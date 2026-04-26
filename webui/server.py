@@ -19,19 +19,37 @@ from viewer.index import Index
 
 def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
     """Run in CHILD process — has own GIL, doesn't block parent's API threads.
-    Builds CFG + pc→inst map, sends back via pipe.
+    Builds 4 things in one pass:
+      - cfg: full CFG dataclass
+      - pc_inst: dict pc → first-seen inst encoding
+      - pc_to_block: dict pc → block_start (O(1) lookup, no 1913-block scan)
+      - block_idxs: dict block_start → sorted list of trace idxs in that block
     """
     try:
+        import bisect
         from viewer.trace import load as _load
         from viewer.cfg import build_cfg as _bc
         t = _load(trace_path)
         cfg = _bc(t, only_module=True)
+        # 一次扫 trace 同时建 pc_inst + pc_to_block + block_idxs
+        # 用 bisect 在 sorted block_starts 上找 block — O(log n)
+        starts = sorted(cfg.blocks.keys())
+        ends = [cfg.blocks[s].end_pc for s in starts]
         pc_inst = {}
-        for i in range(len(t)):
+        pc_to_block = {}
+        block_idxs = {s: [] for s in starts}
+        n = len(t)
+        for i in range(n):
             pc = t.pc(i)
             if pc not in pc_inst:
                 pc_inst[pc] = t.inst(i)
-        conn.send(("ok", cfg, pc_inst))
+            # 找 pc 所在 block: bisect_right(starts, pc) - 1, 然后验证 pc <= end
+            j = bisect.bisect_right(starts, pc) - 1
+            if j >= 0 and pc <= ends[j]:
+                bs = starts[j]
+                pc_to_block[pc] = bs
+                block_idxs[bs].append(i)
+        conn.send(("ok", cfg, pc_inst, pc_to_block, block_idxs))
     except Exception:
         import traceback
         conn.send(("error", traceback.format_exc()))
@@ -56,14 +74,18 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     # 重型结构 (CFG / pc_inst / index / mem-shadow) 都跑后台线程, 不阻塞 UI 响应.
     # 状态: "idle" → "building" → "ready" / "error"
     BG = {
-        "cfg":     {"status": "idle", "data": None, "err": None,
-                    "started_at": 0.0, "ready_at": 0.0},
-        "pc_inst": {"status": "idle", "data": None, "err": None,
-                    "started_at": 0.0, "ready_at": 0.0},
-        "index":   {"status": "idle", "data": None, "err": None,
-                    "started_at": 0.0, "ready_at": 0.0},
-        "mem":     {"status": "idle", "data": None, "err": None,
-                    "started_at": 0.0, "ready_at": 0.0},
+        "cfg":         {"status": "idle", "data": None, "err": None,
+                        "started_at": 0.0, "ready_at": 0.0},
+        "pc_inst":     {"status": "idle", "data": None, "err": None,
+                        "started_at": 0.0, "ready_at": 0.0},
+        "pc_to_block": {"status": "idle", "data": None, "err": None,
+                        "started_at": 0.0, "ready_at": 0.0},
+        "block_idxs":  {"status": "idle", "data": None, "err": None,
+                        "started_at": 0.0, "ready_at": 0.0},
+        "index":       {"status": "idle", "data": None, "err": None,
+                        "started_at": 0.0, "ready_at": 0.0},
+        "mem":         {"status": "idle", "data": None, "err": None,
+                        "started_at": 0.0, "ready_at": 0.0},
     }
     BG_LOCK = threading.Lock()
 
@@ -91,8 +113,11 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if st["status"] == "idle": _bg_run(key, fn)
         return st["data"] if st["status"] == "ready" else None
 
-    def _build_cfg_and_pcinst_in_subprocess():
-        """启子进程跑 CFG+pc_inst, 子进程独立 GIL, 不阻塞主进程的 API 调用."""
+    BG_KEYS_FROM_SUBPROCESS = ("cfg", "pc_inst", "pc_to_block", "block_idxs")
+
+    def _build_cfg_pack_in_subprocess():
+        """启子进程一次跑 CFG + pc_inst + pc_to_block + block_idxs.
+        子进程独立 GIL, 不阻塞主进程 API. 4 个 dict 一次回传."""
         parent_conn, child_conn = mp.Pipe()
         proc = mp.Process(target=_subprocess_build_cfg_and_pcinst,
                           args=(str(trace_path), child_conn), daemon=True)
@@ -107,31 +132,29 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 try: proc.terminate()
                 except: pass
         if tag == "ok":
-            return rest  # [cfg, pc_inst]
+            return rest  # [cfg, pc_inst, pc_to_block, block_idxs]
         raise RuntimeError(rest[0] if rest else "subprocess failed")
 
     def _bg_run_combined():
-        """合并 cfg + pc_inst 两个 key — 一次子进程拿到双结果, 同时 ready."""
+        """一次子进程拿 4 个结果, 同时标 ready."""
         with BG_LOCK:
             if BG["cfg"]["status"] in ("building", "ready"): return
-            for k in ("cfg", "pc_inst"):
+            for k in BG_KEYS_FROM_SUBPROCESS:
                 BG[k]["status"] = "building"
                 BG[k]["started_at"] = time.time()
         def _t():
             try:
-                cfg_obj, pc_inst = _build_cfg_and_pcinst_in_subprocess()
+                results = _build_cfg_pack_in_subprocess()
                 with BG_LOCK:
-                    BG["cfg"]["data"] = cfg_obj
-                    BG["cfg"]["status"] = "ready"
-                    BG["cfg"]["ready_at"] = time.time()
-                    BG["pc_inst"]["data"] = pc_inst
-                    BG["pc_inst"]["status"] = "ready"
-                    BG["pc_inst"]["ready_at"] = time.time()
+                    for k, d in zip(BG_KEYS_FROM_SUBPROCESS, results):
+                        BG[k]["data"] = d
+                        BG[k]["status"] = "ready"
+                        BG[k]["ready_at"] = time.time()
             except Exception as e:
                 with BG_LOCK:
                     msg = repr(e)
-                    BG["cfg"]["err"] = msg; BG["cfg"]["status"] = "error"
-                    BG["pc_inst"]["err"] = msg; BG["pc_inst"]["status"] = "error"
+                    for k in BG_KEYS_FROM_SUBPROCESS:
+                        BG[k]["err"] = msg; BG[k]["status"] = "error"
         threading.Thread(target=_t, daemon=True, name="bg-cfg-supervisor").start()
 
     def _build_index():
@@ -141,12 +164,10 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         m = MemShadow(t); m.build(); return m
 
     def block_for_pc(pc: int) -> Optional[int]:
-        cfg = BG["cfg"]["data"]
-        if cfg is None: return None
-        for start, b in cfg.blocks.items():
-            if start <= pc <= b.end_pc:
-                return start
-        return None
+        # O(1) via precomputed dict (subprocess builds it once).
+        d = BG["pc_to_block"]["data"]
+        if d is None: return None
+        return d.get(pc)
 
     app = FastAPI(title="traceMiku web")
 
@@ -210,7 +231,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         }
 
     @app.get("/api/cfg")
-    def cfg():
+    def cfg(fn: Optional[str] = None):
         # 触发后台子进程构建 (CFG + pc_inst 一次出). 子进程独立 GIL,
         # 主进程的 /api/records /api/record 不会被它阻塞.
         _bg_run_combined()
@@ -230,8 +251,15 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         c = cfg_st["data"]; pc_inst = pcinst_st["data"]
         m = t.meta.module
         base = m.base if m else 0
+        # 可选 fn 过滤: 只返回名字匹配的 blocks (大 trace 默认单函数, 1913 → ~50)
+        # fn 为 None → 全图
         blocks = []
+        included_starts = set()
         for pc, b in c.blocks.items():
+            fname, foff = sym.lookup(pc)
+            if fn and (fname or "") != fn:
+                continue
+            included_starts.add(pc)
             label_lines = []
             for ins_pc in b.insns[:3]:
                 inst = pc_inst.get(ins_pc, 0)
@@ -240,7 +268,6 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 label_lines.append(f"+{rel:x}: {d.mnemonic} {d.op_str}")
             if len(b.insns) > 3:
                 label_lines.append(f"...+{len(b.insns)-3}")
-            fname, foff = sym.lookup(pc)
             blocks.append({
                 "id": hex(pc),
                 "start": hex(pc), "end": hex(b.end_pc),
@@ -250,13 +277,26 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 "executions": b.executions,
                 "label": "\n".join(label_lines),
             })
-        edges = [{"id": f"{hex(s)}->{hex(d)}", "src": hex(s), "dst": hex(d),
-                  "kind": v["kind"], "count": v["count"]}
-                 for (s,d), v in c.edges.items()]
+        edges = []
+        for (s, d), v in c.edges.items():
+            if fn and (s not in included_starts or d not in included_starts):
+                continue
+            edges.append({"id": f"{hex(s)}->{hex(d)}", "src": hex(s), "dst": hex(d),
+                          "kind": v["kind"], "count": v["count"]})
+        # 列出全部 func 名 (前端用来切函数)
+        funcs_seen = {}
+        for pc in c.blocks:
+            fn, _ = sym.lookup(pc)
+            if not fn or fn == "?": continue
+            funcs_seen[fn] = funcs_seen.get(fn, 0) + 1
+        funcs = sorted(([{"name": k, "blocks": v} for k, v in funcs_seen.items()]),
+                       key=lambda x: -x["blocks"])
         return {"status": "ready",
                 "blocks": blocks, "edges": edges,
                 "entry": hex(c.entry_pc),
-                "block_count": len(blocks), "edge_count": len(edges)}
+                "block_count": len(blocks), "edge_count": len(edges),
+                "total_block_count": len(c.blocks),
+                "fn": fn, "funcs": funcs}
 
     @app.get("/api/block-for-pc")
     def block_for_pc_api(pc: str):
@@ -297,29 +337,23 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
     @app.get("/api/idxs-for-block")
     def idxs_for_block(pc: str, max_count: int = 200, near: int = -1):
-        """所有 trace 中 PC 落在该 block 内的 idx. 用于 click block→jump.
-        near>=0 时, 优先返回离该 idx 最近的 max_count 个 (按距离排序后再按 idx 升序输出)."""
-        if BG["cfg"]["status"] != "ready":
-            return {"status": BG["cfg"]["status"], "idxs": []}
-        c = BG["cfg"]["data"]
+        """所有 trace 中 PC 落在该 block 内的 idx. 用预建 dict, O(1).
+        near>=0 时, 优先返回离该 idx 最近的 max_count 个."""
+        if BG["block_idxs"]["status"] != "ready":
+            return {"status": BG["block_idxs"]["status"], "idxs": []}
+        bi = BG["block_idxs"]["data"]
         start = int(pc, 16)
-        if start not in c.blocks: raise HTTPException(404)
-        b = c.blocks[start]
-        end = b.end_pc
-        idxs = []
-        for i in range(len(t)):
-            pc_i = t.pc(i)
-            if start <= pc_i <= end:
-                idxs.append(i)
+        if start not in bi: raise HTTPException(404)
+        all_idxs = bi[start]
         truncated = False
-        if near >= 0 and len(idxs) > max_count:
-            idxs.sort(key=lambda i: abs(i - near))
-            idxs = sorted(idxs[:max_count])
-            truncated = True
-        elif len(idxs) > max_count:
-            idxs = idxs[:max_count]
-            truncated = True
-        return {"block": hex(start), "idxs": idxs, "truncated": truncated}
+        if near >= 0 and len(all_idxs) > max_count:
+            sub = sorted(all_idxs, key=lambda i: abs(i - near))[:max_count]
+            idxs = sorted(sub); truncated = True
+        elif len(all_idxs) > max_count:
+            idxs = all_idxs[:max_count]; truncated = True
+        else:
+            idxs = list(all_idxs)
+        return {"block": hex(start), "idxs": idxs, "truncated": truncated, "total": len(all_idxs)}
 
     @app.get("/api/search")
     def search(pattern: str, max_results: int = 200):

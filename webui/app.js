@@ -35,18 +35,26 @@ async function init() {
   setupCmd();
   // 立即渲染 trace + regs, 不等 CFG.
   setCursor(0, /*scrollIntoView=*/true);
-  // CFG 后台 poll 直到 ready
-  pollCFG();
+  // 默认只加载入口函数的 CFG (1913 -> ~50 块, 避免 cytoscape 主线程 freeze).
+  // 用户可以点 "show all" 切到全图. cursor 走出函数边界时自动跟随新函数.
+  const r0 = await api("/api/record/0");
+  pollCFG(r0?.func || null);
 }
 
-async function pollCFG() {
-  $("cfg-info").textContent = "loading…";
+// 默认 CFG 只渲染当前光标所在函数 (~50 个块, 不是 1913).
+// 大 CFG 全图渲染 cytoscape 主线程 freeze 数秒. 单函数视图秒响应.
+STATE.cfgFunc = null;        // 当前正在渲染的函数名 (null = 全图)
+STATE.allFuncs = [];
+
+async function pollCFG(func = null) {
+  $("cfg-info").textContent = func ? `loading ${func}…` : "loading…";
   let tries = 0;
   while (true) {
-    const r = await api("/api/cfg");
+    const r = await api("/api/cfg", func ? {fn: func} : {});
     if (r.status === "ready") {
+      STATE.cfgFunc = func;
+      STATE.allFuncs = r.funcs || [];
       renderCFG(r);
-      // CFG ready → 重新 setCursor 让 active block 高亮
       setCursor(STATE.cursor, false);
       return;
     }
@@ -180,6 +188,8 @@ function setCursor(idx, scrollIntoView = false) {
     const r = await api("/api/record/" + cur);
     if (STATE.cursor !== cur) return;  // 第二道保险
     renderRegs(r);
+    // 跨函数自动切 CFG 视图 (单函数模式下)
+    if (r.func) maybeSwitchCfgFunc(r.func);
     highlightBlock(r.block_pc);
     $("status").textContent = `#${cur}  ${r.pc}  ${r.asm}`;
   }, 80);
@@ -207,7 +217,18 @@ function renderRegs(r) {
 // ---------------- CFG ----------------
 function renderCFG(payload) {
   STATE.cfg = payload;
-  $("cfg-info").textContent = `${STATE.cfg.block_count} blocks · ${STATE.cfg.edge_count} edges`;
+  const total = payload.total_block_count || payload.block_count;
+  const filt = STATE.cfgFunc ? ` · ${STATE.cfgFunc}` : ` · all funcs`;
+  $("cfg-info").textContent = `${payload.block_count}/${total} blocks · ${payload.edge_count} edges${filt}`;
+  // populate function select
+  const sel = $("cfg-func-select");
+  if (sel && (!sel._populated || STATE.allFuncs.length !== sel._lastFuncCount)) {
+    sel.innerHTML = `<option value="">— all funcs (${total} blocks, slow) —</option>` +
+      STATE.allFuncs.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)} (${f.blocks})</option>`).join("");
+    sel._populated = true;
+    sel._lastFuncCount = STATE.allFuncs.length;
+  }
+  if (sel) sel.value = STATE.cfgFunc || "";
 
   const elements = [];
   for (const b of STATE.cfg.blocks) {
@@ -281,8 +302,13 @@ function renderCFG(payload) {
     showBlockDetail(blockPc);
   });
   $("btn-fit").onclick = () => STATE.cy.fit();
-  $("btn-reload-cfg").onclick = pollCFG;
-  // 默认不 fit-all (>500 个 block 时全图缩到看不清), 而是 center 在 active 上
+  $("btn-reload-cfg").onclick = () => pollCFG(STATE.cfgFunc);
+  const fnSel = $("cfg-func-select");
+  if (fnSel && !fnSel._wired) {
+    fnSel.addEventListener("change", () => { pollCFG(fnSel.value || null); });
+    fnSel._wired = true;
+  }
+  // 单函数视图 → fit; 全图 → center on active
   if (STATE.cfg.block_count <= 200) {
     STATE.cy.fit();
   } else {
@@ -291,6 +317,18 @@ function renderCFG(payload) {
     if (active && active.length) STATE.cy.center(active);
     else STATE.cy.center();
   }
+}
+
+// 当 cursor 跨函数边界时, 自动切到新函数的 CFG 视图. 无开销 — 只
+// 当 func 变化才重新 fetch + render.
+async function maybeSwitchCfgFunc(newFunc) {
+  if (newFunc === STATE.cfgFunc) return;
+  if (!newFunc) return;
+  // 仅当当前在单函数模式时自动切; 全图模式不变
+  if (STATE.cfgFunc === null && STATE.allFuncs.length === 0) return;
+  // 用户在全图模式 → 别强迫切单函数
+  if (STATE.cfgFunc === null) return;
+  await pollCFG(newFunc);
 }
 
 function highlightBlock(pcHex) {
