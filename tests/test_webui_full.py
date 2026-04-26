@@ -268,6 +268,43 @@ def test_scc_self_loop():
     assert loops[0] == [0x100]
 
 
+def test_strings_search_filter(client):
+    """/api/strings?q=... 服务端过滤."""
+    import time
+    # 等 mem ready (耗时, MemShadow build 过)
+    for _ in range(120):
+        r = client.get("/api/strings?min_len=4").json()
+        if r.get("status") == "ready": break
+        time.sleep(0.1)
+    # 全集
+    all_r = client.get("/api/strings?min_len=4").json()
+    if all_r.get("status") != "ready" or len(all_r["strings"]) == 0:
+        pytest.skip("no strings in synth trace")
+    # 拿第一条字符串子串作为查询
+    sub = all_r["strings"][0]["str"][:2]
+    flt_r = client.get(f"/api/strings?min_len=4&q={sub}").json()
+    assert flt_r["status"] == "ready"
+    # 过滤后所有结果都包含 sub
+    for s in flt_r["strings"]:
+        assert sub.lower() in s["str"].lower()
+
+
+def test_idxs_touching_addr_endpoint(client):
+    """/api/idxs-touching-addr 行为基线 — 即使没数据, 不应崩."""
+    import time
+    for _ in range(120):
+        r = client.get("/api/idxs-touching-addr?addr=0x7000&cursor=0").json()
+        if r.get("status") == "ready": break
+        time.sleep(0.1)
+    assert r["status"] == "ready"
+    # 类型契约
+    assert isinstance(r["before"], list)
+    assert isinstance(r["after"], list)
+    for entry in r["before"] + r["after"]:
+        assert "idx" in entry and "kind" in entry
+        assert entry["kind"] in ("r", "w")
+
+
 def test_api_loops_endpoint(client):
     """/api/loops 返回 SCC list. 我们的合成 trace block A 自循环 (br x14 跳回起点)
     + block B (linear) → 期望 1 个 loop."""

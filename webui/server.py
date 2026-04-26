@@ -713,13 +713,43 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         return {"count": len(rows), "from": start, "reg": reg, "chain": rows}
 
     @app.get("/api/strings")
-    def strings_api(min_len: int = 4):
+    def strings_api(min_len: int = 4, q: str = ""):
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             return {"status": BG["mem"]["status"], "strings": []}
         results = BG["mem"]["data"].find_strings(min_len=min_len)
+        if q:
+            ql = q.lower()
+            results = [(a, s) for a, s in results if ql in s.lower()]
         return {"status": "ready", "count": len(results),
                 "strings": [{"addr": hex(a), "len": len(s), "str": s} for a, s in results]}
+
+    @app.get("/api/idxs-touching-addr")
+    def idxs_touching_addr(addr: str, cursor: int = 0, limit: int = 30):
+        """所有 trace idx 中触碰 (load/store) 该 addr 的位置. PDF p.5 双击内存字节 → 跳."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "before": [], "after": []}
+        mem = BG["mem"]["data"]
+        target = int(addr, 16)
+        # mem.writes / mem.reads 是 list[(idx, addr, size, value)] — 线扫
+        idxs_w = [(i, "w") for (i, a, sz, _v) in mem.writes if a <= target < a + sz]
+        idxs_r = [(i, "r") for (i, a, sz, _v) in mem.reads if a <= target < a + sz]
+        all_hits = sorted(idxs_w + idxs_r, key=lambda x: x[0])
+        if not all_hits:
+            return {"status": "ready", "addr": addr, "before": [], "after": [],
+                    "total_before": 0, "total_after": 0}
+        # split by cursor
+        idxs_only = [i for (i, _) in all_hits]
+        import bisect
+        cut = bisect.bisect_left(idxs_only, cursor)
+        before = list(reversed(all_hits[max(0, cut-limit):cut]))
+        after = all_hits[cut:cut+limit]
+        # serialize as list of {idx, kind}
+        ser = lambda lst: [{"idx": i, "kind": k} for (i, k) in lst]
+        return {"status": "ready", "addr": addr, "cursor": cursor,
+                "before": ser(before), "after": ser(after),
+                "total_before": cut, "total_after": len(all_hits) - cut}
 
     @app.get("/api/bg-status")
     def bg_status():

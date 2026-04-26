@@ -613,25 +613,51 @@ async function loadStrings() {
   while (true) {
     const r = await api("/api/strings", {min_len: 4});
     if (r.status === "ready") {
-      let html = '<input class="inp" id="strings-filter" placeholder="filter…" style="width:100%;margin-bottom:4px"><div id="strings-list"></div>';
-      cont.innerHTML = html;
+      cont.innerHTML =
+        '<input class="inp" id="strings-filter" placeholder="search strings…" style="width:100%;margin-bottom:4px">' +
+        '<div id="strings-info" class="dim"></div>' +
+        '<div id="strings-list"></div>';
       const filterInp = $("strings-filter");
       const listEl = $("strings-list");
-      const all = r.strings || [];
-      const renderStrings = (q) => {
-        const ql = q.toLowerCase();
-        let h = "";
-        let n = 0;
-        for (const s of all) {
-          if (q && !s.str.toLowerCase().includes(ql) && !s.addr.includes(ql)) continue;
-          h += `<div class="lp-row"><span>${escapeHtml(s.str)}</span>` +
-               `<span class="meta">${s.addr}</span></div>`;
-          if (++n >= 500) break;
+      const infoEl = $("strings-info");
+      let lastQ = ""; let dbTimer = null; let abortCtl = null;
+      const doSearch = async (q) => {
+        if (abortCtl) try { abortCtl.abort(); } catch(_){}
+        abortCtl = new AbortController();
+        const url = "/api/strings?min_len=4" + (q ? "&q=" + encodeURIComponent(q) : "");
+        try {
+          const resp = await fetch(url, {signal: abortCtl.signal});
+          const j = await resp.json();
+          if (j.status !== "ready") return;
+          let html = "";
+          let n = 0;
+          for (const s of j.strings) {
+            html += `<div class="lp-row" data-addr="${s.addr}">` +
+                    `<span>${escapeHtml(s.str)}</span>` +
+                    `<span class="meta">${s.addr}</span></div>`;
+            if (++n >= 500) break;
+          }
+          listEl.innerHTML = html || '<div class="dim">no match</div>';
+          infoEl.textContent = `${j.count} string${j.count > 1 ? "s" : ""}` +
+                                (j.count > 500 ? " (showing first 500)" : "");
+          listEl.querySelectorAll(".lp-row").forEach(el => {
+            el.addEventListener("click", () => {
+              // 双击或单击 → 跳到第一次写入该地址的指令
+              jumpToFirstWriteOfAddr(el.dataset.addr);
+            });
+          });
+        } catch (e) {
+          if (e.name !== "AbortError") infoEl.textContent = "err: " + e.message;
         }
-        listEl.innerHTML = h || '<div class="dim">no match</div>';
       };
-      renderStrings("");
-      filterInp.addEventListener("input", () => renderStrings(filterInp.value));
+      filterInp.addEventListener("input", () => {
+        if (dbTimer) clearTimeout(dbTimer);
+        const q = filterInp.value;
+        dbTimer = setTimeout(() => {
+          if (q !== lastQ) { lastQ = q; doSearch(q); }
+        }, 200);
+      });
+      doSearch("");
       return;
     }
     if (r.status === "building" || r.status === "idle") {
@@ -641,6 +667,16 @@ async function loadStrings() {
     cont.innerHTML = `<div class="dim">strings ${r.status}</div>`;
     return;
   }
+}
+
+async function jumpToFirstWriteOfAddr(addr) {
+  // PDF p.5: 双击地址跳到定义 (第一次 write 该字节)
+  const r = await api("/api/idxs-touching-addr", {addr, cursor: 0, limit: 5});
+  if (r.status !== "ready") return;
+  // 偏好 write (kind=w), 否则首个 read
+  const all = [...r.after, ...r.before];
+  const first = all.find(e => e.kind === "w") || all[0];
+  if (first) setCursor(first.idx, true);
 }
 
 // taint state — 永久保留 + 支持 abort
