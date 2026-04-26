@@ -495,7 +495,56 @@ function activateLeftTab(name) {
     else if (name === "strings") loadStrings();
     else if (name === "taint") initTaintTab();
     else if (name === "xref") initXrefTab();
-    else if (name === "back") $("lp-back").innerHTML = '<div class="dim">backtrace pending (PDF parity TODO)</div>';
+    else if (name === "back") initBacktraceTab();
+  }
+  // 切到 backtrace 时刷一下当前 cursor 的 stack
+  if (name === "back") refreshBacktrace();
+}
+
+// ---------------- Backtrace ----------------
+function initBacktraceTab() {
+  $("lp-back").innerHTML = '<div class="dim">loading backtrace…</div>';
+  STATE._onCursorChange = STATE._onCursorChange || [];
+  STATE._onCursorChange.push(refreshBacktrace);
+}
+async function refreshBacktrace() {
+  const cont = $("lp-back");
+  if (!cont) return;
+  // 仅当 backtrace tab 已 active 时才 update DOM (省带宽)
+  if (!cont.classList.contains("active")) return;
+  if (STATE._btAbort) try { STATE._btAbort.abort(); } catch(_){}
+  const ctrl = new AbortController();
+  STATE._btAbort = ctrl;
+  try {
+    const url = "/api/backtrace?idx=" + STATE.cursor;
+    const resp = await fetch(url, {signal: ctrl.signal});
+    const r = await resp.json();
+    if (ctrl.signal.aborted) return;
+    if (r.status !== "ready") {
+      cont.innerHTML = `<div class="dim">building call stack… (${r.status})</div>`;
+      setTimeout(() => { if (STATE._btAbort === ctrl) refreshBacktrace(); }, 1000);
+      return;
+    }
+    let html = `<div class="dim">cursor #${STATE.cursor} · depth ${r.depth}</div>`;
+    if (r.stack.length === 0) {
+      html += `<div class="dim">(top of stack)</div>`;
+    } else {
+      // 最深层在最上 (call 顺序倒序)
+      for (let i = r.stack.length - 1; i >= 0; i--) {
+        const f = r.stack[i];
+        const fname = f.fn || "?";
+        html += `<div class="lp-row" data-idx="${f.call_site_idx}">` +
+                `<span>${escapeHtml(fname)} ← ${f.call_pc}</span>` +
+                `<span class="meta">#${f.call_site_idx}</span></div>`;
+      }
+    }
+    cont.innerHTML = html;
+    cont.querySelectorAll(".lp-row").forEach(el =>
+      el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+  } catch (e) {
+    if (e.name !== "AbortError") cont.innerHTML = `<div class="dim">err: ${e.message || e}</div>`;
+  } finally {
+    if (STATE._btAbort === ctrl) STATE._btAbort = null;
   }
 }
 function activateRightTab(name) {
