@@ -1,0 +1,31 @@
+# 大文件 / 商业内容 — 严禁提交
+traces/
+*.bin
+106_*/
+*.apk
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# 临时
+/tmp/
+*.log
+*.bak
+
+# Frida
+*.frida-script-cache
