@@ -4,7 +4,7 @@
 mmap 在后端, 客户端按 viewport 拉切片, 200 万条 trace 滚动丝滑.
 """
 from __future__ import annotations
-import pathlib, time, threading
+import pathlib, time, threading, multiprocessing as mp
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
@@ -15,6 +15,29 @@ from viewer.disasm import decode
 from viewer.symbols import build_from_trace
 from viewer.cfg import build_cfg
 from viewer.index import Index
+
+
+def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
+    """Run in CHILD process — has own GIL, doesn't block parent's API threads.
+    Builds CFG + pc→inst map, sends back via pipe.
+    """
+    try:
+        from viewer.trace import load as _load
+        from viewer.cfg import build_cfg as _bc
+        t = _load(trace_path)
+        cfg = _bc(t, only_module=True)
+        pc_inst = {}
+        for i in range(len(t)):
+            pc = t.pc(i)
+            if pc not in pc_inst:
+                pc_inst[pc] = t.inst(i)
+        conn.send(("ok", cfg, pc_inst))
+    except Exception:
+        import traceback
+        conn.send(("error", traceback.format_exc()))
+    finally:
+        try: conn.close()
+        except: pass
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -68,14 +91,49 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if st["status"] == "idle": _bg_run(key, fn)
         return st["data"] if st["status"] == "ready" else None
 
-    def _build_cfg(): return build_cfg(t, only_module=True)
-    def _build_pc_inst():
-        d = {}
-        for i in range(len(t)):
-            pc = t.pc(i)
-            if pc not in d:
-                d[pc] = t.inst(i)
-        return d
+    def _build_cfg_and_pcinst_in_subprocess():
+        """启子进程跑 CFG+pc_inst, 子进程独立 GIL, 不阻塞主进程的 API 调用."""
+        parent_conn, child_conn = mp.Pipe()
+        proc = mp.Process(target=_subprocess_build_cfg_and_pcinst,
+                          args=(str(trace_path), child_conn), daemon=True)
+        proc.start()
+        try:
+            tag, *rest = parent_conn.recv()
+        finally:
+            try: parent_conn.close()
+            except: pass
+            proc.join(timeout=5)
+            if proc.is_alive():
+                try: proc.terminate()
+                except: pass
+        if tag == "ok":
+            return rest  # [cfg, pc_inst]
+        raise RuntimeError(rest[0] if rest else "subprocess failed")
+
+    def _bg_run_combined():
+        """合并 cfg + pc_inst 两个 key — 一次子进程拿到双结果, 同时 ready."""
+        with BG_LOCK:
+            if BG["cfg"]["status"] in ("building", "ready"): return
+            for k in ("cfg", "pc_inst"):
+                BG[k]["status"] = "building"
+                BG[k]["started_at"] = time.time()
+        def _t():
+            try:
+                cfg_obj, pc_inst = _build_cfg_and_pcinst_in_subprocess()
+                with BG_LOCK:
+                    BG["cfg"]["data"] = cfg_obj
+                    BG["cfg"]["status"] = "ready"
+                    BG["cfg"]["ready_at"] = time.time()
+                    BG["pc_inst"]["data"] = pc_inst
+                    BG["pc_inst"]["status"] = "ready"
+                    BG["pc_inst"]["ready_at"] = time.time()
+            except Exception as e:
+                with BG_LOCK:
+                    msg = repr(e)
+                    BG["cfg"]["err"] = msg; BG["cfg"]["status"] = "error"
+                    BG["pc_inst"]["err"] = msg; BG["pc_inst"]["status"] = "error"
+        threading.Thread(target=_t, daemon=True, name="bg-cfg-supervisor").start()
+
     def _build_index():
         idx = Index(t); idx.build(); return idx
     def _build_mem():
@@ -153,9 +211,11 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
     @app.get("/api/cfg")
     def cfg():
-        # 触发后台构建. 第一次调用 → kick off; 后续直到 ready 都返回 status: building.
-        cfg_st = _bg_run("cfg", _build_cfg)
-        pcinst_st = _bg_run("pc_inst", _build_pc_inst)
+        # 触发后台子进程构建 (CFG + pc_inst 一次出). 子进程独立 GIL,
+        # 主进程的 /api/records /api/record 不会被它阻塞.
+        _bg_run_combined()
+        cfg_st = BG["cfg"]
+        pcinst_st = BG["pc_inst"]
         if cfg_st["status"] != "ready" or pcinst_st["status"] != "ready":
             return {
                 "status": "building",
