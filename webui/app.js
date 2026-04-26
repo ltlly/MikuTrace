@@ -561,8 +561,79 @@ function setupBottomTabs() {
   document.querySelectorAll(".btab").forEach(t => {
     t.addEventListener("click", () => switchBottomTab(t.dataset.btab));
   });
-  // 初始 memory 视图给个占位
-  $("b-memory").innerHTML = '<div class="dim">memory dump 在 cursor 移动时根据 SP/X0 等寄存器自动展示 (TODO: pdf parity)</div>';
+  // Memory tab: 输入地址或寄存器名 (sp/x0 etc) 显示 hex dump.
+  $("b-memory").innerHTML = `
+    <div style="display:flex;gap:6px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--border)">
+      <span class="dim">addr:</span>
+      <input id="mem-addr" class="inp" value="sp" size="20"
+             placeholder="0x... 或 sp/x0/...">
+      <button class="btn" id="mem-go">go</button>
+      <span class="dim" id="mem-info"></span>
+    </div>
+    <div id="mem-content" style="padding:6px 8px;font-family:monospace;font-size:11px;line-height:16px"></div>`;
+  $("mem-go").addEventListener("click", refreshMemDump);
+  $("mem-addr").addEventListener("keydown", e => { if (e.key === "Enter") refreshMemDump(); });
+  // cursor 变化时如果 mem-addr 是寄存器, 自动 refresh
+  STATE._onCursorChange = STATE._onCursorChange || [];
+  STATE._onCursorChange.push(() => {
+    const a = $("mem-addr")?.value;
+    if (a && /^(x\d+|sp|fp|lr|pc)$/i.test(a.trim())) refreshMemDump();
+  });
+}
+
+async function refreshMemDump() {
+  const inp = $("mem-addr");
+  if (!inp) return;
+  const cont = $("mem-content");
+  let raw = inp.value.trim();
+  let addr = null;
+  if (/^(x\d+|sp|fp|lr|pc)$/i.test(raw)) {
+    // resolve 寄存器 → 当前 cursor 的值
+    const r = await api("/api/record/" + STATE.cursor);
+    addr = r.regs?.[raw.toLowerCase()];
+    if (!addr) { cont.innerHTML = `<div class="dim">reg ${raw} unknown</div>`; return; }
+  } else if (/^0x[0-9a-f]+$/i.test(raw)) {
+    addr = raw;
+  } else {
+    cont.innerHTML = '<div class="dim">输入 0x... 或 寄存器名</div>'; return;
+  }
+  cont.innerHTML = '<div class="dim">loading…</div>';
+  const r = await api("/api/mem-dump", {addr, count: 256});
+  if (r.status !== "ready") {
+    cont.innerHTML = `<div class="dim">building memshadow… (${r.status})</div>`;
+    return;
+  }
+  $("mem-info").textContent = `dump from ${addr}`;
+  // 16 bytes per line
+  let html = "";
+  for (let line = 0; line < 16; line++) {
+    const lineAddr = "0x" + (BigInt(addr) + BigInt(line * 16)).toString(16);
+    let hex = "", ascii = "";
+    for (let col = 0; col < 16; col++) {
+      const idx = line * 16 + col;
+      const b = r.bytes[idx];
+      if (b == null || b.byte == null) {
+        hex += `<span style="color:var(--dim)">??</span> `;
+        ascii += `<span style="color:var(--dim)">·</span>`;
+      } else {
+        const cls = b.kind === "w" ? "color:var(--good)" : "color:var(--fg)";
+        hex += `<span style="${cls};cursor:pointer" data-addr="${b.addr}" title="from #${b.src_idx} (${b.kind})">${b.byte.toString(16).padStart(2,'0')}</span> `;
+        const ch = b.byte;
+        ascii += (ch >= 0x20 && ch < 0x7f) ? String.fromCharCode(ch) : "·";
+      }
+    }
+    html += `<div class="mem-line">` +
+            `<span class="addr">${lineAddr}</span>` +
+            `<span class="hex">${hex}</span>` +
+            `<span class="ascii">${escapeHtml(ascii)}</span></div>`;
+  }
+  cont.innerHTML = html;
+  // double click hex → jump to source idx
+  cont.querySelectorAll("[data-addr]").forEach(span => {
+    span.addEventListener("dblclick", () => {
+      jumpToFirstWriteOfAddr(span.dataset.addr);
+    });
+  });
 }
 function switchBottomTab(name) {
   document.querySelectorAll(".btab").forEach(t =>

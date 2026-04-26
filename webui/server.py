@@ -724,6 +724,22 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         return {"status": "ready", "count": len(results),
                 "strings": [{"addr": hex(a), "len": len(s), "str": s} for a, s in results]}
 
+    @app.get("/api/mem-dump")
+    def mem_dump(addr: str, count: int = 256):
+        """Hex dump from MemShadow at given address. ?? for unaccessed bytes."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "bytes": []}
+        mem = BG["mem"]["data"]
+        start = int(addr, 16)
+        out = []
+        for i in range(count):
+            a = start + i
+            b, kind, src_idx = mem.byte_at(a, 1<<63)   # latest
+            out.append({"addr": hex(a), "byte": b, "kind": kind,
+                        "src_idx": src_idx})
+        return {"status": "ready", "addr": addr, "count": count, "bytes": out}
+
     @app.get("/api/idxs-touching-addr")
     def idxs_touching_addr(addr: str, cursor: int = 0, limit: int = 30):
         """所有 trace idx 中触碰 (load/store) 该 addr 的位置. PDF p.5 双击内存字节 → 跳."""

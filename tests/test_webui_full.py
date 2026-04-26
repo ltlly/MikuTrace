@@ -289,6 +289,23 @@ def test_strings_search_filter(client):
         assert sub.lower() in s["str"].lower()
 
 
+def test_mem_dump_endpoint(client):
+    """/api/mem-dump 返回 hex dump (count 个 byte 条目, 包括 None 字节)."""
+    import time
+    # 等 mem build 完
+    for _ in range(120):
+        st = client.get("/api/bg-status").json()
+        if st.get("mem", {}).get("status") == "ready": break
+        # 触发 build (调一次任意需要 mem 的 endpoint)
+        client.get("/api/strings?min_len=4")
+        time.sleep(0.1)
+    r = client.get("/api/mem-dump?addr=0x7000&count=16").json()
+    assert r["status"] == "ready", f"unexpected: {r}"
+    assert len(r["bytes"]) == 16, f"expected 16 byte entries, got {len(r['bytes'])}"
+    for b in r["bytes"]:
+        assert "addr" in b and "byte" in b and "kind" in b
+
+
 def test_idxs_touching_addr_endpoint(client):
     """/api/idxs-touching-addr 行为基线 — 即使没数据, 不应崩."""
     import time
