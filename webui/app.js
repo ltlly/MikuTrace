@@ -152,11 +152,15 @@ function escapeHtml(s) {
 }
 
 // ---------------- cursor + sync ----------------
-async function setCursor(idx, scrollIntoView = false) {
+// 关键: 滚动/连续按键时, 仅更新轻量 UI (active row, status), 把重活
+// (regs fetch + CFG highlight) debounce 到停 80ms 后再做. 1913-node
+// 的 cy.animate/center 每次都重渲, 不 debounce 滚 j/k 即冻屏.
+let _cursorDebounce = null;
+function setCursor(idx, scrollIntoView = false) {
   if (idx < 0) idx = 0;
   if (idx >= STATE.totalRecords) idx = STATE.totalRecords - 1;
   STATE.cursor = idx;
-  // update active row
+  // 立即: active row + scroll
   document.querySelectorAll(".row-insn.active").forEach(e => e.classList.remove("active"));
   const el = document.querySelector(`.row-insn[data-idx="${idx}"]`);
   if (el) el.classList.add("active");
@@ -167,11 +171,18 @@ async function setCursor(idx, scrollIntoView = false) {
       stream.scrollTop = Math.max(0, target - stream.clientHeight / 2);
     }
   }
-  // fetch full record (with regs + block_pc)
-  const r = await api("/api/record/" + idx);
-  renderRegs(r);
-  highlightBlock(r.block_pc);
-  $("status").textContent = `#${idx}  ${r.pc}  ${r.asm}`;
+  $("status").textContent = `#${idx}  …`;
+  // 重活 debounce
+  if (_cursorDebounce) clearTimeout(_cursorDebounce);
+  _cursorDebounce = setTimeout(async () => {
+    const cur = STATE.cursor;
+    if (cur !== idx) return;     // 用户又跳走了, 跳过
+    const r = await api("/api/record/" + cur);
+    if (STATE.cursor !== cur) return;  // 第二道保险
+    renderRegs(r);
+    highlightBlock(r.block_pc);
+    $("status").textContent = `#${cur}  ${r.pc}  ${r.asm}`;
+  }, 80);
 }
 
 function renderRegs(r) {
@@ -284,14 +295,16 @@ function renderCFG(payload) {
 
 function highlightBlock(pcHex) {
   if (!STATE.cy) return;
+  // 同一个 block 不重做 pan/redraw — 比 1913-node 全量 redraw 省很多
+  if (pcHex === STATE.activeBlockPc) return;
   STATE.cy.nodes().removeClass("active");
-  if (!pcHex) return;
+  if (!pcHex) { STATE.activeBlockPc = null; return; }
   const n = STATE.cy.getElementById(pcHex);
   if (n && n.length) {
     n.addClass("active");
     STATE.activeBlockPc = pcHex;
-    // pan to active node
-    STATE.cy.animate({ center: { eles: n }, duration: 200 });
+    // 直接 center, 不 animate. 1913 节点逐帧 redraw 会冻屏.
+    STATE.cy.center(n);
   }
 }
 
