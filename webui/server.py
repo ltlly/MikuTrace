@@ -18,12 +18,15 @@ from viewer.index import Index
 
 
 def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
-    """Run in CHILD process — has own GIL, doesn't block parent's API threads.
-    Builds 4 things in one pass:
+    """Run in CHILD process — own GIL, doesn't block parent's API threads.
+    Single pass over trace builds 4 dicts:
       - cfg: full CFG dataclass
       - pc_inst: dict pc → first-seen inst encoding
-      - pc_to_block: dict pc → block_start (O(1) lookup, no 1913-block scan)
-      - block_idxs: dict block_start → sorted list of trace idxs in that block
+      - pc_to_block: dict pc → block_start (O(1) block lookup)
+      - block_idxs: dict block_start → list of trace idxs in that block
+
+    NOTE: 不再建 pc_to_idxs — 那要 5.6GB python ints (200M 条目).
+    /api/idxs-for-pc 改用从 cursor 双向扫 (O(距离), 通常很快).
     """
     try:
         import bisect
@@ -31,8 +34,6 @@ def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
         from viewer.cfg import build_cfg as _bc
         t = _load(trace_path)
         cfg = _bc(t, only_module=True)
-        # 一次扫 trace 同时建 pc_inst + pc_to_block + block_idxs
-        # 用 bisect 在 sorted block_starts 上找 block — O(log n)
         starts = sorted(cfg.blocks.keys())
         ends = [cfg.blocks[s].end_pc for s in starts]
         pc_inst = {}
@@ -43,7 +44,6 @@ def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
             pc = t.pc(i)
             if pc not in pc_inst:
                 pc_inst[pc] = t.inst(i)
-            # 找 pc 所在 block: bisect_right(starts, pc) - 1, 然后验证 pc <= end
             j = bisect.bisect_right(starts, pc) - 1
             if j >= 0 and pc <= ends[j]:
                 bs = starts[j]
@@ -215,17 +215,22 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         fname, foff = sym.lookup(r.pc)
         m = t.meta.module
         base = m.base if m else 0
-        # block_pc 仅当 CFG ready 时返回, 否则 null (前端不会卡)
         bpc = None
         if BG["cfg"]["status"] == "ready":
             bp = block_for_pc(r.pc)
             if bp is not None: bpc = hex(bp)
+        regs = {nm: hex(r.reg(nm)) for nm in ALL_REGS if nm not in ("nzcv",)}
+        # prev_regs: 上一条 trace record 的寄存器, 用于精确高亮"这一步" 改了哪些
+        prev_regs = None
+        if idx > 0:
+            pr = t.record(idx - 1)
+            prev_regs = {nm: hex(pr.reg(nm)) for nm in ALL_REGS if nm not in ("nzcv",)}
         return {
             "idx": idx, "pc": hex(r.pc), "rel": hex(r.pc - base) if base else None,
             "func": fname if fname != "?" else None,
             "off": hex(foff) if fname != "?" else None,
             "asm": f"{d.mnemonic} {d.op_str}",
-            "regs": {nm: hex(r.reg(nm)) for nm in ALL_REGS if nm not in ("nzcv",)},
+            "regs": regs, "prev_regs": prev_regs,
             "block_pc": bpc, "cfg_status": BG["cfg"]["status"],
             "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
         }
@@ -334,6 +339,175 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             "executions": b.executions, "insns": ins,
             "exits": [{"to": hex(t), "kind": k} for t, k in b.exits],
         }
+
+    @app.get("/api/cfg-svg")
+    def cfg_svg(fn: Optional[str] = None):
+        """IDA-style CFG: HTML-label per insn (HREF→<a xlink:href>, JS click + CSS 高亮),
+        graphviz dot Sugiyama layout. 单函数 (fn 默认 current cursor 函数).
+        条件分支 → 绿色 taken / 红色 fall-through."""
+        if BG["cfg"]["status"] != "ready" or BG["pc_inst"]["status"] != "ready":
+            _bg_run_combined()
+            return {"status": "building",
+                    "cfg": BG["cfg"]["status"], "pc_inst": BG["pc_inst"]["status"]}
+        c = BG["cfg"]["data"]; pc_inst = BG["pc_inst"]["data"]
+        m = t.meta.module
+        base = m.base if m else 0
+
+        included = []
+        for pc, b in c.blocks.items():
+            fname, foff = sym.lookup(pc)
+            if fn and (fname or "") != fn: continue
+            included.append((pc, b, fname))
+        if not included:
+            return {"status": "empty", "fn": fn, "svg": None}
+        included_starts = {pc for pc, _, _ in included}
+
+        def html_esc(s: str) -> str:
+            return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                     .replace('"', "&quot;"))
+
+        # 探测每条 insn 是否是分支 (用来识别 block 末尾的 cond/uncond 性质)
+        block_term_kind: dict = {}
+        for pc, b, _ in included:
+            if b.insns:
+                last_pc = b.insns[-1]
+                d = decode(last_pc, pc_inst.get(last_pc, 0))
+                if d.is_branch:
+                    block_term_kind[pc] = d.mnemonic
+                else:
+                    block_term_kind[pc] = None
+
+        import io
+        buf = io.StringIO()
+        buf.write("digraph CFG {\n")
+        buf.write('  graph [bgcolor="#0e1117", rankdir=TB, '
+                  'fontname="JetBrainsMono,monospace", fontcolor="#d0d7de", '
+                  'splines=ortho, nodesep=0.45, ranksep=0.55, pad=0.3];\n')
+        buf.write('  node [shape=plaintext, fontname="JetBrainsMono,monospace", '
+                  'fontsize=10];\n')
+        buf.write('  edge [arrowsize=0.8, penwidth=1.4, '
+                  'fontname="JetBrainsMono,monospace", fontsize=8, fontcolor="#6e7681"];\n')
+
+        # 节点: HTML label, 每行 <TD HREF="#insn_<pc>">. CSS/JS 用 a[xlink|href$="<pc>"]
+        # 选中改 class.
+        for pc, b, fname in included:
+            head_rel_str = f"+{(pc - base):x}" if base else f"{pc:x}"
+            head_lbl = html_esc(f"{head_rel_str}  ×{b.executions}")
+            rows = []
+            rows.append(f'<TR><TD ALIGN="LEFT" BGCOLOR="#1f2630" '
+                        f'HREF="#hdr_b{pc:x}" TITLE="block {pc:#x}">'
+                        f'<FONT COLOR="#58a6ff">{head_lbl}</FONT></TD></TR>')
+            for ins_pc in b.insns:
+                inst = pc_inst.get(ins_pc, 0)
+                d = decode(ins_pc, inst)
+                rel_str = f"+{(ins_pc - base):x}" if base else f"{ins_pc:x}"
+                ops = d.op_str
+                if len(ops) > 50: ops = ops[:48] + ".."
+                # 颜色: 分支橙红, ret 红, call 紫, 其他默认
+                fcol = "#d0d7de"
+                if d.is_ret: fcol = "#f85149"
+                elif d.is_call: fcol = "#bc8cff"
+                elif d.is_branch: fcol = "#f7b32b"
+                line = f'<FONT COLOR="#6e7681">{html_esc(rel_str)}:</FONT> '\
+                       f'<FONT COLOR="{fcol}">{html_esc(d.mnemonic)}</FONT>'
+                if ops:
+                    line += f' <FONT COLOR="#d0d7de">{html_esc(ops)}</FONT>'
+                title = f"{ins_pc:#x}: {d.mnemonic} {d.op_str}"
+                rows.append(f'<TR><TD ALIGN="LEFT" '
+                            f'HREF="#insn_{ins_pc:x}" TITLE="{html_esc(title)}">{line}</TD></TR>')
+            ints = min(b.executions, 50) / 50
+            br = "#30363d"
+            if ints > 0.1:
+                r = int(0x30 + ints * 0x80); g = int(0x36 + ints * 0x60); bl = int(0x3d + ints * 0x10)
+                br = f"#{r:02x}{g:02x}{bl:02x}"
+            label = ('<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" '
+                     f'COLOR="{br}" BGCOLOR="#161b22">'
+                     + "".join(rows) +
+                     "</TABLE>>")
+            buf.write(f'  "b{pc:x}" [label={label}, id="b{pc:x}"];\n')
+
+        # edges: green=cond taken, red=cond not-taken (fall-through after b.cond/cbz/tbz),
+        #        blue=uncond branch, magenta=ret, gray=natural fall, purple=call
+        for (s, d), v in c.edges.items():
+            if s not in included_starts: continue
+            kind = v["kind"]; cnt = v["count"]
+            term = block_term_kind.get(s)
+            is_cond = bool(term) and (term.startswith("b.") or term in ("cbz", "cbnz", "tbz", "tbnz"))
+            color = "#666666"; lblcol = None
+            if kind == "fall":
+                # natural fallthrough into next block (no branch)
+                color = "#444c56"
+            elif is_cond:
+                # block ends with conditional. Taken edge != src+4 → green.
+                # Fall-through (dst == last+4) → red.
+                last_pc = d  # dst
+                src_block = c.blocks[s]
+                last_in_src = src_block.insns[-1] if src_block.insns else 0
+                if last_in_src and d == last_in_src + 4:
+                    color = "#f85149"   # red = fall-through (cond false)
+                    lblcol = "#f85149"
+                else:
+                    color = "#3fb950"   # green = taken (cond true)
+                    lblcol = "#3fb950"
+            elif kind == "ret":
+                color = "#bc8cff"
+            elif kind in ("bl", "blr"):
+                color = "#bc8cff"
+            else:
+                color = "#58a6ff"   # uncond
+            label_txt = f'{kind} ×{cnt}' if cnt > 1 else kind
+            label_attr = f'label="{label_txt}"'
+            if lblcol: label_attr += f', fontcolor="{lblcol}"'
+            if d in included_starts:
+                buf.write(f'  "b{s:x}" -> "b{d:x}" [color="{color}", {label_attr}];\n')
+            else:
+                ext_lbl = f"ext +{(d-base):x}" if base else f"ext {d:x}"
+                buf.write(f'  "ext_{s:x}_{d:x}" [shape=ellipse, fontsize=9, '
+                          f'style=filled, fillcolor="#1f2630", color="#6e7681", '
+                          f'fontcolor="#6e7681", label="{ext_lbl}", '
+                          f'id="ext_{s:x}_{d:x}"];\n')
+                buf.write(f'  "b{s:x}" -> "ext_{s:x}_{d:x}" [color="{color}", {label_attr}];\n')
+        buf.write("}\n")
+        dot_text = buf.getvalue()
+
+        import subprocess
+        try:
+            r = subprocess.run(["dot", "-Tsvg"], input=dot_text, text=True,
+                               capture_output=True, timeout=20)
+            if r.returncode != 0:
+                return {"status": "error", "err": r.stderr[:500]}
+            svg = r.stdout
+        except FileNotFoundError:
+            return {"status": "error", "err": "graphviz `dot` 没装"}
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "err": "dot 超时"}
+
+        return {"status": "ready", "svg": svg, "fn": fn,
+                "block_count": len(included),
+                "total_block_count": len(c.blocks)}
+
+    @app.get("/api/idxs-for-pc")
+    def idxs_for_pc(pc: str, cursor: int = 0, limit: int = 30):
+        """从 cursor 双向扫 trace 找该 PC 的执行位置. 不预存 (会要 5GB+ 内存).
+        before: cursor-1 → 0 扫到 limit 个匹配; after: cursor → end 同理.
+        典型耗时 < 30ms (热块 PC 在 cursor 附近就有匹配)."""
+        target = int(pc, 16)
+        n = len(t)
+        cur = max(0, min(cursor, n))
+        before, after = [], []
+        i = cur - 1
+        while i >= 0 and len(before) < limit:
+            if t.pc(i) == target: before.append(i)
+            i -= 1
+        i = cur
+        while i < n and len(after) < limit:
+            if t.pc(i) == target: after.append(i)
+            i += 1
+        # 估总数 (可选): 这里不算 total, 让前端只显示 limit 内的
+        return {"status": "ready", "pc": pc, "cursor": cursor,
+                "before": before, "after": after,
+                "before_capped": len(before) >= limit,
+                "after_capped": len(after) >= limit}
 
     @app.get("/api/idxs-for-block")
     def idxs_for_block(pc: str, max_count: int = 200, near: int = -1):

@@ -4,9 +4,6 @@
 <meta charset="utf-8">
 <title>traceMiku web</title>
 <link rel="stylesheet" href="/static/styles.css">
-<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 </head>
 <body>
 
@@ -14,57 +11,84 @@
   <span class="brand">traceMiku <span class="dim">web</span></span>
   <span id="meta" class="meta">loading…</span>
   <span class="grow"></span>
-  <span class="hint">j/k 单步 · g 跳转 · / 搜索 · click 块跳转</span>
+  <label class="toggle">
+    <input type="checkbox" id="sync-toggle" checked>
+    <span>同步 (sync trace ↔ CFG)</span>
+  </label>
+  <span class="hint">j/k 单步 · g/G 头尾 · / 搜索 · :N 跳转</span>
 </header>
 
 <main id="layout">
-  <section id="left">
-    <div class="panelhead">trace stream <span id="trace-info" class="dim"></span></div>
-    <div id="stream"></div>
+  <!-- 左侧 vertical tab strip -->
+  <aside id="left-tabs">
+    <button class="vtab active" data-vtab="funcs"   title="Functions">F</button>
+    <button class="vtab"        data-vtab="back"    title="BackTrace">B</button>
+    <button class="vtab"        data-vtab="strings" title="Strings">S</button>
+    <button class="vtab"        data-vtab="taint"   title="Taint">T</button>
+    <button class="vtab"        data-vtab="xref"    title="Cross Reference">X</button>
+  </aside>
+
+  <!-- 左侧 panel content (随 vtab 切换) -->
+  <section id="left-panel">
+    <div class="panelhead">
+      <span id="left-panel-title">Functions</span>
+      <span class="grow"></span>
+      <span id="left-panel-info" class="dim"></span>
+    </div>
+    <div id="left-panel-body"></div>
   </section>
 
-  <section id="right">
-    <div class="panelhead">CFG <span id="cfg-info" class="dim"></span>
-      <select id="cfg-func-select" class="inp" style="font-size:11px;max-width:280px"></select>
+  <!-- 中央: 汇编流 + 下方 memory tab -->
+  <section id="asm-col">
+    <div class="panelhead">
+      <span>Disassembly <span id="trace-info" class="dim"></span></span>
+      <span class="grow"></span>
+      <span id="status" class="dim"></span>
+    </div>
+    <div id="stream"></div>
+    <div id="bottom-tabs">
+      <button class="btab active" data-btab="memory">Memory</button>
+      <button class="btab"        data-btab="calltree">Call Tree</button>
+      <button class="btab"        data-btab="navigation">Navigation</button>
+      <button class="btab"        data-btab="trace-for-pc">Trace for PC</button>
+    </div>
+    <div id="bottom-content">
+      <div class="bbody active" id="b-memory"></div>
+      <div class="bbody" id="b-calltree"><div class="dim">call tree pending</div></div>
+      <div class="bbody" id="b-navigation"><div class="dim">navigation history pending</div></div>
+      <div class="bbody" id="b-trace-for-pc"><div class="dim">click 任意 CFG 中的 ASM 行, 或 trace 中的指令, 这里会显示该 PC 的所有执行 idx (按 cursor 分前后)</div></div>
+    </div>
+  </section>
+
+  <!-- 右侧: CFG 图 / Registers (vertical tab) -->
+  <section id="right-col">
+    <div class="panelhead">
+      <span id="right-tab-title">Graph</span>
+      <span class="grow"></span>
+      <select id="cfg-func-select" class="inp" style="font-size:11px;max-width:240px"></select>
       <button id="btn-fit" class="btn">fit</button>
       <button id="btn-reload-cfg" class="btn">reload</button>
+      <span id="cfg-info" class="dim"></span>
     </div>
-    <div id="cy"></div>
+    <div id="right-body">
+      <div id="cfg-pane" class="rbody active">
+        <div id="cfg-canvas-wrap">
+          <div id="cfg-canvas"></div>
+        </div>
+      </div>
+      <div id="regs-pane" class="rbody"></div>
+    </div>
   </section>
 
-  <section id="bottom">
-    <div class="tabs">
-      <button class="tab active" data-tab="regs">regs</button>
-      <button class="tab" data-tab="block">block</button>
-      <button class="tab" data-tab="taint">taint</button>
-      <button class="tab" data-tab="search">search</button>
-      <button class="tab" data-tab="strings">strings</button>
-    </div>
-    <div class="tabbody" id="tab-regs"></div>
-    <div class="tabbody hidden" id="tab-block"></div>
-    <div class="tabbody hidden" id="tab-taint">
-      <div class="row">
-        <button id="ft-btn" class="btn">forward-taint</button>
-        <button id="bt-btn" class="btn">backward-taint</button>
-        <input id="taint-reg" placeholder="reg (x0)" class="inp" value="x0" size="4">
-        <span class="dim">from current cursor</span>
-      </div>
-      <div id="taint-out"></div>
-    </div>
-    <div class="tabbody hidden" id="tab-search">
-      <div class="row">
-        <input id="search-q" placeholder="regex e.g. smull|umull" class="inp" size="40">
-        <button id="search-btn" class="btn">search</button>
-      </div>
-      <div id="search-out"></div>
-    </div>
-    <div class="tabbody hidden" id="tab-strings"><div id="strings-out"></div></div>
-  </section>
+  <!-- 右侧最外层 vertical tabs -->
+  <aside id="right-tabs">
+    <button class="vtab active" data-rtab="cfg"  title="Graph (CFG)">G</button>
+    <button class="vtab"        data-rtab="regs" title="Registers">R</button>
+  </aside>
 
   <footer id="cmdbar">
     <span id="cmd-prompt"></span>
     <input id="cmd-input" type="text" placeholder="" class="inp">
-    <span id="status"></span>
   </footer>
 </main>
 
