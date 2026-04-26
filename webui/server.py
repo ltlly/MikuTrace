@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from viewer.trace import load, ALL_REGS
 from viewer.disasm import decode
 from viewer.symbols import build_from_trace
-from viewer.cfg import build_cfg
+from viewer.cfg import build_cfg, loop_sccs
 from viewer.index import Index
 
 
@@ -191,8 +191,6 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         regs_filter = [r for r in regs.split(",") if r in ALL_REGS] if regs else None
         m = t.meta.module
         base = m.base if m else 0
-        # 每条指令的执行次数 = 该 PC 所在 block 的 executions
-        # (block 是单入口单出口, 所以每次 block 执行, 内部每条 PC 各执行一次)
         cfg_data = BG["cfg"]["data"] if BG["cfg"]["status"] == "ready" else None
         pc_to_block_d = BG["pc_to_block"]["data"] if BG["pc_to_block"]["status"] == "ready" else None
         def exec_count(pc):
@@ -201,16 +199,30 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             if bs is None: return None
             b = cfg_data.blocks.get(bs)
             return b.executions if b else None
+
         rows = []
         for i in range(start, end):
             r = t.record(i)
             d = decode(r.pc, r.inst)
             fname, foff = sym.lookup(r.pc)
+            ann = None
+            # 注释 1: call/branch → 目标函数名 (PDF p.2 风格 "; libc::vfprintf")
+            if d.is_call or d.is_branch:
+                # 拿下一条 trace record 的 PC = 实际跳转 dst
+                if i + 1 < len(t):
+                    next_pc = t.pc(i + 1)
+                    tfn, tfoff = sym.lookup(next_pc)
+                    if tfn and tfn != "?" and tfn != fname:
+                        ann = f"→ {tfn}+{tfoff:#x}"
+            # 注释 2: memory load/store → 解读地址有什么
+            # (capstone Decoded 已含 mem_op tuple, 此处只 mark 为 "mem op")
+            # 简化版: 先只做 call 跳转注释; mem ASCII 解读放后续 PR.
             row = {
                 "idx": i, "pc": hex(r.pc), "rel": hex(r.pc - base) if base else None,
                 "func": fname if fname != "?" else None,
                 "off": hex(foff) if fname != "?" else None,
                 "asm": f"{d.mnemonic} {d.op_str}",
+                "annotation": ann,
                 "exec_count": exec_count(r.pc),
                 "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
             }
@@ -358,6 +370,17 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             "exits": [{"to": hex(t), "kind": k} for t, k in b.exits],
         }
 
+    @app.get("/api/loops")
+    def api_loops():
+        """所有 loop SCC: [{members:[pc,...], size:N}, ...] (size>=2 或自环)."""
+        if BG["cfg"]["status"] != "ready":
+            return {"status": BG["cfg"]["status"], "loops": []}
+        c = BG["cfg"]["data"]
+        loops = []
+        for scc in loop_sccs(c):
+            loops.append({"members": [hex(p) for p in scc], "size": len(scc)})
+        return {"status": "ready", "loops": loops, "count": len(loops)}
+
     @app.get("/api/cfg-svg")
     def cfg_svg(fn: Optional[str] = None):
         """IDA-style CFG: HTML-label per insn (HREF→<a xlink:href>, JS click + CSS 高亮),
@@ -379,6 +402,20 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if not included:
             return {"status": "empty", "fn": fn, "svg": None}
         included_starts = {pc for pc, _, _ in included}
+
+        # 循环检测: 每个 loop SCC 给一个不同的 border 颜色 (PDF p.10 风)
+        # 用 HSL 色相轮; 单个 loop = 1 色相, 嵌套也按 SCC 各自分.
+        loops = loop_sccs(c)
+        loop_color: dict = {}
+        for li, scc in enumerate(loops):
+            # HSL hue rotation; 高饱和度低明度
+            import colorsys
+            h = (li * 0.137) % 1.0   # 黄金比 ratio for max distance
+            rgb = colorsys.hls_to_rgb(h, 0.55, 0.65)
+            hex_col = "#{:02x}{:02x}{:02x}".format(
+                int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
+            for pc in scc:
+                loop_color[pc] = hex_col
 
         def html_esc(s: str) -> str:
             return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -435,10 +472,14 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 rows.append(f'<TR><TD ALIGN="LEFT" '
                             f'HREF="#insn_{ins_pc:x}" TITLE="{html_esc(title)}">{line}</TD></TR>')
             ints = min(b.executions, 50) / 50
-            br = "#30363d"
-            if ints > 0.1:
-                r = int(0x30 + ints * 0x80); g = int(0x36 + ints * 0x60); bl = int(0x3d + ints * 0x10)
-                br = f"#{r:02x}{g:02x}{bl:02x}"
+            # 优先 loop 色 — PDF p.10 "不同循环不同颜色"
+            if pc in loop_color:
+                br = loop_color[pc]
+            else:
+                br = "#30363d"
+                if ints > 0.1:
+                    r = int(0x30 + ints * 0x80); g = int(0x36 + ints * 0x60); bl = int(0x3d + ints * 0x10)
+                    br = f"#{r:02x}{g:02x}{bl:02x}"
             label = ('<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" '
                      f'COLOR="{br}" BGCOLOR="#161b22">'
                      + "".join(rows) +

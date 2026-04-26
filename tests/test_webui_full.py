@@ -238,6 +238,59 @@ def test_backtrace_endpoint(client):
 
 # ============== full-trace invariant scan =================================
 
+def test_scc_finds_loops():
+    """Tarjan SCC 测试: 构造 A→B→A 自环 + C 单顶点, 应找到 1 个 loop."""
+    from viewer.cfg import CFG, Block, find_sccs, loop_sccs
+    c = CFG()
+    c.blocks[0x100] = Block(start_pc=0x100, end_pc=0x100)
+    c.blocks[0x200] = Block(start_pc=0x200, end_pc=0x200)
+    c.blocks[0x300] = Block(start_pc=0x300, end_pc=0x300)
+    c.edges[(0x100, 0x200)] = {"kind": "b", "count": 1}
+    c.edges[(0x200, 0x100)] = {"kind": "b", "count": 1}
+    c.edges[(0x100, 0x300)] = {"kind": "b", "count": 1}
+    sccs = find_sccs(c)
+    # 3 SCCs total: {0x100,0x200} loop, {0x300} singleton
+    sizes = sorted(len(s) for s in sccs)
+    assert sizes == [1, 2]
+    loops = loop_sccs(c)
+    assert len(loops) == 1
+    assert sorted(loops[0]) == [0x100, 0x200]
+
+
+def test_scc_self_loop():
+    """size=1 自环也算 loop."""
+    from viewer.cfg import CFG, Block, loop_sccs
+    c = CFG()
+    c.blocks[0x100] = Block(start_pc=0x100, end_pc=0x100)
+    c.edges[(0x100, 0x100)] = {"kind": "b", "count": 1}
+    loops = loop_sccs(c)
+    assert len(loops) == 1
+    assert loops[0] == [0x100]
+
+
+def test_api_loops_endpoint(client):
+    """/api/loops 返回 SCC list. 我们的合成 trace block A 自循环 (br x14 跳回起点)
+    + block B (linear) → 期望 1 个 loop."""
+    _wait_cfg(client)
+    r = client.get("/api/loops").json()
+    assert r["status"] == "ready"
+    assert isinstance(r["loops"], list)
+    # 每个 loop 是 dict 含 members + size
+    for L in r["loops"]:
+        assert "members" in L and "size" in L
+        assert L["size"] == len(L["members"])
+        assert all(m.startswith("0x") for m in L["members"])
+
+
+def test_annotation_field_present(client):
+    """每条 record 都应该有 annotation 键 (可能为 null)."""
+    rs = client.get("/api/records?start=0&count=22").json()["records"]
+    assert all("annotation" in r for r in rs)
+    # br x14 in our synth jumps to next block — annotation should hint
+    br_records = [r for r in rs if r["asm"].startswith("br")]
+    assert len(br_records) > 0
+
+
 def test_all_records_invariants(client):
     """全 trace 扫描, 每条 record 满足: pc/idx 类型正确, asm 非空,
     is_branch/is_call/is_ret 互斥逻辑."""

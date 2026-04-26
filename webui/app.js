@@ -171,12 +171,13 @@ function buildRow(i, r) {
   const fn = r.func ? `${r.func}+${r.off}` : (r.rel || r.pc);
   const ecCls = execCountClass(r.exec_count);
   const ecTitle = r.exec_count != null ? `executed ×${r.exec_count}` : "";
+  const annHtml = r.annotation ? `<span class="ann">; ${escapeHtml(r.annotation)}</span>` : "";
   row.innerHTML =
     `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
     `<span class="idx">#${r.idx}</span>` +
     `<span class="pc">${r.pc}</span>` +
     `<span class="func">${fn}</span>` +
-    `<span class="asm">${escapeHtml(r.asm)}</span>`;
+    `<span class="asm">${escapeHtml(r.asm)}${annHtml ? "  " + annHtml : ""}</span>`;
   row.addEventListener("click", () => setCursor(i, false));
   return row;
 }

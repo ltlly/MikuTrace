@@ -138,6 +138,7 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 .row-insn .pc   { color: var(--accent2); }
 .row-insn .func { color: var(--good); }
 .row-insn .asm  { color: var(--fg); }
+.row-insn .ann  { color: var(--dim); }   /* 行尾注释, 如 "; → sub_xxx+0x10" */
 .row-insn.is-call .asm { color: var(--accent); }
 .row-insn.is-ret  .asm { color: var(--warn); }
 .row-insn.is-branch .asm { color: var(--accent2); }

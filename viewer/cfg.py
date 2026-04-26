@@ -38,6 +38,75 @@ class CFG:
     entry_pc: int = 0
 
 
+def find_sccs(cfg: "CFG") -> list[list[int]]:
+    """Tarjan SCC: 返回 list of [block_start_pc, ...] (每个 SCC 一组).
+    单顶点 SCC (无自环) 不算循环, 只有 size>=2 或自环的算 loop.
+    """
+    blocks = list(cfg.blocks)
+    if not blocks: return []
+    # adjacency: src → list of dst (only dsts within blocks)
+    adj: dict[int, list[int]] = {b: [] for b in blocks}
+    for (s, d) in cfg.edges:
+        if s in adj and d in adj:
+            adj[s].append(d)
+
+    # Iterative Tarjan
+    index_counter = [0]
+    stack: list[int] = []
+    on_stack: set[int] = set()
+    lowlink: dict[int, int] = {}
+    index: dict[int, int] = {}
+    sccs: list[list[int]] = []
+
+    for start in blocks:
+        if start in index: continue
+        # iterative DFS to avoid Python recursion limit on huge CFGs
+        work = [(start, iter(adj[start]))]
+        index[start] = index_counter[0]
+        lowlink[start] = index_counter[0]
+        index_counter[0] += 1
+        stack.append(start); on_stack.add(start)
+        while work:
+            v, it = work[-1]
+            try:
+                w = next(it)
+                if w not in index:
+                    index[w] = index_counter[0]
+                    lowlink[w] = index_counter[0]
+                    index_counter[0] += 1
+                    stack.append(w); on_stack.add(w)
+                    work.append((w, iter(adj[w])))
+                elif w in on_stack:
+                    lowlink[v] = min(lowlink[v], index[w])
+            except StopIteration:
+                # all neighbors done, pop
+                if lowlink[v] == index[v]:
+                    scc = []
+                    while True:
+                        w = stack.pop(); on_stack.discard(w)
+                        scc.append(w)
+                        if w == v: break
+                    sccs.append(scc)
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    lowlink[parent] = min(lowlink[parent], lowlink[v])
+    return sccs
+
+
+def loop_sccs(cfg: "CFG") -> list[list[int]]:
+    """只返回真 loop (size>1, 或 size=1 但有自环)."""
+    out = []
+    for scc in find_sccs(cfg):
+        if len(scc) > 1:
+            out.append(scc)
+        elif len(scc) == 1:
+            v = scc[0]
+            if (v, v) in cfg.edges:
+                out.append(scc)
+    return out
+
+
 def build_cfg(t: Trace, only_module: bool = True) -> CFG:
     """Walk trace, identify block boundaries, count edges."""
     cfg = CFG()
