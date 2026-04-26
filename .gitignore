@@ -1,7 +1,8 @@
 # 大文件 / 商业内容 — 严禁提交
+# 测试 APK + 解包目录 + 参考 PDF 都放 example/, 永远不进 git
 traces/
 *.bin
-106_*/
+/example/
 *.apk
 *.pdf
 

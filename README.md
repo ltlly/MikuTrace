@@ -31,7 +31,11 @@ fail-path (~4675 条) 与 cold-path (~2M 条) 互不污染, 事后挑要分析�
 # 看某次 call 的完整性 (truncated / last_insn_is_ret 一眼)
 ./tracemiku info traces/run1/calls/call_002_tid12345_2066291r_50342ms
 
-# 在 TUI 中打开那次 call
+# 单页 Web SPA 打开 (推荐: IDA 风格左 trace + 右 CFG, 同屏联动光标)
+./tracemiku web traces/run1
+./tracemiku web traces/run1/calls/call_002_tid12345_2066291r_50342ms
+
+# TUI 备选 (大函数 CFG 是 ASCII 缩略图, 体验有限)
 ./tracemiku view traces/run1/calls/call_002_tid12345_2066291r_50342ms
 
 # run 级元信息 (顶层 + 所有 call 概要)
@@ -87,6 +91,23 @@ traces/run1/
 - `cmodule` (默认, 实验性): CModule + native callout, 短 trace 与 js 相当, **TB 类目标
   在 fail-path cleanup 出 SO 范围时 stalker 跟丢, 后续 onLeave 不触发** —
   这是函数走法导致 (~99% 已抓), 不是 frida bug, 但抓 cold-path 大计算建议先用 `--mode js`.
+
+## Web SPA (推荐分析入口)
+
+```bash
+./tracemiku web traces/run1                       # auto port + 自动开浏览器
+./tracemiku web traces/run1 --port 8080
+./tracemiku web traces/run1 --no-browser          # 远程 / SSH 隧道场景
+```
+
+**布局** (IDA 风格, 单 tab 整合):
+- **左**: trace 反汇编流, viewport-only 虚拟列表, 200 万行丝滑滚, 每条带 PC/asm/func+offset
+- **右**: CFG (cytoscape.js + dagre layout), 当前指令所在 block 蓝框高亮 + 自动 pan, hot block 橙边
+- **下**: tabs — regs (变化项红色) / block 详情 / taint / search / strings
+- **快捷键**: `j/k` 单步, `g/G` 头/尾, `:N` 跳转 #N, `/` 搜索, `f` 正向污点, `b` 反向污点
+- **联动**: click 指令行 → CFG 自动高亮+pan; click block → trace 跳到该 block 离当前光标最近的一次执行
+
+后端 FastAPI + 前端 vanilla JS (无构建工具, cytoscape.js CDN). 单进程, mmap trace 在后端.
 
 ## TUI 操作（中文）
 

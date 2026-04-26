@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>traceMiku web</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+</head>
+<body>
+
+<header id="topbar">
+  <span class="brand">traceMiku <span class="dim">web</span></span>
+  <span id="meta" class="meta">loading…</span>
+  <span class="grow"></span>
+  <span class="hint">j/k 单步 · g 跳转 · / 搜索 · click 块跳转</span>
+</header>
+
+<main id="layout">
+  <section id="left">
+    <div class="panelhead">trace stream <span id="trace-info" class="dim"></span></div>
+    <div id="stream"></div>
+  </section>
+
+  <section id="right">
+    <div class="panelhead">CFG <span id="cfg-info" class="dim"></span>
+      <button id="btn-fit" class="btn">fit</button>
+      <button id="btn-reload-cfg" class="btn">reload</button>
+    </div>
+    <div id="cy"></div>
+  </section>
+
+  <section id="bottom">
+    <div class="tabs">
+      <button class="tab active" data-tab="regs">regs</button>
+      <button class="tab" data-tab="block">block</button>
+      <button class="tab" data-tab="taint">taint</button>
+      <button class="tab" data-tab="search">search</button>
+      <button class="tab" data-tab="strings">strings</button>
+    </div>
+    <div class="tabbody" id="tab-regs"></div>
+    <div class="tabbody hidden" id="tab-block"></div>
+    <div class="tabbody hidden" id="tab-taint">
+      <div class="row">
+        <button id="ft-btn" class="btn">forward-taint</button>
+        <button id="bt-btn" class="btn">backward-taint</button>
+        <input id="taint-reg" placeholder="reg (x0)" class="inp" value="x0" size="4">
+        <span class="dim">from current cursor</span>
+      </div>
+      <div id="taint-out"></div>
+    </div>
+    <div class="tabbody hidden" id="tab-search">
+      <div class="row">
+        <input id="search-q" placeholder="regex e.g. smull|umull" class="inp" size="40">
+        <button id="search-btn" class="btn">search</button>
+      </div>
+      <div id="search-out"></div>
+    </div>
+    <div class="tabbody hidden" id="tab-strings"><div id="strings-out"></div></div>
+  </section>
+
+  <footer id="cmdbar">
+    <span id="cmd-prompt"></span>
+    <input id="cmd-input" type="text" placeholder="" class="inp">
+    <span id="status"></span>
+  </footer>
+</main>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
