@@ -1,10 +1,7 @@
-// 通用 trace agent — 任意 SO 任意函数.
+// 通用 trace agent — 任意 SO 任意函数, per-call 独立 trace.
 //
-// 支持模式:
-//  1. trace 一个 SO 的指定导出函数 (可选 cmd 过滤)
-//  2. trace SO 中的任意偏移函数
-//  3. trace JNI_OnLoad (导出名)
-//  4. 通过 JNI RegisterNatives 抓取动态注册的方法 + 按 cmd id 过滤
+// 每次 onEnter 自增 callIdx; frames/trace-begin/trace-end 都带 callIdx,
+// host 用 callIdx 把每次调用写到独立目录.
 //
 // init opts:
 //   soPattern: SO 文件名子串 (必填)
@@ -42,9 +39,12 @@ const STATE = {
 
     target: null, fnPtr: null, fnHooked: false, regHooked: false,
     excluded: false,
-    followed: new Set(),
+    followed: new Set(),                 // tids currently Stalker-followed
     threadKnownAt: new Set(),
-    batches: new Map(),
+    callIdx: 0,                          // monotonically increasing per onEnter
+    tidCall: new Map(),                  // tid -> active callIdx on that tid
+    activeCall: 0,                       // most recent primary callIdx (worker attribution)
+    batches: new Map(),                  // callIdx -> {batch, batchOff, batchSeq, totalRecs, tid, lastFlush, startedAt}
     flushTimer: null,
     started: 0, capped: false, seenCalls: 0, primaryTid: 0,
     cmdHist: {},
@@ -62,23 +62,25 @@ function findExport(mod, name) {
     return null;
 }
 
-function getOrInitBatch(tid) {
-    let b = STATE.batches.get(tid);
+function getOrInitBatch(callIdx, tid) {
+    let b = STATE.batches.get(callIdx);
     if (!b) {
         b = { batch: Memory.alloc(BATCH_BYTES), batchOff: 0,
-              batchSeq: 0, totalRecs: 0, lastFlush: Date.now() };
-        STATE.batches.set(tid, b);
+              batchSeq: 0, totalRecs: 0, tid: tid || 0,
+              lastFlush: Date.now(), startedAt: Date.now() };
+        STATE.batches.set(callIdx, b);
     }
+    if (!b.tid && tid) b.tid = tid;
     return b;
 }
-function flush(tid, reason) {
-    const b = STATE.batches.get(tid);
+function flush(callIdx, reason) {
+    const b = STATE.batches.get(callIdx);
     if (!b || b.batchOff === 0) return;
     const off = b.batchOff, recs = off / REC_SIZE;
     const blob = b.batch.readByteArray(off);
     b.totalRecs += recs;
-    send({ type: "frames", tid, seq: b.batchSeq++, recs, bytes: off,
-           total: b.totalRecs, reason }, blob);
+    send({ type: "frames", callIdx, tid: b.tid, seq: b.batchSeq++,
+           recs, bytes: off, total: b.totalRecs, reason }, blob);
     b.batch = Memory.alloc(BATCH_BYTES);
     b.batchOff = 0; b.lastFlush = Date.now();
 }
@@ -86,13 +88,13 @@ function ensureFlushTimer() {
     if (STATE.flushTimer) return;
     STATE.flushTimer = setInterval(() => {
         const now = Date.now();
-        for (const [tid, b] of STATE.batches) {
+        for (const [callIdx, b] of STATE.batches) {
             if (b.batchOff > 0 && now - b.lastFlush >= FLUSH_INTERVAL_MS)
-                flush(tid, "interval");
+                flush(callIdx, "interval");
         }
     }, FLUSH_INTERVAL_MS);
 }
-function totalAcrossAllTids() {
+function totalAcrossAllCalls() {
     let s = 0;
     for (const b of STATE.batches.values()) s += b.totalRecs + b.batchOff/REC_SIZE;
     return s;
@@ -100,20 +102,31 @@ function totalAcrossAllTids() {
 
 function recordInsn(ctx) {
     if (STATE.capped) return;
-    if (totalAcrossAllTids() >= STATE.maxRecords) {
+    if (totalAcrossAllCalls() >= STATE.maxRecords) {
         STATE.capped = true;
         log(`[!] 达到上限 ${STATE.maxRecords} 条记录, 停止追踪`);
         for (const tid of STATE.followed) {
             try { Stalker.unfollow(tid); } catch (_) {}
-            flush(tid, "cap");
         }
         try { Stalker.flush(); } catch (_) {}
+        // 把每个未结束的 call 标 truncated 上报
+        for (const [tid, callIdx] of STATE.tidCall) {
+            flush(callIdx, "cap");
+            const b = STATE.batches.get(callIdx);
+            send({ type: "trace-end", callIdx, tid, retval: "?",
+                   ms: Date.now() - (b ? b.startedAt : Date.now()),
+                   total: b ? b.totalRecs : 0, dropped: 0, truncated: true });
+        }
+        STATE.tidCall.clear();
         STATE.followed.clear();
         return;
     }
     const tid = Process.getCurrentThreadId();
-    const b = getOrInitBatch(tid);
-    if (b.batchOff + REC_SIZE > BATCH_BYTES) flush(tid, "size");
+    let callIdx = STATE.tidCall.get(tid);
+    if (!callIdx) callIdx = STATE.activeCall;   // worker thread: attribute to active primary
+    if (!callIdx) return;                        // 未知归属 — 丢弃 (应不发生)
+    const b = getOrInitBatch(callIdx, tid);
+    if (b.batchOff + REC_SIZE > BATCH_BYTES) flush(callIdx, "size");
     const p = b.batch.add(b.batchOff);
     p.writePointer(ctx.pc);
     p.add(8).writePointer(ctx.x0);   p.add(16).writePointer(ctx.x1);
@@ -198,10 +211,17 @@ function hookFnPtr(fnPtr) {
                 }
             }
             this._tid = this.threadId;
+            STATE.callIdx++;
+            this._callIdx = STATE.callIdx;
+            STATE.tidCall.set(this._tid, this._callIdx);
+            STATE.activeCall = this._callIdx;
             STATE.primaryTid = this._tid;
             STATE.started = Date.now();
-            log(`[>] 进入函数 tid=${this._tid}` + (STATE.cmdValue ? ` cmd=${STATE.cmdValue}` : ""));
-            send({ type: "trace-begin", tid: this._tid, ts: STATE.started });
+            // 预创建 batch 以便记录 startedAt
+            getOrInitBatch(this._callIdx, this._tid).startedAt = STATE.started;
+            log(`[>] call #${this._callIdx} 进入函数 tid=${this._tid}` +
+                (STATE.cmdValue ? ` cmd=${STATE.cmdValue}` : ""));
+            send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started });
             followThread(this._tid, "primary");
             // 只 hook pthread_create 等 NEW 线程；不 follow 已存在的 346 个
             // (那会把进程拖死)。新生成的 worker 线程才 follow。
@@ -212,14 +232,19 @@ function hookFnPtr(fnPtr) {
         onLeave(retv) {
             if (this._skip) return;
             const tid = this._tid;
+            const callIdx = this._callIdx;
             try { Stalker.unfollow(tid); } catch (_) {}
             try { Stalker.flush(); } catch (_) {}
             STATE.followed.delete(tid);
-            flush(tid, "primary-end");
+            flush(callIdx, "primary-end");
+            const b = STATE.batches.get(callIdx);
             const elapsed = Date.now() - STATE.started;
-            const recs = STATE.batches.get(tid)?.totalRecs || 0;
-            log(`[<] 函数返回=${retv} 主线程记录数=${recs} 用时=${elapsed}ms`);
-            send({ type: "trace-end", tid, retval: retv.toString(), ms: elapsed });
+            const recs = b ? b.totalRecs : 0;
+            STATE.tidCall.delete(tid);
+            if (STATE.activeCall === callIdx) STATE.activeCall = 0;
+            log(`[<] call #${callIdx} 函数返回=${retv} 记录数=${recs} 用时=${elapsed}ms`);
+            send({ type: "trace-end", callIdx, tid, retval: retv.toString(),
+                   ms: elapsed, total: recs, dropped: 0, truncated: false });
         }
     });
 }
@@ -336,14 +361,15 @@ rpc.exports = {
         STATE.maxRecords = opts.maxRecords || 5000000;
         STATE.followAllThreads = !!opts.followAllThreads;  // 默认 false (太重)
         if (!STATE.soPattern) { log("[!] 必须指定 soPattern"); return "no-so"; }
-        log(`[*] traceMiku 通用agent up frida=${Frida.version} pid=${Process.id}`);
+        log(`[*] traceMiku 通用agent up frida=${Frida.version} pid=${Process.id} (per-call)`);
         log(`[*] target=${STATE.soPattern} method=${STATE.methodName} export=${STATE.exportName} `
             + `fnOffset=${STATE.fnOffset} cmd=${STATE.cmdValue}`);
         send({ type: "hello", pid: Process.id, frida: Frida.version,
                recSize: REC_SIZE, batchRecs: BATCH_RECS,
                soPattern: STATE.soPattern, methodName: STATE.methodName,
                exportName: STATE.exportName, fnOffset: STATE.fnOffset,
-               cmdValue: STATE.cmdValue, maxRecords: STATE.maxRecords });
+               cmdValue: STATE.cmdValue, maxRecords: STATE.maxRecords,
+               perCall: true });
         try { installDlopenHooks(); } catch (e) { log("[!] " + e); }
         armOnTarget();
 
@@ -374,16 +400,18 @@ rpc.exports = {
         return "armed";
     },
     forceFlush() {
-        for (const tid of STATE.batches.keys()) flush(tid, "force");
+        for (const callIdx of STATE.batches.keys()) flush(callIdx, "force");
         return "ok";
     },
     stats() {
-        const tids = {};
-        for (const [tid, b] of STATE.batches) tids[tid] = b.totalRecs + b.batchOff/REC_SIZE;
+        const calls = {};
+        for (const [callIdx, b] of STATE.batches)
+            calls[callIdx] = { tid: b.tid, recs: b.totalRecs + b.batchOff/REC_SIZE };
         return { target: STATE.target ? STATE.target.name : null,
                  fnHooked: STATE.fnHooked, regHooked: STATE.regHooked,
-                 seenCalls: STATE.seenCalls, primaryTid: STATE.primaryTid,
+                 seenCalls: STATE.seenCalls, callIdx: STATE.callIdx,
+                 primaryTid: STATE.primaryTid, activeCall: STATE.activeCall,
                  followed: Array.from(STATE.followed),
-                 perTid: tids, capped: STATE.capped, cmdHist: STATE.cmdHist };
+                 perCall: calls, capped: STATE.capped, cmdHist: STATE.cmdHist };
     }
 };

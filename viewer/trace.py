@@ -111,28 +111,53 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
                     except: pass
                     break
     else:
-        # directory — pick the largest trace_<pid>.bin or fallback trace.bin
+        # per-call directory: trace.bin + meta.json (call-level), parent meta.json (run-level)
+        if (p / "trace.bin").exists():
+            bin_path = p / "trace.bin"
+            cm = p / "meta.json"
+            if cm.exists():
+                _populate_meta(meta, json.load(open(cm)))
+            # merge run-level meta from parent of parent (run/calls/<call>/ → run/)
+            run_dir = p.parent.parent if p.parent.name == "calls" else p.parent
+            tm = run_dir / "meta.json"
+            if tm.exists():
+                top = json.load(open(tm))
+                if "method" in top: meta.method = top["method"] or meta.method
+                if "cmd" in top: meta.cmd = top["cmd"] if meta.cmd is None else meta.cmd
+                if "module" in top and not meta.module:
+                    m = top["module"]
+                    meta.module = Module(m["name"],
+                                         int(m["base"], 16) if isinstance(m["base"], str) else m["base"],
+                                         m["size"])
+                if "fn_addr" in top and not meta.fn_addr:
+                    meta.fn_addr = int(top["fn_addr"], 16) if isinstance(top["fn_addr"], str) else top["fn_addr"]
+            return Trace(bin_path, meta)
+
+        # legacy: trace_<pid>_<tid>.bin layout
         candidates = sorted(p.glob("trace_*.bin"),
                             key=lambda x: x.stat().st_size, reverse=True)
-        if (p / "trace.bin").exists() and not candidates:
-            bin_path = p / "trace.bin"
-        else:
-            if not candidates:
-                raise FileNotFoundError(f"no trace.bin in {p}")
-            bin_path = candidates[0]
-            stem_parts = bin_path.stem.split("_")[1:]
-            try: meta.pid = int(stem_parts[0])
-            except: pass
-            for variant in ("_".join(stem_parts), stem_parts[0] if stem_parts else ""):
-                mp = p / f"meta_{variant}.json"
-                if mp.exists():
-                    _populate_meta(meta, json.load(open(mp))); break
-        # also merge top-level meta.json
+        if not candidates:
+            raise FileNotFoundError(f"no trace.bin in {p}")
+        bin_path = candidates[0]
+        stem_parts = bin_path.stem.split("_")[1:]
+        try: meta.pid = int(stem_parts[0])
+        except: pass
+        for variant in ("_".join(stem_parts), stem_parts[0] if stem_parts else ""):
+            mp = p / f"meta_{variant}.json"
+            if mp.exists():
+                _populate_meta(meta, json.load(open(mp))); break
         tm = p / "meta.json"
         if tm.exists():
             top = json.load(open(tm))
             if "method" in top: meta.method = top["method"]
             if "cmd" in top: meta.cmd = top["cmd"]
+            if "module" in top and not meta.module:
+                m = top["module"]
+                meta.module = Module(m["name"],
+                                     int(m["base"], 16) if isinstance(m["base"], str) else m["base"],
+                                     m["size"])
+            if "fn_addr" in top and not meta.fn_addr:
+                meta.fn_addr = int(top["fn_addr"], 16) if isinstance(top["fn_addr"], str) else top["fn_addr"]
     return Trace(bin_path, meta)
 
 

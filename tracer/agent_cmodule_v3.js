@@ -70,7 +70,8 @@ function flushRing(reason) {
     const blob = STATE.ringBuf.readByteArray(head);
     const total = STATE.totalBuf.readU64().toNumber();
     const dropped = STATE.droppedBuf.readU64().toNumber();
-    send({ type: "frames", seq: STATE.batchSeq++, recs: head / REC_SIZE,
+    send({ type: "frames", callIdx: STATE.callIdx, tid: STATE.primaryTid,
+           seq: STATE.batchSeq++, recs: head / REC_SIZE,
            bytes: head, total, dropped, reason }, blob);
     STATE.headBuf.writeU64(0);
 }
@@ -142,10 +143,16 @@ rpc.exports = {
                 STATE.fnEntered = true;
                 this._tid = this.threadId;
                 STATE.callIdx++;
+                this._callIdx = STATE.callIdx;
                 STATE.primaryTid = this._tid;
                 STATE.started = Date.now();
-                log(`[>] call #${STATE.callIdx} tid=${this._tid}`);
-                send({ type: "trace-begin", tid: this._tid, ts: STATE.started, call: STATE.callIdx });
+                // 重置 ring 计数 (per-call)
+                STATE.totalBuf.writeU64(0);
+                STATE.droppedBuf.writeU64(0);
+                STATE.headBuf.writeU64(0);
+                STATE.batchSeq = 0;
+                log(`[>] call #${this._callIdx} tid=${this._tid}`);
+                send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started });
                 ensureFlushTimer();
                 applyExcludesOnce();
                 Stalker.follow(this._tid, {
@@ -173,9 +180,9 @@ rpc.exports = {
                 const total = STATE.totalBuf.readU64().toNumber();
                 const dropped = STATE.droppedBuf.readU64().toNumber();
                 const rate = (total / Math.max(elapsed/1000, 1e-3)).toFixed(0);
-                log(`[<] call #${STATE.callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s)`);
-                send({ type: "trace-end", tid: this._tid, retval: retv.toString(),
-                       ms: elapsed, total, dropped });
+                log(`[<] call #${this._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s)`);
+                send({ type: "trace-end", callIdx: this._callIdx, tid: this._tid,
+                       retval: retv.toString(), ms: elapsed, total, dropped, truncated: false });
                 STATE.fnEntered = false;
             }
         });

@@ -81,29 +81,87 @@ def cmd_trace(args):
     print(f"[host] using agent: {agent_name} (mode={args.mode})", flush=True)
 
     OUT = pathlib.Path(args.out); OUT.mkdir(parents=True, exist_ok=True)
+    CALLS_DIR = OUT / "calls"; CALLS_DIR.mkdir(exist_ok=True)
     log_fp = open(OUT/"log.txt", "w")
-    sess_files = {}
+    sess_files = {}    # callIdx -> {fp, meta, dir, callIdx, tid}
     top_meta = {
         "pkg": args.pkg, "so": args.so,
         "method": args.method, "export": args.export,
         "fn_offset": args.fn_offset, "cmd": args.cmd,
-        "started_at": time.time(), "sessions": [],
-        "tracemiku_cli": True,
+        "started_at": time.time(), "calls": [],
+        "tracemiku_cli": True, "per_call": True,
     }
 
     def wlog(s):
         line = f"[{time.strftime('%H:%M:%S')}] {s}"
         print(line, flush=True); log_fp.write(line + "\n"); log_fp.flush()
 
-    def open_sess(pid, tid):
-        key = (pid, tid)
-        if key in sess_files: return sess_files[key]
-        fp = open(OUT/f"trace_{pid}_{tid}.bin", "wb")
-        md = {"pid": pid, "tid": tid, "started_at": time.time(),
-              "frames": 0, "bytes": 0}
-        sess_files[key] = {"fp": fp, "meta": md}
-        top_meta["sessions"].append([pid, tid])
-        return sess_files[key]
+    def open_call(call_idx, tid, pid):
+        if call_idx in sess_files: return sess_files[call_idx]
+        d = CALLS_DIR / f"_pending_call_{call_idx:03d}"
+        d.mkdir(exist_ok=True)
+        fp = open(d/"trace.bin", "wb")
+        md = {"callIdx": call_idx, "pid": pid, "tid": tid,
+              "ts_in": time.time(), "started_at": time.time(),
+              "records": 0, "bytes": 0,
+              "truncated": True, "last_insn_is_ret": None}
+        sess_files[call_idx] = {"fp": fp, "meta": md, "dir": d,
+                                "callIdx": call_idx, "tid": tid, "pid": pid}
+        return sess_files[call_idx]
+
+    def finalize_call(s, *, truncated):
+        """Close .bin, decode last insn, write meta.json, rename dir."""
+        try: s["fp"].close()
+        except: pass
+        md = s["meta"]
+        md["truncated"] = bool(truncated)
+        md["closed_at"] = time.time()
+        # decode first/last insn
+        bin_path = s["dir"]/"trace.bin"
+        first_pc = last_pc = None
+        last_is_ret = None
+        size = bin_path.stat().st_size if bin_path.exists() else 0
+        n = size // 272
+        if n > 0:
+            try:
+                from viewer.disasm import decode as _decode
+                with open(bin_path, "rb") as bf:
+                    head = bf.read(272)
+                    first_pc = int.from_bytes(head[:8], "little")
+                    if n > 1:
+                        bf.seek((n-1)*272)
+                        tail = bf.read(272)
+                    else:
+                        tail = head
+                    last_pc = int.from_bytes(tail[:8], "little")
+                    last_inst = int.from_bytes(tail[268:272], "little")
+                    d = _decode(last_pc, last_inst)
+                    last_is_ret = bool(d.is_ret)
+            except Exception as e:
+                wlog(f"[!] decode last insn 失败: {e}")
+        md["records"] = n
+        md["first_pc"] = hex(first_pc) if first_pc is not None else None
+        md["last_pc"]  = hex(last_pc)  if last_pc  is not None else None
+        md["last_insn_is_ret"] = last_is_ret
+        # 真完整 = onLeave 触发 + 最后一条是 ret
+        # rename dir to call_NNN_tidT_Rrec_Mms or _truncated_call_NNN_R
+        ms_v = md.get("ms")
+        ms_str = "?ms" if ms_v is None else f"{int(ms_v)}ms"
+        if truncated:
+            new_name = f"_truncated_call_{md['callIdx']:03d}_tid{md['tid']}_{n}r_{ms_str}"
+        else:
+            new_name = f"call_{md['callIdx']:03d}_tid{md['tid']}_{n}r_{ms_str}"
+        new_dir = CALLS_DIR / new_name
+        if new_dir.exists():
+            new_dir = CALLS_DIR / (new_name + "_dup")
+        try:
+            s["dir"].rename(new_dir)
+            s["dir"] = new_dir
+        except Exception as e:
+            wlog(f"[!] rename {s['dir']}->{new_name} 失败: {e}")
+        # 写 meta.json (rename 后)
+        json.dump(md, open(s["dir"]/"meta.json","w"), indent=2)
+        return md
 
     def make_cb(pid, tag):
         def cb(m, data):
@@ -113,14 +171,16 @@ def cmd_trace(args):
                     t = p.get("type")
                     if t == "log": wlog(f"[{tag}] {p['msg']}")
                     elif t == "frames":
+                        ci = p.get("callIdx")
                         tid = p.get("tid", 0)
-                        s = open_sess(pid, tid)
+                        if ci is None:
+                            wlog(f"[{tag}] frames 缺 callIdx, 丢弃 {p.get('recs')} 条"); return
+                        s = sess_files.get(ci) or open_call(ci, tid, pid)
                         if data: s["fp"].write(data); s["fp"].flush()
                         s["meta"]["bytes"] += len(data) if data else 0
-                        s["meta"]["frames"] += p["recs"]
-                        wlog(f"[{tag}] tid={tid} +{p['recs']} (total={p['total']}, {p.get('reason','?')})")
+                        s["meta"]["records"] += p["recs"]
+                        wlog(f"[{tag}] call#{ci} tid={tid} +{p['recs']} (total={p['total']}, {p.get('reason','?')})")
                     elif t == "module":
-                        for s in sess_files.values(): s["meta"]["module"] = {k: p[k] for k in ("name","base","size")}
                         if "module" not in top_meta:
                             top_meta["module"] = {k: p[k] for k in ("name","base","size")}
                         wlog(f"[{tag}] 模块 {p['name']} @ {p['base']}")
@@ -131,13 +191,25 @@ def cmd_trace(args):
                         top_meta["registration"] = {k: p[k] for k in ("name","sig","fp")}
                         wlog(f"[{tag}] 动态注册 {p['name']} {p['sig']} → {p['fp']}")
                     elif t == "trace-begin":
-                        open_sess(pid, p["tid"])
-                        sess_files[(pid, p["tid"])]["meta"]["trace_begin"] = {"tid": p["tid"], "ts": p["ts"]}
-                        wlog(f"[{tag}] trace 开始 tid={p['tid']}")
+                        ci = p.get("callIdx") or 0
+                        open_call(ci, p["tid"], pid)
+                        # ts_in 用 host 时钟; agent 的 Date.now() 是设备时钟, 与 host 可能差几小时/天
+                        sess_files[ci]["meta"]["ts_in"] = time.time()
+                        sess_files[ci]["meta"]["ts_device_in_ms"] = p.get("ts")
+                        wlog(f"[{tag}] trace 开始 call#{ci} tid={p['tid']}")
                     elif t == "trace-end":
-                        if (pid, p["tid"]) in sess_files:
-                            sess_files[(pid, p["tid"])]["meta"]["trace_end"] = {"retval": p.get("retval"), "ms": p.get("ms")}
-                        wlog(f"[{tag}] trace 结束 tid={p['tid']} ms={p.get('ms')} ret={p.get('retval')}")
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        s = sess_files[ci]
+                        s["meta"]["retval"] = p.get("retval")
+                        s["meta"]["ms"] = p.get("ms")
+                        s["meta"]["dropped"] = p.get("dropped", 0)
+                        s["meta"]["ts_out"] = time.time()
+                        truncated = bool(p.get("truncated", False))
+                        finalize_call(s, truncated=truncated)
+                        del sess_files[ci]
+                        wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated}")
                     elif t == "follow": wlog(f"[{tag}] 跟踪 tid={p['tid']} ({p.get('label','?')})")
                     elif t == "cmd-hist":
                         h = p.get("hist", {})
@@ -210,20 +282,38 @@ def cmd_trace(args):
     try: sess.detach()
     except: pass
 
-    for key, s in sess_files.items():
-        try: s["fp"].close()
-        except: pass
-        s["meta"]["closed_at"] = time.time()
-        json.dump(s["meta"], open(OUT/f"meta_{key[0]}_{key[1]}.json","w"), indent=2)
+    # 任何 teardown 时仍未结束的 call → 强制关 + 标 truncated
+    pending = list(sess_files.values())
+    for s in pending:
+        s["meta"].setdefault("ts_out", time.time())
+        s["meta"].setdefault("ms", int((s["meta"]["ts_out"] - s["meta"].get("ts_in", s["meta"]["ts_out"]))*1000))
+        finalize_call(s, truncated=True)
+    sess_files.clear()
+
+    # 重新扫一遍 calls/, 写顶层 meta
+    calls_summary = []
+    for cd in sorted(CALLS_DIR.iterdir()):
+        if not cd.is_dir(): continue
+        mp = cd/"meta.json"
+        if not mp.exists(): continue
+        cm = json.load(open(mp))
+        calls_summary.append({
+            "callIdx": cm.get("callIdx"), "tid": cm.get("tid"),
+            "records": cm.get("records", 0), "ms": cm.get("ms"),
+            "retval": cm.get("retval"), "truncated": cm.get("truncated", True),
+            "last_insn_is_ret": cm.get("last_insn_is_ret"),
+            "dir": cd.name,
+        })
+    top_meta["calls"] = calls_summary
     top_meta["stopped_at"] = time.time()
     json.dump(top_meta, open(OUT/"meta.json","w"), indent=2)
     log_fp.close()
 
-    total_b = sum(s["meta"]["bytes"] for s in sess_files.values())
-    print(f"\n[完成] {len(sess_files)} 个 session, 共 {total_b} 字节 ({total_b//272} 条记录)")
-    for key, s in sorted(sess_files.items(), key=lambda kv: -kv[1]["meta"]["bytes"])[:10]:
-        if s["meta"]["bytes"] > 0:
-            print(f"  trace_{key[0]}_{key[1]}.bin: {s['meta']['bytes']} 字节 ({s['meta']['frames']} 条)")
+    total_recs = sum(c["records"] for c in calls_summary)
+    print(f"\n[完成] {len(calls_summary)} 个 call, 共 {total_recs} 条记录 → {OUT}")
+    for c in sorted(calls_summary, key=lambda c: -c["records"])[:10]:
+        flag = "✓" if (not c["truncated"] and c["last_insn_is_ret"]) else "?"
+        print(f"  {flag} {c['dir']}  ret={c.get('retval')}")
     return 0
 
 
@@ -233,45 +323,235 @@ def cmd_view(args):
 
 
 def cmd_list(args):
-    base = pathlib.Path(args.dir or "traces")
-    if not base.exists():
-        print(f"[!] 目录不存在: {base}"); return 1
+    """两种模式:
+    - tracemiku list / list --dir traces : 列所有 run
+    - tracemiku list <run> : 列该 run 下的 calls (records 降序)
+    """
+    target = pathlib.Path(args.path) if getattr(args, "path", None) else pathlib.Path(args.dir or "traces")
+    if not target.exists():
+        print(f"[!] 路径不存在: {target}"); return 1
+
+    # 是否是 run 目录? 判断: 含 calls/ 子目录 或 trace_*.bin (兼容旧)
+    is_run = (target/"calls").exists() or any(target.glob("trace_*.bin"))
+
+    if is_run:
+        return _list_calls(target, args)
+    else:
+        return _list_runs(target, args)
+
+
+def _list_runs(base, args):
     rows = []
     for sub in sorted(base.iterdir()):
         if not sub.is_dir(): continue
         meta_f = sub/"meta.json"
         meta = json.load(open(meta_f)) if meta_f.exists() else {}
-        bins = list(sub.glob("trace_*.bin"))
-        total = sum(b.stat().st_size for b in bins)
-        rows.append({
-            "name": sub.name, "method": meta.get("method"), "cmd": meta.get("cmd"),
-            "sessions": len(bins), "bytes": total, "records": total//272,
-        })
+        # per-call run
+        calls_dir = sub/"calls"
+        if calls_dir.exists():
+            calls_meta = []
+            for cd in calls_dir.iterdir():
+                if not cd.is_dir(): continue
+                mp = cd/"meta.json"
+                if mp.exists():
+                    try: calls_meta.append(json.load(open(mp)))
+                    except: pass
+            n_calls = len(calls_meta)
+            total_recs = sum(c.get("records", 0) for c in calls_meta)
+            max_recs = max((c.get("records", 0) for c in calls_meta), default=0)
+            rows.append({
+                "name": sub.name, "method": meta.get("method"), "cmd": meta.get("cmd"),
+                "calls": n_calls, "records": total_recs, "max_records": max_recs,
+                "kind": "per-call",
+            })
+        else:
+            # legacy flat layout
+            bins = list(sub.glob("trace_*.bin"))
+            total = sum(b.stat().st_size for b in bins)
+            rows.append({
+                "name": sub.name, "method": meta.get("method"), "cmd": meta.get("cmd"),
+                "calls": len(bins), "records": total//272, "max_records": total//272,
+                "kind": "legacy",
+            })
     if args.json:
-        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        print(json.dumps(rows, indent=2, ensure_ascii=False)); return 0
+    print(f"{'name':<40s}  {'method':<18s}  {'cmd':>6s}  {'calls':>5s}  {'records':>10s}  {'max':>10s}  kind")
+    for r in rows:
+        print(f"{r['name']:<40s}  {str(r['method'] or '-'):<18s}  "
+              f"{str(r['cmd'] or '-'):>6s}  {r['calls']:>5d}  "
+              f"{r['records']:>10d}  {r['max_records']:>10d}  {r['kind']}")
+    return 0
+
+
+def _list_calls(run_dir, args):
+    calls_dir = run_dir/"calls"
+    rows = []
+    if calls_dir.exists():
+        for cd in calls_dir.iterdir():
+            if not cd.is_dir(): continue
+            mp = cd/"meta.json"
+            if not mp.exists(): continue
+            cm = json.load(open(mp))
+            cm["dir"] = cd.name
+            rows.append(cm)
     else:
-        print(f"{'name':<40s}  {'method':<20s}  cmd       sessions  records")
-        for r in rows:
-            print(f"{r['name']:<40s}  {str(r['method'] or '-'):<20s}  "
-                  f"{str(r['cmd'] or '-'):>5s}     {r['sessions']:>3d}      {r['records']:>9d}")
+        # legacy: 单 run 多 trace_*.bin
+        for b in sorted(run_dir.glob("trace_*.bin")):
+            rows.append({
+                "callIdx": None, "tid": None,
+                "records": b.stat().st_size // 272,
+                "dir": b.name, "truncated": None, "last_insn_is_ret": None,
+            })
+    rows.sort(key=lambda r: -(r.get("records") or 0))
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False)); return 0
+    print(f"{'#':>4s}  {'tid':>7s}  {'records':>10s}  {'ms':>7s}  ret      ✓  dir")
+    for r in rows:
+        complete = (r.get("truncated") is False) and (r.get("last_insn_is_ret") is True)
+        flag = "✓" if complete else ("✗" if r.get("truncated") else "?")
+        ci  = r.get("callIdx")
+        ci_s = f"{ci:>4d}" if isinstance(ci, int) else "   ?"
+        tid = r.get("tid"); tid_s = f"{tid:>7d}" if isinstance(tid, int) else "      ?"
+        ms_v = r.get("ms"); ms_s = f"{ms_v:>7d}" if isinstance(ms_v, int) else "      ?"
+        recs = r.get("records") or 0
+        ret = (r.get("retval") or "-")[:8]
+        print(f"{ci_s}  {tid_s}  {recs:>10d}  {ms_s}  {ret:<8s} {flag}  {r['dir']}")
     return 0
 
 
 def cmd_info(args):
+    """3 种路径形式:
+    - run 目录 (含 calls/) → 顶层概要 + 各 call 概要
+    - call 目录 (含 trace.bin + meta.json) → 单 call 完整性
+    - 旧 run 目录 (trace_*.bin) → 兼容旧逻辑
+    """
+    p = pathlib.Path(args.path)
+    if not p.exists():
+        print(f"[!] 路径不存在: {p}"); return 1
+
+    # call 目录
+    if (p/"trace.bin").exists():
+        return _info_call(p, args)
+
+    # run 目录 (per-call)
+    if (p/"calls").exists():
+        return _info_run(p, args)
+
+    # 旧 layout fallback
     from viewer.trace import load
-    t = load(args.path)
+    t = load(p)
     out = {
-        "path": str(args.path),
-        "records": len(t),
+        "path": str(p), "records": len(t),
         "module": {"name": t.meta.module.name, "base": hex(t.meta.module.base),
                    "size": t.meta.module.size} if t.meta.module else None,
         "method": t.meta.method, "cmd": t.meta.cmd,
         "fn_addr": hex(t.meta.fn_addr) if t.meta.fn_addr else None,
     }
+    if args.json: print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        for k, v in out.items(): print(f"{k}: {v}")
+    return 0
+
+
+def _info_call(p, args):
+    """单 call 目录: 重新解码 last insn 并核对 last_insn_is_ret."""
+    from viewer.disasm import decode as _decode
+    meta = {}
+    mp = p/"meta.json"
+    if mp.exists():
+        meta = json.load(open(mp))
+    bin_path = p/"trace.bin"
+    n = bin_path.stat().st_size // 272
+    first_pc = last_pc = None
+    last_is_ret = None
+    last_asm = None
+    if n > 0:
+        with open(bin_path, "rb") as bf:
+            head = bf.read(272)
+            first_pc = int.from_bytes(head[:8], "little")
+            if n > 1:
+                bf.seek((n-1)*272)
+                tail = bf.read(272)
+            else:
+                tail = head
+            last_pc = int.from_bytes(tail[:8], "little")
+            last_inst = int.from_bytes(tail[268:272], "little")
+            d = _decode(last_pc, last_inst)
+            last_is_ret = bool(d.is_ret)
+            last_asm = f"{d.mnemonic} {d.op_str}".strip()
+    truncated = bool(meta.get("truncated", False))
+    complete = (not truncated) and last_is_ret
+    out = {
+        "path": str(p),
+        "callIdx": meta.get("callIdx"),
+        "tid": meta.get("tid"),
+        "records": n,
+        "ms": meta.get("ms"),
+        "retval": meta.get("retval"),
+        "truncated": truncated,
+        "last_insn_is_ret": last_is_ret,
+        "first_pc": hex(first_pc) if first_pc is not None else None,
+        "last_pc":  hex(last_pc)  if last_pc  is not None else None,
+        "last_asm": last_asm,
+        "is_complete": bool(complete),
+    }
+    # rate sanity
+    ms = meta.get("ms")
+    if isinstance(ms, (int, float)) and ms > 0:
+        out["rec_per_sec"] = int(n / (ms/1000.0))
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
-        for k, v in out.items(): print(f"{k}: {v}")
+        flag = "✓ 完整" if complete else ("✗ 截断" if truncated else "? 未结束/未 ret")
+        print(f"路径:   {p}")
+        print(f"call#:  {out['callIdx']}  tid={out['tid']}")
+        print(f"记录:   {n} 条" + (f"  ({out['rec_per_sec']} rec/s)" if "rec_per_sec" in out else ""))
+        print(f"用时:   {ms} ms")
+        print(f"返回值: {out['retval']}")
+        print(f"truncated:        {truncated}")
+        print(f"last_insn_is_ret: {last_is_ret}")
+        print(f"first_pc: {out['first_pc']}")
+        print(f"last_pc:  {out['last_pc']}  ({last_asm})")
+        print(f"完整性:  {flag}")
+    return 0
+
+
+def _info_run(p, args):
+    top = {}
+    if (p/"meta.json").exists():
+        top = json.load(open(p/"meta.json"))
+    calls_dir = p/"calls"
+    calls = []
+    for cd in sorted(calls_dir.iterdir()):
+        if not cd.is_dir(): continue
+        mp = cd/"meta.json"
+        if not mp.exists(): continue
+        cm = json.load(open(mp)); cm["dir"] = cd.name
+        calls.append(cm)
+    calls.sort(key=lambda c: -(c.get("records") or 0))
+    out = {
+        "path": str(p),
+        "pkg": top.get("pkg"), "so": top.get("so"),
+        "method": top.get("method"), "cmd": top.get("cmd"),
+        "fn_offset": top.get("fn_offset"), "fn_addr": top.get("fn_addr"),
+        "module": top.get("module"),
+        "calls_count": len(calls),
+        "total_records": sum(c.get("records",0) for c in calls),
+        "max_records":   max((c.get("records",0) for c in calls), default=0),
+        "calls": calls,
+    }
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
+    print(f"路径:    {p}")
+    print(f"pkg/so:  {out['pkg']} / {out['so']}")
+    print(f"method:  {out['method']}  cmd={out['cmd']}  fn={out['fn_addr']}")
+    print(f"calls:   {out['calls_count']}, 总 {out['total_records']} 条, 最长 {out['max_records']}")
+    print()
+    for c in calls[:30]:
+        complete = (c.get("truncated") is False) and (c.get("last_insn_is_ret") is True)
+        flag = "✓" if complete else ("✗" if c.get("truncated") else "?")
+        print(f"  {flag} call#{c.get('callIdx')}  tid={c.get('tid')}  recs={c.get('records')}  "
+              f"ms={c.get('ms')}  ret={c.get('retval')}  {c['dir']}")
     return 0
 
 
@@ -464,7 +744,8 @@ def main():
     q_fs = _addj(qsp.add_parser("func-summary", help="函数命中频次"))
 
     # list
-    p_ls = sp.add_parser("list", help="列出已有 trace")
+    p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")
+    p_ls.add_argument("path", nargs="?", help="可选: 某 run 目录, 列出其中的 calls (records 降序)")
     p_ls.add_argument("--dir", help="trace 根目录 (默认 traces/)")
     p_ls.add_argument("--json", action="store_true")
 

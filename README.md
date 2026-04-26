@@ -11,21 +11,62 @@ python3 -m pip install --user textual capstone frida
 chmod +x tracemiku tracemiku-view
 ```
 
-## 快速上手
+## 快速上手 (per-call)
+
+每次目标函数调用 → 一个独立 trace 子目录, 目录名带 records/ms 一眼看出长短.
+fail-path (~4675 条) 与 cold-path (~2M 条) 互不污染, 事后挑要分析的那次.
 
 ```bash
-# 列出已有 trace
+# 列出已有 run
 ./tracemiku list
 
-# 一行抓 TB cold-path: 清数据 → 启动 → 自动点"同意" → trace 第一次 cmd 70102
+# 一行抓 TB cold-path: 清数据 → 启动 → 自动点"同意" → trace 直到抓到一次 cold-path
 ./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
   --fn-offset 0x57770 --cmd 70102 --duration 120 \
   --mode js --cold-launch --out traces/run1
 
+# 列出本 run 内所有 calls, records 降序 (最长的 cold-path 排第一)
+./tracemiku list traces/run1
+
+# 看某次 call 的完整性 (truncated / last_insn_is_ret 一眼)
+./tracemiku info traces/run1/calls/call_002_tid12345_2066291r_50342ms
+
+# 在 TUI 中打开那次 call
+./tracemiku view traces/run1/calls/call_002_tid12345_2066291r_50342ms
+
+# run 级元信息 (顶层 + 所有 call 概要)
+./tracemiku info traces/run1
+```
+
+### per-call 目录结构
+
+```
+traces/run1/
+├── meta.json                       # 顶层 meta + calls[] 概要
+├── log.txt
+└── calls/
+    ├── call_001_tid12345_4675r_98ms/      # idx_tid_records_ms
+    │   ├── trace.bin
+    │   └── meta.json                       # 含 truncated/last_insn_is_ret
+    ├── call_002_tid12345_2066291r_50342ms/ ← cold-path, 一眼看出
+    │   ├── trace.bin
+    │   └── meta.json
+    └── _truncated_call_003_tid12345_500r_?ms/  ← teardown 强制结束
+```
+
+每个 `calls/<...>/meta.json` 必含:
+- `truncated`: bool (true = teardown 强制 / 跟丢, false = onLeave 触发)
+- `last_insn_is_ret`: bool (capstone 解 .bin 最后一条)
+- `records`, `ms`, `retval`, `first_pc`, `last_pc`
+
+判定真完整 = `truncated == false && last_insn_is_ret == true`.
+
+### 其他模式
+
+```bash
 # 任意 app 任意 SO 任意函数 (动态注册的方法)
 ./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
-  --method doCommandNative --cmd 70102 \
-  --duration 90 --out traces/run2
+  --method doCommandNative --cmd 70102 --duration 90 --out traces/run2
 
 # SO 内固定偏移
 ./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
@@ -34,12 +75,6 @@ chmod +x tracemiku tracemiku-view
 # SO 导出函数 (如 JNI_OnLoad)
 ./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
   --export JNI_OnLoad --duration 30 --out traces/run4
-
-# 启动可视化 TUI
-./tracemiku view traces/run1
-
-# 元信息
-./tracemiku info traces/run1 --json
 ```
 
 ### `--cold-launch` (TB 类首启隐私协议自动化)
@@ -85,29 +120,33 @@ chmod +x tracemiku tracemiku-view
 
 ## AI 友好的 query 接口（供 Claude Code 等调用）
 
-每个查询子命令都有 `--json` 输出，可直接被 AI 解析：
+每个查询子命令都有 `--json` 输出，可直接被 AI 解析。query path 既支持
+传入 run 目录(自动选最大的 trace), 也支持传 per-call 目录直接定位:
 
 ```bash
+# 直接对某次 cold-path call 做分析
+CALL=traces/run1/calls/call_002_tid12345_2066291r_50342ms
+
 # 取指定范围的指令记录（带寄存器）
-./tracemiku query traces/run1 records --range 0..50 --regs x0,x1,x2 --json
+./tracemiku query $CALL records --range 0..50 --regs x0,x1,x2 --json
 
 # 正向污点：从 #0 跟踪 x2 的传播
-./tracemiku query traces/run1 forward-taint --from 0 --reg x2 --max 200 --json
+./tracemiku query $CALL forward-taint --from 0 --reg x2 --max 200 --json
 
 # 反向污点：回溯 #100 处 x0 的来源
-./tracemiku query traces/run1 backward-taint --from 100 --reg x0 --json
+./tracemiku query $CALL backward-taint --from 100 --reg x0 --json
 
 # 字符串提取
-./tracemiku query traces/run1 strings --min-len 4 --json
+./tracemiku query $CALL strings --min-len 4 --json
 
 # CFG 数据（block + edge 列表）
-./tracemiku query traces/run1 cfg --json
+./tracemiku query $CALL cfg --json
 
 # 反汇编正则搜索
-./tracemiku query traces/run1 search --pattern "smull|umull" --json
+./tracemiku query $CALL search --pattern "smull|umull" --json
 
 # 函数命中频次
-./tracemiku query traces/run1 func-summary --json
+./tracemiku query $CALL func-summary --json
 ```
 
 返回都是干净 JSON，键名稳定，便于自动化分析。

@@ -58,7 +58,7 @@ RPC) work 正常, JS 与 CModule 抓到同一计数. 真机 TB 跟丢现象与 m
 | `tracemiku query forward-taint --from 0 --reg x0 --max 500` | ~3 s |
 | `tracemiku view ...` Textual TUI 启动 + 滚动 | < 100 ms / 帧 (viewport-only) |
 
-## 5. 复现
+## 5. 复现 (per-call layout)
 
 ```bash
 # 假设 TB apk 已装, frida-server 跑 6699 端口
@@ -66,9 +66,18 @@ RPC) work 正常, JS 与 CModule 抓到同一计数. 真机 TB 跟丢现象与 m
   --fn-offset 0x57770 --cmd 70102 --duration 120 \
   --mode js --cold-launch --out traces/cold_full
 
+# run 概要 + 每次 call 概要 (records 降序)
+./tracemiku list traces/cold_full
 ./tracemiku info traces/cold_full
-./tracemiku view traces/cold_full
+
+# 挑最长那次 (cold-path) 直接看
+COLD=$(ls -d traces/cold_full/calls/call_* | sort -t_ -k4 -n -r | head -1)
+./tracemiku info "$COLD"
+./tracemiku view "$COLD"
 ```
+
+每次 onEnter 一个独立子目录, 名字带 `<records>r_<ms>ms` — fail-path
+(~4675r_~100ms) 与 cold-path (~2M r_~50000ms) 不再混在一起.
 
 ## 6. 已知反例 / 限制
 
