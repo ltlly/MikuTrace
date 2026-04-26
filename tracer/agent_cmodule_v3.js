@@ -9,6 +9,8 @@ const STATE = {
     ringBuf: null, headBuf: null, totalBuf: null, droppedBuf: null,
     ringSizeBuf: null,
     flushTimer: null, hbTimer: null, batchSeq: 0, started: 0, callIdx: 0, primaryTid: 0,
+    // watchdog
+    lastTotal: 0, stuckSecs: 0, stuckThreshold: 8,
 };
 const REC_SIZE = 272;
 const RING_RECS = 16384;
@@ -83,11 +85,32 @@ function ensureFlushTimer() {
     }, FLUSH_INTERVAL_MS);
     if (!STATE.hbTimer) {
         STATE.hbTimer = setInterval(() => {
-            send({type:"hb",
-                  head:   STATE.headBuf.readU64().toNumber(),
-                  total:  STATE.totalBuf.readU64().toNumber(),
-                  dropped:STATE.droppedBuf.readU64().toNumber(),
-                  fnEntered: STATE.fnEntered});
+            const head  = STATE.headBuf.readU64().toNumber();
+            const total = STATE.totalBuf.readU64().toNumber();
+            const dropped = STATE.droppedBuf.readU64().toNumber();
+            send({type:"hb", head, total, dropped, fnEntered: STATE.fnEntered, callIdx: STATE.callIdx});
+            // Watchdog: 单 call ring 模式下, 一次 fail-path stuck 会永远占位
+            // 阻塞后续 cold-path. 检测 stuck (fnEntered + total 不增长 + head=0)
+            // 持续 STATE.stuckThreshold 秒, 强制结束本 call → 释放 fnEntered.
+            if (STATE.fnEntered && total === STATE.lastTotal && head === 0) {
+                STATE.stuckSecs++;
+                if (STATE.stuckSecs >= STATE.stuckThreshold) {
+                    log(`[!] watchdog: call #${STATE.callIdx} 卡死 ${STATE.stuckSecs}s`
+                        + ` (recs=${total}), 强制结束以放行后续 call`);
+                    try { Stalker.unfollow(STATE.primaryTid); } catch(_){}
+                    try { Stalker.flush(); } catch(_){}
+                    flushRing("watchdog");
+                    const ms = Date.now() - STATE.started;
+                    send({ type: "trace-end", callIdx: STATE.callIdx,
+                           tid: STATE.primaryTid, retval: "?",
+                           ms, total, dropped, truncated: true });
+                    STATE.fnEntered = false;
+                    STATE.stuckSecs = 0;
+                }
+            } else {
+                STATE.stuckSecs = 0;
+            }
+            STATE.lastTotal = total;
         }, 1000);
     }
 }
