@@ -24,10 +24,11 @@ from .disasm import decode
 @dataclass
 class Block:
     start_pc: int
-    insns: list[int] = field(default_factory=list)   # list of (pc) — sorted
+    insns: list[int] = field(default_factory=list)   # list of (pc) — sorted, unique
     exits: set = field(default_factory=set)           # set of (target_pc, kind)
     executions: int = 0
     end_pc: int = 0     # PC of last (branch) instruction
+    _filled: bool = False  # True 后 insns 不再追加 (防多次执行重复)
 
 
 @dataclass
@@ -96,8 +97,12 @@ def build_cfg(t: Trace, only_module: bool = True) -> CFG:
                 cfg.blocks[pc] = blk
             cur = blk
             cur.executions += 1
-        cur.insns.append(pc)
-        cur.end_pc = pc
+        # 只在 block 第一次执行时填 insns; 后续重复执行不再 append.
+        # (block 是静态结构, 每次执行 PC 序列相同; 之前每次 append 导致
+        #  执行 N 次的块在 UI 中显示 N 份相同 ASM.)
+        if not cur._filled:
+            cur.insns.append(pc)
+            cur.end_pc = pc
         d = decode(pc, inst)
         if d.is_branch:
             # Edge to next executed pc
@@ -107,6 +112,7 @@ def build_cfg(t: Trace, only_module: bool = True) -> CFG:
                 e = (cur.start_pc, next_pc)
                 cfg.edges.setdefault(e, {"kind": kind, "count": 0})["count"] += 1
                 cur.exits.add((next_pc, kind))
+            cur._filled = True   # block 完整, 下次进入不再 append insns
             cur = None
         prev_pc = pc
 

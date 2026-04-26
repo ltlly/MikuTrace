@@ -54,6 +54,8 @@ async function init() {
 
   const r0 = await api("/api/record/0");
   pollCFG(r0?.func || null);
+  // 默认 funcs tab 已 active, 立即 load 一次
+  TAB_INIT.funcs = true;
   loadFuncsList();
 }
 
@@ -186,6 +188,8 @@ function setCursor(idx, scrollIntoView = false) {
     }
   }
   $("status").textContent = `#${idx}`;
+  // 通知订阅者 (e.g. taint-from text)
+  if (STATE._onCursorChange) for (const f of STATE._onCursorChange) try { f(); } catch(_){}
   if (_cursorDebounce) clearTimeout(_cursorDebounce);
   _cursorDebounce = setTimeout(async () => {
     const cur = STATE.cursor;
@@ -459,16 +463,26 @@ function setupVerticalTabs() {
     t.addEventListener("click", () => activateRightTab(t.dataset.rtab));
   });
 }
+// 每个 tab 的 DOM 永久保留, 只切显示/隐藏 (不再每次切都重新 fetch+渲染).
+// 第一次访问时 init, 后续切回直接 show.
+const TAB_INIT = {};
 function activateLeftTab(name) {
   document.querySelectorAll("#left-tabs .vtab").forEach(t =>
     t.classList.toggle("active", t.dataset.vtab === name));
   $("left-panel-title").textContent =
-    {funcs: "Functions", back: "BackTrace", strings: "Strings", taint: "Taint", xref: "Cross Reference"}[name];
-  if (name === "funcs") loadFuncsList();
-  else if (name === "strings") loadStrings();
-  else if (name === "taint") showTaintControls();
-  else if (name === "xref") showXrefControls();
-  else if (name === "back") $("left-panel-body").innerHTML = '<div class="dim">backtrace pending</div>';
+    {funcs: "Functions", back: "Backtrace", strings: "Strings", taint: "Taint", xref: "Cross Reference"}[name];
+  // 切换显示/隐藏对应 panel
+  document.querySelectorAll("#left-panel-body > .lp-tab").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  // 第一次进入才 init
+  if (!TAB_INIT[name]) {
+    TAB_INIT[name] = true;
+    if (name === "funcs") loadFuncsList();
+    else if (name === "strings") loadStrings();
+    else if (name === "taint") initTaintTab();
+    else if (name === "xref") initXrefTab();
+    else if (name === "back") $("lp-back").innerHTML = '<div class="dim">backtrace pending (PDF parity TODO)</div>';
+  }
 }
 function activateRightTab(name) {
   document.querySelectorAll("#right-tabs .vtab").forEach(t =>
@@ -493,19 +507,25 @@ function switchBottomTab(name) {
     b.classList.toggle("active", b.id === "b-" + name));
 }
 
-// ---------------- left panel: Functions list ----------------
+// ---------------- left panel: Functions list (一次加载, 永久挂载) ----------------
 async function loadFuncsList() {
-  const body = $("left-panel-body");
-  body.innerHTML = '<div class="dim">loading…</div>';
-  const r = await api("/api/cfg-svg", {});  // 触发 cfg build
-  // 实际上我们拿 funcs 列表通过 /api/cfg endpoint (返回 funcs[])
-  const cfg = await api("/api/cfg", {});
-  if (cfg.status === "building") {
-    body.innerHTML = `<div class="dim">cfg building… (${cfg.cfg})</div>`;
-    setTimeout(loadFuncsList, 1000);
+  const cont = $("lp-funcs");
+  cont.innerHTML = '<div class="dim">loading…</div>';
+  // 等 cfg subprocess 给 funcs 列表
+  while (true) {
+    const cfg = await api("/api/cfg", {});
+    if (cfg.status === "ready") {
+      STATE.allFuncs = cfg.funcs || [];
+      break;
+    }
+    if (cfg.status === "building") {
+      cont.innerHTML = `<div class="dim">cfg building… (${cfg.cfg})</div>`;
+      await new Promise(res => setTimeout(res, 1500));
+      continue;
+    }
+    cont.innerHTML = `<div class="dim">cfg ${cfg.status}</div>`;
     return;
   }
-  STATE.allFuncs = cfg.funcs || [];
   let html = "";
   for (const f of STATE.allFuncs) {
     const active = f.name === STATE.cfgFunc ? " active" : "";
@@ -513,90 +533,158 @@ async function loadFuncsList() {
             `<span>${escapeHtml(f.name)}</span>` +
             `<span class="meta">${f.blocks} bb</span></div>`;
   }
-  body.innerHTML = html || '<div class="dim">no funcs</div>';
-  body.querySelectorAll(".lp-row").forEach(r => {
-    r.addEventListener("click", () => pollCFG(r.dataset.fn));
+  cont.innerHTML = html || '<div class="dim">no funcs</div>';
+  cont.querySelectorAll(".lp-row").forEach(r => {
+    r.addEventListener("click", () => {
+      pollCFG(r.dataset.fn);
+      cont.querySelectorAll(".lp-row").forEach(o => o.classList.toggle("active", o === r));
+    });
   });
   $("left-panel-info").textContent = `${STATE.allFuncs.length}`;
 }
 
-let _stringsLoaded = false;
 async function loadStrings() {
-  const body = $("left-panel-body");
-  body.innerHTML = '<div class="dim">loading…</div>';
-  const r = await api("/api/strings", {min_len: 4});
-  if (r.status === "building" || r.status === "idle") {
-    body.innerHTML = `<div class="dim">building memshadow…</div>`;
-    setTimeout(loadStrings, 1500);
+  const cont = $("lp-strings");
+  cont.innerHTML = '<div class="dim">building memshadow… (一次性)</div>';
+  while (true) {
+    const r = await api("/api/strings", {min_len: 4});
+    if (r.status === "ready") {
+      let html = '<input class="inp" id="strings-filter" placeholder="filter…" style="width:100%;margin-bottom:4px"><div id="strings-list"></div>';
+      cont.innerHTML = html;
+      const filterInp = $("strings-filter");
+      const listEl = $("strings-list");
+      const all = r.strings || [];
+      const renderStrings = (q) => {
+        const ql = q.toLowerCase();
+        let h = "";
+        let n = 0;
+        for (const s of all) {
+          if (q && !s.str.toLowerCase().includes(ql) && !s.addr.includes(ql)) continue;
+          h += `<div class="lp-row"><span>${escapeHtml(s.str)}</span>` +
+               `<span class="meta">${s.addr}</span></div>`;
+          if (++n >= 500) break;
+        }
+        listEl.innerHTML = h || '<div class="dim">no match</div>';
+      };
+      renderStrings("");
+      filterInp.addEventListener("input", () => renderStrings(filterInp.value));
+      return;
+    }
+    if (r.status === "building" || r.status === "idle") {
+      await new Promise(res => setTimeout(res, 1500));
+      continue;
+    }
+    cont.innerHTML = `<div class="dim">strings ${r.status}</div>`;
     return;
   }
-  let html = "";
-  for (const s of (r.strings || []).slice(0, 500))
-    html += `<div class="lp-row"><span>${escapeHtml(s.str)}</span>` +
-            `<span class="meta">${s.addr}</span></div>`;
-  body.innerHTML = html || '<div class="dim">no strings</div>';
-  $("left-panel-info").textContent = `${r.count || 0}`;
 }
 
-function showTaintControls() {
-  const body = $("left-panel-body");
-  body.innerHTML = `
-    <div class="dim">from cursor #${STATE.cursor}</div>
+// taint state — 永久保留 + 支持 abort
+function initTaintTab() {
+  const cont = $("lp-taint");
+  cont.innerHTML = `
+    <div class="dim" id="taint-from">from cursor #${STATE.cursor}</div>
     <div class="row" style="margin:6px 0">
       reg <input id="taint-reg" class="inp" value="x0" size="4">
       <button class="btn" id="taint-fwd">forward →</button>
       <button class="btn" id="taint-bwd">← backward</button>
+      <button class="btn" id="taint-cancel" style="display:none">cancel</button>
     </div>
-    <div id="taint-out"></div>`;
+    <div id="taint-out"><div class="dim">点上面 forward / backward 跑</div></div>`;
   $("taint-fwd").onclick = () => doTaint("forward");
   $("taint-bwd").onclick = () => doTaint("backward");
+  $("taint-cancel").onclick = () => {
+    if (STATE._taintAbort) STATE._taintAbort.abort();
+  };
+  // 当 cursor 变化时刷新 "from cursor #N" 显示 (但不自动重跑)
+  STATE._onCursorChange = STATE._onCursorChange || [];
+  STATE._onCursorChange.push(() => {
+    const el = $("taint-from");
+    if (el) el.textContent = `from cursor #${STATE.cursor}`;
+  });
 }
 
 async function doTaint(dir) {
+  // cancel any in-flight taint first
+  if (STATE._taintAbort) {
+    try { STATE._taintAbort.abort(); } catch (_) {}
+  }
+  const ctrl = new AbortController();
+  STATE._taintAbort = ctrl;
   const reg = $("taint-reg").value || "x0";
   const cont = $("taint-out");
-  cont.innerHTML = '<div class="dim">running…</div>';
-  const r = await api(`/api/${dir}-taint`, {start: STATE.cursor, reg});
-  if (r.status === "building" || r.status === "idle") {
-    cont.innerHTML = '<div class="dim">building index…</div>';
-    setTimeout(() => doTaint(dir), 1500);
-    return;
+  const startCursor = STATE.cursor;
+  cont.innerHTML = `<div class="dim">running ${dir} from #${startCursor} reg=${reg}…</div>`;
+  $("taint-cancel").style.display = "";
+  try {
+    const url = `/api/${dir}-taint?` + new URLSearchParams({start: startCursor, reg});
+    const resp = await fetch(url, {signal: ctrl.signal});
+    const r = await resp.json();
+    if (ctrl.signal.aborted) return;
+    if (r.status === "building" || r.status === "idle") {
+      cont.innerHTML = '<div class="dim">building index…</div>';
+      setTimeout(() => { if (STATE._taintAbort === ctrl) doTaint(dir); }, 1500);
+      return;
+    }
+    const list = r.hits || r.chain || [];
+    let html = `<div class="dim">${list.length} 条 (from #${startCursor})</div>`;
+    for (const h of list)
+      html += `<div class="lp-row" data-idx="${h.idx}">` +
+              `<span>${escapeHtml(h.asm)}</span>` +
+              `<span class="meta">#${h.idx}</span></div>`;
+    cont.innerHTML = html;
+    cont.querySelectorAll(".lp-row").forEach(el =>
+      el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+  } catch (e) {
+    if (e.name === "AbortError") {
+      cont.innerHTML = '<div class="dim">aborted</div>';
+    } else {
+      cont.innerHTML = `<div class="dim">error: ${e.message || e}</div>`;
+    }
+  } finally {
+    if (STATE._taintAbort === ctrl) STATE._taintAbort = null;
+    $("taint-cancel").style.display = "none";
   }
-  const list = r.hits || r.chain || [];
-  let html = `<div class="dim">${list.length} 条</div>`;
-  for (const h of list)
-    html += `<div class="lp-row" data-idx="${h.idx}">` +
-            `<span>${escapeHtml(h.asm)}</span>` +
-            `<span class="meta">#${h.idx}</span></div>`;
-  cont.innerHTML = html;
-  cont.querySelectorAll(".lp-row").forEach(el =>
-    el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
 }
 
-function showXrefControls() {
-  const body = $("left-panel-body");
-  const pc = STATE.activeInsnPc || "?";
-  body.innerHTML = `
-    <div class="dim">cross-references at cursor PC</div>
-    <div style="margin:4px 0">PC: ${pc}</div>
-    <div id="xref-out"><div class="dim">click 任意 trace/CFG 指令触发 xref</div></div>`;
+function initXrefTab() {
+  const cont = $("lp-xref");
+  cont.innerHTML = `
+    <div class="dim">click 任意 trace/CFG 行触发</div>
+    <div id="xref-info" style="margin:4px 0" class="dim">PC: -</div>
+    <div id="xref-out"><div class="dim">尚未选择</div></div>`;
   if (STATE.activeInsnPc) loadXrefForCurrentPc();
 }
 
 async function loadXrefForCurrentPc() {
   const pc = STATE.activeInsnPc;
   if (!pc) return;
-  const r = await api("/api/idxs-for-pc",
-                      {pc, cursor: STATE.cursor, limit: 50});
   const out = $("xref-out");
+  const info = $("xref-info");
   if (!out) return;
-  let html = `<div class="dim">total ${r.total_before + r.total_after} 次执行</div>`;
-  for (const i of [...r.before, ...r.after].slice(0, 50))
-    html += `<div class="lp-row" data-idx="${i}">` +
-            `<span>#${i}</span><span class="meta"></span></div>`;
-  out.innerHTML = html;
-  out.querySelectorAll(".lp-row").forEach(el =>
-    el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+  if (info) info.textContent = `PC: ${pc}`;
+  out.innerHTML = '<div class="dim">scanning…</div>';
+  // abort 旧 xref 请求
+  if (STATE._xrefAbort) try { STATE._xrefAbort.abort(); } catch(_){}
+  const ctrl = new AbortController();
+  STATE._xrefAbort = ctrl;
+  try {
+    const url = "/api/idxs-for-pc?" + new URLSearchParams(
+      {pc, cursor: STATE.cursor, limit: 100});
+    const resp = await fetch(url, {signal: ctrl.signal});
+    const r = await resp.json();
+    if (ctrl.signal.aborted) return;
+    let html = `<div class="dim">${r.before.length} before · ${r.after.length} after (cursor #${r.cursor})</div>`;
+    for (const i of r.before) html += `<div class="lp-row" data-idx="${i}"><span>#${i}</span><span class="meta">-${STATE.cursor - i}</span></div>`;
+    for (const i of r.after)  html += `<div class="lp-row" data-idx="${i}"><span>#${i}</span><span class="meta">+${i - STATE.cursor}</span></div>`;
+    out.innerHTML = html;
+    out.querySelectorAll(".lp-row").forEach(el =>
+      el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+  } catch (e) {
+    if (e.name !== "AbortError") out.innerHTML = `<div class="dim">err: ${e.message || e}</div>`;
+  } finally {
+    if (STATE._xrefAbort === ctrl) STATE._xrefAbort = null;
+  }
 }
 
 // ---------------- sync toggle ----------------

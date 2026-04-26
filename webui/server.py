@@ -488,26 +488,28 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
     @app.get("/api/idxs-for-pc")
     def idxs_for_pc(pc: str, cursor: int = 0, limit: int = 30):
-        """从 cursor 双向扫 trace 找该 PC 的执行位置. 不预存 (会要 5GB+ 内存).
-        before: cursor-1 → 0 扫到 limit 个匹配; after: cursor → end 同理.
-        典型耗时 < 30ms (热块 PC 在 cursor 附近就有匹配)."""
+        """numpy vector scan: pc_array() 是 mmap 上的 zero-copy uint64 视图.
+        np.nonzero(pc_arr == target) ~5ms 跑完 2.5M (Python loop 是 320ms).
+        不预存 dict (5GB+ 内存太大)."""
+        import numpy as np, bisect
         target = int(pc, 16)
         n = len(t)
         cur = max(0, min(cursor, n))
-        before, after = [], []
-        i = cur - 1
-        while i >= 0 and len(before) < limit:
-            if t.pc(i) == target: before.append(i)
-            i -= 1
-        i = cur
-        while i < n and len(after) < limit:
-            if t.pc(i) == target: after.append(i)
-            i += 1
-        # 估总数 (可选): 这里不算 total, 让前端只显示 limit 内的
+        # 全量 indices where pc==target
+        arr = t.pc_array()
+        all_idxs = np.nonzero(arr == np.uint64(target))[0]
+        cut = int(np.searchsorted(all_idxs, cur, side="left"))
+        total_before = cut
+        total_after = len(all_idxs) - cut
+        # before: 离 cursor 最近的 limit 个 (即 idx 最大的 limit 个 < cursor)
+        before = all_idxs[max(0, cut - limit):cut][::-1].tolist()
+        after = all_idxs[cut:cut + limit].tolist()
         return {"status": "ready", "pc": pc, "cursor": cursor,
                 "before": before, "after": after,
-                "before_capped": len(before) >= limit,
-                "after_capped": len(after) >= limit}
+                "total_before": total_before,
+                "total_after": total_after,
+                "before_capped": total_before > limit,
+                "after_capped": total_after > limit}
 
     @app.get("/api/idxs-for-block")
     def idxs_for_block(pc: str, max_count: int = 200, near: int = -1):

@@ -40,10 +40,10 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 .toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
 .toggle input { margin: 0; cursor: pointer; }
 
-/* 4-column grid: leftTabs | leftPanel | (asm + memory) | (cfg or regs) | rightTabs */
+/* 5-column grid: leftTabs | leftPanel | (asm + memory) | (cfg or regs) | rightTabs */
 #layout {
   display: grid;
-  grid-template-columns: 24px 250px 1fr 1fr 24px;
+  grid-template-columns: 28px 260px 1fr 1fr 28px;
   grid-template-rows: 1fr 22px;
   grid-template-areas:
     "lt lp asm right rt"
@@ -60,15 +60,17 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 
 /* vertical tab strip */
 .vtab {
-  width: 24px; height: 60px;
+  width: 28px;
   background: transparent;
   color: var(--dim); border: none;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   font-family: inherit; font-size: 11px;
-  writing-mode: vertical-lr;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);   /* 让文字从下往上, 上端是开头 */
   text-orientation: mixed;
-  padding: 4px 0;
+  padding: 12px 4px;
+  white-space: nowrap;
 }
 .vtab:hover { background: var(--bg3); color: var(--fg); }
 .vtab.active { color: var(--accent); background: var(--bg3); }
@@ -81,12 +83,19 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
   flex: 0 0 auto;
 }
 
-/* left panel */
+/* left panel — 各 tab 永久 mounted, 切换只是 display:none */
 #left-panel-body {
-  flex: 1; overflow: auto;
+  flex: 1; overflow: hidden;
   font-size: 11px; line-height: 16px;
+  position: relative;
+}
+.lp-tab {
+  display: none;
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  overflow: auto;
   padding: 4px 6px;
 }
+.lp-tab.active { display: block; }
 .lp-row {
   padding: 1px 4px; cursor: pointer; white-space: nowrap;
   display: grid; grid-template-columns: 1fr auto;

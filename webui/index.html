@@ -19,23 +19,29 @@
 </header>
 
 <main id="layout">
-  <!-- 左侧 vertical tab strip -->
+  <!-- 左侧 vertical tab strip — 旋转文字显示全名 -->
   <aside id="left-tabs">
-    <button class="vtab active" data-vtab="funcs"   title="Functions">F</button>
-    <button class="vtab"        data-vtab="back"    title="BackTrace">B</button>
-    <button class="vtab"        data-vtab="strings" title="Strings">S</button>
-    <button class="vtab"        data-vtab="taint"   title="Taint">T</button>
-    <button class="vtab"        data-vtab="xref"    title="Cross Reference">X</button>
+    <button class="vtab active" data-vtab="funcs"   title="Functions">Functions</button>
+    <button class="vtab"        data-vtab="back"    title="Backtrace">Backtrace</button>
+    <button class="vtab"        data-vtab="strings" title="Strings">Strings</button>
+    <button class="vtab"        data-vtab="taint"   title="Taint">Taint</button>
+    <button class="vtab"        data-vtab="xref"    title="Cross Reference">Cross Ref</button>
   </aside>
 
-  <!-- 左侧 panel content (随 vtab 切换) -->
+  <!-- 左侧 panel content (随 vtab 切换). 各子 panel 永久保留, 切换只 show/hide -->
   <section id="left-panel">
     <div class="panelhead">
       <span id="left-panel-title">Functions</span>
       <span class="grow"></span>
       <span id="left-panel-info" class="dim"></span>
     </div>
-    <div id="left-panel-body"></div>
+    <div id="left-panel-body">
+      <div class="lp-tab active" data-tab="funcs"   id="lp-funcs"></div>
+      <div class="lp-tab"        data-tab="back"    id="lp-back"></div>
+      <div class="lp-tab"        data-tab="strings" id="lp-strings"></div>
+      <div class="lp-tab"        data-tab="taint"   id="lp-taint"></div>
+      <div class="lp-tab"        data-tab="xref"    id="lp-xref"></div>
+    </div>
   </section>
 
   <!-- 中央: 汇编流 + 下方 memory tab -->
@@ -82,8 +88,8 @@
 
   <!-- 右侧最外层 vertical tabs -->
   <aside id="right-tabs">
-    <button class="vtab active" data-rtab="cfg"  title="Graph (CFG)">G</button>
-    <button class="vtab"        data-rtab="regs" title="Registers">R</button>
+    <button class="vtab active" data-rtab="cfg"  title="Graph (CFG)">Graph</button>
+    <button class="vtab"        data-rtab="regs" title="Registers">Registers</button>
   </aside>
 
   <footer id="cmdbar">
