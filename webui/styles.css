@@ -113,11 +113,25 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 }
 .row-insn {
   display: grid;
-  grid-template-columns: 60px 100px 200px 1fr;
-  padding: 0 8px; white-space: nowrap;
+  grid-template-columns: 12px 60px 100px 200px 1fr;
+  padding: 0 4px 0 8px; white-space: nowrap;
   cursor: pointer; color: var(--fg);
   gap: 6px;
+  align-items: center;
 }
+/* PDF-style 计数圆点 — 列首彩色小圆点表执行次数级别 */
+.row-insn .ec {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  margin-top: 5px;
+}
+.row-insn .ec.ec-unknown { background: transparent; border: 1px solid #30363d; }
+.row-insn .ec.ec-1     { background: #444c56; }      /* 灰: 仅 1 次 */
+.row-insn .ec.ec-low   { background: #58a6ff; }      /* 蓝: 2-9 */
+.row-insn .ec.ec-mid   { background: #3fb950; }      /* 绿: 10-99 */
+.row-insn .ec.ec-high  { background: #f7b32b; }      /* 黄: 100-999 */
+.row-insn .ec.ec-vhigh { background: #f85149; box-shadow: 0 0 4px #f85149; }  /* 红+发光: 1000+ */
 .row-insn:hover { background: var(--bg3); }
 .row-insn.active { background: var(--hl); color: white; }
 .row-insn .idx  { color: var(--dim); }

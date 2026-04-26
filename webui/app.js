@@ -144,6 +144,17 @@ function renderViewport() {
   }
 }
 
+// PDF p.2 风格的"指令执行计数圆点": 颜色按 exec_count 分级
+// 1 灰, 2-9 蓝, 10-99 绿, 100-999 黄, 1000+ 橙红
+function execCountClass(c) {
+  if (c == null) return "ec-unknown";
+  if (c <= 1) return "ec-1";
+  if (c <= 9) return "ec-low";
+  if (c <= 99) return "ec-mid";
+  if (c <= 999) return "ec-high";
+  return "ec-vhigh";
+}
+
 function buildRow(i, r) {
   const row = document.createElement("div");
   row.className = "row-insn";
@@ -158,7 +169,10 @@ function buildRow(i, r) {
   row.style.left = 0; row.style.right = 0;
   row.style.height = STATE.rowHeight + "px";
   const fn = r.func ? `${r.func}+${r.off}` : (r.rel || r.pc);
+  const ecCls = execCountClass(r.exec_count);
+  const ecTitle = r.exec_count != null ? `executed ×${r.exec_count}` : "";
   row.innerHTML =
+    `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
     `<span class="idx">#${r.idx}</span>` +
     `<span class="pc">${r.pc}</span>` +
     `<span class="func">${fn}</span>` +

@@ -191,6 +191,16 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         regs_filter = [r for r in regs.split(",") if r in ALL_REGS] if regs else None
         m = t.meta.module
         base = m.base if m else 0
+        # 每条指令的执行次数 = 该 PC 所在 block 的 executions
+        # (block 是单入口单出口, 所以每次 block 执行, 内部每条 PC 各执行一次)
+        cfg_data = BG["cfg"]["data"] if BG["cfg"]["status"] == "ready" else None
+        pc_to_block_d = BG["pc_to_block"]["data"] if BG["pc_to_block"]["status"] == "ready" else None
+        def exec_count(pc):
+            if not cfg_data or not pc_to_block_d: return None
+            bs = pc_to_block_d.get(pc)
+            if bs is None: return None
+            b = cfg_data.blocks.get(bs)
+            return b.executions if b else None
         rows = []
         for i in range(start, end):
             r = t.record(i)
@@ -201,6 +211,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 "func": fname if fname != "?" else None,
                 "off": hex(foff) if fname != "?" else None,
                 "asm": f"{d.mnemonic} {d.op_str}",
+                "exec_count": exec_count(r.pc),
                 "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
             }
             if regs_filter:
@@ -220,17 +231,24 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             bp = block_for_pc(r.pc)
             if bp is not None: bpc = hex(bp)
         regs = {nm: hex(r.reg(nm)) for nm in ALL_REGS if nm not in ("nzcv",)}
-        # prev_regs: 上一条 trace record 的寄存器, 用于精确高亮"这一步" 改了哪些
         prev_regs = None
         if idx > 0:
             pr = t.record(idx - 1)
             prev_regs = {nm: hex(pr.reg(nm)) for nm in ALL_REGS if nm not in ("nzcv",)}
+        # exec_count: 与 /api/records 一致, 该 PC 所在 block 的 executions
+        exec_count = None
+        if BG["cfg"]["status"] == "ready" and BG["pc_to_block"]["status"] == "ready":
+            bs = BG["pc_to_block"]["data"].get(r.pc)
+            if bs is not None:
+                blk = BG["cfg"]["data"].blocks.get(bs)
+                if blk: exec_count = blk.executions
         return {
             "idx": idx, "pc": hex(r.pc), "rel": hex(r.pc - base) if base else None,
             "func": fname if fname != "?" else None,
             "off": hex(foff) if fname != "?" else None,
             "asm": f"{d.mnemonic} {d.op_str}",
             "regs": regs, "prev_regs": prev_regs,
+            "exec_count": exec_count,
             "block_pc": bpc, "cfg_status": BG["cfg"]["status"],
             "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
         }
@@ -394,9 +412,10 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             head_rel_str = f"+{(pc - base):x}" if base else f"{pc:x}"
             head_lbl = html_esc(f"{head_rel_str}  ×{b.executions}")
             rows = []
-            rows.append(f'<TR><TD ALIGN="LEFT" BGCOLOR="#1f2630" '
+            # Header 用浅灰色 — 不要用 #58a6ff (蓝, 同 cursor highlight 撞色, 用户分不清)
+            rows.append(f'<TR><TD ALIGN="LEFT" BGCOLOR="#0e1117" '
                         f'HREF="#hdr_b{pc:x}" TITLE="block {pc:#x}">'
-                        f'<FONT COLOR="#58a6ff">{head_lbl}</FONT></TD></TR>')
+                        f'<FONT COLOR="#8b949e" POINT-SIZE="9">{head_lbl}</FONT></TD></TR>')
             for ins_pc in b.insns:
                 inst = pc_inst.get(ins_pc, 0)
                 d = decode(ins_pc, inst)
@@ -485,6 +504,70 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         return {"status": "ready", "svg": svg, "fn": fn,
                 "block_count": len(included),
                 "total_block_count": len(c.blocks)}
+
+    # backtrace lazy build: 一次扫 trace 找所有 bl/blr/ret 位置, 存 (idx, kind),
+    # 之后 backtrace(idx) 只需在事件列表里 bisect + 重放
+    BG.setdefault("frame_events", {"status": "idle", "data": None,
+                                    "started_at": 0.0, "ready_at": 0.0, "err": None})
+    def _build_frame_events():
+        # numpy 一次拿整张 inst 表 — record 第 67 个 u32 (offset 268, 即 record/8/8 start
+        # u64 #33 是 nzcv|inst — 我们要 inst 是它的高 32 位)
+        # 简化: stride view of inst bytes.
+        import numpy as np
+        # inst 在 record 偏移 268, 4 字节. 用 frombuffer 拿 inst 列.
+        # full u32 view: count = n*REC_SIZE/4
+        from viewer.trace import REC_SIZE
+        u32 = np.frombuffer(t._mm, dtype=np.uint32, count=t.n * (REC_SIZE // 4))
+        # inst 列在每 record 的第 (268/4)=67 个 u32. stride = 68 (REC_SIZE/4).
+        inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]   # = [67, 67+68, ...]
+        # bl 编码: 100101_imm26  → top 6 bits 0b100101 (= 0x25). instr & 0xFC000000 == 0x94000000
+        # blr 编码: 1101_0110_0011_1111_0000_00 Rn 00000  → instr & 0xFFFFFC1F == 0xD63F0000
+        # ret 编码: 1101_0110_0101_1111_0000_00 Rn 00000  → instr & 0xFFFFFC1F == 0xD65F0000
+        # br  编码: 1101_0110_0001_1111_0000_00 Rn 00000  → instr & 0xFFFFFC1F == 0xD61F0000  (不是 call)
+        is_bl  = (inst_arr & np.uint32(0xFC000000)) == np.uint32(0x94000000)
+        is_blr = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD63F0000)
+        is_ret = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD65F0000)
+        is_call = is_bl | is_blr
+        call_idxs = np.nonzero(is_call)[0]
+        ret_idxs = np.nonzero(is_ret)[0]
+        # 合并 + 按 idx 排序
+        events = []
+        for i in call_idxs.tolist(): events.append((i, "push"))
+        for i in ret_idxs.tolist(): events.append((i, "pop"))
+        events.sort(key=lambda e: e[0])
+        return events
+
+    @app.get("/api/backtrace")
+    def backtrace(idx: int):
+        """call stack at trace idx. 用预计算的 bl/blr/ret 事件列表 bisect+重放,
+        典型 < 100ms (之前每次 0→idx full scan 是 5+s).
+        """
+        n = len(t)
+        if idx < 0 or idx >= n: raise HTTPException(404)
+        st = BG["frame_events"]
+        if st["status"] != "ready":
+            _bg_run("frame_events", _build_frame_events)
+            return {"status": st["status"], "stack": [], "depth": 0}
+        events = st["data"]
+        import bisect
+        cut = bisect.bisect_right([e[0] for e in events], idx)
+        # 重放 events[:cut]
+        stack = []
+        pc_arr = t.pc_array()
+        for ev_idx, op in events[:cut]:
+            if op == "push":
+                # callee_pc = next executed pc
+                callee = int(pc_arr[ev_idx + 1]) if ev_idx + 1 < n else None
+                fn = sym.lookup(callee)[0] if callee else None
+                stack.append({
+                    "call_site_idx": ev_idx,
+                    "call_pc": hex(int(pc_arr[ev_idx])),
+                    "callee_pc": hex(callee) if callee else None,
+                    "fn": fn if fn != "?" else None,
+                })
+            else:
+                if stack: stack.pop()
+        return {"status": "ready", "idx": idx, "stack": stack, "depth": len(stack)}
 
     @app.get("/api/idxs-for-pc")
     def idxs_for_pc(pc: str, cursor: int = 0, limit: int = 30):
