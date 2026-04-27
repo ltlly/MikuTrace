@@ -18,13 +18,24 @@ stock frida 17.x 在 Pixel 7 / Android 16 + OLLVM 大库 (TB libsgmainso 等) tr
 patched 版本 + 一键安装:
 
 ```bash
-./vendor/frida-patched/install.sh   # 默认 forward 6699
+# 推荐: stealth 版 (codeslab fallback + anti-detect 重命名 frida → miku)
+./vendor/frida-patched/install-stealth.sh   # → /data/local/tmp/.miku-srv, forward 6699
+
+# 旧版: 仅 codeslab fallback (target 内仍可见 gum-js-loop 等 frida 字符串)
+./vendor/frida-patched/install.sh
 ```
 
 详细成因和 patch 解释见 [`docs/frida-codeslab-patch.md`](docs/frida-codeslab-patch.md).
-patch 仅 1 处改动 (frida-gum `gum_memory_allocate_near` fallback), 实测把 TB
+codeslab patch 仅 1 处改动 (frida-gum `gum_memory_allocate_near` fallback), 实测把 TB
 70102 cold-path trace 从 stock 的 1805 条 + SIGTRAP 提到 **3,858,484 条 + 进程零崩溃**
 ([对比表](docs/frida-codeslab-patch.md#验证-patched-前后对比-实测数据)).
+
+stealth 版另外把 12 个 target-可见 frida 字符串 (`gum-js-loop` → `miku-js-loop`,
+`re.frida.server` → `re.miku.server`, `g_set_prgname("frida")` → `("miku")` 等) 改成
+`miku` 主题, 躲常见 anti-frida 静态扫描. wire protocol (D-Bus 名 / `frida:rpc` /
+`frida_agent_main`) 不动, host stock frida-tools 直接兼容.
+详见 [`vendor/frida-patched/README.md`](vendor/frida-patched/README.md).
+自构建: `./vendor/frida-patched/build-from-source.sh` (一键, 30-60min cold).
 
 
 ## 快速上手 (per-call)
