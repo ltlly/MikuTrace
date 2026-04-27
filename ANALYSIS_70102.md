@@ -131,17 +131,24 @@ Interceptor.attach(waitFn, {
 ```
 看 #383 处 sub_547bc8 调用前 x8 的值 — 那就是 handler。
 
-## 7. 加速方案 (针对你的"trace 太慢"问题)
+## 7. 加速方案 (针对你的"trace 太慢"问题) — 已实施
 
-| 方案 | 速度提升 | 信息损失 |
+| 方案 | 实测 | 完整性 |
 |---|---|---|
-| 当前 (per-insn 全寄存器) | 1× (~30K rec/s) | 无 |
-| **fast-pc** (`tracer/agent_fast_pc.js`, Stalker exec event 全 native) | **30-100×** (~1M+ pc/s) | 只有 PC, 无寄存器 |
-| 混合: PC + 每 N 条寄存器快照 | 5-20× | 中间寄存器需 viewer 推算 |
-| 只 hook handler (避开 dispatcher 763K 噪音) | 1000× | 跳过派发逻辑 |
+| baseline `--mode js` (per-insn JS callout) | 17K rec/s, IPC bound | 完整 (dropped=0) |
+| **`--mode cmodule` (v5)** — CModule + SPSC ring + 设备落盘 + gzip pull | **1.56M rec/s** (~92x) | **完整 (dropped=0)** |
 
-`tracer/agent_fast_pc.js` + `tracer/host_fast_pc.py` 已写好。等 cmd 70102 在 TB 上被触发时跑：
+v5 核心: cmodule on_insn 写 SPSC lock-free ring, v8 setInterval 10ms flush 到
+`/data/data/<pkg>/cache/.miku/trace_NNN.bin` (UFS ~500MB/s); host 用
+`adb exec-out 'gzip -1 -c' | gunzip` pipeline (~26x 压缩 + USB 21MB/s = 320MB/s
+effective). ring 满时 cmodule spin 等 v8 flush, dropped=0 完整保证.
+
+实测 (TB doCommandNative 70102 cold-launch, 14 calls):
+67M records / 16 GB raw / 93s wall (43s 采集 + 50s gzip pull) 全 dropped=0.
+
 ```bash
-python3 tracer/host_fast_pc.py --out traces/fast_70102 --duration 120 --cmd 70102
-# 在手机上操作触发 70102 (登录 / 网络请求)
+./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
+  --fn-offset 0x57770 --cmd 70102 --duration 600 \
+  --cold-launch --remote 127.0.0.1:6699 --out traces/run1
+# --mode cmodule 是默认 (v5), 不用显式指定
 ```

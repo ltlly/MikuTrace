@@ -48,9 +48,10 @@ fail-path (~4675 条) 与 cold-path (~2M 条) 互不污染, 事后挑要分析�
 ./tracemiku list
 
 # 一行抓 TB cold-path: 清数据 → 启动 → 自动点"同意" → trace 直到抓到一次 cold-path
+# v5 默认: cmodule + 设备落盘 + gzip pull, 1.5M rec/s, dropped=0 完整保证
 ./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
   --fn-offset 0x57770 --cmd 70102 --duration 120 \
-  --mode js --cold-launch --out traces/run1
+  --cold-launch --out traces/run1
 
 # 列出本 run 内所有 calls, records 降序 (最长的 cold-path 排第一)
 ./tracemiku list traces/run1
@@ -109,15 +110,28 @@ traces/run1/
 ```
 
 ### `--cold-launch` (TB 类首启隐私协议自动化)
-内置流程: `am force-stop` → `pm clear` → `monkey` 拉起 → `uiautomator dump`
+内置流程 (`tracemiku` 内 `_cold_launch_start` + `_drive_consent`):
+`am force-stop` → `pm clear` → `monkey` 拉起 → `uiautomator dump`
 找 `text="同意"` 按钮 → `input tap` → 轮询直到首页 (推荐/淘宝直播/百亿补贴 等
-标志出现) 才返回. 实测 0s 找按钮, 6s 进首页. 独立脚本: `tracer/tb_launcher.sh <pkg>`.
+标志出现) 才返回. 实测 0s 找按钮, 6s 进首页.
 
-### `--mode {js,cmodule}`
-- `js` (推荐用于真机大 trace): JS callout, 已实测稳定抓 200 万+ 条
-- `cmodule` (默认, 实验性): CModule + native callout, 短 trace 与 js 相当, **TB 类目标
-  在 fail-path cleanup 出 SO 范围时 stalker 跟丢, 后续 onLeave 不触发** —
-  这是函数走法导致 (~99% 已抓), 不是 frida bug, 但抓 cold-path 大计算建议先用 `--mode js`.
+### `--mode {cmodule, cmodule-v3, js}`
+- **`cmodule` (默认, v5)**: CModule on_insn → SPSC lock-free ring (17MB) →
+  v8 setInterval 10ms → File.write → `/data/data/<pkg>/cache/.miku/trace_NNN.bin`
+  → host adb `gzip -1 -c | gunzip` 流式 pull. **采集 ~1.56M rec/s, dropped=0**
+  完整保证 (file_size = records × 272 字节精确匹配).
+
+  实测 (TB libsgmainso doCommandNative 70102 cold-launch, 14 calls):
+  67M records 完整 trace 全程 dropped=0, 总 wall 93s (其中采集 43s + gzip pull 50s).
+  vs baseline `js` 模式 17K rec/s = **~92x 加速**.
+
+- `cmodule-v3`: 旧 cmodule, send blob via IPC. IPC bound (~5MB/s), 在 cmodule
+  callout 速度下 ring overflow drop ~91%. 不推荐, 留作回归对比.
+
+- `js`: 历史备选, JS putCallout, 无 cmodule. ~17K rec/s 但 dropped=0 (callout 慢
+  正好匹配 IPC). cmodule 编译失败时自动 fallback 用这个.
+
+trace.bin 物理格式 (272B/rec) v3/v5 完全相同, viewer/webui 不区分模式.
 
 ## Web SPA (推荐分析入口)
 
@@ -302,11 +316,10 @@ traceMiku/
 ├── tracemiku           # 统一 CLI 入口（trace/view/query/list/info）
 ├── tracemiku-view      # 兼容旧入口
 ├── tracer/             # Stage-1 采集端
-│   ├── agent_generic.js   # 通用 JS callout agent (主推, 实测稳跑 200 万+ 条)
-│   ├── agent_cmodule_v3.js # CModule on_insn (实验性, 短 trace OK)
-│   ├── agent_fast_pc.js   # PC-only 流 (Stalker exec events, viewer 暂不支持)
-│   ├── tb_launcher.sh     # TB 冷启动 + 自动同意脚本 (供 --cold-launch)
-│   └── ...
+│   ├── agent_cmodule_v5.js # 默认 (--mode cmodule): CModule + SPSC ring + 设备落盘 + gzip pull, 1.5M rec/s, dropped=0
+│   ├── agent_cmodule_v3.js # 回归对比 (--mode cmodule-v3): cmodule + send blob (IPC bound)
+│   ├── agent_generic.js    # 备选 (--mode js): JS callout, ~17K rec/s, IPC bound 但 dropped=0
+│   └── README.md
 ├── viewer/             # Stage-2 离线 TUI
 │   ├── trace.py        # mmap binary trace 解析
 │   ├── disasm.py       # capstone 包装 + def/use 提取

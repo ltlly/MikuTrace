@@ -134,9 +134,9 @@ traces/<run_name>/
 ## 当前状态 (开新会话需知)
 
 - 工作目录: `/home/ltlly/Code/traceMiku`
-- frida-server: Florida fork, `127.0.0.1:6699` (`adb forward` 已固定)
+- frida-server: stealth build `/data/local/tmp/.miku-srv` (`adb forward tcp:6699`)
 - TB pkg: `com.taobao.taobao`, fnOffset 0x57770, cmd=70102 (sgmain doCommandNative)
 - 已有完整 cold-path trace: `traces/doCommand_70102_coldpath/` (2,066,291 条 / 562 MB) — 别删
-- `--cold-launch` 已实现 (`tracemiku:25-58`), `tracer/tb_launcher.sh` 也可独立用
+- `--cold-launch` 已实现 (`tracemiku:25-58`), 内嵌不依赖外部 shell 脚本
 - 测试: `python3 -m pytest tests/ -q` 当前 25 passed (9 skipped 是删旧 trace 后失效的 fixture)
 - 关键 memory: `feedback_frida_cmodule_import_semantics.md` (CModule extern 语义)
