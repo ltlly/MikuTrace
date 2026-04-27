@@ -1,0 +1,26 @@
+diff --git a/gum/backend-posix/gummemory-posix.c b/gum/backend-posix/gummemory-posix.c
+index 848b430..cd60ff8 100644
+--- a/gum/backend-posix/gummemory-posix.c
++++ b/gum/backend-posix/gummemory-posix.c
+@@ -196,6 +196,21 @@ gum_memory_allocate_near (const GumAddressSpec * spec,
+ 
+   gum_enumerate_free_ranges (gum_try_alloc_in_range_if_near_enough, &ctx);
+ 
++  /*
++   * MikuTrace patch: when the kernel-suggested page and every free range
++   * within ±max_distance are exhausted (typical on Android 14+/ARM64 where
++   * ASLR places target SOs at high VA with crowded neighbours), fall back
++   * to an unconstrained allocation instead of returning NULL — the upstream
++   * caller would then g_assert() and SIGTRAP the entire process.
++   *
++   * Stalker's emitted trampolines use ADRP+BR Xn for far jumps so the
++   * "near" constraint is best-effort, not load-bearing — see issues:
++   *   https://github.com/frida/frida-gum/issues/707
++   *   https://github.com/frida/frida-gum/issues/793
++   */
++  if (ctx.result == NULL)
++    ctx.result = gum_memory_allocate (NULL, size, alignment, prot);
++
+   return ctx.result;
+ }
+ 

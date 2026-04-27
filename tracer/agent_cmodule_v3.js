@@ -146,16 +146,49 @@ rpc.exports = {
         try { buildCModule(); }
         catch (e) { log(`[!!] CModule 编译失败: ${e}`); return "no-cmodule"; }
 
+        const armWith = (m) => {
+            STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
+            log(`[+] target ${m.name} base=${m.base} end=${m.base.add(m.size)}`);
+            send({ type: "module", name: m.name, base: m.base.toString(), size: m.size, pid: Process.id });
+            const fp = m.base.add(STATE.fnOffset);
+            const tBase = STATE.target.base, tEnd = STATE.target.end;
+            const onInsn = STATE.onInsnPtr;
+            installFnHook(fp, tBase, tEnd, onInsn);
+            log(`[+] hook ${STATE.soPattern}+0x${STATE.fnOffset.toString(16)} @ ${fp}`);
+        };
         const m = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern) !== -1);
-        if (!m) { log("[!] no SO"); return "no-so"; }
-        STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
-        log(`[+] target ${m.name} base=${m.base} end=${m.base.add(m.size)}`);
-        send({ type: "module", name: m.name, base: m.base.toString(), size: m.size, pid: Process.id });
+        if (!m) {
+            log("[!] no SO yet, hooking dlopen to wait");
+            const dlopen = (Module.findGlobalExportByName||Module.getGlobalExportByName)("android_dlopen_ext")
+                        || (Module.findGlobalExportByName||Module.getGlobalExportByName)("dlopen");
+            if (!dlopen) { log("[!!] dlopen sym not found"); return "no-dlopen"; }
+            Interceptor.attach(dlopen, {
+                onEnter(a){ try{ this._p = a[0].readCString(); }catch(_){ } },
+                onLeave(rv){
+                    if (!this._p || this._p.indexOf(STATE.soPattern) < 0) return;
+                    if (STATE.target) return;
+                    const m2 = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern) !== -1);
+                    if (m2) armWith(m2);
+                }
+            });
+            return "waiting-dlopen";
+        }
+        armWith(m);
+        return "armed";
+    },
+    forceFlush() { flushRing("force"); return "ok"; },
+    stats() {
+        return {
+            target: STATE.target ? STATE.target.name : null,
+            total: STATE.totalBuf.readU64().toNumber(),
+            head: STATE.headBuf.readU64().toNumber(),
+            dropped: STATE.droppedBuf.readU64().toNumber(),
+            primaryTid: STATE.primaryTid, callIdx: STATE.callIdx,
+        };
+    }
+};
 
-        const fp = m.base.add(STATE.fnOffset);
-        const tBase = STATE.target.base, tEnd = STATE.target.end;
-        const onInsn = STATE.onInsnPtr;
-
+function installFnHook(fp, tBase, tEnd, onInsn) {
         Interceptor.attach(fp, {
             onEnter(args) {
                 if (STATE.cmdValue) {
@@ -209,17 +242,4 @@ rpc.exports = {
                 STATE.fnEntered = false;
             }
         });
-        log(`[+] hook ${STATE.soPattern}+0x${STATE.fnOffset.toString(16)} @ ${fp}`);
-        return "armed";
-    },
-    forceFlush() { flushRing("force"); return "ok"; },
-    stats() {
-        return {
-            target: STATE.target ? STATE.target.name : null,
-            total: STATE.totalBuf.readU64().toNumber(),
-            head: STATE.headBuf.readU64().toNumber(),
-            dropped: STATE.droppedBuf.readU64().toNumber(),
-            primaryTid: STATE.primaryTid, callIdx: STATE.callIdx,
-        };
-    }
-};
+}

@@ -11,6 +11,22 @@ python3 -m pip install --user textual capstone frida
 chmod +x tracemiku tracemiku-view
 ```
 
+### 推荐: 使用 patched frida-server (Android 14+ 必装)
+
+stock frida 17.x 在 Pixel 7 / Android 16 + OLLVM 大库 (TB libsgmainso 等) trace
+~4500 条后 SIGTRAP 杀进程, tombstone 报 `Unable to allocate code slab`. 仓库自带
+patched 版本 + 一键安装:
+
+```bash
+./vendor/frida-patched/install.sh   # 默认 forward 6699
+```
+
+详细成因和 patch 解释见 [`docs/frida-codeslab-patch.md`](docs/frida-codeslab-patch.md).
+patch 仅 1 处改动 (frida-gum `gum_memory_allocate_near` fallback), 实测把 TB
+70102 cold-path trace 从 stock 的 1805 条 + SIGTRAP 提到 **3,858,484 条 + 进程零崩溃**
+([对比表](docs/frida-codeslab-patch.md#验证-patched-前后对比-实测数据)).
+
+
 ## 快速上手 (per-call)
 
 每次目标函数调用 → 一个独立 trace 子目录, 目录名带 records/ms 一眼看出长短.
@@ -321,6 +337,18 @@ traceMiku/
 - Stage-3 反编译辅助（叠加 trace 到 IDA/binja MCP）暂未做
 - CFG 布局用 graphviz `dot`，不是 krash 自研的 Decompiler Layout（可改用 ghidra 的算法重写）
 - 字符串只能从内存 shadow 抠（trace 没读过的字节不在）
+
+## TODO
+
+- **C/C++ 原生 tracer (libgumTraceMiku.so)**: 当前 `agent_cmodule_v3.js` 仍走 frida
+  CModule (运行时 TCC 编译), JS 层只能跑 ~30K rec/s, CModule 跑 ~16K (实测 patched
+  frida 的瓶颈在 stalker 自身). 要更猛, 把 agent 整体写成 C/C++ 编译成 `.so`,
+  `Module.load()` 注入后用 frida-gum 原生 `gum_stalker_*` API + 共享 mmap ring buffer
+  (host 端 mmap 同文件零拷贝读取), 目标 50K+ rec/s 流, 减少 JS bridge 开销和 GC 抖动.
+  参考: [revercc/gumTVM](https://github.com/revercc/gumTVM)
+- **Stage-3 反编译辅助叠加** (上面已列, 重申): trace + binja HLIL 联合视图, 让
+  `[!]` 注释能直接落在反编译伪码行上.
+- **NEON/FP 寄存器记录**: record 格式 v2, 支持 OLLVM SIMD 跳表场景.
 
 ## 文档
 
