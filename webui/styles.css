@@ -215,17 +215,20 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 /* dimmed background under cursor-pc */
 #cfg-canvas svg a.cursor-pc { outline: 1px solid #58a6ff; }
 
-/* registers */
-.regs-grid {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px;
-  font-size: 11px; padding: 6px 8px;
+/* registers — pwndbg-style 单列宽: 名 | hex | annotation */
+.regs-list {
+  font-size: 11px; padding: 4px 8px;
+  font-family: 'JetBrains Mono', monospace;
 }
 .reg {
-  display: grid; grid-template-columns: 36px 1fr;
+  display: grid; grid-template-columns: 36px 200px 1fr;
   padding: 0 4px;
+  white-space: nowrap;
+  gap: 6px;
 }
-.reg .rn { color: var(--dim); }
+.reg .rn { color: var(--warn); font-weight: bold; }
 .reg .rv { color: var(--fg); }
+.reg .ra { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
 .reg.changed .rv { color: var(--bad); font-weight: bold; }
 
 /* memory hex view */
@@ -244,6 +247,29 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 .mem-line .b-write  { color: var(--good); cursor: pointer; }
 .mem-line .hex .b-read,
 .mem-line .hex .b-write { cursor: pointer; }
+.mem-line .sel { background: var(--hl); border-radius: 2px; }
+
+/* context menu — for memory cell right click */
+.ctx-menu {
+  position: fixed; z-index: 1000;
+  background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px;
+  min-width: 180px; max-height: 60vh; overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.ctx-section {
+  padding: 4px 8px;
+  background: var(--bg3);
+  color: var(--accent);
+  font-weight: bold;
+  border-top: 1px solid var(--border);
+}
+.ctx-item {
+  padding: 2px 12px; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+}
+.ctx-item:hover { background: var(--hl); }
 
 /* search/taint hits */
 .hit-row {

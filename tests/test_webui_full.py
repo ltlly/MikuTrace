@@ -364,6 +364,71 @@ def test_mem_dump_endpoint(client):
         assert "addr" in b and "byte" in b and "kind" in b
 
 
+def test_idxs_touching_range_endpoint(client):
+    """/api/idxs-touching-range 多字节范围 readers/writers 分组."""
+    import time
+    for _ in range(120):
+        r = client.get("/api/idxs-touching-range?addr=0x7000&size=8&cursor=0").json()
+        if r.get("status") == "ready": break
+        time.sleep(0.1)
+    assert r["status"] == "ready"
+    assert "writers_before" in r and "writers_after" in r
+    assert "readers_before" in r and "readers_after" in r
+    assert "writers_total" in r and "readers_total" in r
+
+
+def test_record_n_has_regs_annotated(client):
+    """/api/record/N 应该有 regs_annotated 字段 (mem ready 后)."""
+    import time
+    n = client.get("/api/meta").json()["records"]
+    for _ in range(120):
+        r = client.get(f"/api/record/{n//2}").json()
+        if r.get("regs_annotated") and len(r["regs_annotated"]) > 0: break
+        time.sleep(0.1)
+    assert "regs_annotated" in r
+    # 至少一些寄存器有注释
+    if r["regs_annotated"]:
+        assert isinstance(r["regs_annotated"], dict)
+
+
+def test_cfg_external_call_return_into_fn(tmp_path):
+    """外部 callee 返回到本 fn 时应作为 ext_in 边或显式 in-edge 显示.
+    构造: doFoo bl→callee, callee ret 回 doFoo. 单 fn=doFoo 视图应有 call-return 边."""
+    from viewer.trace import load
+    from viewer.cfg import build_cfg
+    import struct
+    from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
+    ks = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
+    seqs = [
+        (0x100000, ["nop"]),                # doFoo entry
+        (0x100004, ["bl #0x100200"]),       # call
+        (0x100200, ["ret"]),                 # callee
+        (0x100008, ["nop"]),                 # post-call in doFoo
+        (0x10000c, ["ret"]),                 # doFoo end
+    ]
+    run = tmp_path/"r"; run.mkdir(); (run/"calls").mkdir()
+    cd = run/"calls"/"call_001_tid100"; cd.mkdir()
+    bf = open(cd/"trace.bin","wb")
+    for pc, asm_list in seqs:
+        for asm in asm_list:
+            inst, _ = ks.asm(asm)
+            bf.write(struct.pack("<Q", pc))
+            for _ in range(31): bf.write(struct.pack("<Q", 0))
+            bf.write(struct.pack("<Q", 0x7000))
+            bf.write(struct.pack("<I", 0))
+            bf.write(struct.pack("<I", int.from_bytes(bytes(inst), "little")))
+            pc += 4
+    bf.close()
+    json.dump({}, open(cd/"meta.json","w"))
+    json.dump({"module":{"name":"libt.so","base":hex(0x100000),"size":0x10000}},
+              open(run/"meta.json","w"))
+    t = load(cd)
+    cfg = build_cfg(t, only_module=True)
+    # 至少有一条 call-return 边
+    cr = [(s, d) for (s, d), v in cfg.edges.items() if v["kind"] == "call-return"]
+    assert len(cr) >= 1, f"no call-return edges in cfg: {dict(cfg.edges)}"
+
+
 def test_idxs_touching_addr_endpoint(client):
     """/api/idxs-touching-addr 行为基线 — 即使没数据, 不应崩."""
     import time

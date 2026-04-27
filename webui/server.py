@@ -15,6 +15,8 @@ from viewer.disasm import decode
 from viewer.symbols import build_from_trace
 from viewer.cfg import build_cfg, loop_sccs
 from viewer.index import Index
+from viewer.display import (collect_modules_from_trace, deref_u64,
+                            is_in_known_module, maybe_string_at, _heuristic_region)
 
 
 def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
@@ -231,6 +233,60 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             rows.append(row)
         return {"start": start, "end": end, "count": end-start, "records": rows}
 
+    def _classify_reg_value(value: int, t_cursor: int, sp: int = 0,
+                             max_depth: int = 3) -> str:
+        """pwndbg 风格 — 返回纯文本注释 (前端能直接 append 到 hex 后)."""
+        if BG["mem"]["status"] != "ready":
+            return ""
+        mem = BG["mem"]["data"]
+        modules = collect_modules_from_trace(t, mem)
+        if value == 0: return "  NULL"
+        seen = set(); parts = []; cur = value; depth = 0
+        while True:
+            if cur in seen: parts.append(" ↺"); break
+            seen.add(cur)
+            if cur == 0:
+                if depth == 0: parts.append(" NULL")
+                break
+            if sp and abs(cur - sp) < 0x20000:
+                sign = "+" if cur >= sp else "-"
+                parts.append(f"  [SP{sign}{abs(cur-sp):#x}]"); break
+            modhit = is_in_known_module(modules, cur)
+            if modhit:
+                mname, moff = modhit
+                if t.meta.module and mname == t.meta.module.name:
+                    fname, foff = sym.lookup(cur)
+                    if fname != "?":
+                        parts.append(f"  [{fname}+{foff:#x}]")
+                    else:
+                        parts.append(f"  [{mname}+{moff:#x}]")
+                else:
+                    parts.append(f"  [{mname}+{moff:#x}]")
+                break
+            hint = _heuristic_region(cur)
+            try:
+                s = maybe_string_at(mem, cur, t_cursor)
+            except Exception:
+                s = None
+            if s:
+                parts.append(f'  → "{s}"'); break
+            if depth < max_depth:
+                nxt = deref_u64(mem, cur, t_cursor)
+                if nxt is not None and nxt != 0 and nxt != cur:
+                    if hint and depth == 0: parts.append(f"  ({hint})")
+                    parts.append(f"  → {nxt:#x}")
+                    cur = nxt; depth += 1; continue
+            if hint:
+                parts.append(f"  ({hint})")
+            elif 0 < cur < 0x1000000:
+                sign_ext = cur if cur < 0x80000000 else cur - 0x100000000
+                if abs(sign_ext) < 0x10000:
+                    parts.append(f"  ({sign_ext})")
+                else:
+                    parts.append(f"  ({cur})")
+            break
+        return "".join(parts)
+
     @app.get("/api/record/{idx}")
     def one_record(idx: int):
         if idx < 0 or idx >= len(t): raise HTTPException(404)
@@ -247,6 +303,15 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if idx > 0:
             pr = t.record(idx - 1)
             prev_regs = {nm: hex(pr.reg(nm)) for nm in ALL_REGS if nm not in ("nzcv",)}
+        # PDF p.3 / pwndbg 风: 每个 reg 加 classify 注释 (代码指针/字符串/栈/...).
+        # mem ready 才有值; 否则 None.
+        sp_val = r.reg("sp") if hasattr(r, "reg") else 0
+        regs_annotated = {}
+        if BG["mem"]["status"] == "ready":
+            for nm in ALL_REGS:
+                if nm == "nzcv": continue
+                v = r.reg(nm)
+                regs_annotated[nm] = _classify_reg_value(v, idx, sp=sp_val)
         # exec_count: 与 /api/records 一致, 该 PC 所在 block 的 executions
         exec_count = None
         if BG["cfg"]["status"] == "ready" and BG["pc_to_block"]["status"] == "ready":
@@ -260,6 +325,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             "off": hex(foff) if fname != "?" else None,
             "asm": f"{d.mnemonic} {d.op_str}",
             "regs": regs, "prev_regs": prev_regs,
+            "regs_annotated": regs_annotated,
             "exec_count": exec_count,
             "block_pc": bpc, "cfg_status": BG["cfg"]["status"],
             "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
@@ -488,8 +554,28 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
         # edges: green=cond taken, red=cond not-taken (fall-through after b.cond/cbz/tbz),
         #        blue=uncond branch, magenta=ret, gray=natural fall, purple=call
+        # 4 种 edge 处境:
+        #  src∈fn ∧ dst∈fn         普通块间边 (b/br/fall/...)
+        #  src∈fn ∧ dst∉fn         caller bl 调外部 → ext_out stub
+        #  src∉fn ∧ dst∈fn         外部 call 返回到本 fn → ext_in stub (NEW)
+        #  否则                    跳过
         for (s, d), v in c.edges.items():
-            if s not in included_starts: continue
+            src_in = s in included_starts
+            dst_in = d in included_starts
+            if not src_in and not dst_in: continue
+            if not src_in and dst_in:
+                # external return into this fn — 用 ext_in 桩
+                # 这正是 doCommandNative 那些 in:0 块的入边来源.
+                kind = v["kind"]; cnt = v["count"]
+                ext_lbl = f"from +{(s-base):x}" if base else f"from {s:x}"
+                buf.write(f'  "ext_in_{s:x}" [shape=ellipse, fontsize=9, '
+                          f'style=filled, fillcolor="#1f2630", color="#bc8cff", '
+                          f'fontcolor="#bc8cff", label="{ext_lbl}", '
+                          f'id="ext_in_{s:x}"];\n')
+                lbl = f'{kind} ×{cnt}' if cnt > 1 else kind
+                buf.write(f'  "ext_in_{s:x}" -> "b{d:x}" [color="#bc8cff", '
+                          f'label="{lbl}", style=dashed];\n')
+                continue
             kind = v["kind"]; cnt = v["count"]
             term = block_term_kind.get(s)
             is_cond = bool(term) and (term.startswith("b.") or term in ("cbz", "cbnz", "tbz", "tbnz"))
@@ -746,6 +832,37 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             out.append({"addr": hex(a), "byte": b, "kind": kind,
                         "src_idx": src_idx})
         return {"status": "ready", "addr": addr, "count": count, "bytes": out}
+
+    @app.get("/api/idxs-touching-range")
+    def idxs_touching_range(addr: str, size: int = 1, cursor: int = 0, limit: int = 50):
+        """所有 trace idx 中读/写 [addr, addr+size) 的位置. 用于内存视图选择字节
+        范围 → 右键 → 看读者/写者. 返回前 limit 个 (按 idx 升序)."""
+        # 兼容快速 build 的 race: 先 trigger, 再读 status (不要在 return 时再读)
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            st = BG["mem"]["status"]
+            if st != "ready":
+                return {"status": st, "writers_before": [], "writers_after": [],
+                        "writers_total": 0, "readers_before": [], "readers_after": [],
+                        "readers_total": 0}
+        mem = BG["mem"]["data"]
+        start = int(addr, 16); endaddr = start + size
+        writers = sorted({i for (i, a, sz, _v) in mem.writes
+                          if a < endaddr and (a + sz) > start})
+        readers = sorted({i for (i, a, sz, _v) in mem.reads
+                          if a < endaddr and (a + sz) > start})
+        # cursor 邻域优先
+        import bisect
+        def split(idxs):
+            cut = bisect.bisect_left(idxs, cursor)
+            before = list(reversed(idxs[max(0, cut-limit):cut]))
+            after = idxs[cut:cut+limit]
+            return before, after, len(idxs)
+        wb, wa, wt = split(writers)
+        rb, ra, rt = split(readers)
+        return {"status": "ready", "addr": addr, "size": size, "cursor": cursor,
+                "writers_before": wb, "writers_after": wa, "writers_total": wt,
+                "readers_before": rb, "readers_after": ra, "readers_total": rt}
 
     @app.get("/api/idxs-touching-addr")
     def idxs_touching_addr(addr: str, cursor: int = 0, limit: int = 30):

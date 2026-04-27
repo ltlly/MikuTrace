@@ -221,19 +221,24 @@ function setCursor(idx, scrollIntoView = false) {
 function renderRegs(r) {
   const cont = $("regs-pane");
   const regs = r.regs || {};
-  // 关键: prev_regs 来自后端 (idx-1 的寄存器), NOT 上次点击的那一条.
-  // 这样 4→8 跳转时, 高亮 #8 相对 #7 的变化 (这一步真的改了什么), 不是 #8 vs #4.
   const prev = r.prev_regs || {};
+  const ann = r.regs_annotated || {};
+  // pwndbg 风: 单列宽 — name | hex | annotation. 改成 1-col flow 不再 2-col grid.
   const order = ["x0","x1","x2","x3","x4","x5","x6","x7",
                  "x8","x9","x10","x11","x12","x13","x14","x15",
                  "x16","x17","x18","x19","x20","x21","x22","x23",
                  "x24","x25","x26","x27","x28","fp","lr","sp","pc"];
-  let html = '<div class="regs-grid">';
+  let html = '<div class="regs-list">';
   for (const nm of order) {
     if (!(nm in regs)) continue;
     const changed = prev[nm] !== undefined && prev[nm] !== regs[nm];
     const cls = changed ? "reg changed" : "reg";
-    html += `<div class="${cls}"><span class="rn">${nm}</span><span class="rv">${regs[nm]}</span></div>`;
+    const a = ann[nm] || "";
+    html += `<div class="${cls}">` +
+            `<span class="rn">${nm}</span>` +
+            `<span class="rv">${regs[nm]}</span>` +
+            `<span class="ra">${escapeHtml(a)}</span>` +
+            `</div>`;
   }
   html += "</div>";
   cont.innerHTML = html;
@@ -630,10 +635,96 @@ async function refreshMemDump() {
             `<span class="ascii">${ascii}</span></div>`;
   }
   cont.innerHTML = html;
-  // double click hex → jump to source idx
+  // 双击单字节 → 跳到第一次 write
   cont.querySelectorAll("[data-addr]").forEach(span => {
     span.addEventListener("dblclick", () => {
       jumpToFirstWriteOfAddr(span.dataset.addr);
+    });
+  });
+  // 选择 + 右键: 拖动鼠标选 N 个字节, 右键 contextmenu 弹列表
+  setupMemSelection(cont);
+}
+
+function setupMemSelection(cont) {
+  let dragStart = null, dragEnd = null;
+  const mark = () => {
+    cont.querySelectorAll(".sel").forEach(e => e.classList.remove("sel"));
+    if (dragStart === null || dragEnd === null) return;
+    const [lo, hi] = dragStart < dragEnd ? [dragStart, dragEnd] : [dragEnd, dragStart];
+    const cells = [...cont.querySelectorAll("[data-addr]")];
+    for (const c of cells) {
+      const a = BigInt(c.dataset.addr);
+      if (a >= BigInt("0x" + lo.toString(16)) && a <= BigInt("0x" + hi.toString(16)))
+        c.classList.add("sel");
+    }
+  };
+  cont.addEventListener("mousedown", e => {
+    if (e.button !== 0) return;
+    const t = e.target.closest("[data-addr]");
+    if (!t) { dragStart = dragEnd = null; mark(); return; }
+    dragStart = parseInt(t.dataset.addr, 16);
+    dragEnd = dragStart;
+    mark();
+    e.preventDefault();
+  });
+  cont.addEventListener("mousemove", e => {
+    if (dragStart === null) return;
+    if (e.buttons !== 1) return;
+    const t = e.target.closest("[data-addr]");
+    if (!t) return;
+    dragEnd = parseInt(t.dataset.addr, 16);
+    mark();
+  });
+  cont.addEventListener("contextmenu", async e => {
+    e.preventDefault();
+    let lo, hi;
+    if (dragStart !== null && dragEnd !== null) {
+      [lo, hi] = dragStart < dragEnd ? [dragStart, dragEnd] : [dragEnd, dragStart];
+    } else {
+      const t = e.target.closest("[data-addr]");
+      if (!t) return;
+      lo = hi = parseInt(t.dataset.addr, 16);
+    }
+    showMemContextMenu(e.clientX, e.clientY, lo, hi - lo + 1);
+  });
+}
+
+async function showMemContextMenu(x, y, addr, size) {
+  // 打掉旧 menu
+  const old = document.getElementById("mem-ctx"); if (old) old.remove();
+  const menu = document.createElement("div");
+  menu.id = "mem-ctx"; menu.className = "ctx-menu";
+  menu.style.left = x + "px"; menu.style.top = y + "px";
+  menu.innerHTML = `<div class="dim" style="padding:4px 8px">addr=${"0x"+addr.toString(16)} size=${size}</div>` +
+    `<div class="ctx-loading dim" style="padding:4px 8px">scanning…</div>`;
+  document.body.appendChild(menu);
+  // 关闭逻辑
+  const close = () => { menu.remove(); document.removeEventListener("click", close); };
+  setTimeout(() => document.addEventListener("click", close), 100);
+  // fetch
+  const r = await api("/api/idxs-touching-range",
+    {addr: "0x" + addr.toString(16), size, cursor: STATE.cursor, limit: 30});
+  if (r.status !== "ready") {
+    menu.querySelector(".ctx-loading").textContent = "(building memshadow)";
+    return;
+  }
+  let html = `<div class="dim" style="padding:4px 8px">addr=${"0x"+addr.toString(16)} size=${size} · cursor #${STATE.cursor}</div>`;
+  html += `<div class="ctx-section">writers (${r.writers_total})</div>`;
+  if (r.writers_before.length === 0 && r.writers_after.length === 0)
+    html += `<div class="dim" style="padding:2px 12px">none</div>`;
+  for (const i of [...r.writers_before, ...r.writers_after])
+    html += `<div class="ctx-item" data-idx="${i}">→ #${i}</div>`;
+  html += `<div class="ctx-section">readers (${r.readers_total})</div>`;
+  if (r.readers_before.length === 0 && r.readers_after.length === 0)
+    html += `<div class="dim" style="padding:2px 12px">none</div>`;
+  for (const i of [...r.readers_before, ...r.readers_after])
+    html += `<div class="ctx-item" data-idx="${i}">→ #${i}</div>`;
+  menu.innerHTML = html;
+  menu.querySelectorAll(".ctx-item").forEach(el => {
+    el.addEventListener("click", ev => {
+      ev.stopPropagation();
+      setCursor(parseInt(el.dataset.idx), true);
+      close();
     });
   });
 }
