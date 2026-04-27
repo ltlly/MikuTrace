@@ -448,15 +448,29 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             loops.append({"members": [hex(p) for p in scc], "size": len(scc)})
         return {"status": "ready", "loops": loops, "count": len(loops)}
 
+    # cfg-svg 是大函数 graphviz 调用 (~5-30s), 同 fn 重复请求直接返回 cache.
+    # cache key = fn (timeout 不影响输出, dot 输出确定); cfg/pc_inst 是 readonly 一次构建.
+    _CFG_SVG_CACHE: dict = {}
+
     @app.get("/api/cfg-svg")
     def cfg_svg(fn: Optional[str] = None, timeout: int = 60):
         """IDA-style CFG: HTML-label per insn (HREF→<a xlink:href>, JS click + CSS 高亮),
         graphviz dot Sugiyama layout. 单函数 (fn 默认 current cursor 函数).
-        条件分支 → 绿色 taken / 红色 fall-through."""
+        条件分支 → 绿色 taken / 红色 fall-through.
+
+        Cached: 同 fn 第二次调用直接返回 (cfg/pc_inst 不变, 输出确定).
+        """
         if BG["cfg"]["status"] != "ready" or BG["pc_inst"]["status"] != "ready":
             _bg_run_combined()
             return {"status": "building",
                     "cfg": BG["cfg"]["status"], "pc_inst": BG["pc_inst"]["status"]}
+        cache_key = fn or "<all>"
+        cached = _CFG_SVG_CACHE.get(cache_key)
+        if cached is not None:
+            return {"status": "ready", "svg": cached["svg"], "fn": fn,
+                    "block_count": cached["block_count"],
+                    "total_block_count": cached["total_block_count"],
+                    "cached": True}
         c = BG["cfg"]["data"]; pc_inst = BG["pc_inst"]["data"]
         m = t.meta.module
         base = m.base if m else 0
@@ -636,9 +650,11 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         except subprocess.TimeoutExpired:
             return {"status": "error", "err": f"dot 超时 ({timeout}s) — 增大 settings.dotTimeout 或减小 fn 范围"}
 
-        return {"status": "ready", "svg": svg, "fn": fn,
-                "block_count": len(included),
-                "total_block_count": len(c.blocks)}
+        result = {"svg": svg,
+                  "block_count": len(included),
+                  "total_block_count": len(c.blocks)}
+        _CFG_SVG_CACHE[cache_key] = result
+        return {"status": "ready", "fn": fn, **result}
 
     # backtrace lazy build: 一次扫 trace 找所有 bl/blr/ret 位置, 存 (idx, kind),
     # 之后 backtrace(idx) 只需在事件列表里 bisect + 重放
