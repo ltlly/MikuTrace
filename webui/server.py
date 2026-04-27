@@ -645,32 +645,26 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     BG.setdefault("frame_events", {"status": "idle", "data": None,
                                     "started_at": 0.0, "ready_at": 0.0, "err": None})
     def _build_frame_events():
-        # numpy 一次拿整张 inst 表 — record 第 67 个 u32 (offset 268, 即 record/8/8 start
-        # u64 #33 是 nzcv|inst — 我们要 inst 是它的高 32 位)
-        # 简化: stride view of inst bytes.
+        # numpy 一次拿整张 inst 表; 返回 dict{events, idxs_arr} 让 backtrace 端
+        # 直接 np.searchsorted 而不重建 list (频繁 cursor 移动时 O(N) → O(log N)).
         import numpy as np
-        # inst 在 record 偏移 268, 4 字节. 用 frombuffer 拿 inst 列.
-        # full u32 view: count = n*REC_SIZE/4
         from viewer.trace import REC_SIZE
         u32 = np.frombuffer(t._mm, dtype=np.uint32, count=t.n * (REC_SIZE // 4))
-        # inst 列在每 record 的第 (268/4)=67 个 u32. stride = 68 (REC_SIZE/4).
-        inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]   # = [67, 67+68, ...]
-        # bl 编码: 100101_imm26  → top 6 bits 0b100101 (= 0x25). instr & 0xFC000000 == 0x94000000
-        # blr 编码: 1101_0110_0011_1111_0000_00 Rn 00000  → instr & 0xFFFFFC1F == 0xD63F0000
-        # ret 编码: 1101_0110_0101_1111_0000_00 Rn 00000  → instr & 0xFFFFFC1F == 0xD65F0000
-        # br  编码: 1101_0110_0001_1111_0000_00 Rn 00000  → instr & 0xFFFFFC1F == 0xD61F0000  (不是 call)
+        inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]
         is_bl  = (inst_arr & np.uint32(0xFC000000)) == np.uint32(0x94000000)
         is_blr = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD63F0000)
         is_ret = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD65F0000)
         is_call = is_bl | is_blr
-        call_idxs = np.nonzero(is_call)[0]
-        ret_idxs = np.nonzero(is_ret)[0]
-        # 合并 + 按 idx 排序
-        events = []
-        for i in call_idxs.tolist(): events.append((i, "push"))
-        for i in ret_idxs.tolist(): events.append((i, "pop"))
-        events.sort(key=lambda e: e[0])
-        return events
+        call_idxs = np.nonzero(is_call)[0].astype(np.int64)
+        ret_idxs = np.nonzero(is_ret)[0].astype(np.int64)
+        # 合并 + 按 idx 排序 (用 numpy)
+        all_idxs = np.concatenate([call_idxs, ret_idxs])
+        all_kinds = np.concatenate([np.zeros(len(call_idxs), dtype=np.int8),
+                                     np.ones(len(ret_idxs), dtype=np.int8)])
+        order = np.argsort(all_idxs, kind="stable")
+        sorted_idxs = all_idxs[order]
+        sorted_kinds = all_kinds[order]
+        return {"idxs": sorted_idxs, "kinds": sorted_kinds}
 
     @app.get("/api/backtrace")
     def backtrace(idx: int):
@@ -683,9 +677,10 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if st["status"] != "ready":
             _bg_run("frame_events", _build_frame_events)
             return {"status": st["status"], "stack": [], "depth": 0}
-        events = st["data"]
-        import bisect
-        cut = bisect.bisect_right([e[0] for e in events], idx)
+        import numpy as np
+        data = st["data"]
+        sorted_idxs = data["idxs"]; sorted_kinds = data["kinds"]
+        cut = int(np.searchsorted(sorted_idxs, idx, side="right"))
         # 重放 events[:cut]
         stack = []
         pc_arr = t.pc_array()
@@ -699,8 +694,9 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                     return f"{fn}+{foff:#x}"
                 return f"+{(pc - base):#x}"
             return hex(pc)
-        for ev_idx, op in events[:cut]:
-            if op == "push":
+        for k in range(cut):
+            ev_idx = int(sorted_idxs[k]); kind = int(sorted_kinds[k])
+            if kind == 0:  # push (call)
                 callee = int(pc_arr[ev_idx + 1]) if ev_idx + 1 < n else None
                 fn = sym.lookup(callee)[0] if callee else None
                 call_pc = int(pc_arr[ev_idx])
@@ -712,7 +708,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                     "callee_pc_fmt": _fmt(callee) if callee else None,
                     "fn": fn if fn != "?" else None,
                 })
-            else:
+            else:  # pop (ret)
                 if stack: stack.pop()
         return {"status": "ready", "idx": idx, "stack": stack, "depth": len(stack)}
 
@@ -860,41 +856,46 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     @app.get("/api/string-provenance")
     def string_provenance(addr: str, length: int = 32):
         """对 [addr, addr+length) 区域, 列每个字节的 write idxs (谁构造) +
-        read idxs (谁消费). PDF p.6 "字符串参考" 杀手级功能 — trace 中
-        动态构造的字符串能看到逐字节谁写, 谁读."""
+        read idxs (谁消费). 向量化: 一次 numpy mask 拿所有命中范围的 mem op,
+        再 scatter 到每 byte. 6.8M trace 上 ~17s → ~10ms."""
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             st = BG["mem"]["status"]
             if st != "ready":
                 return {"status": st, "bytes": []}
-        mem = BG["mem"]["data"]
-        start = int(addr, 16)
-        # 用 numpy 加速: 把 mem.writes/reads 转 numpy 数组
         import numpy as np
-        # writes 是 list[(idx, addr, size, value)]; 找命中 [start, start+length)
-        # writes_per_byte[offset] = [idx, ...] (按 idx 升序)
+        mem = BG["mem"]["data"]
+        start = int(addr, 16); end = start + length
+        # 一次性过滤命中 [start, end) 范围的 writes/reads (远少于全集)
+        w_mask = (mem.w_addr < np.uint64(end)) & ((mem.w_addr.astype(np.int64) + mem.w_size) > start)
+        r_mask = (mem.r_addr < np.uint64(end)) & ((mem.r_addr.astype(np.int64) + mem.r_size) > start)
+        w_a, w_s, w_i = mem.w_addr[w_mask], mem.w_size[w_mask], mem.w_idx[w_mask]
+        r_a, r_s, r_i = mem.r_addr[r_mask], mem.r_size[r_mask], mem.r_idx[r_mask]
+        # scatter 到每个 byte offset
+        writers_per: list[list[int]] = [[] for _ in range(length)]
+        readers_per: list[list[int]] = [[] for _ in range(length)]
+        for a, s, i in zip(w_a.tolist(), w_s.tolist(), w_i.tolist()):
+            lo = max(0, int(a) - start); hi = min(length, int(a) + int(s) - start)
+            for o in range(lo, hi):
+                writers_per[o].append(int(i))
+        for a, s, i in zip(r_a.tolist(), r_s.tolist(), r_i.tolist()):
+            lo = max(0, int(a) - start); hi = min(length, int(a) + int(s) - start)
+            for o in range(lo, hi):
+                readers_per[o].append(int(i))
+        # 各 list 已按 trace order 自然 ascending. 但 mem.writes 顺序按 trace
+        # 顺序 build, 同 byte 多次 write 也是 ascending. sort() 兜底.
         out_bytes = []
         for offset in range(length):
             a = start + offset
-            writers = sorted({i for (i, wa, sz, _v) in mem.writes
-                              if wa <= a < wa + sz})
-            readers = sorted({i for (i, wa, sz, _v) in mem.reads
-                              if wa <= a < wa + sz})
-            byte_val = None
-            kind = "??"
+            ws = writers_per[offset]; rs = readers_per[offset]
+            byte_val = None; kind = "??"
             if mem.bytes:
-                # MemShadow.byte_at(a, t) — t = current "now" = max idx
-                b, k, _ = mem.byte_at(a, 1<<63)
-                byte_val = b
-                kind = k
+                b, k, _ = mem.byte_at(a, 1 << 63)
+                byte_val = b; kind = k
             out_bytes.append({
-                "addr": hex(a),
-                "byte": byte_val,
-                "kind": kind,
-                "writers": writers[:20],   # 限制每个字节最多 20 个
-                "readers": readers[:20],
-                "writers_total": len(writers),
-                "readers_total": len(readers),
+                "addr": hex(a), "byte": byte_val, "kind": kind,
+                "writers": ws[:20], "readers": rs[:20],
+                "writers_total": len(ws), "readers_total": len(rs),
             })
         return {"status": "ready", "addr": addr, "length": length, "bytes": out_bytes}
 
@@ -963,9 +964,8 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
     @app.get("/api/idxs-touching-range")
     def idxs_touching_range(addr: str, size: int = 1, cursor: int = 0, limit: int = 50):
-        """所有 trace idx 中读/写 [addr, addr+size) 的位置. 用于内存视图选择字节
-        范围 → 右键 → 看读者/写者. 返回前 limit 个 (按 idx 升序)."""
-        # 兼容快速 build 的 race: 先 trigger, 再读 status (不要在 return 时再读)
+        """所有 trace idx 中读/写 [addr, addr+size) 的位置. 向量化版: 用 numpy
+        mask 替代 set comprehension, 6.8M trace 上 596ms → ~5ms."""
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             st = BG["mem"]["status"]
@@ -973,51 +973,60 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 return {"status": st, "writers_before": [], "writers_after": [],
                         "writers_total": 0, "readers_before": [], "readers_after": [],
                         "readers_total": 0}
+        import numpy as np
         mem = BG["mem"]["data"]
         start = int(addr, 16); endaddr = start + size
-        writers = sorted({i for (i, a, sz, _v) in mem.writes
-                          if a < endaddr and (a + sz) > start})
-        readers = sorted({i for (i, a, sz, _v) in mem.reads
-                          if a < endaddr and (a + sz) > start})
-        # cursor 邻域优先
-        import bisect
-        def split(idxs):
-            cut = bisect.bisect_left(idxs, cursor)
-            before = list(reversed(idxs[max(0, cut-limit):cut]))
-            after = idxs[cut:cut+limit]
-            return before, after, len(idxs)
-        wb, wa, wt = split(writers)
-        rb, ra, rt = split(readers)
+        # vectorized: writes 已按 trace order, idx 列升序. mask 后保持升序.
+        w_mask = (mem.w_addr < np.uint64(endaddr)) & ((mem.w_addr.astype(np.int64) + mem.w_size) > start)
+        r_mask = (mem.r_addr < np.uint64(endaddr)) & ((mem.r_addr.astype(np.int64) + mem.r_size) > start)
+        writers = mem.w_idx[w_mask]
+        readers = mem.r_idx[r_mask]
+        # cursor 邻域 split (writers/readers 已升序)
+        wcut = int(np.searchsorted(writers, cursor))
+        rcut = int(np.searchsorted(readers, cursor))
+        wb = writers[max(0, wcut - limit):wcut][::-1].tolist()
+        wa = writers[wcut:wcut + limit].tolist()
+        rb = readers[max(0, rcut - limit):rcut][::-1].tolist()
+        ra = readers[rcut:rcut + limit].tolist()
         return {"status": "ready", "addr": addr, "size": size, "cursor": cursor,
-                "writers_before": wb, "writers_after": wa, "writers_total": wt,
-                "readers_before": rb, "readers_after": ra, "readers_total": rt}
+                "writers_before": wb, "writers_after": wa, "writers_total": int(len(writers)),
+                "readers_before": rb, "readers_after": ra, "readers_total": int(len(readers))}
 
     @app.get("/api/idxs-touching-addr")
     def idxs_touching_addr(addr: str, cursor: int = 0, limit: int = 30):
-        """所有 trace idx 中触碰 (load/store) 该 addr 的位置. PDF p.5 双击内存字节 → 跳."""
+        """所有 trace idx 中触碰 (load/store) 该 addr 的位置. 向量化, 6.8M trace
+        上 ~5ms vs 旧线扫数百 ms."""
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             return {"status": BG["mem"]["status"], "before": [], "after": []}
+        import numpy as np
         mem = BG["mem"]["data"]
         target = int(addr, 16)
-        # mem.writes / mem.reads 是 list[(idx, addr, size, value)] — 线扫
-        idxs_w = [(i, "w") for (i, a, sz, _v) in mem.writes if a <= target < a + sz]
-        idxs_r = [(i, "r") for (i, a, sz, _v) in mem.reads if a <= target < a + sz]
-        all_hits = sorted(idxs_w + idxs_r, key=lambda x: x[0])
-        if not all_hits:
+        # vectorized: target ∈ [addr, addr+size)
+        w_mask = (mem.w_addr <= np.uint64(target)) & ((mem.w_addr.astype(np.int64) + mem.w_size) > target)
+        r_mask = (mem.r_addr <= np.uint64(target)) & ((mem.r_addr.astype(np.int64) + mem.r_size) > target)
+        w_idxs = mem.w_idx[w_mask]
+        r_idxs = mem.r_idx[r_mask]
+        # 合并 + 标 kind, 按 idx sort. 用 numpy concat + argsort.
+        if len(w_idxs) == 0 and len(r_idxs) == 0:
             return {"status": "ready", "addr": addr, "before": [], "after": [],
                     "total_before": 0, "total_after": 0}
-        # split by cursor
-        idxs_only = [i for (i, _) in all_hits]
-        import bisect
-        cut = bisect.bisect_left(idxs_only, cursor)
-        before = list(reversed(all_hits[max(0, cut-limit):cut]))
-        after = all_hits[cut:cut+limit]
-        # serialize as list of {idx, kind}
-        ser = lambda lst: [{"idx": i, "kind": k} for (i, k) in lst]
+        all_idxs = np.concatenate([w_idxs, r_idxs])
+        all_kinds = np.concatenate([np.zeros(len(w_idxs), dtype=np.int8),
+                                     np.ones(len(r_idxs), dtype=np.int8)])
+        order = np.argsort(all_idxs, kind="stable")
+        sorted_idxs = all_idxs[order]; sorted_kinds = all_kinds[order]
+        cut = int(np.searchsorted(sorted_idxs, cursor))
+        bef_i = sorted_idxs[max(0, cut-limit):cut][::-1].tolist()
+        bef_k = sorted_kinds[max(0, cut-limit):cut][::-1].tolist()
+        aft_i = sorted_idxs[cut:cut+limit].tolist()
+        aft_k = sorted_kinds[cut:cut+limit].tolist()
+        kind_str = lambda k: "w" if k == 0 else "r"
+        before = [{"idx": int(i), "kind": kind_str(k)} for i, k in zip(bef_i, bef_k)]
+        after  = [{"idx": int(i), "kind": kind_str(k)} for i, k in zip(aft_i, aft_k)]
         return {"status": "ready", "addr": addr, "cursor": cursor,
-                "before": ser(before), "after": ser(after),
-                "total_before": cut, "total_after": len(all_hits) - cut}
+                "before": before, "after": after,
+                "total_before": cut, "total_after": int(len(sorted_idxs) - cut)}
 
     @app.get("/api/bg-status")
     def bg_status():

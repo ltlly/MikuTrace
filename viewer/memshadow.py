@@ -80,6 +80,26 @@ class MemShadow:
                     if val is None: continue
                     self.reads.append((i, addr, sz, val))
                     self._splat_bytes(addr, sz, val, i, "r")
+        # numpy 视图: 给 idxs-touching-* 端点向量化查询用. 6.8M trace 上
+        # 596ms set comprehension → ~5ms vectorized mask.
+        # writes/reads 已按 trace order build, w_idx/r_idx 自然 ascending.
+        import numpy as np
+        if self.writes:
+            self.w_idx  = np.array([x[0] for x in self.writes], dtype=np.int64)
+            self.w_addr = np.array([x[1] for x in self.writes], dtype=np.uint64)
+            self.w_size = np.array([x[2] for x in self.writes], dtype=np.int32)
+        else:
+            self.w_idx = np.empty(0, dtype=np.int64)
+            self.w_addr = np.empty(0, dtype=np.uint64)
+            self.w_size = np.empty(0, dtype=np.int32)
+        if self.reads:
+            self.r_idx  = np.array([x[0] for x in self.reads], dtype=np.int64)
+            self.r_addr = np.array([x[1] for x in self.reads], dtype=np.uint64)
+            self.r_size = np.array([x[2] for x in self.reads], dtype=np.int32)
+        else:
+            self.r_idx = np.empty(0, dtype=np.int64)
+            self.r_addr = np.empty(0, dtype=np.uint64)
+            self.r_size = np.empty(0, dtype=np.int32)
         self.built = True
 
     def _splat_bytes(self, addr: int, sz: int, val: int, idx: int, kind: str):
