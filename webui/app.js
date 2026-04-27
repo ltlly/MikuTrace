@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = {
   stringsMinLen: 4,
   memDumpLines: 16,        // 16 行 × 16 字节
   backtraceMaxDepth: 1000,
+  dotTimeout: 60,          // graphviz dot subprocess 超时秒
   // 显示格式: 'abs' = 绝对地址 0x6d6e0e4820
   //          'fnoff' = func+offset = doCommandNative+0xb0
   //          'soFnOff' = libsgmainso@func+offset
@@ -98,6 +99,9 @@ function buildVirtualList() {
   const wantH = STATE.totalRecords * STATE.rowHeight;
   STATE.usingDecoupledScroll = wantH > SAFE_MAX_H;
   inner.style.height = Math.min(wantH, SAFE_MAX_H) + "px";
+  // 防溢出: rows abs 位置可能略超 inner.height (decoupled 边界), 用 overflow:hidden
+  // 阻止溢出渲染到下方 #bottom-tabs (用户图 #18 重叠).
+  inner.style.overflow = "hidden";
   inner.id = "stream-inner";
   STATE.viewportStartIdx = 0;
   stream.appendChild(inner);
@@ -201,13 +205,17 @@ function viewportIdxRange() {
   const overscan = 10;
   let startIdx, endIdx;
   if (STATE.usingDecoupledScroll) {
-    // scrollbar 仅表 percentage, 实际可见 idx 由 % × totalRecords 算
     const visible = Math.ceil(viewH / STATE.rowHeight);
     const scrollMax = Math.max(1, innerH - viewH);
     const pct = Math.min(1, scrollPos / scrollMax);
     const baseIdx = Math.floor(pct * Math.max(0, STATE.totalRecords - visible));
     startIdx = Math.max(0, baseIdx - overscan);
     endIdx = Math.min(STATE.totalRecords, baseIdx + visible + overscan);
+    // 限制 endIdx 让所有 row top + rowHeight ≤ inner.height — 否则末尾行
+    // 渲染到 inner 之外, overflow 到 #bottom-tabs (用户图 #18 重叠).
+    // top(i) = scrollPos + (i - startIdx) * rowHeight, 要求 ≤ innerH - rowHeight
+    const maxRowsBelowScroll = Math.floor((innerH - scrollPos) / STATE.rowHeight);
+    endIdx = Math.min(endIdx, startIdx + maxRowsBelowScroll);
   } else {
     startIdx = Math.max(0, Math.floor(scrollPos / STATE.rowHeight) - overscan);
     endIdx = Math.min(STATE.totalRecords,
@@ -437,12 +445,13 @@ function renderRegs(r) {
 // ---------------- CFG (graphviz SVG) ----------------
 async function pollCFG(fn = null) {
   $("cfg-info").textContent = fn ? `loading ${fn}…` : "loading…";
-  // 立即 sync dropdown 显示, 不等 ready
   const sel0 = $("cfg-func-select");
   if (sel0) sel0.value = fn || "";
   let tries = 0;
   while (true) {
-    const r = await api("/api/cfg-svg", fn ? {fn} : {});
+    const params = {timeout: STATE.settings.dotTimeout || 60};
+    if (fn) params.fn = fn;
+    const r = await api("/api/cfg-svg", params);
     if (r.status === "ready") {
       STATE.cfgFunc = fn;
       embedCfgSvg(r);
@@ -733,12 +742,13 @@ async function refreshBacktrace() {
     if (r.stack.length === 0) {
       html += `<div class="dim">(top of stack)</div>`;
     } else {
-      // 最深层在最上 (call 顺序倒序)
       for (let i = r.stack.length - 1; i >= 0; i--) {
         const f = r.stack[i];
         const fname = f.fn || "?";
+        // 用 _fmt 后端格式化的相对地址 (用户图 #13 抱怨绝对地址)
+        const callSite = f.call_pc_fmt || f.call_pc;
         html += `<div class="lp-row" data-idx="${f.call_site_idx}">` +
-                `<span>${escapeHtml(fname)} ← ${f.call_pc}</span>` +
+                `<span>${escapeHtml(fname)} ← ${escapeHtml(callSite)}</span>` +
                 `<span class="meta">#${f.call_site_idx}</span></div>`;
       }
     }
@@ -1333,6 +1343,7 @@ function initSettingsTab() {
     ${fmt("stringsMinLen", "Strings min length", "number", "min=1")}
     ${fmt("memDumpLines", "Mem dump lines (×16 bytes)", "number", "min=1")}
     ${fmt("backtraceMaxDepth", "Backtrace max depth", "number", "min=1")}
+    ${fmt("dotTimeout", "graphviz dot timeout (秒)", "number", "min=5")}
     <div class="set-row" style="margin-top:8px">
       <button class="btn" id="set-reset">重置默认</button>
       <span id="set-status" class="dim"></span>

@@ -449,7 +449,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         return {"status": "ready", "loops": loops, "count": len(loops)}
 
     @app.get("/api/cfg-svg")
-    def cfg_svg(fn: Optional[str] = None):
+    def cfg_svg(fn: Optional[str] = None, timeout: int = 60):
         """IDA-style CFG: HTML-label per insn (HREF→<a xlink:href>, JS click + CSS 高亮),
         graphviz dot Sugiyama layout. 单函数 (fn 默认 current cursor 函数).
         条件分支 → 绿色 taken / 红色 fall-through."""
@@ -627,14 +627,14 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         import subprocess
         try:
             r = subprocess.run(["dot", "-Tsvg"], input=dot_text, text=True,
-                               capture_output=True, timeout=20)
+                               capture_output=True, timeout=max(5, timeout))
             if r.returncode != 0:
                 return {"status": "error", "err": r.stderr[:500]}
             svg = r.stdout
         except FileNotFoundError:
             return {"status": "error", "err": "graphviz `dot` 没装"}
         except subprocess.TimeoutExpired:
-            return {"status": "error", "err": "dot 超时"}
+            return {"status": "error", "err": f"dot 超时 ({timeout}s) — 增大 settings.dotTimeout 或减小 fn 范围"}
 
         return {"status": "ready", "svg": svg, "fn": fn,
                 "block_count": len(included),
@@ -689,15 +689,27 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         # 重放 events[:cut]
         stack = []
         pc_arr = t.pc_array()
+        m = t.meta.module
+        base = m.base if m else 0
+        def _fmt(pc):
+            if pc is None: return None
+            if base and base <= pc < base + (m.size if m else 0):
+                fn, foff = sym.lookup(pc)
+                if fn and fn != "?":
+                    return f"{fn}+{foff:#x}"
+                return f"+{(pc - base):#x}"
+            return hex(pc)
         for ev_idx, op in events[:cut]:
             if op == "push":
-                # callee_pc = next executed pc
                 callee = int(pc_arr[ev_idx + 1]) if ev_idx + 1 < n else None
                 fn = sym.lookup(callee)[0] if callee else None
+                call_pc = int(pc_arr[ev_idx])
                 stack.append({
                     "call_site_idx": ev_idx,
-                    "call_pc": hex(int(pc_arr[ev_idx])),
+                    "call_pc": hex(call_pc),
+                    "call_pc_fmt": _fmt(call_pc),
                     "callee_pc": hex(callee) if callee else None,
+                    "callee_pc_fmt": _fmt(callee) if callee else None,
                     "fn": fn if fn != "?" else None,
                 })
             else:

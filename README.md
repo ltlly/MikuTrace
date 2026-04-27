@@ -100,14 +100,86 @@ traces/run1/
 ./tracemiku web traces/run1 --no-browser          # 远程 / SSH 隧道场景
 ```
 
-**布局** (IDA 风格, 单 tab 整合):
-- **左**: trace 反汇编流, viewport-only 虚拟列表, 200 万行丝滑滚, 每条带 PC/asm/func+offset
-- **右**: CFG (cytoscape.js + dagre layout), 当前指令所在 block 蓝框高亮 + 自动 pan, hot block 橙边
-- **下**: tabs — regs (变化项红色) / block 详情 / taint / search / strings
-- **快捷键**: `j/k` 单步, `g/G` 头/尾, `:N` 跳转 #N, `/` 搜索, `f` 正向污点, `b` 反向污点
-- **联动**: click 指令行 → CFG 自动高亮+pan; click block → trace 跳到该 block 离当前光标最近的一次执行
+### 布局 (IDA 风格)
 
-后端 FastAPI + 前端 vanilla JS (无构建工具, cytoscape.js CDN). 单进程, mmap trace 在后端.
+```
+┌──────┬──────────┬──────────────────┬──────────┬──────┐
+│ vert │ Func     │ Disassembly      │ CFG /    │ vert │
+│ tabs │ list /   │ (asm stream)     │ Regs     │ tabs │
+│      │ Backtrac │                  │          │      │
+│      │ Strings  ├──────────────────┤          │      │
+│ Func │ Taint    │ Memory / Call    │          │ Graph│
+│ Back │ XRef     │ Tree / Nav /     │          │ Reg  │
+│ Str  │ Settings │ Trace-for-PC     │          │      │
+│ Taint│          │                  │          │      │
+│ XRef │          │                  │          │      │
+│ Set  │          │                  │          │      │
+└──────┴──────────┴──────────────────┴──────────┴──────┘
+                  ┌─────────── status ──────────────────┐
+                  └─────────────────────────────────────┘
+```
+
+### 关键功能
+
+**反汇编流** (中间):
+- 每条带 `计数器圆点 #idx 地址 func+offset asm ; 注释`
+- **计数器圆点** 颜色按执行次数: 灰=1次/蓝=2-9/绿=10-99/黄=100-999/红=1000+
+- ASM 中**寄存器名** (x0/sp/lr...): hover 显示值, 双击跳上次写, 右键菜单 (jump CFG/Memory at value, taint)
+- 大 trace (>1.6M 行) 自动 decoupled scroll 突破浏览器 33M-px div 上限
+
+**CFG** (右):
+- graphviz `dot -Tsvg` IDA 风布局, 单函数模式 (cursor 跨函数自动切)
+- 每条 ASM 是 `<a xlink:href="#insn_<pc>">`, click 跳 trace, cursor sync 高亮
+- 分支配色: 绿 cond-taken / 红 cond-fall-through / 蓝 uncond / 紫 call-return
+- 调用返回边连接 caller bl block ↔ post-call block (用调用栈推断)
+- 循环检测 (Tarjan SCC) + 不同 loop 不同 hue 边框
+- 拖动平移 / Ctrl+滚轮缩放 / wheel 滚动
+
+**寄存器** (右切 tab):
+- pwndbg 风注释: `[func+0xN]` / `→ "string"` / `[SP+0xN]` / `(JavaHeap)` / `(libart?)`
+- 多级 deref, 变化的 reg 红色高亮 (vs idx-1)
+
+**内存** (中下):
+- 输入 `0x...` 或寄存器名 (sp/x0/...) → hex+ascii dump
+- 'w' 写过的字节绿色, 双击跳第一次 write
+- 拖选字节范围 → 右键看 readers/writers + 跳转
+
+**Backtrace** (左 tab):
+- cursor 处的 call stack: 每帧是未 ret 的 bl/blr, 最上面最深 callee
+- click frame 跳调用点
+
+**Strings** (左 tab):
+- 全局 / cursor 时刻已构造的 (toggle)
+- 双击 → 逐字节 provenance: 谁 write, 谁 read
+
+**Taint** (左 tab):
+- 默认填充当前 insn 的 dst reg
+- 支持 abort 取消; cursor 变化只更新提示, 不重跑
+
+**Cross Ref** (左 tab):
+- 当前 PC 在 trace 中所有被执行的位置 (= PC 执行历史)
+
+**Settings** (左 tab):
+- 地址显示格式: 绝对 / func+offset / so@func+offset
+- 各 limit 可调 (taint/search/strings/idxs-for-pc/mem 行数 etc), 0=不限
+- localStorage 持久化
+
+### 快捷键
+| 键 | 动作 |
+|---|---|
+| j/k 或 ↓/↑ | 单步 |
+| PgDn/PgUp | 翻 20 条 |
+| g / G | 跳头 / 尾 |
+| `:N` | 跳到 #N |
+| 鼠标点 trace 行 | setCursor |
+| 鼠标点 CFG 块/insn | 跳 trace |
+| 双击寄存器名 | 跳上次写 |
+| 右键寄存器 | 菜单 (CFG/Mem/taint) |
+| 右键内存字节 | readers/writers |
+
+后端 FastAPI + 前端 vanilla JS (无构建工具, graphviz dot 服务端渲染). 单进程, mmap trace 在后端, **CFG 子进程** (避 GIL).
+
+**性能**: numpy `pc_array()` 零拷贝映射 mmap PC 列, `idxs-for-pc` 322ms → 14ms (23x). 100 并发 `/api/record` 2656 req/s.
 
 ## TUI 操作（中文）
 
