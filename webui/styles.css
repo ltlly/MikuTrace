@@ -305,6 +305,35 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 }
 .tfp-row .tfp-jump:hover { text-decoration: underline; }
 
+/* Settings tab */
+.set-section {
+  color: var(--accent); font-weight: bold;
+  padding: 6px 0 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.set-row {
+  display: grid; grid-template-columns: 120px 1fr;
+  gap: 8px; padding: 2px 0; align-items: center;
+}
+.set-row label { color: var(--dim); font-size: 11px; }
+.set-row input[type=number], .set-row select {
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 3px;
+  padding: 2px 6px; font-size: 11px; font-family: inherit;
+}
+
+/* asm: 寄存器操作数 — hover 显示值, dblclick 跳到 def, 右键菜单 */
+.row-insn .op-reg {
+  cursor: help;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.row-insn .op-reg:hover {
+  background: var(--hl2);
+  outline: 1px dotted var(--warn);
+}
+
 .btn {
   background: var(--bg3); color: var(--fg);
   border: 1px solid var(--border); border-radius: 3px;

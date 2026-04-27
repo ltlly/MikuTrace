@@ -19,13 +19,14 @@
 </header>
 
 <main id="layout">
-  <!-- 左侧 vertical tab strip — 旋转文字显示全名 -->
+  <!-- 左侧 vertical tab strip — 旋转文字显示全名. title=完整说明 -->
   <aside id="left-tabs">
-    <button class="vtab active" data-vtab="funcs"   title="Functions">Functions</button>
-    <button class="vtab"        data-vtab="back"    title="Backtrace">Backtrace</button>
-    <button class="vtab"        data-vtab="strings" title="Strings">Strings</button>
-    <button class="vtab"        data-vtab="taint"   title="Taint">Taint</button>
-    <button class="vtab"        data-vtab="xref"    title="Cross Reference">Cross Ref</button>
+    <button class="vtab active" data-vtab="funcs"   title="函数列表 — 列出 trace 中出现的所有函数, click 切到该函数 CFG">Functions</button>
+    <button class="vtab"        data-vtab="back"    title="调用栈 — 当前 cursor 处的 call stack: 每帧是一次 bl/blr 还未 ret, 最上面是最深层 callee. click 跳到调用点">Backtrace</button>
+    <button class="vtab"        data-vtab="strings" title="字符串 — 当前 cursor 内存中可见的 ASCII 字符串. 双击查看 provenance (谁逐字节写, 谁读)">Strings</button>
+    <button class="vtab"        data-vtab="taint"   title="污点追踪 — 从 cursor 处的某寄存器开始, forward 看后续被污染的指令, backward 找该值的来源">Taint</button>
+    <button class="vtab"        data-vtab="xref"    title="交叉引用 — 当前 cursor 的 PC 在 trace 中所有被执行的位置 (= PC 执行历史)">Cross Ref</button>
+    <button class="vtab"        data-vtab="settings" title="设置: 限制条数, 地址显示格式">Settings</button>
   </aside>
 
   <!-- 左侧 panel content (随 vtab 切换). 各子 panel 永久保留, 切换只 show/hide -->
@@ -41,6 +42,7 @@
       <div class="lp-tab"        data-tab="strings" id="lp-strings"></div>
       <div class="lp-tab"        data-tab="taint"   id="lp-taint"></div>
       <div class="lp-tab"        data-tab="xref"    id="lp-xref"></div>
+      <div class="lp-tab"        data-tab="settings" id="lp-settings"></div>
     </div>
   </section>
 

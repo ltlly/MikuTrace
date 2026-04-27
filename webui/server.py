@@ -326,6 +326,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             "asm": f"{d.mnemonic} {d.op_str}",
             "regs": regs, "prev_regs": prev_regs,
             "regs_annotated": regs_annotated,
+            "regs_def": list(d.regs_def), "regs_use": list(d.regs_use),
             "exec_count": exec_count,
             "block_pc": bpc, "cfg_status": BG["cfg"]["status"],
             "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
@@ -806,17 +807,35 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         return {"count": len(rows), "from": start, "reg": reg, "chain": rows}
 
     @app.get("/api/strings")
-    def strings_api(min_len: int = 4, q: str = ""):
+    def strings_api(min_len: int = 4, q: str = "", cursor: int = -1, limit: int = 0):
+        """字符串列表. cursor>=0 时按 cursor 时刻的内存状态过滤
+        (只显示在 cursor 时刻 已 written 的字节构成的字符串).
+        limit=0 → 不限."""
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             st = BG["mem"]["status"]
             if st != "ready":
                 return {"status": st, "strings": []}
-        results = BG["mem"]["data"].find_strings(min_len=min_len)
+        mem = BG["mem"]["data"]
+        if cursor < 0:
+            results = mem.find_strings(min_len=min_len)
+        else:
+            # 按 cursor 时刻过滤: 字符串的所有字节必须在 cursor 之前已被写入
+            all_results = mem.find_strings(min_len=min_len)
+            results = []
+            for addr, s in all_results:
+                ok = True
+                for o in range(len(s)):
+                    b, kind, src = mem.byte_at(addr + o, cursor)
+                    if b is None or src is None or src > cursor:
+                        ok = False; break
+                if ok: results.append((addr, s))
         if q:
             ql = q.lower()
             results = [(a, s) for a, s in results if ql in s.lower()]
-        return {"status": "ready", "count": len(results),
+        if limit > 0:
+            results = results[:limit]
+        return {"status": "ready", "count": len(results), "cursor": cursor,
                 "strings": [{"addr": hex(a), "len": len(s), "str": s} for a, s in results]}
 
     @app.get("/api/string-provenance")
@@ -875,6 +894,39 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             out.append({"addr": hex(a), "byte": b, "kind": kind,
                         "src_idx": src_idx})
         return {"status": "ready", "addr": addr, "count": count, "bytes": out}
+
+    @app.get("/api/last-write-of-reg")
+    def last_write_of_reg(cursor: int, reg: str):
+        """返回 cursor 之前最近一次该 reg 的值变化 (def-use 起点).
+        线性扫 backwards from cursor-1."""
+        if reg not in ALL_REGS:
+            return {"status": "error", "err": f"unknown reg {reg}"}
+        n = len(t)
+        if cursor <= 0 or cursor > n: return {"status": "ready", "idx": None}
+        cur_val = t.record(cursor).reg(reg) if cursor < n else None
+        # scan backward
+        i = cursor - 1
+        while i >= 0:
+            v = t.record(i).reg(reg)
+            if v != cur_val:
+                # idx i+1 是写入此 reg 的指令 (因为 reg 在 i+1 时变了)
+                # 但典型语义: 我们要回到 idx where reg 等于当前值的 FIRST 时刻
+                return {"status": "ready", "idx": i + 1, "value": hex(cur_val) if cur_val is not None else None}
+            i -= 1
+        return {"status": "ready", "idx": 0, "value": hex(cur_val) if cur_val is not None else None}
+
+    @app.get("/api/reg-value-at")
+    def reg_value_at(idx: int, reg: str):
+        """读 idx 处 reg 的当前值 + classify 注释."""
+        if idx < 0 or idx >= len(t): raise HTTPException(404)
+        if reg not in ALL_REGS: return {"status": "error", "err": f"unknown reg {reg}"}
+        r = t.record(idx)
+        v = r.reg(reg)
+        ann = ""
+        if BG["mem"]["status"] == "ready":
+            ann = _classify_reg_value(v, idx, sp=r.reg("sp"))
+        return {"status": "ready", "idx": idx, "reg": reg,
+                "value": hex(v), "annotation": ann}
 
     @app.get("/api/idxs-touching-range")
     def idxs_touching_range(addr: str, size: int = 1, cursor: int = 0, limit: int = 50):

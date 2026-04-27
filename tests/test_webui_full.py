@@ -364,6 +364,47 @@ def test_mem_dump_endpoint(client):
         assert "addr" in b and "byte" in b and "kind" in b
 
 
+def test_last_write_of_reg(client):
+    """随便挑一条非 #0 的 record, 测 /api/last-write-of-reg."""
+    n = client.get("/api/meta").json()["records"]
+    if n < 3: return
+    r = client.get(f"/api/last-write-of-reg?cursor={n-1}&reg=x0").json()
+    assert r["status"] == "ready"
+    # idx 应该在 [0, n-1] 内 (或 None 如果 reg 从未变)
+    if r["idx"] is not None:
+        assert 0 <= r["idx"] < n
+
+
+def test_reg_value_at(client):
+    """/api/reg-value-at 返 reg 当前值."""
+    r = client.get("/api/reg-value-at?idx=0&reg=x0").json()
+    assert r["status"] == "ready"
+    assert r["reg"] == "x0"
+    assert r["value"].startswith("0x")
+    # 错误 reg
+    r2 = client.get("/api/reg-value-at?idx=0&reg=foo").json()
+    assert r2["status"] == "error"
+
+
+def test_strings_at_cursor_filter(client):
+    """/api/strings?cursor=N 只返回 cursor 时刻已 written 的字符串."""
+    import time
+    for _ in range(120):
+        r = client.get("/api/strings?min_len=4&cursor=0").json()
+        if r.get("status") == "ready": break
+        time.sleep(0.1)
+    assert r["status"] == "ready"
+    # cursor=0 时还没写任何东西, 应该没字符串 OR 只有 prefilled (synth 没字符串)
+    assert r["cursor"] == 0
+
+
+def test_record_includes_regs_def_use(client):
+    r = client.get("/api/record/0").json()
+    assert "regs_def" in r and "regs_use" in r
+    assert isinstance(r["regs_def"], list)
+    assert isinstance(r["regs_use"], list)
+
+
 def test_string_provenance_endpoint(client):
     """/api/string-provenance — 逐字节列出 writers/readers."""
     import time

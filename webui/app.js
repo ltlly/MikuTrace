@@ -10,15 +10,32 @@ const api = (path, params = {}) => {
   return fetch(path + (q ? "?" + q : "")).then(r => r.json());
 };
 
+// 默认 settings — localStorage 覆盖
+const DEFAULT_SETTINGS = {
+  // limits (0 = 不限)
+  taintLimit: 5000,
+  searchLimit: 5000,
+  idxsForPcLimit: 200,
+  idxsForBlockLimit: 5000,
+  stringsLimit: 5000,
+  stringsMinLen: 4,
+  memDumpLines: 16,        // 16 行 × 16 字节
+  backtraceMaxDepth: 1000,
+  // 显示格式: 'abs' = 绝对地址 0x6d6e0e4820
+  //          'fnoff' = func+offset = doCommandNative+0xb0
+  //          'soFnOff' = libsgmainso@func+offset
+  addrFormat: 'fnoff',
+};
+
 const STATE = {
   meta: null,
   cursor: 0,
   totalRecords: 0,
   rowHeight: 18,
   pageSize: 500,
-  cache: new Map(),         // start -> records[] window
-  cacheKeys: [],            // LRU
-  inflight: new Map(),      // start -> Promise (de-dupe in-flight fetch)
+  cache: new Map(),
+  cacheKeys: [],
+  inflight: new Map(),
   cfg: null,
   cfgFunc: null,
   allFuncs: [],
@@ -26,9 +43,20 @@ const STATE = {
   activeInsnPc: null,
   prevRegs: null,
   syncEnabled: true,
-  // CFG canvas pan/zoom
   cfgPan: {x: 0, y: 0, scale: 1},
+  settings: loadSettings(),
 };
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem("tracemiku-settings");
+    if (!raw) return {...DEFAULT_SETTINGS};
+    return {...DEFAULT_SETTINGS, ...JSON.parse(raw)};
+  } catch { return {...DEFAULT_SETTINGS}; }
+}
+function saveSettings() {
+  localStorage.setItem("tracemiku-settings", JSON.stringify(STATE.settings));
+}
 
 window.TM = STATE;
 
@@ -74,7 +102,89 @@ function buildVirtualList() {
     const tok = ++renderTok;
     requestAnimationFrame(() => { if (tok === renderTok) renderViewport(); });
   });
+  // 全局事件委托 — reg hover/dblclick/right-click
+  inner.addEventListener("mouseover", async ev => {
+    const rg = ev.target.closest(".op-reg");
+    if (!rg) return;
+    if (rg.dataset.title) return;
+    const reg = rg.dataset.reg;
+    const idx = parseInt(rg.closest(".row-insn")?.dataset?.idx);
+    if (!Number.isFinite(idx)) return;
+    try {
+      const r = await api("/api/reg-value-at", {idx, reg});
+      if (r.status === "ready") rg.title = `${reg} = ${r.value}${r.annotation || ""}`;
+      rg.dataset.title = "1";
+    } catch (_) {}
+  });
+  inner.addEventListener("dblclick", async ev => {
+    const rg = ev.target.closest(".op-reg");
+    if (!rg) return;
+    ev.stopPropagation();
+    const reg = rg.dataset.reg;
+    const idx = parseInt(rg.closest(".row-insn")?.dataset?.idx);
+    const r = await api("/api/last-write-of-reg", {cursor: idx, reg});
+    if (r.status === "ready" && r.idx != null) setCursor(r.idx, true);
+  });
+  inner.addEventListener("contextmenu", async ev => {
+    const rg = ev.target.closest(".op-reg");
+    if (!rg) return;
+    ev.preventDefault();
+    const reg = rg.dataset.reg;
+    const idx = parseInt(rg.closest(".row-insn")?.dataset?.idx);
+    const r = await api("/api/reg-value-at", {idx, reg});
+    if (r.status !== "ready") return;
+    showRegContextMenu(ev.clientX, ev.clientY, reg, r.value, r.annotation, idx);
+  });
   requestAnimationFrame(renderViewport);
+}
+
+function showRegContextMenu(x, y, reg, valueHex, ann, idx) {
+  const old = document.getElementById("reg-ctx"); if (old) old.remove();
+  const menu = document.createElement("div");
+  menu.id = "reg-ctx"; menu.className = "ctx-menu";
+  menu.style.left = x + "px"; menu.style.top = y + "px";
+  menu.innerHTML =
+    `<div class="dim" style="padding:4px 8px">${reg} = ${valueHex}${ann ? "<br>" + escapeHtml(ann) : ""}</div>` +
+    `<div class="ctx-item" data-act="lastdef">⏪ jump to last write of ${reg}</div>` +
+    `<div class="ctx-item" data-act="cfg-at">📊 CFG view at ${valueHex}</div>` +
+    `<div class="ctx-item" data-act="mem-at">💾 Memory view at ${valueHex}</div>` +
+    `<div class="ctx-item" data-act="taint-fwd">→ forward taint ${reg}</div>` +
+    `<div class="ctx-item" data-act="taint-bwd">← backward taint ${reg}</div>`;
+  document.body.appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener("click", close); };
+  setTimeout(() => document.addEventListener("click", close), 100);
+  menu.querySelectorAll(".ctx-item").forEach(el => {
+    el.addEventListener("click", async ev => {
+      ev.stopPropagation();
+      const act = el.dataset.act;
+      close();
+      if (act === "lastdef") {
+        const r = await api("/api/last-write-of-reg", {cursor: idx, reg});
+        if (r.idx != null) setCursor(r.idx, true);
+      } else if (act === "cfg-at") {
+        // reg value is an address — find its block in CFG
+        const r = await api("/api/block-for-pc", {pc: valueHex});
+        if (r.block) {
+          // 跳到该块第一次执行的 idx
+          const r2 = await api("/api/idxs-for-block", {pc: r.block, max_count: 1, near: STATE.cursor});
+          if (r2.idxs && r2.idxs.length > 0) setCursor(r2.idxs[0], true);
+          else alert("Block not in trace yet");
+        } else alert("PC not in any tracked block");
+      } else if (act === "mem-at") {
+        // 切到 memory tab 并 dump 该地址
+        switchBottomTab("memory");
+        const inp = $("mem-addr");
+        if (inp) { inp.value = valueHex; refreshMemDump(); }
+      } else if (act === "taint-fwd" || act === "taint-bwd") {
+        document.querySelector('[data-vtab="taint"]').click();
+        await new Promise(r => setTimeout(r, 100));
+        const ri = $("taint-reg");
+        if (ri) ri.value = reg;
+        if (act === "taint-fwd") $("taint-fwd").click();
+        else $("taint-bwd").click();
+      }
+    });
+  });
 }
 
 function renderViewport() {
@@ -155,6 +265,18 @@ function execCountClass(c) {
   return "ec-vhigh";
 }
 
+// 格式化主 PC 列 (依 settings.addrFormat).
+// rec: 当前 trace record 的 dict (含 pc, rel, func, off)
+function formatPc(rec) {
+  const fmt = STATE.settings.addrFormat;
+  const so = STATE.meta?.module?.name || "";
+  const fn = rec.func; const off = rec.off;
+  if (fmt === "fnoff" && fn) return `${fn}+${off}`;
+  if (fmt === "soFnOff" && fn) return so ? `${so}@${fn}+${off}` : `${fn}+${off}`;
+  // 默认 / fallback: 绝对
+  return rec.pc;
+}
+
 function buildRow(i, r) {
   const row = document.createElement("div");
   row.className = "row-insn";
@@ -168,18 +290,35 @@ function buildRow(i, r) {
   row.style.top = (i * STATE.rowHeight) + "px";
   row.style.left = 0; row.style.right = 0;
   row.style.height = STATE.rowHeight + "px";
-  const fn = r.func ? `${r.func}+${r.off}` : (r.rel || r.pc);
   const ecCls = execCountClass(r.exec_count);
   const ecTitle = r.exec_count != null ? `executed ×${r.exec_count}` : "";
   const annHtml = r.annotation ? `<span class="ann">; ${escapeHtml(r.annotation)}</span>` : "";
+  // 把 PC 列按 settings 格式化, 并在 asm 中识别寄存器套 click handler
+  const pcFmt = formatPc(r);
   row.innerHTML =
     `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
     `<span class="idx">#${r.idx}</span>` +
-    `<span class="pc">${r.pc}</span>` +
-    `<span class="func">${fn}</span>` +
-    `<span class="asm">${escapeHtml(r.asm)}${annHtml ? "  " + annHtml : ""}</span>`;
+    `<span class="pc" title="${r.pc}">${escapeHtml(pcFmt)}</span>` +
+    `<span class="func">${r.func ? r.func + "+" + r.off : (r.rel || r.pc)}</span>` +
+    `<span class="asm">${highlightRegs(r.asm)}${annHtml ? "  " + annHtml : ""}</span>`;
   row.addEventListener("click", () => setCursor(i, false));
   return row;
+}
+
+// 把 ASM 中的寄存器名 (x0..x30, w0..w30, sp, fp, lr, pc) 包成 <span class="op-reg">
+const REG_RE = /\b(x([12]?\d|3[01])|w([12]?\d|3[01])|sp|fp|lr|pc|xzr|wzr)\b/gi;
+function highlightRegs(asm) {
+  // escape first, then replace; using a marker to avoid double-escape
+  const safe = escapeHtml(asm);
+  return safe.replace(REG_RE, (m) => {
+    return `<span class="op-reg" data-reg="${normalizeReg(m)}">${m}</span>`;
+  });
+}
+function normalizeReg(name) {
+  const lc = name.toLowerCase();
+  if (lc.startsWith("w") && lc.length > 1 && /\d/.test(lc[1])) return "x" + lc.substring(1);
+  if (lc === "wzr") return "xzr";
+  return lc;
 }
 
 function escapeHtml(s) {
@@ -247,13 +386,18 @@ function renderRegs(r) {
 // ---------------- CFG (graphviz SVG) ----------------
 async function pollCFG(fn = null) {
   $("cfg-info").textContent = fn ? `loading ${fn}…` : "loading…";
+  // 立即 sync dropdown 显示, 不等 ready
+  const sel0 = $("cfg-func-select");
+  if (sel0) sel0.value = fn || "";
   let tries = 0;
   while (true) {
     const r = await api("/api/cfg-svg", fn ? {fn} : {});
     if (r.status === "ready") {
       STATE.cfgFunc = fn;
       embedCfgSvg(r);
-      // 重新触发 cursor 同步 (高亮/active block)
+      // 再次 sync (option 此时确保 populated)
+      const sel = $("cfg-func-select");
+      if (sel) sel.value = STATE.cfgFunc || "";
       const rec = await api("/api/record/" + STATE.cursor);
       if (STATE.syncEnabled) highlightCfgInsn(rec.pc);
       return;
@@ -433,7 +577,8 @@ async function showTraceForPc(pcHex) {
   const cont = $("b-trace-for-pc");
   cont.innerHTML = `<div class="dim">loading ${pcHex}…</div>`;
   const r = await api("/api/idxs-for-pc",
-                      {pc: pcHex, cursor: STATE.cursor, limit: 30});
+                      {pc: pcHex, cursor: STATE.cursor,
+                       limit: STATE.settings.idxsForPcLimit || 30});
   const afterMore = r.after_capped ? "+" : "";
   const beforeMore = r.before_capped ? "+" : "";
   let html = `<div class="tfp-section"><h4>${pcHex}</h4>`;
@@ -490,7 +635,8 @@ function activateLeftTab(name) {
   document.querySelectorAll("#left-tabs .vtab").forEach(t =>
     t.classList.toggle("active", t.dataset.vtab === name));
   $("left-panel-title").textContent =
-    {funcs: "Functions", back: "Backtrace", strings: "Strings", taint: "Taint", xref: "Cross Reference"}[name];
+    {funcs: "Functions", back: "Backtrace", strings: "Strings",
+     taint: "Taint", xref: "Cross Reference", settings: "Settings"}[name] || name;
   // 切换显示/隐藏对应 panel
   document.querySelectorAll("#left-panel-body > .lp-tab").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
@@ -502,6 +648,7 @@ function activateLeftTab(name) {
     else if (name === "taint") initTaintTab();
     else if (name === "xref") initXrefTab();
     else if (name === "back") initBacktraceTab();
+    else if (name === "settings") initSettingsTab();
   }
   // 切到 backtrace 时刷一下当前 cursor 的 stack
   if (name === "back") refreshBacktrace();
@@ -603,7 +750,8 @@ async function refreshMemDump() {
     cont.innerHTML = '<div class="dim">输入 0x... 或 寄存器名</div>'; return;
   }
   cont.innerHTML = '<div class="dim">loading…</div>';
-  const r = await api("/api/mem-dump", {addr, count: 256});
+  const lines = STATE.settings.memDumpLines || 16;
+  const r = await api("/api/mem-dump", {addr, count: lines * 16});
   if (r.status !== "ready") {
     cont.innerHTML = `<div class="dim">building memshadow… (${r.status})</div>`;
     return;
@@ -612,7 +760,7 @@ async function refreshMemDump() {
   // 16 bytes per line — ascii 列分 char 一个 span (不再字符串拼 HTML 后 escapeHtml,
   // 那会把 <span> 转成文本显示)
   let html = "";
-  for (let line = 0; line < 16; line++) {
+  for (let line = 0; line < lines; line++) {
     const lineAddr = "0x" + (BigInt(addr) + BigInt(line * 16)).toString(16);
     let hex = "", ascii = "";
     for (let col = 0; col < 16; col++) {
@@ -775,7 +923,9 @@ async function loadStrings() {
   const cont = $("lp-strings");
   cont.innerHTML = '<div class="dim">building memshadow… (一次性)</div>';
   while (true) {
-    const r = await api("/api/strings", {min_len: 4});
+    const opts = {min_len: STATE.settings.stringsMinLen,
+                  limit: STATE.settings.stringsLimit};
+    const r = await api("/api/strings", opts);
     if (r.status === "ready") {
       cont.innerHTML =
         '<input class="inp" id="strings-filter" placeholder="search strings…" style="width:100%;margin-bottom:4px">' +
@@ -784,26 +934,41 @@ async function loadStrings() {
       const filterInp = $("strings-filter");
       const listEl = $("strings-list");
       const infoEl = $("strings-info");
+      // 把 "at-cursor" 选项加进 panel
+      const cont2 = $("lp-strings");
+      // 在已有结构上插一行 toggle
+      if (!cont2.querySelector(".strings-cursor-toggle")) {
+        const tog = document.createElement("label");
+        tog.className = "strings-cursor-toggle";
+        tog.innerHTML = `<input type="checkbox" id="strings-at-cursor"> 仅 cursor 时刻已构造的`;
+        tog.style.fontSize = "11px"; tog.style.cursor = "pointer";
+        cont2.insertBefore(tog, cont2.querySelector("#strings-info"));
+      }
+      const cursorTog = $("strings-at-cursor");
       let lastQ = ""; let dbTimer = null; let abortCtl = null;
       const doSearch = async (q) => {
         if (abortCtl) try { abortCtl.abort(); } catch(_){}
         abortCtl = new AbortController();
-        const url = "/api/strings?min_len=4" + (q ? "&q=" + encodeURIComponent(q) : "");
+        const params = new URLSearchParams({
+          min_len: STATE.settings.stringsMinLen,
+          limit: STATE.settings.stringsLimit,
+        });
+        if (q) params.set("q", q);
+        if (cursorTog.checked) params.set("cursor", STATE.cursor);
+        const url = "/api/strings?" + params.toString();
         try {
           const resp = await fetch(url, {signal: abortCtl.signal});
           const j = await resp.json();
           if (j.status !== "ready") return;
           let html = "";
-          let n = 0;
           for (const s of j.strings) {
             html += `<div class="lp-row" data-addr="${s.addr}">` +
                     `<span>${escapeHtml(s.str)}</span>` +
                     `<span class="meta">${s.addr}</span></div>`;
-            if (++n >= 500) break;
           }
           listEl.innerHTML = html || '<div class="dim">no match</div>';
           infoEl.textContent = `${j.count} string${j.count > 1 ? "s" : ""}` +
-                                (j.count > 500 ? " (showing first 500)" : "");
+                                (cursorTog.checked ? ` · @cursor #${STATE.cursor}` : "");
           listEl.querySelectorAll(".lp-row").forEach(el => {
             el.addEventListener("click", () => {
               // 双击或单击 → 跳到第一次写入该地址的指令
@@ -821,7 +986,16 @@ async function loadStrings() {
           if (q !== lastQ) { lastQ = q; doSearch(q); }
         }, 200);
       });
+      cursorTog.addEventListener("change", () => doSearch(filterInp.value));
       doSearch("");
+      // 当 cursor 变化时, 如果 at-cursor 模式, 自动重 search
+      STATE._onCursorChange = STATE._onCursorChange || [];
+      STATE._onCursorChange.push(() => {
+        if (cursorTog.checked) {
+          if (dbTimer) clearTimeout(dbTimer);
+          dbTimer = setTimeout(() => doSearch(filterInp.value), 300);
+        }
+      });
       // 双击字符串 → 显示 provenance (谁逐字节构造的, 谁读了)
       listEl.addEventListener("dblclick", async ev => {
         const row = ev.target.closest(".lp-row");
@@ -890,7 +1064,7 @@ function initTaintTab() {
   cont.innerHTML = `
     <div class="dim" id="taint-from">from cursor #${STATE.cursor}</div>
     <div class="row" style="margin:6px 0">
-      reg <input id="taint-reg" class="inp" value="x0" size="4">
+      reg <input id="taint-reg" class="inp" value="x0" size="6">
       <button class="btn" id="taint-fwd">forward →</button>
       <button class="btn" id="taint-bwd">← backward</button>
       <button class="btn" id="taint-cancel" style="display:none">cancel</button>
@@ -901,11 +1075,25 @@ function initTaintTab() {
   $("taint-cancel").onclick = () => {
     if (STATE._taintAbort) STATE._taintAbort.abort();
   };
-  // 当 cursor 变化时刷新 "from cursor #N" 显示 (但不自动重跑)
+  // cursor 变化时刷新 "from cursor #N" + 自动 prefill 寄存器框
+  // 默认填充 = 当前 insn 的 def reg (regs_def[0]); 没有 def 则保留旧值
   STATE._onCursorChange = STATE._onCursorChange || [];
-  STATE._onCursorChange.push(() => {
+  STATE._onCursorChange.push(async () => {
     const el = $("taint-from");
     if (el) el.textContent = `from cursor #${STATE.cursor}`;
+    const ri = $("taint-reg");
+    if (!ri || ri.matches(":focus")) return;   // 用户在编辑就别覆盖
+    try {
+      const r = await api("/api/record/" + STATE.cursor);
+      if (r.regs_def && r.regs_def.length > 0) {
+        // 取 def 中第一个非 xzr/sp/pc 的 (有意义的)
+        const cand = r.regs_def.find(g => !["xzr","sp","pc","nzcv"].includes(g));
+        if (cand) ri.value = cand;
+      } else if (r.regs_use && r.regs_use.length > 0) {
+        const cand = r.regs_use.find(g => !["xzr","sp","pc","nzcv"].includes(g));
+        if (cand) ri.value = cand;
+      }
+    } catch (_) {}
   });
 }
 
@@ -922,7 +1110,9 @@ async function doTaint(dir) {
   cont.innerHTML = `<div class="dim">running ${dir} from #${startCursor} reg=${reg}…</div>`;
   $("taint-cancel").style.display = "";
   try {
-    const url = `/api/${dir}-taint?` + new URLSearchParams({start: startCursor, reg});
+    const params = new URLSearchParams({start: startCursor, reg});
+    if (STATE.settings.taintLimit > 0) params.set("max_count", STATE.settings.taintLimit);
+    const url = `/api/${dir}-taint?` + params.toString();
     const resp = await fetch(url, {signal: ctrl.signal});
     const r = await resp.json();
     if (ctrl.signal.aborted) return;
@@ -975,7 +1165,8 @@ async function loadXrefForCurrentPc() {
   STATE._xrefAbort = ctrl;
   try {
     const url = "/api/idxs-for-pc?" + new URLSearchParams(
-      {pc, cursor: STATE.cursor, limit: 100});
+      {pc, cursor: STATE.cursor,
+       limit: STATE.settings.idxsForPcLimit || 100});
     const resp = await fetch(url, {signal: ctrl.signal});
     const r = await resp.json();
     if (ctrl.signal.aborted) return;
@@ -1063,6 +1254,65 @@ function closeCmd() {
   STATE._cmdCB = null;
   $("cmd-prompt").textContent = "";
   $("cmd-input").value = "";
+}
+
+// ---------------- Settings tab ----------------
+function initSettingsTab() {
+  const cont = $("lp-settings");
+  const s = STATE.settings;
+  const fmt = (k, label, type, attrs = "") =>
+    `<div class="set-row"><label>${label}</label>` +
+    `<input id="set-${k}" type="${type}" value="${s[k]}" ${attrs}></div>`;
+  cont.innerHTML = `
+    <div class="set-section">📋 显示格式</div>
+    <div class="set-row">
+      <label>地址显示</label>
+      <select id="set-addrFormat" class="inp">
+        <option value="abs"${s.addrFormat==="abs"?" selected":""}>绝对地址 0x6d6e0e4820</option>
+        <option value="fnoff"${s.addrFormat==="fnoff"?" selected":""}>func+offset (doCommandNative+0xb0)</option>
+        <option value="soFnOff"${s.addrFormat==="soFnOff"?" selected":""}>so@func+offset</option>
+      </select>
+    </div>
+    <div class="set-section">🔢 列表 limits (0 = 不限, 慎用大 trace)</div>
+    ${fmt("taintLimit", "Taint hits", "number", "min=0")}
+    ${fmt("searchLimit", "Search hits", "number", "min=0")}
+    ${fmt("idxsForPcLimit", "Trace-for-PC each side", "number", "min=0")}
+    ${fmt("idxsForBlockLimit", "Idxs for block", "number", "min=0")}
+    ${fmt("stringsLimit", "Strings count", "number", "min=0")}
+    ${fmt("stringsMinLen", "Strings min length", "number", "min=1")}
+    ${fmt("memDumpLines", "Mem dump lines (×16 bytes)", "number", "min=1")}
+    ${fmt("backtraceMaxDepth", "Backtrace max depth", "number", "min=1")}
+    <div class="set-row" style="margin-top:8px">
+      <button class="btn" id="set-reset">重置默认</button>
+      <span id="set-status" class="dim"></span>
+    </div>
+    <div class="dim" style="margin-top:8px;font-size:10px;line-height:14px">
+      改后立即生效, 保存 localStorage.
+    </div>`;
+  cont.querySelectorAll("input, select").forEach(el => {
+    if (!el.id.startsWith("set-")) return;
+    const key = el.id.substring(4);
+    if (!(key in DEFAULT_SETTINGS)) return;
+    el.addEventListener("change", () => {
+      const v = el.tagName === "SELECT" ? el.value : Number(el.value);
+      STATE.settings[key] = v;
+      saveSettings();
+      $("set-status").textContent = `saved · ${key}=${v}`;
+      reapplySettings();
+    });
+  });
+  $("set-reset").addEventListener("click", () => {
+    STATE.settings = {...DEFAULT_SETTINGS};
+    saveSettings();
+    initSettingsTab();
+    reapplySettings();
+  });
+}
+
+function reapplySettings() {
+  // 地址格式变 → 重渲 trace 行
+  document.querySelectorAll(".row-insn").forEach(el => el.remove());
+  renderViewport();
 }
 
 // ---------------- go ----------------
