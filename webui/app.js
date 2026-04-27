@@ -373,6 +373,20 @@ function escapeHtml(s) {
   return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 }
 
+// Event-delegated row click → setCursor. 替代 querySelectorAll().forEach(addEventListener)
+// 对每个 row 一个 listener — 5000 行 taint result 时省 5000 个 listener.
+// 同 container 重复调用安全 (用 _delegatedRowClick flag 去重).
+function bindRowClicks(container, selector = ".lp-row") {
+  if (!container || container._delegatedRowClick === selector) return;
+  container._delegatedRowClick = selector;
+  container.addEventListener("click", (e) => {
+    const row = e.target.closest(selector);
+    if (!row) return;
+    const idx = row.dataset.idx;
+    if (idx != null && idx !== "") setCursor(parseInt(idx), true);
+  });
+}
+
 // ---------------- cursor + sync ----------------
 let _cursorDebounce = null;
 function setCursor(idx, scrollIntoView = false) {
@@ -753,8 +767,7 @@ async function refreshBacktrace() {
       }
     }
     cont.innerHTML = html;
-    cont.querySelectorAll(".lp-row").forEach(el =>
-      el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+    bindRowClicks(cont);
   } catch (e) {
     if (e.name !== "AbortError") cont.innerHTML = `<div class="dim">err: ${e.message || e}</div>`;
   } finally {
@@ -1105,8 +1118,7 @@ async function showStringProvenance(addr, infoEl) {
   }
   html += "</div>";
   cont.innerHTML = html;
-  cont.querySelectorAll(".tfp-jump").forEach(el =>
-    el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+  bindRowClicks(cont, ".tfp-jump");
 }
 
 async function jumpToFirstWriteOfAddr(addr) {
@@ -1189,8 +1201,7 @@ async function doTaint(dir) {
               `<span>${escapeHtml(h.asm)}</span>` +
               `<span class="meta">#${h.idx}</span></div>`;
     cont.innerHTML = html;
-    cont.querySelectorAll(".lp-row").forEach(el =>
-      el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+    bindRowClicks(cont);
   } catch (e) {
     if (e.name === "AbortError") {
       cont.innerHTML = '<div class="dim">aborted</div>';
@@ -1235,8 +1246,7 @@ async function loadXrefForCurrentPc() {
     for (const i of r.before) html += `<div class="lp-row" data-idx="${i}"><span>#${i}</span><span class="meta">-${STATE.cursor - i}</span></div>`;
     for (const i of r.after)  html += `<div class="lp-row" data-idx="${i}"><span>#${i}</span><span class="meta">+${i - STATE.cursor}</span></div>`;
     out.innerHTML = html;
-    out.querySelectorAll(".lp-row").forEach(el =>
-      el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
+    bindRowClicks(out);
   } catch (e) {
     if (e.name !== "AbortError") out.innerHTML = `<div class="dim">err: ${e.message || e}</div>`;
   } finally {
