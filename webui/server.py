@@ -233,13 +233,20 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             rows.append(row)
         return {"start": start, "end": end, "count": end-start, "records": rows}
 
+    # collect_modules_from_trace 只用 t.meta.module + 启发式, 在 trace lifetime
+    # 是 const. cache 一次, 省 /api/record 33-reg classify 时 33 次重建.
+    _MODULES_CACHE = {"data": None}
+
     def _classify_reg_value(value: int, t_cursor: int, sp: int = 0,
                              max_depth: int = 3) -> str:
         """pwndbg 风格 — 返回纯文本注释 (前端能直接 append 到 hex 后)."""
         if BG["mem"]["status"] != "ready":
             return ""
         mem = BG["mem"]["data"]
-        modules = collect_modules_from_trace(t, mem)
+        modules = _MODULES_CACHE["data"]
+        if modules is None:
+            modules = collect_modules_from_trace(t, mem)
+            _MODULES_CACHE["data"] = modules
         if value == 0: return "  NULL"
         seen = set(); parts = []; cur = value; depth = 0
         while True:
