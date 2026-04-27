@@ -364,6 +364,22 @@ def test_mem_dump_endpoint(client):
         assert "addr" in b and "byte" in b and "kind" in b
 
 
+def test_string_provenance_endpoint(client):
+    """/api/string-provenance — 逐字节列出 writers/readers."""
+    import time
+    for _ in range(120):
+        r = client.get("/api/string-provenance?addr=0x7000&length=8").json()
+        if r.get("status") == "ready": break
+        time.sleep(0.1)
+    assert r["status"] == "ready"
+    assert r["length"] == 8
+    assert len(r["bytes"]) == 8
+    for b in r["bytes"]:
+        assert "addr" in b and "byte" in b and "kind" in b
+        assert "writers" in b and "readers" in b
+        assert "writers_total" in b and "readers_total" in b
+
+
 def test_idxs_touching_range_endpoint(client):
     """/api/idxs-touching-range 多字节范围 readers/writers 分组."""
     import time

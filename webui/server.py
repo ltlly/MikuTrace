@@ -809,13 +809,56 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     def strings_api(min_len: int = 4, q: str = ""):
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
-            return {"status": BG["mem"]["status"], "strings": []}
+            st = BG["mem"]["status"]
+            if st != "ready":
+                return {"status": st, "strings": []}
         results = BG["mem"]["data"].find_strings(min_len=min_len)
         if q:
             ql = q.lower()
             results = [(a, s) for a, s in results if ql in s.lower()]
         return {"status": "ready", "count": len(results),
                 "strings": [{"addr": hex(a), "len": len(s), "str": s} for a, s in results]}
+
+    @app.get("/api/string-provenance")
+    def string_provenance(addr: str, length: int = 32):
+        """对 [addr, addr+length) 区域, 列每个字节的 write idxs (谁构造) +
+        read idxs (谁消费). PDF p.6 "字符串参考" 杀手级功能 — trace 中
+        动态构造的字符串能看到逐字节谁写, 谁读."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            st = BG["mem"]["status"]
+            if st != "ready":
+                return {"status": st, "bytes": []}
+        mem = BG["mem"]["data"]
+        start = int(addr, 16)
+        # 用 numpy 加速: 把 mem.writes/reads 转 numpy 数组
+        import numpy as np
+        # writes 是 list[(idx, addr, size, value)]; 找命中 [start, start+length)
+        # writes_per_byte[offset] = [idx, ...] (按 idx 升序)
+        out_bytes = []
+        for offset in range(length):
+            a = start + offset
+            writers = sorted({i for (i, wa, sz, _v) in mem.writes
+                              if wa <= a < wa + sz})
+            readers = sorted({i for (i, wa, sz, _v) in mem.reads
+                              if wa <= a < wa + sz})
+            byte_val = None
+            kind = "??"
+            if mem.bytes:
+                # MemShadow.byte_at(a, t) — t = current "now" = max idx
+                b, k, _ = mem.byte_at(a, 1<<63)
+                byte_val = b
+                kind = k
+            out_bytes.append({
+                "addr": hex(a),
+                "byte": byte_val,
+                "kind": kind,
+                "writers": writers[:20],   # 限制每个字节最多 20 个
+                "readers": readers[:20],
+                "writers_total": len(writers),
+                "readers_total": len(readers),
+            })
+        return {"status": "ready", "addr": addr, "length": length, "bytes": out_bytes}
 
     @app.get("/api/mem-dump")
     def mem_dump(addr: str, count: int = 256):

@@ -291,11 +291,19 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
   font-weight: bold;
 }
 .tfp-row {
-  display: grid; grid-template-columns: 56px 100px 1fr;
-  gap: 6px; padding: 0 4px; cursor: pointer;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
-.tfp-row:hover { background: var(--bg3); }
+.tfp-row:hover { background: var(--bg3); cursor: pointer; }
 .tfp-row .delta { color: var(--dim); font-size: 10px; }
+.tfp-row .addr  { color: var(--accent2); }
+.tfp-row .hex   { color: var(--fg); }
+.tfp-row .ascii { color: var(--good); }
+.tfp-row .tfp-jump {
+  color: var(--accent); cursor: pointer; margin-right: 2px;
+}
+.tfp-row .tfp-jump:hover { text-decoration: underline; }
 
 .btn {
   background: var(--bg3); color: var(--fg);

@@ -822,6 +822,12 @@ async function loadStrings() {
         }, 200);
       });
       doSearch("");
+      // 双击字符串 → 显示 provenance (谁逐字节构造的, 谁读了)
+      listEl.addEventListener("dblclick", async ev => {
+        const row = ev.target.closest(".lp-row");
+        if (!row) return;
+        await showStringProvenance(row.dataset.addr, infoEl);
+      });
       return;
     }
     if (r.status === "building" || r.status === "idle") {
@@ -831,6 +837,41 @@ async function loadStrings() {
     cont.innerHTML = `<div class="dim">strings ${r.status}</div>`;
     return;
   }
+}
+
+async function showStringProvenance(addr, infoEl) {
+  // 在底部 b-trace-for-pc tab 借用展示空间
+  switchBottomTab("trace-for-pc");
+  const cont = $("b-trace-for-pc");
+  cont.innerHTML = `<div class="dim">analyzing string @ ${addr}…</div>`;
+  const r = await api("/api/string-provenance", {addr, length: 64});
+  if (r.status !== "ready") {
+    cont.innerHTML = `<div class="dim">memshadow ${r.status}</div>`;
+    return;
+  }
+  let html = `<div class="tfp-section"><h4>String @ ${addr} — provenance (谁构造 / 谁读取)</h4></div>`;
+  // 逐字节表
+  html += `<div style="font-family:monospace;font-size:11px">`;
+  for (const b of r.bytes) {
+    const ch = (b.byte != null && b.byte >= 0x20 && b.byte < 0x7f) ?
+      String.fromCharCode(b.byte) : "·";
+    const byteStr = b.byte != null ? b.byte.toString(16).padStart(2,"0") : "??";
+    const writerLinks = b.writers.map(i =>
+      `<a class="tfp-jump" data-idx="${i}">w#${i}</a>`).join(" ");
+    const readerLinks = b.readers.map(i =>
+      `<a class="tfp-jump" data-idx="${i}">r#${i}</a>`).join(" ");
+    html += `<div class="tfp-row">` +
+            `<span class="addr">${b.addr}</span> ` +
+            `<span class="hex">${byteStr}</span> ` +
+            `<span class="ascii">${escapeHtml(ch)}</span> ` +
+            `<span class="dim">w(${b.writers_total}):</span> ${writerLinks} ` +
+            `<span class="dim">r(${b.readers_total}):</span> ${readerLinks}` +
+            `</div>`;
+  }
+  html += "</div>";
+  cont.innerHTML = html;
+  cont.querySelectorAll(".tfp-jump").forEach(el =>
+    el.addEventListener("click", () => setCursor(parseInt(el.dataset.idx), true)));
 }
 
 async function jumpToFirstWriteOfAddr(addr) {
