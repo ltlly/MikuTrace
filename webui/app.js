@@ -93,8 +93,13 @@ function buildVirtualList() {
   stream.innerHTML = "";
   const inner = document.createElement("div");
   inner.style.position = "relative";
-  inner.style.height = (STATE.totalRecords * STATE.rowHeight) + "px";
+  // 浏览器 abs 元素 max-height ~33M px (Chrome). 大 trace 超出时用 decoupled scroll
+  const SAFE_MAX_H = 30_000_000;
+  const wantH = STATE.totalRecords * STATE.rowHeight;
+  STATE.usingDecoupledScroll = wantH > SAFE_MAX_H;
+  inner.style.height = Math.min(wantH, SAFE_MAX_H) + "px";
   inner.id = "stream-inner";
+  STATE.viewportStartIdx = 0;
   stream.appendChild(inner);
 
   let renderTok = 0;
@@ -187,26 +192,52 @@ function showRegContextMenu(x, y, reg, valueHex, ann, idx) {
   });
 }
 
-function renderViewport() {
-  // 不再 await: 立即渲染已 cache 行, 缺的 async 拉取, 拉到再补绘.
+function viewportIdxRange() {
   const stream = $("stream");
   const inner = $("stream-inner");
-  const top = stream.scrollTop;
-  const bot = top + stream.clientHeight;
+  const innerH = inner.offsetHeight || parseInt(inner.style.height);
+  const viewH = stream.clientHeight;
+  const scrollPos = stream.scrollTop;
   const overscan = 10;
-  const startIdx = Math.max(0, Math.floor(top / STATE.rowHeight) - overscan);
-  const endIdx = Math.min(STATE.totalRecords,
-                          Math.ceil(bot / STATE.rowHeight) + overscan);
+  let startIdx, endIdx;
+  if (STATE.usingDecoupledScroll) {
+    // scrollbar 仅表 percentage, 实际可见 idx 由 % × totalRecords 算
+    const visible = Math.ceil(viewH / STATE.rowHeight);
+    const scrollMax = Math.max(1, innerH - viewH);
+    const pct = Math.min(1, scrollPos / scrollMax);
+    const baseIdx = Math.floor(pct * Math.max(0, STATE.totalRecords - visible));
+    startIdx = Math.max(0, baseIdx - overscan);
+    endIdx = Math.min(STATE.totalRecords, baseIdx + visible + overscan);
+  } else {
+    startIdx = Math.max(0, Math.floor(scrollPos / STATE.rowHeight) - overscan);
+    endIdx = Math.min(STATE.totalRecords,
+                      Math.ceil((scrollPos + viewH) / STATE.rowHeight) + overscan);
+  }
+  return [startIdx, endIdx];
+}
+
+function renderViewport() {
+  const stream = $("stream");
+  const inner = $("stream-inner");
+  const [startIdx, endIdx] = viewportIdxRange();
+  // decoupled 模式: 重置每次的 viewportStartIdx, 行 top 重新计算
+  STATE.viewportStartIdx = startIdx;
 
   // 清掉视口外的行
   inner.querySelectorAll(".row-insn").forEach(el => {
     const i = parseInt(el.dataset.idx);
     if (i < startIdx || i >= endIdx) el.remove();
   });
+  // decoupled 模式下: 重置剩余行的 top (因为 scrollPos 改了)
+  if (STATE.usingDecoupledScroll) {
+    inner.querySelectorAll(".row-insn").forEach(el => {
+      const i = parseInt(el.dataset.idx);
+      el.style.top = rowTopPx(i) + "px";
+    });
+  }
   const present = new Set([...inner.querySelectorAll(".row-insn")]
                           .map(e => parseInt(e.dataset.idx)));
 
-  // 已 cache 的立即画
   for (let i = startIdx; i < endIdx; i++) {
     if (present.has(i)) continue;
     const winStart = Math.floor(i / STATE.pageSize) * STATE.pageSize;
@@ -217,7 +248,7 @@ function renderViewport() {
     inner.appendChild(buildRow(i, r));
   }
 
-  // 缺的 windows: 异步拉, 拉到后只画当前还在视口里的
+  // async 拉缺失 windows
   const need = new Set();
   for (let i = startIdx; i < endIdx; i++) {
     const winStart = Math.floor(i / STATE.pageSize) * STATE.pageSize;
@@ -234,12 +265,9 @@ function renderViewport() {
           STATE.cache.delete(old);
         }
         STATE.inflight.delete(s);
-        // 拉到后只补绘当前视口仍需要的行 (用户可能已滚走)
-        const top = stream.scrollTop;
-        const bot = top + stream.clientHeight;
-        const sIdx = Math.max(0, Math.floor(top / STATE.rowHeight) - overscan);
-        const eIdx = Math.min(STATE.totalRecords,
-                              Math.ceil(bot / STATE.rowHeight) + overscan);
+        // re-check viewport, 用户可能已滚走
+        const [sIdx, eIdx] = viewportIdxRange();
+        STATE.viewportStartIdx = sIdx;
         const cur = new Set([...inner.querySelectorAll(".row-insn")]
                             .map(e => parseInt(e.dataset.idx)));
         for (let i = Math.max(s, sIdx); i < Math.min(s + STATE.pageSize, eIdx); i++) {
@@ -280,6 +308,9 @@ function formatPc(rec) {
 function buildRow(i, r) {
   const row = document.createElement("div");
   row.className = "row-insn";
+  // 当 addrFormat 是 fn-based, PC 列已含 func — 加 fmt-fn class 隐藏 func 列, 避免重复
+  if (STATE.settings.addrFormat === "fnoff" || STATE.settings.addrFormat === "soFnOff")
+    row.classList.add("fmt-fn");
   if (r.is_call)   row.classList.add("is-call");
   if (r.is_ret)    row.classList.add("is-ret");
   if (r.is_branch && !r.is_call && !r.is_ret) row.classList.add("is-branch");
@@ -287,13 +318,12 @@ function buildRow(i, r) {
   row.dataset.idx = i;
   row.dataset.pc = r.pc;
   row.style.position = "absolute";
-  row.style.top = (i * STATE.rowHeight) + "px";
+  row.style.top = rowTopPx(i) + "px";
   row.style.left = 0; row.style.right = 0;
   row.style.height = STATE.rowHeight + "px";
   const ecCls = execCountClass(r.exec_count);
   const ecTitle = r.exec_count != null ? `executed ×${r.exec_count}` : "";
   const annHtml = r.annotation ? `<span class="ann">; ${escapeHtml(r.annotation)}</span>` : "";
-  // 把 PC 列按 settings 格式化, 并在 asm 中识别寄存器套 click handler
   const pcFmt = formatPc(r);
   row.innerHTML =
     `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
@@ -303,6 +333,16 @@ function buildRow(i, r) {
     `<span class="asm">${highlightRegs(r.asm)}${annHtml ? "  " + annHtml : ""}</span>`;
   row.addEventListener("click", () => setCursor(i, false));
   return row;
+}
+
+// 浏览器单 div 高度上限 ~33M px → 大 trace 用 decoupled scroll: scrollbar 位置
+// 只表 percentage, 实际 row 位置由 (idx - startIdx)*rowHeight + scrollPos 算.
+function rowTopPx(idx) {
+  if (STATE.usingDecoupledScroll) {
+    const stream = $("stream");
+    return (stream.scrollTop || 0) + (idx - STATE.viewportStartIdx) * STATE.rowHeight;
+  }
+  return idx * STATE.rowHeight;
 }
 
 // 把 ASM 中的寄存器名 (x0..x30, w0..w30, sp, fp, lr, pc) 包成 <span class="op-reg">
@@ -336,9 +376,20 @@ function setCursor(idx, scrollIntoView = false) {
   if (el) el.classList.add("active");
   if (scrollIntoView) {
     const stream = $("stream");
-    const target = idx * STATE.rowHeight;
-    if (target < stream.scrollTop || target > stream.scrollTop + stream.clientHeight - STATE.rowHeight*2) {
-      stream.scrollTop = Math.max(0, target - stream.clientHeight / 2);
+    const inner = $("stream-inner");
+    if (STATE.usingDecoupledScroll) {
+      // 用 percentage 映射: 把 scrollTop 设到 idx 对应的 % 位置
+      const innerH = inner.offsetHeight || parseInt(inner.style.height);
+      const viewH = stream.clientHeight;
+      const visible = Math.ceil(viewH / STATE.rowHeight);
+      const scrollMax = Math.max(1, innerH - viewH);
+      const pct = (idx - visible/2) / Math.max(1, STATE.totalRecords - visible);
+      stream.scrollTop = Math.max(0, Math.min(scrollMax, pct * scrollMax));
+    } else {
+      const target = idx * STATE.rowHeight;
+      if (target < stream.scrollTop || target > stream.scrollTop + stream.clientHeight - STATE.rowHeight*2) {
+        stream.scrollTop = Math.max(0, target - stream.clientHeight / 2);
+      }
     }
   }
   $("status").textContent = `#${idx}`;

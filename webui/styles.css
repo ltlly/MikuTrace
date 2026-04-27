@@ -119,6 +119,11 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
   gap: 6px;
   align-items: center;
 }
+/* fnoff/soFnOff 模式: PC 列已经显示 func+offset, func 列重复 → 隐藏 func 列 */
+.row-insn.fmt-fn {
+  grid-template-columns: 12px 60px 240px 1fr;
+}
+.row-insn.fmt-fn .func { display: none; }
 /* PDF-style 计数圆点 — 列首彩色小圆点表执行次数级别 */
 .row-insn .ec {
   display: inline-block;
