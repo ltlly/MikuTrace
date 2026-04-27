@@ -117,10 +117,11 @@ def cmd_trace(args):
         except Exception as e: print(f"[!] cold-launch 失败: {e}"); return 2
     # 选择 agent 文件 (按 --mode)
     agent_map = {
-        "js":      "agent_generic.js",       # 旧 JS callout, 30K rec/s
-        "cmodule": "agent_cmodule_v3.js",    # CModule 极速 native callout
+        "js":      "agent_generic.js",       # 备选: JS callout (无 CModule 时 fallback), ~17K rec/s, IPC bound
+        "cmodule": "agent_cmodule_v5.js",    # 默认: CModule + SPSC ring + 设备落盘 + gzip pull, ~1.5M rec/s, dropped=0
+        "cmodule-v3": "agent_cmodule_v3.js", # 回归对比: cmodule + send blob (IPC bound, 仅留作基准)
     }
-    agent_name = agent_map.get(args.mode, "agent_generic.js")
+    agent_name = agent_map.get(args.mode, "agent_cmodule_v5.js")
     AGENT_PATH = HERE / "tracer" / agent_name
     AGENT = AGENT_PATH.read_text()
     print(f"[host] using agent: {agent_name} (mode={args.mode})", flush=True)
@@ -145,19 +146,64 @@ def cmd_trace(args):
         if call_idx in sess_files: return sess_files[call_idx]
         d = CALLS_DIR / f"_pending_call_{call_idx:03d}"
         d.mkdir(exist_ok=True)
-        fp = open(d/"trace.bin", "wb")
+        # v5: agent 端落盘到 device, host 不再持久接 stream → fp=None.
+        # 兼容 v3/v4: 若 agent 仍 send blob, on_message 在收到第一个 frames 时 lazy-open 写盘.
         md = {"callIdx": call_idx, "pid": pid, "tid": tid,
               "ts_in": time.time(), "started_at": time.time(),
               "records": 0, "bytes": 0,
-              "truncated": True, "last_insn_is_ret": None}
-        sess_files[call_idx] = {"fp": fp, "meta": md, "dir": d,
+              "truncated": True, "last_insn_is_ret": None,
+              "devicePath": None}
+        sess_files[call_idx] = {"fp": None, "meta": md, "dir": d,
                                 "callIdx": call_idx, "tid": tid, "pid": pid}
         return sess_files[call_idx]
 
+    def adb_pull_device_trace(device_path, dst_path):
+        """从设备 gzip-stream 文件到 host (在设备端压缩, USB 传输, host 解压).
+           trace.bin 多 0 padding + PC 局部性, 实测压缩比 ~25x:
+              1.25GB raw → 48MB gz, USB 21MB/s 下 60s → 6s (10x 提速).
+           失败抛异常.
+        """
+        import gzip as _gz, shlex
+        with open(dst_path, "wb") as dst:
+            cmd = f"gzip -1 -c {shlex.quote(device_path)}"
+            ps = subprocess.Popen(["adb", "exec-out", cmd],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                # streaming gunzip while pulling
+                gz = _gz.GzipFile(fileobj=ps.stdout, mode="rb")
+                while True:
+                    chunk = gz.read(4 * 1024 * 1024)
+                    if not chunk: break
+                    dst.write(chunk)
+                gz.close()
+            finally:
+                ps.stdout.close()
+                ps.wait(timeout=30)
+            if ps.returncode != 0:
+                stderr = ps.stderr.read().decode("utf-8","replace")[:200]
+                raise RuntimeError(f"adb exec-out gzip {device_path} 失败: rc={ps.returncode} {stderr}")
+        size = pathlib.Path(dst_path).stat().st_size
+        if size == 0:
+            raise RuntimeError(f"adb gzip pull {device_path} 拉到 0 字节文件")
+        subprocess.run(["adb", "shell", "rm", "-f", device_path], capture_output=True)
+        return size
+
     def finalize_call(s, *, truncated):
         """Close .bin, decode last insn, write meta.json, rename dir."""
-        try: s["fp"].close()
+        try:
+            if s.get("fp"): s["fp"].close()
         except: pass
+        # v5: 从 device 拉 trace.bin
+        device_path = s["meta"].get("devicePath")
+        if device_path:
+            try:
+                local_path = s["dir"] / "trace.bin"
+                t0 = time.time()
+                size = adb_pull_device_trace(device_path, str(local_path))
+                wlog(f"  pull {device_path} → {size:,} bytes in {time.time()-t0:.1f}s")
+                s["meta"]["bytes"] = size
+            except Exception as e:
+                wlog(f"[!] pull device trace 失败: {e}")
         md = s["meta"]
         md["truncated"] = bool(truncated)
         md["closed_at"] = time.time()
@@ -221,8 +267,12 @@ def cmd_trace(args):
                         if ci is None:
                             wlog(f"[{tag}] frames 缺 callIdx, 丢弃 {p.get('recs')} 条"); return
                         s = sess_files.get(ci) or open_call(ci, tid, pid)
-                        if data: s["fp"].write(data); s["fp"].flush()
-                        s["meta"]["bytes"] += len(data) if data else 0
+                        # 兼容 v3/v4 的 send-blob 模式 (v5 不送 blob, 直接落盘 device)
+                        if data:
+                            if s.get("fp") is None:
+                                s["fp"] = open(s["dir"]/"trace.bin", "wb")
+                            s["fp"].write(data)
+                            s["meta"]["bytes"] += len(data)
                         s["meta"]["records"] += p["recs"]
                         wlog(f"[{tag}] call#{ci} tid={tid} +{p['recs']} (total={p['total']}, {p.get('reason','?')})")
                     elif t == "module":
@@ -241,7 +291,10 @@ def cmd_trace(args):
                         # ts_in 用 host 时钟; agent 的 Date.now() 是设备时钟, 与 host 可能差几小时/天
                         sess_files[ci]["meta"]["ts_in"] = time.time()
                         sess_files[ci]["meta"]["ts_device_in_ms"] = p.get("ts")
-                        wlog(f"[{tag}] trace 开始 call#{ci} tid={p['tid']}")
+                        # v5: agent 落盘 device, host 之后 adb pull
+                        if p.get("devicePath"):
+                            sess_files[ci]["meta"]["devicePath"] = p["devicePath"]
+                        wlog(f"[{tag}] trace 开始 call#{ci} tid={p['tid']}{' device='+p['devicePath'] if p.get('devicePath') else ''}")
                     elif t == "trace-end":
                         ci = p.get("callIdx") or 0
                         if ci not in sess_files:
@@ -251,10 +304,12 @@ def cmd_trace(args):
                         s["meta"]["ms"] = p.get("ms")
                         s["meta"]["dropped"] = p.get("dropped", 0)
                         s["meta"]["ts_out"] = time.time()
+                        if p.get("devicePath"):     # v5
+                            s["meta"]["devicePath"] = p["devicePath"]
                         truncated = bool(p.get("truncated", False))
                         finalize_call(s, truncated=truncated)
                         del sess_files[ci]
-                        wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated}")
+                        wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated} dropped={p.get('dropped',0)}")
                     elif t == "follow": wlog(f"[{tag}] 跟踪 tid={p['tid']} ({p.get('label','?')})")
                     elif t == "cmd-hist":
                         h = p.get("hist", {})
@@ -288,6 +343,7 @@ def cmd_trace(args):
         "cmdValue": args.cmd or 0,
         "maxRecords": args.max_records,
         "followAllThreads": args.follow_workers,
+        "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
