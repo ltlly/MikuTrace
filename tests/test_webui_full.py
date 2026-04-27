@@ -238,6 +238,64 @@ def test_backtrace_endpoint(client):
 
 # ============== full-trace invariant scan =================================
 
+def test_cfg_call_return_edges(tmp_path):
+    """合成 caller bl→callee→ret 模式, 验证 call-return 边出现.
+    caller block: nop, bl callee, nop_post_call, ret
+    callee block: ret
+    期望 edge: caller_bl_block → nop_post_call (kind=call-return)
+    """
+    from viewer.trace import load
+    from viewer.cfg import build_cfg
+    import struct
+    from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
+    ks = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
+    base = 0x100000
+    # trace 顺序:
+    #  caller @ 0x100000: nop (#0)
+    #  caller @ 0x100004: bl 0x100100  (#1)
+    #  callee @ 0x100100: ret  (#2)
+    #  caller @ 0x100008: nop  (#3)
+    #  caller @ 0x10000c: ret  (#4)
+    seqs = [
+        (0x100000, ["nop"]),
+        (0x100004, ["bl #0x100100"]),
+        (0x100100, ["ret"]),
+        (0x100008, ["nop"]),
+        (0x10000c, ["ret"]),
+    ]
+    run = tmp_path/"r"; run.mkdir(); (run/"calls").mkdir()
+    cd = run/"calls"/"call_001_tid100"; cd.mkdir()
+    bf = open(cd/"trace.bin","wb")
+    for pc, asm_list in seqs:
+        for asm in asm_list:
+            inst, _ = ks.asm(asm)
+            bf.write(struct.pack("<Q", pc))
+            for _ in range(31): bf.write(struct.pack("<Q", 0))
+            bf.write(struct.pack("<Q", 0x7000))
+            bf.write(struct.pack("<I", 0))
+            bf.write(struct.pack("<I", int.from_bytes(bytes(inst), "little")))
+            pc += 4
+    bf.close()
+    json.dump({}, open(cd/"meta.json","w"))
+    json.dump({"module":{"name":"libt.so","base":hex(base),"size":0x10000}},
+              open(run/"meta.json","w"))
+    t = load(cd)
+    cfg = build_cfg(t, only_module=True)
+    # 找 caller bl block: 包含 0x100004 (bl)
+    bl_block = None
+    for s, b in cfg.blocks.items():
+        if 0x100004 in b.insns:
+            bl_block = s; break
+    assert bl_block is not None
+    # 期望 edge bl_block → 0x100008 with kind=call-return
+    found = False
+    for (s, d), v in cfg.edges.items():
+        if s == bl_block and d == 0x100008 and v["kind"] == "call-return":
+            found = True; break
+    assert found, f"call-return edge not found. edges from bl_block: " + \
+        str([(hex(s), hex(d), v["kind"]) for (s,d),v in cfg.edges.items() if s == bl_block])
+
+
 def test_scc_finds_loops():
     """Tarjan SCC 测试: 构造 A→B→A 自环 + C 单顶点, 应找到 1 个 loop."""
     from viewer.cfg import CFG, Block, find_sccs, loop_sccs

@@ -238,6 +238,12 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 .mem-line .addr { color: var(--accent2); }
 .mem-line .hex  { color: var(--fg); }
 .mem-line .ascii { color: var(--dim); }
+/* per-byte coloring (read=灰, write=绿, unread=暗灰) */
+.mem-line .b-unread { color: var(--dim); }
+.mem-line .b-read   { color: var(--fg); }
+.mem-line .b-write  { color: var(--good); cursor: pointer; }
+.mem-line .hex .b-read,
+.mem-line .hex .b-write { cursor: pointer; }
 
 /* search/taint hits */
 .hit-row {

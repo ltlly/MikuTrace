@@ -604,7 +604,8 @@ async function refreshMemDump() {
     return;
   }
   $("mem-info").textContent = `dump from ${addr}`;
-  // 16 bytes per line
+  // 16 bytes per line — ascii 列分 char 一个 span (不再字符串拼 HTML 后 escapeHtml,
+  // 那会把 <span> 转成文本显示)
   let html = "";
   for (let line = 0; line < 16; line++) {
     const lineAddr = "0x" + (BigInt(addr) + BigInt(line * 16)).toString(16);
@@ -613,19 +614,20 @@ async function refreshMemDump() {
       const idx = line * 16 + col;
       const b = r.bytes[idx];
       if (b == null || b.byte == null) {
-        hex += `<span style="color:var(--dim)">??</span> `;
-        ascii += `<span style="color:var(--dim)">·</span>`;
+        hex += `<span class="b-unread">??</span> `;
+        ascii += `<span class="b-unread">·</span>`;
       } else {
-        const cls = b.kind === "w" ? "color:var(--good)" : "color:var(--fg)";
-        hex += `<span style="${cls};cursor:pointer" data-addr="${b.addr}" title="from #${b.src_idx} (${b.kind})">${b.byte.toString(16).padStart(2,'0')}</span> `;
+        const cls = b.kind === "w" ? "b-write" : "b-read";
+        hex += `<span class="${cls}" data-addr="${b.addr}" title="from #${b.src_idx} (${b.kind})">${b.byte.toString(16).padStart(2,'0')}</span> `;
         const ch = b.byte;
-        ascii += (ch >= 0x20 && ch < 0x7f) ? String.fromCharCode(ch) : "·";
+        const cc = (ch >= 0x20 && ch < 0x7f) ? String.fromCharCode(ch) : "·";
+        ascii += `<span class="${cls}">${escapeHtml(cc)}</span>`;
       }
     }
     html += `<div class="mem-line">` +
             `<span class="addr">${lineAddr}</span>` +
             `<span class="hex">${hex}</span>` +
-            `<span class="ascii">${escapeHtml(ascii)}</span></div>`;
+            `<span class="ascii">${ascii}</span></div>`;
   }
   cont.innerHTML = html;
   // double click hex → jump to source idx

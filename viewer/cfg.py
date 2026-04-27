@@ -146,8 +146,12 @@ def build_cfg(t: Trace, only_module: bool = True) -> CFG:
         prev_pc = pc
 
     # Pass 2: actually populate blocks + edges
+    # 同时维护 call stack 用于添加 "call-return" 边: 当 callee 执行 ret 后,
+    # trace 跳回 caller 的 bl+4 (post-call). 添加 edge caller_block → post_call_pc
+    # 以使 caller 的 CFG 不被 callee 切断成"孤立"块.
     cur: Optional[Block] = None
     prev_pc = 0
+    call_stack: list[int] = []   # caller block start_pcs (LIFO)
     for i in range(n):
         pc = t.pc(i)
         inst = t.inst(i)
@@ -157,7 +161,6 @@ def build_cfg(t: Trace, only_module: bool = True) -> CFG:
         # Need to start a new block?
         if pc in block_starts or cur is None:
             if cur is not None and prev_pc and prev_pc + 4 == pc:
-                # Fall-through edge from previous block's end to this start
                 e = (cur.start_pc, pc)
                 cfg.edges.setdefault(e, {"kind": "fall", "count": 0})["count"] += 1
             blk = cfg.blocks.get(pc)
@@ -166,22 +169,30 @@ def build_cfg(t: Trace, only_module: bool = True) -> CFG:
                 cfg.blocks[pc] = blk
             cur = blk
             cur.executions += 1
-        # 只在 block 第一次执行时填 insns; 后续重复执行不再 append.
-        # (block 是静态结构, 每次执行 PC 序列相同; 之前每次 append 导致
-        #  执行 N 次的块在 UI 中显示 N 份相同 ASM.)
         if not cur._filled:
             cur.insns.append(pc)
             cur.end_pc = pc
         d = decode(pc, inst)
         if d.is_branch:
-            # Edge to next executed pc
             next_pc = t.pc(i + 1) if i + 1 < n else None
             if next_pc is not None:
                 kind = d.mnemonic
                 e = (cur.start_pc, next_pc)
                 cfg.edges.setdefault(e, {"kind": kind, "count": 0})["count"] += 1
                 cur.exits.add((next_pc, kind))
-            cur._filled = True   # block 完整, 下次进入不再 append insns
+                # 维护调用栈
+                if d.is_call:
+                    call_stack.append(cur.start_pc)
+                elif d.is_ret:
+                    if call_stack:
+                        caller_block = call_stack.pop()
+                        # caller 块 → post-call PC (next_pc) 加 call-return 边
+                        e2 = (caller_block, next_pc)
+                        cfg.edges.setdefault(e2,
+                            {"kind": "call-return", "count": 0})["count"] += 1
+                        if caller_block in cfg.blocks:
+                            cfg.blocks[caller_block].exits.add((next_pc, "call-return"))
+            cur._filled = True
             cur = None
         prev_pc = pc
 

@@ -494,7 +494,14 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             term = block_term_kind.get(s)
             is_cond = bool(term) and (term.startswith("b.") or term in ("cbz", "cbnz", "tbz", "tbnz"))
             color = "#666666"; lblcol = None
-            if kind == "fall":
+            extra = ""
+            if kind == "call-return":
+                # PDF p.8 风: 调用返回边 (caller bl block → post-call block)
+                # 紫色虚线, 与普通 bl 区分; 让 CFG 不被 callee 切断
+                color = "#bc8cff"
+                extra = ", style=dashed"
+                lblcol = "#bc8cff"
+            elif kind == "fall":
                 # natural fallthrough into next block (no branch)
                 color = "#444c56"
             elif is_cond:
@@ -519,14 +526,14 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             label_attr = f'label="{label_txt}"'
             if lblcol: label_attr += f', fontcolor="{lblcol}"'
             if d in included_starts:
-                buf.write(f'  "b{s:x}" -> "b{d:x}" [color="{color}", {label_attr}];\n')
+                buf.write(f'  "b{s:x}" -> "b{d:x}" [color="{color}", {label_attr}{extra}];\n')
             else:
                 ext_lbl = f"ext +{(d-base):x}" if base else f"ext {d:x}"
                 buf.write(f'  "ext_{s:x}_{d:x}" [shape=ellipse, fontsize=9, '
                           f'style=filled, fillcolor="#1f2630", color="#6e7681", '
                           f'fontcolor="#6e7681", label="{ext_lbl}", '
                           f'id="ext_{s:x}_{d:x}"];\n')
-                buf.write(f'  "b{s:x}" -> "ext_{s:x}_{d:x}" [color="{color}", {label_attr}];\n')
+                buf.write(f'  "b{s:x}" -> "ext_{s:x}_{d:x}" [color="{color}", {label_attr}{extra}];\n')
         buf.write("}\n")
         dot_text = buf.getvalue()
 
