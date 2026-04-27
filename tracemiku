@@ -800,7 +800,7 @@ def cmd_query(args):
     elif sub == "forward-taint":
         from viewer.taint import forward_taint
         idx = Index(t); idx.build()
-        results = forward_taint(t, args.from_, args.reg, max_count=args.max)
+        results = forward_taint(t, args.from_, args.reg, max_count=args.max, index=idx)
         rows = []
         for i, why in results:
             r = t.record(i); d = decode(r.pc, r.inst)
@@ -813,7 +813,7 @@ def cmd_query(args):
     elif sub == "backward-taint":
         from viewer.taint import backward_taint
         idx = Index(t); idx.build()
-        results = backward_taint(t, args.from_, args.reg, max_count=args.max)
+        results = backward_taint(t, args.from_, args.reg, max_count=args.max, index=idx)
         rows = []
         for i, reg in results:
             r = t.record(i); d = decode(r.pc, r.inst)

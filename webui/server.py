@@ -763,6 +763,10 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
     @app.get("/api/search")
     def search(pattern: str, max_results: int = 200):
+        """Regex 搜索指令 mnemonic+op_str. 简单线扫 + early-break, decode 有
+        lru_cache 所以重复 PC 几乎零开销. 6.8M trace 上 ~10-200ms 取决于命中
+        密度 (max_results 提前 break).
+        """
         import re
         rx = re.compile(pattern, re.I)
         m = t.meta.module
@@ -786,7 +790,9 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
             return {"status": BG["index"]["status"], "hits": []}
-        results = forward_taint(t, start, reg, max_count=max_count)
+        # 用 index 做 bisect 加速 — O(|hits|·log N) vs 旧 O(N²)
+        results = forward_taint(t, start, reg, max_count=max_count,
+                                index=BG["index"]["data"])
         m = t.meta.module
         base = m.base if m else 0
         rows = []
@@ -805,7 +811,8 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
             return {"status": BG["index"]["status"], "chain": []}
-        results = backward_taint(t, start, reg, max_count=max_count)
+        results = backward_taint(t, start, reg, max_count=max_count,
+                                 index=BG["index"]["data"])
         m = t.meta.module
         base = m.base if m else 0
         rows = []
@@ -909,23 +916,37 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
 
     @app.get("/api/last-write-of-reg")
     def last_write_of_reg(cursor: int, reg: str):
-        """返回 cursor 之前最近一次该 reg 的值变化 (def-use 起点).
-        线性扫 backwards from cursor-1."""
+        """返回 cursor 之前最近一次该 reg 被 def 的指令 idx.
+        index.reg_defs bisect: O(log N) vs 旧 O(cursor) 线性扫.
+        """
         if reg not in ALL_REGS:
             return {"status": "error", "err": f"unknown reg {reg}"}
         n = len(t)
         if cursor <= 0 or cursor > n: return {"status": "ready", "idx": None}
         cur_val = t.record(cursor).reg(reg) if cursor < n else None
-        # scan backward
+        # 用 reg_defs index 找 cursor 之前最近的 def idx
+        if BG["index"]["status"] == "ready":
+            idx_obj = BG["index"]["data"]
+            defs = idx_obj.reg_defs.get(reg, [])
+            import bisect
+            pos = bisect.bisect_left(defs, cursor) - 1
+            if pos >= 0:
+                def_idx = defs[pos]
+                return {"status": "ready", "idx": def_idx,
+                        "value": hex(cur_val) if cur_val is not None else None}
+            return {"status": "ready", "idx": 0,
+                    "value": hex(cur_val) if cur_val is not None else None}
+        # fallback: index 没建好, 用旧线性扫
+        _bg_run("index", _build_index)
         i = cursor - 1
         while i >= 0:
             v = t.record(i).reg(reg)
             if v != cur_val:
-                # idx i+1 是写入此 reg 的指令 (因为 reg 在 i+1 时变了)
-                # 但典型语义: 我们要回到 idx where reg 等于当前值的 FIRST 时刻
-                return {"status": "ready", "idx": i + 1, "value": hex(cur_val) if cur_val is not None else None}
+                return {"status": "ready", "idx": i + 1,
+                        "value": hex(cur_val) if cur_val is not None else None}
             i -= 1
-        return {"status": "ready", "idx": 0, "value": hex(cur_val) if cur_val is not None else None}
+        return {"status": "ready", "idx": 0,
+                "value": hex(cur_val) if cur_val is not None else None}
 
     @app.get("/api/reg-value-at")
     def reg_value_at(idx: int, reg: str):

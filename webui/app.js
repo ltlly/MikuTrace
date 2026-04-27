@@ -1288,7 +1288,9 @@ function setupKeys() {
     else if (e.key === "PageUp")   setCursor(STATE.cursor - 20, true);
     else if (e.key === "g") setCursor(0, true);
     else if (e.key === "G") setCursor(STATE.totalRecords - 1, true);
-    else if (e.key === "/") { e.preventDefault(); openCmd("/", v => { /* TODO search */ }); }
+    else if (e.key === "/") { e.preventDefault(); openCmd("/", v => doSearch(v)); }
+    else if (e.key === "n") { searchStep(+1); }
+    else if (e.key === "N") { searchStep(-1); }
     else if (e.key === ":") { openCmd(":", v => { const n = parseInt(v); if (!Number.isNaN(n)) setCursor(n, true); }); }
   });
 }
@@ -1315,6 +1317,47 @@ function closeCmd() {
   STATE._cmdCB = null;
   $("cmd-prompt").textContent = "";
   $("cmd-input").value = "";
+}
+
+// ---------------- vim-style / search + n/N ----------------
+async function doSearch(pattern) {
+  if (!pattern) return;
+  const status = $("status");
+  if (status) status.textContent = `搜索 "${pattern}"...`;
+  try {
+    const r = await fetch(`/api/search?pattern=${encodeURIComponent(pattern)}&max_results=2000`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    STATE._searchPattern = pattern;
+    STATE._searchHits = (j.hits || []).map(h => h.idx).sort((a,b)=>a-b);
+    if (STATE._searchHits.length === 0) {
+      if (status) status.textContent = `"${pattern}" 0 hits`;
+      return;
+    }
+    // 跳到 cursor 之后第一个 hit
+    let pos = STATE._searchHits.findIndex(i => i >= STATE.cursor);
+    if (pos === -1) pos = 0;
+    STATE._searchPos = pos;
+    setCursor(STATE._searchHits[pos], true);
+    if (status) status.textContent = `"${pattern}" ${pos+1}/${STATE._searchHits.length} hits — n/N 翻页`;
+  } catch (e) {
+    if (status) status.textContent = `search 失败: ${e.message}`;
+  }
+}
+function searchStep(dir) {
+  const hits = STATE._searchHits || [];
+  if (hits.length === 0) {
+    const status = $("status");
+    if (status) status.textContent = `(无搜索结果) — 按 / 开始搜索`;
+    return;
+  }
+  let pos = (STATE._searchPos ?? 0) + dir;
+  if (pos < 0) pos = hits.length - 1;
+  if (pos >= hits.length) pos = 0;
+  STATE._searchPos = pos;
+  setCursor(hits[pos], true);
+  const status = $("status");
+  if (status) status.textContent = `"${STATE._searchPattern}" ${pos+1}/${hits.length} hits — n/N 翻页`;
 }
 
 // ---------------- Settings tab ----------------
