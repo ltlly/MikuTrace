@@ -4,7 +4,7 @@
 mmap 在后端, 客户端按 viewport 拉切片, 200 万条 trace 滚动丝滑.
 """
 from __future__ import annotations
-import pathlib, time, threading, multiprocessing as mp
+import pathlib, time, threading, multiprocessing as mp, logging
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
@@ -17,6 +17,162 @@ from viewer.cfg import build_cfg, loop_sccs
 from viewer.index import Index
 from viewer.display import (collect_modules_from_trace, deref_u64,
                             is_in_known_module, maybe_string_at, _heuristic_region)
+
+
+log = logging.getLogger(__name__)
+
+
+# ============== Shared CFG-rendering helpers (used by both /api/cfg-svg and
+# /api/bn-cfg-svg-for-pc, 避免双份 dot 模板/颜色/subprocess 调用) ==============
+
+def _html_esc(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace('"', "&quot;"))
+
+# mnem 类别 → asm 颜色 (一个真理源, 两边渲染共用)
+_MNEM_COLORS = {
+    "ret":    "#f85149",
+    "call":   "#bc8cff",
+    "branch": "#f7b32b",
+    "":       "#d0d7de",   # default
+}
+
+def _classify_mnem(text_or_mnem: str) -> str:
+    """ASM 行第一个 token (mnem) → 'ret' | 'call' | 'branch' | ''.
+    入参可以是整行 'sub  sp, sp, ...' 或仅 mnem 'sub'."""
+    tx = text_or_mnem.lstrip()
+    if not tx: return ""
+    mnem = tx.split(maxsplit=1)[0].lower()
+    if mnem == "ret": return "ret"
+    if mnem in ("bl", "blr"): return "call"
+    if mnem in ("b", "br", "cbz", "cbnz", "tbz", "tbnz") or mnem.startswith("b."):
+        return "branch"
+    return ""
+
+
+def _build_block_label(rows_html: list[str], border_color: str,
+                       bg_color: str = "#161b22") -> str:
+    """组 graphviz <TABLE> label. rows_html 是已经 escape 好的 <TR>...</TR>.
+    返回 '<<TABLE...>...</TABLE>>' 可直接放 dot label= 后."""
+    return ('<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" '
+            f'COLOR="{border_color}" BGCOLOR="{bg_color}">'
+            + "".join(rows_html) +
+            "</TABLE>>")
+
+
+# BN token cls → graphviz <FONT COLOR>. 镜像 styles.css .tok-* (一个真理源).
+_TOK_COLOR = {
+    "key":   "#ff7b72",   "type":  "#ff7b72",   "reg":   "#79c0ff",
+    "var":   "#56d4dd",   "num":   "#ffa657",   "str":   "#a5d6ff",
+    "fn":    "#d2a8ff",   "data":  "#ffa657",   "field": "#f2cc60",
+    "cmt":   "#8b949e",   "op":    "#d0d7de",   "sep":   "#d0d7de",
+    "brace": "#ffa657",   "mnem":  "#c9d1d9",   "opcode":"#6e7681",
+    "txt":   "#c9d1d9",   "label": "#ff7b72",   "tag":   "#f2cc60",
+    "hex":   "#ffa657",   "other": "#d0d7de",
+}
+
+
+def _render_tokens_html(tokens) -> str:
+    """BN tokens → graphviz HTML 着色片段. skip 'meta' + 空文本 (graphviz HTML
+    parser 会因空 <FONT></FONT> 报 syntax error). 纯空白 token 用 &nbsp; 防间距塌缩."""
+    parts = []
+    for tk in tokens:
+        if tk.cls == "meta": continue
+        text = tk.text
+        if not text: continue                 # 空文本 token: 必跳, graphviz 不容空 <FONT>
+        if not text.strip():
+            parts.append(text.replace(" ", "&nbsp;"))
+            continue
+        col = _TOK_COLOR.get(tk.cls, "#d0d7de")
+        parts.append(f'<FONT COLOR="{col}">{_html_esc(text)}</FONT>')
+    return "".join(parts)
+
+
+def _format_insn_row(rel_str: str, mnem: str, ops: str,
+                     pc_for_href: int, title: str,
+                     tokens: list | None = None) -> str:
+    """一条 insn 渲染成 <TR><TD HREF="#insn_<pc>" TITLE="...">+pc: mnem ops</TD></TR>.
+    `tokens` 给定时 (BN CFG) 按 BN 词法 per-token 着色; 缺省 (trace CFG/capstone) 走
+    粗粒度 mnem-color 模式."""
+    if tokens:
+        body = _render_tokens_html(tokens)
+        line = f'<FONT COLOR="#6e7681">{_html_esc(rel_str)}:</FONT> {body}'
+    else:
+        fcol = _MNEM_COLORS[_classify_mnem(mnem)]
+        line = (f'<FONT COLOR="#6e7681">{_html_esc(rel_str)}:</FONT> '
+                f'<FONT COLOR="{fcol}">{_html_esc(mnem)}</FONT>')
+        if ops:
+            line += f' <FONT COLOR="#d0d7de">{_html_esc(ops)}</FONT>'
+    return (f'<TR><TD ALIGN="LEFT" HREF="#insn_{pc_for_href:x}" '
+            f'TITLE="{_html_esc(title)}">{line}</TD></TR>')
+
+
+# BN CFG 专用: edge 颜色映射 + BB 边框色梯度 + token-based mnem/ops 切分
+
+_BN_EDGE_KIND_COLOR = {
+    "true":     ("#3fb950", None),       # 绿 = cond taken
+    "false":    ("#f85149", None),       # 红 = cond fall-through
+    "uncond":   ("#58a6ff", None),       # 蓝 = unconditional
+    "indirect": ("#d2a8ff", None),       # 紫 = indirect (OLLVM dispatcher)
+    "ret":      ("#bc8cff", None),
+    "call":     ("#bc8cff", "dashed"),
+    "user":     ("#bc8cff", "dashed"),
+    "exc":      ("#ff7b72", "dashed"),
+    "syscall":  ("#ff7b72", None),
+    "unres":    ("#6e7681", "dashed"),
+}
+
+
+def _bn_bb_border_color(exec_count: int, is_current: bool) -> str:
+    """BN BB 边框色: cursor 紫 / 0 灰 / 否则按 log10 梯度蓝→绿→红."""
+    if is_current: return "#d2a8ff"
+    if exec_count == 0: return "#30363d"
+    import math
+    t_lvl = min(math.log10(max(exec_count, 1)) / 3, 1.0)
+    if t_lvl < 0.33:
+        r = int(0x30 + t_lvl * 3 * 0x28); g = int(0x36 + t_lvl * 3 * 0x4a); bl = int(0x3d + t_lvl * 3 * 0x60)
+    elif t_lvl < 0.66:
+        f = (t_lvl - 0.33) * 3
+        r = int(0x58 + f * 0x80); g = int(0x80 + f * 0x40); bl = int(0x9d - f * 0x60)
+    else:
+        f = (t_lvl - 0.66) * 3
+        r = int(0xd8 + f * 0x20); g = int(0xc0 - f * 0x80); bl = int(0x3d - f * 0x20)
+    clamp = lambda v: max(0, min(255, v))
+    return f"#{clamp(r):02x}{clamp(g):02x}{clamp(bl):02x}"
+
+
+def _split_mnem_ops_from_tokens(line) -> tuple[str, str]:
+    """从 HlilLine.tokens 拿精准 mnem / ops, fallback 是字符串切分.
+    line 是 viewer.decompiler.backend.HlilLine."""
+    mnem_tk = ""; ops_str = ""
+    if line.tokens:
+        seen_inst = False
+        for tk in line.tokens:
+            if tk.cls == "mnem" and not mnem_tk:
+                mnem_tk = tk.text.strip(); seen_inst = True
+            elif seen_inst and tk.cls != "mnem":
+                ops_str += tk.text
+    if not mnem_tk:
+        parts = line.text.lstrip().split(maxsplit=1)
+        mnem_tk = parts[0] if parts else ""
+        ops_str = parts[1] if len(parts) > 1 else ""
+    return mnem_tk, ops_str.strip()
+
+
+def _render_dot_to_svg(dot_text: str, timeout: int = 60) -> tuple[Optional[str], Optional[str]]:
+    """Run dot subprocess, return (svg_str, None) on success or (None, err_str).
+    err_str 包含 returncode != 0 时的 stderr 前 500 字符."""
+    import subprocess
+    try:
+        r = subprocess.run(["dot", "-Tsvg"], input=dot_text, text=True,
+                           capture_output=True, timeout=max(5, timeout))
+    except FileNotFoundError:
+        return None, "graphviz `dot` not found in PATH"
+    except subprocess.TimeoutExpired:
+        return None, f"dot timeout after {timeout}s"
+    if r.returncode != 0:
+        return None, (r.stderr or "")[:500]
+    return r.stdout, None
 
 
 def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
@@ -63,15 +219,54 @@ def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
 HERE = pathlib.Path(__file__).resolve().parent
 
 
-def make_app(trace_path: pathlib.Path) -> FastAPI:
+def make_app(trace_path: pathlib.Path,
+             decomp_so: Optional[pathlib.Path] = None,
+             decomp_backend: Optional[str] = None) -> FastAPI:
     """Build a FastAPI app bound to one trace.
 
     Heavy structures (CFG, symbols, index) are lazily computed on first hit
     and cached. mmap'd trace stays open for the lifetime of the server.
+
+    decomp_so / decomp_backend: if given, kick off background BN/Ghidra/IDA
+    load at startup; /api/hlil-for-pc serves results once ready. base for the
+    backend = trace.meta.module.base (so caller passes absolute runtime PCs).
     """
     t = load(trace_path)
     sym = build_from_trace(t)
     cache: dict = {}
+
+    # ---- decompiler backend (optional, slow init in BG) ----
+    DECOMP = {
+        "backend": None,           # the live backend instance (or None)
+        "name": None,              # 'binja' | 'ghidra' | 'ida' | 'r2' | 'none'
+        "status": "disabled",      # disabled | loading | ready | error
+        "err": None,
+        "started_at": 0.0,
+        "ready_at": 0.0,
+        "so_path": str(decomp_so) if decomp_so else None,
+    }
+    if decomp_so is not None:
+        DECOMP["status"] = "loading"
+        DECOMP["started_at"] = time.time()
+        def _load_decomp():
+            try:
+                from viewer.decompiler import make_backend
+                bk = make_backend(decomp_backend)
+                # base: 我们传 trace 看到的 module.base (绝对运行时 base).
+                # 这样后端 function_at(absolute_pc) 直接命中.
+                base = t.meta.module.base if t.meta.module else 0
+                bk.open(str(decomp_so), base=base)
+                DECOMP["backend"] = bk
+                DECOMP["name"] = bk.name
+                DECOMP["status"] = "ready"
+                DECOMP["ready_at"] = time.time()
+                log.info("decomp backend %s ready in %.1fs",
+                         bk.name, DECOMP["ready_at"] - DECOMP["started_at"])
+            except Exception as e:
+                DECOMP["err"] = repr(e)
+                DECOMP["status"] = "error"
+                log.exception("decomp backend failed")
+        threading.Thread(target=_load_decomp, daemon=True, name="decomp-load").start()
 
     # 重型结构 (CFG / pc_inst / index / mem-shadow) 都跑后台线程, 不阻塞 UI 响应.
     # 状态: "idle" → "building" → "ready" / "error"
@@ -505,9 +700,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
             for pc in scc:
                 loop_color[pc] = hex_col
 
-        def html_esc(s: str) -> str:
-            return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                     .replace('"', "&quot;"))
+        # html_esc / build_label / format_insn_row 用模块顶层 _html_esc / _build_block_label / _format_insn_row
 
         # 探测每条 insn 是否是分支 (用来识别 block 末尾的 cond/uncond 性质)
         block_term_kind: dict = {}
@@ -535,7 +728,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         # 选中改 class.
         for pc, b, fname in included:
             head_rel_str = f"+{(pc - base):x}" if base else f"{pc:x}"
-            head_lbl = html_esc(f"{head_rel_str}  ×{b.executions}")
+            head_lbl = _html_esc(f"{head_rel_str}  ×{b.executions}")
             rows = []
             # Header 用浅灰色 — 不要用 #58a6ff (蓝, 同 cursor highlight 撞色, 用户分不清)
             rows.append(f'<TR><TD ALIGN="LEFT" BGCOLOR="#0e1117" '
@@ -547,18 +740,8 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 rel_str = f"+{(ins_pc - base):x}" if base else f"{ins_pc:x}"
                 ops = d.op_str
                 if len(ops) > 50: ops = ops[:48] + ".."
-                # 颜色: 分支橙红, ret 红, call 紫, 其他默认
-                fcol = "#d0d7de"
-                if d.is_ret: fcol = "#f85149"
-                elif d.is_call: fcol = "#bc8cff"
-                elif d.is_branch: fcol = "#f7b32b"
-                line = f'<FONT COLOR="#6e7681">{html_esc(rel_str)}:</FONT> '\
-                       f'<FONT COLOR="{fcol}">{html_esc(d.mnemonic)}</FONT>'
-                if ops:
-                    line += f' <FONT COLOR="#d0d7de">{html_esc(ops)}</FONT>'
                 title = f"{ins_pc:#x}: {d.mnemonic} {d.op_str}"
-                rows.append(f'<TR><TD ALIGN="LEFT" '
-                            f'HREF="#insn_{ins_pc:x}" TITLE="{html_esc(title)}">{line}</TD></TR>')
+                rows.append(_format_insn_row(rel_str, d.mnemonic, ops, ins_pc, title))
             ints = min(b.executions, 50) / 50
             # 优先 loop 色 — PDF p.10 "不同循环不同颜色"
             if pc in loop_color:
@@ -568,10 +751,7 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
                 if ints > 0.1:
                     r = int(0x30 + ints * 0x80); g = int(0x36 + ints * 0x60); bl = int(0x3d + ints * 0x10)
                     br = f"#{r:02x}{g:02x}{bl:02x}"
-            label = ('<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" '
-                     f'COLOR="{br}" BGCOLOR="#161b22">'
-                     + "".join(rows) +
-                     "</TABLE>>")
+            label = _build_block_label(rows, br)
             buf.write(f'  "b{pc:x}" [label={label}, id="b{pc:x}"];\n')
 
         # edges: green=cond taken, red=cond not-taken (fall-through after b.cond/cbz/tbz),
@@ -645,17 +825,9 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         buf.write("}\n")
         dot_text = buf.getvalue()
 
-        import subprocess
-        try:
-            r = subprocess.run(["dot", "-Tsvg"], input=dot_text, text=True,
-                               capture_output=True, timeout=max(5, timeout))
-            if r.returncode != 0:
-                return {"status": "error", "err": r.stderr[:500]}
-            svg = r.stdout
-        except FileNotFoundError:
-            return {"status": "error", "err": "graphviz `dot` 没装"}
-        except subprocess.TimeoutExpired:
-            return {"status": "error", "err": f"dot 超时 ({timeout}s) — 增大 settings.dotTimeout 或减小 fn 范围"}
+        svg, err = _render_dot_to_svg(dot_text, timeout=timeout)
+        if err is not None:
+            return {"status": "error", "err": err}
 
         result = {"svg": svg,
                   "block_count": len(included),
@@ -879,8 +1051,8 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     @app.get("/api/string-provenance")
     def string_provenance(addr: str, length: int = 32):
         """对 [addr, addr+length) 区域, 列每个字节的 write idxs (谁构造) +
-        read idxs (谁消费). 向量化: 一次 numpy mask 拿所有命中范围的 mem op,
-        再 scatter 到每 byte. 6.8M trace 上 ~17s → ~10ms."""
+        read idxs (谁消费). 全 numpy: 不再 Python scatter 循环, 即使 hot buffer
+        被写 100K 次也 ~ms 级."""
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             st = BG["mem"]["status"]
@@ -889,36 +1061,32 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
         import numpy as np
         mem = BG["mem"]["data"]
         start = int(addr, 16); end = start + length
-        # 一次性过滤命中 [start, end) 范围的 writes/reads (远少于全集)
+        # 一次性过滤: 只留与 [start, end) 真重叠的 ops (绝大多数被剔)
         w_mask = (mem.w_addr < np.uint64(end)) & ((mem.w_addr.astype(np.int64) + mem.w_size) > start)
         r_mask = (mem.r_addr < np.uint64(end)) & ((mem.r_addr.astype(np.int64) + mem.r_size) > start)
-        w_a, w_s, w_i = mem.w_addr[w_mask], mem.w_size[w_mask], mem.w_idx[w_mask]
-        r_a, r_s, r_i = mem.r_addr[r_mask], mem.r_size[r_mask], mem.r_idx[r_mask]
-        # scatter 到每个 byte offset
-        writers_per: list[list[int]] = [[] for _ in range(length)]
-        readers_per: list[list[int]] = [[] for _ in range(length)]
-        for a, s, i in zip(w_a.tolist(), w_s.tolist(), w_i.tolist()):
-            lo = max(0, int(a) - start); hi = min(length, int(a) + int(s) - start)
-            for o in range(lo, hi):
-                writers_per[o].append(int(i))
-        for a, s, i in zip(r_a.tolist(), r_s.tolist(), r_i.tolist()):
-            lo = max(0, int(a) - start); hi = min(length, int(a) + int(s) - start)
-            for o in range(lo, hi):
-                readers_per[o].append(int(i))
-        # 各 list 已按 trace order 自然 ascending. 但 mem.writes 顺序按 trace
-        # 顺序 build, 同 byte 多次 write 也是 ascending. sort() 兜底.
+        w_a64 = mem.w_addr[w_mask].astype(np.int64); w_s = mem.w_size[w_mask]; w_i = mem.w_idx[w_mask]
+        r_a64 = mem.r_addr[r_mask].astype(np.int64); r_s = mem.r_size[r_mask]; r_i = mem.r_idx[r_mask]
+        w_end = w_a64 + w_s.astype(np.int64)
+        r_end = r_a64 + r_s.astype(np.int64)
+        WRITERS_CAP = 20
+
         out_bytes = []
         for offset in range(length):
             a = start + offset
-            ws = writers_per[offset]; rs = readers_per[offset]
+            # ops covering byte a: addr <= a < addr+size — pure numpy mask, 无 Python 循环
+            wh = (w_a64 <= a) & (a < w_end)
+            rh = (r_a64 <= a) & (a < r_end)
+            w_full = w_i[wh]; r_full = r_i[rh]
             byte_val = None; kind = "??"
             if mem.bytes:
                 b, k, _ = mem.byte_at(a, 1 << 63)
                 byte_val = b; kind = k
             out_bytes.append({
                 "addr": hex(a), "byte": byte_val, "kind": kind,
-                "writers": ws[:20], "readers": rs[:20],
-                "writers_total": len(ws), "readers_total": len(rs),
+                "writers": w_full[:WRITERS_CAP].tolist(),
+                "readers": r_full[:WRITERS_CAP].tolist(),
+                "writers_total": int(w_full.size),
+                "readers_total": int(r_full.size),
             })
         return {"status": "ready", "addr": addr, "length": length, "bytes": out_bytes}
 
@@ -1054,7 +1222,336 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     @app.get("/api/bg-status")
     def bg_status():
         """所有后台构建任务的状态. 前端用来显示 progress / 决定是否 retry."""
-        return {k: {sk: sv for sk, sv in s.items() if sk != "data"} for k, s in BG.items()}
+        out = {k: {sk: sv for sk, sv in s.items() if sk != "data"} for k, s in BG.items()}
+        # decomp 也单独抛出来 (前端用)
+        out["decomp"] = {k: v for k, v in DECOMP.items() if k != "backend"}
+        return out
+
+    # ---- decompiler endpoints (optional) ----
+    def _tok(t):
+        """Token → compact wire dict."""
+        d = {"t": t.text, "c": t.cls}
+        if t.addr: d["a"] = hex(t.addr)
+        return d
+
+    # Lazy cache: per BN function, the trace-derived exec stats.
+    # key=fn.start (caller-coord) → {bb_counts, edges_seen, succ_map, fn_total}
+    # FIFO cap 防止打开很多函数后 dict 无界增长 (每条 entry ~1-10KB).
+    _CFG_OVERLAY_CACHE: "dict" = {}
+    _CFG_OVERLAY_ORDER: "list" = []        # FIFO eviction order
+    _CFG_OVERLAY_LOCK = threading.Lock()
+    _CFG_OVERLAY_MAX = 256
+
+    def _compute_cfg_overlay(fn_start: int, blocks, edges) -> dict:
+        """Walk pc_array (zero-copy numpy view) once, fill bb hit counts +
+        edges-seen set + per-BB-end successor-pc map. ~5-50ms per fn on 5M
+        traces; cached. succ_map 也 cache 出去, dyn-only 检测 O(1) 复用."""
+        with _CFG_OVERLAY_LOCK:
+            hit = _CFG_OVERLAY_CACHE.get(fn_start)
+            if hit is not None: return hit
+        import numpy as np
+        pcs = t.pc_array()
+        # exec_count = BB 内所有指令的累计命中数 (instruction-level heat map).
+        # 不用 pure BB-entry count 的原因: trace 可能从函数中段开始 (trace 起点
+        # 落在 BB 内部, BB.start 一次都没出现), 导致有效 BB 也显示 0. 累计指令
+        # 数对 trace 起点鲁棒, 视觉范围也更广.
+        bb_counts = {b.start: int(((pcs >= b.start) & (pcs < b.end)).sum())
+                     for b in blocks}
+        # build successor-pc set for each src_last_pc (ARM64 fixed 4-byte insns)
+        succ_map: dict[int, set] = {}
+        for src_last in {b.end - 4 for b in blocks}:
+            idx = np.flatnonzero(pcs == src_last)
+            if idx.size == 0: continue
+            nxt = pcs[idx[idx + 1 < len(pcs)] + 1]
+            succ_map[src_last] = {int(x) for x in nxt.tolist()}
+        # static edges 跟 succ_map 求交 = 见过的 edges
+        bb_by_start = {b.start: b for b in blocks}
+        edges_seen = {
+            (e.src, e.dst) for e in edges
+            if (b := bb_by_start.get(e.src)) and e.dst in succ_map.get(b.end - 4, ())
+        }
+        out = {
+            "bb_counts":  bb_counts,
+            "edges_seen": edges_seen,
+            "succ_map":   succ_map,
+            "fn_total":   sum(bb_counts.values()),
+        }
+        with _CFG_OVERLAY_LOCK:
+            _CFG_OVERLAY_CACHE[fn_start] = out
+            _CFG_OVERLAY_ORDER.append(fn_start)
+            while len(_CFG_OVERLAY_ORDER) > _CFG_OVERLAY_MAX:
+                victim = _CFG_OVERLAY_ORDER.pop(0)
+                _CFG_OVERLAY_CACHE.pop(victim, None)
+        return out
+
+    @app.get("/api/decomp-status")
+    def decomp_status():
+        """前端 polling: 反编译后端是否 ready."""
+        out = {k: v for k, v in DECOMP.items() if k != "backend"}
+        if DECOMP["started_at"]:
+            ref = DECOMP["ready_at"] if DECOMP["status"] == "ready" else time.time()
+            out["elapsed"] = ref - DECOMP["started_at"]
+        return out
+
+    @app.get("/api/asm-tokens-for-pcs")
+    def asm_tokens_for_pcs(pcs: str):
+        """Batch query: for a list of trace PCs (comma-separated hex), return the
+        BN-tokenized ASM for each (so trace stream rows can render BN-grade syntax
+        highlighting instead of capstone's plain string).
+
+        Param:
+            pcs: "0x6d52ed1770,0x6d52ed1774,..." (no spaces). Limit ~256 per call.
+
+        Returns:
+            {ready: bool, status: 'ok'|'loading'|...,
+             tokens: { "0x...": [{text, cls, addr}, ...], ... }}
+            Missing PCs (not in any BN-known fn) are simply absent from `tokens`.
+        """
+        if DECOMP["status"] != "ready":
+            return {"ready": False, "status": DECOMP["status"], "tokens": {}}
+        bk = DECOMP["backend"]
+        out: dict[str, list[dict]] = {}
+        seen: set[int] = set()
+        for raw in pcs.split(","):
+            s = raw.strip()
+            if not s: continue
+            try:
+                pc = int(s, 16) if s.startswith("0x") else int(s)
+            except ValueError:
+                continue
+            if pc in seen: continue
+            seen.add(pc)
+            tks = bk.asm_tokens_at(pc)
+            if not tks: continue
+            out[hex(pc)] = [_tok(tk) for tk in tks]
+            if len(seen) >= 512: break  # safety cap
+        return {"ready": True, "status": "ok", "tokens": out}
+
+    @app.get("/api/hlil-for-pc")
+    def hlil_for_pc(pc: str):
+        """给定 trace 里一个 PC, 返回所属函数的 HLIL + 当前 PC 在哪一行.
+
+        Returns:
+            {ready, status,
+             fn: {name, start, end, vars: [...]},
+             lines: [{pc, text}, ...],
+             current_line_idx: int (-1 if no exact match)}
+        """
+        if DECOMP["status"] != "ready":
+            return {"ready": False, "status": DECOMP["status"],
+                    "err": DECOMP["err"],
+                    "elapsed": (time.time() - DECOMP["started_at"]) if DECOMP["started_at"] else 0}
+        bk = DECOMP["backend"]
+        try:
+            pc_i = int(pc, 16) if pc.startswith("0x") else int(pc)
+        except ValueError:
+            raise HTTPException(400, f"bad pc: {pc!r}")
+
+        fn = bk.function_at(pc_i)
+        if fn is None:
+            return {"ready": True, "status": "no-function", "pc": hex(pc_i)}
+
+        # 标记 PC 是否真的落在 BN 识别的 fn 范围内 (False = nearest fallback)
+        in_range = fn.start <= pc_i < fn.end
+        # trace 侧用 sym 推断的函数名 (跟左侧 disasm 显示的一致)
+        trace_fname, trace_foff = sym.lookup(pc_i)
+        lines = bk.hlil_for(fn)
+        # 当前 PC 对应的行: 精确匹配 → 否则 pc<=line的最近一行 (典型情况) →
+        # 否则 line>pc 中最近的 (PC 在 prologue, HLIL 已合并到 entry-after-prologue)
+        cur_idx = -1
+        best_le = -1
+        first_gt = -1
+        for i, l in enumerate(lines):
+            if l.pc_lo == pc_i:
+                cur_idx = i; break
+            if l.pc_lo <= pc_i and l.pc_lo > best_le:
+                best_le = l.pc_lo; cur_idx = i
+            elif l.pc_lo > pc_i and first_gt < 0:
+                first_gt = i
+        if cur_idx == -1 and first_gt >= 0:
+            cur_idx = first_gt
+
+        vars_ = bk.vars_for(fn)
+        return {
+            "ready": True, "status": "ok",
+            "backend": bk.name,
+            "pc": hex(pc_i),
+            "in_range": in_range,
+            "fn": {"name": fn.name, "start": hex(fn.start), "end": hex(fn.end)},
+            "trace_fn": {"name": trace_fname, "off": hex(trace_foff)} if trace_fname and trace_fname != "?" else None,
+            "vars": [{"name": v.name, "type": v.type_name, "storage": v.storage}
+                     for v in vars_[:20]],
+            "lines": [{
+                "pc": hex(l.pc_lo),
+                "text": l.text,
+                "indent": l.indent,
+                "tokens": [_tok(tk) for tk in l.tokens] if l.tokens else None,
+            } for l in lines],
+            "current_line_idx": cur_idx,
+        }
+
+    @app.get("/api/bn-cfg-svg-for-pc")
+    def bn_cfg_svg_for_pc(pc: str, mode: str = "asm", timeout: int = 30):
+        """SVG-rendered BN CFG with trace overlay coloring.
+
+        BB 染色:
+          - 执行 0 次 = 灰 (静态可达, trace 没走过)
+          - 执行 1 次 = 浅蓝
+          - 执行 2-9 次 = 蓝
+          - 执行 10-99 = 绿
+          - 执行 100-999 = 黄
+          - 执行 1000+ = 红 + 发光
+          - 当前 cursor BB = 加粗紫边
+
+        Edge 染色:
+          - both static + dynamic = 蓝实线
+          - static-only (trace 没走过) = 灰虚线
+          - dynamic-only = 红粗线 (BN 没标但 trace 真走了; OLLVM 间接跳常见)
+        """
+        if DECOMP["status"] != "ready":
+            return {"status": DECOMP["status"]}
+        bk = DECOMP["backend"]
+        try:
+            pc_i = int(pc, 16) if pc.startswith("0x") else int(pc)
+        except ValueError:
+            raise HTTPException(400, f"bad pc: {pc!r}")
+        fn = bk.function_at(pc_i)
+        if fn is None: return {"status": "no-function"}
+        blocks, edges = bk.cfg_for(fn, mode=mode)
+        if not blocks: return {"status": "empty-cfg"}
+        # 巨型 OLLVM dispatcher 一打开就 5K+ BBs, dot 几十秒不出结果, 浏览器也卡.
+        # 直接拒绝并让用户在前端看到清晰原因 (trace CFG 仍能用).
+        BB_HARD_CAP = 800
+        if len(blocks) > BB_HARD_CAP:
+            return {"status": "too-large",
+                    "fn": {"name": fn.name, "start": hex(fn.start), "end": hex(fn.end)},
+                    "block_count": len(blocks), "edge_count": len(edges),
+                    "err": f"BN reports {len(blocks)} basic blocks (cap={BB_HARD_CAP}); "
+                           f"likely an OLLVM-flattened dispatcher. Use trace CFG instead."}
+        ovr = _compute_cfg_overlay(fn.start, blocks, edges)
+
+        # dynamic-only edges: 复用 ovr["succ_map"] (而不是再扫一遍 pc_array).
+        # static edges 是 (src, dst); dynamic-only = succ_map 里 src→dst 但 BN 没标的.
+        bn_edge_set = {(e.src, e.dst) for e in edges}
+        bb_starts = {b.start for b in blocks}
+        succ_map = ovr["succ_map"]
+        dyn_only = []
+        for b in blocks:
+            for nxt in succ_map.get(b.end - 4, ()):
+                if nxt in bb_starts and (b.start, nxt) not in bn_edge_set:
+                    dyn_only.append((b.start, nxt))
+
+        # ---- 构建 dot text (用模块顶层 _build_block_label / _format_insn_row helpers) ----
+        cur_bb_start = next((b.start for b in blocks if b.start <= pc_i < b.end), None)
+        m_base = t.meta.module.base if t.meta.module else 0
+
+        out = ['digraph BN_CFG {',
+               '  graph [bgcolor="#0e1117", rankdir=TB, '
+               'fontname="JetBrainsMono,monospace", fontcolor="#d0d7de", '
+               'splines=ortho, nodesep=0.45, ranksep=0.55, pad=0.3];',
+               '  node [shape=plaintext, fontname="JetBrainsMono,monospace", fontsize=10];',
+               '  edge [arrowsize=0.8, penwidth=1.4, '
+               'fontname="JetBrainsMono,monospace", fontsize=8, fontcolor="#6e7681"];']
+        for b in blocks:
+            n = ovr["bb_counts"].get(b.start, 0)
+            head_off = f"+{b.start - m_base:x}" if m_base else f"{b.start:x}"
+            head_lbl = _html_esc(f"{head_off}  ×{n}")
+            br = _bn_bb_border_color(n, is_current=(b.start == cur_bb_start))
+            rows = [f'<TR><TD ALIGN="LEFT" BGCOLOR="#0e1117" '
+                    f'HREF="#hdr_b{b.start:x}" TITLE="block {b.start:#x} (BN)">'
+                    f'<FONT COLOR="#8b949e" POINT-SIZE="9">{head_lbl}</FONT></TD></TR>']
+            for ln in b.lines:
+                # 用 BN token 精准分 mnem/ops; fallback 字符串切分
+                mnem_tk, ops_str = _split_mnem_ops_from_tokens(ln)
+                rel_str = f"+{(ln.pc_lo - m_base):x}" if m_base else f"{ln.pc_lo:x}"
+                title = f"{ln.pc_lo:#x}: {mnem_tk} {ops_str}".rstrip()
+                rows.append(_format_insn_row(rel_str, mnem_tk, ops_str, ln.pc_lo, title,
+                                             tokens=ln.tokens))
+            out.append(f'  "b{b.start:x}" [label={_build_block_label(rows, br)}, id="b{b.start:x}"];')
+
+        for e in edges:
+            color, style = _BN_EDGE_KIND_COLOR.get(e.kind, ("#666666", None))
+            seen = (e.src, e.dst) in ovr["edges_seen"]
+            attrs = [f'color="{color}"', f'label="{e.kind}"']
+            if not seen:
+                attrs += ['style=dashed', 'penwidth=0.8']
+            else:
+                attrs.append('penwidth=1.6')
+                if style: attrs.append(f'style={style}')
+            out.append(f'  "b{e.src:x}" -> "b{e.dst:x}" [{", ".join(attrs)}];')
+        # dynamic-only: trace 真走但 BN 没标 (OLLVM 间接跳真 target)
+        for src, dst in dyn_only:
+            out.append(f'  "b{src:x}" -> "b{dst:x}" '
+                       f'[color="#f85149", penwidth=2.4, label="dyn-only", '
+                       f'fontcolor="#f85149"];')
+        out.append("}")
+        dot_text = "\n".join(out)
+
+        svg, err = _render_dot_to_svg(dot_text, timeout=timeout)
+        if err is not None:
+            return {"status": "error", "err": err}
+        return {
+            "status": "ok",
+            "fn": {"name": fn.name, "start": hex(fn.start), "end": hex(fn.end)},
+            "block_count": len(blocks),
+            "total_block_count": len(blocks),     # for embedCfgSvg compat
+            "edge_count": len(edges),
+            "dyn_only_count": len(dyn_only),
+            "fn_total_exec": ovr["fn_total"],
+            "current_bb": hex(cur_bb_start) if cur_bb_start else None,
+            "svg": svg,
+        }
+
+    @app.get("/api/bn-cfg-for-pc")
+    def bn_cfg_for_pc(pc: str, mode: str = "asm"):
+        """BN-derived CFG for the function containing pc, with trace overlay.
+
+        Returns:
+            {ready, fn, blocks: [{start, end, exec_count, lines: [{pc, tokens, text}]}],
+             edges: [{src, dst, kind, seen_in_trace}]}
+        """
+        if DECOMP["status"] != "ready":
+            return {"ready": False, "status": DECOMP["status"]}
+        bk = DECOMP["backend"]
+        try:
+            pc_i = int(pc, 16) if pc.startswith("0x") else int(pc)
+        except ValueError:
+            raise HTTPException(400, f"bad pc: {pc!r}")
+        fn = bk.function_at(pc_i)
+        if fn is None:
+            return {"ready": True, "status": "no-function"}
+        blocks, edges = bk.cfg_for(fn, mode=mode)
+        if not blocks:
+            return {"ready": True, "status": "empty-cfg", "fn": {"name": fn.name}}
+        ovr = _compute_cfg_overlay(fn.start, blocks, edges)
+
+        # 找当前 cursor 处的 BB
+        cur_bb = None
+        for b in blocks:
+            if b.start <= pc_i < b.end:
+                cur_bb = hex(b.start); break
+
+        return {
+            "ready": True, "status": "ok",
+            "backend": bk.name, "mode": mode, "pc": hex(pc_i),
+            "fn": {"name": fn.name, "start": hex(fn.start), "end": hex(fn.end)},
+            "current_bb": cur_bb,
+            "fn_total_exec": ovr["fn_total"],
+            "blocks": [{
+                "start": hex(b.start),
+                "end": hex(b.end),
+                "exec_count": ovr["bb_counts"].get(b.start, 0),
+                "lines": [{
+                    "pc": hex(l.pc_lo),
+                    "text": l.text,
+                    "tokens": [_tok(tk) for tk in l.tokens] if l.tokens else None,
+                } for l in b.lines],
+            } for b in blocks],
+            "edges": [{
+                "src": hex(e.src), "dst": hex(e.dst), "kind": e.kind,
+                "seen_in_trace": (e.src, e.dst) in ovr["edges_seen"],
+            } for e in edges],
+        }
 
     # static SPA
     @app.get("/", response_class=HTMLResponse)
@@ -1065,17 +1562,27 @@ def make_app(trace_path: pathlib.Path) -> FastAPI:
     return app
 
 
-def serve(trace_path: pathlib.Path, host: str = "127.0.0.1", port: int = 0,
-          open_browser: bool = True):
-    """Run the server (blocking). port=0 → auto-pick."""
+def serve(trace_path: pathlib.Path, host: str = "0.0.0.0", port: int = 0,
+          open_browser: bool = True,
+          decomp_so: Optional[pathlib.Path] = None,
+          decomp_backend: Optional[str] = None):
+    """Run the server (blocking). port=0 → auto-pick.
+
+    decomp_so: optional SO 文件; 启动时后台 BN/Ghidra/IDA 加载, ready 后 /api/hlil-for-pc 工作.
+    decomp_backend: 'binja' / 'ghidra' / 'ida' / 'r2' / None 自动选最高优先可用项.
+    """
     import uvicorn, socket, threading, webbrowser
     if port == 0:
         s = socket.socket(); s.bind((host, 0)); port = s.getsockname()[1]; s.close()
-    app = make_app(trace_path)
-    url = f"http://{host}:{port}/"
+    app = make_app(trace_path, decomp_so=decomp_so, decomp_backend=decomp_backend)
+    # SSH 远程开发: 0.0.0.0 时打印一个可点击的 host 地址 (本机 IP) 提示
+    show_host = "127.0.0.1" if host in ("127.0.0.1", "localhost") else host
+    url = f"http://{show_host}:{port}/"
     print(f"\n[traceMiku web] {url}")
     print(f"[traceMiku web] trace: {trace_path}")
+    if decomp_so:
+        print(f"[traceMiku web] decomp SO: {decomp_so} (backend={decomp_backend or 'auto'}, loading in BG)")
     print(f"[traceMiku web] Ctrl-C to stop\n")
-    if open_browser:
+    if open_browser and host in ("127.0.0.1", "localhost"):
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     uvicorn.run(app, host=host, port=port, log_level="warning")

@@ -16,7 +16,13 @@
     <span>同步 (sync trace ↔ CFG)</span>
   </label>
   <span class="hint">j/k 单步 · g/G 头尾 · / 搜索 · :N 跳转</span>
+  <button class="help-btn" data-help="overview" title="帮助 (整体说明)">?</button>
 </header>
+
+<!-- 帮助 popover (全局, 默认隐藏) -->
+<div id="help-popover" class="hidden" role="dialog" aria-modal="true">
+  <div id="help-popover-content"></div>
+</div>
 
 <main id="layout">
   <!-- 左侧 vertical tab strip — 旋转文字显示全名. title=完整说明 -->
@@ -35,6 +41,7 @@
       <span id="left-panel-title">Functions</span>
       <span class="grow"></span>
       <span id="left-panel-info" class="dim"></span>
+      <button class="help-btn" data-help="left-panel" title="帮助">?</button>
     </div>
     <div id="left-panel-body">
       <div class="lp-tab active" data-tab="funcs"   id="lp-funcs"></div>
@@ -52,6 +59,7 @@
       <span>Disassembly <span id="trace-info" class="dim"></span></span>
       <span class="grow"></span>
       <span id="status" class="dim"></span>
+      <button class="help-btn" data-help="disasm" title="帮助">?</button>
     </div>
     <div id="stream"></div>
     <div id="bottom-tabs">
@@ -59,6 +67,8 @@
       <button class="btab"        data-btab="calltree">Call Tree</button>
       <button class="btab"        data-btab="navigation">Navigation</button>
       <button class="btab"        data-btab="trace-for-pc">Trace for PC</button>
+      <span class="grow"></span>
+      <button class="help-btn" data-help="bottom" title="帮助">?</button>
     </div>
     <div id="bottom-content">
       <div class="bbody active" id="b-memory"></div>
@@ -73,10 +83,15 @@
     <div class="panelhead">
       <span id="right-tab-title">Graph</span>
       <span class="grow"></span>
+      <select id="cfg-source" class="inp" style="font-size:11px" title="CFG 数据源">
+        <option value="trace">Trace CFG</option>
+        <option value="bn-asm">BN ASM (full + overlay)</option>
+      </select>
       <select id="cfg-func-select" class="inp" style="font-size:11px;max-width:240px"></select>
       <button id="btn-fit" class="btn">fit</button>
       <button id="btn-reload-cfg" class="btn">reload</button>
       <span id="cfg-info" class="dim"></span>
+      <button class="help-btn" data-help="right" title="帮助">?</button>
     </div>
     <div id="right-body">
       <div id="cfg-pane" class="rbody active">
@@ -85,13 +100,15 @@
         </div>
       </div>
       <div id="regs-pane" class="rbody"></div>
+      <div id="hlil-pane" class="rbody"></div>
     </div>
   </section>
 
   <!-- 右侧最外层 vertical tabs -->
   <aside id="right-tabs">
-    <button class="vtab active" data-rtab="cfg"  title="Graph (CFG)">Graph</button>
-    <button class="vtab"        data-rtab="regs" title="Registers">Registers</button>
+    <button class="vtab active" data-rtab="cfg"  title="Graph (CFG) — trace 重建的 BB 控制流">Graph</button>
+    <button class="vtab"        data-rtab="regs" title="Registers — 当前 cursor 寄存器值 + 智能解引用">Registers</button>
+    <button class="vtab"        data-rtab="hlil" title="HLIL — 反编译伪代码 (BN/Ghidra/IDA 后端, cursor 联动)">HLIL</button>
   </aside>
 
   <footer id="cmdbar">

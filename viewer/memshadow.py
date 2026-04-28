@@ -147,9 +147,15 @@ class MemShadow:
         return out
 
     def find_strings(self, min_len: int = 4) -> list[tuple[int, str]]:
-        """Scan known bytes for printable ASCII runs."""
+        """Scan known bytes for printable ASCII runs.
+        Cached per min_len since mem.bytes is immutable after build()."""
         if not self.built: self.build()
         if not self.bytes: return []
+        cache = getattr(self, "_strings_cache", None)
+        if cache is None:
+            cache = {}; self._strings_cache = cache
+        if min_len in cache:
+            return cache[min_len]
         addrs = sorted(self.bytes.keys())
         results = []
         run_start = None
@@ -173,4 +179,5 @@ class MemShadow:
         if run_start is not None and len(run_chars) >= min_len:
             results.append((run_start, bytes(run_chars).decode("ascii", errors="replace")))
         # Filter out "runs" that aren't truly contiguous
+        cache[min_len] = results
         return results

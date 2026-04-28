@@ -223,7 +223,7 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 /* registers — pwndbg-style 单列宽: 名 | hex | annotation */
 .regs-list {
   font-size: 11px; padding: 4px 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: inherit;
 }
 .reg {
   display: grid; grid-template-columns: 36px 200px 1fr;
@@ -238,7 +238,7 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 
 /* memory hex view */
 .mem-line {
-  font-family: monospace; white-space: pre;
+  font-family: inherit; white-space: pre;
   padding: 0 8px; line-height: 16px;
   display: grid; grid-template-columns: 110px 1fr 200px;
   gap: 12px;
@@ -272,7 +272,7 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 }
 .ctx-item {
   padding: 2px 12px; cursor: pointer;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: inherit;
 }
 .ctx-item:hover { background: var(--hl); }
 
@@ -355,3 +355,190 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 
 #cmd-prompt { color: var(--accent); }
 #cmd-input  { flex: 1; background: var(--bg); border: none; outline: none; }
+
+/* HLIL pane (反编译伪代码 — BN/Ghidra/IDA 后端 + cursor 联动高亮) */
+#hlil-pane {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-family: inherit;     /* 跟全局 (左侧 disasm) 一致, 远端 SSH 才不会换字体 */
+  font-size: 12px;
+}
+#hlil-pane.active { display: flex; }
+.hlil-head {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex: 0 0 auto;
+}
+.hlil-vars {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.hlil-vars summary { cursor: pointer; }
+.hlil-vars div { padding-left: 8px; }
+.hlil-var-name { color: var(--accent); }
+.hlil-var-type { color: var(--warn); }
+.hlil-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.hlil-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 8px;
+  cursor: pointer;
+  line-height: 1.4;
+  font-family: inherit;
+}
+.hlil-line:hover { background: var(--hl); }
+.hlil-line.cur {
+  background: var(--hl2);
+  border-left: 2px solid var(--warn);
+  padding-left: 6px;        /* 减 2px 抵消左 border 让文字不抖动 */
+}
+.hlil-pc {
+  color: var(--dim);
+  flex: 0 0 90px;
+  user-select: none;
+  font-family: inherit;
+}
+.hlil-text {
+  color: var(--fg);
+  flex: 1 1 auto;
+  white-space: pre;        /* 保留 LinearView 给的 4/8 空格缩进 */
+  font-family: inherit;
+}
+
+/* BN-style token highlighting (HLIL pane + future CFG node). 配色 ref BN
+   Dark Sun theme. 在 hlil-text / cfg-bb 里都生效. */
+.tok-key      { color: #ff7b72; }                /* if/return/while/struct */
+.tok-type     { color: #ff7b72; font-style: italic; }    /* int64_t/uint32_t etc */
+.tok-reg      { color: #79c0ff; }                /* x0/sp/lr 寄存器 */
+.tok-var      { color: #56d4dd; }                /* var_64/result/arg1 */
+.tok-num      { color: #ffa657; }                /* 0x2710/123 */
+.tok-str      { color: #a5d6ff; }                /* "abc" */
+.tok-fn       { color: #d2a8ff; cursor: pointer; }    /* sub_xxx/imports */
+.tok-fn:hover { text-decoration: underline; }
+.tok-data     { color: #ffa657; cursor: pointer; }    /* data_xxx */
+.tok-data:hover { text-decoration: underline; }
+.tok-field    { color: #f2cc60; }                /* struct field name */
+.tok-cmt      { color: #8b949e; font-style: italic; }
+.tok-op       { color: #d0d7de; }                /* +/-/*///s/ */
+.tok-sep      { color: #d0d7de; }                /* operand , */
+.tok-brace    { color: #ffa657; }                /* () [] {} */
+.tok-mnem     { color: #c9d1d9; font-weight: 600; }   /* asm mnemonic */
+.tok-opcode   { color: #6e7681; }
+.tok-indent   { color: transparent; }            /* 不可见, 保留宽度 */
+.tok-txt      { color: #c9d1d9; }
+.tok-meta     { color: transparent; }            /* AddressSeparator/CollapseState 折叠隐藏 */
+.tok-label    { color: #ff7b72; font-weight: bold; }  /* goto label */
+.tok-tag      { color: #f2cc60; }
+.tok-hex      { color: #ffa657; }
+.tok-other    { color: #d0d7de; }
+
+/* current-line 高亮时, 让 var/reg 颜色稍稍发亮 (BN 也这么做) */
+.hlil-line.cur .tok-var,
+.hlil-line.cur .tok-reg { filter: brightness(1.25); }
+
+/* fn/data hover: 加个底色让用户知道可点击 */
+.tok-fn:hover, .tok-data:hover {
+  background: rgba(210, 168, 255, 0.15);
+  border-radius: 2px;
+}
+
+/* 帮助按钮 + popover (每个 panelhead 末端的 ? 触发) */
+.help-btn {
+  width: 18px; height: 18px;
+  background: var(--bg3); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 50%;
+  cursor: pointer; font: 600 11px inherit;
+  padding: 0; line-height: 16px; text-align: center;
+  flex: 0 0 auto;
+}
+.help-btn:hover { color: var(--accent); border-color: var(--accent); }
+.help-btn:active { background: var(--hl); }
+
+#help-popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg2);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+  padding: 12px 16px;
+  max-width: 540px;
+  max-height: 75vh;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+#help-popover.hidden {
+  display: block;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+#help-popover h3 {
+  margin: 0 0 8px 0;
+  color: var(--accent);
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+#help-popover h4 {
+  margin: 12px 0 4px 0;
+  color: var(--warn);
+  font-size: 12px;
+}
+#help-popover code, #help-popover kbd {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: inherit;
+  color: var(--accent2);
+}
+#help-popover kbd {
+  font-weight: 600;
+  color: var(--good);
+  margin: 0 1px;
+}
+#help-popover ul { margin: 4px 0 8px 16px; padding: 0; }
+#help-popover li { margin: 2px 0; }
+#help-popover .swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+}
+#help-popover table {
+  border-collapse: collapse;
+  margin: 4px 0;
+  font-size: 11px;
+}
+#help-popover td, #help-popover th {
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+#help-popover .close-x {
+  position: absolute;
+  top: 6px; right: 10px;
+  cursor: pointer;
+  color: var(--dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+#help-popover .close-x:hover { color: var(--bad); }

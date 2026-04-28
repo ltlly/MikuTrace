@@ -522,8 +522,12 @@ def cmd_view(args):
 
 def cmd_web(args):
     from webui.server import serve
+    so = pathlib.Path(args.so).expanduser() if args.so else None
+    if so and not so.exists():
+        print(f"[!] --so 路径不存在: {so}"); return 1
     serve(pathlib.Path(args.path), host=args.host, port=args.port,
-          open_browser=not args.no_browser)
+          open_browser=not args.no_browser,
+          decomp_so=so, decomp_backend=args.decomp)
     return 0
 
 
@@ -968,9 +972,14 @@ def main():
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")
     p_web.add_argument("path", help="trace 目录 (run 或 per-call)")
-    p_web.add_argument("--host", default="127.0.0.1")
+    p_web.add_argument("--host", default="0.0.0.0")
     p_web.add_argument("--port", type=int, default=0, help="0=自动")
     p_web.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    p_web.add_argument("--so", default=None,
+                       help="SO 文件路径 (启用 HLIL 反编译 tab; 启动时后台加载)")
+    p_web.add_argument("--decomp", default=None,
+                       choices=("binja", "ghidra", "none"),
+                       help="反编译后端 (默认按可用性自动选)")
 
     args = ap.parse_args()
     if args.subcommand == "trace":   return cmd_trace(args)

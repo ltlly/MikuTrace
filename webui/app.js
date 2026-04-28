@@ -45,6 +45,12 @@ const STATE = {
   prevRegs: null,
   syncEnabled: true,
   cfgPan: {x: 0, y: 0, scale: 1},
+  cfgSource: "trace",
+  bnCfgFn: null,         // {name, start, end} of BN-CFG currently rendered (for cross-fn 自动重载)
+  bnAsmTokens: new Map(),         // pc_hex -> tokens[] (or null = fetched, no data)
+  bnAsmTokensInflight: new Set(), // pc_hex set inflight to /api/asm-tokens-for-pcs
+  bnAsmFetchTimer: null,          // debounce handle
+  bnAsmDisabled: false,           // flips true if backend reports not-ready, suppresses retries
   settings: loadSettings(),
 };
 
@@ -78,6 +84,7 @@ async function init() {
   setupCfgPanZoom();
   setupSyncToggle();
   setupCfgFuncSelect();
+  setupHelp();
 
   setCursor(0, true);
 
@@ -284,9 +291,87 @@ function renderViewport() {
           if (!rec) continue;
           inner.appendChild(buildRow(i, rec));
         }
+        scheduleBnAsmFetch();
       })
       .catch(_ => { STATE.inflight.delete(s); });
     STATE.inflight.set(s, p);
+  }
+  scheduleBnAsmFetch();
+}
+
+// Lazy: collect 当前 viewport 里 .asm 还在 fallback 模式且未 inflight 的 PC,
+// 60ms 节流 + 单批 ≤256, 一拉到结果就 in-place 替换 .asm 内容. 对没 BN 的会话
+// (decomp 还在 loading 或 disabled) 静默 no-op, 不影响其它功能.
+function scheduleBnAsmFetch() {
+  if (STATE.bnAsmDisabled) return;
+  if (STATE.bnAsmFetchTimer) return;
+  STATE.bnAsmFetchTimer = setTimeout(() => {
+    STATE.bnAsmFetchTimer = null;
+    fetchBnAsmTokensForViewport();
+  }, 60);
+}
+
+async function fetchBnAsmTokensForViewport() {
+  const inner = $("stream-inner");
+  if (!inner) return;
+  const need = new Set();
+  inner.querySelectorAll(".row-insn").forEach(row => {
+    const pc = row.dataset.pc;
+    if (pc && !STATE.bnAsmTokens.has(pc) && !STATE.bnAsmTokensInflight.has(pc)) {
+      need.add(pc);
+    }
+  });
+  if (need.size === 0) return;
+  const pcs = [...need].slice(0, 256);
+  pcs.forEach(p => STATE.bnAsmTokensInflight.add(p));
+  try {
+    const r = await api("/api/asm-tokens-for-pcs", {pcs: pcs.join(",")});
+    if (!r || r.ready === false) {
+      // backend 还没 ready, 把这批从 inflight 撤回让以后能重试; 不入 cache 防"假阳性"
+      pcs.forEach(p => STATE.bnAsmTokensInflight.delete(p));
+      return;
+    }
+    if (r.status !== "ok") return;
+    const got = r.tokens || {};
+    for (const p of pcs) {
+      // null 标记 = 已问过, BN 不知道 (略过 future 重问)
+      STATE.bnAsmTokens.set(p, got[p] || null);
+    }
+    // FIFO 上限: 病态 trace 里 unique PC 数可能巨大 (libsg JNI_OnLoad 实测 ~10K
+    // 没问题; 上限 50K 防 worst case dict 无界).
+    const CAP = 50000;
+    if (STATE.bnAsmTokens.size > CAP) {
+      const overflow = STATE.bnAsmTokens.size - CAP;
+      const it = STATE.bnAsmTokens.keys();
+      for (let i = 0; i < overflow; i++) STATE.bnAsmTokens.delete(it.next().value);
+    }
+    applyBnTokensToRows(pcs);
+    if (need.size > pcs.length) scheduleBnAsmFetch();
+  } catch (_) {
+    // 网络/解析错: 撤回 inflight, 不静默 disable (用户重试)
+    pcs.forEach(p => STATE.bnAsmTokensInflight.delete(p));
+    return;
+  } finally {
+    pcs.forEach(p => STATE.bnAsmTokensInflight.delete(p));
+  }
+}
+
+function applyBnTokensToRows(pcList) {
+  const inner = $("stream-inner");
+  if (!inner) return;
+  for (const pc of pcList) {
+    const tks = STATE.bnAsmTokens.get(pc);
+    if (!tks || !tks.length) continue;
+    const tokenHtml = renderTokens(tks);
+    inner.querySelectorAll(`.row-insn[data-pc="${pc}"] .asm`).forEach(el => {
+      const annEl = el.querySelector(".ann");
+      // rebuild: BN tokens + 保留原 annotation 节点
+      el.innerHTML = tokenHtml;
+      if (annEl) {
+        el.appendChild(document.createTextNode("  "));
+        el.appendChild(annEl);
+      }
+    });
   }
 }
 
@@ -333,12 +418,15 @@ function buildRow(i, r) {
   const ecTitle = r.exec_count != null ? `executed ×${r.exec_count}` : "";
   const annHtml = r.annotation ? `<span class="ann">; ${escapeHtml(r.annotation)}</span>` : "";
   const pcFmt = formatPc(r);
+  // BN tokens 已 ready 时直接 token 渲染; 否则 capstone 字符串 + reg-regex 兜底,
+  // renderViewport() 之后批量补 BN tokens 时再 patch 这条 .asm 内容.
+  const asmInner = renderAsmInner(r);
   row.innerHTML =
     `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
     `<span class="idx">#${r.idx}</span>` +
     `<span class="pc" title="${r.pc}">${escapeHtml(pcFmt)}</span>` +
     `<span class="func">${r.func ? r.func + "+" + r.off : (r.rel || r.pc)}</span>` +
-    `<span class="asm">${highlightRegs(r.asm)}${annHtml ? "  " + annHtml : ""}</span>`;
+    `<span class="asm">${asmInner}${annHtml ? "  " + annHtml : ""}</span>`;
   row.addEventListener("click", () => setCursor(i, false));
   return row;
 }
@@ -351,6 +439,14 @@ function rowTopPx(idx) {
     return (stream.scrollTop || 0) + (idx - STATE.viewportStartIdx) * STATE.rowHeight;
   }
   return idx * STATE.rowHeight;
+}
+
+// 一行 trace asm 的内部 HTML: 优先用 BN tokens (有 .tok-* 着色),
+// 否则 fallback 到 capstone 字符串 + reg-regex 着色.
+function renderAsmInner(r) {
+  const tks = STATE.bnAsmTokens.get(r.pc);
+  if (tks && tks.length) return renderTokens(tks);
+  return highlightRegs(r.asm);
 }
 
 // 把 ASM 中的寄存器名 (x0..x30, w0..w30, sp, fp, lr, pc) 包成 <span class="op-reg">
@@ -425,7 +521,20 @@ function setCursor(idx, scrollIntoView = false) {
     if (STATE.cursor !== cur) return;
     renderRegs(r);
     if (r.func && STATE.syncEnabled) maybeSwitchCfgFunc(r.func);
-    if (STATE.syncEnabled) highlightCfgInsn(r.pc);
+    if (STATE.syncEnabled) {
+      // BN CFG 模式: 跨 fn 自动重新加载 SVG, 同 fn 内仅 highlight (省事省 dot 渲染)
+      if (STATE.cfgSource === "bn-asm") {
+        const pcInt = parseInt(r.pc, 16);
+        const f = STATE.bnCfgFn;
+        if (!f || pcInt < f.start || pcInt >= f.end) {
+          loadBnCfgForCursor();
+        } else {
+          highlightCfgInsn(r.pc);
+        }
+      } else {
+        highlightCfgInsn(r.pc);
+      }
+    }
     $("status").textContent = `#${cur}  ${r.pc}  ${r.asm}`;
   }, 60);
 }
@@ -584,7 +693,72 @@ function setupCfgPanZoom() {
     applyCfgTransform();
   }, {passive: false});
   $("btn-fit").onclick = fitCfg;
-  $("btn-reload-cfg").onclick = () => pollCFG(STATE.cfgFunc);
+  $("btn-reload-cfg").onclick = () => loadCfgWithCurrentSource();
+  // CFG source selector: trace 重建 vs BN 静态 + trace overlay
+  const srcSel = $("cfg-source");
+  if (srcSel) {
+    srcSel.addEventListener("change", () => {
+      STATE.cfgSource = srcSel.value;
+      if (STATE.cfgSource !== "bn-asm") STATE.bnCfgFn = null;
+      loadCfgWithCurrentSource();
+    });
+  }
+}
+
+// 按当前 cfg-source 选择走哪个数据源
+function loadCfgWithCurrentSource() {
+  const src = (STATE.cfgSource || "trace");
+  if (src === "trace") return pollCFG(STATE.cfgFunc);
+  if (src === "bn-asm") return loadBnCfgForCursor();
+}
+
+async function loadBnCfgForCursor() {
+  $("cfg-info").textContent = "loading BN CFG…";
+  try {
+    const rec = await api("/api/record/" + STATE.cursor);
+    const r = await api("/api/bn-cfg-svg-for-pc", { pc: rec.pc, mode: "asm" });
+    if (r.status === "loading" || r.status === "disabled") {
+      $("cfg-info").textContent = `decomp ${r.status}`;
+      $("cfg-canvas").innerHTML = "";
+      return;
+    }
+    if (r.status !== "ok") {
+      $("cfg-info").textContent = `BN CFG: ${r.status} ${r.err || ""}`;
+      $("cfg-canvas").innerHTML = `<div class="dim" style="padding:8px">${escapeHtml(r.err || r.status)}</div>`;
+      // 让 cursor sync 把 "已拒绝的大 fn" 当作"已加载", 别每次 cursor 移动都重新打.
+      // too-large / no-function 都返回 fn.start/end (服务端会带), 同 fn 内 cursor 移动直接静默.
+      if (r.fn && r.fn.start && r.fn.end) {
+        STATE.bnCfgFn = {
+          name: r.fn.name,
+          start: parseInt(r.fn.start, 16),
+          end:   parseInt(r.fn.end, 16),
+        };
+      } else {
+        STATE.bnCfgFn = null;
+      }
+      return;
+    }
+    // reuse embedCfgSvg but tweak info string
+    embedCfgSvg(r);
+    STATE.bnCfgFn = r.fn ? {
+      name: r.fn.name,
+      start: parseInt(r.fn.start, 16),
+      end:   parseInt(r.fn.end, 16),
+    } : null;
+    const ovInfo = `BN ${r.fn.name} · ${r.block_count} blocks · ${r.edge_count} static edges` +
+      (r.dyn_only_count ? ` · ${r.dyn_only_count} dyn-only ⚠` : "") +
+      ` · total exec=${r.fn_total_exec}`;
+    $("cfg-info").textContent = ovInfo;
+    // 立即把 cursor PC 高亮到当前 BN CFG (loadBnCfgForCursor 自带 fit, 高亮要在 fit 之后)
+    if (STATE.cursor != null) {
+      try {
+        const rec = await api("/api/record/" + STATE.cursor);
+        highlightCfgInsn(rec.pc);
+      } catch (_) {}
+    }
+  } catch (e) {
+    $("cfg-info").textContent = "err: " + (e.message || e);
+  }
 }
 
 function highlightCfgInsn(pcHex) {
@@ -779,7 +953,163 @@ function activateRightTab(name) {
     t.classList.toggle("active", t.dataset.rtab === name));
   document.querySelectorAll("#right-body .rbody").forEach(b =>
     b.classList.toggle("active", b.id === name + "-pane"));
-  $("right-tab-title").textContent = {cfg: "Graph", regs: "Registers"}[name];
+  $("right-tab-title").textContent =
+    {cfg: "Graph", regs: "Registers", hlil: "HLIL (decompiled)"}[name];
+  if (name === "hlil") {
+    if (!TAB_INIT.hlil) { TAB_INIT.hlil = true; initHlilTab(); }
+    refreshHlil();   // immediate refresh on activate
+  }
+}
+
+// ---------------- HLIL (decompiled view) ----------------
+const HLIL_STATE = {
+  fnStart: null,            // 当前显示的函数 start (避免同函数重复 fetch)
+  lastPc: null,             // 最近请求过的 pc
+  loading: false,
+  errorShown: false,
+};
+function initHlilTab() {
+  $("hlil-pane").innerHTML =
+    '<div class="dim" style="padding:8px">连接反编译后端…</div>';
+  STATE._onCursorChange = STATE._onCursorChange || [];
+  STATE._onCursorChange.push(refreshHlil);
+}
+
+async function refreshHlil() {
+  const pane = $("hlil-pane");
+  if (!pane || !pane.classList.contains("active")) return;
+  const cur = STATE.cursor;
+  let pc = null;
+  try {
+    const r = await api("/api/record/" + cur);
+    pc = r.pc;
+  } catch (_) { return; }
+  if (!pc) return;
+  if (HLIL_STATE.loading && HLIL_STATE.lastPc === pc) return;
+  HLIL_STATE.lastPc = pc;
+  HLIL_STATE.loading = true;
+  try {
+    const r = await api("/api/hlil-for-pc", { pc });
+    HLIL_STATE.loading = false;
+    if (!r.ready) {
+      const elapsed = (r.elapsed || 0).toFixed(1);
+      const msg = r.status === "loading"
+        ? `反编译后端加载中… (${elapsed}s)<br><span class="dim">第一次启动 ~30-60s, 之后单函数查询 ms 级</span>`
+        : r.status === "disabled"
+        ? `反编译后端未启用<br><span class="dim">启动时加 <code>--so PATH</code> 参数</span>`
+        : r.status === "error"
+        ? `反编译后端加载失败<br><span class="dim" style="color:#c33">${escapeHtml(r.err || '')}</span>`
+        : `状态: ${r.status}`;
+      pane.innerHTML = `<div class="dim" style="padding:8px">${msg}</div>`;
+      // 若还在 loading, 1.5s 后重试
+      if (r.status === "loading") setTimeout(refreshHlil, 1500);
+      return;
+    }
+    if (r.status === "no-function") {
+      pane.innerHTML = `<div class="dim" style="padding:8px">PC ${escapeHtml(r.pc)} 不在任何已识别函数内</div>`;
+      HLIL_STATE.fnStart = null;
+      return;
+    }
+    renderHlil(r);
+  } catch (e) {
+    HLIL_STATE.loading = false;
+    if (!HLIL_STATE.errorShown) {
+      pane.innerHTML = `<div class="dim" style="padding:8px;color:#c33">err: ${escapeHtml(e.message||e)}</div>`;
+      HLIL_STATE.errorShown = true;
+    }
+  }
+}
+
+function renderHlil(r) {
+  const pane = $("hlil-pane");
+  // 同函数 + 同 in_range 才复用 DOM
+  const cacheKey = r.fn.start + ':' + (r.in_range ? '1' : '0');
+  const sameFn = HLIL_STATE.fnStart === cacheKey;
+  if (!sameFn) {
+    HLIL_STATE.fnStart = cacheKey;
+    let html = '';
+    html += `<div class="hlil-head">`;
+    // 主函数名 (BN 给的)
+    html += `<div><b>${escapeHtml(r.fn.name)}</b> <span class="dim">[${escapeHtml(r.fn.start)}..${escapeHtml(r.fn.end)})  via ${escapeHtml(r.backend)}</span></div>`;
+    // 不在 BN 函数范围内: 显式提示 nearest fallback (OLLVM 混淆区常见)
+    if (r.in_range === false) {
+      html += `<div class="dim" style="color:var(--warn)">⚠ PC ${escapeHtml(r.pc)} 不在 ${escapeHtml(r.fn.name)} 范围内 (nearest fn fallback; 可能 OLLVM 混淆 / trampoline)</div>`;
+    }
+    // trace 侧 sym 推断的名字 — 跟左侧 disasm 显示对照
+    if (r.trace_fn && r.trace_fn.name !== r.fn.name) {
+      html += `<div class="dim">↪ trace sym: <code>${escapeHtml(r.trace_fn.name)}+${escapeHtml(r.trace_fn.off)}</code> <span style="opacity:0.6">(左侧 disasm 显示的名字, 跟 BN 不同因为 trace 推断 vs 静态分析)</span></div>`;
+    }
+    if (r.vars && r.vars.length) {
+      html += '<details class="hlil-vars"><summary>vars (' + r.vars.length + ')</summary><div>';
+      for (const v of r.vars) {
+        html += `<div class="hlil-var"><span class="hlil-var-name">${escapeHtml(v.name)}</span> : <span class="hlil-var-type">${escapeHtml(v.type)}</span> <span class="dim">@ ${escapeHtml(v.storage)}</span></div>`;
+      }
+      html += '</div></details>';
+    }
+    html += `</div>`;
+    html += `<div class="hlil-body">`;
+    for (let i = 0; i < r.lines.length; i++) {
+      const l = r.lines[i];
+      html += `<div class="hlil-line" data-i="${i}" data-pc="${l.pc}">`;
+      html += `<span class="hlil-pc">${l.pc}</span>`;
+      html += `<span class="hlil-text">${renderTokens(l.tokens, l.text)}</span>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+    pane.innerHTML = html;
+    // click HLIL line → 跳到该 PC 在 trace 里的某次出现
+    pane.querySelectorAll(".hlil-line").forEach(el => {
+      el.addEventListener("click", (ev) => {
+        // 双击 fn/data token: 跳那个 token 的目标地址 (跨函数 navigate)
+        const tk = ev.target.closest(".tok-fn, .tok-data");
+        if (tk && ev.detail >= 2 && tk.dataset.a) {
+          jumpToPc(tk.dataset.a); ev.stopPropagation(); return;
+        }
+        jumpToPc(el.dataset.pc);
+      });
+    });
+  }
+  // 高亮 current line
+  pane.querySelectorAll(".hlil-line.cur").forEach(e => e.classList.remove("cur"));
+  if (r.current_line_idx >= 0) {
+    const el = pane.querySelector(`.hlil-line[data-i="${r.current_line_idx}"]`);
+    if (el) {
+      el.classList.add("cur");
+      // scroll into view (only when not already visible)
+      const body = pane.querySelector(".hlil-body");
+      if (body) {
+        const rb = body.getBoundingClientRect();
+        const re = el.getBoundingClientRect();
+        if (re.top < rb.top || re.bottom > rb.bottom) {
+          el.scrollIntoView({block: "center", behavior: "instant"});
+        }
+      }
+    }
+  }
+}
+
+async function jumpToPc(pc) {
+  // 拿该 PC 的 trace idxs, 跳到离 cursor 最近的一次
+  try {
+    const r = await api("/api/idxs-for-pc", { pc, cursor: STATE.cursor });
+    if (r.status === "ready" && (r.before.length || r.after.length)) {
+      const target = r.after.length ? r.after[0] : r.before[r.before.length - 1];
+      setCursor(target, true);
+    }
+  } catch(_) {}
+}
+
+// 把 backend 给的 tokens 渲染成 HTML, 套 .tok-{cls} class.
+// fallback: 没 tokens 时 escape 原文.
+function renderTokens(tokens, fallbackText) {
+  if (!tokens || !tokens.length) return escapeHtml(fallbackText || "");
+  let s = "";
+  for (const tk of tokens) {
+    const cls = "tok-" + (tk.c || "other");
+    const a = tk.a ? ` data-a="${tk.a}"` : "";
+    s += `<span class="${cls}"${a}>${escapeHtml(tk.t)}</span>`;
+  }
+  return s;
 }
 
 // ---------------- bottom tabs ----------------
@@ -1428,6 +1758,251 @@ function reapplySettings() {
   // 地址格式变 → 重渲 trace 行
   document.querySelectorAll(".row-insn").forEach(el => el.remove());
   renderViewport();
+}
+
+// ---------------- help system ----------------
+// 每个 panelhead 上的 ? 按钮触发. data-help 字符串决定显示哪段 doc.
+// 部分 panel 是动态的 (左侧 lp-tab 切, 右侧 rtab 切, 中下 btab 切),
+// 我们用 data-help="left-panel" / "right" / "bottom" 后再根据当前 active sub-tab
+// 选 sub-doc.
+const HELP_DOC = {
+  overview: { title: "traceMiku Web — 总览", html: `
+<p>左 = 函数列表/调用栈/字符串/污点等多 tab; 中 = 反汇编流 + 内存; 右 = CFG / 寄存器 / HLIL.
+   光标 (cursor) 在 trace 里的当前指令 = 三个区共享的状态; 移动 cursor → 全部 follow.</p>
+<h4>顶栏快捷键</h4>
+<ul>
+<li><kbd>j</kbd> / <kbd>k</kbd> 单步 (下/上); <kbd>↓↑</kbd> 同</li>
+<li><kbd>PgDn</kbd> / <kbd>PgUp</kbd> 翻 20 条</li>
+<li><kbd>g</kbd> / <kbd>G</kbd> 跳 trace 头/尾</li>
+<li><kbd>:N</kbd> 跳到第 N 条 (输入数字)</li>
+<li><kbd>/</kbd> 搜索反汇编 (regex)</li>
+<li><kbd>Esc</kbd> 关闭弹窗 (帮助 / 命令栏)</li>
+</ul>
+<h4>同步开关</h4>
+<p>顶栏 "同步" toggle 控制 cursor 在右侧 CFG 是否自动 highlight + scroll. 大 trace 切换函数时关闭可省 dot 重渲染.</p>
+` },
+
+  disasm: { title: "Disassembly (反汇编流)", html: `
+<p>每行 = 一次 trace 记录 (一条指令的执行快照). 列从左到右:
+<code>圆点 #idx 地址 func+offset asm ; 注释</code></p>
+<h4>圆点 = 该 PC 的执行频次</h4>
+<table>
+<tr><td><span class="swatch" style="background:#444c56"></span></td><td>1 次</td></tr>
+<tr><td><span class="swatch" style="background:#58a6ff"></span></td><td>2-9 次</td></tr>
+<tr><td><span class="swatch" style="background:#3fb950"></span></td><td>10-99 次</td></tr>
+<tr><td><span class="swatch" style="background:#f7b32b"></span></td><td>100-999 次</td></tr>
+<tr><td><span class="swatch" style="background:#f85149"></span></td><td>1000+ 次 (热路径)</td></tr>
+</table>
+<h4>asm 颜色</h4>
+<p>BN 后端 ready 后, 视口里的指令会自动升级到 BN 词法着色 (mnem / reg / num / sym / brace 各色), 跟右侧 Graph BN-CFG 一致. BN 没载入时 fallback 到 capstone 字符串 + 寄存器名 regex 着色:</p>
+<ul>
+<li><span style="color:#c9d1d9">浅灰粗</span> = mnem (指令助记符)</li>
+<li><span style="color:#79c0ff">蓝</span> = 寄存器名</li>
+<li><span style="color:#ffa657">橙</span> = 立即数 / 括号 / 数据 sym</li>
+<li><span style="color:#d2a8ff">紫</span> = 函数 sym (sub_xxx / 导入)</li>
+<li><span style="color:#f2cc60">黄</span> = struct 字段名</li>
+<li><span style="color:#a5d6ff">浅蓝</span> = 字符串字面量</li>
+<li><span style="color:#8b949e">灰斜</span> = 注释</li>
+</ul>
+<h4>交互</h4>
+<ul>
+<li>点指令行 → setCursor</li>
+<li>hover 寄存器名 → 显示当前值</li>
+<li>双击寄存器名 → 跳上次 def</li>
+<li>右键寄存器 → 菜单 (CFG/Memory at value/taint)</li>
+<li>地址显示格式 (绝对 / func+offset / so@func+offset) 在左侧 Settings 切换</li>
+</ul>
+` },
+
+  right: { title: "右侧面板 (Graph / Registers / HLIL)", html: `
+<p>右侧 vertical tab 切换三个子面板. 当前显示哪个就看下面对应章节.</p>
+
+<h3>Graph (CFG)</h3>
+<h4>数据源 (上方 dropdown)</h4>
+<ul>
+<li><b>Trace CFG</b>: 仅包含 trace 真走过的 BB. 间接跳真 target 100% 准, 但函数死代码看不到.</li>
+<li><b>BN ASM</b>: 完整函数所有 BB (BN 静态分析) + trace 命中染色 + 三色 edge.</li>
+</ul>
+<h4>BB 边框颜色 (BN 模式)</h4>
+<table>
+<tr><td><span class="swatch" style="background:#30363d"></span></td><td>0 次 (静态可达, trace 未踩 — 死代码 / 未触发)</td></tr>
+<tr><td><span class="swatch" style="background:#1d4060"></span></td><td>低频 (1-9)</td></tr>
+<tr><td><span class="swatch" style="background:#3fb950"></span></td><td>中频 (10-99)</td></tr>
+<tr><td><span class="swatch" style="background:#d8a040"></span></td><td>高频 (100-999)</td></tr>
+<tr><td><span class="swatch" style="background:#f85149"></span></td><td>热路径 (1000+)</td></tr>
+<tr><td><span class="swatch" style="background:#d2a8ff"></span></td><td>当前 cursor 所在 BB</td></tr>
+</table>
+<h4>Edge 颜色 (BN 模式)</h4>
+<table>
+<tr><td><span class="swatch" style="background:#3fb950"></span></td><td>true (cond taken)</td></tr>
+<tr><td><span class="swatch" style="background:#f85149"></span></td><td>false (cond fall-through)</td></tr>
+<tr><td><span class="swatch" style="background:#58a6ff"></span></td><td>uncond (无条件)</td></tr>
+<tr><td><span class="swatch" style="background:#d2a8ff"></span></td><td>indirect (br/blr 间接跳, OLLVM dispatch)</td></tr>
+<tr><td><span class="swatch" style="background:#bc8cff"></span></td><td>call / ret</td></tr>
+<tr><td>实线</td><td>trace 走过 (static + dynamic 都见)</td></tr>
+<tr><td>虚线</td><td>static-only (BN 知道但 trace 没走)</td></tr>
+<tr><td><span style="color:#f85149">红粗实</span></td><td>dyn-only (trace 真走但 BN 没标 — OLLVM 间接跳真 target, 金矿信号)</td></tr>
+</table>
+<h4>交互</h4>
+<ul>
+<li>鼠标拖动 = pan; <kbd>Ctrl</kbd>+滚轮 = zoom; 滚轮 = 垂直滚动</li>
+<li>点 BB 内任意 insn 行 → setCursor 跳 trace</li>
+<li><b>fit</b> 按钮: 按宽度自适应缩放</li>
+<li><b>reload</b> 按钮: 强制重新渲染 dot (改 source 后用)</li>
+</ul>
+
+<h3>Registers</h3>
+<p>当前 cursor 时刻 31 个通用寄存器 + sp + pc 的值. 跟 pwndbg 配色:</p>
+<ul>
+<li>变化的 reg (相比 cursor-1) → <span style="color:#f85149">红色加粗</span></li>
+<li>智能解引用注释 (右列):
+  <ul>
+    <li><code>[func+0xN]</code> 代码指针</li>
+    <li><code>→ "string"</code> 字符串指针</li>
+    <li><code>[SP+0xN]</code> 栈指针</li>
+    <li><code>(JavaHeap)</code> / <code>(libart?)</code> 已知 region</li>
+    <li>多级 deref 链 <code>→ 0x... → "..."</code></li>
+  </ul>
+</li>
+</ul>
+
+<h3>HLIL (反编译伪代码)</h3>
+<p>由 BN/Ghidra/IDA 后端 (<code>--so PATH</code> 启动时指定) 提供. 当前 cursor 所在函数显示完整 HLIL, 行号 = 该 stmt 起始 PC.</p>
+<h4>Token 着色 (BN dark theme 风)</h4>
+<ul>
+<li><span style="color:#ff7b72">关键字</span> (if/return/uint64_t)</li>
+<li><span style="color:#79c0ff">寄存器</span> (x0/sp)</li>
+<li><span style="color:#56d4dd">变量/参数</span> (var_64/arg1)</li>
+<li><span style="color:#ffa657">数字/常量</span></li>
+<li><span style="color:#a5d6ff">字符串</span></li>
+<li><span style="color:#d2a8ff">函数符号</span> (sub_xxx/imports — 可双击)</li>
+<li><span style="color:#ffa657">data 符号</span> (data_xxx — 可双击)</li>
+<li><span style="color:#f2cc60">struct field</span></li>
+</ul>
+<h4>交互</h4>
+<ul>
+<li>当前 PC 对应行 → 黄色背景 + 左竖条</li>
+<li>点 HLIL 任意行 → setCursor 跳到该 PC 在 trace 离 cursor 最近的执行</li>
+<li>双击 fn / data token (紫/橙文字) → 跳到该地址在 trace 里的某次执行 (跨函数 navigate)</li>
+<li>cursor 在同一函数内移动 → 仅更新高亮, 不重渲染 (不闪烁)</li>
+</ul>
+<h4>后端状态</h4>
+<p>启动时 BN load SO ~30-60s; 之后单函数查询 ~5ms. 缓存到 <code>~/.cache/tracemiku/decomp/cache.db</code>, 下次复用.</p>
+` },
+
+  "left-panel": { title: "左侧面板 — 帮助按当前 tab 显示", html: `
+<p>左侧 vertical tabs: Functions / Backtrace / Strings / Taint / Cross Ref / Settings.</p>
+
+<h3>Functions</h3>
+<p>trace 中走过的所有函数, 按调用次数降序. 点函数 → 跳到第一次进入它的 trace 位置 + 右侧 Graph 切到这个函数.</p>
+
+<h3>Backtrace</h3>
+<p>cursor 处的 call stack (栈底 → 栈顶). 每帧 = 一个 bl/blr 还没 ret. 点帧 → 跳到调用点 trace idx.</p>
+
+<h3>Strings</h3>
+<p>从 trace 内存写入还原出来的 ASCII 字符串. <kbd>双击</kbd> → provenance: 这串字节是谁逐字节写的, 谁读的.</p>
+
+<h3>Taint (污点追踪)</h3>
+<ul>
+<li><b>From idx</b>: 起点 (默认 cursor)</li>
+<li><b>Reg</b>: 起点寄存器名 (e.g. x0)</li>
+<li><b>Forward</b>: 跟踪后续被该 reg 污染的指令</li>
+<li><b>Backward</b>: 回溯该 reg 当前值是哪条指令 def 的, 顺着 def-chain 找根源</li>
+</ul>
+
+<h3>Cross Ref</h3>
+<p>当前 cursor 处 PC 在整个 trace 中所有出现 (= PC 执行历史). 点 → 跳那一次.</p>
+
+<h3>Settings</h3>
+<p>各种显示限制 (条数 / 行数), 地址格式 (绝对 / func+offset / so@func+offset). localStorage 持久化.</p>
+` },
+
+  bottom: { title: "中下面板 (Memory / Call Tree / Navigation / Trace for PC)", html: `
+<h3>Memory</h3>
+<p>输入 <code>0x...</code> 或寄存器名 (sp/x0/...) → hex+ASCII dump. 默认 16 行 × 16 字节 (Settings 可调).</p>
+<h4>字节颜色</h4>
+<ul>
+<li><span style="color:#6e7681">暗灰</span> = 该字节 trace 没读过也没写过</li>
+<li>白 = 读过 (从 register 装载)</li>
+<li><span style="color:#3fb950">绿</span> = 写过 (从 register 存储)</li>
+</ul>
+<h4>交互</h4>
+<ul>
+<li>双击 <span style="color:#3fb950">绿</span> 字节 → 跳到第一次 write 该字节的 trace idx</li>
+<li>拖选字节范围, 右键 → 菜单 (readers / writers / 跳第一个 R-or-W)</li>
+</ul>
+
+<h3>Call Tree</h3>
+<p>函数调用树 (整 trace). 还在开发.</p>
+
+<h3>Navigation</h3>
+<p>cursor 历史栈 (类似浏览器前进后退). 还在开发.</p>
+
+<h3>Trace for PC</h3>
+<p>显示某 PC 在 trace 里所有出现的 idx, 按 cursor 分前后. 通过点击 CFG 的 ASM 行或 trace 指令触发.</p>
+` },
+};
+
+let HELP_OPEN_FOR = null;   // 当前打开 help 的 panel id
+
+function setupHelp() {
+  // 全局 click delegation: 触发器 (.help-btn) 弹出, popover 外部点击关闭
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest(".help-btn");
+    if (btn) {
+      ev.stopPropagation();
+      let id = btn.dataset.help;
+      // 左侧 left-panel: 当前 active lp-tab 决定子内容. 暂用 left-panel 总说明.
+      // (后续如需精细化可加 tab-specific doc 但当前一份 doc 已经覆盖所有 lp tabs)
+      const doc = HELP_DOC[id];
+      if (!doc) return;
+      showHelp(doc, btn);
+      return;
+    }
+    // 点 popover 内部不关闭 (除了 close-x 已在内部处理)
+    const pop = $("help-popover");
+    if (pop && !pop.classList.contains("hidden") && !pop.contains(ev.target)) {
+      hideHelp();
+    }
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") hideHelp();
+  });
+}
+
+function showHelp(doc, anchorEl) {
+  const pop = $("help-popover");
+  const cnt = $("help-popover-content");
+  cnt.innerHTML = `<span class="close-x" id="help-close">×</span>`
+                + `<h3>${escapeHtml(doc.title)}</h3>`
+                + doc.html;
+  pop.classList.remove("hidden");
+  // 定位: 锚点下方; 若超出右侧则左移; 若超出底部则上翻
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = "0px";   // tmp 让 measure 干净
+  pop.style.top = "0px";
+  pop.style.visibility = "hidden";
+  const pr = pop.getBoundingClientRect();
+  let left = r.right - pr.width;          // 默认左对齐到 ? 按钮的右侧 (popover 长在 ? 左下方)
+  if (left < 8) left = 8;
+  let top = r.bottom + 6;
+  if (top + pr.height > window.innerHeight - 8) {
+    top = Math.max(8, r.top - pr.height - 6);
+  }
+  pop.style.left = left + "px";
+  pop.style.top  = top + "px";
+  pop.style.visibility = "visible";
+  HELP_OPEN_FOR = doc.title;
+  $("help-close").addEventListener("click", (ev) => {
+    ev.stopPropagation(); hideHelp();
+  });
+}
+function hideHelp() {
+  const pop = $("help-popover");
+  if (pop && !pop.classList.contains("hidden")) {
+    pop.classList.add("hidden");
+    HELP_OPEN_FOR = null;
+  }
 }
 
 // ---------------- go ----------------
