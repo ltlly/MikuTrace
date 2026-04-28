@@ -1101,13 +1101,22 @@ async function jumpToPc(pc) {
 
 // 把 backend 给的 tokens 渲染成 HTML, 套 .tok-{cls} class.
 // fallback: 没 tokens 时 escape 原文.
+// 完整匹配整行 token text 的 GPR — token-level, 不会误匹配子串.
+const REG_RE_FULL = /^(x([12]?\d|3[01])|w([12]?\d|3[01])|sp|fp|lr|pc|xzr|wzr)$/i;
+
 function renderTokens(tokens, fallbackText) {
   if (!tokens || !tokens.length) return escapeHtml(fallbackText || "");
   let s = "";
   for (const tk of tokens) {
-    const cls = "tok-" + (tk.c || "other");
-    const a = tk.a ? ` data-a="${tk.a}"` : "";
-    s += `<span class="${cls}"${a}>${escapeHtml(tk.t)}</span>`;
+    let cls = "tok-" + (tk.c || "other");
+    let extra = tk.a ? ` data-a="${tk.a}"` : "";
+    // BN reg-token + GPR 文本 → 也挂上 op-reg/data-reg, 让旧的 hover/dblclick/contextmenu
+    // handler (closest(".op-reg") + dataset.reg) 在 BN-token 渲染下仍然命中.
+    if (tk.c === "reg" && REG_RE_FULL.test(tk.t)) {
+      cls += " op-reg";
+      extra += ` data-reg="${normalizeReg(tk.t)}"`;
+    }
+    s += `<span class="${cls}"${extra}>${escapeHtml(tk.t)}</span>`;
   }
   return s;
 }
@@ -1126,7 +1135,7 @@ function setupBottomTabs() {
       <button class="btn" id="mem-go">go</button>
       <span class="dim" id="mem-info"></span>
     </div>
-    <div id="mem-content" style="padding:6px 8px;font-family:monospace;font-size:11px;line-height:16px"></div>`;
+    <div id="mem-content" style="padding:6px 8px;font-family:inherit;font-size:11px;line-height:16px"></div>`;
   $("mem-go").addEventListener("click", refreshMemDump);
   $("mem-addr").addEventListener("keydown", e => { if (e.key === "Enter") refreshMemDump(); });
   // cursor 变化时如果 mem-addr 是寄存器, 自动 refresh
@@ -1429,7 +1438,7 @@ async function showStringProvenance(addr, infoEl) {
   }
   let html = `<div class="tfp-section"><h4>String @ ${addr} — provenance (谁构造 / 谁读取)</h4></div>`;
   // 逐字节表
-  html += `<div style="font-family:monospace;font-size:11px">`;
+  html += `<div style="font-family:inherit;font-size:11px">`;
   for (const b of r.bytes) {
     const ch = (b.byte != null && b.byte >= 0x20 && b.byte < 0x7f) ?
       String.fromCharCode(b.byte) : "·";
