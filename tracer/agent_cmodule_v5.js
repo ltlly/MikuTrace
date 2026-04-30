@@ -219,7 +219,12 @@ rpc.exports = {
     init(opts) {
         opts = opts || {};
         STATE.soPattern = opts.soPattern || "libsgmainso";
-        STATE.fnOffset = opts.fnOffset !== undefined ? opts.fnOffset : 0x57770;
+        STATE.exportName = opts.exportName || null;
+        STATE.methodName = opts.methodName || null;
+        // null/undefined fnOffset means "resolve from exportName/methodName".
+        // Only fall back to the historical 0x57770 default when nothing else is given.
+        STATE.fnOffset = (opts.fnOffset != null) ? opts.fnOffset
+                        : ((opts.exportName || opts.methodName) ? null : 0x57770);
         STATE.cmdValue = opts.cmdValue || 0;
         STATE.cmdArg = opts.cmdArg !== undefined ? opts.cmdArg : 2;
         STATE.pkg = opts.pkg || null;
@@ -240,11 +245,47 @@ rpc.exports = {
             STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
             log(`[+] target ${m.name} base=${m.base} end=${m.base.add(m.size)}`);
             send({ type: "module", name: m.name, base: m.base.toString(), size: m.size, pid: Process.id });
-            const fp = m.base.add(STATE.fnOffset);
+
+            // Resolve hook target: --fn-offset > --export > --method
+            let fp = null, label = "";
+            if (STATE.fnOffset !== null && STATE.fnOffset !== undefined) {
+                fp = m.base.add(STATE.fnOffset);
+                label = `${STATE.soPattern}+0x${STATE.fnOffset.toString(16)}`;
+            } else if (STATE.exportName) {
+                // Frida 17.x: prefer module instance method; fallback to static lookups
+                if (typeof m.findExportByName === "function") {
+                    fp = m.findExportByName(STATE.exportName);
+                } else if (typeof m.getExportByName === "function") {
+                    try { fp = m.getExportByName(STATE.exportName); } catch(_) { fp = null; }
+                }
+                if (!fp && typeof Module.findExportByName === "function") {
+                    fp = Module.findExportByName(m.name, STATE.exportName);
+                }
+                if (!fp) {
+                    // last resort: scan exports
+                    try {
+                        const exps = m.enumerateExports();
+                        const e = exps.find(x => x.name === STATE.exportName);
+                        if (e) fp = e.address;
+                    } catch(_) {}
+                }
+                if (!fp) {
+                    log(`[!!] export "${STATE.exportName}" not found in ${m.name}`);
+                    return;
+                }
+                STATE.fnOffset = fp.sub(m.base).toInt32();   // back-fill for stats/log
+                label = `${STATE.soPattern}!${STATE.exportName}`;
+            } else if (STATE.methodName) {
+                log(`[!!] --method ${STATE.methodName} (动态注册 JNI) v5 agent 暂不支持; 改用 --fn-offset 或 --export`);
+                return;
+            } else {
+                log(`[!!] 必须传 --fn-offset / --export / --method 之一`);
+                return;
+            }
             const tBase = STATE.target.base, tEnd = STATE.target.end;
             const onInsn = STATE.onInsnPtr;
             installFnHook(fp, tBase, tEnd, onInsn);
-            log(`[+] hook ${STATE.soPattern}+0x${STATE.fnOffset.toString(16)} @ ${fp}`);
+            log(`[+] hook ${label} @ ${fp} (offset 0x${STATE.fnOffset.toString(16)})`);
         };
         const m = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern) !== -1);
         if (!m) {

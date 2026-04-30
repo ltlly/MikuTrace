@@ -157,35 +157,80 @@ def cmd_trace(args):
                                 "callIdx": call_idx, "tid": tid, "pid": pid}
         return sess_files[call_idx]
 
+    # Probed once per process: does this device need root to read app caches?
+    # On user builds, /data/data/<pkg>/cache/ is owned by app uid — shell uid can't read.
+    # On userdebug / KSU-rooted devices, we wrap with `su -c` to bypass.
+    _adb_pull_use_su = [None]
+
+    def _detect_su_needed():
+        if _adb_pull_use_su[0] is not None:
+            return _adb_pull_use_su[0]
+        # quick probe: try reading a known root-only path as shell; if denied, use su
+        r = subprocess.run(["adb", "shell", "id"], capture_output=True, text=True, timeout=5)
+        is_root_shell = "uid=0" in (r.stdout or "")
+        _adb_pull_use_su[0] = not is_root_shell
+        return _adb_pull_use_su[0]
+
+    def _wrap_su(cmd):
+        """Wrap a shell command with `su -c` if needed (for KSU/Magisk-rooted user builds)."""
+        import shlex as _sx
+        if _detect_su_needed():
+            # double-quote-safe escaping via single-quotes inside su -c '...'
+            return f"su -c {_sx.quote(cmd)}"
+        return cmd
+
     def adb_pull_device_trace(device_path, dst_path):
-        """从设备 gzip-stream 文件到 host (在设备端压缩, USB 传输, host 解压).
-           trace.bin 多 0 padding + PC 局部性, 实测压缩比 ~25x:
-              1.25GB raw → 48MB gz, USB 21MB/s 下 60s → 6s (10x 提速).
+        """从设备拉 trace 文件到 host.
+           优先 gzip-stream (~25x 压缩, ~10x 加速); 部分 ROM (e.g. ColorOS)
+           的 toybox gzip 不输出合法 gzip magic — 检测失败时 fallback 到 raw cat.
+           App cache 路径只有 app uid / root 能读 — 自动检测并用 su -c 包装.
            失败抛异常.
         """
         import gzip as _gz, shlex
-        with open(dst_path, "wb") as dst:
-            cmd = f"gzip -1 -c {shlex.quote(device_path)}"
-            ps = subprocess.Popen(["adb", "exec-out", cmd],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try:
-                # streaming gunzip while pulling
-                gz = _gz.GzipFile(fileobj=ps.stdout, mode="rb")
-                while True:
-                    chunk = gz.read(4 * 1024 * 1024)
-                    if not chunk: break
-                    dst.write(chunk)
-                gz.close()
-            finally:
-                ps.stdout.close()
-                ps.wait(timeout=30)
-            if ps.returncode != 0:
-                stderr = ps.stderr.read().decode("utf-8","replace")[:200]
-                raise RuntimeError(f"adb exec-out gzip {device_path} 失败: rc={ps.returncode} {stderr}")
-        size = pathlib.Path(dst_path).stat().st_size
-        if size == 0:
-            raise RuntimeError(f"adb gzip pull {device_path} 拉到 0 字节文件")
-        subprocess.run(["adb", "shell", "rm", "-f", device_path], capture_output=True)
+        # ---- try gzip-stream first ----
+        gz_err = None
+        try:
+            with open(dst_path, "wb") as dst:
+                inner = f"gzip -1 -c {shlex.quote(device_path)}"
+                cmd = _wrap_su(inner)
+                ps = subprocess.Popen(["adb", "exec-out", cmd],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    gz = _gz.GzipFile(fileobj=ps.stdout, mode="rb")
+                    while True:
+                        chunk = gz.read(4 * 1024 * 1024)
+                        if not chunk: break
+                        dst.write(chunk)
+                    gz.close()
+                finally:
+                    ps.stdout.close()
+                    ps.wait(timeout=30)
+                if ps.returncode != 0:
+                    stderr = ps.stderr.read().decode("utf-8","replace")[:200]
+                    raise RuntimeError(f"adb exec-out gzip rc={ps.returncode} {stderr}")
+            size = pathlib.Path(dst_path).stat().st_size
+            if size == 0:
+                raise RuntimeError("gzip pull 拉到 0 字节")
+        except Exception as e:
+            gz_err = e
+        # ---- fallback: raw cat (slower, but works on ColorOS-style toybox gzip) ----
+        if gz_err is not None:
+            wlog(f"  gzip pull 失败 ({gz_err}); 回退 raw cat")
+            with open(dst_path, "wb") as dst:
+                inner = f"cat {shlex.quote(device_path)}"
+                cmd = _wrap_su(inner)
+                ps = subprocess.Popen(["adb", "exec-out", cmd],
+                                      stdout=dst, stderr=subprocess.PIPE)
+                ps.wait(timeout=180)
+                if ps.returncode != 0:
+                    stderr = ps.stderr.read().decode("utf-8","replace")[:200]
+                    raise RuntimeError(f"raw cat 也失败: rc={ps.returncode} {stderr} (gzip 错误: {gz_err})")
+            size = pathlib.Path(dst_path).stat().st_size
+            if size == 0:
+                raise RuntimeError(f"raw cat 拉到 0 字节 (gzip 错误: {gz_err})")
+        # cleanup device file (also via su if needed)
+        rm_cmd = _wrap_su(f"rm -f {shlex.quote(device_path)}")
+        subprocess.run(["adb", "shell", rm_cmd], capture_output=True)
         return size
 
     def finalize_call(s, *, truncated):
