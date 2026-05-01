@@ -444,9 +444,12 @@ def cmd_trace(args):
     incl_pats = []
     if args.include_so:
         incl_pats = [p.strip() for p in args.include_so.split(",") if p.strip()]
-    hostile_pats = []
-    if getattr(args, "hostile_patterns", None):
-        hostile_pats = [p.strip() for p in args.hostile_patterns.split(",") if p.strip()]
+    stalker_exc_pats = []
+    if getattr(args, "stalker_exclude_patterns", None):
+        stalker_exc_pats = [p.strip() for p in args.stalker_exclude_patterns.split(",") if p.strip()]
+    diff_pats = []
+    if getattr(args, "boundary_diff_patterns", None):
+        diff_pats = [p.strip() for p in args.boundary_diff_patterns.split(",") if p.strip()]
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -459,7 +462,8 @@ def cmd_trace(args):
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
         "includeSoPatterns": incl_pats,     # multi-SO trace
         "deepTrace": bool(getattr(args, "trace_deep", False)),
-        "hostilePatterns": hostile_pats,
+        "stalkerExcludePatterns": stalker_exc_pats,
+        "boundaryDiffPatterns": diff_pats,
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1038,11 +1042,16 @@ def main():
                            " 'libsgsecuritybody,libsgavmp,libcrypto'."
                            " HARD_EXCL (libc/libart/linker etc) 永远排除 — 即使列在这里也忽略.")
     p_tr.add_argument("--trace-deep", action="store_true", dest="trace_deep",
-                      help="深度模式: 不再 module-level 排除 libart/libc 等. 改成 per-symbol "
-                           "exclude (interpreter/JIT/GC/atomic primitives). 这些 hostile 函数 "
-                           "用 boundary ptr-diff 抓内存写. 慢但 memshadow 完整. linker/libdl 仍排除.")
-    p_tr.add_argument("--hostile-patterns", default=None, dest="hostile_patterns",
-                      help="逗号分隔, 覆盖默认 hostile 名单. 仅 --trace-deep 下生效.")
+                      help="深度模式: 不再 module-level 排除 libart/libc. 改成 per-symbol "
+                           "Stalker.exclude (interpreter/JIT/GC/atomic primitives 这些 LDXR/STXR "
+                           "或 ART 自修改不安全的函数). 大部分 libart 函数 (NewStringUTF / "
+                           "GetField 等) 现在能被 Stalker 跟到. linker/libdl 仍整 module 排除.")
+    p_tr.add_argument("--stalker-exclude-patterns", default=None, dest="stalker_exclude_patterns",
+                      help="逗号分隔, 覆盖默认 Stalker.exclude 名单 (per-symbol). 仅 --trace-deep 下生效.")
+    p_tr.add_argument("--boundary-diff-patterns", default=None, dest="boundary_diff_patterns",
+                      help="逗号分隔, 在这些函数装 Interceptor 抓内存写 (boundary ptr-diff). "
+                           "**严禁包含 pthread/malloc/atomic** — Frida 自己用这些, attach 会崩进程. "
+                           "默认空. 仅 --trace-deep 下生效.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")

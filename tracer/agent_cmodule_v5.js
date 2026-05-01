@@ -47,10 +47,10 @@ const HARD_EXCL = ["libc.so","libm.so","libdl.so","libpthread.so","libart.so",
 // init-time recursion that nothing else can touch — too risky to per-symbol).
 const DEEP_KEEP_EXCL = ["linker", "linker64", "libdl.so"];
 
-// Hostile symbol patterns. When --trace-deep is on, we per-symbol exclude
-// these from Stalker AND attach Interceptor for boundary-diff (route B).
-// Pattern is substring match against demangled-ish symbol name.
-const DEFAULT_HOSTILE_PATTERNS = [
+// Stalker-exclude patterns (LDXR/STXR atomic deadlock prevention + self-modifying
+// hot code). These are NEVER instrumented by Stalker. Safe to add anything here —
+// it just means Stalker won't recompile their basic blocks.
+const STALKER_EXCLUDE_PATTERNS = [
     // ART self-modifying / hot reentry surfaces
     "art::interpreter::Execute",
     "art::interpreter::DoCall",
@@ -58,12 +58,26 @@ const DEFAULT_HOSTILE_PATTERNS = [
     "art::jit::Jit", "art::jit::JitCompiler",
     "art::gc::Heap::", "art::gc::collector::",
     "art::ClassLinker::Lookup",
-    // libc atomic / lock primitives (LDXR/STXR pairs Stalker can't safely instrument)
+    // libc atomic / lock primitives. Stalker on LDXR/STXR pairs clears the
+    // exclusive monitor → atomics fail → process deadlock.
     "pthread_mutex_lock", "pthread_mutex_unlock",
     "pthread_rwlock_", "pthread_cond_",
     "__bionic_atomic_", "__atomic_",
     "malloc", "free", "calloc", "realloc",   // scudo allocator atomics
 ];
+
+// Boundary-diff patterns (Interceptor.attach for memory diff). MUST be a strict
+// subset of "functions that Frida itself does NOT call internally". Attaching
+// on pthread_mutex_lock / malloc / __atomic_* causes self-recursion in Frida's
+// own machinery → process crashes during attach.
+//
+// Default = empty. Opt-in via --boundary-diff-patterns. Safe candidates (these
+// are leaf-ish ART helpers that Frida internals don't reach):
+//   - "art::Thread::DecodeJObject"   // read-only ptr decode
+//   - "art::JNI::Get*"               // get-side JNI helpers
+// memcpy/memmove are NOT safe — they may be ifunc-resolved + Frida's
+// readByteArray internally calls them.
+const DEFAULT_BOUNDARY_DIFF_PATTERNS = [];
 
 // SOFT_EXCL: excluded by default (perf + noise), but --include-so can
 // override (user accepts the risk). System-ish but no atomic deadlock pattern.
@@ -247,9 +261,10 @@ function applyExcludesOnce() {
     const userIncl = STATE.includeSoPatterns || [];
     const matchesUser = (name) => userIncl.some(pat => name.indexOf(pat) !== -1);
     const deep = !!STATE.deepTrace;
-    const hostilePatterns = STATE.hostilePatterns || DEFAULT_HOSTILE_PATTERNS;
-    STATE.hostileSyms = [];
-    let nMod = 0, hard = 0, soft = 0, user_kept = 0, hostile = 0;
+    const stalkerPatterns = STATE.stalkerExcludePatterns || STALKER_EXCLUDE_PATTERNS;
+    const diffPatterns = STATE.boundaryDiffPatterns || DEFAULT_BOUNDARY_DIFF_PATTERNS;
+    STATE.diffSyms = [];     // syms to Interceptor.attach (boundary-diff only)
+    let nMod = 0, hard = 0, soft = 0, user_kept = 0, stalkerOnly = 0, diffTargets = 0;
 
     for (const m of Process.enumerateModules()) {
         const isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
@@ -258,25 +273,36 @@ function applyExcludesOnce() {
         if (isHard) {
             const stillKeep = DEEP_KEEP_EXCL.some(p => m.name.indexOf(p) !== -1);
             if (deep && !stillKeep) {
-                // 不整 module exclude. 改成 per-symbol hostile exclude.
-                let perMod = 0;
+                // Don't full-module exclude. Per-symbol Stalker.exclude for
+                // STALKER_EXCLUDE_PATTERNS matches; collect BOUNDARY_DIFF
+                // matches for safe Interceptor.attach later (must be a strict
+                // subset — Frida internals call pthread/malloc, attaching there
+                // crashes the process).
+                let perModStalker = 0, perModDiff = 0;
                 try {
                     for (const sym of m.enumerateSymbols()) {
                         if (!sym.address || sym.address.isNull()) continue;
-                        if (!hostilePatterns.some(p => sym.name.indexOf(p) !== -1)) continue;
-                        const symSize = sym.size || 4096;   // Stalker exclude needs size; default 1 page
-                        try {
-                            Stalker.exclude({base: sym.address, size: symSize});
-                            STATE.hostileSyms.push({
-                                addr: sym.address, end: sym.address.add(symSize),
-                                name: sym.name, mod: m.name,
+                        const isStalkerEx = stalkerPatterns.some(p => sym.name.indexOf(p) !== -1);
+                        const isDiff = diffPatterns.length > 0 &&
+                                       diffPatterns.some(p => sym.name.indexOf(p) !== -1);
+                        if (isStalkerEx) {
+                            const symSize = sym.size || 4096;
+                            try {
+                                Stalker.exclude({base: sym.address, size: symSize});
+                                perModStalker++;
+                            } catch (_) {}
+                        }
+                        if (isDiff) {
+                            STATE.diffSyms.push({
+                                addr: sym.address, name: sym.name, mod: m.name,
                             });
-                            perMod++;
-                        } catch (_) {}
+                            perModDiff++;
+                        }
                     }
                 } catch (e) { log(`[!] enumSymbols ${m.name} failed: ${e}`); }
-                hostile += perMod;
-                log(`[+] deep: ${m.name} kept; ${perMod} hostile syms excluded`);
+                stalkerOnly += perModStalker;
+                diffTargets += perModDiff;
+                log(`[+] deep: ${m.name} kept; stalker-excl=${perModStalker} diff-targets=${perModDiff}`);
                 continue;
             }
             // Not deep, or module on DEEP_KEEP_EXCL: full module exclude
@@ -288,8 +314,9 @@ function applyExcludesOnce() {
             try { Stalker.exclude({base: m.base, size: m.size}); nMod++; soft++; } catch (_) {}
         }
     }
-    log(`[+] Stalker.exclude: modules=${nMod} (hard=${hard} soft=${soft}, user-kept=${user_kept}); deep=${deep} hostile-syms=${hostile}`);
-    if (deep) installBoundaryDiffHooksOnce();
+    log(`[+] Stalker.exclude: modules=${nMod} (hard=${hard} soft=${soft}, user-kept=${user_kept}); ` +
+        `deep=${deep} stalker-only-syms=${stalkerOnly} diff-targets=${diffTargets}`);
+    if (deep && STATE.diffSyms.length > 0) installBoundaryDiffHooksOnce();
     STATE.excluded = true;
 }
 
@@ -322,20 +349,22 @@ function isPtrInWritable(p) {
 
 function installBoundaryDiffHooksOnce() {
     if (STATE.boundaryHooksInstalled) return;
-    if (!STATE.hostileSyms || STATE.hostileSyms.length === 0) {
+    if (!STATE.diffSyms || STATE.diffSyms.length === 0) {
         STATE.boundaryHooksInstalled = true;
         return;
     }
     STATE.extWriteEvents = STATE.extWriteEvents || [];
     let installed = 0;
-    for (const sym of STATE.hostileSyms) {
+    for (const sym of STATE.diffSyms) {
         try {
             Interceptor.attach(sym.addr, makeBoundaryDiffHook(sym.name));
             installed++;
-        } catch (_) {}
+        } catch (e) {
+            log(`[!] Interceptor.attach ${sym.name} failed: ${e}`);
+        }
     }
     STATE.boundaryHooksInstalled = true;
-    log(`[+] boundary-diff Interceptor installed: ${installed}/${STATE.hostileSyms.length} hostile syms`);
+    log(`[+] boundary-diff Interceptor installed: ${installed}/${STATE.diffSyms.length} diff targets`);
 }
 
 function makeBoundaryDiffHook(symName) {
@@ -561,8 +590,11 @@ rpc.exports = {
         // exclude only HOSTILE_PATTERNS. Boundary-diff via Interceptor catches
         // memory writes by excluded syms. See applyExcludesOnce.
         STATE.deepTrace = !!opts.deepTrace;
-        STATE.hostilePatterns = Array.isArray(opts.hostilePatterns) && opts.hostilePatterns.length
-                                ? opts.hostilePatterns : null;   // null → DEFAULT
+        STATE.stalkerExcludePatterns = Array.isArray(opts.stalkerExcludePatterns)
+                                        && opts.stalkerExcludePatterns.length
+                                        ? opts.stalkerExcludePatterns : null;
+        STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns)
+                                      ? opts.boundaryDiffPatterns : null;
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);

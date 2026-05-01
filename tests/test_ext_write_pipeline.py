@@ -142,14 +142,19 @@ def test_agent_has_deep_trace_strings():
     js = (HERE / "tracer" / "agent_cmodule_v5.js").read_text()
     # RPC opt
     assert "deepTrace" in js, "agent 缺 deepTrace opt"
-    assert "DEFAULT_HOSTILE_PATTERNS" in js, "agent 缺 DEFAULT_HOSTILE_PATTERNS"
+    assert "STALKER_EXCLUDE_PATTERNS" in js, "agent 缺 STALKER_EXCLUDE_PATTERNS"
+    assert "DEFAULT_BOUNDARY_DIFF_PATTERNS" in js, "agent 缺 DEFAULT_BOUNDARY_DIFF_PATTERNS"
     # boundary diff core
     assert "installBoundaryDiffHooksOnce" in js
     assert "ext-write" in js, "agent 必须 send type='ext-write'"
     assert "flushExtWriteEvents" in js
-    # ART hostile patterns 必含一些已知值
+    # ART stalker-exclude patterns 必含一些已知值
     assert "art::interpreter::Execute" in js
     assert "art::jit" in js or "art::jit::Jit" in js
+    # 关键: Frida-internals 函数(pthread/malloc 等)必须在 STALKER_EXCLUDE 名单里
+    # 且默认 BOUNDARY_DIFF 名单为空 (绝不能 attach 它们)
+    assert "DEFAULT_BOUNDARY_DIFF_PATTERNS = []" in js, \
+        "默认 boundary-diff 必须为空 — 否则 Interceptor.attach pthread/malloc 会让进程崩"
 
 
 def test_agent_flushes_ext_at_trace_end():
