@@ -1,4 +1,22 @@
 #!/usr/bin/env python3
+# Auto-fallback to a Python with our deps (capstone/frida/fastapi) when the
+# `env`-resolved python3 lacks them — common on dev machines with multiple
+# venvs in PATH where the first one is for an unrelated project.
+import os, sys
+try:
+    import capstone, frida   # smoke check for native trace deps
+except ImportError:
+    for _p in ("/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"):
+        if os.path.exists(_p) and _p != sys.executable:
+            try: os.execv(_p, [_p, *sys.argv])
+            except Exception: pass
+    sys.stderr.write(
+        f"error: missing 'capstone' / 'frida' in {sys.executable}\n"
+        f"  pip install capstone frida fastapi 'pydantic>=2' uvicorn numpy\n"
+        f"  or invoke directly with the right interpreter: "
+        f"<other-python> ./tracemiku ...\n")
+    sys.exit(1)
+
 """tracemiku — 安卓真机 ARM64 指令级 trace 全栈工具.
 
 子命令:
