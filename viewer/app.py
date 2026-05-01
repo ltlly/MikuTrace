@@ -264,8 +264,7 @@ class XRefTab(Static):
             out.append(f"  {reg:>3s} → #{use_idx:6d}  {uf:<28s}  {ud.mnemonic} {ud.op_str}\n", style="white")
         if d.mem_op:
             out.append("\n内存操作\n", style="bold yellow")
-            for op in d.mem_op:
-                base, ireg, disp, sz, is_w, _src = op
+            for base, ireg, disp, sz, is_w, _src in d.mem_op:
                 bv = r.reg(base) if base in ALL_REGS else 0
                 iv = r.reg(ireg) if (ireg and ireg in ALL_REGS) else 0
                 addr = (bv + iv + disp) & 0xffffffffffffffff

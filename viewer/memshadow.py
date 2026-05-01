@@ -26,8 +26,8 @@ def _value_of_write(t: Trace, idx: int, mem_op, decoded) -> int | None:
     """For a store insn, the source register that gets stored.
 
     mem_op[5] (src_reg) is set explicitly for stp/ldp pair (each of the 2
-    mem_ops carries its own source). For other store insns it's "" — we then
-    pick the first non-base/non-idx reg from regs_use.
+    mem_ops carries its own source). For other store insns it's "" — fall back
+    to picking the first non-base/non-idx reg from regs_use.
     """
     base, idx_reg, _, _, _, src = mem_op
     if not src:
@@ -39,12 +39,19 @@ def _value_of_write(t: Trace, idx: int, mem_op, decoded) -> int | None:
     return rec.reg(src)
 
 
-def _value_of_read(t: Trace, idx: int, decoded) -> int | None:
-    """For a load insn, the value loaded = destination register in NEXT record."""
+def _value_of_read(t: Trace, idx: int, decoded, mem_op=None) -> int | None:
+    """For a load insn, the value loaded = destination register in NEXT record.
+
+    mem_op[5] (src_reg) 给 ldp 配对显式 — 第 i 个 mem_op 对应自己的 dest.
+    其它情况 fallback 到 regs_def[0].
+    """
     if idx + 1 >= len(t): return None
-    if not decoded.regs_def: return None
-    dest = decoded.regs_def[0]
-    if dest not in ALL_REGS: return None
+    dest = ""
+    if mem_op is not None and len(mem_op) >= 6 and mem_op[5]:
+        dest = mem_op[5]
+    elif decoded.regs_def:
+        dest = decoded.regs_def[0]
+    if not dest or dest not in ALL_REGS: return None
     return t.record(idx + 1).reg(dest)
 
 
@@ -72,7 +79,7 @@ class MemShadow:
                     self.writes.append((i, addr, sz, val))
                     self._splat_bytes(addr, sz, val, i, "w")
                 else:
-                    val = _value_of_read(self.t, i, d)
+                    val = _value_of_read(self.t, i, d, op)
                     if val is None: continue
                     self.reads.append((i, addr, sz, val))
                     self._splat_bytes(addr, sz, val, i, "r")

@@ -431,8 +431,7 @@ def make_app(trace_path: pathlib.Path,
         # 例: ldr x9, [x8, 0x80] → x8 注释 += "  [pthread_mutex_t.__lock]"
         if DECOMP["status"] == "ready" and d.mem_op:
             bk = DECOMP["backend"]
-            for op in d.mem_op:
-                base_reg, idx_reg, disp, sz, is_w, _src = op
+            for base_reg, idx_reg, disp, sz, is_w, _src in d.mem_op:
                 if not base_reg or base_reg not in regs_annotated:
                     continue
                 try:

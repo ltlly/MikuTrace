@@ -40,9 +40,11 @@ class Decoded:
     regs_def: tuple = ()
     regs_use: tuple = ()
     mem_op: tuple = ()   # ((base_reg, index_reg, disp, size, is_write, src_reg), ...)
-                          # src_reg is the destination on load OR source on store
-                          # — important for stp/ldp pair where one insn has 2
-                          # mem_op tuples with different src/dst regs.
+                          # src_reg = the dest reg (load) or src reg (store) for
+                          # this byte range. Set explicitly for stp/ldp pair where
+                          # each of the 2 mem_ops has its own source/dest reg.
+                          # Empty for other insns (consumers fallback to picking
+                          # from regs_use[0] excluding base/idx).
     is_branch: bool = False
     is_call: bool = False
     is_ret: bool = False
@@ -105,9 +107,9 @@ def decode(pc: int, inst: int) -> Decoded:
                         ops.append(nm)
             d.regs_use = tuple(ops)
 
-    # Memory operands. mem_op tuple = (base, idx, disp, size, is_write, src_reg)
-    # src_reg = the dest reg (load) or src reg (store) for this byte range.
-    # Empty for non-stp/ldp insns (consumers fallback to picking from regs_use).
+    # Memory operands. mem_op tuple = (base, idx, disp, size, is_write, src_reg).
+    # src_reg = dest (load) or src (store) for this byte range; empty for non-pair
+    # insns (consumer 用 regs_use[0] 兜底).
     mem_ops = []
     for op in ins.operands:
         if op.type == ARM64_OP_MEM:
