@@ -26,6 +26,16 @@ from webui.cfg_render import (
     split_mnem_ops_from_tokens as _split_mnem_ops_from_tokens,
     render_dot_to_svg as _render_dot_to_svg,
 )
+from webui.schemas import (
+    MetaResponse, ModuleInfo, RecordsResponse, RecordRow,
+    RecordDetail, CfgBuildingResponse, CfgReadyResponse,
+    BlockDetail, LoopsResponse, SearchResponse, StringsResponse,
+    TaintResponse, MemDumpResponse, IdxsResponse, BacktraceResponse,
+    BgStatusResponse, LastWriteResponse, RegValueResponse,
+    TouchingResponse, StringProvenanceResponse, DecompStatusResponse,
+    AsmTokensResponse, HlilResponse, BnCfgSvgResponse, BnCfgForPcResponse,
+    BlockForPcResponse,
+)
 
 
 log = logging.getLogger(__name__)
@@ -224,7 +234,7 @@ def make_app(trace_path: pathlib.Path,
 
     app = FastAPI(title="traceMiku web")
 
-    @app.get("/api/meta")
+    @app.get("/api/meta", response_model=MetaResponse)
     def meta():
         m = t.meta.module
         return {
@@ -232,12 +242,14 @@ def make_app(trace_path: pathlib.Path,
             "records": len(t),
             "module": {"name": m.name, "base": hex(m.base), "size": m.size,
                        "end": hex(m.end)} if m else None,
+            "modules": [{"name": x.name, "base": hex(x.base), "size": x.size,
+                         "end": hex(x.end)} for x in t.meta.modules],
             "method": t.meta.method, "cmd": t.meta.cmd,
             "fn_addr": hex(t.meta.fn_addr) if t.meta.fn_addr else None,
             "regs": ALL_REGS,
         }
 
-    @app.get("/api/records")
+    @app.get("/api/records", response_model=RecordsResponse)
     def records(start: int = 0, count: int = 100, regs: str = ""):
         if start < 0 or start >= len(t): return {"count": 0, "records": []}
         end = min(start + count, len(t))
@@ -345,7 +357,7 @@ def make_app(trace_path: pathlib.Path,
             break
         return "".join(parts)
 
-    @app.get("/api/record/{idx}")
+    @app.get("/api/record/{idx}", response_model=RecordDetail)
     def one_record(idx: int):
         if idx < 0 or idx >= len(t): raise HTTPException(404)
         r = t.record(idx); d = decode(r.pc, r.inst)
@@ -390,7 +402,7 @@ def make_app(trace_path: pathlib.Path,
             "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
         }
 
-    @app.get("/api/cfg")
+    @app.get("/api/cfg", response_model=CfgReadyResponse)
     def cfg(fn: Optional[str] = None):
         # 触发后台子进程构建 (CFG + pc_inst 一次出). 子进程独立 GIL,
         # 主进程的 /api/records /api/record 不会被它阻塞.
@@ -458,7 +470,7 @@ def make_app(trace_path: pathlib.Path,
                 "total_block_count": len(c.blocks),
                 "fn": fn, "funcs": funcs}
 
-    @app.get("/api/block-for-pc")
+    @app.get("/api/block-for-pc", response_model=BlockForPcResponse)
     def block_for_pc_api(pc: str):
         # 不强制 trigger CFG build (record endpoint 调它高频)
         if BG["cfg"]["status"] != "ready":
@@ -466,7 +478,7 @@ def make_app(trace_path: pathlib.Path,
         bp = block_for_pc(int(pc, 16))
         return {"pc": pc, "block": hex(bp) if bp else None}
 
-    @app.get("/api/block")
+    @app.get("/api/block", response_model=BlockDetail)
     def block_detail(pc: str):
         if BG["cfg"]["status"] != "ready":
             return {"status": BG["cfg"]["status"]}
@@ -495,7 +507,7 @@ def make_app(trace_path: pathlib.Path,
             "exits": [{"to": hex(t), "kind": k} for t, k in b.exits],
         }
 
-    @app.get("/api/loops")
+    @app.get("/api/loops", response_model=LoopsResponse)
     def api_loops():
         """所有 loop SCC: [{members:[pc,...], size:N}, ...] (size>=2 或自环)."""
         if BG["cfg"]["status"] != "ready":
@@ -717,7 +729,7 @@ def make_app(trace_path: pathlib.Path,
         sorted_kinds = all_kinds[order]
         return {"idxs": sorted_idxs, "kinds": sorted_kinds}
 
-    @app.get("/api/backtrace")
+    @app.get("/api/backtrace", response_model=BacktraceResponse)
     def backtrace(idx: int):
         """call stack at trace idx. 用预计算的 bl/blr/ret 事件列表 bisect+重放,
         典型 < 100ms (之前每次 0→idx full scan 是 5+s).
@@ -763,7 +775,7 @@ def make_app(trace_path: pathlib.Path,
                 if stack: stack.pop()
         return {"status": "ready", "idx": idx, "stack": stack, "depth": len(stack)}
 
-    @app.get("/api/idxs-for-pc")
+    @app.get("/api/idxs-for-pc", response_model=IdxsResponse)
     def idxs_for_pc(pc: str, cursor: int = 0, limit: int = 30):
         """numpy vector scan: pc_array() 是 mmap 上的 zero-copy uint64 视图.
         np.nonzero(pc_arr == target) ~5ms 跑完 2.5M (Python loop 是 320ms).
@@ -788,7 +800,7 @@ def make_app(trace_path: pathlib.Path,
                 "before_capped": total_before > limit,
                 "after_capped": total_after > limit}
 
-    @app.get("/api/idxs-for-block")
+    @app.get("/api/idxs-for-block", response_model=IdxsResponse)
     def idxs_for_block(pc: str, max_count: int = 200, near: int = -1):
         """所有 trace 中 PC 落在该 block 内的 idx. 用预建 dict, O(1).
         near>=0 时, 优先返回离该 idx 最近的 max_count 个."""
@@ -808,7 +820,7 @@ def make_app(trace_path: pathlib.Path,
             idxs = list(all_idxs)
         return {"block": hex(start), "idxs": idxs, "truncated": truncated, "total": len(all_idxs)}
 
-    @app.get("/api/search")
+    @app.get("/api/search", response_model=SearchResponse)
     def search(pattern: str, max_results: int = 200):
         """Regex 搜索指令 mnemonic+op_str. 简单线扫 + early-break, decode 有
         lru_cache 所以重复 PC 几乎零开销. 6.8M trace 上 ~10-200ms 取决于命中
@@ -831,7 +843,7 @@ def make_app(trace_path: pathlib.Path,
                 if len(rows) >= max_results: break
         return {"count": len(rows), "pattern": pattern, "hits": rows}
 
-    @app.get("/api/forward-taint")
+    @app.get("/api/forward-taint", response_model=TaintResponse)
     def forward_taint_api(start: int, reg: str, max_count: int = 500):
         from viewer.taint import forward_taint
         if BG["index"]["status"] != "ready":
@@ -852,7 +864,7 @@ def make_app(trace_path: pathlib.Path,
                          "asm": f"{d.mnemonic} {d.op_str}", "why": why})
         return {"count": len(rows), "from": start, "reg": reg, "hits": rows}
 
-    @app.get("/api/backward-taint")
+    @app.get("/api/backward-taint", response_model=TaintResponse)
     def backward_taint_api(start: int, reg: str, max_count: int = 500):
         from viewer.taint import backward_taint
         if BG["index"]["status"] != "ready":
@@ -872,7 +884,7 @@ def make_app(trace_path: pathlib.Path,
                          "asm": f"{d.mnemonic} {d.op_str}", "via": via})
         return {"count": len(rows), "from": start, "reg": reg, "chain": rows}
 
-    @app.get("/api/strings")
+    @app.get("/api/strings", response_model=StringsResponse)
     def strings_api(min_len: int = 4, q: str = "", cursor: int = -1, limit: int = 0):
         """字符串列表. cursor>=0 时按 cursor 时刻的内存状态过滤
         (只显示在 cursor 时刻 已 written 的字节构成的字符串).
@@ -904,7 +916,7 @@ def make_app(trace_path: pathlib.Path,
         return {"status": "ready", "count": len(results), "cursor": cursor,
                 "strings": [{"addr": hex(a), "len": len(s), "str": s} for a, s in results]}
 
-    @app.get("/api/string-provenance")
+    @app.get("/api/string-provenance", response_model=StringProvenanceResponse)
     def string_provenance(addr: str, length: int = 32):
         """对 [addr, addr+length) 区域, 列每个字节的 write idxs (谁构造) +
         read idxs (谁消费). 全 numpy: 不再 Python scatter 循环, 即使 hot buffer
@@ -946,7 +958,7 @@ def make_app(trace_path: pathlib.Path,
             })
         return {"status": "ready", "addr": addr, "length": length, "bytes": out_bytes}
 
-    @app.get("/api/mem-dump")
+    @app.get("/api/mem-dump", response_model=MemDumpResponse)
     def mem_dump(addr: str, count: int = 256):
         """Hex dump from MemShadow at given address. ?? for unaccessed bytes."""
         if BG["mem"]["status"] != "ready":
@@ -962,7 +974,7 @@ def make_app(trace_path: pathlib.Path,
                         "src_idx": src_idx})
         return {"status": "ready", "addr": addr, "count": count, "bytes": out}
 
-    @app.get("/api/last-write-of-reg")
+    @app.get("/api/last-write-of-reg", response_model=LastWriteResponse)
     def last_write_of_reg(cursor: int, reg: str):
         """返回 cursor 之前最近一次该 reg 被 def 的指令 idx.
         index.reg_defs bisect: O(log N) vs 旧 O(cursor) 线性扫.
@@ -996,7 +1008,7 @@ def make_app(trace_path: pathlib.Path,
         return {"status": "ready", "idx": 0,
                 "value": hex(cur_val) if cur_val is not None else None}
 
-    @app.get("/api/reg-value-at")
+    @app.get("/api/reg-value-at", response_model=RegValueResponse)
     def reg_value_at(idx: int, reg: str):
         """读 idx 处 reg 的当前值 + classify 注释."""
         if idx < 0 or idx >= len(t): raise HTTPException(404)
@@ -1009,7 +1021,7 @@ def make_app(trace_path: pathlib.Path,
         return {"status": "ready", "idx": idx, "reg": reg,
                 "value": hex(v), "annotation": ann}
 
-    @app.get("/api/idxs-touching-range")
+    @app.get("/api/idxs-touching-range", response_model=TouchingResponse)
     def idxs_touching_range(addr: str, size: int = 1, cursor: int = 0, limit: int = 50):
         """所有 trace idx 中读/写 [addr, addr+size) 的位置. 向量化版: 用 numpy
         mask 替代 set comprehension, 6.8M trace 上 596ms → ~5ms."""
@@ -1039,7 +1051,7 @@ def make_app(trace_path: pathlib.Path,
                 "writers_before": wb, "writers_after": wa, "writers_total": int(len(writers)),
                 "readers_before": rb, "readers_after": ra, "readers_total": int(len(readers))}
 
-    @app.get("/api/idxs-touching-addr")
+    @app.get("/api/idxs-touching-addr", response_model=TouchingResponse)
     def idxs_touching_addr(addr: str, cursor: int = 0, limit: int = 30):
         """所有 trace idx 中触碰 (load/store) 该 addr 的位置. 向量化, 6.8M trace
         上 ~5ms vs 旧线扫数百 ms."""
@@ -1075,7 +1087,7 @@ def make_app(trace_path: pathlib.Path,
                 "before": before, "after": after,
                 "total_before": cut, "total_after": int(len(sorted_idxs) - cut)}
 
-    @app.get("/api/bg-status")
+    @app.get("/api/bg-status", response_model=BgStatusResponse)
     def bg_status():
         """所有后台构建任务的状态. 前端用来显示 progress / 决定是否 retry."""
         out = {k: {sk: sv for sk, sv in s.items() if sk != "data"} for k, s in BG.items()}
@@ -1140,7 +1152,7 @@ def make_app(trace_path: pathlib.Path,
                 _CFG_OVERLAY_CACHE.pop(victim, None)
         return out
 
-    @app.get("/api/decomp-status")
+    @app.get("/api/decomp-status", response_model=DecompStatusResponse)
     def decomp_status():
         """前端 polling: 反编译后端是否 ready."""
         out = {k: v for k, v in DECOMP.items() if k != "backend"}
@@ -1149,7 +1161,7 @@ def make_app(trace_path: pathlib.Path,
             out["elapsed"] = ref - DECOMP["started_at"]
         return out
 
-    @app.get("/api/asm-tokens-for-pcs")
+    @app.get("/api/asm-tokens-for-pcs", response_model=AsmTokensResponse)
     def asm_tokens_for_pcs(pcs: str):
         """Batch query: for a list of trace PCs (comma-separated hex), return the
         BN-tokenized ASM for each (so trace stream rows can render BN-grade syntax
@@ -1183,7 +1195,7 @@ def make_app(trace_path: pathlib.Path,
             if len(seen) >= 512: break  # safety cap
         return {"ready": True, "status": "ok", "tokens": out}
 
-    @app.get("/api/hlil-for-pc")
+    @app.get("/api/hlil-for-pc", response_model=HlilResponse)
     def hlil_for_pc(pc: str):
         """给定 trace 里一个 PC, 返回所属函数的 HLIL + 当前 PC 在哪一行.
 
@@ -1246,7 +1258,7 @@ def make_app(trace_path: pathlib.Path,
             "current_line_idx": cur_idx,
         }
 
-    @app.get("/api/bn-cfg-svg-for-pc")
+    @app.get("/api/bn-cfg-svg-for-pc", response_model=BnCfgSvgResponse)
     def bn_cfg_svg_for_pc(pc: str, mode: str = "asm", timeout: int = 30):
         """SVG-rendered BN CFG with trace overlay coloring.
 
@@ -1358,7 +1370,7 @@ def make_app(trace_path: pathlib.Path,
             "svg": svg,
         }
 
-    @app.get("/api/bn-cfg-for-pc")
+    @app.get("/api/bn-cfg-for-pc", response_model=BnCfgForPcResponse)
     def bn_cfg_for_pc(pc: str, mode: str = "asm"):
         """BN-derived CFG for the function containing pc, with trace overlay.
 
