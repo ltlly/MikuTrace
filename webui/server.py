@@ -34,7 +34,7 @@ from webui.schemas import (
     BgStatusResponse, LastWriteResponse, RegValueResponse,
     TouchingResponse, StringProvenanceResponse, DecompStatusResponse,
     AsmTokensResponse, HlilResponse, BnCfgSvgResponse, BnCfgForPcResponse,
-    BlockForPcResponse,
+    BlockForPcResponse, FieldAtResponse,
 )
 
 
@@ -383,6 +383,22 @@ def make_app(trace_path: pathlib.Path,
                 if nm == "nzcv": continue
                 v = r.reg(nm)
                 regs_annotated[nm] = _classify_reg_value(v, idx, sp=sp_val)
+        # field_at: 若当前指令是 ldr/str [reg, #offset], 给 base reg 注释加上结构体字段语义
+        # 例: ldr x9, [x8, 0x80] → x8 注释 += "  [pthread_mutex_t.__lock]"
+        if DECOMP["status"] == "ready" and d.mem_op:
+            bk = DECOMP["backend"]
+            for base_reg, idx_reg, disp, sz, is_w in d.mem_op:
+                if not base_reg or base_reg not in regs_annotated:
+                    continue
+                try:
+                    hint = bk.field_at(r.pc, base_reg, disp)
+                except Exception:
+                    hint = None
+                if hint and (hint.struct or hint.field):
+                    label = hint.field or hint.struct or "?"
+                    if hint.struct and hint.field:
+                        label = f"{hint.struct}.{hint.field}"
+                    regs_annotated[base_reg] = (regs_annotated[base_reg] or "") + f"  [{label}]"
         # exec_count: 与 /api/records 一致, 该 PC 所在 block 的 executions
         exec_count = None
         if BG["cfg"]["status"] == "ready" and BG["pc_to_block"]["status"] == "ready":
@@ -1195,6 +1211,37 @@ def make_app(trace_path: pathlib.Path,
             out[hex(pc)] = [_tok(tk) for tk in tks]
             if len(seen) >= 512: break  # safety cap
         return {"ready": True, "status": "ok", "tokens": out}
+
+    @app.get("/api/field-at", response_model=FieldAtResponse)
+    def api_field_at(pc: str, reg: str, offset: str = "0"):
+        """BN HLIL 结构体字段语义查询.
+        eg. ldr x9, [x8, 0x80] → query (pc, x8, 0x80) → [pthread_mutex_t.__lock]
+        offset 接受 dec ("128") 或 hex ("0x80")。
+        """
+        try:
+            off_int = int(offset, 16) if str(offset).lower().startswith("0x") else int(offset)
+        except (ValueError, TypeError):
+            off_int = 0
+        out = {"pc": pc, "reg": reg, "offset": off_int, "hit": False,
+               "struct": None, "field": None, "type_name": None}
+        if DECOMP["status"] != "ready":
+            return out
+        bk = DECOMP["backend"]
+        try:
+            pc_int = int(pc, 16) if pc.startswith("0x") else int(pc)
+        except ValueError:
+            return out
+        try:
+            hint = bk.field_at(pc_int, reg, off_int)
+        except Exception as e:
+            log.debug("field_at(%s, %s, %s) raised: %s", pc, reg, offset, e)
+            return out
+        if hint is None:
+            return out
+        return {"pc": pc, "reg": reg, "offset": off_int, "hit": True,
+                "struct": hint.struct or None,
+                "field": hint.field or None,
+                "type_name": hint.type_name or None}
 
     @app.get("/api/hlil-for-pc", response_model=HlilResponse)
     def hlil_for_pc(pc: str):
