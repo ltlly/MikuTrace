@@ -18,15 +18,8 @@ and "??" for bytes never observed (matching krash's behavior).
 """
 from __future__ import annotations
 import struct
-from .trace import Trace, ALL_REGS
+from .trace import Trace, ALL_REGS, addr_of as _addr_of
 from .disasm import decode
-
-
-def _addr_of(rec, mem_op):
-    base, idx_reg, disp, sz, is_w = mem_op
-    bv = rec.reg(base) if base in ALL_REGS else 0
-    iv = rec.reg(idx_reg) if (idx_reg and idx_reg in ALL_REGS) else 0
-    return (bv + iv + disp) & 0xffffffffffffffff
 
 
 def _value_of_write(t: Trace, idx: int, mem_op, decoded) -> int | None:

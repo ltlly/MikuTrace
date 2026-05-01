@@ -213,7 +213,7 @@ def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
         conn.send(("error", traceback.format_exc()))
     finally:
         try: conn.close()
-        except: pass
+        except Exception: pass
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -323,11 +323,11 @@ def make_app(trace_path: pathlib.Path,
             tag, *rest = parent_conn.recv()
         finally:
             try: parent_conn.close()
-            except: pass
+            except Exception: pass
             proc.join(timeout=5)
             if proc.is_alive():
                 try: proc.terminate()
-                except: pass
+                except Exception: pass
         if tag == "ok":
             return rest  # [cfg, pc_inst, pc_to_block, block_idxs]
         raise RuntimeError(rest[0] if rest else "subprocess failed")

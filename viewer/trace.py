@@ -15,6 +15,7 @@ from typing import Optional
 REC_SIZE = 272
 REG_NAMES = [f"x{i}" for i in range(29)] + ["fp", "lr"]   # 31 entries
 ALL_REGS = REG_NAMES + ["sp", "pc"]
+_REG_INDEX = {name: i for i, name in enumerate(REG_NAMES)}
 
 # Pre-compiled struct for one record's pc + x[31] + sp + nzcv + inst
 # = 1 u64 (pc) + 31 u64 (regs) + 1 u64 (sp) + 1 u32 + 1 u32
@@ -34,8 +35,7 @@ class Record:
         if name == "pc": return self.pc
         if name == "sp": return self.sp
         if name == "nzcv": return self.nzcv
-        i = REG_NAMES.index(name)
-        return self.regs[i]
+        return self.regs[_REG_INDEX[name]]
 
 
 @dataclass
@@ -53,6 +53,7 @@ class TraceMeta:
     method: str = ""
     cmd: Optional[int] = None
     module: Optional[Module] = None
+    modules: list[Module] = field(default_factory=list)
     fn_addr: Optional[int] = None
     trace_begin: dict = field(default_factory=dict)
     trace_end: dict = field(default_factory=dict)
@@ -71,9 +72,9 @@ class Trace:
 
     def close(self):
         try: self._mm.close()
-        except: pass
+        except Exception: pass
         try: self._fh.close()
-        except: pass
+        except Exception: pass
 
     def __len__(self): return self.n
 
@@ -106,6 +107,14 @@ class Trace:
         return self._pc_arr
 
 
+def addr_of(rec: Record, mem_op_tuple) -> int:
+    """Compute effective address for a memory operand from a record."""
+    base, idx_reg, disp, sz, is_w = mem_op_tuple
+    bv = rec.reg(base) if base in ALL_REGS else 0
+    iv = rec.reg(idx_reg) if (idx_reg and idx_reg in ALL_REGS) else 0
+    return (bv + iv + disp) & 0xffffffffffffffff
+
+
 def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
     """Load a trace from either a per-PID bin file or a session directory."""
     p = pathlib.Path(trace_dir_or_file)
@@ -118,9 +127,9 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
             for variant in ("_".join(stem_parts), stem_parts[0]):
                 mp = p.parent / f"meta_{variant}.json"
                 if mp.exists():
-                    _populate_meta(meta, json.load(open(mp)))
+                    _populate_meta(meta, json.loads(mp.read_text()))
                     try: meta.pid = int(stem_parts[0])
-                    except: pass
+                    except Exception: pass
                     break
     else:
         # per-call directory: trace.bin + meta.json (call-level), parent meta.json (run-level)
@@ -128,12 +137,12 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
             bin_path = p / "trace.bin"
             cm = p / "meta.json"
             if cm.exists():
-                _populate_meta(meta, json.load(open(cm)))
+                _populate_meta(meta, json.loads(cm.read_text()))
             # merge run-level meta from parent of parent (run/calls/<call>/ → run/)
             run_dir = p.parent.parent if p.parent.name == "calls" else p.parent
             tm = run_dir / "meta.json"
             if tm.exists():
-                top = json.load(open(tm))
+                top = json.loads(tm.read_text())
                 if "method" in top: meta.method = top["method"] or meta.method
                 if "cmd" in top: meta.cmd = top["cmd"] if meta.cmd is None else meta.cmd
                 if "module" in top and not meta.module:
@@ -153,14 +162,14 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
         bin_path = candidates[0]
         stem_parts = bin_path.stem.split("_")[1:]
         try: meta.pid = int(stem_parts[0])
-        except: pass
+        except Exception: pass
         for variant in ("_".join(stem_parts), stem_parts[0] if stem_parts else ""):
             mp = p / f"meta_{variant}.json"
             if mp.exists():
-                _populate_meta(meta, json.load(open(mp))); break
+                _populate_meta(meta, json.loads(mp.read_text())); break
         tm = p / "meta.json"
         if tm.exists():
-            top = json.load(open(tm))
+            top = json.loads(tm.read_text())
             if "method" in top: meta.method = top["method"]
             if "cmd" in top: meta.cmd = top["cmd"]
             if "module" in top and not meta.module:
@@ -178,6 +187,13 @@ def _populate_meta(meta: TraceMeta, raw: dict):
     if "module" in raw:
         m = raw["module"]
         meta.module = Module(m["name"], int(m["base"], 16) if isinstance(m["base"], str) else m["base"], m["size"])
+    if "modules" in raw:
+        for m in raw["modules"]:
+            base = int(m["base"], 16) if isinstance(m["base"], str) else m["base"]
+            meta.modules.append(Module(m["name"], base, m["size"]))
+    # Backward compat: if only "module" (singular) exists, add it to modules list
+    if meta.module and not meta.modules:
+        meta.modules.append(meta.module)
     if "fn_addr" in raw:
         meta.fn_addr = int(raw["fn_addr"], 16) if isinstance(raw["fn_addr"], str) else raw["fn_addr"]
     if "trace_begin" in raw: meta.trace_begin = raw["trace_begin"]

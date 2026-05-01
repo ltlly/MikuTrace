@@ -143,7 +143,7 @@ def load_ida_symbols(json_path: str | pathlib.Path, base: int = 0) -> SymbolMap:
     Addresses are relative offsets if base > 0; otherwise absolute.
     """
     sm = SymbolMap(base=base)
-    raw = json.load(open(json_path))
+    raw = json.loads(pathlib.Path(json_path).read_text())
     for entry in raw:
         addr = entry["address"]
         if isinstance(addr, str):

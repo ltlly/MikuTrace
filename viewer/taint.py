@@ -14,15 +14,8 @@ Backward(idx, taint_reg) -> list[(insn_idx, via)]:
 from __future__ import annotations
 import bisect
 from collections import defaultdict
-from .trace import Trace, ALL_REGS
+from .trace import Trace, ALL_REGS, addr_of as _addr_of
 from .disasm import decode
-
-
-def _addr_of(rec, mem_op_tuple):
-    base, idx_reg, disp, sz, is_w = mem_op_tuple
-    bv = rec.reg(base) if base in ALL_REGS else 0
-    iv = rec.reg(idx_reg) if (idx_reg and idx_reg in ALL_REGS) else 0
-    return (bv + iv + disp) & 0xffffffffffffffff
 
 
 def forward_taint(trace: Trace, start_idx: int, taint_reg: str,

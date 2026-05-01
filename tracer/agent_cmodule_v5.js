@@ -245,6 +245,10 @@ rpc.exports = {
             STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
             log(`[+] target ${m.name} base=${m.base} end=${m.base.add(m.size)}`);
             send({ type: "module", name: m.name, base: m.base.toString(), size: m.size, pid: Process.id });
+            // Send all loaded modules for multi-SO pointer classification
+            send({ type: "modules", modules: Process.enumerateModules().map(mod => ({
+                name: mod.name, base: mod.base.toString(), size: mod.size
+            })), pid: Process.id });
 
             // Resolve hook target: --fn-offset > --export > --method
             let fp = null, label = "";

@@ -173,11 +173,13 @@ def format_reg_line(name: str, value: int,
 
 
 def collect_modules_from_trace(trace: Trace, mem: MemShadow) -> list[tuple[int, int, str]]:
-    """Return list of (base, end, name). Includes the meta.module + heuristic
-    bands derived from observed PC ranges."""
+    """Return list of (base, end, name). Uses meta.modules if available,
+    falls back to meta.module only."""
     out = []
-    if trace.meta.module:
+    if trace.meta.modules:
+        for m in trace.meta.modules:
+            out.append((m.base, m.end, m.name))
+    elif trace.meta.module:
         m = trace.meta.module
         out.append((m.base, m.end, m.name))
-    # Heuristic: scan unique pcs for "modules" (large clusters of addresses)
     return out

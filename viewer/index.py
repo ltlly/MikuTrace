@@ -12,7 +12,7 @@ Building all of these for a 67k record trace takes ~1-2 seconds.
 from __future__ import annotations
 import struct
 from collections import defaultdict
-from .trace import Trace, REG_NAMES, ALL_REGS
+from .trace import Trace, REG_NAMES, ALL_REGS, addr_of
 from .disasm import decode
 
 
@@ -42,9 +42,7 @@ class Index:
             for base, idx_reg, disp, sz, is_write in d.mem_op:
                 if not base:
                     continue
-                base_v = r.reg(base) if base in ALL_REGS else 0
-                idx_v  = r.reg(idx_reg) if (idx_reg and idx_reg in ALL_REGS) else 0
-                addr = (base_v + idx_v + disp) & 0xffffffffffffffff
+                addr = addr_of(r, (base, idx_reg, disp, sz, is_write))
                 # value: post-execution we don't have, but we can capture written value
                 # from a register (e.g. str x0, [x1] writes x0). Leave value=None.
                 rec = (i, addr, sz, None)
