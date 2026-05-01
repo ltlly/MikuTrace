@@ -324,6 +324,10 @@ def cmd_trace(args):
                         if "module" not in top_meta:
                             top_meta["module"] = {k: p[k] for k in ("name","base","size")}
                         wlog(f"[{tag}] 模块 {p['name']} @ {p['base']}")
+                    elif t == "modules":
+                        if "modules" not in top_meta:
+                            top_meta["modules"] = p["modules"]
+                        wlog(f"[{tag}] {len(p['modules'])} 个已加载模块")
                     elif t == "fn-resolved":
                         top_meta["fn_addr"] = p["addr"]
                         wlog(f"[{tag}] 函数 @ {p['addr']}")

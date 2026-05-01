@@ -150,8 +150,15 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
                     meta.module = Module(m["name"],
                                          int(m["base"], 16) if isinstance(m["base"], str) else m["base"],
                                          m["size"])
+                if "modules" in top and not meta.modules:
+                    for m in top["modules"]:
+                        base = int(m["base"], 16) if isinstance(m["base"], str) else m["base"]
+                        meta.modules.append(Module(m["name"], base, m["size"]))
                 if "fn_addr" in top and not meta.fn_addr:
                     meta.fn_addr = int(top["fn_addr"], 16) if isinstance(top["fn_addr"], str) else top["fn_addr"]
+            # 兜底: 若仅 meta.module (legacy) 而未填 modules, 把单数加进列表
+            if meta.module and not meta.modules:
+                meta.modules.append(meta.module)
             return Trace(bin_path, meta)
 
         # legacy: trace_<pid>_<tid>.bin layout
@@ -177,8 +184,15 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
                 meta.module = Module(m["name"],
                                      int(m["base"], 16) if isinstance(m["base"], str) else m["base"],
                                      m["size"])
+            if "modules" in top and not meta.modules:
+                for m in top["modules"]:
+                    base = int(m["base"], 16) if isinstance(m["base"], str) else m["base"]
+                    meta.modules.append(Module(m["name"], base, m["size"]))
             if "fn_addr" in top and not meta.fn_addr:
                 meta.fn_addr = int(top["fn_addr"], 16) if isinstance(top["fn_addr"], str) else top["fn_addr"]
+        # 兜底: legacy trace 仅 meta.module 时, 同步进 modules 列表
+        if meta.module and not meta.modules:
+            meta.modules.append(meta.module)
     return Trace(bin_path, meta)
 
 
