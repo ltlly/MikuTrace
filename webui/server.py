@@ -42,6 +42,7 @@ from webui.schemas import (
     DataChaseResponse, LastWriteOfAddrResponse,
     FindMemPatternResponse, JniCallsResponse,
     JobjHistoryResponse, JniStringsResponse,
+    SoStatsResponse,
 )
 
 
@@ -256,6 +257,12 @@ def make_app(trace_path: pathlib.Path,
             "regs": ALL_REGS,
         }
 
+    # ModuleResolver: cached at app build time, used by /api/records to attach
+    # module name to each row. Multi-SO traces (--include-so 抓的) 用这个让前端
+    # 按 SO 折叠/过滤. 单 SO trace 仍 OK — 所有 row module 都是同一个.
+    from viewer.symbols import ModuleResolver as _MR
+    _module_resolver = _MR(t.meta.modules)
+
     @app.get("/api/records", response_model=RecordsResponse)
     def records(start: int = 0, count: int = 100, regs: str = ""):
         if start < 0 or start >= len(t):
@@ -278,20 +285,17 @@ def make_app(trace_path: pathlib.Path,
             r = t.record(i)
             d = decode(r.pc, r.inst)
             fname, foff = sym.lookup(r.pc)
+            mod = _module_resolver.resolve(r.pc)
             ann = None
-            # 注释 1: call/branch → 目标函数名 (PDF p.2 风格 "; libc::vfprintf")
             if d.is_call or d.is_branch:
-                # 拿下一条 trace record 的 PC = 实际跳转 dst
                 if i + 1 < len(t):
                     next_pc = t.pc(i + 1)
                     tfn, tfoff = sym.lookup(next_pc)
                     if tfn and tfn != "?" and tfn != fname:
                         ann = f"→ {tfn}+{tfoff:#x}"
-            # 注释 2: memory load/store → 解读地址有什么
-            # (capstone Decoded 已含 mem_op tuple, 此处只 mark 为 "mem op")
-            # 简化版: 先只做 call 跳转注释; mem ASCII 解读放后续 PR.
             row = {
                 "idx": i, "pc": hex(r.pc), "rel": hex(r.pc - base) if base else None,
+                "module": mod.name if mod else None,
                 "func": fname if fname != "?" else None,
                 "off": hex(foff) if fname != "?" else None,
                 "asm": f"{d.mnemonic} {d.op_str}",
@@ -303,6 +307,39 @@ def make_app(trace_path: pathlib.Path,
                 row["regs"] = {nm: hex(r.reg(nm)) for nm in regs_filter}
             rows.append(row)
         return {"start": start, "end": end, "count": end-start, "records": rows}
+
+    @app.get("/api/so-stats", response_model=SoStatsResponse)
+    def api_so_stats(top: int = 20, all: bool = False):
+        """Per-SO record counts. numpy vectorized on pc_array. Drives the
+        UI's 'SO filter' panel — list of modules + record count + percent."""
+        import numpy as np
+        arr = t.pc_array()
+        if not _module_resolver.modules:
+            return {"records": int(len(arr)), "modules_total": 0,
+                    "unknown_records": int(len(arr)), "unknown_percent": 100.0,
+                    "modules": []}
+        idx_arr = _module_resolver.vectorize(arr)
+        n = int(len(arr))
+        counts = np.bincount(idx_arr + 1, minlength=len(_module_resolver.modules) + 1)
+        out = []
+        unknown = int(counts[0])
+        for i, m in enumerate(_module_resolver.modules):
+            c = int(counts[i + 1])
+            if c == 0 and not all: continue
+            out.append({
+                "name": m.name, "base": hex(m.base), "end": hex(m.end),
+                "size": m.size, "records": c,
+                "percent": round(c * 100 / n, 2) if n else 0,
+            })
+        out.sort(key=lambda x: -x["records"])
+        if top > 0: out = out[:top]
+        return {
+            "records": n,
+            "modules_total": len(_module_resolver.modules),
+            "unknown_records": unknown,
+            "unknown_percent": round(unknown * 100 / n, 2) if n else 0,
+            "modules": out,
+        }
 
     # collect_modules_from_trace 只用 t.meta.module + 启发式, 在 trace lifetime
     # 是 const. cache 一次, 省 /api/record 33-reg classify 时 33 次重建.

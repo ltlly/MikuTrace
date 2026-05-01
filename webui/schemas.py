@@ -38,6 +38,7 @@ class RecordRow(BaseModel):
     idx: int
     pc: str
     rel: Optional[str] = None
+    module: Optional[str] = None         # SO name; for multi-SO traces enables UI filter
     func: Optional[str] = None
     off: Optional[str] = None
     asm: str
@@ -683,6 +684,24 @@ class JobjHistoryResponse(BaseModel):
     end: int
     count: int
     hits: list[JobjHistoryHit]
+
+
+# ── /api/so-stats (multi-SO) ────────────────────────────────────────────────
+
+class SoStatsModule(BaseModel):
+    name: str
+    base: str
+    end: str
+    size: int
+    records: int
+    percent: float
+
+class SoStatsResponse(BaseModel):
+    records: int
+    modules_total: int
+    unknown_records: int
+    unknown_percent: float
+    modules: list[SoStatsModule]
 
 
 # ── /api/jni-strings (Gap-L) ────────────────────────────────────────────────

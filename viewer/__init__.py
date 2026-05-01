@@ -37,7 +37,7 @@ from .disasm import decode, Decoded, fmt as fmt_insn
 
 # ── symbol map (function names) ──
 from .symbols import (
-    SymbolMap, build_from_trace, load_ida_symbols,
+    SymbolMap, ModuleResolver, build_from_trace, load_ida_symbols,
     auto_known_offsets,
 )
 
@@ -73,7 +73,8 @@ __all__ = [
     # disasm
     "decode", "Decoded", "fmt_insn",
     # symbols
-    "SymbolMap", "build_from_trace", "load_ida_symbols", "auto_known_offsets",
+    "SymbolMap", "ModuleResolver",
+    "build_from_trace", "load_ida_symbols", "auto_known_offsets",
     # cfg
     "build_cfg", "CFG", "Block",
     "find_sccs", "loop_sccs", "write_dot", "textual_summary",

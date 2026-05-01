@@ -150,3 +150,48 @@ def test_jni_strings_endpoint(client):
     r = client.get("/api/jni-strings").json()
     assert "note" in r
     assert isinstance(r["hits"], list)
+
+
+# ── multi-SO support ───────────────────────────────────────────────────────
+
+def test_module_resolver_basic():
+    from viewer.symbols import ModuleResolver
+    from viewer.trace import Module
+    mods = [
+        Module("libA.so", base=0x1000, size=0x100),
+        Module("libB.so", base=0x2000, size=0x100),
+    ]
+    mr = ModuleResolver(mods)
+    assert mr.resolve(0x1050).name == "libA.so"
+    assert mr.resolve(0x2080).name == "libB.so"
+    assert mr.resolve(0x1500) is None       # in gap
+    assert mr.resolve(0x500) is None        # before
+    assert mr.resolve(0x9999) is None       # after
+
+
+def test_module_resolver_vectorize():
+    import numpy as np
+    from viewer.symbols import ModuleResolver
+    from viewer.trace import Module
+    mods = [Module("A", 0x1000, 0x100), Module("B", 0x2000, 0x100)]
+    mr = ModuleResolver(mods)
+    arr = np.array([0x1050, 0x2080, 0x1500, 0x2000, 0x20ff], dtype=np.uint64)
+    out = mr.vectorize(arr)
+    assert out.tolist() == [0, 1, -1, 1, 1]
+
+
+def test_so_stats_endpoint(client):
+    r = client.get("/api/so-stats?top=5").json()
+    assert "records" in r
+    assert "modules" in r
+    # synth_trace_dir's run-level meta.json has 1 module
+    assert r["modules_total"] >= 1
+
+
+def test_records_includes_module_field(client):
+    r = client.get("/api/records?start=0&count=3").json()
+    if r["records"]:
+        for row in r["records"]:
+            assert "module" in row
+            # synth trace uses 'synth.so' or 'libt.so' depending on fixture
+            assert row["module"] in ("libt.so", "synth.so")

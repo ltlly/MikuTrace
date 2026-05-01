@@ -10,10 +10,53 @@ This gives us reasonable `sub_<offset>` style names for the obfuscated SO,
 plus exact ranges. If meta has a known fn_addr (e.g. doCommandNative), use it.
 """
 from __future__ import annotations
-import json, pathlib
+import bisect, json, pathlib
 from collections import defaultdict
-from .trace import Trace
+from .trace import Trace, Module
 from .disasm import decode
+
+
+class ModuleResolver:
+    """Map a PC to its module (one of trace.meta.modules).
+
+    bisect-based, O(log N) per lookup. Vectorized variant available for
+    bulk classify (a numpy uint64 array of PCs → numpy int array of module
+    indices, with -1 for "not in any known module").
+    """
+    def __init__(self, modules: list[Module]):
+        # Sort by base, keep parallel arrays for bisect
+        self.modules = sorted(modules, key=lambda m: m.base)
+        self._bases = [m.base for m in self.modules]
+        self._ends = [m.end for m in self.modules]
+
+    def resolve(self, pc: int) -> Module | None:
+        """Single PC → Module (or None)."""
+        if not self.modules: return None
+        i = bisect.bisect_right(self._bases, pc) - 1
+        if i < 0: return None
+        m = self.modules[i]
+        return m if pc < m.end else None
+
+    def resolve_name(self, pc: int) -> str | None:
+        m = self.resolve(pc)
+        return m.name if m else None
+
+    def vectorize(self, pcs):
+        """numpy bulk: pcs (uint64 array) → int array of module indices,
+        -1 for unmapped. ~10ms for 7M PCs."""
+        import numpy as np
+        if not self.modules:
+            return np.full(len(pcs), -1, dtype=np.int32)
+        bases = np.array(self._bases, dtype=np.uint64)
+        ends = np.array(self._ends, dtype=np.uint64)
+        idx = np.searchsorted(bases, pcs, side="right") - 1
+        # Negative → before first module
+        valid_floor = idx >= 0
+        # If valid: check pc < ends[idx]
+        idx_safe = np.where(valid_floor, idx, 0)
+        within = pcs < ends[idx_safe]
+        result = np.where(valid_floor & within, idx, -1).astype(np.int32)
+        return result
 
 
 class SymbolMap:

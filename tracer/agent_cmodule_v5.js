@@ -32,13 +32,21 @@ const RING_RECS = 65536;             // ~17.6 MB
 const RING_BYTES = REC_SIZE * RING_RECS;
 const FLUSH_INTERVAL_MS = 10;
 
-const EXCL = ["libc.so","libm.so","libdl.so","libart.so","libartbase.so",
-              "libartpalette.so","libnativehelper.so","libnativeloader.so",
-              "linker","linker64","libbase.so","libcutils.so","liblog.so",
-              "libutils.so","libstdc++.so","libc++.so","libnetd_client.so",
-              "libssl.so","libcrypto.so","libsync.so","libui.so","libgui.so",
-              "libbinder.so","libbinder_ndk.so","libhwbinder.so",
-              "libopenjdk.so","libjavacore.so","libGLESv2.so","libEGL.so"];
+// HARD_EXCL: atomic deadlock / early-init / re-entrant — NEVER trace these
+// even if user requests via --include-so. ARM64 LDXR/STXR sequences in
+// libc/libpthread/libart, when instrumented by Stalker, leave the exclusive
+// monitor cleared → all atomics fail → process deadlock.
+const HARD_EXCL = ["libc.so","libm.so","libdl.so","libpthread.so","libart.so",
+                   "libartbase.so","libartpalette.so","linker","linker64"];
+
+// SOFT_EXCL: excluded by default (perf + noise), but --include-so can
+// override (user accepts the risk). System-ish but no atomic deadlock pattern.
+const SOFT_EXCL = ["libnativehelper.so","libnativeloader.so","libbase.so",
+                   "libcutils.so","liblog.so","libutils.so","libstdc++.so",
+                   "libc++.so","libnetd_client.so","libssl.so","libcrypto.so",
+                   "libsync.so","libui.so","libgui.so","libbinder.so",
+                   "libbinder_ndk.so","libhwbinder.so","libopenjdk.so",
+                   "libjavacore.so","libGLESv2.so","libEGL.so"];
 
 function log(...a) { send({ type: "log", msg: a.map(String).join(" ") }); }
 
@@ -208,13 +216,58 @@ function ensureFlushTimer() {
 
 function applyExcludesOnce() {
     if (STATE.excluded) return;
-    let n = 0;
-    for (const m of Process.enumerateModules())
-        for (const pat of EXCL) if (m.name.indexOf(pat) !== -1) {
-            try { Stalker.exclude({base:m.base, size:m.size}); n++; break; } catch(_){}
+    // Combined exclude list = HARD_EXCL + (SOFT_EXCL minus user-requested includes)
+    const userIncl = STATE.includeSoPatterns || [];
+    const matchesUser = (name) => userIncl.some(pat => name.indexOf(pat) !== -1);
+    let n = 0, hard = 0, soft = 0, user_kept = 0;
+    for (const m of Process.enumerateModules()) {
+        let isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
+        let isSoft = !isHard && SOFT_EXCL.some(p => m.name.indexOf(p) !== -1);
+        if (isHard) {
+            // Always exclude — even if user requested it (warn)
+            if (matchesUser(m.name))
+                log(`[!] WARN: --include-so matched ${m.name}, but it is HARD_EXCL (atomic deadlock risk); skipping`);
+            try { Stalker.exclude({base:m.base, size:m.size}); n++; hard++; } catch(_){}
+        } else if (isSoft) {
+            if (matchesUser(m.name)) { user_kept++; continue; }   // user wants it
+            try { Stalker.exclude({base:m.base, size:m.size}); n++; soft++; } catch(_){}
         }
-    log(`[+] Stalker.exclude ${n} 个 system 模块`);
+    }
+    log(`[+] Stalker.exclude ${n} system 模块 (hard=${hard} soft=${soft}; user-kept=${user_kept})`);
     STATE.excluded = true;
+}
+
+// Build the list of (base, end, name) ranges where we WANT to record records.
+// Default: just the target SO. With --include-so PATTERNS: target + matches.
+//
+// Called every time we hook a new function entry (per-call) — late-dlopen'd
+// SOs (libsgsecuritybody, libsgavmp loaded after agent init) are picked up
+// the next time the target fn is entered.
+function buildIncludeRanges() {
+    STATE.includeRanges = [];
+    if (STATE.target) {
+        STATE.includeRanges.push({
+            base: STATE.target.base,
+            end: STATE.target.end,
+            name: STATE.target.name,
+        });
+    }
+    const userIncl = STATE.includeSoPatterns || [];
+    if (userIncl.length === 0) return;
+    for (const m of Process.enumerateModules()) {
+        if (STATE.target && m.name === STATE.target.name) continue;
+        // Skip HARD_EXCL even if user-listed (deadlock risk)
+        if (HARD_EXCL.some(p => m.name.indexOf(p) !== -1)) continue;
+        for (const pat of userIncl) {
+            if (m.name.indexOf(pat) !== -1) {
+                STATE.includeRanges.push({
+                    base: m.base, end: m.base.add(m.size), name: m.name });
+                break;
+            }
+        }
+    }
+    log(`[+] tracing ${STATE.includeRanges.length} module ranges:`);
+    for (const r of STATE.includeRanges) log(`    ${r.name}`);
 }
 
 rpc.exports = {
@@ -230,6 +283,10 @@ rpc.exports = {
         STATE.cmdValue = opts.cmdValue || 0;
         STATE.cmdArg = opts.cmdArg !== undefined ? opts.cmdArg : 2;
         STATE.pkg = opts.pkg || null;
+        // Multi-SO trace: array of patterns to ALSO trace (in addition to target).
+        // e.g. ['libsgsecuritybody','libsgavmp','libcrypto']. HARD_EXCL still applies.
+        STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns)
+                                   ? opts.includeSoPatterns : [];
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);
@@ -288,9 +345,10 @@ rpc.exports = {
                 log(`[!!] 必须传 --fn-offset / --export / --method 之一`);
                 return;
             }
-            const tBase = STATE.target.base, tEnd = STATE.target.end;
+            // ranges built on each onEnter (transform refers to STATE.includeRanges
+            // — late-dlopen'd SOs picked up automatically on next call).
             const onInsn = STATE.onInsnPtr;
-            installFnHook(fp, tBase, tEnd, onInsn);
+            installFnHook(fp, onInsn);
             log(`[+] hook ${label} @ ${fp} (offset 0x${STATE.fnOffset.toString(16)})`);
         };
         const m = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern) !== -1);
@@ -325,7 +383,9 @@ rpc.exports = {
     }
 };
 
-function installFnHook(fp, tBase, tEnd, onInsn) {
+function installFnHook(fp, onInsn) {
+    // ranges read fresh from STATE.includeRanges on each Stalker.follow,
+    // so late-dlopen'd SOs are picked up. Each onEnter rebuilds the list.
         Interceptor.attach(fp, {
             onEnter(args) {
                 if (STATE.cmdValue) {
@@ -349,13 +409,25 @@ function installFnHook(fp, tBase, tEnd, onInsn) {
                 send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started, devicePath: STATE.traceFilePath });
                 ensureFlushTimer();
                 applyExcludesOnce();
+                // (Re)build include ranges per call — picks up late-dlopen'd
+                // SOs (libsgsecuritybody, libsgavmp etc dlopen'd after agent init).
+                buildIncludeRanges();
+                const ranges = STATE.includeRanges.map(r => ({base: r.base, end: r.end}));
                 Stalker.follow(this._tid, {
                     events: { call:false, ret:false, exec:false, block:false, compile:false },
                     transform(iter) {
                         let ins;
                         while ((ins = iter.next()) !== null) {
                             const a = ins.address;
-                            if (a.compare(tBase) >= 0 && a.compare(tEnd) < 0) {
+                            // Multi-SO: putCallout if PC in ANY of include ranges
+                            let inRange = false;
+                            for (let i = 0; i < ranges.length; i++) {
+                                const r = ranges[i];
+                                if (a.compare(r.base) >= 0 && a.compare(r.end) < 0) {
+                                    inRange = true; break;
+                                }
+                            }
+                            if (inRange) {
                                 iter.putCallout(onInsn);
                             }
                             iter.keep();

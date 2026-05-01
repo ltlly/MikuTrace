@@ -542,3 +542,22 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
   padding: 0 4px;
 }
 #help-popover .close-x:hover { color: var(--bad); }
+
+/* ── Multi-SO trace: per-row module badge + SO-hidden filter ── */
+.row-insn .mod-badge {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.85;
+  font-family: var(--font-mono);
+  vertical-align: middle;
+}
+.row-insn.so-hidden { display: none; }
+/* SO Filter list */
+#lp-sofilter .so-row:hover { background: #161b22; }
+#lp-sofilter .so-row input { cursor: pointer; }
+#lp-sofilter .so-list { max-height: calc(100vh - 200px); overflow-y: auto; }

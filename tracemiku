@@ -383,6 +383,9 @@ def cmd_trace(args):
         device = frida.get_usb_device(timeout=10)
     wlog(f"device={device}")
 
+    incl_pats = []
+    if args.include_so:
+        incl_pats = [p.strip() for p in args.include_so.split(",") if p.strip()]
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -393,6 +396,7 @@ def cmd_trace(args):
         "maxRecords": args.max_records,
         "followAllThreads": args.follow_workers,
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
+        "includeSoPatterns": incl_pats,     # multi-SO trace
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -966,6 +970,10 @@ def main():
     p_tr.add_argument("--fn-offset", help="SO 内函数偏移 (16进制如 0x57770)")
     p_tr.add_argument("--cmd", type=int, help="cmd id 过滤值 (默认 0=不过滤)")
     p_tr.add_argument("--cmd-arg", type=int, default=2, help="cmd id 在第几个参数 (默认 2)")
+    p_tr.add_argument("--include-so", default="", dest="include_so",
+                      help="逗号分隔, 额外 trace 这些 SO (除目标外). e.g."
+                           " 'libsgsecuritybody,libsgavmp,libcrypto'."
+                           " HARD_EXCL (libc/libart/linker etc) 永远排除 — 即使列在这里也忽略.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")

@@ -17,11 +17,16 @@ const BATCH_RECS = 4096;
 const BATCH_BYTES = REC_SIZE * BATCH_RECS;
 const FLUSH_INTERVAL_MS = 200;
 
-const EXCLUDE_PATTERNS = [
-    "libc.so", "libm.so", "libdl.so",
+// HARD_EXCL: never trace these — atomic deadlock / re-entrant / early-init
+const HARD_EXCL = [
+    "libc.so", "libm.so", "libdl.so", "libpthread.so",
     "libart.so", "libartbase.so", "libartpalette.so",
-    "libnativehelper.so", "libnativeloader.so",
     "linker", "linker64",
+];
+
+// SOFT_EXCL: excluded by default, but --include-so can override
+const SOFT_EXCL = [
+    "libnativehelper.so", "libnativeloader.so",
     "libbase.so", "libcutils.so", "liblog.so", "libutils.so",
     "libstdc++.so", "libc++.so",
     "libnetd_client.so", "libssl.so", "libcrypto.so",
@@ -153,17 +158,49 @@ function recordInsn(ctx) {
 
 function applyExcludesOnce() {
     if (STATE.excluded) return;
-    let n = 0;
+    const userIncl = STATE.includeSoPatterns || [];
+    const matchesUser = (name) => userIncl.some(p => name.indexOf(p) !== -1);
+    let n = 0, hard = 0, soft = 0, kept = 0;
     for (const m of Process.enumerateModules()) {
-        for (const pat of EXCLUDE_PATTERNS) {
+        const isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
+        const isSoft = !isHard && SOFT_EXCL.some(p => m.name.indexOf(p) !== -1);
+        if (isHard) {
+            if (matchesUser(m.name))
+                log(`[!] WARN: --include-so matched HARD_EXCL ${m.name}; skipping (atomic risk)`);
+            try { Stalker.exclude({ base: m.base, size: m.size }); n++; hard++; }
+            catch (_) {}
+        } else if (isSoft) {
+            if (matchesUser(m.name)) { kept++; continue; }
+            try { Stalker.exclude({ base: m.base, size: m.size }); n++; soft++; }
+            catch (_) {}
+        }
+    }
+    log(`[+] Stalker.exclude ${n} (hard=${hard} soft=${soft}; user-kept=${kept})`);
+    STATE.excluded = true;
+}
+
+// Build include ranges; called per-thread-follow to pick up late-dlopen'd SOs.
+function buildIncludeRanges() {
+    STATE.includeRanges = [];
+    if (STATE.target) {
+        STATE.includeRanges.push({base: STATE.target.base, end: STATE.target.end,
+                                    name: STATE.target.name});
+    }
+    const userIncl = STATE.includeSoPatterns || [];
+    if (userIncl.length === 0) return;
+    for (const m of Process.enumerateModules()) {
+        if (STATE.target && m.name === STATE.target.name) continue;
+        if (HARD_EXCL.some(p => m.name.indexOf(p) !== -1)) continue;
+        for (const pat of userIncl) {
             if (m.name.indexOf(pat) !== -1) {
-                try { Stalker.exclude({ base: m.base, size: m.size }); n++; break; }
-                catch (_) {}
+                STATE.includeRanges.push({base: m.base, end: m.base.add(m.size),
+                                            name: m.name});
+                break;
             }
         }
     }
-    log(`[+] Stalker.exclude 排除 ${n} 个 system 模块`);
-    STATE.excluded = true;
+    log(`[+] tracing ${STATE.includeRanges.length} module ranges:`);
+    for (const r of STATE.includeRanges) log(`    ${r.name}`);
 }
 
 function followThread(tid, label) {
@@ -171,19 +208,25 @@ function followThread(tid, label) {
     STATE.followed.add(tid);
     ensureFlushTimer();
     applyExcludesOnce();
-    const tBase = STATE.target.base, tEnd = STATE.target.end;
+    buildIncludeRanges();
+    const ranges = STATE.includeRanges.map(r => ({base: r.base, end: r.end}));
+    const inAnyRange = (a) => {
+        for (let i = 0; i < ranges.length; i++) {
+            const r = ranges[i];
+            if (a.compare(r.base) >= 0 && a.compare(r.end) < 0) return true;
+        }
+        return false;
+    };
     Stalker.follow(tid, {
         events: { call:false, ret:false, exec:false, block:false, compile:false },
         transform(iter) {
             const first = iter.next();
             if (first === null) return;
-            const ir0 = first.address.compare(tBase) >= 0 && first.address.compare(tEnd) < 0;
-            if (ir0) iter.putCallout(recordInsn);
+            if (inAnyRange(first.address)) iter.putCallout(recordInsn);
             iter.keep();
             let ins;
             while ((ins = iter.next()) !== null) {
-                const ir = ins.address.compare(tBase) >= 0 && ins.address.compare(tEnd) < 0;
-                if (ir) iter.putCallout(recordInsn);
+                if (inAnyRange(ins.address)) iter.putCallout(recordInsn);
                 iter.keep();
             }
         }
@@ -364,6 +407,8 @@ rpc.exports = {
         STATE.cmdValue = opts.cmdValue !== undefined ? opts.cmdValue : 0;
         STATE.maxRecords = opts.maxRecords || 5000000;
         STATE.followAllThreads = !!opts.followAllThreads;  // 默认 false (太重)
+        STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns)
+                                   ? opts.includeSoPatterns : [];
         if (!STATE.soPattern) { log("[!] 必须指定 soPattern"); return "no-so"; }
         log(`[*] traceMiku 通用agent up frida=${Frida.version} pid=${Process.id} (per-call)`);
         log(`[*] target=${STATE.soPattern} method=${STATE.methodName} export=${STATE.exportName} `

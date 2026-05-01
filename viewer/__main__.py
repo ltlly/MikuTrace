@@ -291,12 +291,13 @@ def cmd_data_chase(args):
 
 def cmd_records(args):
     """Mirror of /api/records: list trace records in [start, start+count).
-    Like search-asm but no filter — for raw inspection of a window."""
+    Each row carries `module` (the SO that the PC belongs to)."""
     from .trace import load, ALL_REGS
-    from .symbols import build_from_trace
+    from .symbols import build_from_trace, ModuleResolver
     from .disasm import decode
     t = load(args.trace)
     sym = build_from_trace(t)
+    mres = ModuleResolver(t.meta.modules)
     base = t.meta.module.base if t.meta.module else 0
     n = len(t)
     if args.start < 0 or args.start >= n:
@@ -309,9 +310,11 @@ def cmd_records(args):
     for i in range(args.start, end):
         r = t.record(i); d = decode(r.pc, r.inst)
         fname, foff = sym.lookup(r.pc)
+        m = mres.resolve(r.pc)
         row = {
             "idx": i, "pc": hex(r.pc),
             "rel": hex(r.pc - base) if base else None,
+            "module": m.name if m else None,
             "func": fname if fname != "?" else None,
             "off": hex(foff) if fname != "?" else None,
             "asm": f"{d.mnemonic} {d.op_str}",
@@ -322,6 +325,50 @@ def cmd_records(args):
         rows.append(row)
     t.close()
     _emit({"start": args.start, "end": end, "count": end - args.start, "records": rows})
+
+
+# ───────────────────────── so-stats (Phase 2) ─────────────────────────
+
+def cmd_so_stats(args):
+    """Per-SO record counts. numpy vectorized — fast on 7M-record trace.
+
+    Output: list of {name, base, end, records, percent}, sorted by record count desc.
+    Records whose PC isn't in any known module → '<unknown>' bucket.
+    """
+    import numpy as np
+    from .trace import load
+    from .symbols import ModuleResolver
+    t = load(args.trace)
+    arr = t.pc_array()
+    mres = ModuleResolver(t.meta.modules)
+    if not mres.modules:
+        _emit({"records": int(len(arr)), "modules": [],
+               "note": "no modules in meta — re-run trace with current tracer"})
+        t.close(); return
+    idx_arr = mres.vectorize(arr)
+    n = int(len(arr))
+    counts = np.bincount(idx_arr + 1, minlength=len(mres.modules) + 1)
+    # idx_arr+1: -1 (unknown) → 0; module 0 → 1; ...
+    out = []
+    unknown = int(counts[0])
+    for i, m in enumerate(mres.modules):
+        c = int(counts[i + 1])
+        if c == 0 and not args.all: continue
+        out.append({
+            "name": m.name, "base": hex(m.base), "end": hex(m.end),
+            "size": m.size, "records": c,
+            "percent": round(c * 100 / n, 2) if n else 0,
+        })
+    out.sort(key=lambda x: -x["records"])
+    if args.top > 0: out = out[:args.top]
+    t.close()
+    _emit({
+        "records": n,
+        "modules_total": len(mres.modules),
+        "unknown_records": unknown,
+        "unknown_percent": round(unknown * 100 / n, 2) if n else 0,
+        "modules": out,
+    })
 
 
 # ───────────────────────── last-write-of-addr (Gap-B) ─────────────────────────
@@ -845,6 +892,8 @@ _KNOWN_SUBCOMMANDS = {
     "records", "last-write-of-addr", "data-chase", "find-mem-pattern", "jni-calls",
     # Gap-K / Gap-L:
     "jobj-history", "jni-strings",
+    # multi-SO trace
+    "so-stats",
 }
 
 
@@ -964,6 +1013,11 @@ def main():
                     help="max bytes to read per string buffer")
     s.add_argument("--jni-offsets", default=None, dest="jni_offsets")
 
+    s = sub.add_parser("so-stats", help="per-SO record counts (multi-SO traces)")
+    s.add_argument("trace")
+    s.add_argument("--top", type=int, default=20, help="top-N modules (0=all)")
+    s.add_argument("--all", action="store_true", help="include zero-count modules")
+
     s = sub.add_parser("field-at", help="BN HLIL struct field hint at (pc,reg,offset)")
     s.add_argument("trace")
     s.add_argument("--pc", required=True, help="hex 0x...")
@@ -1008,6 +1062,7 @@ def main():
         "jni-calls": cmd_jni_calls,
         "jobj-history": cmd_jobj_history,
         "jni-strings": cmd_jni_strings,
+        "so-stats": cmd_so_stats,
         "field-at": cmd_field_at,
         "reg-timeline": cmd_reg_timeline,
         "mem-diff": cmd_mem_diff,

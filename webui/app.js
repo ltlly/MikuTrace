@@ -51,8 +51,17 @@ const STATE = {
   bnAsmTokensInflight: new Set(), // pc_hex set inflight to /api/asm-tokens-for-pcs
   bnAsmFetchTimer: null,          // debounce handle
   bnAsmDisabled: false,           // flips true if backend reports not-ready, suppresses retries
+  // SO Filter: set of SO names to hide. Persisted in localStorage.
+  // soStats: {records, modules:[{name,records,percent},...]} cached after fetch.
+  hiddenSOs: new Set(),
+  soStats: null,
   settings: loadSettings(),
 };
+// load hidden SOs from localStorage
+try {
+  const raw = localStorage.getItem("tracemiku-hidden-sos");
+  if (raw) STATE.hiddenSOs = new Set(JSON.parse(raw));
+} catch (_) {}
 
 function loadSettings() {
   try {
@@ -398,10 +407,28 @@ function formatPc(rec) {
   return rec.pc;
 }
 
+// SO color: deterministic hash → palette of 12 dark-bg-friendly hues.
+const SO_COLORS = [
+  "#79c0ff", "#56d4dd", "#ffa657", "#a5d6ff", "#d2a8ff",
+  "#f2cc60", "#3fb950", "#ff7b72", "#bc8cff", "#58a6ff",
+  "#ff9492", "#7ee787",
+];
+function soColor(name) {
+  if (!name) return "#6e7681";
+  let h = 0; for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return SO_COLORS[Math.abs(h) % SO_COLORS.length];
+}
+// short label for SO badge: trim '.so', take 'libsg' from 'libsgmainso-6.8.260403.so'
+function soBadge(name) {
+  if (!name) return "?";
+  let s = name.replace(/-[0-9.]+\.so$/, "").replace(/\.so$/, "");
+  if (s.startsWith("lib")) s = s.slice(3);
+  return s.length > 8 ? s.slice(0, 8) : s;
+}
+
 function buildRow(i, r) {
   const row = document.createElement("div");
   row.className = "row-insn";
-  // 当 addrFormat 是 fn-based, PC 列已含 func — 加 fmt-fn class 隐藏 func 列, 避免重复
   if (STATE.settings.addrFormat === "fnoff" || STATE.settings.addrFormat === "soFnOff")
     row.classList.add("fmt-fn");
   if (r.is_call)   row.classList.add("is-call");
@@ -410,6 +437,12 @@ function buildRow(i, r) {
   if (i === STATE.cursor) row.classList.add("active");
   row.dataset.idx = i;
   row.dataset.pc = r.pc;
+  if (r.module) {
+    row.dataset.module = r.module;
+    // SO filter checkbox writes a class to body — `.so-hidden-<safe>` hides matching rows
+    if (STATE.hiddenSOs && STATE.hiddenSOs.has(r.module))
+      row.classList.add("so-hidden");
+  }
   row.style.position = "absolute";
   row.style.top = rowTopPx(i) + "px";
   row.style.left = 0; row.style.right = 0;
@@ -418,12 +451,15 @@ function buildRow(i, r) {
   const ecTitle = r.exec_count != null ? `executed ×${r.exec_count}` : "";
   const annHtml = r.annotation ? `<span class="ann">; ${escapeHtml(r.annotation)}</span>` : "";
   const pcFmt = formatPc(r);
-  // BN tokens 已 ready 时直接 token 渲染; 否则 capstone 字符串 + reg-regex 兜底,
-  // renderViewport() 之后批量补 BN tokens 时再 patch 这条 .asm 内容.
   const asmInner = renderAsmInner(r);
+  // Module badge: 4-8 char abbrev + tooltip with full name. Color hashed.
+  const modBadge = r.module
+    ? `<span class="mod-badge" style="color:${soColor(r.module)}" title="${escapeHtml(r.module)}">${escapeHtml(soBadge(r.module))}</span>`
+    : "";
   row.innerHTML =
     `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
     `<span class="idx">#${r.idx}</span>` +
+    modBadge +
     `<span class="pc" title="${r.pc}">${escapeHtml(pcFmt)}</span>` +
     `<span class="func">${r.func ? r.func + "+" + r.off : (r.rel || r.pc)}</span>` +
     `<span class="asm">${asmInner}${annHtml ? "  " + annHtml : ""}</span>`;
@@ -884,7 +920,8 @@ function activateLeftTab(name) {
     t.classList.toggle("active", t.dataset.vtab === name));
   $("left-panel-title").textContent =
     {funcs: "Functions", back: "Backtrace", strings: "Strings",
-     taint: "Taint", xref: "Cross Reference", settings: "Settings"}[name] || name;
+     taint: "Taint", xref: "Cross Reference", sofilter: "SO Filter",
+     settings: "Settings"}[name] || name;
   // 切换显示/隐藏对应 panel
   document.querySelectorAll("#left-panel-body > .lp-tab").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
@@ -896,10 +933,81 @@ function activateLeftTab(name) {
     else if (name === "taint") initTaintTab();
     else if (name === "xref") initXrefTab();
     else if (name === "back") initBacktraceTab();
+    else if (name === "sofilter") initSoFilterTab();
     else if (name === "settings") initSettingsTab();
   }
   // 切到 backtrace 时刷一下当前 cursor 的 stack
   if (name === "back") refreshBacktrace();
+}
+
+// ---------------- SO Filter (multi-SO trace) ----------------
+async function initSoFilterTab() {
+  const cont = $("lp-sofilter");
+  cont.innerHTML = '<div class="dim">loading SO stats…</div>';
+  let stats;
+  try {
+    stats = await fetchJson("/api/so-stats?top=200&all=false");
+  } catch (e) {
+    cont.innerHTML = `<div class="dim">SO stats failed: ${escapeHtml(String(e))}</div>`;
+    return;
+  }
+  STATE.soStats = stats;
+  renderSoFilter();
+}
+
+function renderSoFilter() {
+  const cont = $("lp-sofilter");
+  if (!cont || !STATE.soStats) return;
+  const stats = STATE.soStats;
+  const lines = [];
+  lines.push(`<div class="dim" style="padding:6px 8px;border-bottom:1px solid #30363d">
+    ${stats.records} records · ${stats.modules.length} SOs in trace
+    ${stats.unknown_records ? ` · ${stats.unknown_records} unmapped` : ""}
+  </div>`);
+  lines.push(`<div style="padding:6px 8px;display:flex;gap:6px;border-bottom:1px solid #30363d">
+    <button class="btn" id="so-show-all" style="font-size:11px">Show all</button>
+    <button class="btn" id="so-hide-rest" style="font-size:11px;margin-left:auto" title="hide everything except target SO">Hide all but #1</button>
+  </div>`);
+  lines.push('<div class="so-list" style="padding:4px 0">');
+  for (const m of stats.modules) {
+    const hidden = STATE.hiddenSOs.has(m.name);
+    const col = soColor(m.name);
+    const pct = m.percent.toFixed(1);
+    lines.push(`<label class="so-row" style="display:flex;align-items:center;gap:6px;padding:3px 8px;cursor:pointer;${hidden ? 'opacity:.5' : ''}">
+      <input type="checkbox" data-so="${escapeHtml(m.name)}" ${hidden ? '' : 'checked'}>
+      <span class="mod-badge" style="color:${col};min-width:60px">${escapeHtml(soBadge(m.name))}</span>
+      <span class="dim" style="font-size:10px">${pct}%</span>
+      <span style="flex:1;font-family:monospace;font-size:11px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
+      <span class="dim" style="font-size:10px">${m.records}</span>
+    </label>`);
+  }
+  lines.push('</div>');
+  cont.innerHTML = lines.join("");
+
+  cont.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener("change", () => {
+      const so = cb.dataset.so;
+      if (cb.checked) STATE.hiddenSOs.delete(so);
+      else STATE.hiddenSOs.add(so);
+      persistHiddenSOs();
+      // re-render trace viewport so the .so-hidden classes update
+      renderViewport();
+    });
+  });
+  $("so-show-all")?.addEventListener("click", () => {
+    STATE.hiddenSOs.clear(); persistHiddenSOs(); renderSoFilter(); renderViewport();
+  });
+  $("so-hide-rest")?.addEventListener("click", () => {
+    STATE.hiddenSOs = new Set(stats.modules.slice(1).map(x => x.name));
+    persistHiddenSOs(); renderSoFilter(); renderViewport();
+  });
+}
+
+function persistHiddenSOs() {
+  try {
+    localStorage.setItem("tracemiku-hidden-sos",
+      JSON.stringify([...STATE.hiddenSOs]));
+  } catch (_) {}
 }
 
 // ---------------- Backtrace ----------------
