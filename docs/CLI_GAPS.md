@@ -3,7 +3,7 @@
 > 实际逆向 TB libsgmainso x-sign 时发现的 CLI 工具不足。
 > 2026-05-01.
 
-> **状态 (2026-05-01 同日修完)**:
+> **状态 (2026-05-01 同日修完, K/L 也补齐)**:
 > ✅ Gap-A (taint --data-only --exclude-regs)
 > ✅ Gap-B (last-write-of-addr CLI + REST)
 > ✅ Gap-C (stats --top-modules / --all-modules)
@@ -13,7 +13,10 @@
 > ✅ Gap-H (find-mem-pattern CLI + REST)
 > ✅ Gap-I (mem-dump --reg --idx)
 > ✅ Gap-J (jni-calls — vtable map BN-parsed from vendor/jni/jni_bn.h, NOT hardcoded)
-> ⏸ Gap-G (cross-fn-call taint), Gap-K/L (jobj-history / jni-strings) 留 backlog
+> ✅ Gap-K (jobj-history — track jobject through all JNI calls)
+> ✅ Gap-L (jni-strings — list all JNI string ops + buffer content from MemShadow)
+> ⏸ Gap-G (cross-fn-call taint) 留 backlog
+> ⏸ jstring 实际内容: tracer 端需加 GetStringUTFChars hook; 单 viewer 修不了
 >
 > **实证 (实战 trace TB doCommandNative 70102 cold-path 7.6M records)**:
 > - taint-bwd 旧: final ret x0 chain 26 hits 里 20+ 是 sp/fp 噪音

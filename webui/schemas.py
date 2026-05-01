@@ -665,6 +665,50 @@ class JniCallsResponse(BaseModel):
     vtable_size: int
 
 
+# ── /api/jobj-history (Gap-K) ───────────────────────────────────────────────
+
+class JobjHistoryHit(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    jni_fn: str
+    vtable_offset: str
+    match_arg: str          # which arg (x1..x4) the jobject matched
+    args: dict[str, str]
+
+class JobjHistoryResponse(BaseModel):
+    jobject: str
+    start: int
+    end: int
+    count: int
+    hits: list[JobjHistoryHit]
+
+
+# ── /api/jni-strings (Gap-L) ────────────────────────────────────────────────
+
+class JniStringHit(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    jni_fn: str
+    arg_name: str
+    direction: str          # "in" | "out_x0" | "out_x4"
+    x1: str
+    x2: str
+    buffer_addr: Optional[str] = None
+    observed_bytes: Optional[int] = None
+    string: Optional[str] = None
+
+class JniStringsResponse(BaseModel):
+    count: int
+    with_observed_string: int
+    without_observed_string: int
+    note: str
+    hits: list[JniStringHit]
+
+
 # ── /api/field-at ────────────────────────────────────────────────────────────
 
 class FieldAtResponse(BaseModel):

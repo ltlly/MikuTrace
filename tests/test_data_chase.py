@@ -130,3 +130,23 @@ def test_jni_calls_endpoint(client):
     r = client.get("/api/jni-calls").json()
     assert r["count"] == 0
     assert r["vtable_size"] >= 50    # we expect ~229 entries from BN-parsed jni.h
+
+
+def test_jobj_history_endpoint(client):
+    """No real jobjects in synth trace — should return empty hits with shape."""
+    r = client.get("/api/jobj-history?jobject=0xdead").json()
+    assert r["jobject"] == "0xdead"
+    assert r["count"] == 0
+    assert r["start"] == 0
+
+
+def test_jobj_history_invalid_jobject(client):
+    r = client.get("/api/jobj-history?jobject=not-hex")
+    assert r.status_code == 400
+
+
+def test_jni_strings_endpoint(client):
+    """Synth trace has no JNI string ops; expect empty hits with note."""
+    r = client.get("/api/jni-strings").json()
+    assert "note" in r
+    assert isinstance(r["hits"], list)

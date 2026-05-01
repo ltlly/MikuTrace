@@ -41,6 +41,7 @@ from webui.schemas import (
     RegTimelineResponse, MemDiffResponse, FnSummaryResponse,
     DataChaseResponse, LastWriteOfAddrResponse,
     FindMemPatternResponse, JniCallsResponse,
+    JobjHistoryResponse, JniStringsResponse,
 )
 
 
@@ -1362,6 +1363,154 @@ def make_app(trace_path: pathlib.Path,
             prev_d = d
         return {"in_fn": in_fn, "count": len(hits), "hits": hits,
                 "vtable_size": len(jni_vtable)}
+
+    def _load_vtable_for_endpoint():
+        """Internal helper: load vtable JSON, used by jobj-history / jni-strings."""
+        import pathlib, json as _json
+        offsets_path = (pathlib.Path(__file__).resolve().parent.parent
+                         / "viewer" / "jni_offsets.json")
+        if not offsets_path.exists(): return {}
+        offsets_data = _json.loads(offsets_path.read_text())
+        raw = offsets_data.get("offsets", offsets_data)
+        return {int(k, 16) if isinstance(k, str) else int(k): v
+                 for k, v in raw.items()}
+
+    def _scan_jni_calls_in_range(start_idx, end_idx):
+        """Yield (i, r, d, prev_d, jni_fn_name, vtbl_off, fname) for JNI calls
+        in [start_idx, end_idx). Used by jobj-history / jni-strings endpoints.
+        """
+        jni_vtable = _load_vtable_for_endpoint()
+        if not jni_vtable: return
+        n = len(t)
+        end = n if end_idx < 0 else min(end_idx, n)
+        prev_d = None
+        for i in range(0, end):
+            r = t.record(i); d = decode(r.pc, r.inst)
+            fname, _ = sym.lookup(r.pc)
+            if i >= start_idx and d.mnemonic == "blr" and d.indirect_branch_reg \
+                    and prev_d is not None:
+                target_reg = d.indirect_branch_reg
+                if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
+                        and prev_d.mem_op):
+                    base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                    if not is_w and disp in jni_vtable:
+                        yield (i, r, d, prev_d, jni_vtable[disp], disp, fname)
+            prev_d = d
+
+    @app.get("/api/jobj-history", response_model=JobjHistoryResponse)
+    def api_jobj_history(jobject: str, start: int = 0, end: int = -1,
+                         max: int = 200):
+        """Track a jobject through trace — find all JNI calls touching it. Gap-K."""
+        try:
+            target = int(jobject, 16) if jobject.startswith("0x") else int(jobject)
+        except ValueError:
+            raise HTTPException(400, f"bad jobject: {jobject!r}")
+        m_ = t.meta.module
+        base_ = m_.base if m_ else 0
+        end_real = end if end >= 0 else len(t)
+        hits = []
+        for tup in _scan_jni_calls_in_range(start, end_real):
+            i, r, d, prev_d, jni_fn, vtbl_off, fname = tup
+            match_arg = None
+            for arg in ("x1", "x2", "x3", "x4"):
+                if r.reg(arg) == target:
+                    match_arg = arg; break
+            if match_arg is None: continue
+            hits.append({
+                "idx": i, "pc": hex(r.pc),
+                "rel": hex(r.pc - base_) if base_ else None,
+                "func": fname if fname != "?" else None,
+                "jni_fn": jni_fn,
+                "vtable_offset": hex(vtbl_off),
+                "match_arg": match_arg,
+                "args": {a: hex(r.reg(a)) for a in ("x1", "x2", "x3", "x4")},
+            })
+            if max > 0 and len(hits) >= max: break
+        return {"jobject": hex(target), "start": start, "end": end_real,
+                "count": len(hits), "hits": hits}
+
+    # Same _JNI_STRING_OPS as CLI (kept in sync — single source would be
+    # viewer/jni_string_ops.py but it's tiny enough to inline here).
+    _JNI_STRING_OPS_SRV = {
+        "NewString": ("x1", "out_x0"),
+        "NewStringUTF": ("x1", "out_x0"),
+        "GetStringChars": ("x1", "out_x0"),
+        "GetStringUTFChars": ("x1", "out_x0"),
+        "ReleaseStringChars": ("x2", "in"),
+        "ReleaseStringUTFChars": ("x2", "in"),
+        "GetStringRegion": ("x4", "out_x4"),
+        "GetStringUTFRegion": ("x4", "out_x4"),
+        "GetStringLength": ("x1", "in"),
+        "GetStringUTFLength": ("x1", "in"),
+        "GetStringCritical": ("x1", "out_x0"),
+        "ReleaseStringCritical": ("x2", "in"),
+    }
+
+    @app.get("/api/jni-strings", response_model=JniStringsResponse)
+    def api_jni_strings(max: int = 200, max_len: int = 128):
+        """All JNI string operations + buffer content from MemShadow. Gap-L.
+        Buffer content '(not observed)' for Stalker-excluded ranges (libart heap).
+        """
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"count": 0, "with_observed_string": 0,
+                    "without_observed_string": 0,
+                    "note": "MemShadow building", "hits": []}
+        mem_obj = BG["mem"]["data"]
+        m_ = t.meta.module
+        base_ = m_.base if m_ else 0
+
+        def read_str(addr, cursor):
+            if not addr: return None, 0
+            out_b = bytearray(); seen = 0
+            for o in range(max_len):
+                b, _, _ = mem_obj.byte_at(addr + o, cursor)
+                if b is None:
+                    if seen == 0: return None, 0
+                    break
+                seen += 1
+                if b == 0: break
+                out_b.append(b)
+            try: return out_b.decode("utf-8", errors="replace") or None, seen
+            except Exception: return None, seen
+
+        hits = []
+        for tup in _scan_jni_calls_in_range(0, len(t)):
+            i, r, d, prev_d, jni_fn, vtbl_off, fname = tup
+            if jni_fn not in _JNI_STRING_OPS_SRV: continue
+            arg_name, direction = _JNI_STRING_OPS_SRV[jni_fn]
+            rec = {
+                "idx": i, "pc": hex(r.pc),
+                "rel": hex(r.pc - base_) if base_ else None,
+                "func": fname if fname != "?" else None,
+                "jni_fn": jni_fn, "arg_name": arg_name, "direction": direction,
+                "x1": hex(r.reg("x1")), "x2": hex(r.reg("x2")),
+            }
+            buf_addr = None
+            if direction == "out_x0" and i + 1 < len(t):
+                buf_addr = t.record(i + 1).reg("x0"); cursor = i + 1
+            elif direction == "out_x4":
+                buf_addr = r.reg("x4"); cursor = i
+            elif direction == "in":
+                buf_addr = r.reg(arg_name); cursor = i
+            else:
+                cursor = i
+            if buf_addr is not None:
+                rec["buffer_addr"] = hex(buf_addr)
+                s, seen = read_str(buf_addr, cursor)
+                rec["observed_bytes"] = seen
+                rec["string"] = s
+            hits.append(rec)
+            if max > 0 and len(hits) >= max: break
+        with_str = sum(1 for h in hits if h.get("string"))
+        return {
+            "count": len(hits),
+            "with_observed_string": with_str,
+            "without_observed_string": len(hits) - with_str,
+            "note": ("buffers in libart heap are Stalker-excluded; "
+                      "agent-side hook on GetStringUTFChars needed for content"),
+            "hits": hits,
+        }
 
     @app.get("/api/field-at", response_model=FieldAtResponse)
     def api_field_at(pc: str, reg: str, offset: str = "0"):

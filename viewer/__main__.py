@@ -479,6 +479,184 @@ def cmd_jni_calls(args):
            "vtable_size": len(jni_vtable)})
 
 
+# ───────────────────────── jobj-history (Gap-K) ─────────────────────────
+
+def _scan_jni_calls(t, sym, jni_vtable):
+    """Iterator over all JNI vtable calls in trace.
+
+    Yields (idx, record, decoded, prev_decoded, jni_fn_name, vtable_offset, fname).
+    Used by both cmd_jni_calls and the higher-level cmd_jobj_history /
+    cmd_jni_strings — they all need the same vtable-call detection logic.
+    """
+    from .disasm import decode
+    n = len(t)
+    prev_d = None
+    for i in range(n):
+        r = t.record(i); d = decode(r.pc, r.inst)
+        fname, _ = sym.lookup(r.pc)
+        if d.mnemonic == "blr" and d.indirect_branch_reg and prev_d is not None:
+            target_reg = d.indirect_branch_reg
+            if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
+                    and prev_d.mem_op):
+                base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                if not is_w and disp in jni_vtable:
+                    yield (i, r, d, prev_d, jni_vtable[disp], disp, fname)
+        prev_d = d
+
+
+def cmd_jobj_history(args):
+    """Track a jobject through trace — find all JNI calls where it appears
+    as any of x1..x4. Reveals NewObject → SetField → CallMethod lifecycle.
+    """
+    from .trace import load
+    from .symbols import build_from_trace
+    jni_vtable = _load_jni_vtable(args.jni_offsets)
+    t = load(args.trace)
+    sym = build_from_trace(t)
+    base = t.meta.module.base if t.meta.module else 0
+    target = _parse_int(args.jobject)
+    start = max(0, args.start)
+    end = args.end if args.end >= 0 else len(t)
+    hits = []
+    for tup in _scan_jni_calls(t, sym, jni_vtable):
+        i, r, d, prev_d, jni_fn, vtbl_off, fname = tup
+        if i < start: continue
+        if i >= end: break
+        # Match jobject in any of x1..x4 (x0 is always JNIEnv*, skip)
+        match_arg = None
+        for arg in ("x1", "x2", "x3", "x4"):
+            if r.reg(arg) == target:
+                match_arg = arg; break
+        if match_arg is None: continue
+        hits.append({
+            "idx": i, "pc": hex(r.pc),
+            "rel": hex(r.pc - base) if base else None,
+            "func": fname if fname != "?" else None,
+            "jni_fn": jni_fn,
+            "vtable_offset": hex(vtbl_off),
+            "match_arg": match_arg,
+            "args": {a: hex(r.reg(a)) for a in ("x1", "x2", "x3", "x4")},
+        })
+        if args.max > 0 and len(hits) >= args.max: break
+    t.close()
+    _emit({"jobject": hex(target), "start": start, "end": end,
+           "count": len(hits), "hits": hits})
+
+
+# ───────────────────────── jni-strings (Gap-L) ─────────────────────────
+
+# JNI string-related fn names → which arg is the string, and direction
+# (in = we have buffer pre-call; out = result is char*/jstring after call)
+_JNI_STRING_OPS = {
+    # name             arg_idx   direction (after_x0=ret is buffer)
+    "NewString":          ("x1", "out_x0"),  # x1=jchar*, ret=jstring
+    "NewStringUTF":       ("x1", "out_x0"),  # x1=const char*, ret=jstring
+    "GetStringChars":     ("x1", "out_x0"),  # x1=jstring, ret=jchar*
+    "GetStringUTFChars":  ("x1", "out_x0"),  # x1=jstring, ret=const char*
+    "ReleaseStringChars": ("x2", "in"),      # x2=chars
+    "ReleaseStringUTFChars":("x2","in"),
+    "GetStringRegion":    ("x4", "out_x4"),  # x4=jchar* dest buffer
+    "GetStringUTFRegion": ("x4", "out_x4"),  # x4=char* dest buffer
+    "GetStringLength":    ("x1", "in"),
+    "GetStringUTFLength": ("x1", "in"),
+    "GetStringCritical":  ("x1", "out_x0"),
+    "ReleaseStringCritical":("x2", "in"),
+}
+
+
+def _read_str_from_mem(mem, addr, cursor, max_len=128):
+    """Read NUL-terminated UTF-8 string from MemShadow. Returns (str_or_None,
+    bytes_observed, total_attempted). Returns None if mem doesn't have any
+    observed byte at addr (Stalker-excluded ranges produce '?' for entire
+    string)."""
+    if mem is None or not addr: return None, 0, 0
+    out = bytearray()
+    seen = 0
+    for o in range(max_len):
+        b, kind, src = mem.byte_at(addr + o, cursor)
+        if b is None:
+            if seen == 0: return None, 0, o
+            break
+        seen += 1
+        if b == 0: break
+        out.append(b)
+    if not out: return None, seen, max_len
+    try:
+        return out.decode("utf-8", errors="replace"), seen, max_len
+    except Exception:
+        return None, seen, max_len
+
+
+def cmd_jni_strings(args):
+    """List all JNI string operations + buffer content (when observable in
+    MemShadow). Note: libart heap is Stalker-excluded, so many buffers will
+    show '(not observed)'. Operations on ART-internal strings won't have
+    observable bytes; ones the SO itself reads/writes will."""
+    from .trace import load
+    from .symbols import build_from_trace
+    from .memshadow import MemShadow
+    jni_vtable = _load_jni_vtable(args.jni_offsets)
+    t = load(args.trace)
+    sym = build_from_trace(t)
+    base = t.meta.module.base if t.meta.module else 0
+    print("Building MemShadow (~5-30s)...", file=sys.stderr)
+    mem = MemShadow(t); mem.build()
+
+    hits = []
+    for tup in _scan_jni_calls(t, sym, jni_vtable):
+        i, r, d, prev_d, jni_fn, vtbl_off, fname = tup
+        if jni_fn not in _JNI_STRING_OPS: continue
+        arg_name, direction = _JNI_STRING_OPS[jni_fn]
+        # Buffer addr depends on direction
+        rec = {
+            "idx": i, "pc": hex(r.pc),
+            "rel": hex(r.pc - base) if base else None,
+            "func": fname if fname != "?" else None,
+            "jni_fn": jni_fn,
+            "arg_name": arg_name,
+            "direction": direction,
+            "x1": hex(r.reg("x1")),
+            "x2": hex(r.reg("x2")),
+        }
+        # For "out_x0" we need the next record's x0 (post-call result)
+        # For "out_x4" the dest buffer was passed in x4 pre-call
+        # For "in" the buffer is at the named arg pre-call
+        observed = None
+        if direction == "out_x0" and i + 1 < len(t):
+            nxt = t.record(i + 1)
+            buf_addr = nxt.reg("x0")
+            rec["buffer_addr"] = hex(buf_addr)
+            s, seen, _ = _read_str_from_mem(mem, buf_addr, i + 1, args.max_len)
+            observed = (s, seen)
+        elif direction == "out_x4":
+            buf_addr = r.reg("x4")
+            rec["buffer_addr"] = hex(buf_addr)
+            s, seen, _ = _read_str_from_mem(mem, buf_addr, i, args.max_len)
+            observed = (s, seen)
+        elif direction == "in":
+            buf_addr = r.reg(arg_name)
+            rec["buffer_addr"] = hex(buf_addr)
+            s, seen, _ = _read_str_from_mem(mem, buf_addr, i, args.max_len)
+            observed = (s, seen)
+        if observed is not None:
+            s, seen = observed
+            rec["observed_bytes"] = seen
+            rec["string"] = s if s is not None else None
+        hits.append(rec)
+        if args.max > 0 and len(hits) >= args.max: break
+    t.close()
+    # Summarize what we got vs what was Stalker-excluded
+    with_str = sum(1 for h in hits if h.get("string"))
+    _emit({
+        "count": len(hits),
+        "with_observed_string": with_str,
+        "without_observed_string": len(hits) - with_str,
+        "note": ("buffers in libart heap are Stalker-excluded; "
+                  "to capture content add agent-side hook on GetStringUTFChars"),
+        "hits": hits,
+    })
+
+
 # ───────────────────────── mem-dump ─────────────────────────
 
 def cmd_mem_dump(args):
@@ -665,6 +843,8 @@ _KNOWN_SUBCOMMANDS = {
     "reg-timeline", "mem-diff", "fn-summary",
     # Gap-D / Gap-B / Gap-F / Gap-H / Gap-J:
     "records", "last-write-of-addr", "data-chase", "find-mem-pattern", "jni-calls",
+    # Gap-K / Gap-L:
+    "jobj-history", "jni-strings",
 }
 
 
@@ -769,6 +949,21 @@ def main():
     s.add_argument("--jni-offsets", default=None, dest="jni_offsets",
                     help="path to jni_offsets.json (default: viewer/jni_offsets.json)")
 
+    s = sub.add_parser("jobj-history", help="all JNI calls touching a specific jobject")
+    s.add_argument("trace")
+    s.add_argument("--jobject", required=True, help="jobject value (hex 0x...)")
+    s.add_argument("--start", type=int, default=0)
+    s.add_argument("--end", type=int, default=-1, help="-1=trace end")
+    s.add_argument("--max", type=int, default=200)
+    s.add_argument("--jni-offsets", default=None, dest="jni_offsets")
+
+    s = sub.add_parser("jni-strings", help="all JNI string ops + buffer content (when observed)")
+    s.add_argument("trace")
+    s.add_argument("--max", type=int, default=200, help="0=unlimited")
+    s.add_argument("--max-len", type=int, default=128, dest="max_len",
+                    help="max bytes to read per string buffer")
+    s.add_argument("--jni-offsets", default=None, dest="jni_offsets")
+
     s = sub.add_parser("field-at", help="BN HLIL struct field hint at (pc,reg,offset)")
     s.add_argument("trace")
     s.add_argument("--pc", required=True, help="hex 0x...")
@@ -811,6 +1006,8 @@ def main():
         "mem-dump": cmd_mem_dump,
         "find-mem-pattern": cmd_find_mem_pattern,
         "jni-calls": cmd_jni_calls,
+        "jobj-history": cmd_jobj_history,
+        "jni-strings": cmd_jni_strings,
         "field-at": cmd_field_at,
         "reg-timeline": cmd_reg_timeline,
         "mem-diff": cmd_mem_diff,
