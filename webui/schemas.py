@@ -1,396 +1,497 @@
 """Pydantic response models for traceMiku Web API.
 
-These models drive the auto-generated OpenAPI schema at /openapi.json,
-making the API self-documenting for LLM consumers and frontend codegen.
+Strict per-endpoint schemas matching actual server.py returns. Multi-shape
+endpoints (ready vs pending vs error) use Union types — Pydantic tries each
+arm in order. OpenAPI schema (`/openapi.json`) reflects exact field
+requirements per state, so LLM/MCP/frontend codegen can rely on it.
 
-NOTE on permissiveness:
-    Many endpoints return either a "ready" shape (full data) or a "pending"
-    shape (`{"status": "building"|"error"|"empty", ...}`) depending on
-    background-task readiness. Rather than building strict Union types for
-    every endpoint, we set `extra='allow'` and mark most non-essential fields
-    Optional so Pydantic accepts both shapes. The OpenAPI schema still lists
-    the canonical "ready" fields for LLM clients to discover.
-
-    If you need strict validation of a specific endpoint's contract, build
-    a per-endpoint Union[Building, Ready] response_model.
+Backward-compat aliases (CfgReadyResponse, CfgBuildingResponse) preserved at
+the bottom for old import sites.
 """
 from __future__ import annotations
-from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict
-
-
-class _Permissive(BaseModel):
-    """Base model allowing extra fields. Use this for response models that
-    accept multi-shape returns (ready vs building/error/empty)."""
-    model_config = ConfigDict(extra='allow')
-
-
-# ── Generic pending-state response ──────────────────────────────────────────
-
-class BgPendingResponse(_Permissive):
-    """Response shape when a background task is not ready yet.
-    Returned by many endpoints when CFG / index / mem / decomp is building."""
-    status: str       # "building" | "error" | "empty" | "idle"
+from typing import Optional, Union, Literal, Any
+from pydantic import BaseModel, Field
 
 
 # ── /api/meta ────────────────────────────────────────────────────────────────
 
-class ModuleInfo(_Permissive):
+class ModuleInfo(BaseModel):
     name: str
     base: str        # hex "0x..."
     size: int
     end: str         # hex "0x..."
 
-class MetaResponse(_Permissive):
+class MetaResponse(BaseModel):
     path: str
     records: int
     module: Optional[ModuleInfo] = None
     modules: list[ModuleInfo] = []
     method: str = ""
     cmd: Optional[int] = None
-    fn_addr: Optional[str] = None     # hex "0x..." or None
-    regs: list[str] = []
+    fn_addr: Optional[str] = None
+    regs: list[str]
 
 
 # ── /api/records ─────────────────────────────────────────────────────────────
 
-class RecordRow(_Permissive):
+class RecordRow(BaseModel):
     idx: int
-    pc: str           # hex "0x..."
+    pc: str
     rel: Optional[str] = None
     func: Optional[str] = None
     off: Optional[str] = None
     asm: str
     annotation: Optional[str] = None
     exec_count: Optional[int] = None
-    is_branch: bool = False
-    is_call: bool = False
-    is_ret: bool = False
+    is_branch: bool
+    is_call: bool
+    is_ret: bool
     regs: Optional[dict[str, str]] = None
 
-class RecordsResponse(_Permissive):
-    """May return empty `{count:0, records:[]}` for out-of-range start, or
-    full `{start, end, count, records}` for a valid window."""
-    start: Optional[int] = None
-    end: Optional[int] = None
-    count: int = 0
-    records: list[RecordRow] = []
+class RecordsResponse(BaseModel):
+    """Always returns start/end/count/records. Empty when start out of range."""
+    start: int
+    end: int
+    count: int
+    records: list[RecordRow]
 
 
 # ── /api/record/{idx} ────────────────────────────────────────────────────────
 
-class RecordDetail(_Permissive):
+class RecordDetail(BaseModel):
     idx: int
     pc: str
     rel: Optional[str] = None
     func: Optional[str] = None
     off: Optional[str] = None
     asm: str
-    regs: dict[str, str] = {}
+    regs: dict[str, str]
     prev_regs: Optional[dict[str, str]] = None
     regs_annotated: dict[str, str] = {}
-    regs_def: list[str] = []
-    regs_use: list[str] = []
+    regs_def: list[str]
+    regs_use: list[str]
     exec_count: Optional[int] = None
     block_pc: Optional[str] = None
-    cfg_status: str = ""
-    is_branch: bool = False
-    is_call: bool = False
-    is_ret: bool = False
+    cfg_status: str
+    is_branch: bool
+    is_call: bool
+    is_ret: bool
 
 
 # ── /api/cfg ─────────────────────────────────────────────────────────────────
 
-class CfgBlock(_Permissive):
-    id: str           # hex
-    start: str        # hex
-    end: str          # hex
+class CfgBlock(BaseModel):
+    id: str
+    start: str
+    end: str
     rel: Optional[str] = None
     func: Optional[str] = None
-    insns: int = 0
-    executions: int = 0
-    label: str = ""
+    insns: int
+    executions: int
+    label: str
 
-class CfgEdge(_Permissive):
+class CfgEdge(BaseModel):
     id: str
     src: str
     dst: str
     kind: str
-    count: int = 0
+    count: int
 
-class CfgFuncSummary(_Permissive):
+class CfgFuncSummary(BaseModel):
     name: str
     blocks: int
 
-class CfgResponse(_Permissive):
-    """Either ready (with blocks/edges/...) or building (with cfg/pc_inst/...)."""
-    status: str
-    # Ready fields (Optional, present when status == "ready")
-    blocks: Optional[list[CfgBlock]] = None
-    edges: Optional[list[CfgEdge]] = None
-    entry: Optional[str] = None
-    block_count: Optional[int] = None
-    edge_count: Optional[int] = None
-    total_block_count: Optional[int] = None
+class CfgBuildingResponse(BaseModel):
+    """CFG/pc_inst not ready yet."""
+    status: Literal["building"]
+    cfg: str
+    pc_inst: str
+    elapsed: dict[str, float]
+    errors: dict[str, Optional[str]]
+
+class CfgReadyResponse(BaseModel):
+    status: Literal["ready"]
+    blocks: list[CfgBlock]
+    edges: list[CfgEdge]
+    entry: str
+    block_count: int
+    edge_count: int
+    total_block_count: int
     fn: Optional[str] = None
-    funcs: Optional[list[CfgFuncSummary]] = None
-    # Building fields (Optional, present when status == "building")
-    cfg: Optional[str] = None
-    pc_inst: Optional[str] = None
-    elapsed: Optional[dict[str, float]] = None
-    errors: Optional[dict[str, Optional[str]]] = None
+    funcs: list[CfgFuncSummary]
 
-
-# ── /api/block ───────────────────────────────────────────────────────────────
-
-class BlockInsn(_Permissive):
-    pc: str
-    rel: Optional[str] = None
-    asm: str
-    is_branch: bool = False
-    is_call: bool = False
-    is_ret: bool = False
-
-class BlockExit(_Permissive):
-    to: str
-    kind: str
-
-class BlockDetail(_Permissive):
-    """May be either ready (start/end/insns/...) or building ({status})."""
-    status: Optional[str] = None
-    start: Optional[str] = None
-    end: Optional[str] = None
-    func: Optional[str] = None
-    off: Optional[str] = None
-    executions: Optional[int] = None
-    insns: Optional[list[BlockInsn]] = None
-    exits: Optional[list[BlockExit]] = None
-
-
-# ── /api/loops ───────────────────────────────────────────────────────────────
-
-class LoopInfo(_Permissive):
-    members: list[str] = []
-    size: int = 0
-
-class LoopsResponse(_Permissive):
-    status: str
-    loops: list[LoopInfo] = []
-    count: Optional[int] = None
-
-
-# ── /api/search ──────────────────────────────────────────────────────────────
-
-class SearchHit(_Permissive):
-    idx: int
-    pc: str
-    asm: str
-
-class SearchResponse(_Permissive):
-    count: int = 0
-    pattern: str = ""
-    hits: list[SearchHit] = []
-
-
-# ── /api/strings ─────────────────────────────────────────────────────────────
-
-class StringEntry(_Permissive):
-    addr: str         # hex
-    value: str
-    length: Optional[int] = None
-
-class StringsResponse(_Permissive):
-    """May be ready ({status:'ready', count, cursor, ...}) or pending."""
-    status: str
-    strings: list[StringEntry] = []
-    count: Optional[int] = None
-    cursor: Optional[int] = None
-
-
-# ── /api/forward-taint ───────────────────────────────────────────────────────
-
-class TaintHit(_Permissive):
-    idx: int
-    pc: str
-    why: Optional[str] = None
-
-class TaintResponse(_Permissive):
-    """forward-taint returns hits[]; backward-taint returns chain[]."""
-    status: Optional[str] = None
-    count: Optional[int] = None
-    hits: Optional[list[TaintHit]] = None
-    chain: Optional[list[TaintHit]] = None
-    reg: Optional[str] = None
-
-
-# ── /api/mem-dump ────────────────────────────────────────────────────────────
-
-class MemDumpResponse(_Permissive):
-    """May be ready (addr/bytes/count) or pending ({status})."""
-    status: Optional[str] = None
-    addr: Optional[str] = None
-    bytes: Optional[list[Any]] = None
-    count: Optional[int] = None
-
-
-# ── /api/idxs-for-pc, /api/idxs-for-block ────────────────────────────────────
-
-class IdxsResponse(_Permissive):
-    """idxs-for-pc returns {idxs, kinds}; idxs-for-block returns {block, idxs, total, truncated} or pending {status, idxs:[]}."""
-    status: Optional[str] = None
-    idxs: list[int] = []
-    kinds: Optional[list[str]] = None
-    block: Optional[str] = None
-    total: Optional[int] = None
-    truncated: Optional[bool] = None
-    pc: Optional[str] = None
-    cursor: Optional[int] = None
-
-
-# ── /api/backtrace ───────────────────────────────────────────────────────────
-
-class BacktraceFrame(_Permissive):
-    idx: int
-    pc: str
-    func: Optional[str] = None
-
-class BacktraceResponse(_Permissive):
-    status: Optional[str] = None
-    idx: Optional[int] = None
-    stack: list[BacktraceFrame] = []
-    depth: int = 0
-
-
-# ── /api/bg-status ───────────────────────────────────────────────────────────
-
-class BgTaskStatus(_Permissive):
-    status: str
-    started_at: Optional[float] = None
-    elapsed: Optional[float] = None
-    err: Optional[str] = None
-
-class BgStatusResponse(_Permissive):
-    """One field per BG task; permissive — actual key set may evolve."""
-
-
-# ── /api/last-write-of-reg ───────────────────────────────────────────────────
-
-class LastWriteResponse(_Permissive):
-    status: Optional[str] = None
-    idx: Optional[int] = None
-    pc: Optional[str] = None
-    func: Optional[str] = None
-    err: Optional[str] = None
-
-
-# ── /api/reg-value-at ────────────────────────────────────────────────────────
-
-class RegValueResponse(_Permissive):
-    status: Optional[str] = None
-    idx: Optional[int] = None
-    reg: Optional[str] = None
-    value: Optional[str] = None        # hex
-
-
-# ── /api/idxs-touching-range, /api/idxs-touching-addr ────────────────────────
-
-class TouchingResponse(_Permissive):
-    """Either pending ({status,...}) or various ready shapes — kept permissive."""
-    status: Optional[str] = None
-    addr: Optional[str] = None
-    cursor: Optional[int] = None
-    size: Optional[int] = None
-    before: Optional[list[Any]] = None
-    after: Optional[list[Any]] = None
-    writers_before: Optional[list[Any]] = None
-    writers_after: Optional[list[Any]] = None
-
-
-# ── /api/string-provenance ───────────────────────────────────────────────────
-
-class StringProvenanceResponse(_Permissive):
-    status: Optional[str] = None
-    addr: Optional[str] = None
-    length: Optional[int] = None
-    bytes: Optional[list[Any]] = None
-
-
-# ── /api/decomp-status ───────────────────────────────────────────────────────
-
-class DecompStatusResponse(_Permissive):
-    """Backend status — fields vary; kept permissive."""
-
-
-# ── /api/asm-tokens-for-pcs ──────────────────────────────────────────────────
-
-class AsmToken(_Permissive):
-    cls: str
-    text: str
-
-class AsmTokensResponse(_Permissive):
-    status: Optional[str] = None
-    ready: Optional[bool] = None
-    tokens: Optional[dict[str, list[AsmToken]]] = None
-
-
-# ── /api/hlil-for-pc ─────────────────────────────────────────────────────────
-
-class HlilLine(_Permissive):
-    pc_lo: Optional[str] = None
-    pc_hi: Optional[str] = None
-    text: str = ""
-    tokens: list[AsmToken] = []
-
-class HlilResponse(_Permissive):
-    status: Optional[str] = None
-    ready: Optional[bool] = None
-    pc: Optional[str] = None
-    lines: Optional[list[HlilLine]] = None
-
-
-# ── /api/bn-cfg-svg-for-pc ──────────────────────────────────────────────────
-
-class BnCfgSvgResponse(_Permissive):
-    status: Optional[str] = None
-    svg: Optional[str] = None
-    err: Optional[str] = None
-
-
-# ── /api/bn-cfg-for-pc ──────────────────────────────────────────────────────
-
-class BnCfgBlock(_Permissive):
-    start: str
-    end: str
-    label: str = ""
-
-class BnCfgEdge(_Permissive):
-    src: str
-    dst: str
-    kind: str
-    style: Optional[str] = None
-
-class BnCfgForPcResponse(_Permissive):
-    status: Optional[str] = None
-    ready: Optional[bool] = None
-    fn: Optional[str] = None
-    name: Optional[str] = None
-    blocks: Optional[list[BnCfgBlock]] = None
-    edges: Optional[list[BnCfgEdge]] = None
-    cur_bb: Optional[str] = None
+CfgResponse = Union[CfgReadyResponse, CfgBuildingResponse]
 
 
 # ── /api/block-for-pc ────────────────────────────────────────────────────────
 
-class BlockForPcResponse(_Permissive):
+class BlockForPcResponse(BaseModel):
     pc: str
     block: Optional[str] = None
     cfg_status: Optional[str] = None
 
 
-# ── /api/field-at (新增 9.3) ─────────────────────────────────────────────────
+# ── /api/block ───────────────────────────────────────────────────────────────
 
-class FieldAtResponse(_Permissive):
-    """Struct field hint at (pc, reg, offset). Returns null if not found."""
+class BlockInsn(BaseModel):
+    pc: str
+    rel: Optional[str] = None
+    asm: str
+    is_branch: bool
+    is_call: bool
+    is_ret: bool
+
+class BlockExit(BaseModel):
+    to: str
+    kind: str
+
+class BlockPendingResponse(BaseModel):
+    status: str        # "building" | "idle" | "error"
+
+class BlockDetail(BaseModel):
+    start: str
+    end: str
+    func: Optional[str] = None
+    off: Optional[str] = None
+    executions: int
+    insns: list[BlockInsn]
+    exits: list[BlockExit]
+
+BlockResponse = Union[BlockDetail, BlockPendingResponse]
+
+
+# ── /api/loops ───────────────────────────────────────────────────────────────
+
+class LoopInfo(BaseModel):
+    members: list[str]
+    size: int
+
+class LoopsPendingResponse(BaseModel):
+    status: str
+    loops: list[LoopInfo] = []
+
+class LoopsReadyResponse(BaseModel):
+    status: Literal["ready"]
+    loops: list[LoopInfo]
+    count: int
+
+LoopsResponse = Union[LoopsReadyResponse, LoopsPendingResponse]
+
+
+# ── /api/backtrace ───────────────────────────────────────────────────────────
+
+class BacktraceFrame(BaseModel):
+    call_site_idx: int
+    call_pc: str
+    call_pc_fmt: Optional[str] = None
+    callee_pc: Optional[str] = None
+    callee_pc_fmt: Optional[str] = None
+    fn: Optional[str] = None
+
+class BacktracePendingResponse(BaseModel):
+    status: str
+    stack: list[BacktraceFrame] = []
+    depth: int = 0
+
+class BacktraceReadyResponse(BaseModel):
+    status: Literal["ready"]
+    idx: int
+    stack: list[BacktraceFrame]
+    depth: int
+
+BacktraceResponse = Union[BacktraceReadyResponse, BacktracePendingResponse]
+
+
+# ── /api/idxs-for-pc ─────────────────────────────────────────────────────────
+
+class IdxsForPcResponse(BaseModel):
+    """Single shape (always ready): cursor-relative neighborhood of PC hits."""
+    status: Literal["ready"]
+    pc: str
+    cursor: int
+    before: list[int]
+    after: list[int]
+    total_before: int
+    total_after: int
+    before_capped: bool
+    after_capped: bool
+
+
+# ── /api/idxs-for-block ──────────────────────────────────────────────────────
+
+class IdxsForBlockPendingResponse(BaseModel):
+    status: str
+    idxs: list[int] = []
+
+class IdxsForBlockReadyResponse(BaseModel):
+    block: str
+    idxs: list[int]
+    truncated: bool
+    total: int
+
+IdxsForBlockResponse = Union[IdxsForBlockReadyResponse, IdxsForBlockPendingResponse]
+
+
+# ── /api/search ──────────────────────────────────────────────────────────────
+
+class SearchHit(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    off: Optional[str] = None
+    asm: str
+
+class SearchResponse(BaseModel):
+    count: int
+    pattern: str
+    hits: list[SearchHit]
+
+
+# ── /api/forward-taint ───────────────────────────────────────────────────────
+
+class TaintHit(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    asm: str
+    why: Optional[str] = None
+    via: Optional[str] = None        # only on backward-taint
+
+class ForwardTaintPendingResponse(BaseModel):
+    status: str
+    hits: list[TaintHit] = []
+
+class ForwardTaintReadyResponse(BaseModel):
+    count: int
+    from_: int = Field(alias="from")
+    reg: str
+    hits: list[TaintHit]
+
+    model_config = {"populate_by_name": True}
+
+ForwardTaintResponse = Union[ForwardTaintReadyResponse, ForwardTaintPendingResponse]
+
+
+# ── /api/backward-taint ──────────────────────────────────────────────────────
+
+class BackwardTaintPendingResponse(BaseModel):
+    status: str
+    chain: list[TaintHit] = []
+
+class BackwardTaintReadyResponse(BaseModel):
+    count: int
+    from_: int = Field(alias="from")
+    reg: str
+    chain: list[TaintHit]
+
+    model_config = {"populate_by_name": True}
+
+BackwardTaintResponse = Union[BackwardTaintReadyResponse, BackwardTaintPendingResponse]
+
+# 老 import 的兜底名 — 实际 server.py 用的是这个
+TaintResponse = Union[ForwardTaintReadyResponse, ForwardTaintPendingResponse,
+                      BackwardTaintReadyResponse, BackwardTaintPendingResponse]
+
+
+# ── /api/strings ─────────────────────────────────────────────────────────────
+
+class StringEntry(BaseModel):
+    addr: str
+    len: int
+    str: str
+
+class StringsPendingResponse(BaseModel):
+    status: str
+    strings: list[StringEntry] = []
+
+class StringsReadyResponse(BaseModel):
+    status: Literal["ready"]
+    count: int
+    cursor: int
+    strings: list[StringEntry]
+
+StringsResponse = Union[StringsReadyResponse, StringsPendingResponse]
+
+
+# ── /api/string-provenance ───────────────────────────────────────────────────
+
+class StringProvByte(BaseModel):
+    addr: str
+    byte: Optional[int] = None
+    kind: str             # "r" | "w" | "??"
+    writers: list[int]
+    readers: list[int]
+    writers_total: int
+    readers_total: int
+
+class StringProvPendingResponse(BaseModel):
+    status: str
+    bytes: list[StringProvByte] = []
+
+class StringProvReadyResponse(BaseModel):
+    status: Literal["ready"]
+    addr: str
+    length: int
+    bytes: list[StringProvByte]
+
+StringProvenanceResponse = Union[StringProvReadyResponse, StringProvPendingResponse]
+
+
+# ── /api/mem-dump ────────────────────────────────────────────────────────────
+
+class MemDumpByte(BaseModel):
+    addr: str
+    byte: Optional[int] = None
+    kind: str
+    src_idx: Optional[int] = None
+
+class MemDumpPendingResponse(BaseModel):
+    status: str
+    bytes: list[MemDumpByte] = []
+
+class MemDumpReadyResponse(BaseModel):
+    status: Literal["ready"]
+    addr: str
+    count: int
+    bytes: list[MemDumpByte]
+
+MemDumpResponse = Union[MemDumpReadyResponse, MemDumpPendingResponse]
+
+
+# ── /api/last-write-of-reg ───────────────────────────────────────────────────
+
+class LastWriteErrorResponse(BaseModel):
+    status: Literal["error"]
+    err: str
+
+class LastWriteReadyResponse(BaseModel):
+    status: Literal["ready"]
+    idx: Optional[int] = None
+    value: Optional[str] = None     # hex or null
+
+LastWriteResponse = Union[LastWriteReadyResponse, LastWriteErrorResponse]
+
+
+# ── /api/reg-value-at ────────────────────────────────────────────────────────
+
+class RegValueResponse(BaseModel):
+    status: Literal["ready"]
+    idx: int
+    reg: str
+    value: Optional[str] = None     # hex
+
+
+# ── /api/idxs-touching-range ─────────────────────────────────────────────────
+
+class TouchingRangePendingResponse(BaseModel):
+    status: str
+    writers_before: list[int] = []
+    writers_after: list[int] = []
+    writers_total: int = 0
+    readers_before: list[int] = []
+    readers_after: list[int] = []
+    readers_total: int = 0
+
+class TouchingRangeReadyResponse(BaseModel):
+    status: Literal["ready"]
+    addr: str
+    size: int
+    cursor: int
+    writers_before: list[int]
+    writers_after: list[int]
+    writers_total: int
+    readers_before: list[int]
+    readers_after: list[int]
+    readers_total: int
+
+TouchingRangeResponse = Union[TouchingRangeReadyResponse, TouchingRangePendingResponse]
+
+
+# ── /api/idxs-touching-addr ──────────────────────────────────────────────────
+
+class TouchingAddrEntry(BaseModel):
+    idx: int
+    kind: str        # "r" | "w"
+
+class TouchingAddrPendingResponse(BaseModel):
+    status: str
+    before: list[TouchingAddrEntry] = []
+    after: list[TouchingAddrEntry] = []
+
+class TouchingAddrEmptyResponse(BaseModel):
+    status: Literal["ready"]
+    addr: str
+    before: list[TouchingAddrEntry]   # empty
+    after: list[TouchingAddrEntry]    # empty
+    total_before: int
+    total_after: int
+
+class TouchingAddrReadyResponse(BaseModel):
+    status: Literal["ready"]
+    addr: str
+    cursor: int
+    before: list[TouchingAddrEntry]
+    after: list[TouchingAddrEntry]
+    total_before: int
+    total_after: int
+
+TouchingAddrResponse = Union[TouchingAddrReadyResponse, TouchingAddrEmptyResponse,
+                              TouchingAddrPendingResponse]
+
+# 老 import 兜底 — server.py 现在两个 endpoint 共用 TouchingResponse 名
+TouchingResponse = Union[TouchingRangeReadyResponse, TouchingRangePendingResponse,
+                          TouchingAddrReadyResponse, TouchingAddrEmptyResponse,
+                          TouchingAddrPendingResponse]
+
+
+# ── /api/bg-status ───────────────────────────────────────────────────────────
+
+class BgTaskStatus(BaseModel):
+    status: str
+    started_at: Optional[float] = None
+    ready_at: Optional[float] = None
+    err: Optional[str] = None
+
+class BgStatusResponse(BaseModel):
+    """Dynamic key set (one per BG task + 'decomp'). Defined as dict alias."""
+    # 字典形式动态键, Pydantic root_model 太重 — 直接接 dict[str, dict]
+    pass
+
+    model_config = {"extra": "allow"}    # bg_status returns flat dict
+
+
+# ── /api/decomp-status ───────────────────────────────────────────────────────
+
+class DecompStatusResponse(BaseModel):
+    """{name, status, err, started_at, ready_at, so_path, elapsed?}"""
+    status: str
+    name: Optional[str] = None
+    err: Optional[str] = None
+    started_at: Optional[float] = None
+    ready_at: Optional[float] = None
+    so_path: Optional[str] = None
+    elapsed: Optional[float] = None
+
+
+# ── /api/asm-tokens-for-pcs ──────────────────────────────────────────────────
+
+class AsmTokenWire(BaseModel):
+    """Compact wire form: t=text, c=cls, a?=addr."""
+    t: str
+    c: str
+    a: Optional[str] = None
+
+class AsmTokensResponse(BaseModel):
+    ready: bool
+    status: str
+    tokens: dict[str, list[AsmTokenWire]]
+
+
+# ── /api/field-at ────────────────────────────────────────────────────────────
+
+class FieldAtResponse(BaseModel):
     pc: str
     reg: str
     offset: int
@@ -400,8 +501,142 @@ class FieldAtResponse(_Permissive):
     type_name: Optional[str] = None
 
 
-# ── Backwards-compat aliases ────────────────────────────────────────────────
-# 老代码 import 这些名字 — 把 ready-only model 指向新的 permissive model
+# ── /api/hlil-for-pc ─────────────────────────────────────────────────────────
 
-CfgBuildingResponse = CfgResponse
-CfgReadyResponse = CfgResponse
+class HlilFnInfo(BaseModel):
+    name: str
+    start: str
+    end: str
+
+class HlilTraceFnInfo(BaseModel):
+    name: str
+    off: str
+
+class HlilLineWire(BaseModel):
+    pc: str
+    text: str
+    indent: int = 0
+    tokens: Optional[list[AsmTokenWire]] = None
+
+class HlilVarInfo(BaseModel):
+    name: str
+    type: Optional[str] = None
+    storage: Optional[str] = None
+
+class HlilNotReadyResponse(BaseModel):
+    ready: Literal[False]
+    status: str
+    err: Optional[str] = None
+    elapsed: Optional[float] = None
+
+class HlilNoFunctionResponse(BaseModel):
+    ready: Literal[True]
+    status: Literal["no-function"]
+    pc: str
+
+class HlilOkResponse(BaseModel):
+    ready: Literal[True]
+    status: Literal["ok"]
+    backend: str
+    pc: str
+    in_range: bool
+    fn: HlilFnInfo
+    trace_fn: Optional[HlilTraceFnInfo] = None
+    vars: list[HlilVarInfo]
+    lines: list[HlilLineWire]
+    current_line_idx: int
+
+HlilResponse = Union[HlilOkResponse, HlilNoFunctionResponse, HlilNotReadyResponse]
+
+
+# ── /api/bn-cfg-svg-for-pc ──────────────────────────────────────────────────
+
+class BnCfgFnInfo(BaseModel):
+    name: str
+    start: str
+    end: str
+
+class BnCfgSvgPendingResponse(BaseModel):
+    status: str        # any of: "loading"|"idle"|"disabled"|"no-function"|"empty-cfg"
+
+class BnCfgSvgTooLargeResponse(BaseModel):
+    status: Literal["too-large"]
+    fn: BnCfgFnInfo
+    block_count: int
+    edge_count: int
+    err: str
+
+class BnCfgSvgErrorResponse(BaseModel):
+    status: Literal["error"]
+    err: str
+
+class BnCfgSvgOkResponse(BaseModel):
+    status: Literal["ok"]
+    fn: BnCfgFnInfo
+    block_count: int
+    total_block_count: int
+    edge_count: int
+    dyn_only_count: int
+    fn_total_exec: int
+    current_bb: Optional[str] = None
+    svg: str
+
+BnCfgSvgResponse = Union[BnCfgSvgOkResponse, BnCfgSvgTooLargeResponse,
+                         BnCfgSvgErrorResponse, BnCfgSvgPendingResponse]
+
+
+# ── /api/bn-cfg-for-pc ──────────────────────────────────────────────────────
+
+class BnCfgFnNameOnly(BaseModel):
+    name: str
+
+class BnCfgLineWire(BaseModel):
+    pc: str
+    text: str
+    tokens: Optional[list[AsmTokenWire]] = None
+
+class BnCfgBlock(BaseModel):
+    start: str
+    end: str
+    exec_count: int
+    lines: list[BnCfgLineWire]
+
+class BnCfgEdge(BaseModel):
+    src: str
+    dst: str
+    kind: str
+    seen_in_trace: bool
+
+class BnCfgPendingResponse(BaseModel):
+    ready: Literal[False]
+    status: str
+
+class BnCfgNoFunctionResponse(BaseModel):
+    ready: Literal[True]
+    status: Literal["no-function"]
+
+class BnCfgEmptyResponse(BaseModel):
+    ready: Literal[True]
+    status: Literal["empty-cfg"]
+    fn: BnCfgFnNameOnly
+
+class BnCfgOkResponse(BaseModel):
+    ready: Literal[True]
+    status: Literal["ok"]
+    backend: str
+    mode: str
+    pc: str
+    fn: BnCfgFnInfo
+    current_bb: Optional[str] = None
+    fn_total_exec: int
+    blocks: list[BnCfgBlock]
+    edges: list[BnCfgEdge]
+
+BnCfgForPcResponse = Union[BnCfgOkResponse, BnCfgEmptyResponse,
+                            BnCfgNoFunctionResponse, BnCfgPendingResponse]
+
+
+# ── Backwards-compat aliases (server.py imports these names) ────────────────
+
+# Old single-name imports map to the Union types or specific models
+# so existing `response_model=XYZ` keep working with no change.

@@ -27,12 +27,15 @@ from webui.cfg_render import (
     render_dot_to_svg as _render_dot_to_svg,
 )
 from webui.schemas import (
-    MetaResponse, ModuleInfo, RecordsResponse, RecordRow,
-    RecordDetail, CfgBuildingResponse, CfgReadyResponse,
-    BlockDetail, LoopsResponse, SearchResponse, StringsResponse,
-    TaintResponse, MemDumpResponse, IdxsResponse, BacktraceResponse,
-    BgStatusResponse, LastWriteResponse, RegValueResponse,
-    TouchingResponse, StringProvenanceResponse, DecompStatusResponse,
+    MetaResponse, ModuleInfo, RecordsResponse, RecordRow, RecordDetail,
+    CfgResponse, CfgBuildingResponse, CfgReadyResponse,
+    BlockResponse, BlockDetail, LoopsResponse,
+    SearchResponse, StringsResponse,
+    ForwardTaintResponse, BackwardTaintResponse, TaintResponse,
+    MemDumpResponse, IdxsForPcResponse, IdxsForBlockResponse,
+    BacktraceResponse, BgStatusResponse, LastWriteResponse, RegValueResponse,
+    TouchingRangeResponse, TouchingAddrResponse, TouchingResponse,
+    StringProvenanceResponse, DecompStatusResponse,
     AsmTokensResponse, HlilResponse, BnCfgSvgResponse, BnCfgForPcResponse,
     BlockForPcResponse, FieldAtResponse,
 )
@@ -419,7 +422,7 @@ def make_app(trace_path: pathlib.Path,
             "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
         }
 
-    @app.get("/api/cfg", response_model=CfgReadyResponse)
+    @app.get("/api/cfg", response_model=CfgResponse)
     def cfg(fn: Optional[str] = None):
         # 触发后台子进程构建 (CFG + pc_inst 一次出). 子进程独立 GIL,
         # 主进程的 /api/records /api/record 不会被它阻塞.
@@ -495,7 +498,7 @@ def make_app(trace_path: pathlib.Path,
         bp = block_for_pc(int(pc, 16))
         return {"pc": pc, "block": hex(bp) if bp else None}
 
-    @app.get("/api/block", response_model=BlockDetail)
+    @app.get("/api/block", response_model=BlockResponse)
     def block_detail(pc: str):
         if BG["cfg"]["status"] != "ready":
             return {"status": BG["cfg"]["status"]}
@@ -792,7 +795,7 @@ def make_app(trace_path: pathlib.Path,
                 if stack: stack.pop()
         return {"status": "ready", "idx": idx, "stack": stack, "depth": len(stack)}
 
-    @app.get("/api/idxs-for-pc", response_model=IdxsResponse)
+    @app.get("/api/idxs-for-pc", response_model=IdxsForPcResponse)
     def idxs_for_pc(pc: str, cursor: int = 0, limit: int = 30):
         """numpy vector scan: pc_array() 是 mmap 上的 zero-copy uint64 视图.
         np.nonzero(pc_arr == target) ~5ms 跑完 2.5M (Python loop 是 320ms).
@@ -817,7 +820,7 @@ def make_app(trace_path: pathlib.Path,
                 "before_capped": total_before > limit,
                 "after_capped": total_after > limit}
 
-    @app.get("/api/idxs-for-block", response_model=IdxsResponse)
+    @app.get("/api/idxs-for-block", response_model=IdxsForBlockResponse)
     def idxs_for_block(pc: str, max_count: int = 200, near: int = -1):
         """所有 trace 中 PC 落在该 block 内的 idx. 用预建 dict, O(1).
         near>=0 时, 优先返回离该 idx 最近的 max_count 个."""
@@ -860,7 +863,7 @@ def make_app(trace_path: pathlib.Path,
                 if len(rows) >= max_results: break
         return {"count": len(rows), "pattern": pattern, "hits": rows}
 
-    @app.get("/api/forward-taint", response_model=TaintResponse)
+    @app.get("/api/forward-taint", response_model=ForwardTaintResponse)
     def forward_taint_api(start: int, reg: str, max_count: int = 500):
         from viewer.taint import forward_taint
         if BG["index"]["status"] != "ready":
@@ -881,7 +884,7 @@ def make_app(trace_path: pathlib.Path,
                          "asm": f"{d.mnemonic} {d.op_str}", "why": why})
         return {"count": len(rows), "from": start, "reg": reg, "hits": rows}
 
-    @app.get("/api/backward-taint", response_model=TaintResponse)
+    @app.get("/api/backward-taint", response_model=BackwardTaintResponse)
     def backward_taint_api(start: int, reg: str, max_count: int = 500):
         from viewer.taint import backward_taint
         if BG["index"]["status"] != "ready":
@@ -1038,7 +1041,7 @@ def make_app(trace_path: pathlib.Path,
         return {"status": "ready", "idx": idx, "reg": reg,
                 "value": hex(v), "annotation": ann}
 
-    @app.get("/api/idxs-touching-range", response_model=TouchingResponse)
+    @app.get("/api/idxs-touching-range", response_model=TouchingRangeResponse)
     def idxs_touching_range(addr: str, size: int = 1, cursor: int = 0, limit: int = 50):
         """所有 trace idx 中读/写 [addr, addr+size) 的位置. 向量化版: 用 numpy
         mask 替代 set comprehension, 6.8M trace 上 596ms → ~5ms."""
@@ -1068,7 +1071,7 @@ def make_app(trace_path: pathlib.Path,
                 "writers_before": wb, "writers_after": wa, "writers_total": int(len(writers)),
                 "readers_before": rb, "readers_after": ra, "readers_total": int(len(readers))}
 
-    @app.get("/api/idxs-touching-addr", response_model=TouchingResponse)
+    @app.get("/api/idxs-touching-addr", response_model=TouchingAddrResponse)
     def idxs_touching_addr(addr: str, cursor: int = 0, limit: int = 30):
         """所有 trace idx 中触碰 (load/store) 该 addr 的位置. 向量化, 6.8M trace
         上 ~5ms vs 旧线扫数百 ms."""
