@@ -20,10 +20,10 @@ def cmd_stats(args):
         "method": m.method,
         "cmd": m.cmd,
         "fn_addr": hex(m.fn_addr) if m.fn_addr else None,
-        "module": {"name": mod.name, "base": hex(mod.base), "size": mod.size}
-                  if mod else None,
-        "modules": [{"name": x.name, "base": hex(x.base), "size": x.size}
-                    for x in m.modules],
+        "module": {"name": mod.name, "base": hex(mod.base), "size": mod.size,
+                   "end": hex(mod.end)} if mod else None,
+        "modules": [{"name": x.name, "base": hex(x.base), "size": x.size,
+                     "end": hex(x.end)} for x in m.modules],
     }
     t.close()
     print(json.dumps(out, indent=2, ensure_ascii=False))
@@ -36,7 +36,7 @@ def cmd_export(args):
     from .disasm import decode
     import sqlite3
     t = load(args.trace)
-    out_path = args.output or str(args.trace).rstrip("/").replace("/", "_") + ".db"
+    out_path = args.output or (pathlib.Path(args.trace).resolve().name + ".db")
     con = sqlite3.connect(out_path)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=OFF")
