@@ -36,8 +36,34 @@ const FLUSH_INTERVAL_MS = 10;
 // even if user requests via --include-so. ARM64 LDXR/STXR sequences in
 // libc/libpthread/libart, when instrumented by Stalker, leave the exclusive
 // monitor cleared → all atomics fail → process deadlock.
+//
+// In --trace-deep mode, this list is SHRUNK: module-level exclude is removed
+// for libart (and others; see DEEP_KEEP_EXCL). Per-symbol Stalker.exclude is
+// applied for HOSTILE_PATTERNS sub-ranges (interpreter/JIT/GC etc).
 const HARD_EXCL = ["libc.so","libm.so","libdl.so","libpthread.so","libart.so",
                    "libartbase.so","libartpalette.so","linker","linker64"];
+
+// In deep mode, modules that we still exclude entirely (linker / dl have
+// init-time recursion that nothing else can touch — too risky to per-symbol).
+const DEEP_KEEP_EXCL = ["linker", "linker64", "libdl.so"];
+
+// Hostile symbol patterns. When --trace-deep is on, we per-symbol exclude
+// these from Stalker AND attach Interceptor for boundary-diff (route B).
+// Pattern is substring match against demangled-ish symbol name.
+const DEFAULT_HOSTILE_PATTERNS = [
+    // ART self-modifying / hot reentry surfaces
+    "art::interpreter::Execute",
+    "art::interpreter::DoCall",
+    "ExecuteSwitchImpl", "ExecuteMterp", "MterpHelpers",
+    "art::jit::Jit", "art::jit::JitCompiler",
+    "art::gc::Heap::", "art::gc::collector::",
+    "art::ClassLinker::Lookup",
+    // libc atomic / lock primitives (LDXR/STXR pairs Stalker can't safely instrument)
+    "pthread_mutex_lock", "pthread_mutex_unlock",
+    "pthread_rwlock_", "pthread_cond_",
+    "__bionic_atomic_", "__atomic_",
+    "malloc", "free", "calloc", "realloc",   // scudo allocator atomics
+];
 
 // SOFT_EXCL: excluded by default (perf + noise), but --include-so can
 // override (user accepts the risk). System-ish but no atomic deadlock pattern.
@@ -200,6 +226,7 @@ function ensureFlushTimer() {
                     closeTraceFile();
                     const ms = Date.now() - STATE.started;
                     try { flushJniStringEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
+                    try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
                     send({ type: "trace-end", callIdx: STATE.callIdx,
                            tid: STATE.primaryTid, retval: "?",
                            ms, total, dropped, truncated: true,
@@ -217,25 +244,168 @@ function ensureFlushTimer() {
 
 function applyExcludesOnce() {
     if (STATE.excluded) return;
-    // Combined exclude list = HARD_EXCL + (SOFT_EXCL minus user-requested includes)
     const userIncl = STATE.includeSoPatterns || [];
     const matchesUser = (name) => userIncl.some(pat => name.indexOf(pat) !== -1);
-    let n = 0, hard = 0, soft = 0, user_kept = 0;
+    const deep = !!STATE.deepTrace;
+    const hostilePatterns = STATE.hostilePatterns || DEFAULT_HOSTILE_PATTERNS;
+    STATE.hostileSyms = [];
+    let nMod = 0, hard = 0, soft = 0, user_kept = 0, hostile = 0;
+
     for (const m of Process.enumerateModules()) {
-        let isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
-        let isSoft = !isHard && SOFT_EXCL.some(p => m.name.indexOf(p) !== -1);
+        const isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
+        const isSoft = !isHard && SOFT_EXCL.some(p => m.name.indexOf(p) !== -1);
+
         if (isHard) {
-            // Always exclude — even if user requested it (warn)
+            const stillKeep = DEEP_KEEP_EXCL.some(p => m.name.indexOf(p) !== -1);
+            if (deep && !stillKeep) {
+                // 不整 module exclude. 改成 per-symbol hostile exclude.
+                let perMod = 0;
+                try {
+                    for (const sym of m.enumerateSymbols()) {
+                        if (!sym.address || sym.address.isNull()) continue;
+                        if (!hostilePatterns.some(p => sym.name.indexOf(p) !== -1)) continue;
+                        const symSize = sym.size || 4096;   // Stalker exclude needs size; default 1 page
+                        try {
+                            Stalker.exclude({base: sym.address, size: symSize});
+                            STATE.hostileSyms.push({
+                                addr: sym.address, end: sym.address.add(symSize),
+                                name: sym.name, mod: m.name,
+                            });
+                            perMod++;
+                        } catch (_) {}
+                    }
+                } catch (e) { log(`[!] enumSymbols ${m.name} failed: ${e}`); }
+                hostile += perMod;
+                log(`[+] deep: ${m.name} kept; ${perMod} hostile syms excluded`);
+                continue;
+            }
+            // Not deep, or module on DEEP_KEEP_EXCL: full module exclude
             if (matchesUser(m.name))
                 log(`[!] WARN: --include-so matched ${m.name}, but it is HARD_EXCL (atomic deadlock risk); skipping`);
-            try { Stalker.exclude({base:m.base, size:m.size}); n++; hard++; } catch(_){}
+            try { Stalker.exclude({base: m.base, size: m.size}); nMod++; hard++; } catch (_) {}
         } else if (isSoft) {
-            if (matchesUser(m.name)) { user_kept++; continue; }   // user wants it
-            try { Stalker.exclude({base:m.base, size:m.size}); n++; soft++; } catch(_){}
+            if (matchesUser(m.name)) { user_kept++; continue; }
+            try { Stalker.exclude({base: m.base, size: m.size}); nMod++; soft++; } catch (_) {}
         }
     }
-    log(`[+] Stalker.exclude ${n} system 模块 (hard=${hard} soft=${soft}; user-kept=${user_kept})`);
+    log(`[+] Stalker.exclude: modules=${nMod} (hard=${hard} soft=${soft}, user-kept=${user_kept}); deep=${deep} hostile-syms=${hostile}`);
+    if (deep) installBoundaryDiffHooksOnce();
     STATE.excluded = true;
+}
+
+// ─────────── Route B: boundary memory diff for hostile syms ────────────────
+//
+// 对每个 STATE.hostileSyms 装 Interceptor. onEnter snapshot ±256B around
+// X0..X7 ptrs (only those in writable rw- ranges). onLeave diff, send
+// type='ext-write' message per byte changed. Host writes external_writes.bin
+// alongside trace.bin. Viewer/MemShadow loads it as kind='x' synthetic events.
+
+const PTR_WIN = 256;     // bytes to snapshot around each pointer arg
+
+function refreshWritableRanges() {
+    // Cached at fn-entry. Sorted by base, binary-searched at scan time.
+    STATE.writableRanges = Process.enumerateRanges("rw-").map(r => ({
+        base: r.base, end: r.base.add(r.size),
+    }));
+}
+
+function isPtrInWritable(p) {
+    if (!p || p.isNull()) return false;
+    const ranges = STATE.writableRanges;
+    if (!ranges) return false;
+    for (let i = 0; i < ranges.length; i++) {
+        if (p.compare(ranges[i].base) >= 0 && p.compare(ranges[i].end) < 0)
+            return true;
+    }
+    return false;
+}
+
+function installBoundaryDiffHooksOnce() {
+    if (STATE.boundaryHooksInstalled) return;
+    if (!STATE.hostileSyms || STATE.hostileSyms.length === 0) {
+        STATE.boundaryHooksInstalled = true;
+        return;
+    }
+    STATE.extWriteEvents = STATE.extWriteEvents || [];
+    let installed = 0;
+    for (const sym of STATE.hostileSyms) {
+        try {
+            Interceptor.attach(sym.addr, makeBoundaryDiffHook(sym.name));
+            installed++;
+        } catch (_) {}
+    }
+    STATE.boundaryHooksInstalled = true;
+    log(`[+] boundary-diff Interceptor installed: ${installed}/${STATE.hostileSyms.length} hostile syms`);
+}
+
+function makeBoundaryDiffHook(symName) {
+    return {
+        onEnter(args) {
+            if (this.threadId !== STATE.primaryTid) { this._skip = true; return; }
+            if (!STATE.fnEntered) { this._skip = true; return; }
+            this._sym = symName;
+            // Trace idx at entry — write events get attributed here so
+            // memshadow shows them as "happened just before this insn"
+            this._enterIdx = STATE.headBuf.readU64().toNumber();
+            const snap = [];
+            for (let i = 0; i < 8; i++) {
+                const p = args[i];
+                if (!isPtrInWritable(p)) continue;
+                let buf = null;
+                try { buf = p.readByteArray(PTR_WIN); } catch (_) {}
+                if (buf) snap.push({addr: p, before: new Uint8Array(buf)});
+            }
+            this._snap = snap;
+        },
+        onLeave(rv) {
+            if (this._skip) return;
+            const snap = this._snap || [];
+            // Add rv-window if rv looks like a fresh pointer (e.g. malloc result)
+            try {
+                if (isPtrInWritable(rv)) {
+                    let after = null;
+                    try { after = rv.readByteArray(PTR_WIN); } catch (_) {}
+                    if (after) {
+                        // Treat entire rv-window as ext-write (no "before"; SO
+                        // hasn't seen this region — fresh allocation).
+                        const u8 = new Uint8Array(after);
+                        for (let i = 0; i < u8.length; i++) {
+                            STATE.extWriteEvents.push({
+                                attrIdx: this._enterIdx,
+                                addr: rv.add(i).toString(),
+                                byte: u8[i],
+                            });
+                        }
+                    }
+                }
+            } catch (_) {}
+            // Diff snapshotted pointer windows
+            for (const s of snap) {
+                let after = null;
+                try { after = s.addr.readByteArray(PTR_WIN); } catch (_) { continue; }
+                const a = new Uint8Array(after);
+                for (let i = 0; i < a.length; i++) {
+                    if (a[i] !== s.before[i]) {
+                        STATE.extWriteEvents.push({
+                            attrIdx: this._enterIdx,
+                            addr: s.addr.add(i).toString(),
+                            byte: a[i],
+                        });
+                    }
+                }
+            }
+            // Flush periodically so host buffer doesn't bloat memory
+            if (STATE.extWriteEvents.length >= 4096) flushExtWriteEvents();
+        }
+    };
+}
+
+function flushExtWriteEvents() {
+    if (!STATE.extWriteEvents || STATE.extWriteEvents.length === 0) return 0;
+    const events = STATE.extWriteEvents;
+    STATE.extWriteEvents = [];
+    send({type: "ext-write", callIdx: STATE.callIdx, count: events.length, events: events});
+    return events.length;
 }
 
 // Build the list of (base, end, name) ranges where we WANT to record records.
@@ -387,6 +557,12 @@ rpc.exports = {
         // e.g. ['libsgsecuritybody','libsgavmp','libcrypto']. HARD_EXCL still applies.
         STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns)
                                    ? opts.includeSoPatterns : [];
+        // Deep trace: skip module-level HARD_EXCL for libart etc; per-symbol
+        // exclude only HOSTILE_PATTERNS. Boundary-diff via Interceptor catches
+        // memory writes by excluded syms. See applyExcludesOnce.
+        STATE.deepTrace = !!opts.deepTrace;
+        STATE.hostilePatterns = Array.isArray(opts.hostilePatterns) && opts.hostilePatterns.length
+                                ? opts.hostilePatterns : null;   // null → DEFAULT
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);
@@ -509,6 +685,8 @@ function installFnHook(fp, onInsn) {
                 send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started, devicePath: STATE.traceFilePath });
                 ensureFlushTimer();
                 applyExcludesOnce();
+                // Cache writable rw- ranges for boundary-diff ptr classification
+                if (STATE.deepTrace) refreshWritableRanges();
                 // Hook libart JNI string fns once we're in a thread that has JNIEnv.
                 // Interceptor (not Stalker) — safe even though libart is HARD_EXCL.
                 try { installJniStringHooksOnce(); } catch(_){}
@@ -552,6 +730,7 @@ function installFnHook(fp, onInsn) {
                 const rate = (total / Math.max(elapsed/1000, 1e-3)).toFixed(0);
                 // 在 trace-end 前 flush JNI string events 让 host 关联到本 call
                 try { flushJniStringEvents(this._callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
+                try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
                 log(`[<] call #${this._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
                 send({ type: "trace-end", callIdx: this._callIdx, tid: this._tid,
                        retval: retv.toString(), ms: elapsed, total, dropped, truncated: false,

@@ -83,6 +83,15 @@ class MemShadow:
                     if val is None: continue
                     self.reads.append((i, addr, sz, val))
                     self._splat_bytes(addr, sz, val, i, "r")
+        # Boundary-diff events (--trace-deep): external_writes.bin is a sibling
+        # to trace.bin, written by host from agent ext-write messages. Each
+        # record = <Q attr_idx> <Q addr> <B byte> = 17 bytes. Splat as kind="x"
+        # so byte_at returns the value with provenance. Affects writes/numpy
+        # index too — taint / xref-by-addr endpoints see external writes.
+        try:
+            self._load_external_writes()
+        except Exception as _e:
+            pass
         # numpy 视图: 给 idxs-touching-* 端点向量化查询用. 6.8M trace 上
         # 596ms set comprehension → ~5ms vectorized mask.
         # writes/reads 已按 trace order build, w_idx/r_idx 自然 ascending.
@@ -111,6 +120,35 @@ class MemShadow:
             byte = (val >> (o * 8)) & 0xff
             ba = addr + o
             self.bytes.setdefault(ba, []).append((idx, byte, kind))
+
+    def _load_external_writes(self):
+        """Load sibling external_writes.bin (--trace-deep boundary-diff output).
+        Format: <Q attr_idx <Q addr <B byte (17 bytes / record).
+
+        Insertion respects trace order: records have monotonic attr_idx (host
+        writes them in arrival order, agent fires them on call entry/exit
+        boundaries). Splat each as kind='x'. The byte addr is already 1-byte;
+        size=1, val=byte. attr_idx is the trace idx where the write becomes
+        visible (= entry of the external call), so byte_at(t) returns the
+        external value for any t >= attr_idx (until shadowed by a later w/r/x).
+        """
+        ext_path = self.t.path.parent / "external_writes.bin"
+        if not ext_path.exists() or ext_path.stat().st_size == 0:
+            return
+        REC = 17
+        data = ext_path.read_bytes()
+        n = len(data) // REC
+        for i in range(n):
+            off = i * REC
+            attr_idx, addr, byte = struct.unpack_from("<QQB", data, off)
+            self.writes.append((attr_idx, addr, 1, byte))
+            self._splat_bytes(addr, 1, byte, attr_idx, "x")
+        # writes list 不再保证 trace-order 排序 (ext writes attr_idx 跟物理顺序一致
+        # 但跟内部 stalker writes 可能交错). 重排,后续 numpy index 才正确 ascending.
+        self.writes.sort(key=lambda w: w[0])
+        # bytes[addr] 内事件也按 idx 重排 (binary search 依赖 ascending)
+        for ba, evs in self.bytes.items():
+            evs.sort(key=lambda e: e[0])
 
     def byte_at(self, addr: int, t: int) -> tuple[int | None, str, int | None]:
         """Return (byte_value, kind, source_idx) for latest event with idx <= t.

@@ -258,6 +258,9 @@ def cmd_trace(args):
         try:
             if s.get("fp"): s["fp"].close()
         except: pass
+        try:
+            if s.get("ext_fp"): s["ext_fp"].close()
+        except: pass
         # v5: 从 device 拉 trace.bin
         device_path = s["meta"].get("devicePath")
         if device_path:
@@ -389,6 +392,31 @@ def cmd_trace(args):
                         m_jni = sess_files[ci]["meta"].setdefault("jni_strings", [])
                         m_jni.extend(evs)
                         wlog(f"[{tag}] jni-strings call#{ci} +{len(evs)} (total={len(m_jni)})")
+                    elif t == "ext-write":
+                        # Boundary-diff events from --trace-deep mode.
+                        # Each event: {attrIdx: u64, addr: "0x...", byte: u8}.
+                        # Append to external_writes.bin in per-call dir.
+                        # Format per record: <Q (attr_idx) <Q (addr) <B (byte) = 17 bytes.
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        evs = p.get("events", [])
+                        s = sess_files[ci]
+                        ext_path = s["dir"] / "external_writes.bin"
+                        # Append-mode binary stream (open lazy, kept on session)
+                        ef = s.get("ext_fp")
+                        if ef is None:
+                            ef = open(ext_path, "ab"); s["ext_fp"] = ef
+                        import struct as _st
+                        for ev in evs:
+                            try:
+                                addr = int(ev["addr"], 16) if isinstance(ev["addr"], str) else int(ev["addr"])
+                                ef.write(_st.pack("<QQB", int(ev["attrIdx"]), addr, int(ev["byte"]) & 0xff))
+                            except Exception as _e:
+                                pass
+                        ef.flush()
+                        s["meta"]["ext_writes"] = s["meta"].get("ext_writes", 0) + len(evs)
+                        wlog(f"[{tag}] ext-write call#{ci} +{len(evs)} (total={s['meta']['ext_writes']})")
                     elif t == "follow": wlog(f"[{tag}] 跟踪 tid={p['tid']} ({p.get('label','?')})")
                     elif t == "cmd-hist":
                         h = p.get("hist", {})
@@ -416,6 +444,9 @@ def cmd_trace(args):
     incl_pats = []
     if args.include_so:
         incl_pats = [p.strip() for p in args.include_so.split(",") if p.strip()]
+    hostile_pats = []
+    if getattr(args, "hostile_patterns", None):
+        hostile_pats = [p.strip() for p in args.hostile_patterns.split(",") if p.strip()]
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -427,6 +458,8 @@ def cmd_trace(args):
         "followAllThreads": args.follow_workers,
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
         "includeSoPatterns": incl_pats,     # multi-SO trace
+        "deepTrace": bool(getattr(args, "trace_deep", False)),
+        "hostilePatterns": hostile_pats,
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1004,6 +1037,12 @@ def main():
                       help="逗号分隔, 额外 trace 这些 SO (除目标外). e.g."
                            " 'libsgsecuritybody,libsgavmp,libcrypto'."
                            " HARD_EXCL (libc/libart/linker etc) 永远排除 — 即使列在这里也忽略.")
+    p_tr.add_argument("--trace-deep", action="store_true", dest="trace_deep",
+                      help="深度模式: 不再 module-level 排除 libart/libc 等. 改成 per-symbol "
+                           "exclude (interpreter/JIT/GC/atomic primitives). 这些 hostile 函数 "
+                           "用 boundary ptr-diff 抓内存写. 慢但 memshadow 完整. linker/libdl 仍排除.")
+    p_tr.add_argument("--hostile-patterns", default=None, dest="hostile_patterns",
+                      help="逗号分隔, 覆盖默认 hostile 名单. 仅 --trace-deep 下生效.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")
