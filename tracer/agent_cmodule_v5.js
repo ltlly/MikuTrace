@@ -87,7 +87,9 @@ void on_insn(GumCpuContext *ctx, void *user_data) {
     *(unsigned long long *)(p + 8 + 30*8) = cu[3+30]; // lr
     *(unsigned long long *)(p + 256) = cu[1];         // sp
     *(unsigned int *)(p + 264) = (unsigned int)(cu[2] & 0xffffffffULL);
-    *(unsigned int *)(p + 268) = 0;
+    /* inst: 读 pc 处 4 字节机器码. 历史 bug: 旧代码硬编码 0, 导致 viewer/CLI 全部
+       解码成 'udf #0'. ARM64 fixed-width 4-byte insns, *(uint32_t *)pc 对齐安全. */
+    *(unsigned int *)(p + 268) = *(unsigned int *)cu[0];
     head = h + 1;     /* volatile store. ARM64 store buffer drain ≪ v8 flush 间隔, 实际无 race */
 }
 `;

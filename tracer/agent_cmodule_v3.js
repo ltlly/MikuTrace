@@ -50,7 +50,8 @@ void on_insn(GumCpuContext *ctx, void *user_data) {
     *(unsigned long long *)(p + 8 + 30*8) = cu[3+30]; // lr
     *(unsigned long long *)(p + 256) = cu[1];         // sp
     *(unsigned int *)(p + 264) = (unsigned int)(cu[2] & 0xffffffffULL);
-    *(unsigned int *)(p + 268) = 0;
+    /* inst: 读 pc 处 4 字节机器码 (ARM64 fixed-width). 历史 bug: 旧代码硬编码 0. */
+    *(unsigned int *)(p + 268) = *(unsigned int *)cu[0];
     head += REC;
     total_written++;
 }
