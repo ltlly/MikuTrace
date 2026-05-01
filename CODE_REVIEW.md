@@ -692,7 +692,7 @@ if meta.module and not meta.modules:
 | P1.C | server.py 纯函数 (lines 28-175) → `webui/cfg_render.py` | 1h | ✅ DONE (`9f1e3f0`) |
 | P1.D | `KNOWN_LIBSGMAINSO` 参数化 (#5, `build_from_trace` 接 `known_offsets`) | 1h | ✅ DONE (`1341e6f`) |
 | P1.E | BN backend `field_at` 实现 (#19) | 1-2 day | BN MCP 已就位, 可以开始 |
-| P1.F | SQLite export (`python -m viewer export`) (#18) | 半天 | — (配合 5.3) |
+| P1.F | SQLite export (`python -m viewer export`) (#18) | 半天 | ✅ DONE (`f574873`) |
 | P2.A | 5.2 `tracemiku-mcp` MCP server | 1-2 day | **5.1 必须先做** |
 | P2.B | 5.3 thin CLI subcommands + Python SDK 文档 | 半天 | 可与 5.2 并行 |
 | P3 | 8.3 trace.py fallback 三处去重 | 15min | 防御性, 顺手做 |

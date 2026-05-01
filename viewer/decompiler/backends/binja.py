@@ -315,8 +315,102 @@ class Backend:
         return out
 
     def field_at(self, pc: int, reg: str, offset: int) -> Optional[FieldHint]:
-        # Stub for M0 — needs HLIL operand walking. Implement in M2.
+        """Find struct field semantic at (pc, reg, offset).
+
+        Walks BN HLIL instructions at `pc`, looks for deref-field or
+        struct-offset operands where the base register matches `reg` and
+        the offset matches `offset`.
+        """
+        if self._bv is None: return None
+        fn = self.function_at(pc)
+        if fn is None: return None
+        bn_fn = fn.raw
+        if bn_fn is None: return None
+        ad = self._to_bv_addr(pc)
+        try:
+            hlil = bn_fn.hlil
+            if hlil is None: return None
+            # Find HLIL instructions at this address
+            for insn in hlil.instructions:
+                if insn.address != ad: continue
+                result = self._walk_hlil_for_field(insn, reg, offset)
+                if result: return result
+            # Also check HLIL instructions that span this address
+            for insn in hlil.instructions:
+                if insn.address <= ad < insn.address + 4:
+                    result = self._walk_hlil_for_field(insn, reg, offset)
+                    if result: return result
+        except Exception as e:
+            log.debug("field_at(%#x, %s, %#x) failed: %s", pc, reg, offset, e)
         return None
+
+    def _walk_hlil_for_field(self, hlil_insn, reg: str, offset: int) -> Optional[FieldHint]:
+        """Recursively walk an HLIL expression tree looking for struct field access."""
+        try:
+            from binaryninja import HighLevelILOperation as Op
+        except ImportError:
+            return None
+        return self._search_expr(hlil_insn, reg, offset, depth=0)
+
+    def _search_expr(self, expr, reg: str, offset: int, depth: int) -> Optional[FieldHint]:
+        """Search an HLIL expression for (reg + offset) with struct field info."""
+        if depth > 10: return None
+        try:
+            from binaryninja import HighLevelILOperation as Op
+        except ImportError:
+            return None
+        try:
+            op = expr.operation
+            # HLIL_DEREF_FIELD: memory access with known struct field
+            if op == Op.HLIL_DEREF_FIELD:
+                src = expr.src
+                if hasattr(src, 'offset') and src.offset == offset:
+                    # Check if the source register matches
+                    if self._expr_uses_reg(src, reg):
+                        field_name = expr.constant_field.name if hasattr(expr, 'constant_field') and expr.constant_field else ""
+                        type_name = str(expr.expr_type) if hasattr(expr, 'expr_type') and expr.expr_type else ""
+                        return FieldHint(
+                            struct=str(src.expr_type) if hasattr(src, 'expr_type') and src.expr_type else "",
+                            field=field_name,
+                            offset=offset,
+                            type_name=type_name,
+                        )
+            # HLIL_STRUCT_FIELD: struct field access (not necessarily memory)
+            if op == Op.HLIL_STRUCT_FIELD:
+                if hasattr(expr, 'offset') and expr.offset == offset:
+                    if self._expr_uses_reg(expr.src, reg):
+                        return FieldHint(
+                            struct=str(expr.expr_type) if hasattr(expr, 'expr_type') and expr.expr_type else "",
+                            field=expr.constant_field.name if hasattr(expr, 'constant_field') and expr.constant_field else "",
+                            offset=offset,
+                            type_name=str(expr.expr_type) if hasattr(expr, 'expr_type') and expr.expr_type else "",
+                        )
+            # Recurse into operands
+            for operand in expr.operands:
+                if hasattr(operand, 'operation'):
+                    result = self._search_expr(operand, reg, offset, depth + 1)
+                    if result: return result
+        except Exception:
+            pass
+        return None
+
+    def _expr_uses_reg(self, expr, reg: str) -> bool:
+        """Check if an HLIL expression references the given register."""
+        try:
+            from binaryninja import HighLevelILOperation as Op
+            if expr.operation == Op.HLIL_REG:
+                reg_info = expr.reg
+                if hasattr(reg_info, 'name'):
+                    return reg_info.name == reg
+                # Try to get register name from index
+                if hasattr(reg_info, 'index'):
+                    arch = self._bv.arch
+                    if arch:
+                        reg_name = arch.get_reg_name(reg_info.index)
+                        return reg_name == reg
+        except Exception:
+            pass
+        return False
 
     def xrefs_to(self, addr: int) -> list[int]:
         if self._bv is None: return []
