@@ -50,6 +50,67 @@ class SymbolMap:
         return (name, pc - start)
 
 
+def auto_known_offsets(trace: Trace) -> dict[int, str] | None:
+    """Try to auto-discover known_offsets for the target SO.
+
+    Lookup order:
+      1. trace.meta.raw["known_offsets"] (per-call meta.json)
+      2. <trace_dir>/known_offsets.json (next to trace.bin)
+      3. <run_dir>/known_offsets.json (per-call dir's parent.parent if 'calls')
+      4. examples/<so_basename>/known_offsets.json (project samples)
+
+    Returns None if nothing found. Keys may be hex strings ("0x570b8") or ints;
+    we normalize to int → str dict.
+    """
+    so_name = trace.meta.module.name if trace.meta.module else None
+    candidates: list[pathlib.Path] = []
+
+    # 1. inline in raw meta
+    raw = getattr(trace.meta, "raw", None) or {}
+    inline = raw.get("known_offsets")
+    if isinstance(inline, dict):
+        return _parse_offsets(inline)
+
+    # 2. trace dir
+    try:
+        trace_dir = trace.path.parent if trace.path.is_file() else trace.path
+    except Exception:
+        trace_dir = None
+    if trace_dir:
+        candidates.append(trace_dir / "known_offsets.json")
+        # 3. run dir (parent.parent if in calls/)
+        if trace_dir.parent.name == "calls":
+            candidates.append(trace_dir.parent.parent / "known_offsets.json")
+        else:
+            candidates.append(trace_dir.parent / "known_offsets.json")
+
+    # 4. examples by SO basename
+    if so_name:
+        # libsgmainso-6.8.260403.so -> libsgmainso
+        stem = so_name.split("-")[0].split(".")[0]
+        proj_root = pathlib.Path(__file__).resolve().parent.parent
+        candidates.append(proj_root / "examples" / stem / "known_offsets.json")
+
+    for p in candidates:
+        try:
+            if p.exists():
+                return _parse_offsets(json.loads(p.read_text()))
+        except Exception:
+            continue
+    return None
+
+
+def _parse_offsets(raw: dict) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for k, v in raw.items():
+        try:
+            ki = int(k, 16) if isinstance(k, str) else int(k)
+            out[ki] = str(v)
+        except Exception:
+            continue
+    return out
+
+
 def build_from_trace(trace: Trace, base: int = 0,
                      known_offsets: dict[int, str] | None = None) -> SymbolMap:
     """Walk the trace, identify function entries (bl targets + first PC),
@@ -58,8 +119,11 @@ def build_from_trace(trace: Trace, base: int = 0,
     Args:
         known_offsets: Optional dict of {offset: name} for the target module.
             When provided, these offsets are used to align the trace start
-            and name known functions. When None, pure heuristic (bl targets + first PC).
+            and name known functions. When None, attempts auto-discovery
+            via auto_known_offsets(trace); if still None, pure heuristic.
     """
+    if known_offsets is None:
+        known_offsets = auto_known_offsets(trace)
     if base == 0 and trace.meta.module:
         base = trace.meta.module.base
     sm = SymbolMap(base=base)
