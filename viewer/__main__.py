@@ -71,7 +71,20 @@ def cmd_export(args):
     print(f"exported {n} records to {out_path}")
 
 
+_KNOWN_SUBCOMMANDS = {"stats", "export"}
+
+
 def main():
+    # Legacy path: `python -m viewer <trace_dir_or_file>` → launch TUI directly.
+    # 必须在 argparse 之前判定, 否则 add_subparsers 会把第一个位置参数当 subcommand
+    # 解析失败 (invalid choice).
+    if len(sys.argv) >= 2 and sys.argv[1] not in _KNOWN_SUBCOMMANDS \
+            and sys.argv[1] not in ("-h", "--help"):
+        from .app import TraceMikuApp
+        app = TraceMikuApp(sys.argv[1])
+        app.run()
+        return
+
     parser = argparse.ArgumentParser(prog="viewer", description="traceMiku CLI")
     sub = parser.add_subparsers(dest="subcommand")
 
@@ -89,12 +102,7 @@ def main():
     elif args.subcommand == "export":
         cmd_export(args)
     else:
-        # No subcommand — launch TUI (legacy)
-        if len(sys.argv) < 2:
-            parser.print_help(); sys.exit(1)
-        from .app import TraceMikuApp
-        app = TraceMikuApp(sys.argv[1])
-        app.run()
+        parser.print_help(); sys.exit(1)
 
 
 if __name__ == "__main__":
