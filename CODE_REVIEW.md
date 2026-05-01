@@ -707,3 +707,146 @@ if meta.module and not meta.modules:
 - 顺便定义 modules / record / cfg 等 response Pydantic model, 后面 MCP wrapper 可以直接复用
 
 如果想先把"已修好的链路"100% 收尾, **优先做 P1.B (regression test, 30min)** — 防止 multi-module 再回归。这是 memory `feedback_e2e_pipeline_audit` 写下的教训的直接延伸: 改 agent→host→viewer 链路得有测试看着, 不能只靠 mock 一次。
+
+---
+
+## 九、四轮复核 (2026-05-01, 基于 commit `cc923f8` HEAD, 6 个新 commit)
+
+P1 几乎全做完了 (`1341e6f` → `cc923f8`), 但发现 **4 个严重问题** + 几处 minor:
+
+### 9.1 🔴 CRITICAL: Pydantic schema 跟实际返回不匹配, 4 个测试 fail
+
+**Commit**: `7453d7c`
+
+**症状**: `/usr/bin/python3 -m pytest tests/test_webui.py` 4 fail —
+- `test_cfg`, `test_cfg_async_first_call`: 直接调 `/api/cfg`
+- `test_block_for_pc`, `test_search`: 通过 `_wait_cfg()` 间接调
+
+**根本原因**: 多个 endpoint 有 "building" 和 "ready" 两种 response shape, 但 `response_model` 只声明了 ready 的那个。Pydantic 严格校验 → building shape 触发 `ResponseValidationError`。
+
+**已确认受影响的 endpoint**:
+| Endpoint | 声明的 model | 实际还会返回 | 触发条件 |
+|---|---|---|---|
+| `/api/cfg` (line 405) | `CfgReadyResponse` | `{status, cfg, pc_inst, elapsed, errors}` (building) | CFG 未 build 完 (高频) |
+| `/api/block` (line 481) | `BlockDetail` | `{status: ...}` | CFG 未 build 完 |
+| `/api/loops` (line 510) | `LoopsResponse` | `{status, loops: []}` | CFG 未 build 完 |
+| `/api/idxs-for-block` (line 803) | `IdxsResponse` | `{status, idxs: []}` | block_idxs 未 ready |
+| `/api/forward-taint` (line 846) | `TaintResponse` | `{status, hits: []}` | index 未 build |
+| `/api/backward-taint` (line 867) | `TaintResponse` | `{status, chain: []}` | 同上 |
+| `/api/strings` (line 887) | `StringsResponse` | `{status, strings: []}` | strings 未 build |
+| `/api/string-provenance` (line 919) | `StringProvenanceResponse` | `{status: error/empty}` | 多种状态 |
+| `/api/backtrace` (line 732) | `BacktraceResponse` | `{status, stack: [], depth: 0}` | block_idxs 未 ready |
+| `/api/records` (line 254) | `RecordsResponse` | `{count: 0, records: []}` (缺 `start`/`end`) | start out of range |
+
+**修复方案 (3 选 1)**:
+1. **Union 类型** (推荐): `response_model=Union[CfgReadyResponse, CfgBuildingResponse]` — 字段约束最严, OpenAPI 也会输出 `oneOf`, LLM client 一眼看出。
+2. 把所有字段设为 `Optional` 合并成单 model — 简单但 schema 失真 (LLM 看到 `blocks: Optional` 不知道什么时候有)。
+3. building 路径返回 502/503 + `JSONResponse` 显式不走 model — 更 RESTful 但前端要重写错误处理。
+
+**优先级**: **P0, 立刻修**。Pydantic 化的 PR 必须修复才能算完成, 当前是 broken 状态。
+
+### 9.2 🔴 `python -m viewer trace_dir/` 启动 TUI 路径已破坏
+
+**Commit**: `f574873`
+
+**症状**:
+```
+$ python -m viewer traces/percall_test
+usage: viewer [-h] {stats,export} ...
+viewer: error: argument subcommand: invalid choice: 'traces/percall_test'
+       (choose from stats, export)
+```
+
+**根本原因**: `viewer/__main__.py` 加了 argparse subparsers (`stats`/`export`), 但没保留对裸 path 参数的兼容。`add_subparsers(dest="subcommand")` 默认会把第一位置参数当作 subcommand name 解析, "traces/..." 不在 choices 里直接 error。
+
+**末尾的 fallback 逻辑不可达**:
+```python
+else:
+    # No subcommand — launch TUI (legacy)
+    if len(sys.argv) < 2:
+        parser.print_help(); sys.exit(1)
+    from .app import TraceMikuApp     # <-- 永远走不到
+```
+
+**影响范围**: TUI 虽然方向上"冻结"了, 但:
+- 旧文档 / 旧脚本可能还用 `python -m viewer <dir>`, 现在直接报错
+- `tracemiku view` 没坏 (用 `TraceMikuApp` 直接 import)
+- 所以是**默默回归**, 不是核心功能, 但属于 broken UX
+
+**修复 (3 行)**: parse_args 之前先看 `sys.argv[1]` 是否是 path:
+```python
+def main():
+    # Legacy: bare path → launch TUI directly
+    if len(sys.argv) >= 2 and sys.argv[1] not in ("stats", "export", "-h", "--help"):
+        from .app import TraceMikuApp
+        TraceMikuApp(sys.argv[1]).run(); return
+    parser = argparse.ArgumentParser(...)
+    ...
+```
+
+**优先级**: P2 (TUI 冻结后用户少, 但不能 silent break)。
+
+### 9.3 🟡 BN `field_at` 实现了, 但**无消费者**, 死代码
+
+**Commit**: `74f6ea5`
+
+**实现质量**: 95 行, 看起来合理 — 用 BN HLIL_DEREF_FIELD / HLIL_STRUCT_FIELD 操作码递归走 expr tree, fuzzy match `pc <= ad < pc+4`, 深度限 10, try/except 防御性兜底。
+
+**严重问题**: **没有任何调用者**。
+- `webui/server.py` 没新增 endpoint 调用 `field_at`
+- `_classify_reg_value` 也没接它
+- 没有 regression test (一个 BN 二进制文件加在 `examples/` 都没有)
+- 这是跟 multi-module bug 完全一样的反模式 (memory `feedback_e2e_pipeline_audit`): **改了一端, 没接到下游, 端到端不通**
+
+**该补的事**:
+1. `/api/field-at?pc=...&reg=...&offset=...` endpoint
+2. 让 `_classify_reg_value` 在 ldr/str 指令时 query 一次 field hint, 拼到 reg annotation
+3. `tests/test_field_at.py` — 至少跑一个最小 BN bndb 的 deref-field case
+4. Web UI: hex dump 按 struct field 着色 (UI 工作量较大, 可后做)
+
+**优先级**: **P1, 这事跟 8.4 / multi-module 完全平行**。实现已经躺在那里, 接上下游一两个小时。
+
+### 9.4 🟡 `KNOWN_LIBSGMAINSO` 参数化后, 调用方都没传 → libsgmainso 用户失去 JNI_OnLoad/doCommandNative 命名
+
+**Commit**: `1341e6f`
+
+**症状**: `webui/server.py:101` 调 `sym = build_from_trace(t)`, 不传 `known_offsets`。结果: 加载 libsgmainso trace 后 web UI 不再自动显示 `JNI_OnLoad` / `doCommandNative` 等命名 — 全是 `sub_<offset>`。
+
+**这是 #5 参数化的副作用** — 解耦得太彻底, 下游没补回来。也属于"改了一端, 没接到下游"。
+
+**修复方案 (推荐 auto-discovery)**:
+- `viewer/__init__.py` 或 `viewer/symbols.py` 加: `def _auto_known_offsets(trace) -> dict | None`, 检查 trace dir / 上级 / `examples/<so_name>/known_offsets.json` / `meta.json` 里的 `known_offsets` 字段, 命中即返回
+- `webui/server.py`/`tracemiku`/`viewer/app.py` 三处调用: `sym = build_from_trace(t, known_offsets=_auto_known_offsets(t))`
+- 估时: 1 小时
+
+**优先级**: **P1, 立刻修**。否则用户跑 `--so libsgmainso` 时 web UI 用户体验直接退化。
+
+### 9.5 ⚠️ 其他 minor
+
+- **`viewer/__main__.py` `cmd_export` 默认输出文件名**: `args.trace.replace("/", "_") + ".db"` — `traces/run1` → `traces_run1.db`, 不漂亮但能用。建议: `pathlib.Path(args.trace).name + ".db"`, 即 `run1.db`。
+- **`cmd_export` 的 `synchronous=OFF`**: 一次性 export 工具能用, 但要注释一下"export tool, OK to risk"; 不建议挪到通用代码。
+- **`webui/cfg_render.py` 抽离干净**: 11 个纯函数, 没有引用闭包变量, 完美。
+- **regression test 5 个 case** (`test_meta_modules.py`) 全过, 防回归到位。
+- **`cmd_stats` 的 `module` 缺 `end` 字段** (输出 base+size 但没 end), 跟 `/api/meta` 不一致 — 小细节, P3。
+
+### 9.6 综合修订后的 P0/P1 行动清单 (2026-05-01 HEAD)
+
+| 优先级 | TODO | 来源 | 估时 |
+|--------|------|------|------|
+| **🔴 P0** | 修 `/api/cfg`/`/api/block`/`/api/loops`/`/api/strings`/`/api/forward-taint` 等 9 个 endpoint 的 Pydantic Union shape (9.1) | `7453d7c` 引入 | 1-2h |
+| **🟡 P1** | `field_at` 接 endpoint + `_classify_reg_value` 消费 + 测试 (9.3) | `74f6ea5` 引入 | 半天 |
+| **🟡 P1** | `_auto_known_offsets` + 三个调用点 (9.4) | `1341e6f` 引入 | 1h |
+| 🟢 P2 | `python -m viewer <dir>` 兼容 (9.2) | `f574873` 引入 | 5min |
+| 🟢 P3 | `cmd_export` default 文件名 + comment (9.5) | `f574873` 引入 | 5min |
+| 后续 | 5.2 `tracemiku-mcp` MCP server | 5.x | 1-2 day (做完 9.1 才能开 — schema 是 MCP 的输入) |
+| 后续 | 5.3 thin CLI 文档 + Python SDK README | 5.x | 半天 |
+| 后续 | 5.4 LLM 友好高级查询 | 5.x | 各 0.5-1 day |
+
+### 9.7 教训总结 (再次提示)
+
+这次 6 个 commit 复核出来, **9.3/9.4 是同一种 bug 的两次重演**: "改了一端, 没接到下游, 端到端不通"。这正是 memory `feedback_e2e_pipeline_audit` 写下的内容。建议:
+
+- **每个新 feature 必须有 demo / 端到端 trace**: BN field_at 应该有"加载某 .bndb → 调 endpoint → 看到 field hint"的 5 行 reproducer
+- **每个 backward-incompat refactor 必须扫调用方**: `KNOWN_LIBSGMAINSO` 抽出去之后 `git grep build_from_trace` 应该是 reviewer 的标准动作
+
+**下一次 PR 前, 跑一遍 `pytest tests/`**, 不要等审计阶段才发现 4 个 fail。

@@ -251,7 +251,8 @@ def make_app(trace_path: pathlib.Path,
 
     @app.get("/api/records", response_model=RecordsResponse)
     def records(start: int = 0, count: int = 100, regs: str = ""):
-        if start < 0 or start >= len(t): return {"count": 0, "records": []}
+        if start < 0 or start >= len(t):
+            return {"start": start, "end": start, "count": 0, "records": []}
         end = min(start + count, len(t))
         regs_filter = [r for r in regs.split(",") if r in ALL_REGS] if regs else None
         m = t.meta.module
