@@ -38,6 +38,7 @@ from webui.schemas import (
     StringProvenanceResponse, DecompStatusResponse,
     AsmTokensResponse, HlilResponse, BnCfgSvgResponse, BnCfgForPcResponse,
     BlockForPcResponse, FieldAtResponse, CfgSvgResponse,
+    RegTimelineResponse, MemDiffResponse, FnSummaryResponse,
 )
 
 
@@ -1245,6 +1246,118 @@ def make_app(trace_path: pathlib.Path,
                 "struct": hint.struct or None,
                 "field": hint.field or None,
                 "type_name": hint.type_name or None}
+
+    # ─────────────── 5.4 LLM-friendly higher-level queries ───────────────
+
+    @app.get("/api/reg-timeline", response_model=RegTimelineResponse)
+    def api_reg_timeline(reg: str, start: int = 0, end: int = -1, max_points: int = 1000):
+        """All distinct values of `reg` across [start, end). Returns the first
+        idx for each new value (changes only, not every record). Vectorized.
+        """
+        import numpy as np
+        if reg not in ALL_REGS:
+            raise HTTPException(400, f"unknown reg: {reg!r}")
+        n = len(t)
+        if end < 0 or end > n: end = n
+        start = max(0, min(start, end))
+        # Build reg-value column on demand. For ALL_REGS minus pc/sp/nzcv use
+        # the regs[31] tuple at offset 0x008 inside record. We use Record API
+        # for correctness over speed; window is bounded by max_points.
+        out = []
+        prev = object()    # sentinel
+        truncated = False
+        for i in range(start, end):
+            v = t.record(i).reg(reg)
+            if v != prev:
+                out.append({"idx": i, "value": hex(v)})
+                prev = v
+                if len(out) >= max_points:
+                    truncated = True
+                    break
+        return {"reg": reg, "start": start, "end": end,
+                "count": len(out), "points": out, "truncated": truncated}
+
+    @app.get("/api/mem-diff", response_model=MemDiffResponse)
+    def api_mem_diff(idx: int, addr: str, size: int = 16):
+        """Memory state at idx-1 vs idx for [addr, addr+size). Useful for
+        seeing what a single store wrote (or what an insn observed)."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            # mem may not be ready instantly — caller can retry. Return empty.
+            return {"idx": idx, "addr": addr, "size": size, "bytes": [],
+                    "changed_count": 0}
+        mem = BG["mem"]["data"]
+        start = int(addr, 16) if addr.startswith("0x") else int(addr)
+        before_t = max(0, idx - 1)
+        after_t = idx
+        out = []
+        changed = 0
+        for o in range(size):
+            a = start + o
+            b_before, _, _ = mem.byte_at(a, before_t)
+            b_after, _, _ = mem.byte_at(a, after_t)
+            ch = (b_before != b_after)
+            if ch: changed += 1
+            out.append({"addr": hex(a), "before": b_before,
+                        "after": b_after, "changed": ch})
+        return {"idx": idx, "addr": addr, "size": size,
+                "bytes": out, "changed_count": changed}
+
+    @app.get("/api/fn-summary", response_model=FnSummaryResponse)
+    def api_fn_summary(fn: str, top_blocks: int = 5):
+        """One-call function overview for LLM agents: entry pc, block count,
+        total executions, hot blocks, callees seen in trace."""
+        if BG["cfg"]["status"] != "ready":
+            return {"status": BG["cfg"]["status"]}
+        c = BG["cfg"]["data"]
+        m = t.meta.module
+        base = m.base if m else 0
+        # Find blocks belonging to this fn
+        fn_blocks = []
+        entry_pc = None
+        for pc, b in c.blocks.items():
+            fname, _ = sym.lookup(pc)
+            if fname == fn:
+                fn_blocks.append(b)
+                if entry_pc is None or pc < entry_pc:
+                    entry_pc = pc
+        if not fn_blocks:
+            return {"status": "not-found", "fn": fn}
+        total_exec = sum(b.executions for b in fn_blocks)
+        # Entry idxs: trace positions where entry_pc was hit
+        import numpy as np
+        arr = t.pc_array()
+        entry_idxs_all = np.nonzero(arr == np.uint64(entry_pc))[0]
+        entry_idxs = entry_idxs_all[:50].tolist()
+        # Hot blocks
+        hot = sorted(fn_blocks, key=lambda b: -b.executions)[:top_blocks]
+        hot_out = [{"pc": hex(b.start_pc),
+                    "rel": hex(b.start_pc - base) if base else None,
+                    "insns": len(b.insns), "executions": b.executions}
+                   for b in hot]
+        # Callees: walk fn blocks, find call edges (kind in 'bl', 'blr')
+        # via cfg.edges + sym.lookup for the dst's func name
+        callee_pcs: dict[int, int] = {}
+        fn_starts = {b.start_pc for b in fn_blocks}
+        for (s, d), info in c.edges.items():
+            if s in fn_starts and info["kind"] in ("bl", "blr"):
+                callee_pcs[d] = callee_pcs.get(d, 0) + info["count"]
+        callees = []
+        for cpc, cnt in sorted(callee_pcs.items(), key=lambda x: -x[1])[:20]:
+            cfn, _ = sym.lookup(cpc)
+            callees.append({"pc": hex(cpc),
+                            "func": cfn if cfn != "?" else None,
+                            "count": cnt})
+        return {
+            "status": "ready", "fn": fn,
+            "pc": hex(entry_pc), "rel": hex(entry_pc - base) if base else None,
+            "block_count": len(fn_blocks),
+            "total_executions": total_exec,
+            "entry_idxs": entry_idxs,
+            "entry_idxs_total": int(len(entry_idxs_all)),
+            "hot_blocks": hot_out,
+            "callees": callees,
+        }
 
     @app.get("/api/hlil-for-pc", response_model=HlilResponse)
     def hlil_for_pc(pc: str):

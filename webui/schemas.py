@@ -131,6 +131,76 @@ class BlockForPcResponse(BaseModel):
     cfg_status: Optional[str] = None
 
 
+# ── /api/reg-timeline (5.4) ─────────────────────────────────────────────────
+
+class RegTimelinePoint(BaseModel):
+    idx: int
+    value: str        # hex
+
+class RegTimelineResponse(BaseModel):
+    """All distinct values of a register across [start_idx, end_idx).
+    Each entry is the first idx where that value appeared."""
+    reg: str
+    start: int
+    end: int
+    count: int
+    points: list[RegTimelinePoint]
+    truncated: bool
+
+
+# ── /api/mem-diff (5.4) ─────────────────────────────────────────────────────
+
+class MemDiffByte(BaseModel):
+    addr: str
+    before: Optional[int] = None     # byte value before idx (None = ??)
+    after: Optional[int] = None      # byte value at/after idx
+    changed: bool
+
+class MemDiffResponse(BaseModel):
+    """Memory state difference at trace cursor `idx` for [addr, addr+size)."""
+    idx: int
+    addr: str
+    size: int
+    bytes: list[MemDiffByte]
+    changed_count: int
+
+
+# ── /api/fn-summary (5.4) ───────────────────────────────────────────────────
+
+class FnSummaryHotBlock(BaseModel):
+    pc: str
+    rel: Optional[str] = None
+    insns: int
+    executions: int
+
+class FnSummaryCallee(BaseModel):
+    pc: str
+    func: Optional[str] = None
+    count: int
+
+class FnSummaryReadyResponse(BaseModel):
+    status: Literal["ready"]
+    fn: str
+    pc: str                          # canonical entry pc
+    rel: Optional[str] = None
+    block_count: int
+    total_executions: int            # sum of block executions
+    entry_idxs: list[int]            # trace idxs where fn was entered
+    entry_idxs_total: int
+    hot_blocks: list[FnSummaryHotBlock]
+    callees: list[FnSummaryCallee]   # bl/blr targets reached from this fn
+
+class FnSummaryPendingResponse(BaseModel):
+    status: str        # "building" | "idle" — CFG not ready
+
+class FnSummaryNotFoundResponse(BaseModel):
+    status: Literal["not-found"]
+    fn: str
+
+FnSummaryResponse = Union[FnSummaryReadyResponse, FnSummaryNotFoundResponse,
+                          FnSummaryPendingResponse]
+
+
 # ── /api/cfg-svg (5 shapes: building/ready-fresh/ready-cached/empty/error) ──
 
 class CfgSvgBuildingResponse(BaseModel):
