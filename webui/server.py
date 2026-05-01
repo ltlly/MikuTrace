@@ -49,18 +49,8 @@ from webui.schemas import (
 log = logging.getLogger(__name__)
 
 
-# ARM64 reg alias — disasm 里出现 x29/x30/xzr/wzr, viewer.trace 内部存为 fp/lr.
-# 归一化避免前端反复传 raw mnemonic 触发 "unknown reg".
-_REG_ALIAS = {"x29": "fp", "x30": "lr"}
-_REG_ZERO = {"xzr", "wzr"}
-
-def _norm_reg(name: str) -> Optional[str]:
-    """Map disasm reg name to viewer.trace ALL_REGS. Returns canonical name,
-    "ZERO" sentinel for xzr/wzr (always reads 0), or None if invalid."""
-    if name in ALL_REGS: return name
-    if name in _REG_ALIAS: return _REG_ALIAS[name]
-    if name in _REG_ZERO: return "ZERO"
-    return None
+# Reg name canonicalization — single source in viewer.regs.
+from viewer.regs import canonical_reg as _norm_reg
 
 
 def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):

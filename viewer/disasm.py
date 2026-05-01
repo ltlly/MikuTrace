@@ -18,17 +18,7 @@ _md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
 _md.detail = True
 
 
-def _norm_reg(name: str) -> str:
-    if not name: return ""
-    n = name.lower()
-    # w0..w30 → x0..x30; wzr/xzr → xzr; wsp/sp → sp; nzcv/cpsr → nzcv
-    if n.startswith("w") and n[1:].isdigit():
-        return "x" + n[1:]
-    if n in ("wzr", "xzr"): return "xzr"
-    if n in ("wsp",): return "sp"
-    if n == "x29": return "fp"
-    if n == "x30": return "lr"
-    return n
+from .regs import normalize_disasm_reg as _norm_reg
 
 
 @dataclass

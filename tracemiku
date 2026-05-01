@@ -377,6 +377,16 @@ def cmd_trace(args):
                         finalize_call(s, truncated=truncated)
                         del sess_files[ci]
                         wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated} dropped={p.get('dropped',0)}")
+                    elif t == "jni-strings":
+                        # JNI string hooks (libart, Interceptor) flushed at trace-end.
+                        # 写到 sess_files 的 meta, finalize_call 时一起持久化 meta.json.
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        evs = p.get("events", [])
+                        m_jni = sess_files[ci]["meta"].setdefault("jni_strings", [])
+                        m_jni.extend(evs)
+                        wlog(f"[{tag}] jni-strings call#{ci} +{len(evs)} (total={len(m_jni)})")
                     elif t == "follow": wlog(f"[{tag}] 跟踪 tid={p['tid']} ({p.get('label','?')})")
                     elif t == "cmd-hist":
                         h = p.get("hist", {})

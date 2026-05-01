@@ -199,6 +199,7 @@ function ensureFlushTimer() {
                     flushRingToDisk("watchdog");
                     closeTraceFile();
                     const ms = Date.now() - STATE.started;
+                    try { flushJniStringEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
                     send({ type: "trace-end", callIdx: STATE.callIdx,
                            tid: STATE.primaryTid, retval: "?",
                            ms, total, dropped, truncated: true,
@@ -549,6 +550,8 @@ function installFnHook(fp, onInsn) {
                 const total = STATE.headBuf.readU64().toNumber();
                 const dropped = STATE.droppedBuf.readU64().toNumber();
                 const rate = (total / Math.max(elapsed/1000, 1e-3)).toFixed(0);
+                // 在 trace-end 前 flush JNI string events 让 host 关联到本 call
+                try { flushJniStringEvents(this._callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
                 log(`[<] call #${this._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
                 send({ type: "trace-end", callIdx: this._callIdx, tid: this._tid,
                        retval: retv.toString(), ms: elapsed, total, dropped, truncated: false,

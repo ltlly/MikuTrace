@@ -1,25 +1,61 @@
-"""webui frontend smoke tests via Playwright + Microsoft Edge.
+"""webui frontend smoke tests via Playwright + 任何 Chromium-based 浏览器.
 
-Ubuntu 26.04 没 Playwright 官方 chromium 二进制 — 借系统装的 Edge (Chromium-based)
-作 executable_path. 测前端基础渲染、滚动、列宽拖拽、cursor 同步、错误响应不弹炸.
+Ubuntu 26.04 没 Playwright 官方 chromium 二进制 — 探测多个本机 chromium-based
+路径作 executable_path. 测前端基础渲染、滚动、列宽拖拽、cursor 同步、错误响应不弹炸.
+
+浏览器探测顺序:
+  1. PLAYWRIGHT_BROWSER_EXECUTABLE  环境变量 (CI / 用户指定)
+  2. 系统 PATH 上的 chromium-based: chromium / google-chrome / microsoft-edge
+  3. 常见 hard-coded 路径
+默认全 skip if 没找到 + 给出明确提示.
 
 跑 -m slow (启 webui server + headless 浏览器 ~5-15s).
 """
-import json, struct, threading, time, pathlib, pytest
+import json, os, shutil, struct, threading, time, pathlib, pytest
 
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
-EDGE = "/usr/bin/microsoft-edge"
+
+# 候选 chromium-based 浏览器 (按优先级). 找到第一个可执行的.
+_BROWSER_CANDIDATES = [
+    # PATH 上的命令名
+    "chromium", "chromium-browser",
+    "google-chrome", "google-chrome-stable",
+    "microsoft-edge", "microsoft-edge-stable",
+    "brave-browser", "vivaldi",
+    # 常见绝对路径
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+]
 
 
-def _edge_ok():
-    import shutil
-    return shutil.which("microsoft-edge") is not None
+def _find_browser() -> str | None:
+    """Return executable path for any chromium-based browser on this machine.
+    Order: env override > PATH lookup > hardcoded macOS paths."""
+    override = os.environ.get("PLAYWRIGHT_BROWSER_EXECUTABLE")
+    if override and pathlib.Path(override).exists():
+        return override
+    for cand in _BROWSER_CANDIDATES:
+        if "/" in cand:
+            if pathlib.Path(cand).exists():
+                return cand
+        else:
+            found = shutil.which(cand)
+            if found:
+                return found
+    return None
+
+
+_BROWSER = _find_browser()
 
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skipif(not _edge_ok(), reason="Edge 不在 /usr/bin/microsoft-edge"),
+    pytest.mark.skipif(_BROWSER is None, reason=(
+        "未找到 chromium-based 浏览器. "
+        "装 chromium / google-chrome / microsoft-edge, "
+        "或设 PLAYWRIGHT_BROWSER_EXECUTABLE=/path/to/browser")),
 ]
 
 
@@ -95,7 +131,7 @@ def webui_url(tmp_path_factory):
 def browser():
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        b = p.chromium.launch(executable_path=EDGE, headless=True,
+        b = p.chromium.launch(executable_path=_BROWSER, headless=True,
                               args=["--no-sandbox", "--disable-gpu"])
         yield b
         b.close()

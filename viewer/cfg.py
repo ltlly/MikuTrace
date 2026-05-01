@@ -155,7 +155,9 @@ def build_cfg(t: Trace, only_module: bool = True) -> CFG:
     is_blr  = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD63F0000)
     is_br   = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD61F0000)
     is_ret  = (inst_arr & np.uint32(0xFFFFFC1F)) == np.uint32(0xD65F0000)
-    is_bcond     = (inst_arr & np.uint32(0xFF000000)) == np.uint32(0x54000000)
+    # B.cond encoding: bits[31:24]=0x54, bit[4]=0 (must be zero per ARM ARM).
+    # 0x54xxxx1x is unallocated — 加 bit[4] check 防误判 (虽然实际命中概率为 0).
+    is_bcond     = (inst_arr & np.uint32(0xFF000010)) == np.uint32(0x54000000)
     is_cbz_cbnz  = (inst_arr & np.uint32(0x7E000000)) == np.uint32(0x34000000)
     is_tbz_tbnz  = (inst_arr & np.uint32(0x7E000000)) == np.uint32(0x36000000)
     is_branch_arr = is_b | is_bl | is_blr | is_br | is_ret | is_bcond | is_cbz_cbnz | is_tbz_tbnz
