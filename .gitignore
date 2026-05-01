@@ -30,3 +30,6 @@ dist/
 
 # Frida
 *.frida-script-cache
+
+# 外部 fork / clone — 各自有自己的 .git, 不进主仓
+/tools/

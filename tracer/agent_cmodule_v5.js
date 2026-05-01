@@ -270,6 +270,105 @@ function buildIncludeRanges() {
     for (const r of STATE.includeRanges) log(`    ${r.name}`);
 }
 
+// ─────────── JNI string hook (libart, Interceptor — not Stalker) ───────────
+//
+// libart 是 HARD_EXCL'd from Stalker (atomic deadlock 风险), 但 Frida.Interceptor
+// 是独立机制 — 在 fn entry 装 trampoline, 不动函数体. 安全。
+// 通过 JNIEnv vtable 找 GetStringUTFChars/NewStringUTF, hook 它们的 onLeave 读
+// 实际 char* 内容, send 给 host. 这就解决了"libart heap 在 Stalker.exclude 范围
+// 看不到 string buffer"的根本问题.
+function installJniStringHooksOnce() {
+    if (STATE.jniHooksInstalled) return;
+    let env;
+    try {
+        env = Java.vm.tryGetEnv();
+        if (!env) { log("[!] no JNIEnv yet, will retry on next call"); return; }
+    } catch (e) { log("[!] tryGetEnv failed: " + e); return; }
+    const envPtr = env.handle;
+    const vtable = envPtr.readPointer();
+    // offsets from BN-parsed JNINativeInterface_ (viewer/jni_offsets.json)
+    const HOOK_OFFSETS = {
+        0x520: "NewString",            // jstring NewString(env, jchar*, jsize)
+        0x538: "NewStringUTF",          // jstring NewStringUTF(env, char*)
+        0x540: "GetStringUTFLength",    // jsize GetStringUTFLength(env, jstring)
+        0x548: "GetStringUTFChars",     // const char* GetStringUTFChars(env, jstring, isCopy*)
+        0x550: "ReleaseStringUTFChars", // void ReleaseStringUTFChars(env, jstring, char*)
+        0x6f0: "GetStringUTFRegion",    // void GetStringUTFRegion(env, jstring, start, len, char*)
+    };
+    let installed = 0;
+    for (const off in HOOK_OFFSETS) {
+        const offNum = parseInt(off);
+        const fnName = HOOK_OFFSETS[off];
+        const fnPtr = vtable.add(offNum).readPointer();
+        try {
+            Interceptor.attach(fnPtr, makeJniStringHook(fnName, offNum));
+            installed++;
+        } catch (e) { log(`[!] hook ${fnName} failed: ${e}`); }
+    }
+    STATE.jniHooksInstalled = true;
+    STATE.jniStringEvents = [];
+    log(`[+] JNI string hooks installed: ${installed}/6 (Interceptor, indep of Stalker)`);
+}
+
+function makeJniStringHook(fnName, vtblOff) {
+    // capture pre-call args; in onLeave read the buffer content if applicable
+    return {
+        onEnter(args) {
+            // Only target thread (the one we're tracing)
+            if (this.threadId !== STATE.primaryTid) { this._skip = true; return; }
+            this._fn = fnName;
+            this._args = [args[0], args[1], args[2], args[3], args[4]];
+        },
+        onLeave(retv) {
+            if (this._skip) return;
+            // record current trace head (= idx of the next record to be written)
+            const headNow = STATE.headBuf.readU64().toNumber();
+            const ev = {
+                fn: this._fn, head: headNow,
+                jstring: null, buf: null, content: null,
+            };
+            try {
+                if (this._fn === "NewStringUTF") {
+                    // x1 = char* input; ret = jstring
+                    ev.buf = this._args[1].toString();
+                    ev.jstring = retv.toString();
+                    ev.content = this._args[1].readUtf8String(256);
+                } else if (this._fn === "GetStringUTFChars") {
+                    // x1 = jstring; ret = char*
+                    ev.jstring = this._args[1].toString();
+                    ev.buf = retv.toString();
+                    ev.content = retv.readUtf8String(256);
+                } else if (this._fn === "ReleaseStringUTFChars") {
+                    // x1 = jstring, x2 = char*. Read content before release.
+                    ev.jstring = this._args[1].toString();
+                    ev.buf = this._args[2].toString();
+                    ev.content = this._args[2].readUtf8String(256);
+                } else if (this._fn === "NewString") {
+                    ev.buf = this._args[1].toString();
+                    ev.jstring = retv.toString();
+                    // jchar* (UTF-16) — skip for now
+                } else if (this._fn === "GetStringUTFRegion") {
+                    // x1=jstring, x2=start, x3=len, x4=dest char*
+                    ev.jstring = this._args[1].toString();
+                    ev.buf = this._args[4].toString();
+                    ev.content = this._args[4].readUtf8String(256);
+                } else if (this._fn === "GetStringUTFLength") {
+                    ev.jstring = this._args[1].toString();
+                }
+            } catch (_) {}
+            if (STATE.jniStringEvents) STATE.jniStringEvents.push(ev);
+        }
+    };
+}
+
+function flushJniStringEvents(callIdx) {
+    if (!STATE.jniStringEvents || !STATE.jniStringEvents.length) return;
+    const events = STATE.jniStringEvents;
+    STATE.jniStringEvents = [];   // reset for next call
+    send({ type: "jni-strings", callIdx: callIdx, count: events.length, events: events });
+    return events.length;
+}
+
 rpc.exports = {
     init(opts) {
         opts = opts || {};
@@ -409,6 +508,9 @@ function installFnHook(fp, onInsn) {
                 send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started, devicePath: STATE.traceFilePath });
                 ensureFlushTimer();
                 applyExcludesOnce();
+                // Hook libart JNI string fns once we're in a thread that has JNIEnv.
+                // Interceptor (not Stalker) — safe even though libart is HARD_EXCL.
+                try { installJniStringHooksOnce(); } catch(_){}
                 // (Re)build include ranges per call — picks up late-dlopen'd
                 // SOs (libsgsecuritybody, libsgavmp etc dlopen'd after agent init).
                 buildIncludeRanges();
