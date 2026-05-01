@@ -465,6 +465,7 @@ def cmd_trace(args):
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
+        "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1057,6 +1058,9 @@ def main():
                       help="patch libsgmainso 6.8.260403 内的 6 处 obfuscated tgkill svc 为 nop, "
                            "绕过 anti-frida SIGILL 自杀. 仅对该 SO 版本有效, 且需要 --trace-deep "
                            "(否则没必要 — 反检测在非 deep 不触发). 不会影响别的 SO.")
+    p_tr.add_argument("--hide-rwx-maps", action="store_true", dest="hide_rwx_maps",
+                      help="在 libc open/read 拦截 /proc/self/maps, 过滤 rwxp 匿名段 — 让反检测"
+                           "看不到 Frida Stalker block cache 的 rwx. 通用反检测绕过, 不依赖目标 SO.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")

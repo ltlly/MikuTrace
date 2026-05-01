@@ -36,3 +36,4 @@ dist/
 # 但项目自己的 Frida 分析/patch 小工具进
 !/tools/detect_suicide.js
 !/tools/patch_sgmainso_tgkill.js
+!/tools/hide_rwx_maps.js

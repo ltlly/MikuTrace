@@ -454,6 +454,119 @@ const SGMAIN_TGKILL_SVC_OFFSETS = [
     0x15b6d4,   // movz @ 0x15b6bc, svc +0x18
 ];
 
+// ─────────── B3: 隐藏 RWX 匿名页 from /proc/self/maps reads ────────────────
+//
+// libsgmainso 反检测扫 /proc/self/maps 找 rwxp 命中即自杀. 在 libc 层拦截
+// open/openat 跟踪 fd, 在 read/pread 时把含 rwxp 的危险行删掉.
+
+const HIDE_MAPS_TRACKED_FDS = new Set();
+
+function _hideMaps_filterLine(line) {
+    if (line.length === 0) return false;
+    const isRwx = (line.indexOf("rwxp") >= 0 || line.indexOf("rwxs") >= 0);
+    if (!isRwx) return false;
+    const low = line.toLowerCase();
+    if (low.indexOf("frida") >= 0 || low.indexOf("miku") >= 0) return true;
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 6) return true;     // anonymous (no path)
+    const path = fields[5];
+    if (!path) return true;
+    if (path.startsWith("[")) return true;  // [anon:..] / [stack] / [heap]
+    if (path.startsWith("/")) {
+        if (low.indexOf("libsgmain") >= 0) return false;     // sgmainso 自己的别动
+        return false;                                         // 其他 lib rwxp 保留
+    }
+    return true;
+}
+
+function _hideMaps_filterBuffer(text) {
+    const lines = text.split("\n");
+    const kept = [];
+    let dropped = 0;
+    for (const line of lines) {
+        if (_hideMaps_filterLine(line)) { dropped++; continue; }
+        kept.push(line);
+    }
+    return [kept.join("\n"), dropped];
+}
+
+function _findEx(name) {
+    try { return Module.findGlobalExportByName(name); } catch (_) {}
+    try { return Module.getGlobalExportByName(name); } catch (_) {}
+    try { return Module.findExportByName("libc.so", name); } catch (_) {}
+    return null;
+}
+
+function installRwxMapsHider() {
+    if (STATE.rwxMapsHidden) return;
+    let n = 0;
+    const hookOpen = (p, pathIdx, label) => {
+        if (!p) return;
+        Interceptor.attach(p, {
+            onEnter(args) {
+                try {
+                    const path = args[pathIdx].readCString();
+                    if (path && (path === "/proc/self/maps" ||
+                                 (path.startsWith("/proc/") && path.endsWith("/maps")))) {
+                        this._track = true;
+                    }
+                } catch (_) {}
+            },
+            onLeave(rv) {
+                if (this._track) {
+                    const fd = rv.toInt32();
+                    if (fd >= 0) HIDE_MAPS_TRACKED_FDS.add(fd);
+                }
+            }
+        });
+        n++;
+    };
+    const hookRead = (p, label) => {
+        if (!p) return;
+        Interceptor.attach(p, {
+            onEnter(args) {
+                this._fd = args[0].toInt32();
+                this._buf = args[1];
+                this._tracked = HIDE_MAPS_TRACKED_FDS.has(this._fd);
+            },
+            onLeave(rv) {
+                if (!this._tracked) return;
+                const sz = rv.toInt32();
+                if (sz <= 0) return;
+                try {
+                    const bytes = this._buf.readByteArray(sz);
+                    const text = String.fromCharCode.apply(null, new Uint8Array(bytes));
+                    const [filtered, dropped] = _hideMaps_filterBuffer(text);
+                    if (dropped === 0) return;
+                    const newBytes = [];
+                    for (let i = 0; i < filtered.length; i++) newBytes.push(filtered.charCodeAt(i) & 0xff);
+                    while (newBytes.length < sz) newBytes.push(0);
+                    this._buf.writeByteArray(newBytes.slice(0, sz));
+                    rv.replace(ptr(filtered.length));
+                } catch (_) {}
+            }
+        });
+        n++;
+    };
+    hookOpen(_findEx("openat"), 1, "openat");
+    hookOpen(_findEx("open"),   0, "open");
+    hookOpen(_findEx("fopen"),  0, "fopen");
+    hookRead(_findEx("read"),    "read");
+    hookRead(_findEx("pread64"), "pread64");
+    const close_p = _findEx("close");
+    if (close_p) {
+        Interceptor.attach(close_p, {
+            onEnter(args) {
+                const fd = args[0].toInt32();
+                if (HIDE_MAPS_TRACKED_FDS.has(fd)) HIDE_MAPS_TRACKED_FDS.delete(fd);
+            }
+        });
+        n++;
+    }
+    STATE.rwxMapsHidden = true;
+    log(`[hide-rwx-maps] installed ${n} libc hooks`);
+}
+
 function patchSgmainsoSuicide(modName) {
     // modName: pattern of so to patch (e.g., "libsgmainso"). Defaults to STATE.soPattern.
     const pat = modName || STATE.soPattern;
@@ -648,6 +761,7 @@ rpc.exports = {
         STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns)
                                       ? opts.boundaryDiffPatterns : null;
         STATE.patchSuicide = !!opts.patchSuicide;
+        STATE.hideRwxMaps = !!opts.hideRwxMaps;
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);
@@ -769,6 +883,11 @@ function installFnHook(fp, onInsn) {
                 log(`[>] call #${this._callIdx} tid=${this._tid}`);
                 send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started, devicePath: STATE.traceFilePath });
                 ensureFlushTimer();
+                // B3: 隐藏 RWX 匿名页 from /proc/self/maps reads. 在 Stalker.follow 创建
+                // block cache 之前装好, 反检测就看不到 rwxp 了.
+                if (STATE.hideRwxMaps) {
+                    try { installRwxMapsHider(); } catch (e) { log(`[hide-rwx-maps][!] ${e}`); }
+                }
                 // Patch sgmainso obfuscated tgkill thunks BEFORE Stalker.follow
                 // creates RWX block-cache pages that anti-debug would notice.
                 // Only does anything when STATE.patchSuicide is set (CLI: --patch-suicide).
