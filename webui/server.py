@@ -37,7 +37,7 @@ from webui.schemas import (
     TouchingRangeResponse, TouchingAddrResponse, TouchingResponse,
     StringProvenanceResponse, DecompStatusResponse,
     AsmTokensResponse, HlilResponse, BnCfgSvgResponse, BnCfgForPcResponse,
-    BlockForPcResponse, FieldAtResponse,
+    BlockForPcResponse, FieldAtResponse, CfgSvgResponse,
 )
 
 
@@ -542,7 +542,7 @@ def make_app(trace_path: pathlib.Path,
     # cache key = fn (timeout 不影响输出, dot 输出确定); cfg/pc_inst 是 readonly 一次构建.
     _CFG_SVG_CACHE: dict = {}
 
-    @app.get("/api/cfg-svg")
+    @app.get("/api/cfg-svg", response_model=CfgSvgResponse)
     def cfg_svg(fn: Optional[str] = None, timeout: int = 60):
         """IDA-style CFG: HTML-label per insn (HREF→<a xlink:href>, JS click + CSS 高亮),
         graphviz dot Sugiyama layout. 单函数 (fn 默认 current cursor 函数).

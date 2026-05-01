@@ -131,6 +131,36 @@ class BlockForPcResponse(BaseModel):
     cfg_status: Optional[str] = None
 
 
+# ── /api/cfg-svg (5 shapes: building/ready-fresh/ready-cached/empty/error) ──
+
+class CfgSvgBuildingResponse(BaseModel):
+    status: Literal["building"]
+    cfg: str
+    pc_inst: str
+
+class CfgSvgEmptyResponse(BaseModel):
+    status: Literal["empty"]
+    fn: Optional[str] = None
+    svg: Optional[str] = None    # always null for empty
+
+class CfgSvgErrorResponse(BaseModel):
+    status: Literal["error"]
+    err: str
+
+class CfgSvgReadyResponse(BaseModel):
+    """status='ready' covers both fresh-render and cached-hit. `cached` flag
+    distinguishes them (None on fresh render, True on cache hit)."""
+    status: Literal["ready"]
+    fn: Optional[str] = None
+    svg: str
+    block_count: int
+    total_block_count: int
+    cached: Optional[bool] = None    # only set to True on cache hit
+
+CfgSvgResponse = Union[CfgSvgReadyResponse, CfgSvgEmptyResponse,
+                       CfgSvgErrorResponse, CfgSvgBuildingResponse]
+
+
 # ── /api/block ───────────────────────────────────────────────────────────────
 
 class BlockInsn(BaseModel):
