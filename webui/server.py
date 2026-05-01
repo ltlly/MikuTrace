@@ -39,6 +39,8 @@ from webui.schemas import (
     AsmTokensResponse, HlilResponse, BnCfgSvgResponse, BnCfgForPcResponse,
     BlockForPcResponse, FieldAtResponse, CfgSvgResponse,
     RegTimelineResponse, MemDiffResponse, FnSummaryResponse,
+    DataChaseResponse, LastWriteOfAddrResponse,
+    FindMemPatternResponse, JniCallsResponse,
 )
 
 
@@ -1215,6 +1217,151 @@ def make_app(trace_path: pathlib.Path,
             out[hex(pc)] = [_tok(tk) for tk in tks]
             if len(seen) >= 512: break  # safety cap
         return {"ready": True, "status": "ok", "tokens": out}
+
+    # ─────────── Gap fixes: data-chase / last-write-of-addr / etc ───────────
+
+    @app.get("/api/data-chase", response_model=DataChaseResponse)
+    def api_data_chase(start: int, reg: str, max_steps: int = 50,
+                       exclude_regs: str = "sp,fp,lr"):
+        """Single-path data chase, skipping sp/fp/lr noise. Gap-F."""
+        from viewer.taint import data_chase
+        if BG["index"]["status"] != "ready":
+            _bg_run("index", _build_index)
+            return {"from": start, "reg": reg, "count": 0, "steps": []}
+        excl = {x.strip() for x in exclude_regs.split(",") if x.strip()}
+        steps = data_chase(t, start, reg, max_steps=max_steps,
+                           exclude_regs=excl, index=BG["index"]["data"])
+        m_ = t.meta.module
+        base_ = m_.base if m_ else 0
+        out = []
+        for s in steps:
+            fn, _ = sym.lookup(s.pc)
+            out.append({
+                "idx": s.idx, "pc": hex(s.pc),
+                "rel": hex(s.pc - base_) if base_ else None,
+                "func": fn if fn != "?" else None,
+                "asm": s.asm, "via": s.via, "src": s.reg_or_addr,
+            })
+        return {"from": start, "reg": reg, "count": len(out), "steps": out}
+
+    @app.get("/api/last-write-of-addr", response_model=LastWriteOfAddrResponse)
+    def api_last_write_of_addr(addr: str, before_idx: int = -1):
+        """Find most recent mem write to addr before given idx. Gap-B."""
+        import bisect
+        if BG["index"]["status"] != "ready":
+            _bg_run("index", _build_index)
+            return {"status": "not-found", "addr": addr,
+                    "before_idx": before_idx, "writes_total": 0}
+        idx_obj = BG["index"]["data"]
+        try:
+            addr_int = int(addr, 16) if addr.startswith("0x") else int(addr)
+        except ValueError:
+            raise HTTPException(400, f"bad addr: {addr!r}")
+        before = before_idx if before_idx >= 0 else len(t)
+        writes = idx_obj.mem_addr_to_writes.get(addr_int, [])
+        pos = bisect.bisect_left(writes, before) - 1
+        if pos < 0:
+            return {"status": "not-found", "addr": addr,
+                    "before_idx": before, "writes_total": len(writes)}
+        w_idx = writes[pos]
+        rw = t.record(w_idx); dw = decode(rw.pc, rw.inst)
+        fn, _ = sym.lookup(rw.pc)
+        m_ = t.meta.module
+        base_ = m_.base if m_ else 0
+        base_w = dw.mem_op[0][0] if dw.mem_op else None
+        idx_w = dw.mem_op[0][1] if dw.mem_op else None
+        src_candidates = [u for u in dw.regs_use if u not in (base_w, idx_w)]
+        src = src_candidates[0] if src_candidates else None
+        return {
+            "status": "found", "addr": addr, "before_idx": before,
+            "writer_idx": w_idx, "writer_pc": hex(rw.pc),
+            "rel": hex(rw.pc - base_) if base_ else None,
+            "func": fn if fn != "?" else None,
+            "asm": f"{dw.mnemonic} {dw.op_str}",
+            "src_reg": src,
+            "src_value": hex(rw.reg(src)) if src else None,
+            "writes_before": pos + 1, "writes_after": len(writes) - pos - 1,
+        }
+
+    @app.get("/api/find-mem-pattern", response_model=FindMemPatternResponse)
+    def api_find_mem_pattern(bytes_hex: str, since: int = -1, max: int = 100):
+        """Search MemShadow for hex byte pattern. Gap-H.
+
+        Query param `bytes_hex` (FastAPI doesn't allow `bytes` as param name)."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"pattern": bytes_hex, "since_idx": since, "count": 0, "hits": []}
+        mem_obj = BG["mem"]["data"]
+        ph = bytes_hex.replace(" ", "").replace("0x", "")
+        try:
+            pat = bytes.fromhex(ph)
+        except ValueError:
+            raise HTTPException(400, f"bad hex: {bytes_hex!r}")
+        cursor = since if since >= 0 else (1 << 63)
+        if not mem_obj.bytes:
+            return {"pattern": pat.hex(), "since_idx": since, "count": 0, "hits": []}
+        addrs = sorted(mem_obj.bytes.keys())
+        hits = []
+        for a in addrs:
+            match = True; first_idx = None
+            for o, want in enumerate(pat):
+                ev_list = mem_obj.bytes.get(a + o)
+                if not ev_list: match = False; break
+                ev_idx, byte_val = None, None
+                for ev in ev_list:
+                    if ev[0] > cursor: break
+                    ev_idx, byte_val = ev[0], ev[1]
+                if byte_val is None or byte_val != want:
+                    match = False; break
+                if first_idx is None or (ev_idx is not None and ev_idx < first_idx):
+                    first_idx = ev_idx
+            if match:
+                hits.append({"addr": hex(a), "first_idx": first_idx})
+                if max > 0 and len(hits) >= max: break
+        return {"pattern": pat.hex(), "since_idx": since,
+                "count": len(hits), "hits": hits}
+
+    @app.get("/api/jni-calls", response_model=JniCallsResponse)
+    def api_jni_calls(in_fn: Optional[str] = None, max: int = 200):
+        """Detect JNI vtable calls. Gap-J. Uses viewer/jni_offsets.json."""
+        import pathlib, json as _json
+        offsets_path = (pathlib.Path(__file__).resolve().parent.parent
+                         / "viewer" / "jni_offsets.json")
+        if not offsets_path.exists():
+            return {"in_fn": in_fn, "count": 0, "hits": [], "vtable_size": 0}
+        offsets_data = _json.loads(offsets_path.read_text())
+        raw = offsets_data.get("offsets", offsets_data)
+        jni_vtable = {int(k, 16) if isinstance(k, str) else int(k): v
+                       for k, v in raw.items()}
+        m_ = t.meta.module
+        base_ = m_.base if m_ else 0
+        n = len(t); hits = []
+        prev_d = None
+        for i in range(n):
+            r = t.record(i); d = decode(r.pc, r.inst)
+            fname, _ = sym.lookup(r.pc)
+            if in_fn and fname != in_fn:
+                prev_d = d; continue
+            if d.mnemonic == "blr" and d.indirect_branch_reg and prev_d is not None:
+                target_reg = d.indirect_branch_reg
+                if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
+                        and prev_d.mem_op):
+                    base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                    if not is_w and disp in jni_vtable:
+                        hits.append({
+                            "idx": i, "pc": hex(r.pc),
+                            "rel": hex(r.pc - base_) if base_ else None,
+                            "func": fname if fname != "?" else None,
+                            "jni_fn": jni_vtable[disp],
+                            "vtable_offset": hex(disp),
+                            "args": {a: hex(r.reg(a)) for a in
+                                      ("x0", "x1", "x2", "x3", "x4")},
+                        })
+                        if max > 0 and len(hits) >= max:
+                            prev_d = d; break
+            prev_d = d
+        return {"in_fn": in_fn, "count": len(hits), "hits": hits,
+                "vtable_size": len(jni_vtable)}
 
     @app.get("/api/field-at", response_model=FieldAtResponse)
     def api_field_at(pc: str, reg: str, offset: str = "0"):

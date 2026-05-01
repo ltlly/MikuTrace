@@ -589,6 +589,82 @@ class AsmTokensResponse(BaseModel):
     tokens: dict[str, list[AsmTokenWire]]
 
 
+# ── /api/data-chase (Gap-F) ──────────────────────────────────────────────────
+
+class DataChaseStep(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    asm: str
+    via: str             # "mem-load" | "mem-store-src" | "reg" | "terminal"
+    src: str             # reg name OR hex addr OR "(no data deps)"
+
+class DataChaseResponse(BaseModel):
+    from_: int = Field(alias="from")
+    reg: str
+    count: int
+    steps: list[DataChaseStep]
+    model_config = {"populate_by_name": True}
+
+
+# ── /api/last-write-of-addr (Gap-B) ──────────────────────────────────────────
+
+class LastWriteOfAddrFoundResponse(BaseModel):
+    status: Literal["found"]
+    addr: str
+    before_idx: int
+    writer_idx: int
+    writer_pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    asm: str
+    src_reg: Optional[str] = None
+    src_value: Optional[str] = None
+    writes_before: int
+    writes_after: int
+
+class LastWriteOfAddrNotFoundResponse(BaseModel):
+    status: Literal["not-found"]
+    addr: str
+    before_idx: int
+    writes_total: int
+
+LastWriteOfAddrResponse = Union[LastWriteOfAddrFoundResponse,
+                                 LastWriteOfAddrNotFoundResponse]
+
+
+# ── /api/find-mem-pattern (Gap-H) ────────────────────────────────────────────
+
+class MemPatternHit(BaseModel):
+    addr: str
+    first_idx: Optional[int] = None
+
+class FindMemPatternResponse(BaseModel):
+    pattern: str
+    since_idx: int
+    count: int
+    hits: list[MemPatternHit]
+
+
+# ── /api/jni-calls (Gap-J) ──────────────────────────────────────────────────
+
+class JniCallHit(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    jni_fn: str
+    vtable_offset: str
+    args: dict[str, str]
+
+class JniCallsResponse(BaseModel):
+    in_fn: Optional[str] = None
+    count: int
+    hits: list[JniCallHit]
+    vtable_size: int
+
+
 # ── /api/field-at ────────────────────────────────────────────────────────────
 
 class FieldAtResponse(BaseModel):

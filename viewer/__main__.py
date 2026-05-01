@@ -44,6 +44,21 @@ def cmd_stats(args):
     t = load(args.trace)
     m = t.meta
     mod = m.module
+    all_mods = [{"name": x.name, "base": hex(x.base), "size": x.size,
+                 "end": hex(x.end)} for x in m.modules]
+    # Gap-C: --top-modules N (default 10) keeps stats output LLM-friendly.
+    # Always include the target module first if present.
+    target_name = mod.name if mod else None
+    sorted_mods = sorted(all_mods, key=lambda x: -x["size"])
+    if args.all_modules:
+        modules_out = sorted_mods
+    else:
+        n = max(1, args.top_modules)
+        kept = []
+        if target_name:
+            kept = [x for x in sorted_mods if x["name"] == target_name][:1]
+        kept += [x for x in sorted_mods if x["name"] != target_name][:n - len(kept)]
+        modules_out = kept
     out = {
         "path": str(args.trace),
         "records": len(t),
@@ -52,8 +67,9 @@ def cmd_stats(args):
         "fn_addr": hex(m.fn_addr) if m.fn_addr else None,
         "module": {"name": mod.name, "base": hex(mod.base), "size": mod.size,
                    "end": hex(mod.end)} if mod else None,
-        "modules": [{"name": x.name, "base": hex(x.base), "size": x.size,
-                     "end": hex(x.end)} for x in m.modules],
+        "modules": modules_out,
+        "modules_total": len(all_mods),
+        "modules_truncated": len(modules_out) < len(all_mods),
     }
     t.close()
     _emit(out)
@@ -181,6 +197,11 @@ def _build_index_sync(t):
     return idx
 
 
+def _parse_exclude_regs(s):
+    if not s: return None
+    return {x.strip() for x in s.split(",") if x.strip()}
+
+
 def cmd_taint_fwd(args):
     from .trace import load
     from .symbols import build_from_trace
@@ -190,7 +211,9 @@ def cmd_taint_fwd(args):
     sym = build_from_trace(t)
     idx = _build_index_sync(t)
     base = t.meta.module.base if t.meta.module else 0
-    results = forward_taint(t, args.start, args.reg, max_count=args.max, index=idx)
+    results = forward_taint(t, args.start, args.reg, max_count=args.max, index=idx,
+                             exclude_regs=_parse_exclude_regs(args.exclude_regs),
+                             data_only=args.data_only)
     rows = []
     for i, why in results:
         r = t.record(i); d = decode(r.pc, r.inst)
@@ -202,7 +225,8 @@ def cmd_taint_fwd(args):
             "asm": f"{d.mnemonic} {d.op_str}", "why": why,
         })
     t.close()
-    _emit({"from": args.start, "reg": args.reg, "count": len(rows), "hits": rows})
+    _emit({"from": args.start, "reg": args.reg, "data_only": args.data_only,
+           "count": len(rows), "hits": rows})
 
 
 def cmd_taint_bwd(args):
@@ -214,7 +238,9 @@ def cmd_taint_bwd(args):
     sym = build_from_trace(t)
     idx = _build_index_sync(t)
     base = t.meta.module.base if t.meta.module else 0
-    results = backward_taint(t, args.start, args.reg, max_count=args.max, index=idx)
+    results = backward_taint(t, args.start, args.reg, max_count=args.max, index=idx,
+                              exclude_regs=_parse_exclude_regs(args.exclude_regs),
+                              data_only=args.data_only)
     rows = []
     for i, via in results:
         r = t.record(i); d = decode(r.pc, r.inst)
@@ -226,17 +252,254 @@ def cmd_taint_bwd(args):
             "asm": f"{d.mnemonic} {d.op_str}", "via": via,
         })
     t.close()
-    _emit({"from": args.start, "reg": args.reg, "count": len(rows), "chain": rows})
+    _emit({"from": args.start, "reg": args.reg, "data_only": args.data_only,
+           "count": len(rows), "chain": rows})
+
+
+# ───────────────────────── data-chase (Gap-F) ─────────────────────────
+
+def cmd_data_chase(args):
+    """Single-path backward data chase across functions, skipping sp/fp/lr noise.
+
+    The killer LLM逆向 workflow: from a register at idx, follow ONE chain
+    through mov/ldr/str to the real data source. Use this instead of taint-bwd
+    when you want a tight chain not a fanout."""
+    from .trace import load
+    from .symbols import build_from_trace
+    from .taint import data_chase
+    t = load(args.trace)
+    sym = build_from_trace(t)
+    idx_obj = _build_index_sync(t)
+    base = t.meta.module.base if t.meta.module else 0
+    steps = data_chase(t, args.start, args.reg, max_steps=args.max_steps,
+                        exclude_regs=_parse_exclude_regs(args.exclude_regs),
+                        index=idx_obj)
+    out = []
+    for s in steps:
+        fn, foff = sym.lookup(s.pc)
+        out.append({
+            "idx": s.idx, "pc": hex(s.pc),
+            "rel": hex(s.pc - base) if base else None,
+            "func": fn if fn != "?" else None,
+            "asm": s.asm, "via": s.via, "src": s.reg_or_addr,
+        })
+    t.close()
+    _emit({"from": args.start, "reg": args.reg, "count": len(out), "steps": out})
+
+
+# ───────────────────────── records (Gap-D) ─────────────────────────
+
+def cmd_records(args):
+    """Mirror of /api/records: list trace records in [start, start+count).
+    Like search-asm but no filter — for raw inspection of a window."""
+    from .trace import load, ALL_REGS
+    from .symbols import build_from_trace
+    from .disasm import decode
+    t = load(args.trace)
+    sym = build_from_trace(t)
+    base = t.meta.module.base if t.meta.module else 0
+    n = len(t)
+    if args.start < 0 or args.start >= n:
+        _emit({"start": args.start, "end": args.start, "count": 0, "records": []}); return
+    end = min(args.start + args.count, n)
+    regs_filter = None
+    if args.regs:
+        regs_filter = [r for r in args.regs.split(",") if r in ALL_REGS]
+    rows = []
+    for i in range(args.start, end):
+        r = t.record(i); d = decode(r.pc, r.inst)
+        fname, foff = sym.lookup(r.pc)
+        row = {
+            "idx": i, "pc": hex(r.pc),
+            "rel": hex(r.pc - base) if base else None,
+            "func": fname if fname != "?" else None,
+            "off": hex(foff) if fname != "?" else None,
+            "asm": f"{d.mnemonic} {d.op_str}",
+            "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
+        }
+        if regs_filter:
+            row["regs"] = {nm: hex(r.reg(nm)) for nm in regs_filter}
+        rows.append(row)
+    t.close()
+    _emit({"start": args.start, "end": end, "count": end - args.start, "records": rows})
+
+
+# ───────────────────────── last-write-of-addr (Gap-B) ─────────────────────────
+
+def cmd_last_write_of_addr(args):
+    """Most recent write to addr before idx. Mirror logic to /api/last-write-of-reg."""
+    import bisect
+    from .trace import load
+    from .symbols import build_from_trace
+    from .disasm import decode
+    t = load(args.trace)
+    sym = build_from_trace(t)
+    idx_obj = _build_index_sync(t)
+    base = t.meta.module.base if t.meta.module else 0
+    addr = _parse_int(args.addr)
+    before = args.before_idx if args.before_idx >= 0 else len(t)
+    writes = idx_obj.mem_addr_to_writes.get(addr, [])
+    pos = bisect.bisect_left(writes, before) - 1
+    if pos < 0:
+        _emit({"status": "not-found", "addr": args.addr,
+               "before_idx": before, "writes_total": len(writes)})
+        t.close(); return
+    w_idx = writes[pos]
+    rw = t.record(w_idx); dw = decode(rw.pc, rw.inst)
+    fn, foff = sym.lookup(rw.pc)
+    base_w = dw.mem_op[0][0] if dw.mem_op else None
+    idx_w = dw.mem_op[0][1] if dw.mem_op else None
+    src_candidates = [u for u in dw.regs_use if u not in (base_w, idx_w)]
+    src = src_candidates[0] if src_candidates else None
+    src_value = hex(rw.reg(src)) if src else None
+    t.close()
+    _emit({
+        "status": "found", "addr": args.addr, "before_idx": before,
+        "writer_idx": w_idx, "writer_pc": hex(rw.pc),
+        "rel": hex(rw.pc - base) if base else None,
+        "func": fn if fn != "?" else None,
+        "asm": f"{dw.mnemonic} {dw.op_str}",
+        "src_reg": src, "src_value": src_value,
+        "writes_before": pos + 1, "writes_after": len(writes) - pos - 1,
+    })
+
+
+# ───────────────────────── find-mem-pattern (Gap-H) ─────────────────────────
+
+def cmd_find_mem_pattern(args):
+    """Search MemShadow for a hex byte pattern (e.g. SHA-256 IV '67e6096a')."""
+    from .trace import load
+    from .memshadow import MemShadow
+    t = load(args.trace)
+    mem = MemShadow(t); mem.build()
+    pat_hex = args.bytes.replace(" ", "").replace("0x", "")
+    if len(pat_hex) % 2 != 0:
+        _err(f"hex pattern must be even-length: {args.bytes!r}")
+    try:
+        pat = bytes.fromhex(pat_hex)
+    except ValueError as e:
+        _err(f"bad hex: {e}")
+    if len(pat) == 0: _err("empty pattern")
+    if not mem.bytes:
+        _emit({"pattern": pat.hex(), "count": 0, "hits": []}); t.close(); return
+    # Build a sorted list of all (addr, byte_at_after_writes) and scan
+    # Naive: for each addr in mem.bytes, check if pattern matches at addr
+    cursor = args.since if args.since >= 0 else (1 << 63)
+    addrs = sorted(mem.bytes.keys())
+    hits = []
+    for a in addrs:
+        match = True
+        first_idx = None
+        for o, want in enumerate(pat):
+            ev_list = mem.bytes.get(a + o)
+            if not ev_list:
+                match = False; break
+            # Latest event with idx <= cursor
+            ev_idx, byte_val, kind = None, None, None
+            for ev in ev_list:
+                if ev[0] > cursor: break
+                ev_idx, byte_val, kind = ev
+            if byte_val is None or byte_val != want:
+                match = False; break
+            if first_idx is None or (ev_idx is not None and ev_idx < first_idx):
+                first_idx = ev_idx
+        if match:
+            hits.append({"addr": hex(a), "first_idx": first_idx})
+            if args.max > 0 and len(hits) >= args.max: break
+    t.close()
+    _emit({"pattern": pat.hex(), "since_idx": args.since,
+           "count": len(hits), "hits": hits})
+
+
+# ───────────────────────── jni-calls (Gap-J) ─────────────────────────
+
+def _load_jni_vtable(custom_path=None):
+    """Load JNI vtable offset → name map.
+
+    Source of truth: viewer/jni_offsets.json (regenerated via BN from
+    vendor/jni/jni_bn.h — see tools/regen_jni_offsets.py). NEVER hardcoded
+    in Python: hardcoded tables drift from upstream + can't be audited.
+
+    Override path: --jni-offsets <PATH>.
+    """
+    p = pathlib.Path(custom_path) if custom_path else \
+        pathlib.Path(__file__).resolve().parent / "jni_offsets.json"
+    if not p.exists():
+        _err(f"jni offsets file not found: {p}\n"
+             f"  hint: run `python tools/regen_jni_offsets.py` to regenerate")
+    data = json.loads(p.read_text())
+    raw = data.get("offsets", data)
+    return {int(k, 16) if isinstance(k, str) else int(k): v for k, v in raw.items()}
+
+
+def cmd_jni_calls(args):
+    """Detect JNI vtable calls in trace.
+
+    Pattern: `ldr xK, [xJ, #imm]` (load fn ptr from JNIEnv vtable) followed
+    immediately by `blr xK`. `imm` matched against viewer/jni_offsets.json
+    (BN-parsed JNINativeInterface_; not hardcoded — see tools/regen_jni_offsets.py).
+    """
+    from .trace import load
+    from .symbols import build_from_trace
+    from .disasm import decode
+    jni_vtable = _load_jni_vtable(args.jni_offsets)
+    t = load(args.trace)
+    sym = build_from_trace(t)
+    base = t.meta.module.base if t.meta.module else 0
+    n = len(t)
+    fn_filter = args.in_fn or None
+    hits = []
+    prev_d = None
+    prev_r = None
+    for i in range(n):
+        r = t.record(i); d = decode(r.pc, r.inst)
+        fname, _ = sym.lookup(r.pc)
+        if fn_filter and fname != fn_filter:
+            prev_d = d; prev_r = r; continue
+        if d.mnemonic == "blr" and d.indirect_branch_reg and prev_d is not None:
+            target_reg = d.indirect_branch_reg
+            if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
+                    and prev_d.mem_op):
+                base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                if not is_w and disp in jni_vtable:
+                    fn_name = jni_vtable[disp]
+                    hits.append({
+                        "idx": i, "pc": hex(r.pc),
+                        "rel": hex(r.pc - base) if base else None,
+                        "func": fname if fname != "?" else None,
+                        "jni_fn": fn_name, "vtable_offset": hex(disp),
+                        "args": {a: hex(r.reg(a)) for a in
+                                  ("x0", "x1", "x2", "x3", "x4")},
+                    })
+                    if args.max > 0 and len(hits) >= args.max:
+                        prev_d = d; prev_r = r; break
+        prev_d = d; prev_r = r
+    t.close()
+    _emit({"in_fn": fn_filter, "count": len(hits), "hits": hits,
+           "vtable_size": len(jni_vtable)})
 
 
 # ───────────────────────── mem-dump ─────────────────────────
 
 def cmd_mem_dump(args):
-    from .trace import load
+    """Hex dump from MemShadow. Either --addr or --reg+--idx (reg's value at idx)."""
+    from .trace import load, ALL_REGS
     from .memshadow import MemShadow
     t = load(args.trace)
     mem = MemShadow(t); mem.build()
-    start = _parse_int(args.addr)
+    if args.reg:
+        # Gap-I: use reg value at given idx as base addr
+        if args.reg not in ALL_REGS:
+            _err(f"unknown reg: {args.reg!r}")
+        if args.idx < 0 or args.idx >= len(t):
+            _err(f"idx out of range: {args.idx} (n={len(t)})")
+        start = t.record(args.idx).reg(args.reg)
+        addr_str = hex(start)
+    elif args.addr:
+        start = _parse_int(args.addr)
+        addr_str = args.addr
+    else:
+        _err("mem-dump requires --addr OR (--reg + --idx)")
     out_bytes = []
     cursor = args.cursor if args.cursor >= 0 else (1 << 63)
     for i in range(args.count):
@@ -245,8 +508,12 @@ def cmd_mem_dump(args):
         out_bytes.append({"addr": hex(a), "byte": b, "kind": kind,
                           "src_idx": src_idx})
     t.close()
-    _emit({"addr": args.addr, "count": args.count, "cursor": args.cursor,
-           "bytes": out_bytes})
+    out = {"addr": addr_str, "count": args.count, "cursor": args.cursor,
+           "bytes": out_bytes}
+    if args.reg:
+        out["reg"] = args.reg
+        out["idx"] = args.idx
+    _emit(out)
 
 
 # ───────────────────────── reg-timeline ─────────────────────────
@@ -335,8 +602,19 @@ def cmd_fn_summary(args):
     callees = []
     for cpc, cnt in sorted(callee_pcs.items(), key=lambda x: -x[1])[:20]:
         cfn, _ = sym.lookup(cpc)
-        callees.append({"pc": hex(cpc), "func": cfn if cfn != "?" else None,
-                        "count": cnt})
+        # Gap-E fix: callee's TOTAL executions in trace (sum of executions of
+        # all blocks in callee fn). Distinguishes "called from this fn 24×" vs
+        # "callee fn ran 168× total (also called by others)".
+        callee_blocks = [b for b in cfg.blocks.values()
+                         if sym.lookup(b.start_pc)[0] == cfn]
+        callee_total = sum(b.executions for b in callee_blocks)
+        callees.append({
+            "pc": hex(cpc),
+            "func": cfn if cfn != "?" else None,
+            "count": cnt,                            # edges from this fn
+            "callee_block_count": len(callee_blocks),
+            "callee_total_executions": callee_total, # all callers combined
+        })
     t.close()
     _emit({
         "status": "ready", "fn": args.fn,
@@ -385,6 +663,8 @@ _KNOWN_SUBCOMMANDS = {
     "stats", "export", "search-pc", "idxs-for-pc", "search-asm",
     "taint-fwd", "taint-bwd", "mem-dump", "field-at",
     "reg-timeline", "mem-diff", "fn-summary",
+    # Gap-D / Gap-B / Gap-F / Gap-H / Gap-J:
+    "records", "last-write-of-addr", "data-chase", "find-mem-pattern", "jni-calls",
 }
 
 
@@ -402,6 +682,10 @@ def main():
 
     s = sub.add_parser("stats", help="print trace metadata as JSON")
     s.add_argument("trace")
+    s.add_argument("--top-modules", type=int, default=10, dest="top_modules",
+                    help="show only top-N largest modules (default 10)")
+    s.add_argument("--all-modules", action="store_true", dest="all_modules",
+                    help="include all modules (don't truncate)")
 
     s = sub.add_parser("export", help="export trace to SQLite")
     s.add_argument("trace")
@@ -429,18 +713,61 @@ def main():
     s.add_argument("--start", type=int, required=True)
     s.add_argument("--reg", required=True)
     s.add_argument("--max", type=int, default=500)
+    s.add_argument("--exclude-regs", default="", dest="exclude_regs",
+                    help="comma-sep regs to skip (e.g. 'sp,fp,lr'). Default empty.")
+    s.add_argument("--data-only", action="store_true", dest="data_only",
+                    help="skip ldr base/idx regs + sp/fp/lr (LLM逆向 mode)")
 
     s = sub.add_parser("taint-bwd", help="backward def-chain from idx on a register")
     s.add_argument("trace")
     s.add_argument("--start", type=int, required=True)
     s.add_argument("--reg", required=True)
     s.add_argument("--max", type=int, default=500)
+    s.add_argument("--exclude-regs", default="", dest="exclude_regs",
+                    help="comma-sep regs to skip (e.g. 'sp,fp,lr')")
+    s.add_argument("--data-only", action="store_true", dest="data_only")
+
+    s = sub.add_parser("data-chase", help="single-path data chase (cross-fn, skips sp/fp noise)")
+    s.add_argument("trace")
+    s.add_argument("--start", type=int, required=True)
+    s.add_argument("--reg", required=True)
+    s.add_argument("--max-steps", type=int, default=50, dest="max_steps")
+    s.add_argument("--exclude-regs", default="sp,fp,lr", dest="exclude_regs",
+                    help="comma-sep regs to skip (default: sp,fp,lr)")
+
+    s = sub.add_parser("records", help="list trace records in [start, start+count)")
+    s.add_argument("trace")
+    s.add_argument("--start", type=int, default=0)
+    s.add_argument("--count", type=int, default=50)
+    s.add_argument("--regs", default="", help="comma-sep regs to include in each row")
+
+    s = sub.add_parser("last-write-of-addr",
+                       help="find most recent mem write to addr before idx")
+    s.add_argument("trace")
+    s.add_argument("--addr", required=True, help="hex 0x...")
+    s.add_argument("--before-idx", type=int, default=-1, dest="before_idx",
+                    help="-1 = end of trace")
 
     s = sub.add_parser("mem-dump", help="hex dump from MemShadow")
     s.add_argument("trace")
-    s.add_argument("--addr", required=True, help="hex 0x...")
+    s.add_argument("--addr", help="hex 0x... (or use --reg+--idx)")
+    s.add_argument("--reg", help="reg name; mem-dump uses reg's value at --idx as addr")
+    s.add_argument("--idx", type=int, default=0, help="trace idx for --reg lookup")
     s.add_argument("--count", type=int, default=64)
     s.add_argument("--cursor", type=int, default=-1, help="-1=latest")
+
+    s = sub.add_parser("find-mem-pattern", help="search MemShadow for a hex byte pattern")
+    s.add_argument("trace")
+    s.add_argument("--bytes", required=True, help="hex string e.g. '67e6096a' (SHA-256 IV)")
+    s.add_argument("--since", type=int, default=-1, help="trace cursor (latest if -1)")
+    s.add_argument("--max", type=int, default=100, help="0=all hits")
+
+    s = sub.add_parser("jni-calls", help="detect JNI vtable calls (BN-parsed offset map)")
+    s.add_argument("trace")
+    s.add_argument("--in-fn", default=None, help="restrict to a function name")
+    s.add_argument("--max", type=int, default=200)
+    s.add_argument("--jni-offsets", default=None, dest="jni_offsets",
+                    help="path to jni_offsets.json (default: viewer/jni_offsets.json)")
 
     s = sub.add_parser("field-at", help="BN HLIL struct field hint at (pc,reg,offset)")
     s.add_argument("trace")
@@ -478,7 +805,12 @@ def main():
         "search-asm": cmd_search_asm,
         "taint-fwd": cmd_taint_fwd,
         "taint-bwd": cmd_taint_bwd,
+        "data-chase": cmd_data_chase,
+        "records": cmd_records,
+        "last-write-of-addr": cmd_last_write_of_addr,
         "mem-dump": cmd_mem_dump,
+        "find-mem-pattern": cmd_find_mem_pattern,
+        "jni-calls": cmd_jni_calls,
         "field-at": cmd_field_at,
         "reg-timeline": cmd_reg_timeline,
         "mem-diff": cmd_mem_diff,

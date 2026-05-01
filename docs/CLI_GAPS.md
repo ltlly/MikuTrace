@@ -3,6 +3,24 @@
 > 实际逆向 TB libsgmainso x-sign 时发现的 CLI 工具不足。
 > 2026-05-01.
 
+> **状态 (2026-05-01 同日修完)**:
+> ✅ Gap-A (taint --data-only --exclude-regs)
+> ✅ Gap-B (last-write-of-addr CLI + REST)
+> ✅ Gap-C (stats --top-modules / --all-modules)
+> ✅ Gap-D (records CLI mirror)
+> ✅ Gap-E (fn-summary callees with callee_total_executions)
+> ✅ Gap-F (data-chase CLI + REST + viewer.taint.data_chase)
+> ✅ Gap-H (find-mem-pattern CLI + REST)
+> ✅ Gap-I (mem-dump --reg --idx)
+> ✅ Gap-J (jni-calls — vtable map BN-parsed from vendor/jni/jni_bn.h, NOT hardcoded)
+> ⏸ Gap-G (cross-fn-call taint), Gap-K/L (jobj-history / jni-strings) 留 backlog
+>
+> **实证 (实战 trace TB doCommandNative 70102 cold-path 7.6M records)**:
+> - taint-bwd 旧: final ret x0 chain 26 hits 里 20+ 是 sp/fp 噪音
+> - taint-bwd --data-only 新: 8 hits **零噪音**, 全部数据相关
+> - data-chase 6 步即穿透到 sub_8a7b8 内的真数据源 (vs 自写 SDK chase 同路径)
+> - jni-calls 立刻找到 #655 GetStringUTFChars — sign 函数的输入参数入口
+
 ## P0 阻塞性
 
 ### Gap-A: `taint-bwd` / `taint-fwd` 通过 sp/fp/lr 爆炸式扩展, 噪音 >> 信号
