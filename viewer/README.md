@@ -1,120 +1,240 @@
-# traceMiku — Stage 2 Viewer (PDF-parity)
+# viewer/ — core 库 + CLI 子命令 + Python SDK
 
-按看雪 krash 时间无关调试 PDF 的功能完整复刻。
+`viewer/` 是 traceMiku 的离线分析 core. 它给三种消费者用同一份底层:
 
-## 视图（与 PDF 1:1 对应）
+- **Web** (`webui/`) — `webui/server.py` 直接 import `viewer.*`
+- **CLI** (`viewer/__main__.py`) — `python -m viewer <subcommand>`, JSON 输出
+- **Python SDK** (`viewer/__init__.py`) — `from viewer import load, ...`
 
-| krash 视图 | traceMiku 实现 |
+> `viewer/app.py` 的 textual TUI **已冻结**, 仅保留兼容入口 `python -m viewer <dir>`,
+> 不再加新功能。新功能一律先在 Web 上做。
+
+---
+
+## Python SDK
+
+公共 API 在 `viewer/__init__.py` 显式 export:
+
+```python
+from viewer import (
+    # core trace
+    Trace, Record, Module, TraceMeta,
+    load, addr_of,
+    REG_NAMES, ALL_REGS, REC_SIZE,
+    # disasm
+    decode, Decoded, fmt_insn,
+    # symbol map
+    SymbolMap, build_from_trace, load_ida_symbols, auto_known_offsets,
+    # CFG
+    build_cfg, CFG, Block, find_sccs, loop_sccs,
+    # cross-ref index
+    Index,
+    # memory shadow
+    MemShadow,
+    # taint
+    forward_taint, backward_taint,
+    # decompiler backend
+    make_backend,
+)
+```
+
+### 最小例子
+
+```python
+from viewer import load, build_from_trace, Index, decode
+
+t = load("traces/run1/calls/call_002_*/")
+print(len(t), "records")
+print(t.meta.module.name)              # libsgmainso-6.8.260403.so
+
+sym = build_from_trace(t)              # PC → function name
+                                        # auto-loads examples/<so>/known_offsets.json
+idx = Index(t); idx.build()            # def/use chains
+
+# 看第 100 条记录
+r = t.record(100)
+d = decode(r.pc, r.inst)
+print(f"#{r.idx}  {hex(r.pc)}  {d.mnemonic} {d.op_str}  x0={hex(r.reg('x0'))}")
+```
+
+### 完整 cookbook
+
+`examples/llm_cookbook.py` 有 10 个 self-contained 例子:
+
+| Example | 说明 |
 |---|---|
-| 指令流视图 | ✅ 函数前置、当前 PC 高亮、分支着色、固定高度（不抖动）、鼠标点击跳转 |
-| 寄存器视图 | ✅ 全 33 寄存器 + pwndbg 智能解引用 + **变化的红色 ★ 标记 + 数值红色加粗** |
-| 内存视图 | ✅ hex+ascii，未访问字节显示 `??`（红色暗色） |
-| 交叉引用 | ✅ ← def-chain / → use-chain / mem ops，跳转链 d/u |
-| 字符串参考 | ✅ 从内存 shadow 自动提取 ASCII 串 |
-| 污点追踪 | ✅ 正向/反向，结果内联显示，自动跳到首条 |
-| CFG | ✅ **TUI 内交互式**：热点块列表 + 当前块完整反汇编 + 出/入边可跳转（不再开外部 SVG）|
-| 块导航图 | ✅ 像素网格按热度着色 |
-| 调用栈 | 🔜 |
-
-### CFG 交互（v5）
-按 `C` 在 CFG tab 内：
-- 热点块按执行次数排序
-- 当前块完整反汇编展示
-- ↑↓ 切换块；Enter 跳到主 trace 第一次执行；← 跳到上游块；→ 跳到首个出边块
-- 鼠标点击块条目也可选
-
-不再依赖 graphviz 外部窗口。仍需 SVG 的话 `Ctrl-S` 导出 `Ctrl-O` 浏览器打开。
-
-## 快捷键
-
-| 键 | 动作 |
-|---|---|
-| ↑ / ↓ / k / j | 单步 |
-| PgUp / PgDn | 翻页 |
-| Home / End | 头/尾 |
-| `g` | Goto: 输入 `#1234` 或 `0xabcd` |
-| `/` | Search: 输入 regex 在反汇编里跳找 |
-| `d` / `u` | 跳到第一个 def-chain / use-chain |
-| `m` | 设置内存视图地址（hex 或寄存器名 `sp`/`x0`...）|
-| `f` / `b` | 正向/反向污点追踪（输入寄存器名）|
-| `s` | 提取 strings 到 Strings tab |
-| `C` | 构建 CFG 文本视图 |
-| `B` | 构建块导航图（像素网格）|
-| `c` | 导出 CFG 到 `/tmp/cfg_*.dot` 并自动 `dot -Tsvg` |
-| `o` | 浏览器打开 SVG |
-| `q` | 退出 |
-| `Esc` | 关命令栏 |
-
-## 用法
+| `load_trace` | Load + 元信息 |
+| `count_blocks` | Build CFG, 列 hottest blocks |
+| `find_pc` | numpy vec 找一个 PC 的所有 idx |
+| `taint_x0` | Forward-taint x0 |
+| `backward_taint_chain` | Backward def-chain 看 reg 来源 |
+| `find_strings_in_mem` | MemShadow 里所有 ≥N 字节 ASCII 串 |
+| `mem_dump_at_addr` | hex dump |
+| `classify_branch` | 统计 branch/call/ret/other 比例 |
+| `hot_pcs` | top-N 最热 PC + 反汇编 |
+| `full_trace_summary` | 一次性 summary, LLM agent 友好 |
 
 ```bash
-# 从项目根目录
-cd /home/ltlly/Code/traceMiku
-python3 -m viewer traces/doCommand_70102
-
-# 或独立启动器
-./tracemiku-view traces/doCommand_70102
-
-# 看任意 trace.bin
-python3 -m viewer traces/doCommand_70102/trace_26215.bin
+python examples/llm_cookbook.py all              # 跑所有
+python examples/llm_cookbook.py taint_x0         # 跑单个
 ```
 
-## 内存视图说明
+---
 
-trace 只记录寄存器，不直接采集内存。我们通过 trace 重建一个**稀疏内存 shadow**：
-- 对于 `str x0, [x1, #0x10]`：从源寄存器 x0 取值，地址 = x1+0x10
-- 对于 `ldr x8, [x9]`：从下一条记录的 x8（执行后值）反推加载值
-- 任意 (addr, time) 查询：返回 ≤time 的最近一次读/写
-- 从未被 trace 读写的字节显示为 **??**（与 krash PDF 同款行为）
+## CLI 子命令 (LLM/scripting)
 
-按 `m` 输入十六进制地址或寄存器名（如 `sp`, `x0`）跳转。
+`viewer/__main__.py` 暴露 12 个子命令, 默认 JSON 输出:
 
-## 字符串提取
+```bash
+# 元信息 / 导出
+python -m viewer stats <trace>
+python -m viewer export <trace> --format sqlite [-o out.db]
 
-按 `s` 触发：扫描内存 shadow，把所有 ≥4 字节的连续可打印 ASCII 范围识别为字符串。在 doCommand_70102 trace 上能挖出 34 个字符串（其中包含 SDK 自带常量、文件路径、Java 类名等）。
+# 索引 / 搜索
+python -m viewer search-pc <trace> 0x... [--limit N]
+python -m viewer idxs-for-pc <trace> 0x... [--cursor N --limit M]
+python -m viewer search-asm <trace> 'regex' [--max N]
 
-## 污点追踪示例
+# 污点 / 内存
+python -m viewer taint-fwd <trace> --start N --reg x0 [--max N]
+python -m viewer taint-bwd <trace> --start N --reg x0 [--max N]
+python -m viewer mem-dump <trace> --addr 0x... [--count N --cursor N]
 
-进 trace 任意条指令（比如 doCommandNative 入口 #0），按 `f` → 输 `x2` → 看到 cmd id (70102) 怎么被处理：
+# 高级查询
+python -m viewer reg-timeline <trace> --reg x0 --start 0 --end 1000
+python -m viewer mem-diff <trace> --idx 100 --addr 0x... --size 32
+python -m viewer fn-summary <trace> --fn doCommandNative
+
+# BN HLIL 字段语义 (需 BN backend)
+python -m viewer field-at <trace> --pc 0x... --reg x8 --offset 0x80 \
+       --so /path/to/lib.so
+
+# 启动 deprecated TUI (兼容裸路径)
+python -m viewer <trace_dir>
 ```
-正向 taint of x2 from #0:
-  #7  smull x8, w2, w8       ; regs:x2
-  #11 lsr   x11, x8, #0x3f   ; regs:x8
-  #12 asr   x8, x8, #0x2c    ; regs:x8
-  ...                          ← 揭示 cmd dispatch 用 magic-multiply 实现 mod
+
+每个命令的 `--help` 写得清晰 (LLM 能直接挑工具)。地址参数都接受 hex
+(`0x...`) 或十进制。
+
+### 示例: 看 doCommandNative 在 trace 里被执行了几次, 第一次入口什么 PC
+
+```bash
+TRACE=traces/run1/calls/call_002_*/
+python -m viewer fn-summary "$TRACE" --fn doCommandNative
+# {"status":"ready","fn":"doCommandNative","pc":"0x6d12397770",
+#  "block_count":70,"total_executions":164,
+#  "entry_idxs":[0],"entry_idxs_total":1, ...}
 ```
 
-## 块导航图（krash 杀手级）
+### 示例: 跟踪 cmd id 70102 在哪些 reg 上被搬动
 
-按 `B` → BlockMap tab：所有 BB 一格一个像素，颜色编码执行次数：
-- ░ 灰 — 未执行
-- · 白 — 1×
-- ▒ 黄 — ≤5×
-- ▓ 亮黄 — ≤20×
-- █ 红 — ≤100×
-- ▓▓ 亮红粗体 — >100× (热循环)
-- [Y] 黄色高亮 — 当前 cursor 所在块
+```bash
+python -m viewer reg-timeline "$TRACE" --reg x2 --start 0 --end 100
+python -m viewer taint-fwd "$TRACE" --start 0 --reg x2 --max 200
+```
 
-可视化整个 trace 的覆盖率和热点。
+---
 
-## 目前限制
-
-1. **trace 只到 ~4500 条就停**：`doCommandNative(70102)` 是异步——同步部分约 4500 条指令完成后线程就 block 在 libart/libc（被 Stalker.exclude），看起来"trace 没完"实际是函数已把控制权让给 binder/IPC。要看更多需要追踪 worker 线程或包含部分 libart trace。
-2. **NEON / FP 寄存器没抓**：当前 record 格式只有 GPR。OLLVM 用 NEON 的话需扩展 record 格式。
-3. **字符串只能从内存 shadow 抠**：trace 没读到的字节没法识别字符串；如需更多字符串，用 trace 时让设备多走几次代码路径。
-
-## 文件
+## 文件清单
 
 ```
 viewer/
-  trace.py        # mmap binary trace 解析、meta 加载
-  disasm.py       # capstone 反汇编 + def/use/mem 提取（缓存）
-  index.py        # reg_defs / reg_uses 索引、def-use 链
-  symbols.py      # 函数符号推断（trace bl-target + 已知导出表）
-  memshadow.py    # 稀疏内存 shadow + ?? 占位 + 字符串提取
-  cfg.py          # 从 trace 重建 BB-CFG，输出 graphviz dot
-  taint.py        # 正向 / 反向污点
-  app.py          # textual TUI 主程序
-  __main__.py
-  README.md
+├── __init__.py        # 公共 API exports (29 names)
+├── __main__.py        # 12 个 CLI 子命令 + dispatcher
+├── trace.py           # mmap binary trace 解析 + Record + addr_of
+├── disasm.py          # capstone 包装 + def/use 提取 (lru_cache 200K)
+├── symbols.py         # SymbolMap + auto_known_offsets discovery
+├── cfg.py             # build_cfg + Tarjan SCC + write_dot (TUI 用)
+├── index.py           # def/use chain + mem_addr_to_writes
+├── memshadow.py       # 稀疏内存 shadow + find_strings + hex_dump
+├── taint.py           # 正向/反向污点 (heap-based, O(|hits|·log N))
+├── display.py         # pwndbg 风 classify + multi-module collector
+├── decompiler/        # BN/Ghidra/IDA backend 抽象 + binja 实现
+│   ├── backend.py     # FieldHint / Function / Variable 等 dataclasses
+│   └── backends/
+│       ├── binja.py   # BN 实现 (含 field_at HLIL walker)
+│       ├── ghidra.py  # stub
+│       ├── ida.py     # stub
+│       └── none.py    # null backend
+└── app.py             # TUI (deprecated, 不维护)
 ```
+
+## 关键 API
+
+### `load(trace_dir_or_file) -> Trace`
+
+读 trace.bin + meta.json (per-call / run-level 都支持)。返回 `Trace` 含
+`record(i)`, `pc(i)`, `inst(i)`, `pc_array()` (numpy 零拷贝视图)。
+
+### `build_from_trace(trace, base=0, known_offsets=None) -> SymbolMap`
+
+从 trace 推断函数列表 (bl 目标 + 第一个 PC)。`known_offsets=None` 时自动
+discover (按顺序: trace.meta.raw["known_offsets"] / `<trace_dir>/known_offsets.json` /
+`<run_dir>/known_offsets.json` / `examples/<so_basename>/known_offsets.json`)。
+
+### `Index(trace).build()`
+
+扫一次 trace, 建 `reg_defs / reg_uses / mem_writes / mem_reads /
+mem_addr_to_writes`。供 `forward_taint` / `backward_taint` 加速 (旧 O(N²) →
+新 O(|hits|·log N))。67k record 上 1-2 秒。
+
+### `MemShadow(trace).build()`
+
+按 trace 时序扫所有 store/load, 重建字节级内存 shadow。`byte_at(addr, t)`
+返回 (byte_value, kind, source_idx), kind ∈ `r`/`w`/`??`。
+
+### `forward_taint(trace, start_idx, taint_reg, max_count, index)`
+
+heap-based 正向污点。返回 `[(insn_idx, why), ...]`。
+
+### `build_cfg(trace, only_module=True) -> CFG`
+
+从 trace 重建 BB-CFG。`CFG.blocks` 是 `dict[start_pc, Block]`,
+`CFG.edges` 是 `dict[(src, dst), {kind, count}]`。
+
+### `decode(pc, inst) -> Decoded`
+
+capstone 包装, lru_cache。返回 `mnemonic`, `op_str`, `regs_def/use`,
+`mem_op` (含 base/index/disp/size/is_write), `is_branch/call/ret`,
+`branch_target`, `indirect_branch_reg`。
+
+### `make_backend(name)` (lazy)
+
+`name` ∈ `'binja' | 'ghidra' | 'ida' | 'r2' | None` (auto)。返回
+decompiler backend (含 `function_at`, `hlil_for`, `cfg_for`, `field_at`,
+`asm_tokens_at` 等)。lazy import 避免主路径拉 BN。
+
+---
+
+## 跟 webui 的关系
+
+`webui/server.py:make_app(trace_path)` 内部 import `viewer` 然后包成 REST
+endpoints。`webui/schemas.py` 定义 strict Pydantic schemas, OpenAPI 自动
+生成。改 viewer core 时跑 `pytest tests/test_webui.py` 验证 web 那端。
+
+`webui/cfg_render.py` 是从 server.py 抽出来的纯函数 (graphviz dot 拼接 +
+HTML token 着色), 跟 viewer/ 无关。
+
+## 测试
+
+```bash
+pytest tests/ --ignore=tests/test_percall.py --ignore=tests/test_pull_fixes.py \
+              --ignore=tests/test_webui_full.py --ignore=tests/test_real_trace.py
+# 41 passed
+```
+
+(那 4 个 ignore 是要起 subprocess / 真 trace 的, 在 sandbox 跑不动。)
+
+## 旧 TUI 用法 (deprecated)
+
+```bash
+python -m viewer traces/run1/calls/call_002_*/
+# 或
+./tracemiku view traces/run1/calls/call_002_*/
+```
+
+快捷键: ↑↓/k/j 单步, PgUp/PgDn 翻页, `g` 跳转, `/` 搜索, `d`/`u`
+def/use, `f`/`b` 污点, `m` 内存, `s` 字符串, `C` CFG, `B` BlockMap,
+`Ctrl-S` 导出 dot, `q` 退出。
+
+新功能不会加进 TUI; 在 Web (`./tracemiku web <trace>`) 上做。

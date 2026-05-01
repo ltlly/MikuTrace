@@ -7,6 +7,12 @@ PDF: `example/[原创]使用时间无关调试技术(Timeless Debugging)高效�
 PDF 共 25 页. 第 1-10 页是工具功能展示, 第 11-20 页是用工具实战分析 ollvm11 sample. 评论区 (第 21-25 页) 透露了一些设计细节.
 作者将工具分两部分: trace 记录器 + trace 分析器 (此 doc 只对照"分析器", 即 viewer).
 
+> **2026-05-01 更新**: TUI (`viewer/app.py`) 已**冻结**, 不再维护。Web SPA
+> (`webui/`) 是当前主 UI; CLI (`python -m viewer ...`) + Python SDK
+> (`from viewer import ...`) + REST API 是 LLM 友好接口三件套。本文档保留
+> TUI 行号引用作为历史 — 具体当前实现请看 `viewer/__main__.py` 和
+> `webui/server.py`。
+
 > **核心设计哲学** (PDF p10, 第 21 楼回复):
 > 1. 离线分析, 不依赖反混淆;
 > 2. 自重建 CFG 对抗间接跳转混淆;
