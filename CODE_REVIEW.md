@@ -17,11 +17,11 @@
 - 🆕 新功能: #16 (diff) backlog; #22 (CLI) / #24 (Python SDK) 并入新第五节"AI 友好接口"
 
 **新的 quick win 顺序** (在文末完整表格):
-1. `collect_modules_from_trace` 真正实现 (#6) — 用户感知最强
-2. `_addr_of` 抽到 `viewer/insn_util.py` (#4) — 5 分钟
-3. bare `except:` → `except Exception:` (#10) — 5 分钟
-4. `Record.reg()` 用 dict (#8) — 5 分钟
-5. `json.load(open())` → `Path.read_text()` (#9) — 10 分钟
+1. ~~`collect_modules_from_trace` 真正实现 (#6)~~ ✅ DONE (`bd8cc4e` + `1a1819a`)
+2. ~~`_addr_of` 抽到 `viewer/trace.py` (#4)~~ ✅ DONE (`bd8cc4e`)
+3. ~~bare `except:` → `except Exception:` (#10)~~ ✅ DONE (`bd8cc4e`)
+4. ~~`Record.reg()` 用 dict (#8)~~ ✅ DONE (`bd8cc4e`)
+5. ~~`json.load(open())` → `Path.read_text()` (#9)~~ ✅ DONE (`bd8cc4e`)
 6. `KNOWN_LIBSGMAINSO` 参数化 (#5) — 1 小时
 7. **API JSON schema 文档化** (新, 第五节) — 半天, 是 AI 友好接口的前置
 
@@ -97,7 +97,7 @@ class BgManager:
 
 ## 二、代码质量问题
 
-### 4. `_addr_of()` 在 3 个文件中重复
+### 4. `_addr_of()` 在 3 个文件中重复 ✅ DONE (`bd8cc4e`)
 
 `taint.py:21`, `memshadow.py:25`, `display.py` 里都有几乎一样的 `_addr_of` 实现:
 
@@ -139,7 +139,7 @@ KNOWN_LIBSGMAINSO = {
 > - `KNOWN_LIBSGMAINSO` 的 sample 内容可以挪到 `examples/libsgmainso/known_offsets.json` 顺便给后人看。
 > - 同时检查 `symbols.py:103-120` 的 "drop entries inside known" 逻辑 — 它依赖 `KNOWN_LIBSGMAINSO`, 改造后这部分要参数化。
 
-### 6. `collect_modules_from_trace` 几乎是空壳
+### 6. `collect_modules_from_trace` 几乎是空壳 ✅ DONE (`bd8cc4e` + `1a1819a`)
 
 `display.py:175`:
 
@@ -191,7 +191,7 @@ lo = bisect.bisect_right(self._starts, pc) - 1
 > - **真要做就一起做**: `Index.def_chain`/`Index.use_chain` (index.py:62-109) 也手写了二分, 一并替换可以减 ~30 行代码。可读性比性能收益大。
 > - **建议**: 顺手做 (一次性改完所有手写二分,省得以后看到又想改), 但不单立 PR。
 
-### 8. `Record.reg()` 用 `list.index()` 线性查找
+### 8. `Record.reg()` 用 `list.index()` 线性查找 ✅ DONE (`bd8cc4e`)
 
 `trace.py:38`:
 
@@ -217,7 +217,7 @@ return self.regs[_REG_INDEX[name]]  # O(1)
 > - **改动是 5 行代码, 0 风险, 立刻做**。
 > - 同时把 `if name == "pc"/"sp"/"nzcv"` 三个 special case 也并入 dict (`{**REG_NAMES_idx, "sp": -3, "pc": -2, "nzcv": -1}` 加分支), 或者反过来 — 给 special case 一个 dict-of-callable, 整体更对称。但简单加 dict 已经够了。
 
-### 9. `json.load(open(mp))` 多处文件句柄泄漏
+### 9. `json.load(open(mp))` 多处文件句柄泄漏 ✅ DONE (`bd8cc4e`)
 
 `trace.py:119,130,137` 等多处:
 
@@ -238,7 +238,7 @@ with open(mp) as f:
 > - 同时检查 `symbols.py:146` 也有 `json.load(open(json_path))` — 一并修。
 > - **建议**: 换种写法更紧凑 — `import json; json.loads(pathlib.Path(mp).read_text())`, 文件句柄根本不进 Python (read_text 内部 with), 还少一行 indent。
 
-### 10. 大量 bare `except:`
+### 10. 大量 bare `except:` ✅ DONE (`bd8cc4e`)
 
 `trace.py:74`, `server.py:216,325` 等:
 
@@ -624,3 +624,86 @@ __all__ = [...]
 2. 单独 PR 做 5.1 (Pydantic + OpenAPI) — 这一步会让所有 endpoint 的字段约定固化下来, 后面动它们就难了, 所以越早越好。
 3. 之后 5.2 (MCP server) 是 `tools/tracemiku-mcp/` 子目录的事; 用 Anthropic MCP Python SDK, 工具调用全部 wrap 已有 `viewer/*.py` 函数, 增量小。
 4. P1 内的 #19 (`field_at`) 单独排期, 它和 5.x 是独立 track。
+
+---
+
+## 八、三轮复核 (2026-05-01, 基于 commit `cc48513` HEAD)
+
+`1a1819a` 把多模块端到端打通 (host driver + viewer reader 两 patch 字节级与建议一致), `cc48513` 同步了文档。33 unit tests 全过, Case C 实证 multi-module load 正常。
+
+但抓到 3 个新的小 todo:
+
+### 8.1 缺 multi-module pipeline 的 regression test 🆕
+
+`tests/` 全仓 grep 不到 `modules` — 现在改一行 `_populate_meta` / load() 的 fallback 路径就容易再次回归。
+
+**建议**: 加 `tests/test_meta_modules.py`, 跑 3 个 case (用 mock meta.json + 1 byte trace.bin):
+- per-call dir (`d/calls/call_NNN/`) + run-level meta 含 `modules` → `meta.modules` 应 == 3
+- legacy `trace_*.bin` 布局 + run-level meta 含 `modules` → 同上
+- 仅有 `meta.module` 单数 (legacy trace, 无 modules 字段) → fallback 后 `meta.modules == [meta.module]`
+
+复用三轮复核里实证用的 mock 代码即可, 30 分钟落地。
+
+### 8.2 `/api/meta` endpoint 不暴露 `modules` 字段 🆕
+
+`webui/server.py:371-382`:
+```python
+return {
+    "path": ...,
+    "module": {"name": m.name, "base": hex(m.base), ...} if m else None,
+    # 缺: "modules": [{"name", "base", "size", "end"}, ...]
+}
+```
+
+**后果**: Web 前端 / 未来的 MCP client 拿不到多 SO 列表。`_classify_reg_value` 内部用了 `collect_modules_from_trace` 是间接路径 (够它自己 classify), 但外部 consumer 看不到。
+
+**修复 (1 行)**:
+```python
+"modules": [{"name": x.name, "base": hex(x.base), "size": x.size, "end": hex(x.end)}
+            for x in t.meta.modules],
+```
+
+属于 **5.1 (API schema 文档化) 的范畴**, 顺手在做 Pydantic 化时一起加。
+
+### 8.3 `viewer/trace.py` 三处 `meta.module → meta.modules` fallback 重复
+
+`1a1819a` 在两处 run-level merge 末尾加了:
+```python
+if meta.module and not meta.modules:
+    meta.modules.append(meta.module)
+```
+(`trace.py:160` 和 `trace.py:194`)
+
+而 `bd8cc4e` 在 `_populate_meta` 末尾也加了同样的 (line 209-210)。**三处语义完全相同, 重复**。
+
+**修复 (低优先级, 但会让代码干净)**:
+- 删掉 `trace.py:160` 和 `trace.py:194` 的两处
+- 在 `load()` 函数 return 之前 (即两个 `return Trace(bin_path, meta)` 之前) 各加一行调用一个新的 helper `_finalize_modules_fallback(meta)`
+- 或者更简单: 直接保留 `_populate_meta` 那处, 因为 per-call meta 必然走 `_populate_meta`; 而 run-level merge 之后立即 return, 在 return 之前再补一次兜底也不亏 — 现状其实是 "防御性多次重置", 删了也对。
+
+**推荐: 直接删 `trace.py:160` 和 `trace.py:194` 两处**, 因为 `_populate_meta` 已经处理了从 per-call meta 进来的情形; 而 run-level meta 即使写了 `module` 单数, 也走的是 fallback (`_populate_meta` 在 per-call meta 里处理), 不需要在 run-level merge 后再补一次。**待小心验证**, 不是 quick win — 列在 P3。
+
+### 8.4 第 1 步审计的"未做"清单 (按下一步推荐顺序)
+
+| 优先级 | TODO | 估时 | 依赖 |
+|--------|------|------|------|
+| **P1.A** ⭐ | **5.1 API Pydantic + OpenAPI schema** (含 8.2 暴露 modules) | 半天 | — |
+| P1.B | regression test for multi-module pipeline (8.1) | 30min | — (可独立) |
+| P1.C | server.py 纯函数 (lines 28-175) → `webui/cfg_render.py` | 1h | — |
+| P1.D | `KNOWN_LIBSGMAINSO` 参数化 (#5, `build_from_trace` 接 `known_offsets`) | 1h | — |
+| P1.E | BN backend `field_at` 实现 (#19) | 1-2 day | BN MCP 已就位, 可以开始 |
+| P1.F | SQLite export (`python -m viewer export`) (#18) | 半天 | — (配合 5.3) |
+| P2.A | 5.2 `tracemiku-mcp` MCP server | 1-2 day | **5.1 必须先做** |
+| P2.B | 5.3 thin CLI subcommands + Python SDK 文档 | 半天 | 可与 5.2 并行 |
+| P3 | 8.3 trace.py fallback 三处去重 | 15min | 防御性, 顺手做 |
+| P3 | 5.4 LLM 友好高级查询 / BG dataclass / bisect / MemShadow numpy / trace diff | 按需 | — |
+
+### 8.5 推荐下一步
+
+如果只挑一个 PR, **做 P1.A (5.1 API schema 文档化)** — 它:
+- 强制让 `/api/meta` 字段补全 (顺手解决 8.2)
+- 是 5.2 (MCP server) 的硬前置, 拖久了字段名再改就是 breaking change (现在还没下游消费者, 改起来便宜)
+- 半天工作量, 单 PR 收尾干净
+- 顺便定义 modules / record / cfg 等 response Pydantic model, 后面 MCP wrapper 可以直接复用
+
+如果想先把"已修好的链路"100% 收尾, **优先做 P1.B (regression test, 30min)** — 防止 multi-module 再回归。这是 memory `feedback_e2e_pipeline_audit` 写下的教训的直接延伸: 改 agent→host→viewer 链路得有测试看着, 不能只靠 mock 一次。

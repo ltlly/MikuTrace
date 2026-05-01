@@ -1,0 +1,7 @@
+{
+    "0x570b8": "JNI_OnLoad",
+    "0x5758c": "JNI_OnUnload",
+    "0x57770": "doCommandNative",
+    "0x1ab90c": "one_jni_onload",
+    "0x1aba64": "one_jni_onunload"
+}

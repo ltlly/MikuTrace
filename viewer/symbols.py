@@ -50,9 +50,16 @@ class SymbolMap:
         return (name, pc - start)
 
 
-def build_from_trace(trace: Trace, base: int = 0) -> SymbolMap:
+def build_from_trace(trace: Trace, base: int = 0,
+                     known_offsets: dict[int, str] | None = None) -> SymbolMap:
     """Walk the trace, identify function entries (bl targets + first PC),
-    return a SymbolMap with sub_<offset> names."""
+    return a SymbolMap with sub_<offset> names.
+
+    Args:
+        known_offsets: Optional dict of {offset: name} for the target module.
+            When provided, these offsets are used to align the trace start
+            and name known functions. When None, pure heuristic (bl targets + first PC).
+    """
     if base == 0 and trace.meta.module:
         base = trace.meta.module.base
     sm = SymbolMap(base=base)
@@ -72,38 +79,32 @@ def build_from_trace(trace: Trace, base: int = 0) -> SymbolMap:
             # We don't add these as functions; they may be intra-function jumps
             pass
 
-    # Known offsets for libsgmainso 6.8.260403 (extracted from ELF dynsym)
-    KNOWN_LIBSGMAINSO = {
-        0x570b8: "JNI_OnLoad",
-        0x5758c: "JNI_OnUnload",
-        0x57770: "doCommandNative",
-        0x1ab90c: "one_jni_onload",
-        0x1aba64: "one_jni_onunload",
-    }
-
     m = trace.meta
     # Add hooked function entry if known
     if m.module:
         if m.fn_addr:
             seen_entries.add(m.fn_addr)
         # Align trace start to nearest known function entry
-        first_off = first_pc - m.module.base if first_pc else -1
-        aligned = False
-        for off in KNOWN_LIBSGMAINSO:
-            if 0 <= first_off - off <= 0x80:
-                seen_entries.add(m.module.base + off)
-                aligned = True
-                break
-        # If trace starts mid-function and we couldn't align, add as own entry
-        if not aligned and first_pc:
+        if known_offsets:
+            first_off = first_pc - m.module.base if first_pc else -1
+            aligned = False
+            for off in known_offsets:
+                if 0 <= first_off - off <= 0x80:
+                    seen_entries.add(m.module.base + off)
+                    aligned = True
+                    break
+            # If trace starts mid-function and we couldn't align, add as own entry
+            if not aligned and first_pc:
+                seen_entries.add(first_pc)
+        elif first_pc:
             seen_entries.add(first_pc)
     elif first_pc:
         seen_entries.add(first_pc)
 
-    # Drop entries that are already "inside" a known KNOWN_LIBSGMAINSO entry
+    # Drop entries that are already "inside" a known entry
     # (e.g. don't add sub_57780 when doCommandNative is at 57770)
-    if m.module:
-        known_starts = sorted(KNOWN_LIBSGMAINSO.keys())
+    if m.module and known_offsets:
+        known_starts = sorted(known_offsets.keys())
         filtered = set()
         for pc in seen_entries:
             off = pc - m.module.base
@@ -125,9 +126,9 @@ def build_from_trace(trace: Trace, base: int = 0) -> SymbolMap:
         if m.module:
             off = pc - m.module.base
             if m.fn_addr and pc == m.fn_addr:
-                name = m.method or KNOWN_LIBSGMAINSO.get(off, "func")
-            elif off in KNOWN_LIBSGMAINSO:
-                name = KNOWN_LIBSGMAINSO[off]
+                name = m.method or (known_offsets.get(off, "func") if known_offsets else "func")
+            elif known_offsets and off in known_offsets:
+                name = known_offsets[off]
         if name is None:
             if base and pc >= base:
                 name = f"sub_{pc - base:x}"
