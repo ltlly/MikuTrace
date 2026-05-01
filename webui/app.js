@@ -85,6 +85,14 @@ async function init() {
     `  ${STATE.totalRecords.toLocaleString()} 条`;
   $("trace-info").textContent = `${STATE.totalRecords.toLocaleString()} 条`;
 
+  // Fetch SO stats early to decide whether this is a multi-SO trace.
+  // body.multi-so toggles per-row color bars ON; single-SO traces stay clean.
+  // /api/so-stats 是 numpy vectorized, 7M trace 上 ~10ms.
+  api("/api/so-stats?top=200").then(stats => {
+    STATE.soStats = stats;
+    document.body.classList.toggle("multi-so", stats.modules.length >= 2);
+  }).catch(() => {});
+
   buildVirtualList();
   setupVerticalTabs();
   setupBottomTabs();
@@ -452,14 +460,15 @@ function buildRow(i, r) {
   const annHtml = r.annotation ? `<span class="ann">; ${escapeHtml(r.annotation)}</span>` : "";
   const pcFmt = formatPc(r);
   const asmInner = renderAsmInner(r);
-  // Module badge: 4-8 char abbrev + tooltip with full name. Color hashed.
-  const modBadge = r.module
-    ? `<span class="mod-badge" style="color:${soColor(r.module)}" title="${escapeHtml(r.module)}">${escapeHtml(soBadge(r.module))}</span>`
+  // Module color bar (3px wide, left edge). CSS body.multi-so 控制是否显示
+  // — 单 SO trace 默认隐藏 (零噪音). hover/title 显示完整 SO 名.
+  const modBar = r.module
+    ? `<span class="mod-bar" style="color:${soColor(r.module)}" title="${escapeHtml(r.module)}"></span>`
     : "";
   row.innerHTML =
+    modBar +
     `<span class="ec ${ecCls}" title="${ecTitle}"></span>` +
     `<span class="idx">#${r.idx}</span>` +
-    modBadge +
     `<span class="pc" title="${r.pc}">${escapeHtml(pcFmt)}</span>` +
     `<span class="func">${r.func ? r.func + "+" + r.off : (r.rel || r.pc)}</span>` +
     `<span class="asm">${asmInner}${annHtml ? "  " + annHtml : ""}</span>`;
@@ -952,6 +961,9 @@ async function initSoFilterTab() {
     return;
   }
   STATE.soStats = stats;
+  // Toggle body.multi-so so per-row color bars only appear when ≥2 SOs.
+  // Single-SO traces are kept noise-free (the most common case).
+  document.body.classList.toggle("multi-so", stats.modules.length >= 2);
   renderSoFilter();
 }
 
