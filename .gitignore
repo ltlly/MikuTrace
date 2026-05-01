@@ -33,3 +33,6 @@ dist/
 
 # 外部 fork / clone — 各自有自己的 .git, 不进主仓
 /tools/
+# 但项目自己的 Frida 分析/patch 小工具进
+!/tools/detect_suicide.js
+!/tools/patch_sgmainso_tgkill.js

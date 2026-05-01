@@ -437,6 +437,53 @@ function flushExtWriteEvents() {
     return events.length;
 }
 
+// ─────────── Anti-anti-frida: patch obfuscated tgkill thunks ───────────────
+//
+// libsgmainso 6.8.260403 含 8 处 obfuscated tgkill block. 反检测线程通过
+// 内联 svc 调用 SYS_tgkill 自杀 — 标准 Frida `Interceptor.attach("tgkill")`
+// hook 不到. 静态分析 (BN + 字节扫) 找到 6 处确定的 svc 位置, patch 成 nop
+// 即可绕过自杀. 详见 tools/patch_sgmainso_tgkill.js.
+//
+// SVC offsets (relative to libsgmainso base, 找 movz X8,#131 对应的 svc):
+const SGMAIN_TGKILL_SVC_OFFSETS = [
+    0x54f24,    // movz @ 0x54f10, svc +0x14
+    0x5beb0,    // movz @ 0x5be9c
+    0x67274,    // movz @ 0x67260
+    0xfe334,    // movz @ 0xfe320
+    0x14829c,   // movz @ 0x14828c, svc +0x10 (布局略不同)
+    0x15b6d4,   // movz @ 0x15b6bc, svc +0x18
+];
+
+function patchSgmainsoSuicide(modName) {
+    // modName: pattern of so to patch (e.g., "libsgmainso"). Defaults to STATE.soPattern.
+    const pat = modName || STATE.soPattern;
+    if (STATE.suicidePatched) return 0;
+    const m = Process.enumerateModules().find(x => x.name.indexOf(pat) !== -1);
+    if (!m) { log(`[patch-suicide] ${pat} not loaded yet`); return 0; }
+    const NOP = [0x1f, 0x20, 0x03, 0xd5];   // d503201f LE
+    let patched = 0;
+    for (const off of SGMAIN_TGKILL_SVC_OFFSETS) {
+        const svcAddr = m.base.add(off);
+        try {
+            const before = svcAddr.readByteArray(4);
+            const beforeArr = Array.from(new Uint8Array(before));
+            // svc #0 = 01 00 00 d4
+            if (beforeArr[0] !== 0x01 || beforeArr[1] !== 0x00 ||
+                beforeArr[2] !== 0x00 || beforeArr[3] !== 0xd4) {
+                log(`[patch-suicide][!] svc@+0x${off.toString(16)} mismatch (got ${beforeArr.map(b=>b.toString(16).padStart(2,'0')).join(' ')}); skip`);
+                continue;
+            }
+            Memory.patchCode(svcAddr, 4, ptr => { ptr.writeByteArray(NOP); });
+            patched++;
+        } catch (e) {
+            log(`[patch-suicide][!] svc@+0x${off.toString(16)} patch failed: ${e}`);
+        }
+    }
+    log(`[patch-suicide] ${pat}: ${patched}/${SGMAIN_TGKILL_SVC_OFFSETS.length} svc → nop`);
+    STATE.suicidePatched = true;
+    return patched;
+}
+
 // Build the list of (base, end, name) ranges where we WANT to record records.
 // Default: just the target SO. With --include-so PATTERNS: target + matches.
 //
@@ -453,11 +500,16 @@ function buildIncludeRanges() {
         });
     }
     const userIncl = STATE.includeSoPatterns || [];
+    const deep = !!STATE.deepTrace;
     if (userIncl.length === 0) return;
+    // In deep mode, --include-so libart works (HARD_EXCL is no longer a
+    // module-level Stalker block — per-symbol exclude in applyExcludesOnce
+    // already covers the unsafe spots). In non-deep mode, HARD_EXCL is still
+    // skipped to prevent the original atomic-deadlock crash.
     for (const m of Process.enumerateModules()) {
         if (STATE.target && m.name === STATE.target.name) continue;
-        // Skip HARD_EXCL even if user-listed (deadlock risk)
-        if (HARD_EXCL.some(p => m.name.indexOf(p) !== -1)) continue;
+        const isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
+        if (isHard && !deep) continue;
         for (const pat of userIncl) {
             if (m.name.indexOf(pat) !== -1) {
                 STATE.includeRanges.push({
@@ -595,6 +647,7 @@ rpc.exports = {
                                         ? opts.stalkerExcludePatterns : null;
         STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns)
                                       ? opts.boundaryDiffPatterns : null;
+        STATE.patchSuicide = !!opts.patchSuicide;
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);
@@ -716,6 +769,12 @@ function installFnHook(fp, onInsn) {
                 log(`[>] call #${this._callIdx} tid=${this._tid}`);
                 send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started, devicePath: STATE.traceFilePath });
                 ensureFlushTimer();
+                // Patch sgmainso obfuscated tgkill thunks BEFORE Stalker.follow
+                // creates RWX block-cache pages that anti-debug would notice.
+                // Only does anything when STATE.patchSuicide is set (CLI: --patch-suicide).
+                if (STATE.patchSuicide) {
+                    try { patchSgmainsoSuicide(); } catch (e) { log(`[patch-suicide][!] ${e}`); }
+                }
                 applyExcludesOnce();
                 // Cache writable rw- ranges for boundary-diff ptr classification
                 if (STATE.deepTrace) refreshWritableRanges();

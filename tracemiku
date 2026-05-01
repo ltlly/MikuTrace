@@ -464,6 +464,7 @@ def cmd_trace(args):
         "deepTrace": bool(getattr(args, "trace_deep", False)),
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
+        "patchSuicide": bool(getattr(args, "patch_suicide", False)),
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1052,6 +1053,10 @@ def main():
                       help="逗号分隔, 在这些函数装 Interceptor 抓内存写 (boundary ptr-diff). "
                            "**严禁包含 pthread/malloc/atomic** — Frida 自己用这些, attach 会崩进程. "
                            "默认空. 仅 --trace-deep 下生效.")
+    p_tr.add_argument("--patch-suicide", action="store_true", dest="patch_suicide",
+                      help="patch libsgmainso 6.8.260403 内的 6 处 obfuscated tgkill svc 为 nop, "
+                           "绕过 anti-frida SIGILL 自杀. 仅对该 SO 版本有效, 且需要 --trace-deep "
+                           "(否则没必要 — 反检测在非 deep 不触发). 不会影响别的 SO.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")
