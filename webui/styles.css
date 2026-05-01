@@ -105,25 +105,75 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 .lp-row.active { background: var(--hl); }
 .lp-row .meta { color: var(--dim); font-size: 10px; }
 
-/* asm stream */
+/* asm stream — column widths driven by CSS vars 让 stream-header 拖拽实时生效 */
+#asm-col {
+  --col-idx: 60px;
+  --col-pc: 100px;
+  --col-func: 200px;
+  --col-pc-fnoff: 240px;
+}
 #stream {
   flex: 1; overflow-y: auto;
   font-size: 12px; line-height: 18px;
   position: relative; min-height: 0;
 }
+/* 列头: 与 .row-insn 共享 grid template, 通过 css var 同步宽度. */
+#stream-header {
+  display: grid;
+  grid-template-columns: 12px var(--col-idx) var(--col-pc) var(--col-func) 1fr;
+  padding: 0 4px 0 8px;
+  gap: 6px;
+  align-items: center;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--dim);
+  height: 20px;
+  user-select: none;
+  position: relative;
+}
+body.multi-so #stream-header { padding-left: 6px; }
+#stream-header .hd {
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#stream-header .col-resize {
+  position: absolute;
+  top: 0; right: -4px; bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 2;
+}
+#stream-header .col-resize:hover,
+#stream-header .col-resize.dragging {
+  background: var(--accent);
+  opacity: 0.4;
+}
 .row-insn {
   display: grid;
-  grid-template-columns: 12px 60px 100px 200px 1fr;
+  grid-template-columns: 12px var(--col-idx) var(--col-pc) var(--col-func) 1fr;
   padding: 0 4px 0 8px; white-space: nowrap;
   cursor: pointer; color: var(--fg);
   gap: 6px;
   align-items: center;
 }
+/* CSS Grid item 默认 min-width:auto 会让长内容撑出 cell, 把后续列推走;
+   设 min-width:0 + ellipsis 强制截断, hover 看 title 完整内容. */
+.row-insn > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* fnoff/soFnOff 模式: PC 列已经显示 func+offset, func 列重复 → 隐藏 func 列 */
 .row-insn.fmt-fn {
-  grid-template-columns: 12px 60px 240px 1fr;
+  grid-template-columns: 12px var(--col-idx) var(--col-pc-fnoff) 1fr;
 }
 .row-insn.fmt-fn .func { display: none; }
+#asm-col.fmt-fn #stream-header {
+  grid-template-columns: 12px var(--col-idx) var(--col-pc-fnoff) 1fr;
+}
+#asm-col.fmt-fn #stream-header .hd-func { display: none; }
 /* PDF-style 计数圆点 — 列首彩色小圆点表执行次数级别 */
 .row-insn .ec {
   display: inline-block;
@@ -139,6 +189,8 @@ body { display: grid; grid-template-rows: 28px 1fr; height: 100vh; }
 .row-insn .ec.ec-vhigh { background: #f85149; box-shadow: 0 0 4px #f85149; }  /* 红+发光: 1000+ */
 .row-insn:hover { background: var(--bg3); }
 .row-insn.active { background: var(--hl); color: white; }
+.row-insn.placeholder { color: var(--dim); opacity: 0.55; cursor: default; }
+.row-insn.placeholder .asm { color: var(--dim); }
 .row-insn .idx  { color: var(--dim); }
 .row-insn .pc   { color: var(--accent2); }
 .row-insn .func { color: var(--good); }

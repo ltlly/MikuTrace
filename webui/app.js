@@ -93,6 +93,7 @@ async function init() {
     document.body.classList.toggle("multi-so", stats.modules.length >= 2);
   }).catch(() => {});
 
+  setupColResize();
   buildVirtualList();
   setupVerticalTabs();
   setupBottomTabs();
@@ -132,6 +133,7 @@ function buildVirtualList() {
 
   let renderTok = 0;
   stream.addEventListener("scroll", () => {
+    STATE.lastScrollTime = performance.now();
     const tok = ++renderTok;
     requestAnimationFrame(() => { if (tok === renderTok) renderViewport(); });
   });
@@ -233,12 +235,14 @@ function viewportIdxRange() {
     const scrollMax = Math.max(1, innerH - viewH);
     const pct = Math.min(1, scrollPos / scrollMax);
     const baseIdx = Math.floor(pct * Math.max(0, STATE.totalRecords - visible));
-    startIdx = Math.max(0, baseIdx - overscan);
+    // decoupled 模式: row top 用 scrollPos 起算, "上方 overscan" 实际占视口顶部空间
+    // (无效, 反而把可见内容下推). 故只往下方 overscan, startIdx = baseIdx.
+    startIdx = Math.max(0, baseIdx);
     endIdx = Math.min(STATE.totalRecords, baseIdx + visible + overscan);
     // 限制 endIdx 让所有 row top + rowHeight ≤ inner.height — 否则末尾行
-    // 渲染到 inner 之外, overflow 到 #bottom-tabs (用户图 #18 重叠).
-    // top(i) = scrollPos + (i - startIdx) * rowHeight, 要求 ≤ innerH - rowHeight
-    const maxRowsBelowScroll = Math.floor((innerH - scrollPos) / STATE.rowHeight);
+    // 渲染到 inner 之外 (inner overflow:hidden 会裁掉, 但也意味着不可见).
+    // 用 ceil 避免 viewH/rowHeight 不整除时末尾少 1 行 (10214936 条 trace → 末行 #10214935 被切).
+    const maxRowsBelowScroll = Math.ceil((innerH - scrollPos) / STATE.rowHeight);
     endIdx = Math.min(endIdx, startIdx + maxRowsBelowScroll);
   } else {
     startIdx = Math.max(0, Math.floor(scrollPos / STATE.rowHeight) - overscan);
@@ -267,20 +271,74 @@ function renderViewport() {
       el.style.top = rowTopPx(i) + "px";
     });
   }
-  const present = new Set([...inner.querySelectorAll(".row-insn")]
-                          .map(e => parseInt(e.dataset.idx)));
+
+  // 已存在的行: 实数据 vs placeholder 分别记录, 让缓存到达后能升级 placeholder
+  const realIdx = new Set();
+  const placeholderEls = new Map();
+  inner.querySelectorAll(".row-insn").forEach(el => {
+    const i = parseInt(el.dataset.idx);
+    if (el.classList.contains("placeholder")) placeholderEls.set(i, el);
+    else realIdx.add(i);
+  });
 
   for (let i = startIdx; i < endIdx; i++) {
-    if (present.has(i)) continue;
+    if (realIdx.has(i)) continue;
     const winStart = Math.floor(i / STATE.pageSize) * STATE.pageSize;
     const win = STATE.cache.get(winStart);
-    if (!win) continue;
-    const r = win[i - winStart];
-    if (!r) continue;
-    inner.appendChild(buildRow(i, r));
+    if (win) {
+      const r = win[i - winStart];
+      if (r) {
+        const ph = placeholderEls.get(i);
+        if (ph) ph.remove();
+        inner.appendChild(buildRow(i, r));
+      }
+    } else if (!placeholderEls.has(i)) {
+      // 即便 cache miss, 立刻插 placeholder — 滚动时视觉始终非空, 不再"白屏 1-2s"
+      inner.appendChild(buildPlaceholderRow(i));
+    }
   }
 
-  // async 拉缺失 windows
+  // 拉 missing windows: 滚动剧烈期 (<80ms 内还有 scroll) 推迟到稳定后再发,
+  // 避免 fast-drag 期间发出 5-10 个会立即过期的 fetch.
+  scheduleFetchMissing();
+  scheduleBnAsmFetch();
+}
+
+// 占位行: 渲染 idx + "..." 让快速滚动时视觉始终非空, fetch 到达后 in-place 替换.
+function buildPlaceholderRow(i) {
+  const row = document.createElement("div");
+  row.className = "row-insn placeholder";
+  if (i === STATE.cursor) row.classList.add("active");
+  row.dataset.idx = i;
+  row.style.position = "absolute";
+  row.style.top = rowTopPx(i) + "px";
+  row.style.left = 0; row.style.right = 0;
+  row.style.height = STATE.rowHeight + "px";
+  row.innerHTML =
+    `<span class="ec ec-unknown"></span>` +
+    `<span class="idx">#${i}</span>` +
+    `<span class="pc"></span>` +
+    `<span class="func"></span>` +
+    `<span class="asm">…</span>`;
+  row.addEventListener("click", () => setCursor(i, false));
+  return row;
+}
+
+function scheduleFetchMissing() {
+  if (STATE.fetchDebounceTimer) return;
+  const idle = performance.now() - (STATE.lastScrollTime || 0);
+  // 80ms idle 才 fire; 仍在快速滚则 80-idle 后再试 (递归 schedule)
+  const delay = idle < 80 ? Math.max(20, 80 - idle) : 0;
+  STATE.fetchDebounceTimer = setTimeout(() => {
+    STATE.fetchDebounceTimer = null;
+    fireMissingWindowFetches();
+  }, delay);
+}
+
+function fireMissingWindowFetches() {
+  const inner = $("stream-inner");
+  if (!inner) return;
+  const [startIdx, endIdx] = viewportIdxRange();
   const need = new Set();
   for (let i = startIdx; i < endIdx; i++) {
     const winStart = Math.floor(i / STATE.pageSize) * STATE.pageSize;
@@ -297,15 +355,22 @@ function renderViewport() {
           STATE.cache.delete(old);
         }
         STATE.inflight.delete(s);
-        // re-check viewport, 用户可能已滚走
+        // re-check viewport, 用户可能已滚走 — 还在视口的 idx 才升级
         const [sIdx, eIdx] = viewportIdxRange();
         STATE.viewportStartIdx = sIdx;
-        const cur = new Set([...inner.querySelectorAll(".row-insn")]
-                            .map(e => parseInt(e.dataset.idx)));
+        const realIdx = new Set();
+        const phEls = new Map();
+        inner.querySelectorAll(".row-insn").forEach(el => {
+          const i = parseInt(el.dataset.idx);
+          if (el.classList.contains("placeholder")) phEls.set(i, el);
+          else realIdx.add(i);
+        });
         for (let i = Math.max(s, sIdx); i < Math.min(s + STATE.pageSize, eIdx); i++) {
-          if (cur.has(i)) continue;
+          if (realIdx.has(i)) continue;
           const rec = r.records[i - s];
           if (!rec) continue;
+          const ph = phEls.get(i);
+          if (ph) ph.remove();
           inner.appendChild(buildRow(i, rec));
         }
         scheduleBnAsmFetch();
@@ -313,7 +378,6 @@ function renderViewport() {
       .catch(_ => { STATE.inflight.delete(s); });
     STATE.inflight.set(s, p);
   }
-  scheduleBnAsmFetch();
 }
 
 // Lazy: collect 当前 viewport 里 .asm 还在 fallback 模式且未 inflight 的 PC,
@@ -478,10 +542,21 @@ function buildRow(i, r) {
 
 // 浏览器单 div 高度上限 ~33M px → 大 trace 用 decoupled scroll: scrollbar 位置
 // 只表 percentage, 实际 row 位置由 (idx - startIdx)*rowHeight + scrollPos 算.
+// viewH/rowHeight 不整除时, 末行底部会越过视口下沿被 #stream 裁掉 (用户:"勉强
+// 能看见一点"). 按 pct 比例上移 overshoot, 让滚到底时末行底贴齐视口底, 滚到顶时
+// 不偏移. 等价于原生滚动在边缘行的视觉行为.
 function rowTopPx(idx) {
   if (STATE.usingDecoupledScroll) {
     const stream = $("stream");
-    return (stream.scrollTop || 0) + (idx - STATE.viewportStartIdx) * STATE.rowHeight;
+    const inner = $("stream-inner");
+    const scrollPos = stream.scrollTop || 0;
+    const viewH = stream.clientHeight;
+    const innerH = inner ? (inner.offsetHeight || parseInt(inner.style.height) || 0) : 0;
+    const scrollMax = Math.max(1, innerH - viewH);
+    const pct = Math.min(1, scrollPos / scrollMax);
+    const visible = Math.ceil(viewH / STATE.rowHeight);
+    const overshoot = Math.max(0, visible * STATE.rowHeight - viewH);
+    return scrollPos + (idx - STATE.viewportStartIdx) * STATE.rowHeight - overshoot * pct;
   }
   return idx * STATE.rowHeight;
 }
@@ -1886,7 +1961,78 @@ function initSettingsTab() {
 function reapplySettings() {
   // 地址格式变 → 重渲 trace 行
   document.querySelectorAll(".row-insn").forEach(el => el.remove());
+  applyAddrFormatToHeader();
   renderViewport();
+}
+
+// fmt-fn (fnoff/soFnOff) 时 #asm-col 加 class, header 跟着隐藏 func 列.
+function applyAddrFormatToHeader() {
+  const col = $("asm-col");
+  if (!col) return;
+  const f = STATE.settings.addrFormat;
+  col.classList.toggle("fmt-fn", f === "fnoff" || f === "soFnOff");
+}
+
+// 列宽拖拽: localStorage 持久化, CSS var 实时驱动 row + header.
+const COL_WIDTH_KEY = "tracemiku-col-widths";
+const COL_DEFAULTS = {idx: 60, pc: 100, func: 200, "pc-fnoff": 240};
+const COL_MIN = {idx: 30, pc: 60, func: 60, "pc-fnoff": 100};
+
+function loadColWidths() {
+  try {
+    const raw = localStorage.getItem(COL_WIDTH_KEY);
+    return raw ? {...COL_DEFAULTS, ...JSON.parse(raw)} : {...COL_DEFAULTS};
+  } catch { return {...COL_DEFAULTS}; }
+}
+function saveColWidths(w) {
+  localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w));
+}
+function applyColWidths(w) {
+  const col = $("asm-col");
+  if (!col) return;
+  // fmt-fn 模式 pc 列也用 pc-fnoff 宽度 (header 不会显示 func)
+  // 普通模式用 pc / func 各自宽度.
+  col.style.setProperty("--col-idx", w.idx + "px");
+  col.style.setProperty("--col-pc", w.pc + "px");
+  col.style.setProperty("--col-func", w.func + "px");
+  col.style.setProperty("--col-pc-fnoff", w["pc-fnoff"] + "px");
+}
+
+function setupColResize() {
+  const widths = loadColWidths();
+  applyColWidths(widths);
+  applyAddrFormatToHeader();
+
+  const header = $("stream-header");
+  if (!header) return;
+  header.querySelectorAll(".col-resize").forEach(handle => {
+    handle.addEventListener("mousedown", ev => {
+      ev.preventDefault();
+      const colKey = handle.dataset.col;
+      // fmt-fn 模式拖 pc handle, 改的是 pc-fnoff (因为该模式 row 用 --col-pc-fnoff)
+      const isFmtFn = $("asm-col").classList.contains("fmt-fn");
+      const targetKey = (colKey === "pc" && isFmtFn) ? "pc-fnoff" : colKey;
+      const startX = ev.clientX;
+      const startW = widths[targetKey];
+      const minW = COL_MIN[targetKey] || 30;
+      handle.classList.add("dragging");
+      document.body.style.cursor = "col-resize";
+      const onMove = e => {
+        const w = Math.max(minW, startW + (e.clientX - startX));
+        widths[targetKey] = w;
+        applyColWidths(widths);
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        handle.classList.remove("dragging");
+        document.body.style.cursor = "";
+        saveColWidths(widths);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
 }
 
 // ---------------- help system ----------------

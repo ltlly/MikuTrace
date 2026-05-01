@@ -477,11 +477,18 @@ LastWriteResponse = Union[LastWriteReadyResponse, LastWriteErrorResponse]
 
 # ── /api/reg-value-at ────────────────────────────────────────────────────────
 
-class RegValueResponse(BaseModel):
+class RegValueErrorResponse(BaseModel):
+    status: Literal["error"]
+    err: str
+
+class RegValueReadyResponse(BaseModel):
     status: Literal["ready"]
     idx: int
     reg: str
     value: Optional[str] = None     # hex
+    annotation: Optional[str] = None
+
+RegValueResponse = Union[RegValueReadyResponse, RegValueErrorResponse]
 
 
 # ── /api/idxs-touching-range ─────────────────────────────────────────────────

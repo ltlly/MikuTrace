@@ -49,6 +49,20 @@ from webui.schemas import (
 log = logging.getLogger(__name__)
 
 
+# ARM64 reg alias — disasm 里出现 x29/x30/xzr/wzr, viewer.trace 内部存为 fp/lr.
+# 归一化避免前端反复传 raw mnemonic 触发 "unknown reg".
+_REG_ALIAS = {"x29": "fp", "x30": "lr"}
+_REG_ZERO = {"xzr", "wzr"}
+
+def _norm_reg(name: str) -> Optional[str]:
+    """Map disasm reg name to viewer.trace ALL_REGS. Returns canonical name,
+    "ZERO" sentinel for xzr/wzr (always reads 0), or None if invalid."""
+    if name in ALL_REGS: return name
+    if name in _REG_ALIAS: return _REG_ALIAS[name]
+    if name in _REG_ZERO: return "ZERO"
+    return None
+
+
 def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
     """Run in CHILD process — own GIL, doesn't block parent's API threads.
     Single pass over trace builds 4 dicts:
@@ -61,26 +75,12 @@ def _subprocess_build_cfg_and_pcinst(trace_path: str, conn):
     /api/idxs-for-pc 改用从 cursor 双向扫 (O(距离), 通常很快).
     """
     try:
-        import bisect
         from viewer.trace import load as _load
-        from viewer.cfg import build_cfg as _bc
+        from viewer.cfg import build_cfg as _bc, build_aux_indices as _aux
         t = _load(trace_path)
         cfg = _bc(t, only_module=True)
-        starts = sorted(cfg.blocks.keys())
-        ends = [cfg.blocks[s].end_pc for s in starts]
-        pc_inst = {}
-        pc_to_block = {}
-        block_idxs = {s: [] for s in starts}
-        n = len(t)
-        for i in range(n):
-            pc = t.pc(i)
-            if pc not in pc_inst:
-                pc_inst[pc] = t.inst(i)
-            j = bisect.bisect_right(starts, pc) - 1
-            if j >= 0 and pc <= ends[j]:
-                bs = starts[j]
-                pc_to_block[pc] = bs
-                block_idxs[bs].append(i)
+        # 向量化辅助 dict 构建 (替代 10M 行 Python loop): 5GB trace 上 ~3s → <0.5s.
+        pc_inst, pc_to_block, block_idxs = _aux(t, cfg)
         conn.send(("ok", cfg, pc_inst, pc_to_block, block_idxs))
     except Exception:
         import traceback
@@ -1040,8 +1040,13 @@ def make_app(trace_path: pathlib.Path,
         """返回 cursor 之前最近一次该 reg 被 def 的指令 idx.
         index.reg_defs bisect: O(log N) vs 旧 O(cursor) 线性扫.
         """
-        if reg not in ALL_REGS:
+        canon = _norm_reg(reg)
+        if canon is None:
             return {"status": "error", "err": f"unknown reg {reg}"}
+        if canon == "ZERO":
+            # xzr/wzr 不会被 def, 永远读 0
+            return {"status": "ready", "idx": None, "value": "0x0"}
+        reg = canon
         n = len(t)
         if cursor <= 0 or cursor > n: return {"status": "ready", "idx": None}
         cur_val = t.record(cursor).reg(reg) if cursor < n else None
@@ -1073,13 +1078,18 @@ def make_app(trace_path: pathlib.Path,
     def reg_value_at(idx: int, reg: str):
         """读 idx 处 reg 的当前值 + classify 注释."""
         if idx < 0 or idx >= len(t): raise HTTPException(404)
-        if reg not in ALL_REGS: return {"status": "error", "err": f"unknown reg {reg}"}
+        canon = _norm_reg(reg)
+        if canon is None:
+            return {"status": "error", "err": f"unknown reg {reg}"}
+        if canon == "ZERO":
+            return {"status": "ready", "idx": idx, "reg": reg,
+                    "value": "0x0", "annotation": ""}
         r = t.record(idx)
-        v = r.reg(reg)
+        v = r.reg(canon)
         ann = ""
         if BG["mem"]["status"] == "ready":
             ann = _classify_reg_value(v, idx, sp=r.reg("sp"))
-        return {"status": "ready", "idx": idx, "reg": reg,
+        return {"status": "ready", "idx": idx, "reg": canon,
                 "value": hex(v), "annotation": ann}
 
     @app.get("/api/idxs-touching-range", response_model=TouchingRangeResponse)
@@ -1588,8 +1598,10 @@ def make_app(trace_path: pathlib.Path,
         idx for each new value (changes only, not every record). Vectorized.
         """
         import numpy as np
-        if reg not in ALL_REGS:
+        canon = _norm_reg(reg)
+        if canon is None or canon == "ZERO":
             raise HTTPException(400, f"unknown reg: {reg!r}")
+        reg = canon
         n = len(t)
         if end < 0 or end > n: end = n
         start = max(0, min(start, end))
