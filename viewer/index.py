@@ -39,10 +39,11 @@ class Index:
             for reg in d.regs_use:
                 self.reg_uses[reg].append(i)
             # Mem ops: compute address if base+disp, treat index reg as 0 for now
-            for base, idx_reg, disp, sz, is_write in d.mem_op:
+            for op in d.mem_op:
+                base, idx_reg, disp, sz, is_write, _src = op
                 if not base:
                     continue
-                addr = addr_of(r, (base, idx_reg, disp, sz, is_write))
+                addr = addr_of(r, op)
                 # value: post-execution we don't have, but we can capture written value
                 # from a register (e.g. str x0, [x1] writes x0). Leave value=None.
                 rec = (i, addr, sz, None)

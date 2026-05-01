@@ -39,7 +39,10 @@ class Decoded:
     op_str: str
     regs_def: tuple = ()
     regs_use: tuple = ()
-    mem_op: tuple = ()   # ((base_reg, index_reg, disp, size, is_write), ...)
+    mem_op: tuple = ()   # ((base_reg, index_reg, disp, size, is_write, src_reg), ...)
+                          # src_reg is the destination on load OR source on store
+                          # — important for stp/ldp pair where one insn has 2
+                          # mem_op tuples with different src/dst regs.
     is_branch: bool = False
     is_call: bool = False
     is_ret: bool = False
@@ -102,24 +105,40 @@ def decode(pc: int, inst: int) -> Decoded:
                         ops.append(nm)
             d.regs_use = tuple(ops)
 
-    # Memory operands
+    # Memory operands. mem_op tuple = (base, idx, disp, size, is_write, src_reg)
+    # src_reg = the dest reg (load) or src reg (store) for this byte range.
+    # Empty for non-stp/ldp insns (consumers fallback to picking from regs_use).
     mem_ops = []
     for op in ins.operands:
         if op.type == ARM64_OP_MEM:
             base = ins.reg_name(op.mem.base) if op.mem.base != ARM64_REG_INVALID else ""
             idx = ins.reg_name(op.mem.index) if op.mem.index != ARM64_REG_INVALID else ""
             disp = op.mem.disp
-            # Estimate access size from mnemonic (simplified)
             sz = 8
             if mnem.endswith("b"): sz = 1
             elif mnem.endswith("h"): sz = 2
             elif "w" in mnem[:4] or any(o.type == ARM64_OP_REG and ins.reg_name(o.reg).startswith("w") for o in ins.operands):
                 sz = 4
-            mem_ops.append((_norm_reg(base), _norm_reg(idx), disp, sz, is_store))
+            mem_ops.append((_norm_reg(base), _norm_reg(idx), disp, sz, is_store, ""))
         elif op.type == ARM64_OP_IMM and is_branch and not is_ret and not d.indirect_branch_reg:
             d.branch_target = op.imm
         elif op.type == ARM64_OP_REG and mnem in ("br", "blr"):
             d.indirect_branch_reg = _norm_reg(ins.reg_name(op.reg))
+
+    # stp/ldp 配对: capstone 给 1 个 mem_op, 但实际是 2 段 (8+8 或 4+4 字节).
+    # split 让 MemShadow 不丢第二个寄存器的 8 字节 + taint 能看到完整 16 字节范围.
+    if mnem in ("stp", "ldp", "stnp", "ldnp") and len(mem_ops) == 1:
+        reg_operands = [o for o in ins.operands if o.type == ARM64_OP_REG]
+        if len(reg_operands) >= 2:
+            r0 = _norm_reg(ins.reg_name(reg_operands[0].reg))
+            r1 = _norm_reg(ins.reg_name(reg_operands[1].reg))
+            # 32-bit pair (stp w0, w1) 4+4; 64-bit pair (stp x0, x1) 8+8
+            pair_sz = 4 if ins.reg_name(reg_operands[0].reg).startswith("w") else 8
+            base, idx_reg, disp, _, is_w, _ = mem_ops[0]
+            mem_ops = [
+                (base, idx_reg, disp,           pair_sz, is_w, r0),
+                (base, idx_reg, disp + pair_sz, pair_sz, is_w, r1),
+            ]
     d.mem_op = tuple(mem_ops)
     return d
 

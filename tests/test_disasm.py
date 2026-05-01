@@ -64,7 +64,7 @@ def test_load_store_mem_op():
     # ldr x0, [sp, #0x10]
     d = decode(0x100000, asm_to_inst('ldr x0, [sp, #0x10]'))
     assert len(d.mem_op) == 1
-    base, idx, disp, sz, is_w = d.mem_op[0]
+    base, idx, disp, sz, is_w, _src = d.mem_op[0]
     assert base == 'sp'
     assert disp == 0x10
     assert is_w is False

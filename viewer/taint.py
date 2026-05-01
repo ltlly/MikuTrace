@@ -348,7 +348,7 @@ def data_chase(trace: Trace, start_idx: int, taint_reg: str,
         # If this is a load (ldr), follow mem store — not the addressing regs.
         is_load = bool(d.mem_op) and not any(op[4] for op in d.mem_op)
         if is_load:
-            base, idx_reg, disp, sz, _ = d.mem_op[0]
+            base, idx_reg, disp, sz, _, _ = d.mem_op[0]
             base_v = r.reg(base) if base in ALL_REGS else 0
             idx_v = r.reg(idx_reg) if (idx_reg and idx_reg in ALL_REGS) else 0
             mem_addr = (base_v + idx_v + disp) & 0xffffffffffffffff

@@ -67,7 +67,12 @@ class Trace:
         self.path = pathlib.Path(bin_path)
         self.meta = meta
         self._fh = open(self.path, "rb")
-        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        # 0 长度 trace: mmap 拒绝, 用 b'' 兜底, n=0. 测试 / 极端边界用.
+        sz = self.path.stat().st_size
+        if sz == 0:
+            self._mm = b""
+        else:
+            self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
         self.n = len(self._mm) // REC_SIZE
 
     def close(self):
@@ -108,8 +113,11 @@ class Trace:
 
 
 def addr_of(rec: Record, mem_op_tuple) -> int:
-    """Compute effective address for a memory operand from a record."""
-    base, idx_reg, disp, sz, is_w = mem_op_tuple
+    """Compute effective address for a memory operand from a record.
+
+    mem_op_tuple = (base, idx_reg, disp, sz, is_w, src_reg).
+    """
+    base, idx_reg, disp, _sz, _is_w, _src = mem_op_tuple
     bv = rec.reg(base) if base in ALL_REGS else 0
     iv = rec.reg(idx_reg) if (idx_reg and idx_reg in ALL_REGS) else 0
     return (bv + iv + disp) & 0xffffffffffffffff

@@ -431,7 +431,8 @@ def make_app(trace_path: pathlib.Path,
         # 例: ldr x9, [x8, 0x80] → x8 注释 += "  [pthread_mutex_t.__lock]"
         if DECOMP["status"] == "ready" and d.mem_op:
             bk = DECOMP["backend"]
-            for base_reg, idx_reg, disp, sz, is_w in d.mem_op:
+            for op in d.mem_op:
+                base_reg, idx_reg, disp, sz, is_w, _src = op
                 if not base_reg or base_reg not in regs_annotated:
                     continue
                 try:
@@ -1394,7 +1395,7 @@ def make_app(trace_path: pathlib.Path,
                 target_reg = d.indirect_branch_reg
                 if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
                         and prev_d.mem_op):
-                    base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                    base_reg, _, disp, _, is_w, _src = prev_d.mem_op[0]
                     if not is_w and disp in jni_vtable:
                         hits.append({
                             "idx": i, "pc": hex(r.pc),
@@ -1439,7 +1440,7 @@ def make_app(trace_path: pathlib.Path,
                 target_reg = d.indirect_branch_reg
                 if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
                         and prev_d.mem_op):
-                    base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                    base_reg, _, disp, _, is_w, _src = prev_d.mem_op[0]
                     if not is_w and disp in jni_vtable:
                         yield (i, r, d, prev_d, jni_vtable[disp], disp, fname)
             prev_d = d
@@ -1614,11 +1615,12 @@ def make_app(trace_path: pathlib.Path,
         for i in range(start, end):
             v = t.record(i).reg(reg)
             if v != prev:
-                out.append({"idx": i, "value": hex(v)})
-                prev = v
                 if len(out) >= max_points:
+                    # 已满, 但又见到新 distinct 值 → 真截断
                     truncated = True
                     break
+                out.append({"idx": i, "value": hex(v)})
+                prev = v
         return {"reg": reg, "start": start, "end": end,
                 "count": len(out), "points": out, "truncated": truncated}
 

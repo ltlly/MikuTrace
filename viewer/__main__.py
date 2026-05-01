@@ -507,7 +507,7 @@ def cmd_jni_calls(args):
             target_reg = d.indirect_branch_reg
             if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
                     and prev_d.mem_op):
-                base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                base_reg, _, disp, _, is_w, _src = prev_d.mem_op[0]
                 if not is_w and disp in jni_vtable:
                     fn_name = jni_vtable[disp]
                     hits.append({
@@ -545,7 +545,7 @@ def _scan_jni_calls(t, sym, jni_vtable):
             target_reg = d.indirect_branch_reg
             if (prev_d.mnemonic == "ldr" and target_reg in prev_d.regs_def
                     and prev_d.mem_op):
-                base_reg, _, disp, _, is_w = prev_d.mem_op[0]
+                base_reg, _, disp, _, is_w, _src = prev_d.mem_op[0]
                 if not is_w and disp in jni_vtable:
                     yield (i, r, d, prev_d, jni_vtable[disp], disp, fname)
         prev_d = d

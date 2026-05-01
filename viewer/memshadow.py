@@ -23,14 +23,17 @@ from .disasm import decode
 
 
 def _value_of_write(t: Trace, idx: int, mem_op, decoded) -> int | None:
-    """For a store insn, the source register that gets stored."""
-    # The first reg in regs_use is typically the source for stores.
-    # capstone returns regs_use including base/index regs; we need to
-    # exclude those.
-    base, idx_reg, _, _, _ = mem_op
-    candidates = [r for r in decoded.regs_use if r not in (base, idx_reg)]
-    if not candidates: return None
-    src = candidates[0]
+    """For a store insn, the source register that gets stored.
+
+    mem_op[5] (src_reg) is set explicitly for stp/ldp pair (each of the 2
+    mem_ops carries its own source). For other store insns it's "" — we then
+    pick the first non-base/non-idx reg from regs_use.
+    """
+    base, idx_reg, _, _, _, src = mem_op
+    if not src:
+        candidates = [r for r in decoded.regs_use if r not in (base, idx_reg)]
+        if not candidates: return None
+        src = candidates[0]
     if src not in ALL_REGS: return None
     rec = t.record(idx)
     return rec.reg(src)
@@ -61,7 +64,7 @@ class MemShadow:
             r = self.t.record(i)
             d = decode(r.pc, r.inst)
             for op in d.mem_op:
-                base, idx_reg, disp, sz, is_w = op
+                base, idx_reg, disp, sz, is_w, _src = op
                 addr = _addr_of(r, op)
                 if is_w:
                     val = _value_of_write(self.t, i, op, d)
