@@ -90,6 +90,8 @@ def _drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
         subprocess.run(["adb","shell","uiautomator","dump","/sdcard/_tm_ui.xml"],
                        capture_output=True)
         xml = adb("cat","/sdcard/_tm_ui.xml")
+        subprocess.run(["adb","shell","rm","-f","/sdcard/_tm_ui.xml"],
+                       capture_output=True)
         # 找隐私协议同意按钮 (多 app 多语言)
         consent_hit = None
         for pat in CONSENT_BUTTON_PATTERNS:
