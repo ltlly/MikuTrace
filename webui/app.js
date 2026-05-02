@@ -2444,10 +2444,14 @@ async function initDecompileTab() {
 }
 
 function _decUrl(useMem) {
-  // 默认 split_top_k=40 (比 CLI 默认 10 大 4 倍, 给用户更多 fn 选择)
+  // split_top_k / split_min_records 从 UI input 取 (默认 40/10).
+  // CLI 默认 10/50 更保守, UI 给更多 fn.
   const params = new URLSearchParams();
   if (useMem) params.set("with_memshadow", "1");
-  params.set("split_top_k", "40");
+  const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
+  const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
+  params.set("split_top_k", k);
+  params.set("split_min_records", m);
   return params.toString() ? "?" + params.toString() : "";
 }
 
@@ -2505,7 +2509,10 @@ async function selectDecFn(fnId) {
   out.innerHTML = '<div class="dim">loading IR…</div>';
   const useMem = $("dec-vm-mem").checked;
   const tier = $("dec-tier").value || "hot";
-  let qs = `?tier=${tier}` + (useMem ? "&with_memshadow=1" : "") + "&split_top_k=40";
+  const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
+  const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
+  let qs = `?tier=${tier}` + (useMem ? "&with_memshadow=1" : "") +
+           `&split_top_k=${k}&split_min_records=${m}`;
   const url = `/api/dec/fn/${encodeURIComponent(fnId)}${qs}`;
   try {
     const r = await fetch(url).then(r => r.json());
@@ -2549,6 +2556,8 @@ async function runDecLlmCall() {
         with_memshadow: useMem,
         lang: lang,
         tier: tier,
+        split_top_k: parseInt(($("dec-split-k") && $("dec-split-k").value) || "40", 10),
+        split_min_records: parseInt(($("dec-split-min") && $("dec-split-min").value) || "10", 10),
       }),
     }).then(r => r.json());
     r._client_ms = Date.now() - t0;

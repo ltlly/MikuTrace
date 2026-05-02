@@ -2509,8 +2509,9 @@ def make_app(trace_path: pathlib.Path,
     # 内从环境变量读, **服务器永不接受/转发 client 提供的 key**.
 
     def _get_dec_ir(hooks_paths: tuple = (), with_memshadow: bool = False,
-                    split_top_k: int = 10):
-        key = ("dec_ir", hooks_paths, with_memshadow, split_top_k)
+                    split_top_k: int = 10, split_min_records: int = 50):
+        key = ("dec_ir", hooks_paths, with_memshadow, split_top_k,
+               split_min_records)
         if key in cache:
             return cache[key]
         from viewer import build_trace_ir as _build_ir
@@ -2525,13 +2526,14 @@ def make_app(trace_path: pathlib.Path,
             type_spec_paths=[pathlib.Path(p) for p in hooks_paths] or None,
             memshadow=mem,
             split_top_k=split_top_k,
+            split_min_records=split_min_records,
         )
         cache[key] = top
         return top
 
     @app.get("/api/dec/summary")
     def dec_summary(hooks: str = "", with_memshadow: bool = False,
-                    split_top_k: int = 10):
+                    split_top_k: int = 10, split_min_records: int = 50):
         """trace 顶层 IR + summary markdown.
 
         hooks: 逗号分隔 JSON spec 路径; with_memshadow: 抓 VM hex;
@@ -2540,7 +2542,8 @@ def make_app(trace_path: pathlib.Path,
         from viewer.decompiler import render_summary_md
         hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
-                          split_top_k=split_top_k)
+                          split_top_k=split_top_k,
+                          split_min_records=split_min_records)
         return {
             "records": top.records,
             "module_name": top.module_name,
@@ -2569,12 +2572,13 @@ def make_app(trace_path: pathlib.Path,
     @app.get("/api/dec/fn/{fn_id}")
     def dec_fn(fn_id: str, tier: str = "hot",
                hooks: str = "", with_memshadow: bool = False,
-               split_top_k: int = 10):
+               split_top_k: int = 10, split_min_records: int = 50):
         """单个 fn 的 IR markdown."""
         from viewer.decompiler import render_func_md
         hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
-                          split_top_k=split_top_k)
+                          split_top_k=split_top_k,
+                          split_min_records=split_min_records)
         fn = top.fn(fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
@@ -2614,17 +2618,20 @@ def make_app(trace_path: pathlib.Path,
         lang = str(payload.get("lang") or "en")
         tier = str(payload.get("tier") or "hot")
         split_top_k = int(payload.get("split_top_k") or 10)
+        split_min_records = int(payload.get("split_min_records") or 50)
         if isinstance(hooks, str):
             hooks = [s.strip() for s in hooks.split(",") if s.strip()]
         hk = tuple(hooks)
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
-                          split_top_k=split_top_k)
+                          split_top_k=split_top_k,
+                          split_min_records=split_min_records)
         if top.fn(fn_id) is None:
             raise HTTPException(404, f"no such fn {fn_id}")
 
         # server-side LLM 输出 cache. key 含所有可能影响输出的参数.
         cache_key = ("dec_llm_out", fn_id, model_name, lang, tier,
-                     with_memshadow, hk, max_tokens, split_top_k)
+                     with_memshadow, hk, max_tokens, split_top_k,
+                     split_min_records)
         if cache_key in cache:
             cached = cache[cache_key]
             return {**cached, "cache_hit": True}
