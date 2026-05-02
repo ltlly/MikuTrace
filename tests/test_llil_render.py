@@ -145,3 +145,36 @@ def test_render_return_no_var_names_falls_back_plain():
     text = "\n".join(render_hlil(hlil))
     assert "return" in text
     assert "return x0" not in text
+
+
+def test_render_ror_uses_function_style():
+    """LLIL_ROR → '_ror(x, n)' 而非 '(x ror n)' (C 没原生 rotate)."""
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil,
+        set_reg, reg, const, ror, ret, unify_vars,
+    )
+    blk = ssa_block(0x1000, [
+        set_reg("x0", ror(reg("x1"), const(5))),
+        ret(),
+    ])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    var_names = unify_vars({0x1000: blk})
+    text = "\n".join(render_hlil(hlil, var_names=var_names))
+    assert "_ror(" in text
+    assert "ror " not in text  # 不是 'x ror 5' 中缀
+
+
+def test_render_rol_uses_function_style():
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil,
+        set_reg, reg, const, rol, ret,
+    )
+    blk = ssa_block(0x1000, [
+        set_reg("x0", rol(reg("x1"), const(7))),
+        ret(),
+    ])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    text = "\n".join(render_hlil(hlil))
+    assert "_rol(" in text

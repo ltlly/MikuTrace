@@ -64,7 +64,7 @@ from .expr import (
     reg, const, const_ptr, flag, flag_cond,
     load, store, set_reg,
     add, sub, mul, neg, and_, or_, xor, not_,
-    lsl, lsr, asr,
+    lsl, lsr, asr, rol, ror,
     goto, jump, if_, call, ret, nop, intrinsic,
     cmp_e, cmp_ne,
 )
@@ -92,7 +92,7 @@ __all__ = [
     "reg", "const", "const_ptr", "flag", "flag_cond",
     "load", "store", "set_reg",
     "add", "sub", "mul", "neg", "and_", "or_", "xor", "not_",
-    "lsl", "lsr", "asr",
+    "lsl", "lsr", "asr", "rol", "ror",
     "goto", "jump", "if_", "call", "ret", "nop", "intrinsic",
     "cmp_e", "cmp_ne",
     "lift_arm64", "lift_static", "LiftStats",

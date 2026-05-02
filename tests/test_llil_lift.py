@@ -438,3 +438,29 @@ def test_lift_wzr_normalizes_to_xzr():
     assert e.operands[0] == "x0"
     src = e.operands[1]
     assert src.op == LLIL_REG and src.operands == ["xzr"]
+
+
+# ─────────── rotate (ROR — crypto round op) ───────────
+
+def test_lift_ror_imm():
+    """ror x0, x1, #5 → SET_REG(x0, ROR(x1, const(5)))."""
+    from viewer.decompiler.llil import LLIL_ROR
+    [e] = lift_arm64(0x1000, _asm("ror x0, x1, #5"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    body = e.operands[1]
+    assert body.op == LLIL_ROR
+    a, b = body.operands
+    assert a.op == LLIL_REG and a.operands == ["x1"]
+    assert b.op == LLIL_CONST and b.operands == [5]
+
+
+def test_lift_ror_reg():
+    """ror x0, x1, x2 → SET_REG(x0, ROR(x1, x2))."""
+    from viewer.decompiler.llil import LLIL_ROR
+    [e] = lift_arm64(0x1000, _asm("ror x0, x1, x2"))
+    body = e.operands[1]
+    assert body.op == LLIL_ROR
+    a, b = body.operands
+    assert a.op == LLIL_REG and a.operands == ["x1"]
+    assert b.op == LLIL_REG and b.operands == ["x2"]

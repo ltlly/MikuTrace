@@ -15,7 +15,7 @@ from .expr import (
     LLIL_LOAD, LLIL_STORE, LLIL_SET_REG, LLIL_SET_FLAG,
     LLIL_ADD, LLIL_SUB, LLIL_MUL, LLIL_NEG,
     LLIL_AND, LLIL_OR, LLIL_XOR, LLIL_NOT,
-    LLIL_LSL, LLIL_LSR, LLIL_ASR,
+    LLIL_LSL, LLIL_LSR, LLIL_ASR, LLIL_ROL, LLIL_ROR,
     LLIL_CMP_E, LLIL_CMP_NE, LLIL_CMP_SLT, LLIL_CMP_SLE,
     LLIL_CMP_SGE, LLIL_CMP_SGT, LLIL_CMP_ULT, LLIL_CMP_ULE,
     LLIL_CMP_UGE, LLIL_CMP_UGT,
@@ -36,6 +36,7 @@ _OP_SYM = {
     LLIL_ADD: "+", LLIL_SUB: "-", LLIL_MUL: "*",
     LLIL_AND: "&", LLIL_OR: "|", LLIL_XOR: "^",
     LLIL_LSL: "<<", LLIL_LSR: ">>", LLIL_ASR: ">>",
+    LLIL_ROL: "rol", LLIL_ROR: "ror",
     LLIL_NEG: "-", LLIL_NOT: "~",
     LLIL_CMP_E: "==", LLIL_CMP_NE: "!=",
     LLIL_CMP_SLT: "<", LLIL_CMP_SLE: "<=",
@@ -214,6 +215,11 @@ def expr_to_c(expr, types: TypeEnv = None,
         if len(expr.operands) == 2:
             l = expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names, var_names, const_strings)
             r = expr_to_c(expr.operands[1], types, shapes, tag, entry_versions, loc_names, var_names, const_strings)
+            # ROL/ROR 用 BN 风格函数式渲染 (C 没原生 rotate 运算符)
+            if op == LLIL_ROL:
+                return f"_rol({l}, {r})"
+            if op == LLIL_ROR:
+                return f"_ror({l}, {r})"
             return f"({l} {sym} {r})"
         if len(expr.operands) == 1:
             return f"{sym}{expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names, var_names, const_strings)}"

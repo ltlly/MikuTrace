@@ -315,6 +315,14 @@ def asr(a: LlilExpr, b: LlilExpr, size: Optional[int] = None) -> LlilExpr:
     if size is None: size = a.size or 8
     return LlilExpr(LLIL_ASR, size=size, operands=[a, b])
 
+def rol(a: LlilExpr, b: LlilExpr, size: Optional[int] = None) -> LlilExpr:
+    if size is None: size = a.size or 8
+    return LlilExpr(LLIL_ROL, size=size, operands=[a, b])
+
+def ror(a: LlilExpr, b: LlilExpr, size: Optional[int] = None) -> LlilExpr:
+    if size is None: size = a.size or 8
+    return LlilExpr(LLIL_ROR, size=size, operands=[a, b])
+
 def neg(a: LlilExpr, size: Optional[int] = None) -> LlilExpr:
     if size is None: size = a.size or 8
     return LlilExpr(LLIL_NEG, size=size, operands=[a])

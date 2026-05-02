@@ -41,7 +41,7 @@ from .expr import (
     reg, const, const_ptr, flag_cond, flag,
     load, store, set_reg,
     add, sub, mul, neg, and_, or_, xor, not_,
-    lsl, lsr, asr,
+    lsl, lsr, asr, rol, ror,
     goto, jump, if_, call, ret, nop, intrinsic,
     cmp_e, cmp_ne,
 )
@@ -76,6 +76,7 @@ _BIN_BUILDERS = {
     "lsl":  lsl,  "lslv": lsl,
     "lsr":  lsr,  "lsrv": lsr,
     "asr":  asr,  "asrv": asr,
+    "ror":  ror,  "rorv": ror,        # crypto round ops 必备
 }
 
 _UNARY_BUILDERS = {
