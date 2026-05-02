@@ -632,20 +632,30 @@ body.multi-so .row-insn { padding-left: 6px; }
 .fk-row.fk-failed { color: var(--warn); }
 .fk-row.fk-failed::before { content: "✗ "; color: var(--warn); }
 
-/* DEC4 — Trace decompiler tab */
+/* DEC4 — Trace decompiler tab (右侧, 跟 HLIL 同级) */
+#dec-pane {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-size: 12px;
+}
+#dec-pane.active { display: flex; }
 .dec-toolbar {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   padding: 6px; border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  background: var(--bg2);
+  flex: 0 0 auto;
 }
 .dec-toolbar select, .dec-toolbar button {
   padding: 2px 8px;
   font-size: 12px;
 }
-#dec-key-status {
+#dec-key-status, #dec-cost-hint {
   padding: 4px 8px;
   font-size: 11px;
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
 .dec-vm-summary {
   padding: 6px 8px;
@@ -653,6 +663,18 @@ body.multi-so .row-insn { padding-left: 6px; }
   font-family: var(--font-mono);
   font-size: 11px;
   border-bottom: 1px solid var(--border);
+}
+#dec-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#dec-fn-list {
+  flex: 0 0 auto;
+  max-height: 35vh;
+  overflow-y: auto;
+  border-bottom: 2px solid var(--border);
 }
 .dec-fn-item {
   padding: 4px 8px; cursor: pointer;
@@ -662,14 +684,14 @@ body.multi-so .row-insn { padding-left: 6px; }
 }
 .dec-fn-item:hover { background: var(--hover); }
 .dec-fn-selected { background: var(--accent-bg); }
-.dec-fn-id { font-weight: bold; min-width: 32px; font-family: var(--font-mono); }
+.dec-fn-id { font-weight: bold; min-width: 28px; font-family: var(--font-mono); }
 .dec-fn-name { font-family: var(--font-mono); flex: 1; min-width: 0;
                overflow: hidden; text-overflow: ellipsis; }
 .dec-fn-stats { font-size: 11px; }
 #dec-output {
-  border-top: 2px solid var(--border);
+  flex: 1 1 auto;
+  overflow-y: auto;
   padding: 6px;
-  max-height: 60vh; overflow-y: auto;
 }
 .dec-fn-md pre, .dec-llm-out pre {
   font-family: var(--font-mono);
@@ -677,6 +699,7 @@ body.multi-so .row-insn { padding-left: 6px; }
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
+  margin: 0;
 }
 .dec-error { color: var(--warn); padding: 8px; }
 .small { font-size: 11px; }

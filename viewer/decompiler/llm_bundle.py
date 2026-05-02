@@ -56,6 +56,36 @@ Format expectation:
 """
 
 
+SYSTEM_PROMPT_DECOMPILE_ZH = """\
+你是 ARM64 Android trace 反编译助手. 输入是一份结构化 TraceIR,
+描述二进制在真机上实际执行的轨迹 — 不是静态分析的猜测.
+
+可利用的 trace 语义:
+- 每个 block 的 exec_count 表明哪些路径热, 哪些冷
+- 分支计数是真值 (taken=N). 0 not-taken 边在本次执行里就是死分支,
+  **不要给 opaque predicate 编造 dead code**
+- 循环迭代次数是实测值 (iters=N)
+- bl/blr 目标已经解析 (calls 段有 callee_pc + name), **不需要猜间接跳转**
+- samples 是首次执行时的寄存器快照, 适合推断类型
+- 这是 *一条* 执行路径; 不同输入可能走不同分支
+
+输出要求:
+- C 伪代码必须放在 ```c 块里
+- 适当引用观测值帮理解 (例如 "循环跑 256 次, key 在 x20 = 0x...")
+- 变量名要可读, 从 sample 值 + JNI/libc 上下文推类型
+- 不能从 trace 决定的部分 (比如 taken=0 的分支) **明确注释说明**, 不要瞎编
+- 不要保留 OLLVM dispatcher 套路 — trace 已经摊平了, 输出**逻辑**控制流即可
+- 函数体保持 150 行以内, 除非真的必要
+
+格式:
+- 先一段简短的高层语义说明 (3-6 句中文)
+- 然后 ```c ... ``` 伪代码块
+- 最后简短列出假设 / 未知项 (用中文 bullet)
+
+整个回答用**中文**, 但代码本身用 C 语法 (注释也用中文).
+"""
+
+
 SYSTEM_PROMPT_SUMMARY = """\
 You are an ARM64 Android trace triage assistant. You receive a high-level
 TraceIR summary listing function calls observed in one execution. Your job
@@ -112,7 +142,8 @@ def build_summary_prompt(top: TopIR) -> Bundle:
 
 def build_fn_decompile_prompt(top: TopIR, fn_id: str,
                               max_user_chars: int = 200_000,
-                              tier: str = "hot") -> Bundle:
+                              tier: str = "hot",
+                              lang: str = "en") -> Bundle:
     """Function-level decompile prompt.
 
     fn_id: 'F0', ...
@@ -157,11 +188,12 @@ def build_fn_decompile_prompt(top: TopIR, fn_id: str,
         + fn_md
     )
 
+    sys_prompt = SYSTEM_PROMPT_DECOMPILE_ZH if lang == "zh" else SYSTEM_PROMPT_DECOMPILE
     return Bundle(
-        system=SYSTEM_PROMPT_DECOMPILE,
+        system=sys_prompt,
         user=user,
         fn_id=fn_id,
-        estimated_tokens=_est_tokens(SYSTEM_PROMPT_DECOMPILE) + _est_tokens(user),
+        estimated_tokens=_est_tokens(sys_prompt) + _est_tokens(user),
     )
 
 

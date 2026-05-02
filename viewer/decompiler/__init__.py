@@ -29,7 +29,7 @@ from .benchmark import (
 )
 from .llm_bundle import (
     Bundle, build_fn_decompile_prompt, build_summary_prompt,
-    SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_SUMMARY,
+    SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_DECOMPILE_ZH, SYSTEM_PROMPT_SUMMARY,
 )
 from .llm_client import (
     LlmModel, LlmResult,
@@ -52,7 +52,7 @@ __all__ = [
     "render_summary_md", "render_func_md", "write_decompile_dir",
     # LLM (P2-DEC2)
     "Bundle", "build_fn_decompile_prompt", "build_summary_prompt",
-    "SYSTEM_PROMPT_DECOMPILE", "SYSTEM_PROMPT_SUMMARY",
+    "SYSTEM_PROMPT_DECOMPILE", "SYSTEM_PROMPT_DECOMPILE_ZH", "SYSTEM_PROMPT_SUMMARY",
     "LlmModel", "LlmResult",
     "ClaudeModel", "DeepSeekModel", "QwenModel", "MimoModel", "OpenCodeModel",
     "make_llm_model", "list_llm_models",

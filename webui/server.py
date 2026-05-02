@@ -2508,8 +2508,9 @@ def make_app(trace_path: pathlib.Path,
     # API key 严守: 所有 LLM 调用走 LlmModel.call(), API key 在 model adapter
     # 内从环境变量读, **服务器永不接受/转发 client 提供的 key**.
 
-    def _get_dec_ir(hooks_paths: tuple = (), with_memshadow: bool = False):
-        key = ("dec_ir", hooks_paths, with_memshadow)
+    def _get_dec_ir(hooks_paths: tuple = (), with_memshadow: bool = False,
+                    split_top_k: int = 10):
+        key = ("dec_ir", hooks_paths, with_memshadow, split_top_k)
         if key in cache:
             return cache[key]
         from viewer import build_trace_ir as _build_ir
@@ -2523,19 +2524,23 @@ def make_app(trace_path: pathlib.Path,
             t, sym=sym,
             type_spec_paths=[pathlib.Path(p) for p in hooks_paths] or None,
             memshadow=mem,
+            split_top_k=split_top_k,
         )
         cache[key] = top
         return top
 
     @app.get("/api/dec/summary")
-    def dec_summary(hooks: str = "", with_memshadow: bool = False):
+    def dec_summary(hooks: str = "", with_memshadow: bool = False,
+                    split_top_k: int = 10):
         """trace 顶层 IR + summary markdown.
 
-        hooks: 逗号分隔 JSON spec 路径; with_memshadow: 抓 VM hex.
+        hooks: 逗号分隔 JSON spec 路径; with_memshadow: 抓 VM hex;
+        split_top_k: 升级前 K 个 callee 为独立 fn (UI 默认 40, 比 CLI 的 10 大).
         """
         from viewer.decompiler import render_summary_md
         hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
-        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow)
+        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
+                          split_top_k=split_top_k)
         return {
             "records": top.records,
             "module_name": top.module_name,
@@ -2563,11 +2568,13 @@ def make_app(trace_path: pathlib.Path,
 
     @app.get("/api/dec/fn/{fn_id}")
     def dec_fn(fn_id: str, tier: str = "hot",
-               hooks: str = "", with_memshadow: bool = False):
+               hooks: str = "", with_memshadow: bool = False,
+               split_top_k: int = 10):
         """单个 fn 的 IR markdown."""
         from viewer.decompiler import render_func_md
         hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
-        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow)
+        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
+                          split_top_k=split_top_k)
         fn = top.fn(fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
@@ -2588,8 +2595,13 @@ def make_app(trace_path: pathlib.Path,
 
     @app.post("/api/dec/llm-call")
     def dec_llm_call(payload: dict):
-        """同步调 LLM 反编译. body: {fn_id, model, max_tokens?, hooks?,
-        with_memshadow?}. API key 服务端从 env 读, 不接受 client 提供.
+        """同步调 LLM 反编译.
+
+        body: {fn_id, model, max_tokens?, hooks?, with_memshadow?, lang?, tier?, split_top_k?}
+        API key 服务端从 env 读, 不接受 client 提供.
+
+        Token 经济: server-side cache (key = fn_id+model+lang+tier+memshadow).
+        重复请求同参数不重发 LLM, 立即返回 cached result.
         """
         from viewer.decompiler import (
             build_fn_decompile_prompt, make_llm_model,
@@ -2599,20 +2611,32 @@ def make_app(trace_path: pathlib.Path,
         max_tokens = int(payload.get("max_tokens") or 4096)
         hooks = payload.get("hooks") or []
         with_memshadow = bool(payload.get("with_memshadow") or False)
+        lang = str(payload.get("lang") or "en")
+        tier = str(payload.get("tier") or "hot")
+        split_top_k = int(payload.get("split_top_k") or 10)
         if isinstance(hooks, str):
             hooks = [s.strip() for s in hooks.split(",") if s.strip()]
         hk = tuple(hooks)
-        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow)
+        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
+                          split_top_k=split_top_k)
         if top.fn(fn_id) is None:
             raise HTTPException(404, f"no such fn {fn_id}")
+
+        # server-side LLM 输出 cache. key 含所有可能影响输出的参数.
+        cache_key = ("dec_llm_out", fn_id, model_name, lang, tier,
+                     with_memshadow, hk, max_tokens, split_top_k)
+        if cache_key in cache:
+            cached = cache[cache_key]
+            return {**cached, "cache_hit": True}
+
         try:
-            bundle = build_fn_decompile_prompt(top, fn_id)
+            bundle = build_fn_decompile_prompt(top, fn_id, tier=tier, lang=lang)
             model = make_llm_model(model_name)
         except KeyError as e:
             raise HTTPException(400, f"{e}")
         result = model.call(bundle.user, system=bundle.system,
                             max_tokens=max_tokens)
-        return {
+        out = {
             "ok": result.error is None,
             "model": result.model,
             "error": result.error,
@@ -2621,7 +2645,12 @@ def make_app(trace_path: pathlib.Path,
             "out_tokens": result.output_tokens,
             "latency_ms": result.latency_ms,
             "estimated_prompt_tokens": bundle.estimated_tokens,
+            "cache_hit": False,
         }
+        # 仅 success 才 cache; error 不缓存让用户能重试
+        if out["ok"]:
+            cache[cache_key] = out
+        return out
 
     # static SPA
     @app.get("/", response_class=HTMLResponse)

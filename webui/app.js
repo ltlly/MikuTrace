@@ -1007,7 +1007,6 @@ function activateLeftTab(name) {
      forks: "Forks",
      strings: "Strings",
      taint: "Taint", xref: "Cross Reference", sofilter: "SO Filter",
-     decompile: "Decompile (LLM)",
      settings: "Settings"}[name] || name;
   // 切换显示/隐藏对应 panel
   document.querySelectorAll("#left-panel-body > .lp-tab").forEach(b =>
@@ -1023,7 +1022,6 @@ function activateLeftTab(name) {
     else if (name === "calltree") initCallTreeTab();
     else if (name === "forks") initForksTab();
     else if (name === "sofilter") initSoFilterTab();
-    else if (name === "decompile") initDecompileTab();
     else if (name === "settings") initSettingsTab();
   }
   // 切到 backtrace 时刷一下当前 cursor 的 stack
@@ -1155,10 +1153,13 @@ function activateRightTab(name) {
   document.querySelectorAll("#right-body .rbody").forEach(b =>
     b.classList.toggle("active", b.id === name + "-pane"));
   $("right-tab-title").textContent =
-    {cfg: "Graph", regs: "Registers", hlil: "HLIL (decompiled)"}[name];
+    {cfg: "Graph", regs: "Registers", hlil: "HLIL (decompiled)",
+     dec: "Decompile (Trace IR + LLM)"}[name] || name;
   if (name === "hlil") {
     if (!TAB_INIT.hlil) { TAB_INIT.hlil = true; initHlilTab(); }
     refreshHlil();   // immediate refresh on activate
+  } else if (name === "dec") {
+    if (!TAB_INIT.dec) { TAB_INIT.dec = true; initDecompileTab(); }
   }
 }
 
@@ -2409,30 +2410,52 @@ function hideHelp() {
   }
 }
 
-// ---------------- DEC4 — Trace Decompiler tab ----------------
+// ---------------- DEC4 — Trace Decompiler tab (右侧, 跟 HLIL 同级) ----------------
+//
+// Token 经济:
+//  - dec_summary 缓存 (per hooks/memshadow). server 已 cache 不重算.
+//  - LLM 输出 cache (client-side, by fn_id+model+lang+useMem). 重复点不重发.
+//  - prompt token 估值显示 (在 fn 列表 + 反编译按钮提示).
+//
+// 当前能选的 fn 是 calltree 切的 top-K (默认 K=10 → F0-F9). 改 split_top_k
+// 让 fn 列表加长 (用户反馈太少). 通过 ?split_top_k=N URL 参数支持.
+
+let DEC_SELECTED_FN = null;
+const DEC_CACHE = {};   // key = fn_id|model|lang|useMem|tier → result
+
 async function initDecompileTab() {
-  const cont = $("lp-decompile");
-  // 已有 toolbar 在 HTML 里, 我们只 wire events + 初始化 data
-  // 1. 拉 model key status
+  // 拉 model key status
   try {
     const r = await fetch("/api/dec/models").then(r => r.json());
     const k = r.api_keys_configured || {};
     const status = Object.entries(k).map(([n, v]) =>
       `${n}: ${v ? "✓" : "✗"}`).join(" · ");
-    $("dec-key-status").textContent = "API keys env: " + status;
+    $("dec-key-status").textContent = "API keys: " + status;
   } catch (e) {
     $("dec-key-status").textContent = "load model status fail: " + e;
   }
   $("dec-refresh").addEventListener("click", loadDecSummary);
   $("dec-llm-call").addEventListener("click", runDecLlmCall);
+  $("dec-vm-mem").addEventListener("change", loadDecSummary);
+  $("dec-tier").addEventListener("change", () => {
+    if (DEC_SELECTED_FN) selectDecFn(DEC_SELECTED_FN);
+  });
   loadDecSummary();
+}
+
+function _decUrl(useMem) {
+  // 默认 split_top_k=40 (比 CLI 默认 10 大 4 倍, 给用户更多 fn 选择)
+  const params = new URLSearchParams();
+  if (useMem) params.set("with_memshadow", "1");
+  params.set("split_top_k", "40");
+  return params.toString() ? "?" + params.toString() : "";
 }
 
 async function loadDecSummary() {
   const list = $("dec-fn-list");
   list.innerHTML = '<div class="dim">building IR (1-3s)…</div>';
   const useMem = $("dec-vm-mem").checked;
-  const url = "/api/dec/summary" + (useMem ? "?with_memshadow=1" : "");
+  const url = "/api/dec/summary" + _decUrl(useMem);
   let s;
   try {
     s = await fetch(url).then(r => r.json());
@@ -2451,25 +2474,27 @@ async function loadDecSummary() {
            ` (${v.hex_dump_lines} hex lines)` : "") +
          "</div>";
   }
-  // fn list
-  const items = (s.fns || []).map(f =>
-    `<div class="dec-fn-item" data-fn="${f.id}" title="entry idx=${f.entry_idx}, exit=${f.exit_idx}">
+  // fn list — 显示估值 token 让 user 提前感知 cost
+  const items = (s.fns || []).map(f => {
+    // 估值: blocks * 600 chars / 4 (粗估), summary 级 100
+    const estChars = f.blocks * 600 + 200;
+    const estTokens = Math.round(estChars / 4);
+    return `<div class="dec-fn-item" data-fn="${f.id}" title="entry idx=${f.entry_idx}, exit=${f.exit_idx}, ~${estTokens} prompt tokens">
        <span class="dec-fn-id">${f.id}</span>
        <span class="dec-fn-name">${escapeHtml(f.name)}</span>
-       <span class="dec-fn-stats dim">blocks=${f.blocks} loops=${f.loops} calls=${f.calls}` +
-       (f.type_anchors ? ` anchors=${f.type_anchors}` : "") +
-       `</span>
-     </div>`).join("");
+       <span class="dec-fn-stats dim">blk=${f.blocks} loop=${f.loops} call=${f.calls}` +
+       (f.type_anchors ? ` anc=${f.type_anchors}` : "") +
+       ` ~${estTokens}tok</span>
+     </div>`;
+  }).join("");
   list.innerHTML =
-    `<div class="dim small">trace: ${s.records} records, module ${s.module_name || "?"}</div>` +
+    `<div class="dim small">trace ${s.records} rec / module ${s.module_name || "?"} / ${s.fns.length} fns</div>` +
     vm + items;
   list.querySelectorAll(".dec-fn-item").forEach(el => {
     el.addEventListener("click", () => selectDecFn(el.dataset.fn));
   });
   if (s.fns && s.fns.length) selectDecFn(s.fns[0].id);
 }
-
-let DEC_SELECTED_FN = null;
 
 async function selectDecFn(fnId) {
   DEC_SELECTED_FN = fnId;
@@ -2479,11 +2504,17 @@ async function selectDecFn(fnId) {
   const out = $("dec-output");
   out.innerHTML = '<div class="dim">loading IR…</div>';
   const useMem = $("dec-vm-mem").checked;
-  const url = `/api/dec/fn/${encodeURIComponent(fnId)}?tier=hot` +
-              (useMem ? "&with_memshadow=1" : "");
+  const tier = $("dec-tier").value || "hot";
+  let qs = `?tier=${tier}` + (useMem ? "&with_memshadow=1" : "") + "&split_top_k=40";
+  const url = `/api/dec/fn/${encodeURIComponent(fnId)}${qs}`;
   try {
     const r = await fetch(url).then(r => r.json());
-    out.innerHTML = `<div class="dec-fn-md"><pre>${escapeHtml(r.markdown || "")}</pre></div>`;
+    const md = r.markdown || "";
+    const estTokens = Math.round(md.length / 4);
+    $("dec-cost-hint").textContent =
+      `当前 fn IR ≈ ${md.length.toLocaleString()} chars / ~${estTokens.toLocaleString()} tokens. ` +
+      `点 反编译 调 LLM (中文模式 + cache, 重点不重发)`;
+    out.innerHTML = `<div class="dec-fn-md"><pre>${escapeHtml(md)}</pre></div>`;
   } catch (e) {
     out.innerHTML = '<div class="dim">load failed: ' + e + '</div>';
   }
@@ -2496,8 +2527,17 @@ async function runDecLlmCall() {
   }
   const model = $("dec-model").value;
   const useMem = $("dec-vm-mem").checked;
+  const lang = $("dec-zh").checked ? "zh" : "en";
+  const tier = $("dec-tier").value || "hot";
+  const cacheKey = `${DEC_SELECTED_FN}|${model}|${lang}|${useMem}|${tier}`;
   const out = $("dec-output");
-  out.innerHTML = `<div class="dim">calling LLM (${model}) — 30-90s, 请稍等…</div>`;
+  // client cache 命中 → 不重发, 省 token
+  if (DEC_CACHE[cacheKey]) {
+    const r = DEC_CACHE[cacheKey];
+    out.innerHTML = _renderDecResult(r, true);
+    return;
+  }
+  out.innerHTML = `<div class="dim">calling LLM (${model}, ${lang}) — 30-90s, 请稍等…</div>`;
   const t0 = Date.now();
   try {
     const r = await fetch("/api/dec/llm-call", {
@@ -2507,19 +2547,27 @@ async function runDecLlmCall() {
         fn_id: DEC_SELECTED_FN,
         model: model,
         with_memshadow: useMem,
+        lang: lang,
+        tier: tier,
       }),
     }).then(r => r.json());
-    const dt = Date.now() - t0;
+    r._client_ms = Date.now() - t0;
     if (!r.ok) {
       out.innerHTML = `<div class="dec-error">LLM error: ${escapeHtml(r.error || "")}</div>`;
       return;
     }
-    const meta = `<div class="dim small">model: ${r.model} · ${r.in_tokens}→${r.out_tokens} tok` +
-                 ` · server ${r.latency_ms}ms · client ${dt}ms</div>`;
-    out.innerHTML = meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
+    DEC_CACHE[cacheKey] = r;
+    out.innerHTML = _renderDecResult(r, false);
   } catch (e) {
     out.innerHTML = '<div class="dec-error">request failed: ' + escapeHtml(String(e)) + '</div>';
   }
+}
+
+function _renderDecResult(r, fromCache) {
+  const tag = fromCache ? " · <b style='color:#888'>(cache 命中, 0 token)</b>" : "";
+  const meta = `<div class="dim small">${r.model} · ${r.in_tokens}→${r.out_tokens} tok` +
+               ` · server ${r.latency_ms}ms${tag}</div>`;
+  return meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
 }
 
 // ---------------- go ----------------
