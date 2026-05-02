@@ -48,6 +48,7 @@ from webui.schemas import (
     CryptoScanAny, AutoPhaseDetectAny,
     HashInputSearchAny, HashInputSearchRequest,
     DiffTracesResponse, DiffTracesRequest,
+    JniEventsResponse,
 )
 
 
@@ -1954,6 +1955,23 @@ def make_app(trace_path: pathlib.Path,
                 "seen_in_trace": (e.src, e.dst) in ovr["edges_seen"],
             } for e in edges],
         }
+
+    # ── P0-2: jni events ──────────────────────────────────────────────────────
+
+    @app.get("/api/jni-events", response_model=JniEventsResponse)
+    def api_jni_events(id: Optional[str] = None,
+                       idx_lo: Optional[int] = None,
+                       idx_hi: Optional[int] = None):
+        """Trace.jni_events lazy-loaded from per-call dir's jni_hooks.jsonl.
+        Filter by `id` (hook name) and/or trace_idx range."""
+        evs = t.jni_events
+        if id is not None:
+            evs = [e for e in evs if e.get("id") == id]
+        if idx_lo is not None:
+            evs = [e for e in evs if e.get("trace_idx", -1) >= idx_lo]
+        if idx_hi is not None:
+            evs = [e for e in evs if e.get("trace_idx", -1) < idx_hi]
+        return {"count": len(evs), "events": evs}
 
     # ── P0-3: Web sync of CLI commands ────────────────────────────────────────
 

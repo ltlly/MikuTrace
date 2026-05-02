@@ -15,6 +15,7 @@ Sources of info:
   - heuristics: ascii string detection, stack region by SP, etc.
 """
 from __future__ import annotations
+from typing import Optional
 from rich.text import Text
 from .trace import Trace, ALL_REGS
 from .symbols import SymbolMap
@@ -157,18 +158,50 @@ def classify(value: int,
         return out
 
 
+def build_jni_value_map(trace: Trace) -> dict[int, str]:
+    """Build {reg_value → utf8_string} from JNI events.
+
+    For each NewStringUTF event at trace_idx I with args.bytes=S, seed
+    x1..x4 at idx I — by AAPCS the C-string ptr is x1, but wrappers may
+    shift, so include neighbors as plausible matches.
+    GetStringUTFChars ret value is in x0 only AFTER the call returns —
+    can't capture from BL site without a separate snapshot, so skipped.
+    """
+    out: dict[int, str] = {}
+    n = len(trace)
+    for ev in trace.jni_events:
+        if ev.get("id") != "NewStringUTF": continue
+        idx = ev.get("trace_idx")
+        if idx is None or idx < 0 or idx >= n: continue
+        s = (ev.get("args") or {}).get("bytes")
+        if not isinstance(s, str) or not s: continue
+        r = trace.record(idx)
+        for rn in ("x1", "x2", "x3", "x4"):
+            v = r.reg(rn)
+            if 0x10000 < v < (1 << 56):
+                out.setdefault(v, s)
+    return out
+
+
 def format_reg_line(name: str, value: int,
                      trace_cursor: int, trace: Trace,
                      sym: SymbolMap, mem: MemShadow,
-                     modules: list[tuple[int, int, str]], sp: int) -> Text:
+                     modules: list[tuple[int, int, str]], sp: int,
+                     jni_value_map: Optional[dict[int, str]] = None) -> Text:
     """One register line in pwndbg style:
         x0 0x6daecb8f70  → [libart.so+0x...] → "..."
+
+    jni_value_map: optional {ptr_value: utf8_string} from build_jni_value_map.
+    When reg value matches, append `→ "<utf8>"` annotation.
     """
     line = Text()
     line.append(f"{name:>4s} ", style="yellow bold")
     line.append(f"{value:016x}", style="white")
     if value != 0:
         line.append_text(classify(value, trace_cursor, trace, sym, mem, modules, sp=sp))
+    if jni_value_map and value in jni_value_map:
+        s = jni_value_map[value]
+        line.append(f"  → {s!r}", style="bright_green bold")
     return line
 
 

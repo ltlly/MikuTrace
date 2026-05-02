@@ -99,6 +99,21 @@ class Trace:
     def inst(self, i: int) -> int:
         return struct.unpack_from("<I", self._mm, i * REC_SIZE + 268)[0]
 
+    @property
+    def jni_events(self) -> list[dict]:
+        """JNI hook events lazy-loaded from `jni_hooks.jsonl` next to trace.bin.
+        Empty list if file absent. Malformed JSONL lines silently skipped."""
+        if hasattr(self, "_jni_events"):
+            return self._jni_events
+        evs: list[dict] = []
+        jp = self.path.parent / "jni_hooks.jsonl"
+        if jp.exists():
+            for line in jp.read_text().splitlines():
+                try: evs.append(json.loads(line))
+                except Exception: continue
+        self._jni_events = evs
+        return evs
+
     def pc_array(self):
         """numpy uint64 view of all PCs (zero-copy stride view of mmap).
         用于 vectorized 扫描 — np.nonzero(pc_array() == target) 比 Python

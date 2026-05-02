@@ -899,6 +899,13 @@ class RegAtIdxResponse(BaseModel):
     regs: dict[str, RegValue]
 
 
+# ── /api/jni-events (P0-2) ───────────────────────────────────────────────────
+
+class JniEventsResponse(BaseModel):
+    count: int
+    events: list[dict[str, Any]]
+
+
 # ── /api/hash-input-search (P0-3) ────────────────────────────────────────────
 
 class HashInputSearchRequest(BaseModel):
