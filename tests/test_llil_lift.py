@@ -464,3 +464,66 @@ def test_lift_ror_reg():
     a, b = body.operands
     assert a.op == LLIL_REG and a.operands == ["x1"]
     assert b.op == LLIL_REG and b.operands == ["x2"]
+
+
+# ─────────── indexed addressing (LDR/STR with [base, idx, lsl #shift]) ───────────
+
+def test_lift_ldr_indexed_simple():
+    """ldr x0, [x1, x2] → SET_REG(x0, LOAD(ADD(x1, x2)))."""
+    [e] = lift_arm64(0x1000, _asm("ldr x0, [x1, x2]"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    body = e.operands[1]
+    assert body.op == LLIL_LOAD
+    addr = body.operands[0]
+    assert addr.op == LLIL_ADD
+    a, b = addr.operands
+    assert a.op == LLIL_REG and a.operands == ["x1"]
+    assert b.op == LLIL_REG and b.operands == ["x2"]
+
+
+def test_lift_ldr_indexed_lsl_shift():
+    """ldr x0, [x1, x2, lsl #3] → SET_REG(x0, LOAD(ADD(x1, LSL(x2, 3))))."""
+    from viewer.decompiler.llil import LLIL_LSL
+    [e] = lift_arm64(0x1000, _asm("ldr x0, [x1, x2, lsl #3]"))
+    addr = e.operands[1].operands[0]
+    assert addr.op == LLIL_ADD
+    base, idx_shifted = addr.operands
+    assert base.op == LLIL_REG and base.operands == ["x1"]
+    assert idx_shifted.op == LLIL_LSL
+    idx, shamt = idx_shifted.operands
+    assert idx.op == LLIL_REG and idx.operands == ["x2"]
+    assert shamt.op == LLIL_CONST and shamt.operands == [3]
+
+
+def test_lift_str_indexed_simple():
+    """str x3, [x1, x2] → STORE(ADD(x1, x2), x3)."""
+    [e] = lift_arm64(0x1000, _asm("str x3, [x1, x2]"))
+    assert e.op == LLIL_STORE
+    addr = e.operands[0]
+    assert addr.op == LLIL_ADD
+    src = e.operands[1]
+    assert src.op == LLIL_REG and src.operands == ["x3"]
+
+
+def test_lift_str_indexed_lsl_shift():
+    """str x3, [x1, x2, lsl #3] (8-byte word, lsl=log2(size)=3) →
+    STORE(ADD(x1, LSL(x2, 3)), x3)."""
+    from viewer.decompiler.llil import LLIL_LSL
+    [e] = lift_arm64(0x1000, _asm("str x3, [x1, x2, lsl #3]"))
+    addr = e.operands[0]
+    assert addr.op == LLIL_ADD
+    _, idx_shifted = addr.operands
+    assert idx_shifted.op == LLIL_LSL
+    _, shamt = idx_shifted.operands
+    assert shamt.operands == [3]
+
+
+def test_lift_ldr_disp_only_unchanged():
+    """ldr x0, [x1, #16] — 简单 disp, 行为不变 (smoke test)."""
+    [e] = lift_arm64(0x1000, _asm("ldr x0, [x1, #16]"))
+    addr = e.operands[1].operands[0]
+    assert addr.op == LLIL_ADD
+    a, b = addr.operands
+    assert a.operands == ["x1"]
+    assert b.op == LLIL_CONST and b.operands == [16]

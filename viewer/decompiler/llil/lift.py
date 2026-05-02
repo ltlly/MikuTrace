@@ -415,6 +415,50 @@ def _lift_mov(d: Decoded) -> LlilExpr:
     return _intrinsic(d)
 
 
+def _parse_mem_shift(op_str: str) -> int:
+    """从 op_str '[x1, x2, lsl #3]' 抓 shift 量. 找不到返 0.
+
+    简化: 只识别明确的 lsl #N 形态; sxtw/uxtw 等扩展形态走 0 (回退到无 shift,
+    宽度差异 fold 时 memshadow 自然兜底).
+    """
+    s = op_str
+    if "lsl" not in s.lower():
+        return 0
+    try:
+        idx = s.lower().index("lsl")
+        rest = s[idx + 3:].strip().lstrip("#").rstrip("]").rstrip()
+        # 找第一个数字 token
+        tok = ""
+        for c in rest:
+            if c.isdigit() or (c in "0x" and not tok):
+                tok += c
+            elif tok:
+                break
+        if tok:
+            return int(tok, 0)
+    except (ValueError, IndexError):
+        pass
+    return 0
+
+
+def _build_addr_expr(base: str, idx_reg: str, disp: int, op_str: str):
+    """[base, idx, lsl #shift] / [base, idx] / [base, #disp] → LlilExpr.
+
+    返回 addr_expr (size=8). idx_reg=='' 时是简单 disp 形态.
+    """
+    if not idx_reg:
+        return reg(base) if disp == 0 else add(reg(base), const(disp), size=8)
+    # indexed
+    shift = _parse_mem_shift(op_str)
+    idx_expr = reg(idx_reg)
+    if shift > 0:
+        idx_expr = lsl(idx_expr, const(shift), size=8)
+    addr_expr = add(reg(base), idx_expr, size=8)
+    if disp != 0:
+        addr_expr = add(addr_expr, const(disp), size=8)
+    return addr_expr
+
+
 def _lift_load(d: Decoded) -> list:
     """ldr/ldp/...  → 1 或 2 个 LLIL_SET_REG(dst, LLIL_LOAD(addr_expr))."""
     if "!" in d.op_str:
@@ -432,11 +476,7 @@ def _lift_load(d: Decoded) -> list:
             dst = d.regs_def[0]
         else:
             return [_intrinsic(d)]
-        # addr = base + disp  (idx_reg 复杂, MVP 不展开 — 走 intrinsic 兜底)
-        if idx_reg:
-            return [_intrinsic(d, note="indexed_addressing")]
-        addr_expr = (reg(base) if disp == 0
-                     else add(reg(base), const(disp), size=8))
+        addr_expr = _build_addr_expr(base, idx_reg, disp, d.op_str)
         out.append(set_reg(dst, load(addr_expr, size=sz, pc=d.pc),
                            size=sz, pc=d.pc))
     return out or [_intrinsic(d)]
@@ -453,13 +493,10 @@ def _lift_store(d: Decoded) -> list:
         base, idx_reg, disp, sz, is_w, src = mem
         if not is_w:
             continue
-        if idx_reg:
-            return [_intrinsic(d, note="indexed_addressing")]
         # src reg 优先 capstone mem.src; 否则 regs_use 取
         src_reg_name = src or (d.regs_use[i] if i < len(d.regs_use)
                                else (d.regs_use[0] if d.regs_use else "?"))
-        addr_expr = (reg(base) if disp == 0
-                     else add(reg(base), const(disp), size=8))
+        addr_expr = _build_addr_expr(base, idx_reg, disp, d.op_str)
         out.append(store(addr_expr, reg(src_reg_name),
                          size=sz, pc=d.pc))
     return out or [_intrinsic(d)]
