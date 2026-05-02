@@ -102,3 +102,46 @@ def test_render_intrinsic():
     hlil = restructure(cfg, {0x1000: blk})
     text = "\n".join(render_hlil(hlil))
     assert "intrinsic" in text and "svc" in text
+
+
+def test_render_return_shows_x0_value():
+    """ret 显示 'return x0_vN' (BN 风格), 用 cur_versions + var_names."""
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil,
+        set_reg, reg, const, ret, unify_vars,
+    )
+    blk = ssa_block(0x1000, [
+        set_reg("x0", const(0x42)),    # x0 → v1
+        ret(),
+    ])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    var_names = unify_vars({0x1000: blk})
+    text = "\n".join(render_hlil(hlil, var_names=var_names))
+    assert "return x0_v1" in text
+
+
+def test_render_return_no_writes_uses_arg_0():
+    """ret 没写 x0 → 返回入口 x0 = arg_0 (per var_unify)."""
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil, ret, unify_vars,
+    )
+    blk = ssa_block(0x1000, [ret()])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    var_names = unify_vars({0x1000: blk})
+    text = "\n".join(render_hlil(hlil, var_names=var_names))
+    assert "return arg_0" in text
+
+
+def test_render_return_no_var_names_falls_back_plain():
+    """ret 没 var_names → 简单 'return' (向后兼容)."""
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil, ret,
+    )
+    blk = ssa_block(0x1000, [ret()])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    text = "\n".join(render_hlil(hlil))
+    assert "return" in text
+    assert "return x0" not in text

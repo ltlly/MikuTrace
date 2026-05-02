@@ -511,6 +511,14 @@ def _root_to_c(root: LlilExpr,
             args_str = ", ".join(argv)
         return f"call({target}, {args_str})" if args_str else f"call({target})"
     if op == LLIL_RET:
+        # ARM64 AAPCS64: 返回值在 x0 (大值用 x0+x1 pair). 渲染 BN 风格
+        # `return x0_vN` (cur_versions 已知). 没 var_names dict 时回退 'return'.
+        if cur_versions is not None and var_names is not None:
+            v = cur_versions.get("x0", 0)
+            if (("x0", v) in var_names):
+                return f"return {var_names[('x0', v)]}"
+            # fallback: 显示原 reg + version
+            return f"return x0_v{v}" if v > 0 else "return x0"
         return "return"
     if op == LLIL_JUMP:
         target = expr_to_c(root.operands[0], types, shapes, tag=blk.tag,
