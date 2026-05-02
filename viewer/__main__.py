@@ -1070,6 +1070,24 @@ def cmd_diff_traces(args):
     })
 
 
+# ───────────────────────── ollvm-detect-vm ─────────────────────────
+
+def cmd_ollvm_detect_vm(args):
+    """Heuristic VM dispatcher detection.
+
+    P1-D: NOT decoder. Just emits "可能是 OLLVM VM" hint with confidence
+    score. User decides whether to skip the dispatcher when reverse-engineering.
+    """
+    from .trace import load
+    from .ollvmdet import ollvm_detect_vm
+    t = load(args.trace)
+    candidates = ollvm_detect_vm(t, min_entries=args.min_entries,
+                                   conf_threshold=args.threshold)
+    t.close()
+    _emit({"min_entries": args.min_entries, "threshold": args.threshold,
+           "count": len(candidates), "candidates": candidates})
+
+
 # ───────────────────────── hash-finalize-detect ─────────────────────────
 
 def cmd_hash_finalize_detect(args):
@@ -1621,7 +1639,7 @@ _KNOWN_SUBCOMMANDS = {
     "mem-writes-in-range", "mem-flow", "crypto-scan",
     # 第二轮 xsign 实战后追加 (P0 + P1):
     "reg-at-idx", "call-chain", "hash-input-search", "auto-phase-detect",
-    "hash-finalize-detect",
+    "hash-finalize-detect", "ollvm-detect-vm",
     # 多 trace 差分 (P2 → 现需求做了):
     "diff-traces",
 }
@@ -1853,6 +1871,14 @@ def main():
     s.add_argument("--search-in-mem", action="store_true", dest="search_in_mem",
                    help="also search if computed hash bytes appear in mem (= used for tag)")
 
+    s = sub.add_parser("ollvm-detect-vm",
+                       help="heuristic VM dispatcher detection (P1-D, only detect 不 decode)")
+    s.add_argument("trace")
+    s.add_argument("--min-entries", type=int, default=10, dest="min_entries",
+                   help="min indirect br count to score")
+    s.add_argument("--threshold", type=float, default=0.5,
+                   help="confidence threshold (0.0~1.0)")
+
     s = sub.add_parser("hash-finalize-detect",
                        help="find hash digest output regions (闭环 crypto-scan IV → 输出位置)")
     s.add_argument("trace")
@@ -1907,6 +1933,7 @@ def main():
         "auto-phase-detect": cmd_auto_phase_detect,
         "diff-traces": cmd_diff_traces,
         "hash-finalize-detect": cmd_hash_finalize_detect,
+        "ollvm-detect-vm": cmd_ollvm_detect_vm,
     }
     h = handlers.get(args.subcommand)
     if h is None:

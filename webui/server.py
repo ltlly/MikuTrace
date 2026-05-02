@@ -49,7 +49,7 @@ from webui.schemas import (
     HashInputSearchAny, HashInputSearchRequest,
     DiffTracesResponse, DiffTracesRequest,
     JniEventsResponse, CallTreeResponse,
-    HashFinalizeDetectAny,
+    HashFinalizeDetectAny, OllvmDetectResponse,
 )
 
 
@@ -2242,6 +2242,15 @@ def make_app(trace_path: pathlib.Path,
         return {"traces": [ao["trace"] for ao in all_outputs],
                 "n_traces": len(all_outputs),
                 "headers": diff_report}
+
+    @app.get("/api/ollvm-detect-vm", response_model=OllvmDetectResponse)
+    def api_ollvm_detect_vm(min_entries: int = 10, threshold: float = 0.5):
+        """P1-D: heuristic VM dispatcher detection. Hint, not decode."""
+        from viewer.ollvmdet import ollvm_detect_vm
+        candidates = ollvm_detect_vm(t, min_entries=min_entries,
+                                      conf_threshold=threshold)
+        return {"min_entries": min_entries, "threshold": threshold,
+                "count": len(candidates), "candidates": candidates}
 
     @app.get("/api/hash-finalize-detect", response_model=HashFinalizeDetectAny)
     def api_hash_finalize_detect(window: int = 500, min_size: int = 16):

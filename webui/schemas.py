@@ -996,6 +996,22 @@ class CryptoScanPending(BaseModel):
 CryptoScanAny = Union[CryptoScanResponse, CryptoScanPending]
 
 
+# ── /api/ollvm-detect-vm (P1-D) ──────────────────────────────────────────────
+
+class OllvmCandidate(BaseModel):
+    fn_pc: str
+    entry_count: int
+    confidence: float
+    reason: str
+    hint: str
+
+class OllvmDetectResponse(BaseModel):
+    min_entries: int
+    threshold: float
+    count: int
+    candidates: list[OllvmCandidate]
+
+
 # ── /api/hash-finalize-detect (P1-B) ─────────────────────────────────────────
 
 class HashFinalizeCandidate(BaseModel):
