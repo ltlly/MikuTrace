@@ -920,6 +920,44 @@ def cmd_view(args):
     app = TraceMikuApp(args.path); app.run(); return 0
 
 
+def cmd_dec(args):
+    """Trace decompiler — 生成 LLM-friendly skeleton IR (P2-DEC1).
+
+    路线 B (设计: docs/trace-decompiler-design.md). 默认行为:
+    扫 trace, build TraceIR, 写 <path>/decompile/{summary.md, fns/F<id>.md}.
+    LLM 直接读这些 markdown 反编译.
+
+    `--summary` / `--fn F0` → 只 stdout, 不落盘 (UNIX-style).
+    """
+    from viewer import load, build_trace_ir, write_decompile_dir
+    from viewer.decompiler import render_summary_md, render_func_md
+    p = pathlib.Path(args.path)
+    if not p.exists():
+        print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
+    t = load(str(p))
+    print(f"[dec] loading trace: {p}  ({len(t)} records)", file=sys.stderr)
+    top = build_trace_ir(t)
+    print(f"[dec] built IR: {len(top.fns)} fn, "
+          f"{sum(len(f.blocks) for f in top.fns)} blocks", file=sys.stderr)
+    if args.summary:
+        sys.stdout.write(render_summary_md(top))
+        t.close(); return 0
+    if args.fn:
+        fn = top.fn(args.fn)
+        if fn is None:
+            print(f"[!] no such fn: {args.fn} (have {[f.id for f in top.fns]})",
+                  file=sys.stderr); t.close(); return 1
+        sys.stdout.write(render_func_md(fn))
+        t.close(); return 0
+    out_root = pathlib.Path(args.out) if args.out else p
+    dec_dir = write_decompile_dir(top, out_root)
+    print(f"[dec] wrote: {dec_dir}", file=sys.stderr)
+    print(f"  summary: {dec_dir / 'summary.md'}", file=sys.stderr)
+    print(f"  fns:     {len(top.fns)} files in {dec_dir / 'fns'}/", file=sys.stderr)
+    t.close()
+    return 0
+
+
 def cmd_web(args):
     from webui.server import serve
     so = pathlib.Path(args.so).expanduser() if args.so else None
@@ -1417,6 +1455,17 @@ def main():
     p_fz = sp.add_parser("finalize", help="扫 run/calls/_pending_call_* 补 meta + 重命名 (恢复中断的 trace)")
     p_fz.add_argument("path", help="run 目录")
 
+    # dec (trace decompiler — LLM-friendly skeleton IR, P2-DEC1)
+    p_dc = sp.add_parser("dec",
+                         help="生成 LLM-friendly trace IR (markdown), 落 <run>/decompile/")
+    p_dc.add_argument("path", help="trace 目录 (per-call 或 single-bin)")
+    p_dc.add_argument("--fn", default=None,
+                      help="只输出指定 fn id (e.g. F0) 到 stdout, 不落盘")
+    p_dc.add_argument("--summary", action="store_true",
+                      help="只输出 summary.md 到 stdout, 不落盘")
+    p_dc.add_argument("--out", default=None,
+                      help="输出根 (默认 = path/decompile)")
+
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")
     p_web.add_argument("path", help="trace 目录 (run 或 per-call)")
@@ -1437,6 +1486,7 @@ def main():
     if args.subcommand == "info":    return cmd_info(args)
     if args.subcommand == "finalize":return cmd_finalize(args)
     if args.subcommand == "web":     return cmd_web(args)
+    if args.subcommand == "dec":     return cmd_dec(args)
     ap.print_help(); return 1
 
 

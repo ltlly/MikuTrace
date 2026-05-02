@@ -63,6 +63,19 @@ def make_backend(name: str | None = None):
     return _mb(name)
 
 
+# ── trace decompiler (路线 B — LLM-friendly skeleton IR) ──
+def build_trace_ir(t, sym=None, only_module: bool = True):
+    """Build TraceIR from a Trace. See docs/trace-decompiler-design.md §3."""
+    from .decompiler import build_trace_ir as _b
+    return _b(t, sym=sym, only_module=only_module)
+
+
+def write_decompile_dir(top, out_dir):
+    """Write summary.md + fns/<id>.md → out_dir/decompile/."""
+    from .decompiler import write_decompile_dir as _w
+    return _w(top, out_dir)
+
+
 __version__ = "0.3.0"
 
 __all__ = [
@@ -80,8 +93,10 @@ __all__ = [
     "find_sccs", "loop_sccs", "write_dot", "textual_summary",
     # index / mem / taint
     "Index", "MemShadow", "forward_taint", "backward_taint",
-    # decompiler
+    # decompiler (static bridge)
     "make_backend",
+    # trace decompiler (路线 B)
+    "build_trace_ir", "write_decompile_dir",
     # version
     "__version__",
 ]
