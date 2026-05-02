@@ -899,6 +899,63 @@ class RegAtIdxResponse(BaseModel):
     regs: dict[str, RegValue]
 
 
+# ── /api/mem-writes-in-range (P0-3) ──────────────────────────────────────────
+
+class MemWriteRow(BaseModel):
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    asm: str
+    dst_addr: str
+    size: int
+    src_reg: Optional[str] = None
+    src_value: str
+    byte0: int
+
+class MemWritesInRangeResponse(BaseModel):
+    idx_range: list[int]
+    matched: int
+    returned: int
+    writes: list[MemWriteRow]
+    status: Optional[str] = None  # "building" if mem not ready
+
+class MemWritesInRangePending(BaseModel):
+    status: str
+    writes: list[MemWriteRow] = []
+
+MemWritesInRangeAny = Union[MemWritesInRangeResponse, MemWritesInRangePending]
+
+
+# ── /api/mem-flow (P0-3) ─────────────────────────────────────────────────────
+
+class MemFlowEvent(BaseModel):
+    idx: int
+    byte: int
+    kind: str
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    asm: str
+
+class MemFlowByte(BaseModel):
+    addr: str
+    events: list[MemFlowEvent]
+    total: int
+
+class MemFlowResponse(BaseModel):
+    addr: str
+    count: int
+    bytes: list[MemFlowByte]
+    status: Optional[str] = None
+
+class MemFlowPending(BaseModel):
+    status: str
+    bytes: list[MemFlowByte] = []
+
+MemFlowAny = Union[MemFlowResponse, MemFlowPending]
+
+
 # ── /api/call-chain (P0-3) ───────────────────────────────────────────────────
 
 class CallChainEntry(BaseModel):

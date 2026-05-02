@@ -44,6 +44,7 @@ from webui.schemas import (
     JobjHistoryResponse, JniStringsResponse,
     SoStatsResponse,
     RegAtIdxResponse, CallChainResponse,
+    MemWritesInRangeAny, MemFlowAny,
 )
 
 
@@ -1331,10 +1332,13 @@ def make_app(trace_path: pathlib.Path,
         }
 
     @app.get("/api/find-mem-pattern", response_model=FindMemPatternResponse)
-    def api_find_mem_pattern(bytes_hex: str, since: int = -1, max: int = 100):
+    def api_find_mem_pattern(bytes_hex: str, since: int = -1, max: int = 100,
+                             idx_lo: Optional[int] = None,
+                             idx_hi: Optional[int] = None):
         """Search MemShadow for hex byte pattern. Gap-H.
 
-        Query param `bytes_hex` (FastAPI doesn't allow `bytes` as param name)."""
+        Query param `bytes_hex` (FastAPI doesn't allow `bytes` as param name).
+        idx_lo / idx_hi: filter hits by first_idx ∈ [idx_lo, idx_hi)."""
         if BG["mem"]["status"] != "ready":
             _bg_run("mem", _build_mem)
             return {"pattern": bytes_hex, "since_idx": since, "count": 0, "hits": []}
@@ -1363,6 +1367,10 @@ def make_app(trace_path: pathlib.Path,
                 if first_idx is None or (ev_idx is not None and ev_idx < first_idx):
                     first_idx = ev_idx
             if match:
+                if idx_lo is not None and (first_idx is None or first_idx < idx_lo):
+                    continue
+                if idx_hi is not None and (first_idx is None or first_idx >= idx_hi):
+                    continue
                 hits.append({"addr": hex(a), "first_idx": first_idx})
                 if max > 0 and len(hits) >= max: break
         return {"pattern": pat.hex(), "since_idx": since,
@@ -1931,6 +1939,105 @@ def make_app(trace_path: pathlib.Path,
         }
 
     # ── P0-3: Web sync of CLI commands ────────────────────────────────────────
+
+    def _parse_int_qs(s: Optional[str]) -> Optional[int]:
+        if s is None or s == "": return None
+        return int(s, 16) if s.startswith("0x") else int(s)
+
+    @app.get("/api/mem-writes-in-range", response_model=MemWritesInRangeAny)
+    def api_mem_writes_in_range(idx_lo: int, idx_hi: int = -1,
+                                  src_byte: Optional[str] = None,
+                                  addr_lo: Optional[str] = None,
+                                  addr_hi: Optional[str] = None,
+                                  max: int = 200):
+        """All mem writes in [idx_lo, idx_hi); optional filters. mirrors CLI."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "writes": []}
+        import numpy as np
+        mem_obj = BG["mem"]["data"]
+        m_ = t.meta.module
+        base = m_.base if m_ else 0
+        lo, hi = idx_lo, (idx_hi if idx_hi >= 0 else len(t))
+        mask = (mem_obj.w_idx >= lo) & (mem_obj.w_idx < hi)
+        a_lo = _parse_int_qs(addr_lo)
+        a_hi = _parse_int_qs(addr_hi)
+        if a_lo is not None: mask &= (mem_obj.w_addr >= a_lo)
+        if a_hi is not None: mask &= (mem_obj.w_addr < a_hi)
+        if src_byte is not None:
+            sb = _parse_int_qs(src_byte) & 0xff
+            mask &= ((mem_obj.w_value & 0xff) == sb)
+        pos = np.where(mask)[0]
+        matched_n = int(mask.sum())
+        if max > 0 and len(pos) > max:
+            pos = pos[:max]
+        rows = []
+        for k in pos.tolist():
+            i = int(mem_obj.w_idx[k])
+            addr = int(mem_obj.w_addr[k]); sz = int(mem_obj.w_size[k])
+            val = int(mem_obj.w_value[k])
+            r = t.record(i); d = decode(r.pc, r.inst)
+            fn, foff = sym.lookup(r.pc)
+            base_w = d.mem_op[0][0] if d.mem_op else None
+            idx_w = d.mem_op[0][1] if d.mem_op else None
+            src_candidates = [u for u in d.regs_use
+                              if u not in (base_w, idx_w)]
+            src = src_candidates[0] if src_candidates else None
+            rows.append({
+                "idx": i, "pc": hex(r.pc),
+                "rel": hex(r.pc - base) if base else None,
+                "func": fn if fn != "?" else None,
+                "asm": f"{d.mnemonic} {d.op_str}",
+                "dst_addr": hex(addr), "size": sz,
+                "src_reg": src, "src_value": hex(val),
+                "byte0": (val & 0xff),
+            })
+        return {"idx_range": [lo, hi], "matched": matched_n,
+                "returned": len(rows), "writes": rows}
+
+    @app.get("/api/mem-flow", response_model=MemFlowAny)
+    def api_mem_flow(addr: str, count: int = 8,
+                     idx_lo: Optional[int] = None, idx_hi: Optional[int] = None,
+                     events_per_byte: int = 10,
+                     writers_only: bool = False, readers_only: bool = False):
+        """Per-byte read/write timeline. mirrors CLI mem-flow."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "bytes": []}
+        mem_obj = BG["mem"]["data"]
+        m_ = t.meta.module
+        base = m_.base if m_ else 0
+        try:
+            addr_i = _parse_int_qs(addr) or 0
+        except ValueError:
+            raise HTTPException(400, f"bad addr: {addr!r}")
+        cnt = max(1, count)
+        cap = max(0, events_per_byte)
+        kind_filter = None
+        if writers_only: kind_filter = {"w", "x"}
+        elif readers_only: kind_filter = {"r"}
+        out_bytes = []
+        for o in range(cnt):
+            a = addr_i + o
+            evs_raw = mem_obj.bytes.get(a, [])
+            evs = []
+            for ev_idx, ev_byte, ev_kind in evs_raw:
+                if idx_lo is not None and ev_idx < idx_lo: continue
+                if idx_hi is not None and ev_idx >= idx_hi: continue
+                if kind_filter is not None and ev_kind not in kind_filter: continue
+                r = t.record(ev_idx); d = decode(r.pc, r.inst)
+                fn, foff = sym.lookup(r.pc)
+                evs.append({
+                    "idx": ev_idx, "byte": ev_byte, "kind": ev_kind,
+                    "pc": hex(r.pc),
+                    "rel": hex(r.pc - base) if base else None,
+                    "func": fn if fn != "?" else None,
+                    "asm": f"{d.mnemonic} {d.op_str}",
+                })
+            if cap > 0 and len(evs) > cap:
+                evs = evs[-cap:]
+            out_bytes.append({"addr": hex(a), "events": evs, "total": len(evs_raw)})
+        return {"addr": addr, "count": cnt, "bytes": out_bytes}
 
     @app.get("/api/reg-at-idx", response_model=RegAtIdxResponse)
     def api_reg_at_idx(idx: int, regs: str = ""):
