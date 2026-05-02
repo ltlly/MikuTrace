@@ -2674,6 +2674,7 @@ def make_app(trace_path: pathlib.Path,
             restructure, from_viewer_cfg, render_hlil, expr_to_c,
             collect_uidf, flag_elim_block, unify_vars,
         )
+        from viewer.decompiler.llil.render import collect_const_strings
         from viewer.cfg import build_cfg as _build_cfg
         import numpy as np
         from viewer.trace import REC_SIZE
@@ -2801,12 +2802,19 @@ def make_app(trace_path: pathlib.Path,
         # 9.5. var unification — 跨 SSA version 同 reg → BN var_NN 风格
         var_names = unify_vars(ssa_map)
 
+        # 9.7. memshadow string deref — LLIL_CONST 命中 .rodata-ish 地址时,
+        #       从 trace memshadow 读 NUL-term ASCII → render "literal" 替代
+        #       0x... 地址. 这是 trace 反编译器对 OLLVM 加密 string 的关键
+        #       能力, 静态 BN/IDA 看不到的运行时明文.
+        const_strings = collect_const_strings(ssa_map, mem_for_fold)
+
         # 10. render — 含 exec_counts (trace 实测每块执行次数), local var 命名,
-        #              + var unification (arg_N / cs_xN / xN_v)
+        #              + var unification (arg_N / cs_xN / xN_v) + string deref
         exec_counts = {pc: cfg.blocks[pc].executions for pc in fn_blocks_set
                         if pc in cfg.blocks}
         lines = render_hlil(hlil, types=render_types, shapes=merged_shapes,
-                            exec_counts=exec_counts, var_names=var_names)
+                            exec_counts=exec_counts, var_names=var_names,
+                            const_strings=const_strings)
         c_code = "\n".join(lines)
 
         return {
@@ -2826,6 +2834,7 @@ def make_app(trace_path: pathlib.Path,
                 "flag_merged": flag_merged,
                 "struct_shapes": len(merged_shapes),
                 "var_names": len(var_names),
+                "const_strings": len(const_strings),
             },
         }
 
