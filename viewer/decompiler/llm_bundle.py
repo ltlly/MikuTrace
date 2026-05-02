@@ -111,23 +111,25 @@ def build_summary_prompt(top: TopIR) -> Bundle:
 
 
 def build_fn_decompile_prompt(top: TopIR, fn_id: str,
-                              max_user_chars: int = 200_000) -> Bundle:
+                              max_user_chars: int = 200_000,
+                              tier: str = "hot") -> Bundle:
     """Function-level decompile prompt.
 
     fn_id: 'F0', ...
     max_user_chars: 截断保护. ≈50K tokens (≈200KB chars), 保护 LLM context.
                     超出会触发 logic 截断 — block list 仅保留 top-N exec_count.
+    tier: 默认 'hot' (DEC3-A) — warm 块 stub, 单 fn 普遍 < 60KB. 'full' 全 asm.
     """
     fn = top.fn(fn_id)
     if fn is None:
         raise KeyError(f"fn {fn_id!r} not in TopIR (have {[f.id for f in top.fns]})")
 
-    fn_md = render_func_md(fn)
+    fn_md = render_func_md(fn, tier=tier)
 
     # 截断: 若超 max_user_chars, 保留 top-N exec_count blocks.
     if len(fn_md) > max_user_chars:
         truncated_fn = _truncate_fn_by_hot_blocks(fn, target_chars=max_user_chars // 2)
-        fn_md = render_func_md(truncated_fn)
+        fn_md = render_func_md(truncated_fn, tier=tier)
         fn_md += (f"\n\n> ⚠️ TRACE TRUNCATED: original had {len(fn.blocks)} blocks; "
                   f"only the top {len(truncated_fn.blocks)} by exec_count shown to "
                   f"fit token budget. Cold blocks dropped.\n")

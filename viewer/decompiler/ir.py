@@ -37,6 +37,12 @@ class BlockIR:
     asm: str = ""
     # 若是 ref-block (重复块去重时用), 指向首次出现的 block id.
     ref: Optional[str] = None
+    # P2-DEC3-A: 热度分级.
+    # 'hot'  — top-K exec_count, 必含完整 asm
+    # 'warm' — exec_count > 0 但非 top-K, 渲染 stub (PC + count + exits, 无 asm)
+    # 'cold' — exec_count == 0 (静态可达但 trace 没走). MVP 永不出现 (cfg 只
+    #          收 trace 命中过的 block); 留字段给未来 BN prior 注入静态块用.
+    tier: str = "hot"
 
 
 @dataclass

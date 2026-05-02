@@ -956,7 +956,7 @@ def cmd_dec(args):
         if fn is None:
             print(f"[!] no such fn: {args.fn} (have {[f.id for f in top.fns]})",
                   file=sys.stderr); t.close(); return 1
-        sys.stdout.write(render_func_md(fn))
+        sys.stdout.write(render_func_md(fn, tier=args.tier))
         t.close(); return 0
 
     # ── --prompt-only: stdout 拼好的 prompt ───────────────────────────
@@ -979,7 +979,7 @@ def cmd_dec(args):
         except KeyError as e:
             print(f"[!] {e}", file=sys.stderr); t.close(); return 1
         out_root = pathlib.Path(args.out) if args.out else p
-        dec_dir = write_decompile_dir(top, out_root)   # also persists IR
+        dec_dir = write_decompile_dir(top, out_root, tier=args.tier)   # also persists IR
         results_dir = dec_dir / "llm_results"
         results_dir.mkdir(exist_ok=True)
         targets = [top.fn(args.fn)] if args.fn else top.fns
@@ -1006,7 +1006,7 @@ def cmd_dec(args):
 
     # ── 默认: 落盘 ────────────────────────────────────────────────────
     out_root = pathlib.Path(args.out) if args.out else p
-    dec_dir = write_decompile_dir(top, out_root)
+    dec_dir = write_decompile_dir(top, out_root, tier=args.tier)
     print(f"[dec] wrote: {dec_dir}", file=sys.stderr)
     print(f"  summary: {dec_dir / 'summary.md'}", file=sys.stderr)
     print(f"  fns:     {len(top.fns)} files in {dec_dir / 'fns'}/", file=sys.stderr)
@@ -1533,6 +1533,11 @@ def main():
                            "搭 --fn F0 用; 不指定 --fn 默认对每个 fn 都跑 (慢).")
     p_dc.add_argument("--max-tokens", type=int, default=4096,
                       help="LLM 输出上限 token (默认 4096, Sonnet 一次出 ~3K c 代码够)")
+    # P2-DEC3-A — block tier 渲染
+    p_dc.add_argument("--tier", default="hot",
+                      choices=("full", "hot", "summary"),
+                      help="block 渲染粒度: full=全部 asm; hot=top exec_count + 冷块 stub "
+                           "(默认, 单 fn 通常 < 60KB 适合 LLM); summary=只 fn 概要")
 
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")

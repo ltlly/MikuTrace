@@ -23,7 +23,45 @@ from ..symbols import build_from_trace, SymbolMap
 from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR
 
 
-_TRACEMIKU_VERSION = "0.1.0-dec1"   # bump per ship stage
+_TRACEMIKU_VERSION = "0.2.0-dec3a"   # bump per ship stage
+
+
+def classify_blocks_by_tier(top: TopIR,
+                            hot_top_k: int = 150,
+                            min_hot_frac: float = 0.6) -> None:
+    """In-place: 给每个 fn 的 blocks 标 tier='hot'/'warm'.
+
+    规则 (DEC3-A):
+      - block.exec_count == 0 → 'cold' (MVP 不出现, 留给 BN prior)
+      - blocks ≤ hot_top_k → 全部 'hot'
+      - 否则按 exec_count 降序, 累计覆盖 ≥ min_hot_frac 总执行计数前都 'hot',
+        其余 'warm'. 强制至少前 hot_top_k 是 hot, 即使 exec_count tie 很多.
+
+    动机: 真机 OLLVM trace (libsgmainso 1056 块) 只有 ~50-150 块真热,
+    其余是 dispatcher 衍生. 截掉冷块, 单 fn IR 从 506KB → 30-60KB.
+    """
+    for fn in top.fns:
+        if not fn.blocks:
+            continue
+        total_exec = sum(b.exec_count for b in fn.blocks)
+        if total_exec == 0:
+            continue
+        if len(fn.blocks) <= hot_top_k:
+            for b in fn.blocks:
+                b.tier = "cold" if b.exec_count == 0 else "hot"
+            continue
+        # 按 exec_count 降序排, 标 hot 直到累计 frac
+        sorted_blocks = sorted(fn.blocks, key=lambda b: -b.exec_count)
+        accum = 0
+        target = total_exec * min_hot_frac
+        for i, b in enumerate(sorted_blocks):
+            if b.exec_count == 0:
+                b.tier = "cold"
+            elif i < hot_top_k or accum < target:
+                b.tier = "hot"
+                accum += b.exec_count
+            else:
+                b.tier = "warm"
 
 
 def build_trace_ir(t: Trace,
@@ -205,5 +243,9 @@ def build_trace_ir(t: Trace,
     top.fns.append(root_fn)
     # last_insn_is_ret 在 top 上保险也填 (meta 没填的情况)
     top.last_insn_is_ret = last_is_ret
+
+    # P2-DEC3-A: 默认按 exec_count 分级 hot/warm. 调用方可通过 render
+    # 的 tier_filter 选择只渲染热块.
+    classify_blocks_by_tier(top)
 
     return top

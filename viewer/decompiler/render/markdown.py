@@ -57,14 +57,28 @@ def _fmt_edge(e: EdgeIR) -> str:
     return f"`{e.kind}` → **{e.dst}**{cnt}"
 
 
-def render_block_md(b: BlockIR) -> str:
-    """Render single BlockIR as a markdown section."""
+def render_block_md(b: BlockIR, stub: bool = False) -> str:
+    """Render single BlockIR as markdown.
+
+    stub=True: 只 PC + count + exits, 不出 asm. DEC3-A 用于冷块降低 token 预算.
+    """
     lines: list[str] = []
-    lines.append(f"### {b.id} @ {b.pc:#x} (×{b.exec_count})")
+    tier_mark = "" if b.tier == "hot" else f" ({b.tier})"
+    lines.append(f"### {b.id} @ {b.pc:#x} (×{b.exec_count}){tier_mark}")
     if b.ref:
         lines.append(f"  *ref → {b.ref}*")
         return "\n".join(lines) + "\n"
     lines.append("")
+    if stub:
+        # 紧凑 stub: 只一行汇总. 旨在节省 token 而不是给完整信息.
+        exits_short = ""
+        if b.exits:
+            exits_short = " → " + ",".join(e.dst for e in b.exits[:3])
+            if len(b.exits) > 3:
+                exits_short += "+"
+        lines.append(f"- {b.insns} insns{exits_short}")
+        lines.append("")
+        return "\n".join(lines) + "\n"
     smp = _fmt_samples(b.samples)
     if smp:
         lines.append(f"- samples (first exec): {smp}")
@@ -103,8 +117,14 @@ def _fmt_loop(L: LoopIR) -> str:
             f"body=[{body_short}]{extra}")
 
 
-def render_func_md(fn: FuncIR) -> str:
-    """Render FuncIR → F<id>.md text."""
+def render_func_md(fn: FuncIR, tier: str = "full") -> str:
+    """Render FuncIR → F<id>.md text.
+
+    tier:
+      'full'    所有块完整 asm (默认, 跟 DEC1 行为一致)
+      'hot'     hot 块完整 + warm 块 stub (省 60-90% token, DEC3-A)
+      'summary' 没有块明细, 只 fn meta + loops + calls list
+    """
     lines: list[str] = []
     lines.append(f"# {fn.id} `{fn.name}`")
     lines.append("")
@@ -143,15 +163,37 @@ def render_func_md(fn: FuncIR) -> str:
             lines.append(f"- … ({len(fn.calls) - 50} more)")
         lines.append("")
 
-    lines.append(f"## Blocks ({len(fn.blocks)})")
+    if tier == "summary":
+        lines.append(f"## Blocks ({len(fn.blocks)} total)")
+        lines.append("")
+        hot_count = sum(1 for b in fn.blocks if b.tier == "hot")
+        warm_count = sum(1 for b in fn.blocks if b.tier == "warm")
+        lines.append(f"- hot: {hot_count}, warm: {warm_count}")
+        lines.append("- *block detail omitted (--tier summary). "
+                     "Re-render with --tier hot or --tier full.*")
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
+    hot_count = sum(1 for b in fn.blocks if b.tier == "hot")
+    warm_count = sum(1 for b in fn.blocks if b.tier == "warm")
+    if tier == "hot" and warm_count > 0:
+        lines.append(f"## Blocks ({hot_count} hot + {warm_count} warm shown as stub)")
+    else:
+        lines.append(f"## Blocks ({len(fn.blocks)})")
     lines.append("")
     for b in fn.blocks:
-        lines.append(render_block_md(b))
+        if tier == "hot" and b.tier == "warm":
+            lines.append(render_block_md(b, stub=True))
+        else:
+            lines.append(render_block_md(b, stub=False))
     return "\n".join(lines) + "\n"
 
 
-def write_decompile_dir(top: TopIR, out_dir: str | pathlib.Path) -> pathlib.Path:
+def write_decompile_dir(top: TopIR, out_dir: str | pathlib.Path,
+                        tier: str = "full") -> pathlib.Path:
     """Write summary.md + fns/<id>.md into out_dir/decompile/.
+
+    tier: 'full' | 'hot' | 'summary' — 见 render_func_md.
 
     Returns the decompile/ path.
     """
@@ -162,5 +204,7 @@ def write_decompile_dir(top: TopIR, out_dir: str | pathlib.Path) -> pathlib.Path
     fns_dir.mkdir(exist_ok=True)
     (dec / "summary.md").write_text(render_summary_md(top), encoding="utf-8")
     for fn in top.fns:
-        (fns_dir / f"{fn.id}.md").write_text(render_func_md(fn), encoding="utf-8")
+        (fns_dir / f"{fn.id}.md").write_text(
+            render_func_md(fn, tier=tier), encoding="utf-8"
+        )
     return dec
