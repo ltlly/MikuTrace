@@ -388,3 +388,53 @@ def test_short_repr_load():
     [e] = lift_arm64(0x1000, _asm("ldr x0, [x1]"))
     s = e.short()
     assert "x0" in s and "load" in s and "x1" in s
+
+
+# ─────────── w-form normalize (ARM64 wN ↔ xN 同物理 reg) ───────────
+
+def test_lift_wreg_arith_normalizes_to_x():
+    """add w0, w1, w2 — regs_def/use 已经是 'x0','x1','x2' (disasm 层 normalize)."""
+    [e] = lift_arm64(0x1000, _asm("add w0, w1, w2"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    body = e.operands[1]
+    assert body.op == LLIL_ADD
+    a, b = body.operands
+    assert a.op == LLIL_REG and a.operands == ["x1"]
+    assert b.op == LLIL_REG and b.operands == ["x2"]
+
+
+def test_lift_wreg_mov_normalizes():
+    """mov w0, #5 → SET_REG x0 const(5)."""
+    [e] = lift_arm64(0x1000, _asm("mov w0, #5"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+
+
+def test_lift_cbz_wreg_normalizes_to_x():
+    """cbz w0, target → cmp_e(reg(x0), 0) — _first_reg_token normalize 后."""
+    [e] = lift_arm64(0x1000, _asm("cbz w0, #0x2000"))
+    assert e.op == LLIL_IF
+    cond = e.operands[0]
+    a = cond.operands[0]
+    assert a.op == LLIL_REG and a.operands == ["x0"]
+
+
+def test_lift_tbz_wreg_normalizes_to_x():
+    """tbz w8, #5, target → cond uses x8 (normalized)."""
+    [e] = lift_arm64(0x1000, _asm("tbz w8, #5, #0x2000"))
+    assert e.op == LLIL_IF
+    cond = e.operands[0]
+    # cond = cmp_e(and(reg, mask), 0); 找到 reg
+    masked = cond.operands[0]
+    r = masked.operands[0]
+    assert r.op == LLIL_REG and r.operands == ["x8"]
+
+
+def test_lift_wzr_normalizes_to_xzr():
+    """mov w0, wzr → src 是 xzr (规范化)."""
+    [e] = lift_arm64(0x1000, _asm("mov w0, wzr"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    src = e.operands[1]
+    assert src.op == LLIL_REG and src.operands == ["xzr"]

@@ -89,13 +89,18 @@ _BCOND_SUFFIXES = frozenset((
 
 
 def _first_reg_token(op_str: str) -> str:
-    """从 op_str 抓第一个 reg-like token (x0/w0/sp). 失败 ''."""
+    """从 op_str 抓第一个 reg-like token (x0/w0/sp), 归一为 x-form. 失败 ''.
+
+    w0..w30 → x0..x30 (同物理 reg, ARM64 写 wN 隐式 zero-extend xN); wzr → xzr.
+    保证整个 lift 内 reg 名一致, 不破坏 SSA 跨 w/x 形态的 def-use chain.
+    """
+    from ...regs import normalize_disasm_reg
     for p in op_str.split(","):
         p = p.strip()
         if p and p[0] in ("x", "w") and len(p) > 1 and p[1:].rstrip().isdigit():
-            return p
+            return normalize_disasm_reg(p)
         if p in ("sp", "lr", "fp", "xzr", "wzr"):
-            return p
+            return normalize_disasm_reg(p)
     return ""
 
 
