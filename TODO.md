@@ -252,6 +252,28 @@ ROI 中等. 主要为长期独立化准备. 阻塞: miku-shield 方向决定后�
 **判定**: miku-shield 出后这层自动失效, traceMiku **不再做**.
 miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypass.
 
+## P2-DEC: trace decompiler — LLM-friendly skeleton IR (路线 B, ~2 周)
+
+**研究**: [`docs/trace-decompiler-research.md`](docs/trace-decompiler-research.md) (commit fc7dcd0)
+**设计**: [`docs/trace-decompiler-design.md`](docs/trace-decompiler-design.md) (commit dee8d7d)
+
+**定位**: 机器把 trace 折叠/类型推导/反 OLLVM, 输出紧凑结构化 IR;
+反编译这一步交给 Claude/DeepSeek-R1/Qwen. 不写传统 19-stage codegen.
+
+**ship 计划** (每 stage 一次 commit):
+
+| # | Stage | 工作量 | 验证 |
+|---|---|---|---|
+| P2-DEC1 | 骨架 + IR — `viewer/decompiler/{ir,builder,render/*}.py`, `tracemiku dec` CLI | 1 周 | 跑 fail-path 4675 records 出 IR, 手 copy F0.md 到 Claude Code 看伪代码 |
+| P2-DEC2 | LLM 集成 — `llm_client.py` (Claude/DeepSeek/Qwen), `--call-llm`, REST `/api/dec/*` | 3-4d | env API key + 一键调用, 输出落 `decompile/llm_results/` |
+| P2-DEC3 | 折叠 + 类型 — `loop_fold.py` (Larus/Ball-Larus), `type_anchor.py` (REWARDS/Howard, JNI/libc sink) | 1 周 | cold-path 2M records 端到端, 单 fn IR < 60KB |
+| P2-DEC4 | Benchmark — `benchmark/{trace_metrics,decompile_eval}.py`, `tracemiku dec-bench` | 3-4d | 4 自建 metric (branch/loop/call/type) + Decompile-Eval re-exec |
+| P2-DEC5 | docs / CODE_REVIEW 同步 + README 更新 | 半天 | tests 全绿, ship |
+
+**总工作量**: ~3300 LOC, 1.5-2 周一个人. 风险表见设计文档 §12.
+
+**先在 worktree 做** (`feat/trace-decompiler` 分支), 不污染 main.
+
 ---
 
 # ❄ 暂不做 (deferred, 不是 cancel)
