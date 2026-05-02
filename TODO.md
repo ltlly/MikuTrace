@@ -61,12 +61,15 @@
 | D | ollvm-detect-vm heuristic | ✅ | 4328364 | confidence-scored, 仅 detect 不 decode |
 | C | fork tracing M7 (viewer read fork_events) | ✅ partial | 5976c51 | M1-M6/M8 待真机 |
 
-**P1 真机依赖项推迟**:
-- P1-C M1: agent hook fork/clone/vfork/clone3 → 写 fork_events 到 meta.json
-- P1-C M2: host spawn-gating attach child + 注入 agent (复用 RPC opts)
-- P1-C M3: attach 失败 fallback (proc 轮询 + exit code)
-- P1-C M6: Web SPA Forks tab UI
-- P1-C M8: 真机集成测试 (synth fork + anti-debug fork)
+**P1-C 进度**:
+- ✅ M1 agent fork hook 真机 PASS (3406512): fork+clone 抓到, vfork 因
+  Bionic 特殊调用约定不抓 (已知 gap, 反调试场景不影响)
+- ✅ M7 viewer fork-events read (5976c51)
+- ⏳ M2 host spawn-gating attach child (待做)
+- ⏳ M3 attach 失败 fallback (proc 轮询 + exit code)
+- ⏳ M5 CLI fork summary at trace end
+- ⏳ M6 Web SPA Forks tab UI
+- ⏳ M8 真机集成测试 (anti-debug fork 场景)
 
 **累计**: 14 commits, +426 tests, 测试 426 pass + 1 skip.
 
