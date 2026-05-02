@@ -3,27 +3,188 @@
 复用 viewer/ 全部已有: cfg.py / calltree.py / symbols.py / disasm.py.
 本文件只做组装, 不重写分析.
 
-MVP 范围 (P2-DEC1):
-  - 整 trace 当作一个 FuncIR (顶层调用); 子调用作为 calls 列出
-  - 块去重: 同 PC 块只一次 BlockIR (静态骨架)
-  - 计数: cfg 已有 block.executions / edge.count
-  - samples: 首次执行的 x0..x3 + sp 快照
-  - asm: 块内每条指令 mnemonic + ops 文本
-
-Stage 2 加: BN 静态 prior, 子 fn 切分, JNI 锚点, 循环 induction var.
+阶段进展:
+  P2-DEC1: 整 trace 当 1 个 FuncIR (顶层 F0)
+  P2-DEC3-A: hot/warm/cold tier
+  P2-DEC3-B0: calltree 切子 FuncIR — top-K callee 升级独立 fn,
+              按静态 PC 合并 (sub_54fe8 在 trace 里被调 4 次 → 1 个 FuncIR)
 """
 from __future__ import annotations
 import datetime
+from collections import defaultdict
 import numpy as np
 from typing import Optional
 from ..trace import Trace
 from ..cfg import build_cfg, loop_sccs
+from ..calltree import build_call_tree
 from ..disasm import decode, fmt as fmt_insn
 from ..symbols import build_from_trace, SymbolMap
 from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR
 
 
-_TRACEMIKU_VERSION = "0.2.0-dec3a"   # bump per ship stage
+_TRACEMIKU_VERSION = "0.3.0-dec3b0"   # bump per ship stage
+
+
+def _flatten_calltree(root: dict) -> list[dict]:
+    """Flatten 嵌套 calltree → 平铺帧列表 (深度优先, root 不含).
+
+    每帧 dict: fn_pc, fn (name), enter_idx, exit_idx, depth.
+    """
+    out: list[dict] = []
+    def walk(node):
+        for c in node.get("children", []):
+            out.append({
+                "fn_pc": c.get("fn_pc", 0),
+                "fn": c.get("fn") or "",
+                "enter_idx": c["enter_idx"],
+                "exit_idx": c["exit_idx"],
+                "depth": c["depth"],
+            })
+            walk(c)
+    walk(root)
+    return out
+
+
+def split_top_k_callees(top: TopIR, t: Trace, sym: SymbolMap,
+                        cfg, top_k: int = 10,
+                        min_records: int = 50) -> None:
+    """In-place: 把 top-K 子 callee 提升为独立 FuncIR.
+
+    输入: top.fns 当前是 [F0=root_fn]. 加 F1..Fk = top callees.
+
+    算法:
+      1. flatten calltree, 按 fn_pc 分组 (静态 PC 合并多次调用)
+      2. 每组 score = 总命中 records (累计 trace 长度)
+      3. top_k 中超 min_records 的升级独立 FuncIR
+      4. 每个新 FuncIR: blocks = 该 fn 所有调用区段内, 命中过的 cfg blocks
+         exec_count = 调用次数; samples = 首次调用入参快照
+      5. F0 (root) 不去掉这些块 — 它仍包含整 trace 视图. LLM 可选看哪个 fn.
+    """
+    if not top.fns:
+        return
+    n = len(t)
+    if n == 0:
+        return
+    pc_arr = t.pc_array()
+
+    # 1. flatten calltree
+    tree = build_call_tree(t, sym=sym)
+    frames = _flatten_calltree(tree)
+    if not frames:
+        return
+
+    # 2. 过滤 calltree noise. OLLVM 大量 br 替代 ret → bl/ret 不平衡, 导致
+    # 部分 instance 的 exit_idx 错误飘到 trace 末尾. 经验门限:
+    #   - instance 长度 > 30% trace 视为 calltree 配对失败, 丢
+    #   - 也丢 < 3 records 的 (空 frame)
+    max_inst_len = max(int(n * 0.30), 1)
+    frames = [
+        f for f in frames
+        if 3 <= (f["exit_idx"] - f["enter_idx"] + 1) <= max_inst_len
+    ]
+
+    # 3. group by fn_pc
+    by_pc: dict[int, list[dict]] = defaultdict(list)
+    for f in frames:
+        if f["fn_pc"] == 0:        # blr 没找到 next pc, 跳过
+            continue
+        by_pc[f["fn_pc"]].append(f)
+
+    # 4. score
+    def _score(fs: list[dict]) -> int:
+        return sum(f["exit_idx"] - f["enter_idx"] + 1 for f in fs)
+    ranked = sorted(by_pc.items(), key=lambda kv: -_score(kv[1]))
+
+    # 4. 升级 top-K 中达标的为 FuncIR
+    block_pcs: set[int] = set(cfg.blocks)
+    block_pcs_sorted = sorted(block_pcs)
+    pc_to_bid_global = {pc: f"B{i}" for i, pc in enumerate(block_pcs_sorted)}
+
+    new_fns: list[FuncIR] = []
+    for fn_pc, instances in ranked[:top_k]:
+        records = _score(instances)
+        if records < min_records:
+            continue
+        # union mask across all instances
+        mask = np.zeros(n, dtype=bool)
+        for inst in instances:
+            lo, hi = inst["enter_idx"], inst["exit_idx"]
+            if lo < 0: lo = 0
+            if hi >= n: hi = n - 1
+            mask[lo:hi + 1] = True
+        # PCs hit within mask
+        own_pcs = pc_arr[mask]
+        unique_pcs, counts = np.unique(own_pcs, return_counts=True)
+        # 只留命中 cfg block 起点的 (不是块内中间指令)
+        own_blocks: list[BlockIR] = []
+        for pc, cnt in zip(unique_pcs, counts):
+            ipc = int(pc)
+            if ipc not in block_pcs:
+                continue
+            blk = cfg.blocks[ipc]
+            # samples 用全局首次出现 (跟 root 用一致逻辑, 简单)
+            mask_pc = pc_arr == np.uint64(ipc)
+            if mask_pc.any():
+                first_idx = int(np.argmax(mask_pc & mask))
+                if first_idx == 0 and not (mask[0] and pc_arr[0] == ipc):
+                    # argmax 0 表示无命中, 用全局
+                    first_idx = int(np.argmax(mask_pc))
+                r = t.record(first_idx)
+                samples = {reg: r.reg(reg) for reg in ("x0", "x1", "x2", "x3")}
+                samples["sp"] = r.sp
+            else:
+                samples = {}
+            # asm: 块内 disasm
+            asm_lines = []
+            for ins_pc in blk.insns:
+                mp = pc_arr == np.uint64(ins_pc)
+                if mp.any():
+                    fi = int(np.argmax(mp))
+                    iw = t.inst(fi)
+                    d = decode(ins_pc, iw)
+                    asm_lines.append(f"  {ins_pc:#x}: {d.mnemonic} {d.op_str}".rstrip())
+            # exits: cfg.edges 上有的边
+            exits: list[EdgeIR] = []
+            for (src_pc, dst_pc), info in cfg.edges.items():
+                if src_pc != ipc:
+                    continue
+                dst_bid = pc_to_bid_global.get(dst_pc, f"ext:{dst_pc:#x}")
+                exits.append(EdgeIR(
+                    dst=dst_bid, kind=str(info.get("kind", "uncond")),
+                    taken_count=int(info.get("count", 0)),
+                ))
+            own_blocks.append(BlockIR(
+                id=pc_to_bid_global.get(ipc, f"B?{ipc:#x}"),
+                pc=ipc, end_pc=blk.end_pc or ipc,
+                insns=len(blk.insns),
+                exec_count=int(cnt),       # 该 fn 内执行次数 (mask 内出现次数)
+                exits=exits, samples=samples, asm="\n".join(asm_lines),
+            ))
+        if not own_blocks:
+            continue
+        # name: 优先用 sym lookup, 否则 sub_<pc>
+        nm, _ = sym.lookup(fn_pc) if sym else ("", 0)
+        if not nm or nm == "?":
+            nm = f"sub_{fn_pc:x}"
+        # samples: 用最早一次调用 instance 的 x0..x3 快照
+        first_inst = min(instances, key=lambda f: f["enter_idx"])
+        first_idx = first_inst["enter_idx"]
+
+        last_idx = max(inst["exit_idx"] for inst in instances)
+        new_fns.append(FuncIR(
+            id=f"F{len(top.fns) + len(new_fns)}",
+            name=nm,
+            pc_start=fn_pc,
+            pc_end=max(b.end_pc for b in own_blocks),
+            entry_idx=first_idx,
+            exit_idx=last_idx,
+            blocks=own_blocks,
+            loops=[],          # 子 fn 的循环可由后续 stage 单独检测
+            calls=[],          # 子 fn 内的 sub-call MVP 不展开
+            exec_count=len(instances),
+        ))
+
+    top.fns.extend(new_fns)
 
 
 def classify_blocks_by_tier(top: TopIR,
@@ -66,16 +227,20 @@ def classify_blocks_by_tier(top: TopIR,
 
 def build_trace_ir(t: Trace,
                    sym: Optional[SymbolMap] = None,
-                   only_module: bool = True) -> TopIR:
+                   only_module: bool = True,
+                   split_top_k: int = 10,
+                   split_min_records: int = 50) -> TopIR:
     """Build TopIR from a loaded Trace.
 
     Args:
         t: loaded trace (mmap'd)
         sym: optional symbol map (built from trace if not given)
         only_module: keep only main-module blocks (跟 cfg 一致默认)
+        split_top_k: 升级 top-K callee 为独立 FuncIR (DEC3-B0). 0 = 不切.
+        split_min_records: 子 fn 至少这么多 records 才独立, 否则留 F0.
 
     Returns:
-        TopIR with one root FuncIR covering the whole trace.
+        TopIR with one root FuncIR (F0) + up to split_top_k child fns.
     """
     if sym is None:
         sym = build_from_trace(t)
@@ -243,6 +408,12 @@ def build_trace_ir(t: Trace,
     top.fns.append(root_fn)
     # last_insn_is_ret 在 top 上保险也填 (meta 没填的情况)
     top.last_insn_is_ret = last_is_ret
+
+    # P2-DEC3-B0: 升级 top-K callee 为独立 FuncIR
+    if split_top_k > 0 and n > 0:
+        split_top_k_callees(top, t, sym, cfg,
+                            top_k=split_top_k,
+                            min_records=split_min_records)
 
     # P2-DEC3-A: 默认按 exec_count 分级 hot/warm. 调用方可通过 render
     # 的 tier_filter 选择只渲染热块.

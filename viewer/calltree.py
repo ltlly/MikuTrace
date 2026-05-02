@@ -55,6 +55,7 @@ def build_call_tree(trace: Trace, sym=None,
                 continue
             child = {
                 "fn": cf if cf != "?" else None,
+                "fn_pc": int(target_pc),       # callee 入口 PC (按静态 PC 分组用)
                 "enter_idx": i, "exit_idx": i,
                 "children": [], "depth": new_depth,
             }

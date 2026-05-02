@@ -64,10 +64,12 @@ def make_backend(name: str | None = None):
 
 
 # ── trace decompiler (路线 B — LLM-friendly skeleton IR) ──
-def build_trace_ir(t, sym=None, only_module: bool = True):
+def build_trace_ir(t, sym=None, only_module: bool = True,
+                   split_top_k: int = 10, split_min_records: int = 50):
     """Build TraceIR from a Trace. See docs/trace-decompiler-design.md §3."""
     from .decompiler import build_trace_ir as _b
-    return _b(t, sym=sym, only_module=only_module)
+    return _b(t, sym=sym, only_module=only_module,
+              split_top_k=split_top_k, split_min_records=split_min_records)
 
 
 def write_decompile_dir(top, out_dir, tier: str = "full"):
