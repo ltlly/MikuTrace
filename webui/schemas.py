@@ -899,6 +899,56 @@ class RegAtIdxResponse(BaseModel):
     regs: dict[str, RegValue]
 
 
+# ── /api/hash-input-search (P0-3) ────────────────────────────────────────────
+
+class HashInputSearchRequest(BaseModel):
+    target_bytes: str
+    inputs: list[str]
+    keys: list[str] = [""]
+    algos: list[str] = ["sha1", "md5", "sha256"]
+    combos: list[str] = ["plain", "prefix_key", "suffix_key", "key_prefix_input"]
+    prefix_bytes: int = 8
+    search_in_mem: bool = False
+
+class HashFound(BaseModel):
+    algo: str
+    input: str
+    key: str
+    combo: str
+    msg_hex: str
+    hash_full: str
+    full_match: Optional[bool] = None
+    matches_n_bytes: Optional[int] = None
+    found_in_mem: Optional[list[dict]] = None
+    match_type: Optional[str] = None
+
+class HashInputSearchResponse(BaseModel):
+    target_prefix: str
+    tried_combos: int
+    found: list[HashFound]
+    found_count: int
+    status: Optional[str] = None
+
+class HashInputSearchPending(BaseModel):
+    status: str
+    found: list[HashFound] = []
+
+HashInputSearchAny = Union[HashInputSearchResponse, HashInputSearchPending]
+
+
+# ── /api/diff-traces (P0-3) ──────────────────────────────────────────────────
+
+class DiffTracesRequest(BaseModel):
+    traces: list[str]
+    show_offsets: bool = False
+    show_per_byte: bool = False
+
+class DiffTracesResponse(BaseModel):
+    traces: list[str]
+    n_traces: int
+    headers: dict[str, Any]
+
+
 # ── /api/crypto-scan (P0-3) ──────────────────────────────────────────────────
 
 class CryptoHit(BaseModel):

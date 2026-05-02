@@ -46,6 +46,8 @@ from webui.schemas import (
     RegAtIdxResponse, CallChainResponse,
     MemWritesInRangeAny, MemFlowAny,
     CryptoScanAny, AutoPhaseDetectAny,
+    HashInputSearchAny, HashInputSearchRequest,
+    DiffTracesResponse, DiffTracesRequest,
 )
 
 
@@ -1990,6 +1992,214 @@ def make_app(trace_path: pathlib.Path,
             primitives.append({"name": name, "pattern": hex_str,
                                "hit_count": len(hits), "hits": hits})
         return {"scanned": len(addrs_sorted), "primitives": primitives}
+
+    @app.post("/api/hash-input-search", response_model=HashInputSearchAny)
+    def api_hash_input_search(req: HashInputSearchRequest):
+        """Brute-force hash input candidates against target bytes. POST since
+        inputs/keys/algos/combos are arrays. mirrors CLI hash-input-search."""
+        import hashlib, hmac as _hmac, zlib
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "found": []}
+        mem_obj = BG["mem"]["data"]
+        try:
+            target = bytes.fromhex(req.target_bytes.replace(" ", "").replace("0x", ""))
+        except ValueError:
+            raise HTTPException(400, f"bad target_bytes hex: {req.target_bytes!r}")
+        prefix_n = max(4, req.prefix_bytes)
+        target_prefix = target[:prefix_n]
+        valid_algos = {"sha1","md5","sha256","sha384","sha512",
+                       "hmac-sha1","hmac-md5","hmac-sha256","crc32"}
+        for a in req.algos:
+            if a not in valid_algos:
+                raise HTTPException(400, f"unknown algo: {a!r}")
+
+        def combo_iter(inp, key):
+            for c in req.combos:
+                if c == "plain": yield ("plain", inp.encode())
+                elif c == "prefix_key": yield ("prefix_key", key.encode() + inp.encode())
+                elif c == "suffix_key": yield ("suffix_key", inp.encode() + key.encode())
+                elif c == "key_prefix_input": yield ("key_prefix_input", key.encode() + b"\0" + inp.encode())
+                elif c == "input_pipe_key": yield ("input_pipe_key", inp.encode() + b"|" + key.encode())
+                elif c == "key_dot_input": yield ("key_dot_input", key.encode() + b"." + inp.encode())
+                else: raise HTTPException(400, f"unknown combo: {c!r}")
+
+        def hash_it(algo, key_bytes, msg):
+            if algo == "sha1": return hashlib.sha1(msg).digest()
+            if algo == "md5": return hashlib.md5(msg).digest()
+            if algo == "sha256": return hashlib.sha256(msg).digest()
+            if algo == "sha384": return hashlib.sha384(msg).digest()
+            if algo == "sha512": return hashlib.sha512(msg).digest()
+            if algo == "hmac-sha1": return _hmac.new(key_bytes, msg, hashlib.sha1).digest()
+            if algo == "hmac-md5": return _hmac.new(key_bytes, msg, hashlib.md5).digest()
+            if algo == "hmac-sha256": return _hmac.new(key_bytes, msg, hashlib.sha256).digest()
+            if algo == "crc32":
+                crc = zlib.crc32(msg) & 0xffffffff
+                return crc.to_bytes(4, "little") + crc.to_bytes(4, "big")
+
+        def find_in_mem(prefix: bytes, max_hits=3):
+            hits = []
+            for a in mem_obj.bytes:
+                ok = True; evs = None
+                for o in range(len(prefix)):
+                    evs = mem_obj.bytes.get(a + o)
+                    if not evs or evs[-1][1] != prefix[o]: ok = False; break
+                if ok:
+                    hits.append((a, evs[-1][0]))
+                    if len(hits) >= max_hits: break
+            return hits
+
+        keys = req.keys or [""]
+        found = []
+        tried = 0
+        for inp in req.inputs:
+            for key in keys:
+                for combo_name, msg in combo_iter(inp, key):
+                    for algo in req.algos:
+                        if algo.startswith("hmac-") and not key:
+                            continue
+                        try:
+                            h = hash_it(algo, key.encode(),
+                                         msg if not algo.startswith("hmac-") else inp.encode())
+                        except Exception:
+                            continue
+                        tried += 1
+                        if h.startswith(target_prefix):
+                            full_match = h.startswith(target)
+                            found.append({
+                                "algo": algo, "input": inp, "key": key,
+                                "combo": combo_name,
+                                "msg_hex": (msg[:40].hex() + "..." if len(msg) > 40 else msg.hex()),
+                                "hash_full": h.hex(),
+                                "full_match": full_match,
+                                "matches_n_bytes": prefix_n if not full_match else len(target),
+                            })
+                            continue
+                        if req.search_in_mem:
+                            mh = find_in_mem(h[:prefix_n], max_hits=1)
+                            if mh:
+                                found.append({
+                                    "algo": algo, "input": inp, "key": key,
+                                    "combo": combo_name,
+                                    "msg_hex": (msg[:40].hex() + "..."),
+                                    "hash_full": h.hex(),
+                                    "found_in_mem": [{"addr": hex(a), "idx": i} for a, i in mh],
+                                    "match_type": "in_mem",
+                                })
+        return {"target_prefix": target_prefix.hex(),
+                "tried_combos": tried,
+                "found": found, "found_count": len(found)}
+
+    @app.post("/api/diff-traces", response_model=DiffTracesResponse)
+    def api_diff_traces(req: DiffTracesRequest):
+        """Multi-trace differential. mirrors CLI diff-traces."""
+        import json as _json, pathlib as _pl, urllib.parse, base64
+        from collections import defaultdict
+        if len(req.traces) < 2:
+            raise HTTPException(400, "need >= 2 traces for diff")
+
+        def extract_outputs(trace_dir):
+            td = _pl.Path(trace_dir)
+            candidates = list(td.glob("jni_hooks.jsonl")) + \
+                          list(td.glob("calls/*/jni_hooks.jsonl"))
+            if not candidates: return None
+            events = []
+            for jp in candidates:
+                for line in jp.read_text().splitlines():
+                    try: events.append(_json.loads(line))
+                    except Exception: continue
+            new_strs = sorted(
+                [e for e in events
+                 if e.get("id") == "NewStringUTF"
+                 and (e.get("args") or {}).get("bytes")],
+                key=lambda e: e.get("trace_idx", 0))
+            outputs = {}
+            for i, e in enumerate(new_strs):
+                v = e["args"]["bytes"]
+                if v in ("x-sign", "x-mini-wua", "x-sgext", "x-umt"):
+                    if i + 1 < len(new_strs):
+                        val_str = new_strs[i+1]["args"]["bytes"]
+                        try:
+                            url_dec = urllib.parse.unquote(val_str)
+                            pad = '=' * ((4 - len(url_dec) % 4) % 4)
+                            binary = base64.b64decode(url_dec + pad)
+                            outputs[v] = {"raw": val_str, "binary": binary,
+                                           "len_b64": len(url_dec),
+                                           "len_bin": len(binary)}
+                        except Exception as ex:
+                            outputs[v] = {"raw": val_str, "decode_err": str(ex)}
+            return outputs
+
+        all_outputs = []
+        for td in req.traces:
+            out = extract_outputs(td)
+            if out is None:
+                raise HTTPException(400, f"no jni_hooks.jsonl in {td}")
+            all_outputs.append({"trace": td, "outputs": out})
+
+        headers = ["x-mini-wua", "x-umt", "x-sgext", "x-sign"]
+        diff_report: dict = {}
+        for hdr in headers:
+            binaries = []
+            for ao in all_outputs:
+                o = ao["outputs"].get(hdr)
+                binaries.append(o["binary"] if (o and "binary" in o) else None)
+            if any(b is None for b in binaries):
+                diff_report[hdr] = {"error": "missing in some trace",
+                                     "per_trace_lens": [len(b) if b else None for b in binaries]}
+                continue
+            lens = [len(b) for b in binaries]
+            n = min(lens)
+            length_variable = len(set(lens)) > 1
+            stable_bytes = []; variable_bytes = []; per_byte = []
+            for o in range(n):
+                vals = [b[o] for b in binaries]
+                if len(set(vals)) == 1:
+                    stable_bytes.append(o)
+                    per_byte.append({"off": o, "kind": "STABLE", "value": hex(vals[0])})
+                else:
+                    variable_bytes.append(o)
+                    per_byte.append({"off": o, "kind": "VARIABLE",
+                                     "values": [hex(v) for v in vals]})
+            alias_map: dict = defaultdict(list)
+            for o in variable_bytes:
+                tup = tuple(b[o] for b in binaries)
+                alias_map[tup].append(o)
+            alias_groups = [{
+                "positions": pos, "size": len(pos),
+                "values_per_trace": [hex(v) for v in tup],
+            } for tup, pos in alias_map.items() if len(pos) > 1]
+            alias_groups.sort(key=lambda g: -g["size"])
+            nibble_findings = []
+            for o in variable_bytes:
+                vals = [b[o] for b in binaries]
+                his = set((v >> 4) & 0xf for v in vals)
+                los = set(v & 0xf for v in vals)
+                if len(his) == 1:
+                    nibble_findings.append({"off": o, "kind": "hi_fixed",
+                                            "hi": hex(next(iter(his))),
+                                            "lo_per_trace": [hex(v & 0xf) for v in vals]})
+                elif len(los) == 1:
+                    nibble_findings.append({"off": o, "kind": "lo_fixed",
+                                            "lo": hex(next(iter(los))),
+                                            "hi_per_trace": [hex((v >> 4) & 0xf) for v in vals]})
+            diff_report[hdr] = {
+                "len_compared": n,
+                "lens_per_trace": lens,
+                "length_variable": length_variable,
+                "stable_count": len(stable_bytes),
+                "variable_count": len(variable_bytes),
+                "stable_pct": round(100 * len(stable_bytes) / n, 1) if n else 0,
+                "stable_offsets": stable_bytes if req.show_offsets else None,
+                "variable_offsets": variable_bytes if req.show_offsets else None,
+                "alias_groups": alias_groups,
+                "alias_group_count": len(alias_groups),
+                "nibble_findings": nibble_findings,
+                "per_byte": per_byte if req.show_per_byte else None,
+            }
+        return {"traces": [ao["trace"] for ao in all_outputs],
+                "n_traces": len(all_outputs),
+                "headers": diff_report}
 
     @app.get("/api/auto-phase-detect", response_model=AutoPhaseDetectAny)
     def api_auto_phase_detect(detect_byte_streams: bool = True):
