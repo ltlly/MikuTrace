@@ -214,7 +214,13 @@ def restructure(cfg: CfgInfo,
                 target = last_root.operands[0]
                 return HlilSeq(stmts=[leaf, _build(target)])
             if last_root.op == LLIL_JUMP:
-                # indirect — 我们不知道目标
+                # indirect — trace 实际跳到 cfg.succs[start_pc] 中的 succ.
+                # 用最常见 succ (cfg.succs[0]) 续 build. 这是 trace 反编译器
+                # 独家 (BN 静态看不到 indirect 真目标). 注: 多 succ 时其他
+                # 走 visited 跳过 — 完整覆盖需 multi-path traversal (TODO).
+                succs_list = cfg.succs.get(start_pc, [])
+                if succs_list:
+                    return HlilSeq(stmts=[leaf, _build(succs_list[0])])
                 return HlilSeq(stmts=[leaf,
                                        HlilGoto(target_pc=0, pc=last_root.pc)])
         # fallthrough 到下一 succ
@@ -223,7 +229,20 @@ def restructure(cfg: CfgInfo,
             return HlilSeq(stmts=[leaf, _build(succs[0])])
         return leaf
 
-    return _build(cfg.entry)
+    head = _build(cfg.entry)
+    # 把 cfg 内还未 visit 的 block 拼到末尾 (indirect jump / multi-path 切断
+    # 后的 cleanup). 否则用户看不到 unreached blocks 的 LLIL.
+    leftover: list = []
+    for pc in sorted(blocks):
+        if pc not in visited:
+            visited.add(pc)
+            leftover.append(HlilBlock(pc, blocks[pc]))
+    if leftover:
+        if isinstance(head, HlilSeq):
+            head.stmts.extend(leftover)
+            return head
+        return HlilSeq(stmts=[head] + leftover)
+    return head
 
 
 def from_viewer_cfg(viewer_cfg, exec_count_only_module: bool = True) -> CfgInfo:
