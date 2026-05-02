@@ -906,7 +906,8 @@ def make_app(trace_path: pathlib.Path,
 
     @app.get("/api/forward-taint", response_model=ForwardTaintResponse)
     def forward_taint_api(start: int, reg: str, max_count: int = 5000,
-                          through_mem: bool = False, data_only: bool = False):
+                          through_mem: bool = False, data_only: bool = False,
+                          cross_fn_call: bool = False):
         from viewer.taint import forward_taint
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
@@ -920,23 +921,30 @@ def make_app(trace_path: pathlib.Path,
                                 index=BG["index"]["data"], return_status=True,
                                 data_only=data_only,
                                 through_mem=through_mem and mem_obj is not None,
-                                mem=mem_obj)
+                                mem=mem_obj, cross_fn_call=cross_fn_call)
         m = t.meta.module
         base = m.base if m else 0
         rows = []
-        for i, why in results:
+        for entry in results:
+            if cross_fn_call:
+                i, why, fdepth = entry
+            else:
+                i, why = entry; fdepth = None
             r = t.record(i); d = decode(r.pc, r.inst)
             fname, foff = sym.lookup(r.pc)
-            rows.append({"idx": i, "pc": hex(r.pc),
-                         "rel": hex(r.pc - base) if base else None,
-                         "func": fname if fname != "?" else None,
-                         "asm": f"{d.mnemonic} {d.op_str}", "why": why})
+            row = {"idx": i, "pc": hex(r.pc),
+                   "rel": hex(r.pc - base) if base else None,
+                   "func": fname if fname != "?" else None,
+                   "asm": f"{d.mnemonic} {d.op_str}", "why": why}
+            if fdepth is not None: row["frame_depth"] = fdepth
+            rows.append(row)
         return {"count": len(rows), "from": start, "reg": reg, "hits": rows,
                 "stopped_at_max": stopped, "max_count_used": eff}
 
     @app.get("/api/backward-taint", response_model=BackwardTaintResponse)
     def backward_taint_api(start: int, reg: str, max_count: int = 5000,
-                           through_mem: bool = False, data_only: bool = False):
+                           through_mem: bool = False, data_only: bool = False,
+                           cross_fn_call: bool = False):
         from viewer.taint import backward_taint
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
@@ -949,17 +957,23 @@ def make_app(trace_path: pathlib.Path,
                                  index=BG["index"]["data"], return_status=True,
                                  data_only=data_only,
                                  through_mem=through_mem and mem_obj is not None,
-                                 mem=mem_obj)
+                                 mem=mem_obj, cross_fn_call=cross_fn_call)
         m = t.meta.module
         base = m.base if m else 0
         rows = []
-        for i, via in results:
+        for entry in results:
+            if cross_fn_call:
+                i, via, fdepth = entry
+            else:
+                i, via = entry; fdepth = None
             r = t.record(i); d = decode(r.pc, r.inst)
             fname, foff = sym.lookup(r.pc)
-            rows.append({"idx": i, "pc": hex(r.pc),
-                         "rel": hex(r.pc - base) if base else None,
-                         "func": fname if fname != "?" else None,
-                         "asm": f"{d.mnemonic} {d.op_str}", "via": via})
+            row = {"idx": i, "pc": hex(r.pc),
+                   "rel": hex(r.pc - base) if base else None,
+                   "func": fname if fname != "?" else None,
+                   "asm": f"{d.mnemonic} {d.op_str}", "via": via}
+            if fdepth is not None: row["frame_depth"] = fdepth
+            rows.append(row)
         return {"count": len(rows), "from": start, "reg": reg, "chain": rows,
                 "stopped_at_max": stopped, "max_count_used": eff}
 

@@ -37,6 +37,31 @@ from .disasm import decode
 DEFAULT_FRAME_REGS = frozenset({"sp", "fp", "lr"})
 
 
+def build_frame_depth_map(trace: Trace) -> list[int]:
+    """Walk trace once, compute call-frame depth at each idx.
+
+    bl/blr at idx I → caller (still depth d), idx I+1 onwards = depth d+1.
+    ret at idx I → callee (still depth d), idx I+1 onwards = depth d-1.
+
+    Used by --cross-fn-call mode in taint to annotate each output row with
+    its frame depth, making chain output self-documenting across bl/ret
+    boundaries.
+
+    Returns list[int] of length len(trace).
+    """
+    n = len(trace)
+    out = [0] * n
+    depth = 0
+    for i in range(n):
+        out[i] = depth
+        r = trace.record(i); d = decode(r.pc, r.inst)
+        if d.is_call:
+            depth += 1
+        elif d.is_ret and depth > 0:
+            depth -= 1
+    return out
+
+
 def _propagation_regs(d, mem_addressing_regs, *, exclude_regs, data_only):
     """Filter d.regs_use to the set we should actually propagate through.
 
@@ -70,7 +95,9 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
                   exclude_regs: Optional[set] = None,
                   data_only: bool = False,
                   through_mem: bool = False, mem=None,
-                  return_status: bool = False):
+                  return_status: bool = False,
+                  cross_fn_call: bool = False,
+                  frame_depths: Optional[list] = None):
     """Forward taint with heap-based next-use lookup.
 
     用 min-heap 维护每个 tainted reg 的 (next_use_idx, reg, cursor) 元组,
@@ -158,6 +185,11 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
                 for o in range(sz): tainted_mem.add(base_addr + o)
             else:
                 tainted_mem.add(base_addr)
+    if cross_fn_call:
+        if frame_depths is None:
+            frame_depths = build_frame_depth_map(trace)
+        out = [(i, why, frame_depths[i] if i < len(frame_depths) else 0)
+               for (i, why) in out]
     if return_status:
         stopped = max_count > 0 and len(out) >= max_count
         return out, stopped
@@ -206,7 +238,9 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
                    exclude_regs: Optional[set] = None,
                    data_only: bool = False,
                    through_mem: bool = False, mem=None,
-                   return_status: bool = False):
+                   return_status: bool = False,
+                   cross_fn_call: bool = False,
+                   frame_depths: Optional[list] = None):
     """Index-accelerated backward taint.
 
     用 reg_defs[reg] bisect_left 找最近 def, mem_addr_to_writes 找 mem store.
@@ -325,6 +359,11 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
     for ix, reg in sorted(out):
         if ix in seen_idx: continue
         seen_idx.add(ix); dedup.append((ix, reg))
+    if cross_fn_call:
+        if frame_depths is None:
+            frame_depths = build_frame_depth_map(trace)
+        dedup = [(i, reg, frame_depths[i] if i < len(frame_depths) else 0)
+                 for (i, reg) in dedup]
     if return_status:
         stopped = max_count > 0 and len(out) >= max_count
         return dedup, stopped

@@ -359,6 +359,7 @@ class TaintHit(BaseModel):
     asm: str
     why: Optional[str] = None
     via: Optional[str] = None        # only on backward-taint
+    frame_depth: Optional[int] = None  # only when --cross-fn-call
 
 class ForwardTaintPendingResponse(BaseModel):
     status: str

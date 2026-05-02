@@ -229,22 +229,30 @@ def cmd_taint_fwd(args):
     if getattr(args, "through_mem", False):
         from .memshadow import MemShadow
         mem = MemShadow(t); mem.build()
+    cfn = getattr(args, "cross_fn_call", False)
     results, stopped_at_max = forward_taint(
         t, args.start, args.reg, max_count=args.max, index=idx,
         exclude_regs=_parse_exclude_regs(args.exclude_regs),
         data_only=args.data_only,
         through_mem=getattr(args, "through_mem", False),
-        mem=mem, return_status=True)
+        mem=mem, return_status=True, cross_fn_call=cfn)
     rows = []
-    for i, why in results:
+    for entry in results:
+        if cfn:
+            i, why, fdepth = entry
+        else:
+            i, why = entry; fdepth = None
         r = t.record(i); d = decode(r.pc, r.inst)
         fname, foff = sym.lookup(r.pc)
-        rows.append({
+        row = {
             "idx": i, "pc": hex(r.pc),
             "rel": hex(r.pc - base) if base else None,
             "func": fname if fname != "?" else None,
             "asm": f"{d.mnemonic} {d.op_str}", "why": why,
-        })
+        }
+        if fdepth is not None:
+            row["frame_depth"] = fdepth
+        rows.append(row)
     t.close()
     out = {"from": args.start, "reg": args.reg, "data_only": args.data_only,
            "count": len(rows), "stopped_at_max": stopped_at_max, "hits": rows}
@@ -266,22 +274,30 @@ def cmd_taint_bwd(args):
     if getattr(args, "through_mem", False):
         from .memshadow import MemShadow
         mem = MemShadow(t); mem.build()
+    cfn = getattr(args, "cross_fn_call", False)
     results, stopped_at_max = backward_taint(
         t, args.start, args.reg, max_count=args.max, index=idx,
         exclude_regs=_parse_exclude_regs(args.exclude_regs),
         data_only=args.data_only,
         through_mem=getattr(args, "through_mem", False),
-        mem=mem, return_status=True)
+        mem=mem, return_status=True, cross_fn_call=cfn)
     rows = []
-    for i, via in results:
+    for entry in results:
+        if cfn:
+            i, via, fdepth = entry
+        else:
+            i, via = entry; fdepth = None
         r = t.record(i); d = decode(r.pc, r.inst)
         fname, foff = sym.lookup(r.pc)
-        rows.append({
+        row = {
             "idx": i, "pc": hex(r.pc),
             "rel": hex(r.pc - base) if base else None,
             "func": fname if fname != "?" else None,
             "asm": f"{d.mnemonic} {d.op_str}", "via": via,
-        })
+        }
+        if fdepth is not None:
+            row["frame_depth"] = fdepth
+        rows.append(row)
     t.close()
     out = {"from": args.start, "reg": args.reg, "data_only": args.data_only,
            "count": len(rows), "stopped_at_max": stopped_at_max, "chain": rows}
@@ -1644,6 +1660,8 @@ def main():
                     help="byte-level mem store→load 穿透 (对称 backward)")
     s.add_argument("--summary-by-fn", action="store_true", dest="summary_by_fn",
                     help="aggregate hits by function (count, first_idx, last_idx)")
+    s.add_argument("--cross-fn-call", action="store_true", dest="cross_fn_call",
+                    help="annotate each row with frame_depth (bl/ret pair walking)")
 
     s = sub.add_parser("taint-bwd", help="backward def-chain from idx on a register")
     s.add_argument("trace")
@@ -1658,6 +1676,8 @@ def main():
                     help="byte-level mem overlap (穿透 8B-store + 1B-load 错配; 慢, 需 build MemShadow)")
     s.add_argument("--summary-by-fn", action="store_true", dest="summary_by_fn",
                     help="aggregate chain by function (count, first_idx, last_idx)")
+    s.add_argument("--cross-fn-call", action="store_true", dest="cross_fn_call",
+                    help="annotate each row with frame_depth (bl/ret pair walking)")
 
     s = sub.add_parser("data-chase", help="single-path data chase (cross-fn, skips sp/fp noise)")
     s.add_argument("trace")
