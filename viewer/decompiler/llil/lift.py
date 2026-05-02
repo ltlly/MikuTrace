@@ -136,6 +136,22 @@ def _lift(d: Decoded) -> list:
     if base in _UNARY_BUILDERS and d.regs_def:
         return [_lift_arith_unary(d, _UNARY_BUILDERS[base])]
 
+    # ── adr / adrp — capstone 已算 absolute, 直接 SET_REG CONST_PTR ──
+    if base in ("adr", "adrp"):
+        if d.regs_def:
+            dst = d.regs_def[0]
+            for p in d.op_str.split(","):
+                p = p.strip().lstrip("#")
+                if not p:
+                    continue
+                if p.startswith("0x") or p.lstrip("-").isdigit():
+                    try:
+                        v = int(p, 0)
+                        return [set_reg(dst, const_ptr(v), pc=d.pc)]
+                    except ValueError:
+                        break
+        return [_intrinsic(d)]
+
     # ── mov / movz ──
     if base in ("mov", "movz"):
         return [_lift_mov(d)]
