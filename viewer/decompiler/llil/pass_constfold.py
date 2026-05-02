@@ -130,13 +130,24 @@ def fold_expr(node: LlilExpr,
                     pc=node.pc)
 
 
-def constfold_block(blk: SsaBlock) -> SsaBlock:
+def constfold_block(blk: SsaBlock,
+                    uidf: dict | None = None) -> SsaBlock:
     """对一个 SsaBlock 跑 const fold. 返回新 block.
 
     维护 env: dict[(reg, version) → int]. 每条 SET_REG fold value 后, 若
     LLIL_CONST 则记 env. 后续 LLIL_REG use 查 env 替代.
+
+    uidf: optional dict[(block_pc, root_idx) → ObservedValues] from pass_uidf.
+          ObservedValues.is_const() 的 SET_REG 注入 env (BN UIDF 思想 —
+          trace 真值告诉 const fold 哪些寄存器实际上是常量, 即使 lift 看
+          的是 LLIL_LOAD / LLIL_INTRINSIC 这种不可推).
     """
     env: dict[tuple, int] = {}
+    uidf_locked: set[tuple] = set()    # UIDF 注入的 keys, 不被普通 fold pop
+    if uidf is not None:
+        from .pass_uidf import apply_uidf_to_constfold_env
+        apply_uidf_to_constfold_env(uidf, blk, env)
+        uidf_locked = set(env)
     new_roots: list[LlilExpr] = []
     new_tag = SsaTag()
     new_tag.versions = dict(blk.tag.versions)   # 复用 (新 expr 都重建 id)
@@ -157,14 +168,18 @@ def constfold_block(blk: SsaBlock) -> SsaBlock:
                 # walk new value: 给新 LLIL_REG 节点搬 version
                 _copy_versions(value_expr, new_value, blk.tag, new_tag)
                 new_roots.append(new_root)
-            # update env: fold 后是 LLIL_CONST → 记
+            # update env: fold 后是 LLIL_CONST → 记 (但不覆盖 UIDF lock)
             cur_root = new_roots[-1]
             v_node = cur_root.operands[1]
             dst_v = blk.tag.get(root)
+            key = (rname, dst_v)
+            if key in uidf_locked:
+                # UIDF 已注入真值, 不动 (即使 fold 看起来不出 const)
+                continue
             if isinstance(v_node, LlilExpr) and v_node.op == LLIL_CONST:
-                env[(rname, dst_v)] = int(v_node.operands[0])
+                env[key] = int(v_node.operands[0])
             else:
-                env.pop((rname, dst_v), None)
+                env.pop(key, None)
             continue
 
         # 其他 root: 递归 fold sub expr
@@ -208,13 +223,14 @@ def _copy_versions(old: LlilExpr, new: LlilExpr,
             _copy_versions(o_old, o_new, old_tag, new_tag)
 
 
-def constfold_blocks(blocks: dict[int, SsaBlock]
+def constfold_blocks(blocks: dict[int, SsaBlock],
+                     uidf: dict | None = None
                      ) -> tuple[dict[int, SsaBlock], int]:
     """批量. 返回 (新 dict, fold 次数 — 子 expr 替换次数)."""
     out: dict[int, SsaBlock] = {}
     total = 0
     for pc, blk in blocks.items():
-        new = constfold_block(blk)
+        new = constfold_block(blk, uidf=uidf)
         # count: 顶层 SET_REG value 是 LLIL_CONST + _folded_from
         for r in new.roots:
             if r.op == LLIL_SET_REG and isinstance(r.operands[1], LlilExpr):

@@ -2606,10 +2606,13 @@ async function runDecLlilRender() {
     }
     const cacheTag = r.cache_hit ? " <b>(cache 命中)</b>" : "";
     const s = r.stats || {};
+    const uidf = s.uidf_observed
+      ? ` · UIDF=${s.uidf_const}/${s.uidf_observed} const`
+      : "";
     const meta = `<div class="dim small">LLIL 8-pass · fn=${r.fn_id} ${r.name || ""} · `
                + `blocks=${s.blocks} · lift=${s.lift_total} (${(s.lift_coverage*100).toFixed(1)}%覆盖) · `
                + `constfold=${s.constfold_count} · dce=${s.dce_removed} · `
-               + `structs=${s.struct_shapes} · ${dt}ms${cacheTag}</div>`;
+               + `structs=${s.struct_shapes}${uidf} · ${dt}ms${cacheTag}</div>`;
     out.innerHTML = meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
   } catch (e) {
     out.innerHTML = '<div class="dec-error">request failed: ' + escapeHtml(String(e)) + '</div>';

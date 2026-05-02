@@ -2672,6 +2672,7 @@ def make_app(trace_path: pathlib.Path,
             constfold_block, dce_block, typelat_block,
             struct_recover_block, merge_shapes,
             restructure, from_viewer_cfg, render_hlil, expr_to_c,
+            collect_uidf,
         )
         from viewer.cfg import build_cfg as _build_cfg
         import numpy as np
@@ -2725,11 +2726,17 @@ def make_app(trace_path: pathlib.Path,
         # 5. SSA
         ssa_map = ssa_blocks(block_to_exprs)
 
-        # 6. constfold (block-by-block)
+        # 5.5 UIDF — User-Informed DataFlow from trace 真值 (BN docs/dev/uidf).
+        # trace 是天然 UIDF 输入: 每条 SET_REG 在 trace 中实际命中位置该 reg
+        # 真值就是最强 evidence. 注入到 constfold/typelat 的 env, 让 lift
+        # 看不到 (LLIL_LOAD / LLIL_INTRINSIC) 的事实仍能折.
+        uidf = collect_uidf(t, ssa_map, max_blocks=200, max_roots_per_block=80)
+
+        # 6. constfold (block-by-block, with UIDF)
         from viewer.decompiler.llil import constfold_block as _cf
         cf_count = 0
         for pc, blk in list(ssa_map.items()):
-            new = _cf(blk)
+            new = _cf(blk, uidf=uidf)
             ssa_map[pc] = new
             cf_count += sum(1 for r in new.roots
                             if hasattr(r, "operands") and len(r.operands) >= 2
@@ -2790,6 +2797,8 @@ def make_app(trace_path: pathlib.Path,
                 "lift_total": lift_stats.total,
                 "lift_intrinsic": lift_stats.intrinsic,
                 "lift_coverage": round(lift_stats.coverage(), 3),
+                "uidf_observed": len(uidf),
+                "uidf_const": sum(1 for ov in uidf.values() if ov.is_const()),
                 "constfold_count": cf_count,
                 "dce_removed": dce_removed,
                 "struct_shapes": len(merged_shapes),

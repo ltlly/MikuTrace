@@ -18,6 +18,9 @@ sub-expression. visitor pattern 走树.
 """
 from .lift import lift_arm64, lift_static, LiftStats
 from .ssa import SsaTag, SsaBlock, ssa_block, ssa_blocks
+from .pass_uidf import (
+    ObservedValues, collect_uidf, apply_uidf_to_constfold_env,
+)
 from .pass_constfold import fold_expr, constfold_block, constfold_blocks
 from .pass_dce import dce_block, dce_blocks
 from .pass_typelat import (
@@ -92,6 +95,7 @@ __all__ = [
     "cmp_e", "cmp_ne",
     "lift_arm64", "lift_static", "LiftStats",
     "SsaTag", "SsaBlock", "ssa_block", "ssa_blocks",
+    "ObservedValues", "collect_uidf", "apply_uidf_to_constfold_env",
     "fold_expr", "constfold_block", "constfold_blocks",
     "dce_block", "dce_blocks",
     "TypeEnv", "typelat_block", "join",
