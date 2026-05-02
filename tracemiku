@@ -405,6 +405,23 @@ def cmd_trace(args):
                         m_jni = s["meta"].setdefault("jni_hooks", [])
                         m_jni.extend(evs)
                         wlog(f"[{tag}] {t} call#{ci} +{len(evs)} (total={len(m_jni)})")
+                    elif t == "fork-events":
+                        # P1-C M1: agent 端 fork/clone hook 抓到的 fork-event Tier 1.
+                        # 写入 per-call meta.json `fork_events` 数组, viewer 通过
+                        # /api/fork-events + viewer fork-events CLI 暴露.
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        evs = p.get("events", [])
+                        s = sess_files[ci]
+                        m_fork = s["meta"].setdefault("fork_events", [])
+                        m_fork.extend(evs)
+                        # 实时 CLI 提示 (P1-C 实时输出格式)
+                        for ev in evs:
+                            sym_label = ev.get("parent_pc_rel") or ev.get("parent_pc", "?")
+                            kind = "fork-like" if ev.get("is_fork_like") else "thread-like"
+                            wlog(f"[{tag}] [FORK] call#{ci} parent={sym_label} "
+                                 f"({ev.get('syscall')}, {kind}) → child pid={ev.get('child_pid')}")
                     elif t == "ext-write":
                         # Boundary-diff events from --trace-deep mode.
                         # Each event: {attrIdx: u64, addr: "0x...", byte: u8}.
@@ -513,6 +530,7 @@ def cmd_trace(args):
         "suicidePatchSpec": suicide_spec,
         "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
         "jniHooks": jni_hooks_specs,
+        "enableForkHook": bool(getattr(args, "enable_fork_hook", False)),
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1135,6 +1153,10 @@ def main():
     p_tr.add_argument("--hide-rwx-maps", action="store_true", dest="hide_rwx_maps",
                       help="在 libc open/read 拦截 /proc/self/maps, 过滤 rwxp 匿名段 — 让反检测"
                            "看不到 Frida Stalker block cache 的 rwx. 通用反检测绕过, 不依赖目标 SO.")
+    p_tr.add_argument("--enable-fork-hook", action="store_true", dest="enable_fork_hook",
+                      help="hook libc fork/vfork/clone/__bionic_clone, 抓 fork-event Tier 1 "
+                           "(parent_pc, child_pid, clone_flags) 写到 meta.json fork_events. "
+                           "P1-C M1; 反调试 fork 检测必开. 默认关.")
     p_tr.add_argument("--jni-hooks", default="tools/hooks/libart_jni.json", dest="jni_hooks",
                       help="JSON 描述要 hook 的 JNI vtable 函数 (offset/参数类型/返回类型). "
                            "默认 = libart string fns. 设 'none' 关闭. 输出 jni_hooks.jsonl per-call. "

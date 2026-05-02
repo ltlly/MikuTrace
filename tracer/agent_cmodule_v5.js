@@ -241,6 +241,7 @@ function ensureFlushTimer() {
                     const ms = Date.now() - STATE.started;
                     try { flushJniStringEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
                     try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
+                    try { flushForkEvents(STATE.callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
                     send({ type: "trace-end", callIdx: STATE.callIdx,
                            tid: STATE.primaryTid, retval: "?",
                            ms, total, dropped, truncated: true,
@@ -811,6 +812,154 @@ function flushJniHookEvents(callIdx) {
 function flushJniStringEvents(callIdx) { return flushJniHookEvents(callIdx); }
 function installJniStringHooksOnce() { return installJniHooksOnce(); }
 
+
+// ═══════════ P1-C M1: fork/clone/vfork hook (Tier 1 fork-event 落盘) ═══════════
+//
+// 在 parent 进程 hook libc fork/vfork/clone, 永远记录 fork-event Tier 1
+// (parent_pc 相对 SO + child_pid + clone_flags), 不依赖 spawn-gating.
+// host 端写入 meta.json fork_events 字段, viewer 通过 /api/fork-events 暴露.
+//
+// CLONE flags (linux/sched.h, ARM64 uapi):
+//   CLONE_VM       0x100      — share VM (thread-like)
+//   CLONE_THREAD   0x10000    — share thread group (thread-like)
+//   CLONE_SIGHAND  0x800
+//   CLONE_VFORK    0x4000
+//   SIGCHLD        0x11       — fork() signal mask byte
+// is_fork_like = (flags & CLONE_THREAD) == 0 (典型 fork: 没 share TG).
+// thread-like (pthread_create) 走现有 Stalker.follow path, 不进 P1-C.
+
+function _isForkLike(flags) {
+    const CLONE_THREAD = 0x10000;
+    return (flags & CLONE_THREAD) === 0;
+}
+
+function installForkHooksOnce() {
+    if (STATE.forkHooksInstalled) return;
+    STATE.forkEvents = STATE.forkEvents || [];
+    STATE.forkHooksInstalled = true;
+    let installed = 0;
+
+    // Resolve target SO module by soPattern (lazy — agent state has soPattern only).
+    let _modBase = null, _modEnd = null, _modName = null;
+    try {
+        const m = Process.enumerateModules().find(
+            x => STATE.soPattern && x.name.indexOf(STATE.soPattern) !== -1);
+        if (m) {
+            _modBase = m.base;
+            _modEnd  = m.base.add(m.size);
+            _modName = m.name;
+        }
+    } catch (_) {}
+
+    function _pushForkEvent(syscall, returnAddress, child_pid, clone_flags) {
+        try {
+            const pc = ptr(returnAddress);
+            // 计算 SO 内偏移 (parent_pc_rel)
+            let parent_pc_rel = null;
+            let parent_in_target = false;
+            if (_modBase && pc.compare(_modBase) >= 0 && pc.compare(_modEnd) < 0) {
+                parent_pc_rel = "0x" + pc.sub(_modBase).toString(16);
+                parent_in_target = true;
+            }
+            // is_fork_like — 默认 true (fork/vfork 都 是); clone 看 flags
+            const is_fork_like = (clone_flags === null) ? true
+                               : _isForkLike(clone_flags);
+            let trace_idx = 0;
+            try { trace_idx = STATE.headBuf.readU64().toNumber(); } catch (_) {}
+            STATE.forkEvents.push({
+                type: "fork-event",
+                trace_idx: trace_idx,    // parent trace head at this moment
+                parent_pc: pc.toString(),
+                parent_pc_rel: parent_pc_rel,
+                parent_in_target: parent_in_target,
+                parent_module: _modName,
+                syscall: syscall,
+                clone_flags: (clone_flags === null) ? null
+                            : ("0x" + clone_flags.toString(16)),
+                is_fork_like: is_fork_like,
+                child_pid: child_pid,
+                ts: Date.now(),
+                attach_status: "not_attempted",   // M2 will set to success/failed_*
+            });
+        } catch (e) {
+            log("[fork] push event failed: " + e);
+        }
+    }
+
+    function _hookFork() {
+        const p = _findEx("fork");
+        if (!p) return;
+        Interceptor.attach(p, {
+            onEnter() { this._ra = this.returnAddress; },
+            onLeave(rv) {
+                const pid = rv.toInt32();
+                if (pid > 0) _pushForkEvent("fork", this._ra, pid, null);
+            }
+        });
+        installed++;
+    }
+    function _hookVfork() {
+        const p = _findEx("vfork");
+        if (!p) return;
+        Interceptor.attach(p, {
+            onEnter() { this._ra = this.returnAddress; },
+            onLeave(rv) {
+                const pid = rv.toInt32();
+                if (pid > 0) _pushForkEvent("vfork", this._ra, pid, null);
+            }
+        });
+        installed++;
+    }
+    function _hookClone() {
+        // clone(fn, stack, flags, arg, ...): flags is arg[2].
+        // bionic's __bionic_clone(flags, child_stack, ...): flags is arg[0].
+        // We hook both.
+        const p1 = _findEx("clone");
+        if (p1) {
+            Interceptor.attach(p1, {
+                onEnter(args) {
+                    this._ra = this.returnAddress;
+                    // glibc clone(fn, stack, flags, arg) → flags @ args[2]
+                    this._flags = args[2].toInt32();
+                },
+                onLeave(rv) {
+                    const pid = rv.toInt32();
+                    if (pid > 0) _pushForkEvent("clone", this._ra, pid, this._flags);
+                }
+            });
+            installed++;
+        }
+        const p2 = _findEx("__bionic_clone");
+        if (p2) {
+            Interceptor.attach(p2, {
+                onEnter(args) {
+                    this._ra = this.returnAddress;
+                    // bionic __bionic_clone(flags, child_stack, ...) → flags @ args[0]
+                    this._flags = args[0].toInt32();
+                },
+                onLeave(rv) {
+                    const pid = rv.toInt32();
+                    if (pid > 0) _pushForkEvent("__bionic_clone", this._ra, pid,
+                                                  this._flags);
+                }
+            });
+            installed++;
+        }
+    }
+    try { _hookFork(); } catch (e) { log("[fork] hookFork: " + e); }
+    try { _hookVfork(); } catch (e) { log("[fork] hookVfork: " + e); }
+    try { _hookClone(); } catch (e) { log("[fork] hookClone: " + e); }
+    log("[fork] installed " + installed + " fork-family hooks");
+}
+
+function flushForkEvents(callIdx) {
+    if (!STATE.forkEvents || STATE.forkEvents.length === 0) return 0;
+    const events = STATE.forkEvents;
+    STATE.forkEvents = [];
+    send({type: "fork-events", callIdx: callIdx, count: events.length, events: events});
+    return events.length;
+}
+
 rpc.exports = {
     init(opts) {
         opts = opts || {};
@@ -851,6 +1000,9 @@ rpc.exports = {
         STATE.hideRwxMaps = !!opts.hideRwxMaps;
         // jniHooks: array of hook specs (parsed from JSON config). null/empty = disabled.
         STATE.jniHookSpecs = Array.isArray(opts.jniHooks) ? opts.jniHooks : null;
+        // P1-C M1: opt-in fork hook (libc fork/vfork/clone/__bionic_clone).
+        // 默认关 (大部分 app 不 fork; 开了多 1 个 hook 开销). 反调试 fork 场景必开.
+        STATE.enableForkHook = !!opts.enableForkHook;
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);
@@ -989,6 +1141,11 @@ function installFnHook(fp, onInsn) {
                 // Hook libart JNI string fns once we're in a thread that has JNIEnv.
                 // Interceptor (not Stalker) — safe even though libart is HARD_EXCL.
                 try { installJniStringHooksOnce(); } catch(_){}
+                // P1-C M1: hook libc fork/clone family — Tier 1 fork-event 永远记录,
+                // 不依赖 spawn-gating. opt-in via STATE.enableForkHook.
+                if (STATE.enableForkHook) {
+                    try { installForkHooksOnce(); } catch(e) { log("[fork][!] " + e); }
+                }
                 // (Re)build include ranges per call — picks up late-dlopen'd
                 // SOs (libsgsecuritybody, libsgavmp etc dlopen'd after agent init).
                 buildIncludeRanges();
@@ -1030,6 +1187,7 @@ function installFnHook(fp, onInsn) {
                 // 在 trace-end 前 flush JNI string events 让 host 关联到本 call
                 try { flushJniStringEvents(this._callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
                 try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
+                try { flushForkEvents(this._callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
                 log(`[<] call #${this._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
                 send({ type: "trace-end", callIdx: this._callIdx, tid: this._tid,
                        retval: retv.toString(), ms: elapsed, total, dropped, truncated: false,
