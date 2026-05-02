@@ -108,3 +108,58 @@ def test_ssa_ret_no_effect():
     """ret 不 set/use, 测试不崩."""
     blk = ssa_block(0x1000, [set_reg("x0", const(0)), ret()])
     assert len(blk.roots) == 2
+
+
+# ─────────── call-kill (AAPCS64 caller-saved) ───────────
+
+def test_ssa_call_bumps_caller_saved_regs():
+    """LLIL_CALL 后 x0..x18 + lr 全 bump version. 之后读 x0 拿到新 version."""
+    from viewer.decompiler.llil import call, const_ptr
+    use_x0_after = reg("x0")
+    blk = ssa_block(0x1000, [
+        set_reg("x0", const(5)),                            # x0 → v1
+        call(const_ptr(0x4000), pc=0x1004),                 # bumps x0..x18, lr
+        set_reg("x10", use_x0_after),                       # uses post-call x0
+    ])
+    # call 前 x0 是 v1, call 后 v2 (kill)
+    assert blk.tag.get(use_x0_after) == 2
+
+
+def test_ssa_call_bumps_lr():
+    """LLIL_CALL 后 lr 也 bump (bl 隐式写 lr=pc+4)."""
+    from viewer.decompiler.llil import call, const_ptr
+    use_lr = reg("lr")
+    blk = ssa_block(0x1000, [
+        set_reg("x9", reg("lr")),                           # use lr v0
+        call(const_ptr(0x4000), pc=0x1004),                 # bumps lr
+        set_reg("x10", use_lr),                             # use post-call lr
+    ])
+    # post-call lr v1
+    assert blk.tag.get(use_lr) == 1
+
+
+def test_ssa_call_preserves_callee_saved():
+    """x19..x28 / fp / sp 不被 call kill, version 不变."""
+    from viewer.decompiler.llil import call, const_ptr
+    use_x19 = reg("x19")
+    blk = ssa_block(0x1000, [
+        set_reg("x19", const(7)),                           # x19 → v1
+        call(const_ptr(0x4000), pc=0x1004),                 # NO kill
+        set_reg("x10", use_x19),                            # still x19 v1
+    ])
+    assert blk.tag.get(use_x19) == 1
+
+
+def test_ssa_call_kills_nzcv():
+    """call 后 nzcv flag 也 kill — 后续 cmp 前 flag 不能错链."""
+    from viewer.decompiler.llil import call, const_ptr, set_reg as sr
+    from viewer.decompiler.llil.expr import LlilExpr, LLIL_SET_FLAG, LLIL_FLAG
+    set_n = LlilExpr(LLIL_SET_FLAG, size=1, operands=["nzcv", const(0)])
+    use_n = LlilExpr(LLIL_FLAG, size=1, operands=["nzcv"])
+    blk = ssa_block(0x1000, [
+        set_n,                                              # nzcv → v1
+        call(const_ptr(0x4000), pc=0x1004),                 # bumps
+        sr("x0", use_n),                                    # use post-call nzcv
+    ])
+    # post-call nzcv v2 (call bump)
+    assert blk.tag.get(use_n) == 2

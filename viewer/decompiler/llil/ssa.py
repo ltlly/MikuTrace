@@ -14,7 +14,23 @@ Trace linear 没 join → block-local SSA. 每写一次 reg 出新 version.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
-from .expr import LlilExpr, LLIL_SET_REG, LLIL_REG, LLIL_FLAG, LLIL_SET_FLAG
+from .expr import (
+    LlilExpr, LLIL_SET_REG, LLIL_REG, LLIL_FLAG, LLIL_SET_FLAG, LLIL_CALL,
+)
+
+
+# ARM64 AAPCS64: caller-saved (volatile) regs — call 后 callee 可任意覆写,
+# 所以 SSA 必须 bump 其 version 确保之后的 use 不会错链到 call 前的 def.
+# x0/x1 是返回值; x2..x7 是参数; x9..x15 临时; x16/x17 IP; x18 platform.
+# nzcv (flags) 也被 call 杀死.
+_CALLER_SAVED = (
+    "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+    "x8",                                         # indirect return
+    "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+    "x16", "x17", "x18",
+    "lr",                                         # bl 写 lr
+)
+_CALLER_SAVED_FLAGS = ("nzcv", "n", "z", "c", "v")
 
 
 @dataclass
@@ -83,7 +99,7 @@ def ssa_block(block_pc: int, roots: list[LlilExpr],
                 fname = node.operands[0]
                 blk.tag.set(node, cur_flag.get(fname, 0))
 
-        # 再处理 root: 若 SET_REG / SET_FLAG 则 bump
+        # 再处理 root: 若 SET_REG / SET_FLAG / CALL 则 bump
         if root.op == LLIL_SET_REG:
             rname = root.operands[0]
             cur_reg[rname] = cur_reg.get(rname, 0) + 1
@@ -92,6 +108,13 @@ def ssa_block(block_pc: int, roots: list[LlilExpr],
             fname = root.operands[0]
             cur_flag[fname] = cur_flag.get(fname, 0) + 1
             blk.tag.set(root, cur_flag[fname])
+        elif root.op == LLIL_CALL:
+            # AAPCS64: caller-saved 全 kill — 之后的读应链到新 version,
+            # 不能错指 call 前的 def. 这是 BN MLIL_SSA call 的标准行为.
+            for r in _CALLER_SAVED:
+                cur_reg[r] = cur_reg.get(r, 0) + 1
+            for fl in _CALLER_SAVED_FLAGS:
+                cur_flag[fl] = cur_flag.get(fl, 0) + 1
 
     blk.exit_versions = dict(cur_reg)
     return blk
