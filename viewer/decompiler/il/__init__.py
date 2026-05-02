@@ -13,6 +13,7 @@ from .ops import (
     OPS_ALL, OPS_ARITH, OPS_BRANCH,
 )
 from .lift import lift_arm64, lift_static, LiftStats
+from .ssa import SsaInsn, SsaBlock, ssa_block, ssa_blocks
 
 __all__ = [
     "TlilOp",
@@ -23,4 +24,5 @@ __all__ = [
     "OP_CALL", "OP_CALL_INDIRECT", "OP_RET", "OP_NOP", "OP_RAW",
     "OPS_ALL", "OPS_ARITH", "OPS_BRANCH",
     "lift_arm64", "lift_static", "LiftStats",
+    "SsaInsn", "SsaBlock", "ssa_block", "ssa_blocks",
 ]
