@@ -87,6 +87,46 @@ mimo **正确识别 trace 局限**:
 - DEC3-C 真循环 induction var
 - DEC3-D (新) — VM bytecode 提取, 处理 OLLVM-VM 那 800+ 块 (mimo 已识别 VM)
 
+## DEC3-D ship 后实测 — VM 函数处理能力兑现
+
+DEC3-D (commit 2d171be) 加 ollvmdet 检测 + bytecode reader 识别 + memshadow
+hex dump. 严守 §7.0 普适性 (复用 ollvmdet heuristic, 不假设 VM 变种,
+不 disasm).
+
+实测 (libsgmainso, --hooks + --vm-with-memshadow):
+- confidence: 1.00 (4 个 reasons 全命中)
+- bytecode reader: `ldrh w7, [x21, #0x10]!` ×118 hits, step=0x10
+- bytecode addr: 0x75ee0cc010, hex dump 256B 抓到 VM 字节序列
+
+**关键: mimo 输出对比** (同样 hot tier F0 prompt):
+
+| 维度 | DEC3-B + B0 (无 VM evidence) | + DEC3-D (有 VM hex) |
+|---|---|---|
+| VM 描述 | "这是 reg-based VM, 23 handler" 概览 | **完整 VM dispatcher 主循环 C 代码** |
+| opcode 大小 | mimo 自己推 16 字节 | 验证 + 写出 `vm_pc += 0x10` |
+| dispatch 实现 | 抽象描述 | 具体 C 调用 `handler_table[opcode]` + br |
+| S-box 解密 | 模糊提到 | 明确 round 描述 + 字节流逻辑 |
+| 业务名 | sub_54fe8 等 | cmd_init / lock_acquire / cmd_resolve |
+
+mimo 输出节选:
+```c
+while (vm_pc != NULL) {
+    uint16_t opcode = *(uint16_t*)(vm_pc + 0x10);  // 16-bit, 跟 hex 一致
+    vm_pc += 0x10;                                  // 步长跟 reader 检测一致
+    void *handler = handler_table[opcode];
+    ((void(*)(void))handler)();
+}
+```
+
+**用户原问题 "巨大 VM 函数能处理吗" 正向回答**: 可以.
+不通过 disasm bytecode (违反 §7.0), 而是给 LLM evidence (检测 + hex dump),
+让 LLM 推编码. mimo 直接验证它之前推断的"16-bit opcode + 16 字节 VM 指令"
+编码是对的, 给出具体 C 反汇编。
+
+跨变种适用性 (设计兑现): 算法基于通用 pattern (高频 self-update load, step ≤ 16),
+跟 SGMain 的 AVMP / Themida / VMP / Tigress 都不绑死. 换变种 hex pattern 不同,
+但检测路径同, mimo 推编码同, pipeline 不变.
+
 ## DEC3-B ship 后实测 (类型锚点效果)
 
 DEC3-B (commit 92af597) 让用户提供 type spec JSON, 我们扫 trace 注入
