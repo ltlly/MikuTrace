@@ -261,6 +261,9 @@ def cmd_trace(args):
         try:
             if s.get("ext_fp"): s["ext_fp"].close()
         except: pass
+        try:
+            if s.get("jni_fp"): s["jni_fp"].close()
+        except: pass
         # v5: 从 device 拉 trace.bin
         device_path = s["meta"].get("devicePath")
         if device_path:
@@ -382,16 +385,26 @@ def cmd_trace(args):
                         finalize_call(s, truncated=truncated)
                         del sess_files[ci]
                         wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated} dropped={p.get('dropped',0)}")
-                    elif t == "jni-strings":
-                        # JNI string hooks (libart, Interceptor) flushed at trace-end.
-                        # 写到 sess_files 的 meta, finalize_call 时一起持久化 meta.json.
+                    elif t == "jni-hooks" or t == "jni-strings":
+                        # JSON-driven JNI hooks (libart, Interceptor — not Stalker, anti-detect 看不到).
+                        # 每条 event = {id, trace_idx, args:{name:val,...}, ret}.
+                        # 写到 per-call 目录 jni_hooks.jsonl (line-delimited JSON, 跨 trace 复用).
+                        # 同时也进 meta.json 的 jni_hooks 数组 (前端方便查).
                         ci = p.get("callIdx") or 0
                         if ci not in sess_files:
                             open_call(ci, p.get("tid", 0), pid)
                         evs = p.get("events", [])
-                        m_jni = sess_files[ci]["meta"].setdefault("jni_strings", [])
+                        s = sess_files[ci]
+                        jh_path = s["dir"] / "jni_hooks.jsonl"
+                        jf = s.get("jni_fp")
+                        if jf is None:
+                            jf = open(jh_path, "a"); s["jni_fp"] = jf
+                        for ev in evs:
+                            jf.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                        jf.flush()
+                        m_jni = s["meta"].setdefault("jni_hooks", [])
                         m_jni.extend(evs)
-                        wlog(f"[{tag}] jni-strings call#{ci} +{len(evs)} (total={len(m_jni)})")
+                        wlog(f"[{tag}] {t} call#{ci} +{len(evs)} (total={len(m_jni)})")
                     elif t == "ext-write":
                         # Boundary-diff events from --trace-deep mode.
                         # Each event: {attrIdx: u64, addr: "0x...", byte: u8}.
@@ -450,6 +463,23 @@ def cmd_trace(args):
     diff_pats = []
     if getattr(args, "boundary_diff_patterns", None):
         diff_pats = [p.strip() for p in args.boundary_diff_patterns.split(",") if p.strip()]
+    # Load JNI hooks JSON (default = bundled libart_jni.json)
+    jni_hooks_specs = []
+    jh_arg = getattr(args, "jni_hooks", None)
+    if jh_arg and jh_arg.lower() != "none":
+        # If relative path, resolve against project root (= dir containing tracemiku script)
+        jh_path = pathlib.Path(jh_arg)
+        if not jh_path.is_absolute():
+            jh_path = pathlib.Path(__file__).resolve().parent / jh_arg
+        if jh_path.exists():
+            try:
+                jh_doc = json.loads(jh_path.read_text())
+                jni_hooks_specs = jh_doc.get("hooks", [])
+                wlog(f"loaded {len(jni_hooks_specs)} JNI hook specs from {jh_path}")
+            except Exception as e:
+                wlog(f"[!] failed to load --jni-hooks {jh_path}: {e}")
+        else:
+            wlog(f"[!] --jni-hooks file not found: {jh_path} (skipping)")
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -466,6 +496,7 @@ def cmd_trace(args):
         "boundaryDiffPatterns": diff_pats,
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
         "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
+        "jniHooks": jni_hooks_specs,
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1061,6 +1092,10 @@ def main():
     p_tr.add_argument("--hide-rwx-maps", action="store_true", dest="hide_rwx_maps",
                       help="在 libc open/read 拦截 /proc/self/maps, 过滤 rwxp 匿名段 — 让反检测"
                            "看不到 Frida Stalker block cache 的 rwx. 通用反检测绕过, 不依赖目标 SO.")
+    p_tr.add_argument("--jni-hooks", default="tools/hooks/libart_jni.json", dest="jni_hooks",
+                      help="JSON 描述要 hook 的 JNI vtable 函数 (offset/参数类型/返回类型). "
+                           "默认 = libart string fns. 设 'none' 关闭. 输出 jni_hooks.jsonl per-call. "
+                           "Interceptor 不依赖 Stalker, 给重防护 app 的备选方案 (低反检测面).")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")

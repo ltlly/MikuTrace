@@ -38,3 +38,5 @@ dist/
 !/tools/patch_sgmainso_tgkill.js
 !/tools/hide_rwx_maps.js
 !/tools/probe_deep_safe.js
+!/tools/hooks/
+!/tools/hooks/*

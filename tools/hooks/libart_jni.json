@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "Default JNI string-related hooks. Resolved via JNIEnv vtable offsets (libart Android 14/15). Reusable across processes — Interceptor not Stalker, low detection surface.",
+  "kind": "jni_vtable",
+  "hooks": [
+    {
+      "id": "NewString",
+      "vtable_offset": "0x520",
+      "args": [
+        {"name": "env", "type": "ptr"},
+        {"name": "chars", "type": "ptr"},
+        {"name": "len", "type": "int"}
+      ],
+      "ret": {"type": "ptr"}
+    },
+    {
+      "id": "NewStringUTF",
+      "vtable_offset": "0x538",
+      "args": [
+        {"name": "env", "type": "ptr"},
+        {"name": "bytes", "type": "cstring", "max_len": 512}
+      ],
+      "ret": {"type": "ptr"}
+    },
+    {
+      "id": "GetStringUTFLength",
+      "vtable_offset": "0x540",
+      "args": [
+        {"name": "env", "type": "ptr"},
+        {"name": "string", "type": "ptr"}
+      ],
+      "ret": {"type": "int"}
+    },
+    {
+      "id": "GetStringUTFChars",
+      "vtable_offset": "0x548",
+      "args": [
+        {"name": "env", "type": "ptr"},
+        {"name": "string", "type": "ptr"},
+        {"name": "isCopy", "type": "ptr"}
+      ],
+      "ret": {"type": "cstring", "max_len": 512}
+    },
+    {
+      "id": "ReleaseStringUTFChars",
+      "vtable_offset": "0x550",
+      "args": [
+        {"name": "env", "type": "ptr"},
+        {"name": "string", "type": "ptr"},
+        {"name": "chars", "type": "cstring", "max_len": 512}
+      ],
+      "ret": {"type": "void"}
+    },
+    {
+      "id": "GetStringUTFRegion",
+      "vtable_offset": "0x6f0",
+      "args": [
+        {"name": "env", "type": "ptr"},
+        {"name": "string", "type": "ptr"},
+        {"name": "start", "type": "int"},
+        {"name": "len", "type": "int"},
+        {"name": "buf", "type": "cstring", "max_len": 512, "read_in_onleave": true}
+      ],
+      "ret": {"type": "void"}
+    }
+  ]
+}

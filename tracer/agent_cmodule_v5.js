@@ -635,104 +635,151 @@ function buildIncludeRanges() {
     for (const r of STATE.includeRanges) log(`    ${r.name}`);
 }
 
-// ─────────── JNI string hook (libart, Interceptor — not Stalker) ───────────
+// ─────────── JSON-driven JNI hooks (libart, Interceptor — not Stalker) ─────
 //
-// libart 是 HARD_EXCL'd from Stalker (atomic deadlock 风险), 但 Frida.Interceptor
-// 是独立机制 — 在 fn entry 装 trampoline, 不动函数体. 安全。
-// 通过 JNIEnv vtable 找 GetStringUTFChars/NewStringUTF, hook 它们的 onLeave 读
-// 实际 char* 内容, send 给 host. 这就解决了"libart heap 在 Stalker.exclude 范围
-// 看不到 string buffer"的根本问题.
-function installJniStringHooksOnce() {
-    if (STATE.jniHooksInstalled) return;
-    let env;
-    try {
-        env = Java.vm.tryGetEnv();
-        if (!env) { log("[!] no JNIEnv yet, will retry on next call"); return; }
-    } catch (e) { log("[!] tryGetEnv failed: " + e); return; }
-    const envPtr = env.handle;
-    const vtable = envPtr.readPointer();
-    // offsets from BN-parsed JNINativeInterface_ (viewer/jni_offsets.json)
-    const HOOK_OFFSETS = {
-        0x520: "NewString",            // jstring NewString(env, jchar*, jsize)
-        0x538: "NewStringUTF",          // jstring NewStringUTF(env, char*)
-        0x540: "GetStringUTFLength",    // jsize GetStringUTFLength(env, jstring)
-        0x548: "GetStringUTFChars",     // const char* GetStringUTFChars(env, jstring, isCopy*)
-        0x550: "ReleaseStringUTFChars", // void ReleaseStringUTFChars(env, jstring, char*)
-        0x6f0: "GetStringUTFRegion",    // void GetStringUTFRegion(env, jstring, start, len, char*)
-    };
-    let installed = 0;
-    for (const off in HOOK_OFFSETS) {
-        const offNum = parseInt(off);
-        const fnName = HOOK_OFFSETS[off];
-        const fnPtr = vtable.add(offNum).readPointer();
-        try {
-            Interceptor.attach(fnPtr, makeJniStringHook(fnName, offNum));
-            installed++;
-        } catch (e) { log(`[!] hook ${fnName} failed: ${e}`); }
+// 用户配置 JSON 描述要 hook 的 JNI vtable 函数 (offset + 参数类型 + 返回值
+// 类型). 默认 spec = tools/hooks/libart_jni.json (string-related fns).
+//
+// Interceptor 不依赖 Stalker, 不创建 RWX 块缓存 → 反检测看不到. 是给重防护
+// app (libsgmainso 类) 的备选方案: 不开 deep trace, 仅靠 JNI hooks 拿
+// string + 关键调用. 输出 jni_hooks.jsonl per-call dir, 跨 trace 复用.
+
+// 直接 dlsym + JNIInvokeInterface_::GetEnv, 不依赖 Java module (Frida 17 移除)
+function getJNIEnvDirect() {
+    let getVMs = null;
+    try { getVMs = Module.findGlobalExportByName("JNI_GetCreatedJavaVMs"); } catch (_) {}
+    if (!getVMs) {
+        try { getVMs = Module.findExportByName("libart.so", "JNI_GetCreatedJavaVMs"); } catch (_) {}
     }
-    STATE.jniHooksInstalled = true;
-    STATE.jniStringEvents = [];
-    log(`[+] JNI string hooks installed: ${installed}/6 (Interceptor, indep of Stalker)`);
+    if (!getVMs) return null;
+    try {
+        const fn = new NativeFunction(getVMs, "int", ["pointer", "int", "pointer"]);
+        const vms = Memory.alloc(8);
+        const nVMs = Memory.alloc(4);
+        if (fn(vms, 1, nVMs) !== 0) return null;
+        if (nVMs.readU32() < 1) return null;
+        const jvm = vms.readPointer();
+        if (jvm.isNull()) return null;
+        // jvm = JavaVM*. *jvm = const JNIInvokeInterface_*
+        // GetEnv at vtable offset 0x30 (index 6: 3 reserved + DestroyJavaVM/AttachCurrentThread/DetachCurrentThread/GetEnv)
+        const vtable = jvm.readPointer();
+        const getEnvFn = new NativeFunction(vtable.add(0x30).readPointer(), "int", ["pointer", "pointer", "int"]);
+        const envOut = Memory.alloc(8);
+        if (getEnvFn(jvm, envOut, 0x10006) !== 0) return null;
+        return envOut.readPointer();
+    } catch (e) { return null; }
 }
 
-function makeJniStringHook(fnName, vtblOff) {
-    // capture pre-call args; in onLeave read the buffer content if applicable
+function _readArgVal(arg, spec) {
+    if (!spec || !spec.type) return arg.toString();
+    const maxLen = spec.max_len || 256;
+    switch (spec.type) {
+        case "ptr":     return arg.toString();
+        case "int":     return arg.toInt32();
+        case "long":    return arg.toString();
+        case "void":    return null;
+        case "cstring":
+            try { return arg.readUtf8String(maxLen); } catch (_) { return null; }
+        case "utf16":
+            try { return arg.readUtf16String(maxLen); } catch (_) { return null; }
+        case "bytes": {
+            try {
+                const buf = arg.readByteArray(maxLen);
+                const u8 = new Uint8Array(buf);
+                let hex = "";
+                for (let i = 0; i < u8.length; i++) hex += u8[i].toString(16).padStart(2, "0");
+                return hex;
+            } catch (_) { return null; }
+        }
+        default: return arg.toString();
+    }
+}
+
+function _makeJsonHookHandler(spec) {
     return {
         onEnter(args) {
-            // Only target thread (the one we're tracing)
             if (this.threadId !== STATE.primaryTid) { this._skip = true; return; }
-            this._fn = fnName;
-            this._args = [args[0], args[1], args[2], args[3], args[4]];
+            this._spec = spec;
+            this._argVals = new Array(spec.args.length);
+            this._pendingArgs = [];   // {idx, ptr} for args read in onLeave
+            for (let i = 0; i < spec.args.length; i++) {
+                const aSpec = spec.args[i];
+                if (aSpec.read_in_onleave) {
+                    this._pendingArgs.push({idx: i, ptr: args[i]});
+                    this._argVals[i] = null;   // placeholder
+                } else {
+                    this._argVals[i] = _readArgVal(args[i], aSpec);
+                }
+            }
         },
         onLeave(retv) {
             if (this._skip) return;
-            // record current trace head (= idx of the next record to be written)
-            const headNow = STATE.headBuf.readU64().toNumber();
-            const ev = {
-                fn: this._fn, head: headNow,
-                jstring: null, buf: null, content: null,
-            };
-            try {
-                if (this._fn === "NewStringUTF") {
-                    // x1 = char* input; ret = jstring
-                    ev.buf = this._args[1].toString();
-                    ev.jstring = retv.toString();
-                    ev.content = this._args[1].readUtf8String(256);
-                } else if (this._fn === "GetStringUTFChars") {
-                    // x1 = jstring; ret = char*
-                    ev.jstring = this._args[1].toString();
-                    ev.buf = retv.toString();
-                    ev.content = retv.readUtf8String(256);
-                } else if (this._fn === "ReleaseStringUTFChars") {
-                    // x1 = jstring, x2 = char*. Read content before release.
-                    ev.jstring = this._args[1].toString();
-                    ev.buf = this._args[2].toString();
-                    ev.content = this._args[2].readUtf8String(256);
-                } else if (this._fn === "NewString") {
-                    ev.buf = this._args[1].toString();
-                    ev.jstring = retv.toString();
-                    // jchar* (UTF-16) — skip for now
-                } else if (this._fn === "GetStringUTFRegion") {
-                    // x1=jstring, x2=start, x3=len, x4=dest char*
-                    ev.jstring = this._args[1].toString();
-                    ev.buf = this._args[4].toString();
-                    ev.content = this._args[4].readUtf8String(256);
-                } else if (this._fn === "GetStringUTFLength") {
-                    ev.jstring = this._args[1].toString();
-                }
-            } catch (_) {}
-            if (STATE.jniStringEvents) STATE.jniStringEvents.push(ev);
+            // Read pending args (out-buffers) AFTER fn ran
+            for (const p of this._pendingArgs) {
+                this._argVals[p.idx] = _readArgVal(p.ptr, this._spec.args[p.idx]);
+            }
+            const ret = (this._spec.ret && this._spec.ret.type === "void")
+                        ? null
+                        : _readArgVal(retv, this._spec.ret || {type: "ptr"});
+            const head = STATE.headBuf.readU64().toNumber();
+            // Build event with named-arg map
+            const argsObj = {};
+            for (let i = 0; i < this._spec.args.length; i++) {
+                argsObj[this._spec.args[i].name] = this._argVals[i];
+            }
+            STATE.jniHookEvents.push({
+                id: this._spec.id,
+                trace_idx: head,    // == next record idx in trace.bin
+                args: argsObj,
+                ret: ret,
+            });
         }
     };
 }
 
-function flushJniStringEvents(callIdx) {
-    if (!STATE.jniStringEvents || !STATE.jniStringEvents.length) return;
-    const events = STATE.jniStringEvents;
-    STATE.jniStringEvents = [];   // reset for next call
-    send({ type: "jni-strings", callIdx: callIdx, count: events.length, events: events });
+function installJniHooksOnce() {
+    if (STATE.jniHooksInstalled) return;
+    const specs = STATE.jniHookSpecs;
+    if (!Array.isArray(specs) || specs.length === 0) {
+        STATE.jniHooksInstalled = true;
+        return;
+    }
+    const envPtr = getJNIEnvDirect();
+    if (!envPtr) {
+        log("[hooks] no JNIEnv (JavaVM not initialized?), will retry next call");
+        return;
+    }
+    const vtable = envPtr.readPointer();
+    STATE.jniHookEvents = STATE.jniHookEvents || [];
+    let installed = 0, skipped = 0;
+    for (const spec of specs) {
+        try {
+            const off = parseInt(spec.vtable_offset);
+            if (isNaN(off)) { skipped++; continue; }
+            const fnPtr = vtable.add(off).readPointer();
+            if (fnPtr.isNull()) { skipped++; continue; }
+            Interceptor.attach(fnPtr, _makeJsonHookHandler(spec));
+            installed++;
+        } catch (e) {
+            log(`[hooks][!] ${spec.id}: ${e}`);
+            skipped++;
+        }
+    }
+    STATE.jniHooksInstalled = true;
+    log(`[hooks] JSON-driven JNI hooks: ${installed}/${specs.length} installed (${skipped} skipped)`);
+}
+
+function flushJniHookEvents(callIdx) {
+    if (!STATE.jniHookEvents || STATE.jniHookEvents.length === 0) return 0;
+    const events = STATE.jniHookEvents;
+    STATE.jniHookEvents = [];
+    send({type: "jni-hooks", callIdx: callIdx, count: events.length, events: events});
     return events.length;
 }
+
+// 兼容别名 — 旧代码路径调 flushJniStringEvents, 直接重定向新版
+function flushJniStringEvents(callIdx) { return flushJniHookEvents(callIdx); }
+function installJniStringHooksOnce() { return installJniHooksOnce(); }
 
 rpc.exports = {
     init(opts) {
@@ -762,6 +809,8 @@ rpc.exports = {
                                       ? opts.boundaryDiffPatterns : null;
         STATE.patchSuicide = !!opts.patchSuicide;
         STATE.hideRwxMaps = !!opts.hideRwxMaps;
+        // jniHooks: array of hook specs (parsed from JSON config). null/empty = disabled.
+        STATE.jniHookSpecs = Array.isArray(opts.jniHooks) ? opts.jniHooks : null;
 
         STATE.ringBuf  = Memory.alloc(RING_BYTES);
         STATE.headBuf  = Memory.alloc(8);  STATE.headBuf.writeU64(0);

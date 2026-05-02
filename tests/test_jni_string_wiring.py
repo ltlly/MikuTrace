@@ -1,108 +1,140 @@
-"""Pin tests for JNI string hook wiring (Task #30).
+"""Pin tests for JSON-driven JNI hook wiring.
 
-之前 bug: agent 定义了 flushJniStringEvents 但全仓 0 调用, 事件 push 到
-STATE.jniStringEvents 后从不发给 host. 修复: trace-end 前调 flush, host 接
-'jni-strings' 写到 sess meta. 本测试静态扫源码确保 wiring 不再断:
-
-1. agent: flushJniStringEvents 必须在每条 trace-end 前被调
-2. host: tracemiku 的消息 dispatcher 必须有 'jni-strings' 分支
-3. finalize_call 流程把 jni_strings 写进 meta.json (通过 setdefault)
+之前 (Task #30) bug: agent flush 函数没被调; 修复后 trace-end 前必 flush.
+后来 (Task #56) 重构成 JSON 驱动: 配置文件 tools/hooks/libart_jni.json 描述
+要 hook 的 JNI vtable 函数, agent 用通用 installer 装 Interceptor, 输出走
+type='jni-hooks' (event schema = {id, trace_idx, args:{...}, ret}). 旧
+'jni-strings' type 仍兼容 (host dispatcher 接两个).
 """
 import json, pathlib, re, pytest
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 AGENT_JS = HERE / "tracer" / "agent_cmodule_v5.js"
 HOST_PY = HERE / "tracemiku"
+HOOKS_JSON = HERE / "tools" / "hooks" / "libart_jni.json"
 
 
-def _read(p):
-    return pathlib.Path(p).read_text()
+def _read(p): return pathlib.Path(p).read_text()
+
+
+# ── JSON config ─────────────────────────────────────────────────────────────
+
+def test_default_hooks_json_exists():
+    assert HOOKS_JSON.exists(), f"默认 hooks 配置缺失: {HOOKS_JSON}"
+    doc = json.loads(HOOKS_JSON.read_text())
+    assert "hooks" in doc and isinstance(doc["hooks"], list)
+    assert len(doc["hooks"]) >= 6   # 至少含 NewString/UTF + GetUTF{Length,Chars,Region} + ReleaseUTF
+
+
+def test_default_hooks_json_schema_valid():
+    """每个 hook 必含 id / vtable_offset / args / ret."""
+    doc = json.loads(HOOKS_JSON.read_text())
+    for h in doc["hooks"]:
+        assert "id" in h, f"hook missing id: {h}"
+        assert "vtable_offset" in h, f"{h['id']} missing vtable_offset"
+        # vtable_offset 必须能 parseInt (16 进制 string)
+        int(h["vtable_offset"], 16)
+        assert "args" in h and isinstance(h["args"], list)
+        for a in h["args"]:
+            assert "name" in a and "type" in a, f"{h['id']} arg incomplete: {a}"
+            assert a["type"] in ("ptr","int","long","void","cstring","utf16","bytes")
+        assert "ret" in h and "type" in h["ret"]
 
 
 # ── Agent 侧 ─────────────────────────────────────────────────────────────────
 
-def test_agent_defines_flush_function():
+def test_agent_defines_install_and_flush():
     src = _read(AGENT_JS)
-    assert "function flushJniStringEvents(" in src, "flushJniStringEvents 定义缺失"
+    assert "function installJniHooksOnce(" in src, "缺新 installJniHooksOnce"
+    assert "function flushJniHookEvents(" in src, "缺新 flushJniHookEvents"
+    # 兼容别名
+    assert "function flushJniStringEvents(" in src, "缺旧 flushJniStringEvents 兼容"
+    assert "function installJniStringHooksOnce(" in src, "缺旧 installJniStringHooksOnce 兼容"
 
 
 def test_agent_flush_called_before_every_trace_end():
-    """每条 send({type:'trace-end' ...}) 之前不远处必有 flushJniStringEvents 调用."""
+    """每条 send({type:'trace-end' ...}) 之前不远处必有 flush 调用 (alias 也可)."""
     src = _read(AGENT_JS)
-    # 找 trace-end send 的所有位置
     trace_end_sends = list(re.finditer(
         r'send\(\s*\{\s*type:\s*"trace-end"', src))
-    assert len(trace_end_sends) >= 2, (
-        f"应至少 2 处 trace-end (onLeave + watchdog), got {len(trace_end_sends)}")
-    # 每个之前 200 字符内应有 flushJniStringEvents
+    assert len(trace_end_sends) >= 2
     for m in trace_end_sends:
         before = src[max(0, m.start() - 400):m.start()]
-        assert "flushJniStringEvents(" in before, (
-            f"trace-end @{m.start()} 之前 400 字符没找到 flushJniStringEvents — "
-            f"该 trace-end 路径会丢 JNI string 数据.\n"
-            f"context: ...{before[-200:]}")
+        assert ("flushJniHookEvents" in before or "flushJniStringEvents" in before), (
+            f"trace-end @{m.start()} 之前没 JNI flush call")
 
 
-def test_agent_flush_sends_jni_strings_message():
-    """flushJniStringEvents 内部必须 send({type:'jni-strings', ...})."""
+def test_agent_flush_sends_jni_hooks_message():
+    """flushJniHookEvents 必须 send({type:'jni-hooks', ...})."""
     src = _read(AGENT_JS)
-    m = re.search(r'function\s+flushJniStringEvents\s*\([^)]*\)\s*\{(.*?)^\}',
+    m = re.search(r'function\s+flushJniHookEvents\s*\([^)]*\)\s*\{(.*?)^\}',
                   src, re.S | re.M)
-    assert m, "无法定位 flushJniStringEvents 函数体"
+    assert m, "找不到 flushJniHookEvents 函数体"
     body = m.group(1)
-    assert 'type:' in body and '"jni-strings"' in body, (
-        f"flushJniStringEvents 必须 send type='jni-strings', body:\n{body[:300]}")
+    assert '"jni-hooks"' in body, f"应 send type='jni-hooks', got:\n{body[:300]}"
 
 
 def test_agent_flush_resets_buffer():
-    """flush 后必须清空 STATE.jniStringEvents (防重复 send)."""
     src = _read(AGENT_JS)
-    m = re.search(r'function\s+flushJniStringEvents\s*\([^)]*\)\s*\{(.*?)^\}',
+    m = re.search(r'function\s+flushJniHookEvents\s*\([^)]*\)\s*\{(.*?)^\}',
                   src, re.S | re.M)
     body = m.group(1)
-    # 至少一处把 jniStringEvents 设回 [] 或类似
-    assert re.search(r'jniStringEvents\s*=\s*\[\]', body), (
-        f"flush 后应 reset jniStringEvents=[], body:\n{body[:300]}")
+    assert re.search(r'jniHookEvents\s*=\s*\[\]', body), \
+        f"flush 后必须 reset jniHookEvents=[], body:\n{body[:300]}"
 
 
-def test_agent_jni_event_pushes_after_install():
-    """installJniStringHooksOnce 设了 jniStringEvents=[], 之后 hook onLeave push."""
+def test_agent_uses_jni_hook_specs_from_opts():
+    """RPC init 必须从 opts.jniHooks 读 spec, 不再硬编码 vtable offsets."""
     src = _read(AGENT_JS)
-    assert "STATE.jniStringEvents = []" in src
-    assert re.search(r'jniStringEvents\s*\.\s*push\s*\(', src), (
-        "hook onLeave 应 push 事件到 jniStringEvents")
+    assert "STATE.jniHookSpecs" in src
+    assert "opts.jniHooks" in src
+    # 旧 hardcoded HOOK_OFFSETS map 必须被移除
+    assert 'const HOOK_OFFSETS' not in src or '0x520:' not in src, \
+        "agent 不应再硬编码 vtable offset map"
+
+
+def test_agent_resolves_jnienv_without_java_module():
+    """Frida 17 删了 Java 全局, 必须用直接 dlsym (JNI_GetCreatedJavaVMs)."""
+    src = _read(AGENT_JS)
+    assert "JNI_GetCreatedJavaVMs" in src, "必须用 JNI_GetCreatedJavaVMs (Frida 17 兼容)"
 
 
 # ── Host 侧 ──────────────────────────────────────────────────────────────────
 
-def test_host_dispatcher_handles_jni_strings():
+def test_host_dispatcher_handles_jni_hooks():
     src = _read(HOST_PY)
-    # 必须有 t == "jni-strings" 分支 (或 elif 'jni-strings' in ...)
-    assert re.search(r't\s*==\s*["\']jni-strings["\']', src), (
-        "tracemiku host dispatcher 缺 'jni-strings' 分支 — agent 数据落到 else 兜底 log")
+    # 必须有 t == 'jni-hooks' 分支 (旧 jni-strings 也兼容)
+    assert re.search(r't\s*==\s*["\']jni-hooks["\']', src), \
+        "tracemiku 缺 'jni-hooks' dispatcher"
 
 
-def test_host_writes_jni_strings_to_meta():
+def test_host_writes_jsonl_per_call():
     src = _read(HOST_PY)
-    # handler 必须把 events 写到 sess_files[ci]["meta"]["jni_strings"]
-    # 用 setdefault('jni_strings', [...]) 或 直接赋值
-    assert "jni_strings" in src, "host 应在 meta 里写 jni_strings 字段"
-    # finalize_call json.dump(md) 已经存在 — md 自带 jni_strings 字段会落盘
+    assert "jni_hooks.jsonl" in src, "host 应写 jni_hooks.jsonl per-call dir"
+    assert "jni_fp" in src, "host 应有 jni_fp session attr"
 
 
-# ── 端到端 schema ──────────────────────────────────────────────────────────
+def test_host_loads_jni_hooks_json():
+    """tracemiku CLI 必须能加载 --jni-hooks PATH 并传给 agent."""
+    src = _read(HOST_PY)
+    assert "--jni-hooks" in src
+    assert '"jniHooks":' in src, "AGENT_OPTS 缺 jniHooks"
+    assert "jh_doc" in src or 'json.loads' in src   # 至少有 JSON load
 
-def test_jni_event_schema_in_agent():
-    """agent push 的事件应至少含 fn, head, jstring, buf, content 字段
-    (host 之后用这些做 trace idx 关联 + content 显示).
-    """
+
+# ── 端到端 schema ───────────────────────────────────────────────────────────
+
+def test_jni_event_schema_uses_named_args():
+    """agent push 的事件 schema = {id, trace_idx, args:{...}, ret}."""
     src = _read(AGENT_JS)
-    # 找 makeJniStringHook 内 ev = { ... } 字面量
-    m = re.search(r'const\s+ev\s*=\s*\{([^}]+)\}', src)
-    assert m, "无法在 makeJniStringHook 找到 ev = { ... }"
-    ev_body = m.group(1)
-    for field in ("fn", "head", "jstring", "buf", "content"):
-        assert field in ev_body, f"event 缺字段 {field!r}: {ev_body}"
+    # _makeJsonHookHandler 内部 push 的字面量
+    m = re.search(
+        r'STATE\.jniHookEvents\.push\(\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}\s*\)',
+        src, re.S)
+    assert m, "找不到 jniHookEvents.push({...})"
+    body = m.group(1)
+    for field in ("id", "trace_idx", "args", "ret"):
+        assert field in body, f"event 缺字段 {field!r}: {body[:300]}"
 
 
 if __name__ == "__main__":
