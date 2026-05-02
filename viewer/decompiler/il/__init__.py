@@ -16,6 +16,10 @@ from .lift import lift_arm64, lift_static, LiftStats
 from .ssa import SsaInsn, SsaBlock, ssa_block, ssa_blocks
 from .pass_constfold import constfold_block, constfold_blocks
 from .pass_dce import dce_block, dce_blocks
+from .pass_typelat import (
+    TypeEnv, typelat_block,
+    T_TOP, T_INT, T_PTR, T_HANDLE, T_BOOL, T_BOT,
+)
 
 __all__ = [
     "TlilOp",
@@ -29,4 +33,6 @@ __all__ = [
     "SsaInsn", "SsaBlock", "ssa_block", "ssa_blocks",
     "constfold_block", "constfold_blocks",
     "dce_block", "dce_blocks",
+    "TypeEnv", "typelat_block",
+    "T_TOP", "T_INT", "T_PTR", "T_HANDLE", "T_BOOL", "T_BOT",
 ]
