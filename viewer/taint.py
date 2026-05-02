@@ -68,14 +68,16 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
                   max_count: int = 5000, depth: int = 0,
                   index=None,
                   exclude_regs: Optional[set] = None,
-                  data_only: bool = False):
+                  data_only: bool = False,
+                  through_mem: bool = False, mem=None):
     """Forward taint with heap-based next-use lookup.
 
     用 min-heap 维护每个 tainted reg 的 (next_use_idx, reg, cursor) 元组,
     每次 pop 最小 idx → O(|hits| · log R) where R 是 tainted reg 数.
 
-    实测: heap 版本对长 chain (5000 hits) 上 ~10ms. 对超长 trace 上 N >> hits
-    时, heap 版本跳过非 use 的 record 不 decode, 大幅省时.
+    through_mem: store-then-load 链穿透. 当一条 store 写 tainted reg 时, 标记
+    [addr, addr+size) 整段 byte-level tainted; 后续任何 load (含 partial) 命中
+    这区间 → 目的 reg 受感染. 对应 backward 的 byte-level overlap.
     """
     if index is None:
         return _forward_taint_slow(trace, start_idx, taint_reg, max_count,
@@ -85,9 +87,13 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
     else:
         exclude_regs = set(exclude_regs)
 
+    if through_mem and mem is None:
+        from .memshadow import MemShadow
+        mem = MemShadow(trace); mem.build()
+
     import heapq
     tainted_regs = {taint_reg}
-    tainted_mem: set[int] = set()
+    tainted_mem: set[int] = set()  # byte-level tainted addrs
     out = []
     seen_idx = set()
 
@@ -116,8 +122,13 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
         load_tainted = False
         for op in d.mem_op:
             if op[4]: continue
-            if _addr_of(r, op) in tainted_mem:
-                load_tainted = True; break
+            sz = op[3] if len(op) >= 4 else 8
+            base_addr = _addr_of(r, op)
+            # exact-addr fast path (旧行为) + byte-overlap fast path (through_mem)
+            for o in range(sz):
+                if (base_addr + o) in tainted_mem:
+                    load_tainted = True; break
+            if load_tainted: break
         if not (used or load_tainted): continue
         why = []
         if used: why.append("regs:" + ",".join(sorted(used)))
@@ -129,8 +140,16 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
             if nr not in tainted_regs:
                 tainted_regs.add(nr)
                 push_reg(nr, i)
+        # store: 标 byte-level tainted [addr, addr+size). through_mem 时全段标;
+        # 否则只标 base addr (向后兼容)
         for op in d.mem_op:
-            if op[4]: tainted_mem.add(_addr_of(r, op))
+            if not op[4]: continue
+            sz = op[3] if len(op) >= 4 else 8
+            base_addr = _addr_of(r, op)
+            if through_mem:
+                for o in range(sz): tainted_mem.add(base_addr + o)
+            else:
+                tainted_mem.add(base_addr)
     return out
 
 
@@ -174,7 +193,8 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
                    max_count: int = 5000, depth: int = 0,
                    index=None,
                    exclude_regs: Optional[set] = None,
-                   data_only: bool = False):
+                   data_only: bool = False,
+                   through_mem: bool = False, mem=None):
     """Index-accelerated backward taint.
 
     用 reg_defs[reg] bisect_left 找最近 def, mem_addr_to_writes 找 mem store.
@@ -182,6 +202,11 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
 
     With exclude_regs / data_only, propagation is filtered to skip
     addressing-only regs (sp/fp/lr) and base/index regs of loads.
+
+    through_mem: 启用 byte 级 mem overlap 跟踪 (用 MemShadow). 默认只看 mem
+    op 的 base addr 精确匹配; through_mem=True 时, 对一个 size=N 的 load,
+    查 [addr, addr+N) 每个 byte 的最新 writer idx, 全部加入 pending. 这样可
+    以穿透 "8-byte str + 1-byte ldrb" 这种偏移不一致的 store/load 配对.
     """
     if index is None:
         return _backward_taint_slow(trace, idx, taint_reg, max_count,
@@ -190,6 +215,38 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
         exclude_regs = set(DEFAULT_FRAME_REGS) if data_only else set()
     else:
         exclude_regs = set(exclude_regs)
+
+    # through_mem 需要 MemShadow (byte 级数据). 调用方如已 build, 复用; 否则按需 build.
+    if through_mem and mem is None:
+        from .memshadow import MemShadow
+        mem = MemShadow(trace); mem.build()
+
+    def _mem_writers_overlapping(addr: int, size: int, before_idx: int):
+        """返回 [addr, addr+size) 范围内, idx < before_idx 的所有 unique writer_idx.
+        through_mem 模式下用; 普通模式只查 addr 精确匹配."""
+        if not through_mem or mem is None:
+            writes = index.mem_addr_to_writes.get(addr, [])
+            pos = bisect.bisect_left(writes, before_idx) - 1
+            if pos < 0: return []
+            return [writes[pos]]
+        # byte-level: scan bytes, collect unique writers
+        seen = set()
+        for o in range(size):
+            evs = mem.bytes.get(addr + o)
+            if not evs: continue
+            # 找最大 ev_idx <= before_idx (二分)
+            lo, hi = 0, len(evs)
+            while lo < hi:
+                m = (lo + hi) // 2
+                if evs[m][0] < before_idx: lo = m + 1
+                else: hi = m
+            j = lo - 1
+            while j >= 0:
+                ev_idx, _, ev_kind = evs[j]
+                if ev_kind in ("w", "x"):
+                    seen.add(ev_idx); break
+                j -= 1
+        return sorted(seen, reverse=True)
 
     out = []
     visited = set()
@@ -205,26 +262,28 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
         for op in d0.mem_op:
             if op[4]: continue
             a = _addr_of(r0, op)
-            pending.append(("MEM", idx, a))
+            sz = op[3] if len(op) >= 4 else 8
+            pending.append(("MEM", idx, a, sz))
     elif taint_reg not in exclude_regs:
         pending.append((idx, taint_reg))
 
     while pending and len(out) < max_count:
         item = pending.pop(0)
         if item[0] == "MEM":
-            _, before_idx, addr = item
-            writes = index.mem_addr_to_writes.get(addr, [])
-            pos = bisect.bisect_left(writes, before_idx) - 1
-            if pos < 0: continue
-            j = writes[pos]
-            r = trace.record(j); d = decode(r.pc, r.inst)
-            # store 的 source reg = 第一个非 base/index 的 regs_use
-            base_w = d.mem_op[0][0] if d.mem_op else None
-            idx_w = d.mem_op[0][1] if d.mem_op else None
-            src_candidates = [u for u in d.regs_use
-                              if u not in (base_w, idx_w) and u not in exclude_regs]
-            if src_candidates:
-                pending.append((j, src_candidates[0]))
+            # backward-compat: 老 3-tuple (无 size) → 默认 8
+            if len(item) == 3:
+                _, before_idx, addr = item; sz = 8
+            else:
+                _, before_idx, addr, sz = item
+            writers = _mem_writers_overlapping(addr, sz, before_idx)
+            for j in writers:
+                r = trace.record(j); d = decode(r.pc, r.inst)
+                base_w = d.mem_op[0][0] if d.mem_op else None
+                idx_w = d.mem_op[0][1] if d.mem_op else None
+                src_candidates = [u for u in d.regs_use
+                                  if u not in (base_w, idx_w) and u not in exclude_regs]
+                if src_candidates:
+                    pending.append((j, src_candidates[0]))
             continue
         cur_idx, want_reg = item
         if want_reg in exclude_regs: continue
@@ -243,7 +302,8 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
         for op in d.mem_op:
             if op[4]: continue
             a = _addr_of(r, op)
-            pending.append(("MEM", j, a))
+            sz = op[3] if len(op) >= 4 else 8
+            pending.append(("MEM", j, a, sz))
 
     seen_idx = set(); dedup = []
     for ix, reg in sorted(out):

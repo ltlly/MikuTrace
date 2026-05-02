@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "kind": "suicide_patch",
+  "description": "Anti-anti-frida: patch obfuscated tgkill svc thunks → NOP. Specific to libsgmainso 6.8.260403 (Taobao). Found via BN static analysis: 6 confirmed `svc #0` after `mov x8, #131` (SYS_tgkill).",
+  "so_pattern": "libsgmainso",
+  "so_version_hint": "6.8.260403",
+  "instruction_to_patch": {
+    "expected_bytes_le": "01 00 00 d4",
+    "comment": "svc #0",
+    "replacement_bytes_le": "1f 20 03 d5",
+    "replacement_comment": "nop"
+  },
+  "patches": [
+    { "offset": "0x54f24",  "comment": "movz @ 0x54f10, svc +0x14" },
+    { "offset": "0x5beb0",  "comment": "movz @ 0x5be9c" },
+    { "offset": "0x67274",  "comment": "movz @ 0x67260" },
+    { "offset": "0xfe334",  "comment": "movz @ 0xfe320" },
+    { "offset": "0x14829c", "comment": "movz @ 0x14828c, svc +0x10 (布局略不同)" },
+    { "offset": "0x15b6d4", "comment": "movz @ 0x15b6bc, svc +0x18" }
+  ]
+}

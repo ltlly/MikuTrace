@@ -64,8 +64,19 @@ class MemShadow:
         self.reads:  list[tuple] = []
         self.built = False
 
+    # Sidecar 文件名后缀 (与 trace.bin 同目录, 名字 = <trace_basename>.memshadow.v2.npz).
+    # 用 basename-prefixed 防 /tmp/ 多 test 互相污染. v 字段升级时 bump 数字, 老
+    # sidecar 自动失效重 build. 当前 v2: 新增 w_value/r_value 用于 mem-writes-in-range.
+    _SIDECAR_SUFFIX = ".memshadow.v2.npz"
+    # 兼容旧测试的 attribute 名
+    _SIDECAR_NAME = _SIDECAR_SUFFIX
+
     def build(self):
         if self.built: return
+        # 先试 sidecar (cache hit ~1s vs cold build ~25s 在 7M trace 上)
+        if self._try_load_sidecar():
+            self.built = True
+            return
         n = len(self.t)
         for i in range(n):
             r = self.t.record(i)
@@ -92,27 +103,131 @@ class MemShadow:
             self._load_external_writes()
         except Exception as _e:
             pass
-        # numpy 视图: 给 idxs-touching-* 端点向量化查询用. 6.8M trace 上
-        # 596ms set comprehension → ~5ms vectorized mask.
-        # writes/reads 已按 trace order build, w_idx/r_idx 自然 ascending.
+        self._build_numpy_views()
+        self.built = True
+        # 写 sidecar (不 raise; 只读 fs / 没 trace dir 时静默跳过)
+        try: self._save_sidecar()
+        except Exception: pass
+
+    def _build_numpy_views(self):
+        """从 self.writes / self.reads list 重建 numpy 视图 (w_idx 等). 复用于
+        cold build + sidecar load 两个路径."""
         import numpy as np
         if self.writes:
-            self.w_idx  = np.array([x[0] for x in self.writes], dtype=np.int64)
-            self.w_addr = np.array([x[1] for x in self.writes], dtype=np.uint64)
-            self.w_size = np.array([x[2] for x in self.writes], dtype=np.int32)
+            self.w_idx   = np.array([x[0] for x in self.writes], dtype=np.int64)
+            self.w_addr  = np.array([x[1] for x in self.writes], dtype=np.uint64)
+            self.w_size  = np.array([x[2] for x in self.writes], dtype=np.int32)
+            self.w_value = np.array([x[3] for x in self.writes], dtype=np.uint64)
         else:
-            self.w_idx = np.empty(0, dtype=np.int64)
-            self.w_addr = np.empty(0, dtype=np.uint64)
-            self.w_size = np.empty(0, dtype=np.int32)
+            self.w_idx   = np.empty(0, dtype=np.int64)
+            self.w_addr  = np.empty(0, dtype=np.uint64)
+            self.w_size  = np.empty(0, dtype=np.int32)
+            self.w_value = np.empty(0, dtype=np.uint64)
         if self.reads:
-            self.r_idx  = np.array([x[0] for x in self.reads], dtype=np.int64)
-            self.r_addr = np.array([x[1] for x in self.reads], dtype=np.uint64)
-            self.r_size = np.array([x[2] for x in self.reads], dtype=np.int32)
+            self.r_idx   = np.array([x[0] for x in self.reads], dtype=np.int64)
+            self.r_addr  = np.array([x[1] for x in self.reads], dtype=np.uint64)
+            self.r_size  = np.array([x[2] for x in self.reads], dtype=np.int32)
+            self.r_value = np.array([x[3] for x in self.reads], dtype=np.uint64)
         else:
-            self.r_idx = np.empty(0, dtype=np.int64)
-            self.r_addr = np.empty(0, dtype=np.uint64)
-            self.r_size = np.empty(0, dtype=np.int32)
-        self.built = True
+            self.r_idx   = np.empty(0, dtype=np.int64)
+            self.r_addr  = np.empty(0, dtype=np.uint64)
+            self.r_size  = np.empty(0, dtype=np.int32)
+            self.r_value = np.empty(0, dtype=np.uint64)
+
+    def _sidecar_path(self):
+        """sidecar 路径 = <trace.bin>.memshadow.v2.npz (同目录, basename 前缀避免冲突).
+        per-call dir 下 trace.bin → trace.bin.memshadow.v2.npz; tempfile.mkstemp
+        创建的 /tmp/tmpXXX.bin → /tmp/tmpXXX.bin.memshadow.v2.npz 也独立."""
+        try:
+            p = self.t.path
+            return p.parent / (p.name + self._SIDECAR_SUFFIX)
+        except Exception:
+            return None
+
+    def _save_sidecar(self):
+        """把 build 结果保存为 numpy npz. 不存原始 trace 内容, 只存派生索引.
+        v2 schema: w_*/r_* (idx,addr,size,value) + b_* (flattened bytes dict)."""
+        import numpy as np
+        p = self._sidecar_path()
+        if p is None: return
+        # bytes dict 拍平: 按 addr 排序, b_addr 是 sorted-unique addrs,
+        # b_offset[k] 是 events of b_addr[k] 在 b_idx/b_byte/b_kind 中的起点.
+        # b_offset[len(b_addr)] = total events count (sentinel for slicing).
+        if self.bytes:
+            sorted_addrs = sorted(self.bytes.keys())
+            offsets = [0]
+            flat_idx = []; flat_byte = []; flat_kind = []
+            for a in sorted_addrs:
+                evs = self.bytes[a]
+                for ev_idx, ev_byte, ev_kind in evs:
+                    flat_idx.append(ev_idx)
+                    flat_byte.append(ev_byte)
+                    flat_kind.append({"r": 0, "w": 1, "x": 2}.get(ev_kind, 1))
+                offsets.append(len(flat_idx))
+            b_addr   = np.array(sorted_addrs, dtype=np.uint64)
+            b_offset = np.array(offsets,      dtype=np.int64)
+            b_idx    = np.array(flat_idx,     dtype=np.int64)
+            b_byte   = np.array(flat_byte,    dtype=np.uint8)
+            b_kind   = np.array(flat_kind,    dtype=np.uint8)
+        else:
+            b_addr   = np.empty(0, dtype=np.uint64)
+            b_offset = np.array([0], dtype=np.int64)
+            b_idx    = np.empty(0, dtype=np.int64)
+            b_byte   = np.empty(0, dtype=np.uint8)
+            b_kind   = np.empty(0, dtype=np.uint8)
+        np.savez(p,
+                 trace_size=np.array([self.t.path.stat().st_size], dtype=np.int64),
+                 w_idx=self.w_idx, w_addr=self.w_addr,
+                 w_size=self.w_size, w_value=self.w_value,
+                 r_idx=self.r_idx, r_addr=self.r_addr,
+                 r_size=self.r_size, r_value=self.r_value,
+                 b_addr=b_addr, b_offset=b_offset,
+                 b_idx=b_idx, b_byte=b_byte, b_kind=b_kind)
+
+    def _try_load_sidecar(self) -> bool:
+        """如果 sidecar 存在且对应 trace 大小匹配, 加载并 skip cold build.
+        返回 True = loaded; False = miss / stale / corrupt."""
+        import numpy as np
+        p = self._sidecar_path()
+        if p is None or not p.exists(): return False
+        try:
+            data = np.load(p)
+            # Stale 检查: trace.bin 大小变 → invalid (新数据追加)
+            cur_size = self.t.path.stat().st_size
+            if int(data["trace_size"][0]) != cur_size:
+                return False
+            self.w_idx   = data["w_idx"];   self.w_addr  = data["w_addr"]
+            self.w_size  = data["w_size"];  self.w_value = data["w_value"]
+            self.r_idx   = data["r_idx"];   self.r_addr  = data["r_addr"]
+            self.r_size  = data["r_size"];  self.r_value = data["r_value"]
+            # 重建 writes/reads list (供 byte iteration / hex_dump 用)
+            self.writes = list(zip(self.w_idx.tolist(),
+                                    self.w_addr.tolist(),
+                                    self.w_size.tolist(),
+                                    self.w_value.tolist()))
+            self.reads  = list(zip(self.r_idx.tolist(),
+                                    self.r_addr.tolist(),
+                                    self.r_size.tolist(),
+                                    self.r_value.tolist()))
+            # 重建 bytes dict — 优化: 一次 tolist() + 切片避免百万 int() 转换
+            kind_strs = ("r", "w", "x")
+            b_addr_list   = data["b_addr"].tolist()
+            b_offset_list = data["b_offset"].tolist()
+            b_idx_list    = data["b_idx"].tolist()
+            b_byte_list   = data["b_byte"].tolist()
+            b_kind_list   = data["b_kind"].tolist()
+            self.bytes = {}
+            for k, a in enumerate(b_addr_list):
+                lo = b_offset_list[k]; hi = b_offset_list[k+1]
+                idxs  = b_idx_list[lo:hi]
+                bytes_ = b_byte_list[lo:hi]
+                kinds  = b_kind_list[lo:hi]
+                # zip + list comp 避免显式 int()
+                self.bytes[a] = [(idxs[j], bytes_[j], kind_strs[kinds[j]])
+                                  for j in range(hi - lo)]
+            return True
+        except Exception:
+            return False
 
     def _splat_bytes(self, addr: int, sz: int, val: int, idx: int, kind: str):
         # little-endian byte split
