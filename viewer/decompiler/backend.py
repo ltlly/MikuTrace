@@ -119,9 +119,9 @@ class DecompilerBackend(Protocol):
         """Load + analyze. Slow (seconds-minutes). Called once.
 
         base semantics:
-          base == 0        → 调用方将以 'SO 内部偏移' 调 function_at(0x57770).
+          base == 0        → 调用方将以 'SO 内部偏移' 调 function_at(0x1000).
                              backend 自动加上 BV 自己的 ELF preferred base.
-          base != 0        → 调用方将以 '绝对运行时 PC' 调 function_at(0x6d52ed1770).
+          base != 0        → 调用方将以 '绝对运行时 PC' 调 function_at(0x6d52ed1000).
                              backend 用 (pc - base + bv.start) 做 rebase.
         """
         ...

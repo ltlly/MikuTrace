@@ -7,7 +7,7 @@ We build a function map by scanning the trace for branch/call/return structure:
  - PCs between entries are labeled as part of the surrounding function
 
 This gives us reasonable `sub_<offset>` style names for the obfuscated SO,
-plus exact ranges. If meta has a known fn_addr (e.g. doCommandNative), use it.
+plus exact ranges. If meta has a known fn_addr (e.g. JNI_OnLoad), use it.
 """
 from __future__ import annotations
 import bisect, json, pathlib
@@ -129,7 +129,7 @@ def auto_known_offsets(trace: Trace) -> dict[int, str] | None:
 
     # 4. examples by SO basename
     if so_name:
-        # libsgmainso-6.8.260403.so -> libsgmainso
+        # libtarget-1.2.3.so -> libtarget
         stem = so_name.split("-")[0].split(".")[0]
         proj_root = pathlib.Path(__file__).resolve().parent.parent
         candidates.append(proj_root / "examples" / stem / "known_offsets.json")
@@ -209,7 +209,7 @@ def build_from_trace(trace: Trace, base: int = 0,
         seen_entries.add(first_pc)
 
     # Drop entries that are already "inside" a known entry
-    # (e.g. don't add sub_57780 when doCommandNative is at 57770)
+    # (e.g. don't add sub_1010 when myFunc is at 0x1000)
     if m.module and known_offsets:
         known_starts = sorted(known_offsets.keys())
         filtered = set()

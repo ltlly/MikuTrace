@@ -480,6 +480,21 @@ def cmd_trace(args):
                 wlog(f"[!] failed to load --jni-hooks {jh_path}: {e}")
         else:
             wlog(f"[!] --jni-hooks file not found: {jh_path} (skipping)")
+    # Load suicide-patch spec JSON (per-SO-version offset list).
+    suicide_spec = None
+    sps_arg = getattr(args, "suicide_patch_spec", None)
+    if bool(getattr(args, "patch_suicide", False)) and sps_arg:
+        sps_path = pathlib.Path(sps_arg)
+        if not sps_path.is_absolute():
+            sps_path = pathlib.Path(__file__).resolve().parent / sps_arg
+        if sps_path.exists():
+            try:
+                suicide_spec = json.loads(sps_path.read_text())
+                wlog(f"loaded suicide-patch spec ({len(suicide_spec.get('patches', []))} offsets) from {sps_path}")
+            except Exception as e:
+                wlog(f"[!] failed to load --suicide-patch-spec {sps_path}: {e}")
+        else:
+            wlog(f"[!] --suicide-patch-spec file not found: {sps_path}")
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -495,6 +510,7 @@ def cmd_trace(args):
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
+        "suicidePatchSpec": suicide_spec,
         "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
         "jniHooks": jni_hooks_specs,
     }
@@ -1086,9 +1102,13 @@ def main():
                            "**严禁包含 pthread/malloc/atomic** — Frida 自己用这些, attach 会崩进程. "
                            "默认空. 仅 --trace-deep 下生效.")
     p_tr.add_argument("--patch-suicide", action="store_true", dest="patch_suicide",
-                      help="patch libsgmainso 6.8.260403 内的 6 处 obfuscated tgkill svc 为 nop, "
-                           "绕过 anti-frida SIGILL 自杀. 仅对该 SO 版本有效, 且需要 --trace-deep "
-                           "(否则没必要 — 反检测在非 deep 不触发). 不会影响别的 SO.")
+                      help="启用 anti-anti-frida tgkill svc → nop patching. 默认 spec = "
+                           "tools/hooks/sgmainso_6.8.260403_suicide.json (libsgmainso 6.8.260403). "
+                           "其他 SO 版本通过 --suicide-patch-spec PATH 传 JSON. 仅 --trace-deep 下生效.")
+    p_tr.add_argument("--suicide-patch-spec", default="tools/hooks/sgmainso_6.8.260403_suicide.json",
+                      dest="suicide_patch_spec",
+                      help="JSON spec for tgkill svc patches (offset list per SO version). 默认 "
+                           "= libsgmainso 6.8.260403. 给其他 SO/版本: 写新的 spec 文件.")
     p_tr.add_argument("--hide-rwx-maps", action="store_true", dest="hide_rwx_maps",
                       help="在 libc open/read 拦截 /proc/self/maps, 过滤 rwxp 匿名段 — 让反检测"
                            "看不到 Frida Stalker block cache 的 rwx. 通用反检测绕过, 不依赖目标 SO.")

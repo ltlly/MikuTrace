@@ -1,20 +1,28 @@
-"""End-to-end smoke test: list backends, open libsgmainso via best one,
-fetch HLIL for doCommandNative (sub_457770), verify cache works.
+"""End-to-end smoke test for the decompiler backend layer.
 
-Usage:
-    PYTHONPATH=/home/ltlly/tools/binaryninja/python:. \
-        python3 -m viewer.decompiler.smoke_test
-    # or force a backend:
+List backends → open a target SO via best one → fetch HLIL for one fn →
+verify cache works. Path/offset env-overrideable so it works on any host:
+
+    TRACEMIKU_SMOKE_SO=/path/to/libfoo.so \
+    TRACEMIKU_SMOKE_FN_OFFSET=0x1234 \
+        PYTHONPATH=/path/to/binaryninja/python:. python3 -m viewer.decompiler.smoke_test
+
+    # 或 force a backend:
     TRACEMIKU_DECOMP_BACKEND=ghidra ... python3 -m viewer.decompiler.smoke_test
+
+Without env, defaults to bundled example/libsgmainso (skipped if missing).
 """
 from __future__ import annotations
-import time, sys, pathlib
+import os, time, sys, pathlib
 
 from . import make_backend, list_backends, DecompCache
 
 
-SO_PATH = "/home/ltlly/Code/traceMiku/example/106_d9da290cacaffd471ee1231d16b59190/lib/arm64-v8a/libsgmainso-6.8.260403.so"
-DOCMD_OFFSET = 0x57770
+_PROJ_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+_DEFAULT_SO = (_PROJ_ROOT / "example" / "106_d9da290cacaffd471ee1231d16b59190" /
+                "lib" / "arm64-v8a" / "libsgmainso-6.8.260403.so")
+SO_PATH = os.environ.get("TRACEMIKU_SMOKE_SO", str(_DEFAULT_SO))
+DOCMD_OFFSET = int(os.environ.get("TRACEMIKU_SMOKE_FN_OFFSET", "0x57770"), 16)
 
 
 def main():

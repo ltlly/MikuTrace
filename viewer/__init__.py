@@ -7,7 +7,7 @@ Public API for scripting / Jupyter / LLM consumption:
 
     t = load("traces/run1/calls/call_001_*/")
     print(len(t), "records")
-    print(t.meta.module.name)             # libsgmainso-6.8.260403.so
+    print(t.meta.module.name)             # e.g. libtarget-1.2.3.so
 
     sym = build_from_trace(t)             # PC → function-name lookup
     idx = Index(t); idx.build()           # cross-reference index

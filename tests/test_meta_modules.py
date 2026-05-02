@@ -20,9 +20,9 @@ def _write_minimal_trace(path: pathlib.Path, n=3):
 
 
 MODULES = [
-    {"name": "libsgmainso-6.8.260403.so", "base": "0x7a00000000", "size": 0x100000},
-    {"name": "libsgsecuritybodyso.so",    "base": "0x7b00000000", "size": 0x80000},
-    {"name": "libsgavmpso-6.4.46.so",     "base": "0x7c00000000", "size": 0x60000},
+    {"name": "libtarget-1.2.3.so",  "base": "0x7a00000000", "size": 0x100000},
+    {"name": "libhelper.so",        "base": "0x7b00000000", "size": 0x80000},
+    {"name": "libplugin-4.5.so",    "base": "0x7c00000000", "size": 0x60000},
 ]
 
 
@@ -38,29 +38,29 @@ def test_percall_dir_with_modules(tmp_path):
     json.dump({"callIdx": 1, "tid": 100, "records": 3},
               open(call / "meta.json", "w"))
     # run-level meta with modules
-    json.dump({"method": "doCommandNative", "cmd": 70102,
+    json.dump({"method": "myFunc", "cmd": 70102,
                "module": MODULES[0], "modules": MODULES},
               open(run / "meta.json", "w"))
 
     t = load(call)
     assert len(t.meta.modules) == 3
-    assert t.meta.modules[0].name == "libsgmainso-6.8.260403.so"
+    assert t.meta.modules[0].name == "libtarget-1.2.3.so"
     assert t.meta.modules[0].base == 0x7a00000000
-    assert t.meta.modules[1].name == "libsgsecuritybodyso.so"
-    assert t.meta.modules[2].name == "libsgavmpso-6.4.46.so"
+    assert t.meta.modules[1].name == "libhelper.so"
+    assert t.meta.modules[2].name == "libplugin-4.5.so"
     t.close()
 
 
 def test_legacy_trace_bin_layout_with_modules(tmp_path):
     """Legacy layout: trace_<pid>_<tid>.bin in top-level dir + meta.json."""
     _write_minimal_trace(tmp_path / "trace_12345_100.bin")
-    json.dump({"method": "doCommandNative", "cmd": 70102,
+    json.dump({"method": "myFunc", "cmd": 70102,
                "module": MODULES[0], "modules": MODULES},
               open(tmp_path / "meta.json", "w"))
 
     t = load(tmp_path)
     assert len(t.meta.modules) == 3
-    assert t.meta.modules[0].name == "libsgmainso-6.8.260403.so"
+    assert t.meta.modules[0].name == "libtarget-1.2.3.so"
     t.close()
 
 
@@ -68,7 +68,7 @@ def test_legacy_only_module_singular_fallback(tmp_path):
     """Legacy trace with only 'module' (singular), no 'modules' array.
     Fallback should populate meta.modules = [meta.module]."""
     _write_minimal_trace(tmp_path / "trace_12345_100.bin")
-    json.dump({"method": "doCommandNative",
+    json.dump({"method": "myFunc",
                "module": {"name": "libfoo.so", "base": "0x50000000", "size": 0x10000}},
               open(tmp_path / "meta.json", "w"))
 
@@ -98,7 +98,7 @@ def test_percall_meta_modules_override_run_level(tmp_path):
                "modules": per_call_modules},
               open(call / "meta.json", "w"))
     # run-level meta with DIFFERENT modules (should not override)
-    json.dump({"method": "doCommandNative",
+    json.dump({"method": "myFunc",
                "modules": MODULES},
               open(run / "meta.json", "w"))
 

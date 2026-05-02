@@ -2,7 +2,7 @@
 // 历史: 纯 C transform 在 TB 真机上 4675 条后 stalker 卡死.
 // 改用 JS transform (filter in_range), 但 callout 用 CModule on_insn (零 JS 抖动 hot path).
 const STATE = {
-    soPattern: "libsgmainso", fnOffset: 0x57770,
+    soPattern: null, fnOffset: null,    // 必传 — 见 init().
     cmdValue: 0, cmdArg: 2,
     target: null, fnHooked: false, excluded: false, fnEntered: false,
     cm: null, onInsnPtr: null,
@@ -130,8 +130,10 @@ function applyExcludesOnce() {
 rpc.exports = {
     init(opts) {
         opts = opts || {};
-        STATE.soPattern = opts.soPattern || "libsgmainso";
-        STATE.fnOffset = opts.fnOffset !== undefined ? opts.fnOffset : 0x57770;
+        STATE.soPattern = opts.soPattern;
+        if (!STATE.soPattern) throw new Error("init: opts.soPattern required");
+        STATE.fnOffset = (opts.fnOffset !== undefined) ? opts.fnOffset : null;
+        if (STATE.fnOffset == null) throw new Error("init: opts.fnOffset required for v3");
         STATE.cmdValue = opts.cmdValue || 0;
         STATE.cmdArg = opts.cmdArg !== undefined ? opts.cmdArg : 2;
 

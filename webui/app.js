@@ -23,8 +23,8 @@ const DEFAULT_SETTINGS = {
   backtraceMaxDepth: 1000,
   dotTimeout: 60,          // graphviz dot subprocess 超时秒
   // 显示格式: 'abs' = 绝对地址 0x6d6e0e4820
-  //          'fnoff' = func+offset = doCommandNative+0xb0
-  //          'soFnOff' = libsgmainso@func+offset
+  //          'fnoff' = func+offset = myFunc+0xb0
+  //          'soFnOff' = libtarget@func+offset
   addrFormat: 'fnoff',
 };
 
@@ -490,7 +490,7 @@ function soColor(name) {
   let h = 0; for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
   return SO_COLORS[Math.abs(h) % SO_COLORS.length];
 }
-// short label for SO badge: trim '.so', take 'libsg' from 'libsgmainso-6.8.260403.so'
+// short label for SO badge: trim '.so' + version suffix → e.g. 'libfoo-1.2.3.so' → 'libfo'
 function soBadge(name) {
   if (!name) return "?";
   let s = name.replace(/-[0-9.]+\.so$/, "").replace(/\.so$/, "");
@@ -1917,7 +1917,7 @@ function initSettingsTab() {
       <label>地址显示</label>
       <select id="set-addrFormat" class="inp">
         <option value="abs"${s.addrFormat==="abs"?" selected":""}>绝对地址 0x6d6e0e4820</option>
-        <option value="fnoff"${s.addrFormat==="fnoff"?" selected":""}>func+offset (doCommandNative+0xb0)</option>
+        <option value="fnoff"${s.addrFormat==="fnoff"?" selected":""}>func+offset (myFunc+0xb0)</option>
         <option value="soFnOff"${s.addrFormat==="soFnOff"?" selected":""}>so@func+offset</option>
       </select>
     </div>

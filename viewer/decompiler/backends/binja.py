@@ -4,7 +4,7 @@
   - BN 装好 (本机 /home/ltlly/tools/binaryninja/python)
   - Commercial 或更高 license (Personal license 不允许 headless API 调用)
 
-加载策略: 进程内长驻. open() 阻塞分析 (libsgmainso ~47s 冷启), 之后 hot-path
+加载策略: 进程内长驻. open() 阻塞分析 (大 SO 数十秒冷启), 之后 hot-path
 查询 ~5ms / 函数. close() 时显式 close BV, 不靠 GC.
 """
 from __future__ import annotations

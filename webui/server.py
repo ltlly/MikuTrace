@@ -685,8 +685,8 @@ def make_app(trace_path: pathlib.Path,
             dst_in = d in included_starts
             if not src_in and not dst_in: continue
             if not src_in and dst_in:
-                # external return into this fn — 用 ext_in 桩
-                # 这正是 doCommandNative 那些 in:0 块的入边来源.
+                # external return into this fn — 用 ext_in 桩.
+                # (典型: 当函数内某 BB 没在 trace 入口里出现, 但有外部 ret 进来时.)
                 kind = v["kind"]; cnt = v["count"]
                 ext_lbl = f"from +{(s-base):x}" if base else f"from {s:x}"
                 buf.write(f'  "ext_in_{s:x}" [shape=ellipse, fontsize=9, '

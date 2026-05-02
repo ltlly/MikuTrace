@@ -16,7 +16,7 @@
 // SELinux: untrusted_app 写 /data/local/tmp 被 deny, 改 /data/data/<pkg>/cache/.miku/.
 
 const STATE = {
-    soPattern: "libsgmainso", fnOffset: 0x57770,
+    soPattern: null, fnOffset: null,        // 必传, 见 init() — 不再有项目特定默认
     cmdValue: 0, cmdArg: 2, pkg: null,
     target: null, fnHooked: false, excluded: false, fnEntered: false,
     cm: null, onInsnPtr: null,
@@ -439,25 +439,19 @@ function flushExtWriteEvents() {
 
 // ─────────── Anti-anti-frida: patch obfuscated tgkill thunks ───────────────
 //
-// libsgmainso 6.8.260403 含 8 处 obfuscated tgkill block. 反检测线程通过
-// 内联 svc 调用 SYS_tgkill 自杀 — 标准 Frida `Interceptor.attach("tgkill")`
-// hook 不到. 静态分析 (BN + 字节扫) 找到 6 处确定的 svc 位置, patch 成 nop
-// 即可绕过自杀. 详见 tools/patch_sgmainso_tgkill.js.
+// 反检测线程常通过内联 `svc #0` 调用 SYS_tgkill (x8=131) 自杀 — 标准
+// Frida `Interceptor.attach("tgkill")` hook 不到 (无 PLT entry). 解法: 静态
+// 分析找出所有 `svc` 位置 (跟在 `movz x8, #131` 后), patch 成 nop.
 //
-// SVC offsets (relative to libsgmainso base, 找 movz X8,#131 对应的 svc):
-const SGMAIN_TGKILL_SVC_OFFSETS = [
-    0x54f24,    // movz @ 0x54f10, svc +0x14
-    0x5beb0,    // movz @ 0x5be9c
-    0x67274,    // movz @ 0x67260
-    0xfe334,    // movz @ 0xfe320
-    0x14829c,   // movz @ 0x14828c, svc +0x10 (布局略不同)
-    0x15b6d4,   // movz @ 0x15b6bc, svc +0x18
-];
+// 偏移随 SO 版本变, 因此走 spec-driven: host 通过 opts.suicidePatchSpec 传 JSON,
+// 描述 `[ {offset, ...}, ... ]`. 没传 spec 时不做任何 patch — 不再硬编码任何
+// SO 版本的偏移. 现成 spec 在 tools/hooks/sgmainso_6.8.260403_suicide.json.
 
 // ─────────── B3: 隐藏 RWX 匿名页 from /proc/self/maps reads ────────────────
 //
-// libsgmainso 反检测扫 /proc/self/maps 找 rwxp 命中即自杀. 在 libc 层拦截
-// open/openat 跟踪 fd, 在 read/pread 时把含 rwxp 的危险行删掉.
+// 部分反检测 SO 扫 /proc/self/maps 找 rwxp 命中即自杀. 在 libc 层拦截
+// open/openat 跟踪 fd, 在 read/pread 时把含 rwxp 的危险行删掉. 通用方案,
+// 不依赖任何特定 SO.
 
 const HIDE_MAPS_TRACKED_FDS = new Set();
 
@@ -473,7 +467,8 @@ function _hideMaps_filterLine(line) {
     if (!path) return true;
     if (path.startsWith("[")) return true;  // [anon:..] / [stack] / [heap]
     if (path.startsWith("/")) {
-        if (low.indexOf("libsgmain") >= 0) return false;     // sgmainso 自己的别动
+        // 目标 SO 自身的 rwxp 段 (它自己的代码段, 与 Frida 无关) 保留
+        if (STATE.soPattern && low.indexOf(STATE.soPattern.toLowerCase()) >= 0) return false;
         return false;                                         // 其他 lib rwxp 保留
     }
     return true;
@@ -567,34 +562,50 @@ function installRwxMapsHider() {
     log(`[hide-rwx-maps] installed ${n} libc hooks`);
 }
 
-function patchSgmainsoSuicide(modName) {
-    // modName: pattern of so to patch (e.g., "libsgmainso"). Defaults to STATE.soPattern.
-    const pat = modName || STATE.soPattern;
+function applySuicidePatchSpec(spec) {
+    // spec = { so_pattern, instruction_to_patch:{expected_bytes_le, replacement_bytes_le},
+    //          patches: [{offset, comment?}, ...] }
+    // SO 版本相关偏移全部从 spec 来 — agent 内部不硬编码任何 SO 版本.
+    if (!spec || !Array.isArray(spec.patches) || spec.patches.length === 0) {
+        log(`[patch-suicide] no spec provided; skip`);
+        return 0;
+    }
     if (STATE.suicidePatched) return 0;
+    const pat = spec.so_pattern || STATE.soPattern;
     const m = Process.enumerateModules().find(x => x.name.indexOf(pat) !== -1);
     if (!m) { log(`[patch-suicide] ${pat} not loaded yet`); return 0; }
-    const NOP = [0x1f, 0x20, 0x03, 0xd5];   // d503201f LE
+    const insn = spec.instruction_to_patch || {};
+    const expBytes = (insn.expected_bytes_le || "01 00 00 d4")
+                       .split(/\s+/).map(s => parseInt(s, 16));
+    const repBytes = (insn.replacement_bytes_le || "1f 20 03 d5")
+                       .split(/\s+/).map(s => parseInt(s, 16));
     let patched = 0;
-    for (const off of SGMAIN_TGKILL_SVC_OFFSETS) {
+    for (const p of spec.patches) {
+        const off = (typeof p.offset === "string") ? parseInt(p.offset, 16) : p.offset;
         const svcAddr = m.base.add(off);
         try {
             const before = svcAddr.readByteArray(4);
             const beforeArr = Array.from(new Uint8Array(before));
-            // svc #0 = 01 00 00 d4
-            if (beforeArr[0] !== 0x01 || beforeArr[1] !== 0x00 ||
-                beforeArr[2] !== 0x00 || beforeArr[3] !== 0xd4) {
-                log(`[patch-suicide][!] svc@+0x${off.toString(16)} mismatch (got ${beforeArr.map(b=>b.toString(16).padStart(2,'0')).join(' ')}); skip`);
+            const matches = beforeArr.length === expBytes.length &&
+                            beforeArr.every((b, i) => b === expBytes[i]);
+            if (!matches) {
+                log(`[patch-suicide][!] @+0x${off.toString(16)} byte mismatch (got ${beforeArr.map(b=>b.toString(16).padStart(2,'0')).join(' ')}); skip`);
                 continue;
             }
-            Memory.patchCode(svcAddr, 4, ptr => { ptr.writeByteArray(NOP); });
+            Memory.patchCode(svcAddr, 4, ptr => { ptr.writeByteArray(repBytes); });
             patched++;
         } catch (e) {
-            log(`[patch-suicide][!] svc@+0x${off.toString(16)} patch failed: ${e}`);
+            log(`[patch-suicide][!] @+0x${off.toString(16)} patch failed: ${e}`);
         }
     }
-    log(`[patch-suicide] ${pat}: ${patched}/${SGMAIN_TGKILL_SVC_OFFSETS.length} svc → nop`);
+    log(`[patch-suicide] ${pat}: ${patched}/${spec.patches.length} patches applied`);
     STATE.suicidePatched = true;
     return patched;
+}
+
+// 兼容老调用名 (旧 RPC dispatch 还可能引用)
+function patchSgmainsoSuicide(modName) {
+    return applySuicidePatchSpec(STATE.suicidePatchSpec);
 }
 
 // Build the list of (base, end, name) ranges where we WANT to record records.
@@ -641,8 +652,8 @@ function buildIncludeRanges() {
 // 类型). 默认 spec = tools/hooks/libart_jni.json (string-related fns).
 //
 // Interceptor 不依赖 Stalker, 不创建 RWX 块缓存 → 反检测看不到. 是给重防护
-// app (libsgmainso 类) 的备选方案: 不开 deep trace, 仅靠 JNI hooks 拿
-// string + 关键调用. 输出 jni_hooks.jsonl per-call dir, 跨 trace 复用.
+// app 的备选方案: 不开 deep trace, 仅靠 JNI hooks 拿 string + 关键调用.
+// 输出 jni_hooks.jsonl per-call dir, 跨 trace 复用.
 
 // 直接 dlsym + JNIInvokeInterface_::GetEnv, 不依赖 Java module (Frida 17 移除)
 function getJNIEnvDirect() {
@@ -803,13 +814,23 @@ function installJniStringHooksOnce() { return installJniHooksOnce(); }
 rpc.exports = {
     init(opts) {
         opts = opts || {};
-        STATE.soPattern = opts.soPattern || "libsgmainso";
+        // soPattern 必传 — agent 不再有项目特定默认.
+        // host CLI (tracemiku) 已经强制 --so 必填.
+        STATE.soPattern = opts.soPattern;
+        if (!STATE.soPattern) {
+            throw new Error("init: opts.soPattern required (e.g. 'libtarget', 'libfoo'). No hardcoded default.");
+        }
         STATE.exportName = opts.exportName || null;
         STATE.methodName = opts.methodName || null;
-        // null/undefined fnOffset means "resolve from exportName/methodName".
-        // Only fall back to the historical 0x57770 default when nothing else is given.
-        STATE.fnOffset = (opts.fnOffset != null) ? opts.fnOffset
-                        : ((opts.exportName || opts.methodName) ? null : 0x57770);
+        // null/undefined fnOffset = "resolve from exportName/methodName".
+        // 不再有"历史 fallback 到 0x57770" — 调用方必须传至少一个 (offset/export/method).
+        STATE.fnOffset = (opts.fnOffset != null) ? opts.fnOffset : null;
+        if (STATE.fnOffset == null && !STATE.exportName && !STATE.methodName) {
+            throw new Error("init: must provide fnOffset OR exportName OR methodName");
+        }
+        // suicidePatchSpec: parsed JSON of tools/hooks/<x>_suicide.json (per-version).
+        // 空 = 不打 patch. 项目特定偏移全部来自 spec 文件, agent 不硬编码.
+        STATE.suicidePatchSpec = opts.suicidePatchSpec || null;
         STATE.cmdValue = opts.cmdValue || 0;
         STATE.cmdArg = opts.cmdArg !== undefined ? opts.cmdArg : 2;
         STATE.pkg = opts.pkg || null;

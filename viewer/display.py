@@ -3,15 +3,15 @@
 Given a 64-bit value seen at a particular trace cursor, classify it and
 recursively dereference up to N levels:
     0x6daecb8f70 -> [JNIEnv*]
-    0x6c80144620 -> 0xb400006e... -> "doCommandNative"
-    0x6be3eb5780 -> [doCommandNative+0x10] (code)
-    0x111d6      -> 70102 (small int)
+    0x6c80144620 -> 0xb400006e... -> "myFunc"
+    0x6be3eb5780 -> [myFunc+0x10] (code)
+    0x111d6      -> 70102 (small int example)
     0x6c1e6bc240 -> [STACK]
 
 Sources of info:
   - SymbolMap: code-pointer resolution
   - MemShadow: dereference values via observed reads/writes
-  - module map: classify "in libsgmainso/libart/etc"
+  - module map: classify "in <target SO>/libart/etc"
   - heuristics: ascii string detection, stack region by SP, etc.
 """
 from __future__ import annotations
