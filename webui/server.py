@@ -49,6 +49,7 @@ from webui.schemas import (
     HashInputSearchAny, HashInputSearchRequest,
     DiffTracesResponse, DiffTracesRequest,
     JniEventsResponse, CallTreeResponse,
+    HashFinalizeDetectAny,
 )
 
 
@@ -2241,6 +2242,19 @@ def make_app(trace_path: pathlib.Path,
         return {"traces": [ao["trace"] for ao in all_outputs],
                 "n_traces": len(all_outputs),
                 "headers": diff_report}
+
+    @app.get("/api/hash-finalize-detect", response_model=HashFinalizeDetectAny)
+    def api_hash_finalize_detect(window: int = 500, min_size: int = 16):
+        """P1-B: scan MemShadow for hash digest output regions
+        (closes loop with /api/crypto-scan: IV → input, this → output)."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "candidates": []}
+        from viewer.hashfin import hash_finalize_detect
+        candidates = hash_finalize_detect(t, BG["mem"]["data"],
+                                           window=window, min_size=min_size)
+        return {"window": window, "min_size": min_size,
+                "count": len(candidates), "candidates": candidates}
 
     @app.get("/api/auto-phase-detect", response_model=AutoPhaseDetectAny)
     def api_auto_phase_detect(detect_byte_streams: bool = True):

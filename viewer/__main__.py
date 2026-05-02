@@ -1070,6 +1070,26 @@ def cmd_diff_traces(args):
     })
 
 
+# ───────────────────────── hash-finalize-detect ─────────────────────────
+
+def cmd_hash_finalize_detect(args):
+    """Find candidate hash digest output regions.
+
+    Closes the loop with crypto-scan: crypto-scan finds WHERE the IV was
+    loaded (input side); this finds WHERE the digest was stored (output side).
+    """
+    from .trace import load
+    from .memshadow import MemShadow
+    from .hashfin import hash_finalize_detect
+    t = load(args.trace)
+    mem = MemShadow(t); mem.build()
+    candidates = hash_finalize_detect(t, mem, window=args.window,
+                                       min_size=args.min_size)
+    t.close()
+    _emit({"window": args.window, "min_size": args.min_size,
+           "count": len(candidates), "candidates": candidates})
+
+
 # ───────────────────────── auto-phase-detect ─────────────────────────
 
 def cmd_auto_phase_detect(args):
@@ -1601,6 +1621,7 @@ _KNOWN_SUBCOMMANDS = {
     "mem-writes-in-range", "mem-flow", "crypto-scan",
     # 第二轮 xsign 实战后追加 (P0 + P1):
     "reg-at-idx", "call-chain", "hash-input-search", "auto-phase-detect",
+    "hash-finalize-detect",
     # 多 trace 差分 (P2 → 现需求做了):
     "diff-traces",
 }
@@ -1832,6 +1853,14 @@ def main():
     s.add_argument("--search-in-mem", action="store_true", dest="search_in_mem",
                    help="also search if computed hash bytes appear in mem (= used for tag)")
 
+    s = sub.add_parser("hash-finalize-detect",
+                       help="find hash digest output regions (闭环 crypto-scan IV → 输出位置)")
+    s.add_argument("trace")
+    s.add_argument("--window", type=int, default=500,
+                   help="max idx span for a contiguous output region")
+    s.add_argument("--min-size", type=int, default=16, dest="min_size",
+                   help="min bytes (16=md5, 20=sha1, 32=sha256)")
+
     s = sub.add_parser("auto-phase-detect",
                        help="heuristic timeline of algorithm phases (jni IO + crypto IV + base64)")
     s.add_argument("trace")
@@ -1877,6 +1906,7 @@ def main():
         "hash-input-search": cmd_hash_input_search,
         "auto-phase-detect": cmd_auto_phase_detect,
         "diff-traces": cmd_diff_traces,
+        "hash-finalize-detect": cmd_hash_finalize_detect,
     }
     h = handlers.get(args.subcommand)
     if h is None:

@@ -996,6 +996,30 @@ class CryptoScanPending(BaseModel):
 CryptoScanAny = Union[CryptoScanResponse, CryptoScanPending]
 
 
+# ── /api/hash-finalize-detect (P1-B) ─────────────────────────────────────────
+
+class HashFinalizeCandidate(BaseModel):
+    addr: str
+    size: int
+    enter_idx: int
+    exit_idx: int
+    kind: str
+    guess: Optional[str] = None
+
+class HashFinalizeDetectResponse(BaseModel):
+    window: int
+    min_size: int
+    count: int
+    candidates: list[HashFinalizeCandidate]
+    status: Optional[str] = None
+
+class HashFinalizeDetectPending(BaseModel):
+    status: str
+    candidates: list[HashFinalizeCandidate] = []
+
+HashFinalizeDetectAny = Union[HashFinalizeDetectResponse, HashFinalizeDetectPending]
+
+
 # ── /api/auto-phase-detect (P0-3) ────────────────────────────────────────────
 
 class PhaseEntry(BaseModel):
