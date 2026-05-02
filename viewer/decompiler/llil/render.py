@@ -433,6 +433,13 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
         if root.op == LLIL_SET_REG:
             rname = root.operands[0]
             cur_versions[rname] = blk.tag.get(root)
+        elif root.op == LLIL_CALL:
+            # 跟 SSA call-kill 一致 — caller-saved version 同步 bump,
+            # 这样 call 后的 reg 引用拿到正确的 (post-call) version.
+            for r in ("x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+                      "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+                      "x16", "x17", "x18", "lr"):
+                cur_versions[r] = cur_versions.get(r, 0) + 1
         if line:
             out.append(f"{pad}{line};")
     if epilogue:

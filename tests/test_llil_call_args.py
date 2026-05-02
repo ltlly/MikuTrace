@@ -59,3 +59,28 @@ def test_call_indirect_with_args():
     text = "\n".join(render_hlil(hlil, var_names=var_names))
     assert "call(" in text
     assert "x0_v1" in text
+
+
+def test_render_post_call_x0_uses_return_version():
+    """call → x0 之后被读 → render 应显示 post-call version (kill 后 v).
+
+    SSA call-kill 让 x0 在 call 后 bump version; render 的 cur_versions
+    必须同步 bump, 否则后续 x0 引用错链到 pre-call (即 args).
+    """
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil,
+        set_reg, reg, const, const_ptr, call, ret, unify_vars,
+    )
+    blk = ssa_block(0x1000, [
+        set_reg("x0", const(0x42)),                # x0 → v1
+        call(const_ptr(0x4000), pc=0x1000),        # bumps x0 → v2 (return)
+        set_reg("x10", reg("x0")),                 # 读 post-call x0_v2
+        ret(),
+    ])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    var_names = unify_vars({0x1000: blk})
+    text = "\n".join(render_hlil(hlil, var_names=var_names))
+    # call 前后: args 用 v1 (pre-call); 之后 x10 = x0_v2 (post-call return)
+    assert "x0_v1" in text                          # call 的 arg
+    assert "x0_v2" in text                          # post-call read
