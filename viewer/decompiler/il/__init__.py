@@ -14,6 +14,7 @@ from .ops import (
 )
 from .lift import lift_arm64, lift_static, LiftStats
 from .ssa import SsaInsn, SsaBlock, ssa_block, ssa_blocks
+from .pass_constfold import constfold_block, constfold_blocks
 
 __all__ = [
     "TlilOp",
@@ -25,4 +26,5 @@ __all__ = [
     "OPS_ALL", "OPS_ARITH", "OPS_BRANCH",
     "lift_arm64", "lift_static", "LiftStats",
     "SsaInsn", "SsaBlock", "ssa_block", "ssa_blocks",
+    "constfold_block", "constfold_blocks",
 ]
