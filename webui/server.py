@@ -45,6 +45,7 @@ from webui.schemas import (
     SoStatsResponse,
     RegAtIdxResponse, CallChainResponse,
     MemWritesInRangeAny, MemFlowAny,
+    CryptoScanAny, AutoPhaseDetectAny,
 )
 
 
@@ -901,15 +902,22 @@ def make_app(trace_path: pathlib.Path,
     TAINT_MAX_COUNT_CEILING = 50000
 
     @app.get("/api/forward-taint", response_model=ForwardTaintResponse)
-    def forward_taint_api(start: int, reg: str, max_count: int = 5000):
+    def forward_taint_api(start: int, reg: str, max_count: int = 5000,
+                          through_mem: bool = False, data_only: bool = False):
         from viewer.taint import forward_taint
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
             return {"status": BG["index"]["status"], "hits": []}
         eff = min(max(max_count, 0), TAINT_MAX_COUNT_CEILING)
+        mem_obj = BG["mem"]["data"] if (through_mem and BG["mem"]["status"] == "ready") else None
+        if through_mem and mem_obj is None:
+            _bg_run("mem", _build_mem)
         # 用 index 做 bisect 加速 — O(|hits|·log N) vs 旧 O(N²)
         results, stopped = forward_taint(t, start, reg, max_count=eff,
-                                index=BG["index"]["data"], return_status=True)
+                                index=BG["index"]["data"], return_status=True,
+                                data_only=data_only,
+                                through_mem=through_mem and mem_obj is not None,
+                                mem=mem_obj)
         m = t.meta.module
         base = m.base if m else 0
         rows = []
@@ -924,14 +932,21 @@ def make_app(trace_path: pathlib.Path,
                 "stopped_at_max": stopped, "max_count_used": eff}
 
     @app.get("/api/backward-taint", response_model=BackwardTaintResponse)
-    def backward_taint_api(start: int, reg: str, max_count: int = 5000):
+    def backward_taint_api(start: int, reg: str, max_count: int = 5000,
+                           through_mem: bool = False, data_only: bool = False):
         from viewer.taint import backward_taint
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
             return {"status": BG["index"]["status"], "chain": []}
         eff = min(max(max_count, 0), TAINT_MAX_COUNT_CEILING)
+        mem_obj = BG["mem"]["data"] if (through_mem and BG["mem"]["status"] == "ready") else None
+        if through_mem and mem_obj is None:
+            _bg_run("mem", _build_mem)
         results, stopped = backward_taint(t, start, reg, max_count=eff,
-                                 index=BG["index"]["data"], return_status=True)
+                                 index=BG["index"]["data"], return_status=True,
+                                 data_only=data_only,
+                                 through_mem=through_mem and mem_obj is not None,
+                                 mem=mem_obj)
         m = t.meta.module
         base = m.base if m else 0
         rows = []
@@ -1939,6 +1954,110 @@ def make_app(trace_path: pathlib.Path,
         }
 
     # ── P0-3: Web sync of CLI commands ────────────────────────────────────────
+
+    @app.get("/api/crypto-scan", response_model=CryptoScanAny)
+    def api_crypto_scan():
+        """Mirror viewer crypto-scan: 22 standard primitive constants in MemShadow."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "primitives": []}
+        from viewer.__main__ import _CRYPTO_PATTERNS
+        mem_obj = BG["mem"]["data"]
+        if not mem_obj.bytes:
+            return {"scanned": 0, "primitives": []}
+        addrs_sorted = sorted(mem_obj.bytes.keys())
+
+        def _scan_pattern(pat: bytes):
+            hits = []
+            for a in addrs_sorted:
+                ok = True; first_idx = None
+                for o, want in enumerate(pat):
+                    evs = mem_obj.bytes.get(a + o)
+                    if not evs: ok = False; break
+                    last = evs[-1]
+                    if last[1] != want: ok = False; break
+                    if first_idx is None or last[0] < first_idx:
+                        first_idx = last[0]
+                if ok:
+                    hits.append({"addr": hex(a), "first_idx": first_idx})
+                    if len(hits) >= 5: break
+            return hits
+
+        primitives = []
+        for name, hex_str in _CRYPTO_PATTERNS:
+            pat = bytes.fromhex(hex_str)
+            hits = _scan_pattern(pat)
+            primitives.append({"name": name, "pattern": hex_str,
+                               "hit_count": len(hits), "hits": hits})
+        return {"scanned": len(addrs_sorted), "primitives": primitives}
+
+    @app.get("/api/auto-phase-detect", response_model=AutoPhaseDetectAny)
+    def api_auto_phase_detect(detect_byte_streams: bool = True):
+        """Heuristic phase timeline. mirrors CLI auto-phase-detect."""
+        if BG["mem"]["status"] != "ready":
+            _bg_run("mem", _build_mem)
+            return {"status": BG["mem"]["status"], "phases": []}
+        import json as _json, pathlib as _pl
+        mem_obj = BG["mem"]["data"]
+        phases = []
+        # JNI events
+        jni_path = _pl.Path(t.path).parent / "jni_hooks.jsonl"
+        if jni_path.exists():
+            for line in jni_path.read_text().splitlines():
+                try: e = _json.loads(line)
+                except Exception: continue
+                tid = e.get("trace_idx")
+                if tid is None: continue
+                op = e.get("id", "")
+                if op == "GetStringUTFChars":
+                    ret_v = e.get("ret")
+                    if isinstance(ret_v, str) and not ret_v.startswith("0x"):
+                        phases.append({"idx": tid, "phase": "jni_input",
+                                        "info": f"GetStringUTFChars '{ret_v[:32]}'"})
+                elif op == "NewStringUTF":
+                    v = (e.get("args") or {}).get("bytes")
+                    if isinstance(v, str):
+                        phases.append({"idx": tid, "phase": "jni_output",
+                                        "info": f"NewStringUTF '{v[:48]}'"})
+        # crypto IV detection (subset)
+        crypto_patterns = [
+            ("sha1_init",    bytes.fromhex("01234567")),
+            ("sha1_init_h1", bytes.fromhex("89abcdef")),
+            ("sha1_init_h4", bytes.fromhex("f0e1d2c3")),
+            ("sha256_init",  bytes.fromhex("67e6096a")),
+        ]
+        for label, pat in crypto_patterns:
+            for a in mem_obj.bytes:
+                ok = True; first_idx = None
+                for o in range(len(pat)):
+                    evs = mem_obj.bytes.get(a + o)
+                    if not evs or evs[-1][1] != pat[o]: ok = False; break
+                    if first_idx is None or evs[0][0] < first_idx:
+                        first_idx = evs[0][0]
+                if ok and first_idx is not None:
+                    phases.append({"idx": first_idx, "phase": label,
+                                   "info": f"IV pattern at 0x{a:x}"})
+        # byte_stream_write
+        if detect_byte_streams:
+            size1 = mem_obj.w_size == 1
+            if size1.any():
+                w_idx_b = mem_obj.w_idx[size1]
+                w_addr_b = mem_obj.w_addr[size1]
+                for i in range(len(w_idx_b) - 4):
+                    if (w_addr_b[i+1] - w_addr_b[i] == 1 and
+                        w_addr_b[i+2] - w_addr_b[i+1] == 1 and
+                        w_addr_b[i+3] - w_addr_b[i+2] == 1 and
+                        w_idx_b[i+3] - w_idx_b[i] < 500):
+                        phases.append({"idx": int(w_idx_b[i]),
+                                       "phase": "byte_stream_write",
+                                       "info": f"4+ contiguous strb starting 0x{int(w_addr_b[i]):x}"})
+        phases.sort(key=lambda p: p["idx"])
+        dedup = []
+        for p in phases:
+            if dedup and abs(p["idx"] - dedup[-1]["idx"]) < 50 and p["phase"] == dedup[-1]["phase"]:
+                continue
+            dedup.append(p)
+        return {"trace_records": len(t), "phases": dedup}
 
     def _parse_int_qs(s: Optional[str]) -> Optional[int]:
         if s is None or s == "": return None

@@ -899,6 +899,49 @@ class RegAtIdxResponse(BaseModel):
     regs: dict[str, RegValue]
 
 
+# ── /api/crypto-scan (P0-3) ──────────────────────────────────────────────────
+
+class CryptoHit(BaseModel):
+    addr: str
+    first_idx: Optional[int] = None
+
+class CryptoPrimitive(BaseModel):
+    name: str
+    pattern: str
+    hit_count: int
+    hits: list[CryptoHit]
+
+class CryptoScanResponse(BaseModel):
+    scanned: int
+    primitives: list[CryptoPrimitive]
+    status: Optional[str] = None
+
+class CryptoScanPending(BaseModel):
+    status: str
+    primitives: list[CryptoPrimitive] = []
+
+CryptoScanAny = Union[CryptoScanResponse, CryptoScanPending]
+
+
+# ── /api/auto-phase-detect (P0-3) ────────────────────────────────────────────
+
+class PhaseEntry(BaseModel):
+    idx: int
+    phase: str
+    info: str
+
+class AutoPhaseDetectResponse(BaseModel):
+    trace_records: int
+    phases: list[PhaseEntry]
+    status: Optional[str] = None
+
+class AutoPhaseDetectPending(BaseModel):
+    status: str
+    phases: list[PhaseEntry] = []
+
+AutoPhaseDetectAny = Union[AutoPhaseDetectResponse, AutoPhaseDetectPending]
+
+
 # ── /api/mem-writes-in-range (P0-3) ──────────────────────────────────────────
 
 class MemWriteRow(BaseModel):
