@@ -2732,11 +2732,13 @@ def make_app(trace_path: pathlib.Path,
         # 看不到 (LLIL_LOAD / LLIL_INTRINSIC) 的事实仍能折.
         uidf = collect_uidf(t, ssa_map, max_blocks=200, max_roots_per_block=80)
 
-        # 6. constfold (block-by-block, with UIDF)
+        # 6. constfold (block-by-block, with UIDF + memshadow if available)
         from viewer.decompiler.llil import constfold_block as _cf
         cf_count = 0
+        mem_for_fold = mem if (mem is not None and mem.built) else None
         for pc, blk in list(ssa_map.items()):
-            new = _cf(blk, uidf=uidf)
+            new = _cf(blk, uidf=uidf, mem=mem_for_fold,
+                      mem_t_idx=t.n - 1 if t.n > 0 else -1)
             ssa_map[pc] = new
             cf_count += sum(1 for r in new.roots
                             if hasattr(r, "operands") and len(r.operands) >= 2

@@ -71,13 +71,31 @@ def _eval_op(op: str, vals: list[int]) -> int | None:
     return None
 
 
+def _read_mem_bytes(mem, addr: int, size: int, t_idx: int) -> int | None:
+    """从 memshadow 读 size 字节 (LE) → int. 任何字节缺失返 None."""
+    if mem is None or not mem.built:
+        return None
+    val = 0
+    for i in range(size):
+        b, _kind, _src = mem.byte_at(addr + i, t_idx)
+        if b is None:
+            return None
+        val |= (b & 0xFF) << (i * 8)
+    return val
+
+
 def fold_expr(node: LlilExpr,
               tag: SsaTag,
-              env: dict[tuple, int]) -> LlilExpr:
+              env: dict[tuple, int],
+              mem=None,
+              mem_t_idx: int = -1) -> LlilExpr:
     """递归 fold 一个 sub-expression. 返回新 expr (immutable principle).
     若没 fold 机会, 返回 node 自身 (object identity 保持, 上层判等高效).
 
     env: dict[(reg_name, version) → int_value] — 已知 const 的 SSA def.
+    mem: optional MemShadow — 当 LLIL_LOAD addr 全 const 时, 用 memshadow
+         查实际字节, fold LOAD → CONST (trace 反编译器独家能力, BN 静态做不到).
+    mem_t_idx: 用 memshadow 在哪个 trace idx 查 (默认 -1 = 末尾, 最稳态值).
     """
     if node.op == LLIL_CONST:
         return node
@@ -90,10 +108,30 @@ def fold_expr(node: LlilExpr,
                             operands=[env[key]],
                             extra={"_folded_from": "REG"})
         return node
-    if node.op in (LLIL_LOAD, LLIL_STORE):
+    if node.op == LLIL_LOAD:
+        # fold sub addr 后, 若 addr 是 LLIL_CONST + memshadow 可用 → fold 成
+        # LLIL_CONST(实际字节). 这是 trace 反编译器独家能力 (BN 静态没此优势).
+        new_addr = (fold_expr(node.operands[0], tag, env, mem, mem_t_idx)
+                    if isinstance(node.operands[0], LlilExpr)
+                    else node.operands[0])
+        if (mem is not None and isinstance(new_addr, LlilExpr)
+                and new_addr.op == LLIL_CONST and node.size > 0):
+            addr_val = int(new_addr.operands[0])
+            mem_val = _read_mem_bytes(mem, addr_val, node.size, mem_t_idx)
+            if mem_val is not None:
+                return LlilExpr(LLIL_CONST, size=node.size,
+                                operands=[mem_val],
+                                extra={"_folded_from": "LOAD",
+                                       "_load_addr": addr_val})
+        if isinstance(node.operands[0], LlilExpr) and new_addr is node.operands[0]:
+            return node
+        return LlilExpr(node.op, size=node.size,
+                        operands=[new_addr], extra=dict(node.extra),
+                        pc=node.pc)
+    if node.op == LLIL_STORE:
         # fold sub addr / value 但 op 本身不 fold (有副作用)
         new_ops = [
-            fold_expr(o, tag, env) if isinstance(o, LlilExpr) else o
+            fold_expr(o, tag, env, mem, mem_t_idx) if isinstance(o, LlilExpr) else o
             for o in node.operands
         ]
         if all(a is b for a, b in zip(new_ops, node.operands)):
@@ -103,7 +141,7 @@ def fold_expr(node: LlilExpr,
                         pc=node.pc)
     # arithmetic/bitwise/cmp: 递归 fold 子 expr, 全 const 则 evaluate
     new_ops = [
-        fold_expr(o, tag, env) if isinstance(o, LlilExpr) else o
+        fold_expr(o, tag, env, mem, mem_t_idx) if isinstance(o, LlilExpr) else o
         for o in node.operands
     ]
     consts: list[int] = []
@@ -131,7 +169,8 @@ def fold_expr(node: LlilExpr,
 
 
 def constfold_block(blk: SsaBlock,
-                    uidf: dict | None = None) -> SsaBlock:
+                    uidf: dict | None = None,
+                    mem=None, mem_t_idx: int = -1) -> SsaBlock:
     """对一个 SsaBlock 跑 const fold. 返回新 block.
 
     维护 env: dict[(reg, version) → int]. 每条 SET_REG fold value 后, 若
@@ -156,8 +195,8 @@ def constfold_block(blk: SsaBlock,
         if root.op == LLIL_SET_REG:
             rname = root.operands[0]
             value_expr = root.operands[1]
-            new_value = fold_expr(value_expr, blk.tag, env) if isinstance(
-                value_expr, LlilExpr) else value_expr
+            new_value = fold_expr(value_expr, blk.tag, env, mem, mem_t_idx) \
+                if isinstance(value_expr, LlilExpr) else value_expr
             if new_value is value_expr:
                 new_roots.append(root)
             else:
@@ -186,7 +225,7 @@ def constfold_block(blk: SsaBlock,
         new_root = root
         if isinstance(root, LlilExpr) and root.operands:
             new_ops = [
-                fold_expr(o, blk.tag, env) if isinstance(o, LlilExpr) else o
+                fold_expr(o, blk.tag, env, mem, mem_t_idx) if isinstance(o, LlilExpr) else o
                 for o in root.operands
             ]
             if not all(a is b for a, b in zip(new_ops, root.operands)):
@@ -224,13 +263,14 @@ def _copy_versions(old: LlilExpr, new: LlilExpr,
 
 
 def constfold_blocks(blocks: dict[int, SsaBlock],
-                     uidf: dict | None = None
+                     uidf: dict | None = None,
+                     mem=None, mem_t_idx: int = -1
                      ) -> tuple[dict[int, SsaBlock], int]:
     """批量. 返回 (新 dict, fold 次数 — 子 expr 替换次数)."""
     out: dict[int, SsaBlock] = {}
     total = 0
     for pc, blk in blocks.items():
-        new = constfold_block(blk, uidf=uidf)
+        new = constfold_block(blk, uidf=uidf, mem=mem, mem_t_idx=mem_t_idx)
         # count: 顶层 SET_REG value 是 LLIL_CONST + _folded_from
         for r in new.roots:
             if r.op == LLIL_SET_REG and isinstance(r.operands[1], LlilExpr):
