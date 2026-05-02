@@ -18,13 +18,26 @@ from .factory import make_backend, list_backends
 from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR
 from .builder import build_trace_ir
 from .render import render_summary_md, render_func_md, write_decompile_dir
+from .llm_bundle import (
+    Bundle, build_fn_decompile_prompt, build_summary_prompt,
+    SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_SUMMARY,
+)
+from .llm_client import (
+    LlmModel, LlmResult, ClaudeModel, DeepSeekModel, QwenModel,
+    make_llm_model, list_llm_models,
+)
 
 __all__ = [
     # static decompiler bridge (existing)
     "DecompilerBackend", "Function", "HlilLine", "FieldHint", "VarType",
     "DecompCache", "make_backend", "list_backends",
-    # trace decompiler (new, P2-DEC1)
+    # trace decompiler IR (P2-DEC1)
     "TopIR", "FuncIR", "BlockIR", "LoopIR", "CallIR", "EdgeIR",
     "build_trace_ir",
     "render_summary_md", "render_func_md", "write_decompile_dir",
+    # LLM (P2-DEC2)
+    "Bundle", "build_fn_decompile_prompt", "build_summary_prompt",
+    "SYSTEM_PROMPT_DECOMPILE", "SYSTEM_PROMPT_SUMMARY",
+    "LlmModel", "LlmResult", "ClaudeModel", "DeepSeekModel", "QwenModel",
+    "make_llm_model", "list_llm_models",
 ]

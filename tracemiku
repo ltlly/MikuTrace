@@ -921,16 +921,23 @@ def cmd_view(args):
 
 
 def cmd_dec(args):
-    """Trace decompiler — 生成 LLM-friendly skeleton IR (P2-DEC1).
+    """Trace decompiler — 生成 LLM-friendly skeleton IR (P2-DEC1+DEC2).
 
-    路线 B (设计: docs/trace-decompiler-design.md). 默认行为:
-    扫 trace, build TraceIR, 写 <path>/decompile/{summary.md, fns/F<id>.md}.
-    LLM 直接读这些 markdown 反编译.
+    路线 B (设计: docs/trace-decompiler-design.md).
 
-    `--summary` / `--fn F0` → 只 stdout, 不落盘 (UNIX-style).
+    模式:
+      默认                  落盘 <path>/decompile/{summary.md, fns/F<id>.md}
+      --summary             stdout summary.md
+      --fn F0               stdout F0.md
+      --prompt-only F0      stdout 反编译 prompt (system + user)
+      --call-llm claude     调 LLM (默认对每 fn 一次), 落 decompile/llm_results/
     """
     from viewer import load, build_trace_ir, write_decompile_dir
-    from viewer.decompiler import render_summary_md, render_func_md
+    from viewer.decompiler import (
+        render_summary_md, render_func_md,
+        build_fn_decompile_prompt, build_summary_prompt,
+        make_llm_model,
+    )
     p = pathlib.Path(args.path)
     if not p.exists():
         print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
@@ -939,16 +946,65 @@ def cmd_dec(args):
     top = build_trace_ir(t)
     print(f"[dec] built IR: {len(top.fns)} fn, "
           f"{sum(len(f.blocks) for f in top.fns)} blocks", file=sys.stderr)
+
+    # ── 只输出 summary / fn-md ────────────────────────────────────────
     if args.summary:
         sys.stdout.write(render_summary_md(top))
         t.close(); return 0
-    if args.fn:
+    if args.fn and not args.call_llm and not args.prompt_only:
         fn = top.fn(args.fn)
         if fn is None:
             print(f"[!] no such fn: {args.fn} (have {[f.id for f in top.fns]})",
                   file=sys.stderr); t.close(); return 1
         sys.stdout.write(render_func_md(fn))
         t.close(); return 0
+
+    # ── --prompt-only: stdout 拼好的 prompt ───────────────────────────
+    if args.prompt_only:
+        if args.prompt_only.lower() == "summary":
+            b = build_summary_prompt(top)
+        else:
+            try:
+                b = build_fn_decompile_prompt(top, args.prompt_only)
+            except KeyError as e:
+                print(f"[!] {e}", file=sys.stderr); t.close(); return 1
+        sys.stdout.write(f"=== SYSTEM ===\n{b.system}\n=== USER ===\n{b.user}\n")
+        sys.stderr.write(f"\n[prompt] ~{b.estimated_tokens} tokens, {b.chars()} chars\n")
+        t.close(); return 0
+
+    # ── --call-llm: 真调 LLM ────────────────────────────────────────
+    if args.call_llm:
+        try:
+            model = make_llm_model(args.call_llm)
+        except KeyError as e:
+            print(f"[!] {e}", file=sys.stderr); t.close(); return 1
+        out_root = pathlib.Path(args.out) if args.out else p
+        dec_dir = write_decompile_dir(top, out_root)   # also persists IR
+        results_dir = dec_dir / "llm_results"
+        results_dir.mkdir(exist_ok=True)
+        targets = [top.fn(args.fn)] if args.fn else top.fns
+        if args.fn and targets[0] is None:
+            print(f"[!] no such fn: {args.fn}", file=sys.stderr); t.close(); return 1
+        for fn in targets:
+            print(f"[llm] {model.name}/{model.model_id} → {fn.id} ...",
+                  file=sys.stderr)
+            b = build_fn_decompile_prompt(top, fn.id)
+            print(f"  prompt ~{b.estimated_tokens} tokens", file=sys.stderr)
+            r = model.call(b.user, system=b.system, max_tokens=args.max_tokens)
+            if r.error:
+                print(f"  [!] LLM error: {r.error}", file=sys.stderr)
+                continue
+            out_file = results_dir / f"{model.name}_{fn.id}.md"
+            out_file.write_text(
+                f"<!-- model: {r.model}  in: {r.prompt_tokens} tok  "
+                f"out: {r.output_tokens} tok  latency: {r.latency_ms} ms -->\n\n"
+                + r.c_code, encoding="utf-8"
+            )
+            print(f"  → {out_file}  ({r.prompt_tokens}→{r.output_tokens} tok, "
+                  f"{r.latency_ms} ms)", file=sys.stderr)
+        t.close(); return 0
+
+    # ── 默认: 落盘 ────────────────────────────────────────────────────
     out_root = pathlib.Path(args.out) if args.out else p
     dec_dir = write_decompile_dir(top, out_root)
     print(f"[dec] wrote: {dec_dir}", file=sys.stderr)
@@ -1455,7 +1511,7 @@ def main():
     p_fz = sp.add_parser("finalize", help="扫 run/calls/_pending_call_* 补 meta + 重命名 (恢复中断的 trace)")
     p_fz.add_argument("path", help="run 目录")
 
-    # dec (trace decompiler — LLM-friendly skeleton IR, P2-DEC1)
+    # dec (trace decompiler — LLM-friendly skeleton IR, P2-DEC1+DEC2)
     p_dc = sp.add_parser("dec",
                          help="生成 LLM-friendly trace IR (markdown), 落 <run>/decompile/")
     p_dc.add_argument("path", help="trace 目录 (per-call 或 single-bin)")
@@ -1465,6 +1521,18 @@ def main():
                       help="只输出 summary.md 到 stdout, 不落盘")
     p_dc.add_argument("--out", default=None,
                       help="输出根 (默认 = path/decompile)")
+    # P2-DEC2 — LLM 集成
+    p_dc.add_argument("--prompt-only", default=None, metavar="FN_ID",
+                      help="拼装该 fn 的反编译 prompt, stdout 输出 (system + user), "
+                           "不调 LLM. 给 copy-paste 到 Claude Code 等用. "
+                           "FN_ID = summary 表示 summary 级 prompt.")
+    p_dc.add_argument("--call-llm", default=None, metavar="MODEL",
+                      help="调 LLM 真做反编译. MODEL ∈ "
+                           "{claude, claude-opus-4-7, deepseek, deepseek-chat, qwen}. "
+                           "需 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY. "
+                           "搭 --fn F0 用; 不指定 --fn 默认对每个 fn 都跑 (慢).")
+    p_dc.add_argument("--max-tokens", type=int, default=4096,
+                      help="LLM 输出上限 token (默认 4096, Sonnet 一次出 ~3K c 代码够)")
 
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")
