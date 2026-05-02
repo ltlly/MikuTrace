@@ -894,15 +894,20 @@ def make_app(trace_path: pathlib.Path,
                 if len(rows) >= max_results: break
         return {"count": len(rows), "pattern": pattern, "hits": rows}
 
+    # 上限保护: 单 endpoint 一次最多构建 50k 行 — 超过 ~10MB JSON,
+    # 防止 max_count=1M 触发 200MB+ 内存峰值.
+    TAINT_MAX_COUNT_CEILING = 50000
+
     @app.get("/api/forward-taint", response_model=ForwardTaintResponse)
-    def forward_taint_api(start: int, reg: str, max_count: int = 500):
+    def forward_taint_api(start: int, reg: str, max_count: int = 5000):
         from viewer.taint import forward_taint
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
             return {"status": BG["index"]["status"], "hits": []}
+        eff = min(max(max_count, 0), TAINT_MAX_COUNT_CEILING)
         # 用 index 做 bisect 加速 — O(|hits|·log N) vs 旧 O(N²)
-        results = forward_taint(t, start, reg, max_count=max_count,
-                                index=BG["index"]["data"])
+        results, stopped = forward_taint(t, start, reg, max_count=eff,
+                                index=BG["index"]["data"], return_status=True)
         m = t.meta.module
         base = m.base if m else 0
         rows = []
@@ -913,16 +918,18 @@ def make_app(trace_path: pathlib.Path,
                          "rel": hex(r.pc - base) if base else None,
                          "func": fname if fname != "?" else None,
                          "asm": f"{d.mnemonic} {d.op_str}", "why": why})
-        return {"count": len(rows), "from": start, "reg": reg, "hits": rows}
+        return {"count": len(rows), "from": start, "reg": reg, "hits": rows,
+                "stopped_at_max": stopped, "max_count_used": eff}
 
     @app.get("/api/backward-taint", response_model=BackwardTaintResponse)
-    def backward_taint_api(start: int, reg: str, max_count: int = 500):
+    def backward_taint_api(start: int, reg: str, max_count: int = 5000):
         from viewer.taint import backward_taint
         if BG["index"]["status"] != "ready":
             _bg_run("index", _build_index)
             return {"status": BG["index"]["status"], "chain": []}
-        results = backward_taint(t, start, reg, max_count=max_count,
-                                 index=BG["index"]["data"])
+        eff = min(max(max_count, 0), TAINT_MAX_COUNT_CEILING)
+        results, stopped = backward_taint(t, start, reg, max_count=eff,
+                                 index=BG["index"]["data"], return_status=True)
         m = t.meta.module
         base = m.base if m else 0
         rows = []
@@ -933,7 +940,8 @@ def make_app(trace_path: pathlib.Path,
                          "rel": hex(r.pc - base) if base else None,
                          "func": fname if fname != "?" else None,
                          "asm": f"{d.mnemonic} {d.op_str}", "via": via})
-        return {"count": len(rows), "from": start, "reg": reg, "chain": rows}
+        return {"count": len(rows), "from": start, "reg": reg, "chain": rows,
+                "stopped_at_max": stopped, "max_count_used": eff}
 
     @app.get("/api/strings", response_model=StringsResponse)
     def strings_api(min_len: int = 4, q: str = "", cursor: int = -1, limit: int = 0):

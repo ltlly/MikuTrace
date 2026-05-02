@@ -69,7 +69,8 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
                   index=None,
                   exclude_regs: Optional[set] = None,
                   data_only: bool = False,
-                  through_mem: bool = False, mem=None):
+                  through_mem: bool = False, mem=None,
+                  return_status: bool = False):
     """Forward taint with heap-based next-use lookup.
 
     用 min-heap 维护每个 tainted reg 的 (next_use_idx, reg, cursor) 元组,
@@ -78,10 +79,17 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
     through_mem: store-then-load 链穿透. 当一条 store 写 tainted reg 时, 标记
     [addr, addr+size) 整段 byte-level tainted; 后续任何 load (含 partial) 命中
     这区间 → 目的 reg 受感染. 对应 backward 的 byte-level overlap.
+
+    return_status: 若 True, 返回 (rows, stopped_at_max). False (默认) 只返回 rows
+    保持向后兼容. stopped_at_max=True 表示循环因 max_count 截断 (heap 仍有未消费项).
     """
     if index is None:
-        return _forward_taint_slow(trace, start_idx, taint_reg, max_count,
+        rows = _forward_taint_slow(trace, start_idx, taint_reg, max_count,
                                     exclude_regs=exclude_regs, data_only=data_only)
+        if return_status:
+            stopped = (max_count > 0 and len(rows) >= max_count)
+            return rows, stopped
+        return rows
     if exclude_regs is None:
         exclude_regs = set(DEFAULT_FRAME_REGS) if data_only else set()
     else:
@@ -150,6 +158,9 @@ def forward_taint(trace: Trace, start_idx: int, taint_reg: str,
                 for o in range(sz): tainted_mem.add(base_addr + o)
             else:
                 tainted_mem.add(base_addr)
+    if return_status:
+        stopped = max_count > 0 and len(out) >= max_count
+        return out, stopped
     return out
 
 
@@ -194,7 +205,8 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
                    index=None,
                    exclude_regs: Optional[set] = None,
                    data_only: bool = False,
-                   through_mem: bool = False, mem=None):
+                   through_mem: bool = False, mem=None,
+                   return_status: bool = False):
     """Index-accelerated backward taint.
 
     用 reg_defs[reg] bisect_left 找最近 def, mem_addr_to_writes 找 mem store.
@@ -209,8 +221,12 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
     以穿透 "8-byte str + 1-byte ldrb" 这种偏移不一致的 store/load 配对.
     """
     if index is None:
-        return _backward_taint_slow(trace, idx, taint_reg, max_count,
+        rows = _backward_taint_slow(trace, idx, taint_reg, max_count,
                                      exclude_regs=exclude_regs, data_only=data_only)
+        if return_status:
+            stopped = (max_count > 0 and len(rows) >= max_count)
+            return rows, stopped
+        return rows
     if exclude_regs is None:
         exclude_regs = set(DEFAULT_FRAME_REGS) if data_only else set()
     else:
@@ -309,6 +325,9 @@ def backward_taint(trace: Trace, idx: int, taint_reg: str,
     for ix, reg in sorted(out):
         if ix in seen_idx: continue
         seen_idx.add(ix); dedup.append((ix, reg))
+    if return_status:
+        stopped = max_count > 0 and len(out) >= max_count
+        return dedup, stopped
     return dedup
 
 

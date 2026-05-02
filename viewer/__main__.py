@@ -202,6 +202,20 @@ def _parse_exclude_regs(s):
     return {x.strip() for x in s.split(",") if x.strip()}
 
 
+def _summarize_by_fn(rows: list[dict]) -> list[dict]:
+    """Aggregate taint rows by function name. Returns list of
+    {func, count, first_idx, last_idx} sorted by count desc."""
+    by_fn: dict[str, dict] = {}
+    for r in rows:
+        fn = r.get("func") or "?"
+        e = by_fn.setdefault(fn, {"func": fn, "count": 0,
+                                   "first_idx": r["idx"], "last_idx": r["idx"]})
+        e["count"] += 1
+        if r["idx"] < e["first_idx"]: e["first_idx"] = r["idx"]
+        if r["idx"] > e["last_idx"]: e["last_idx"] = r["idx"]
+    return sorted(by_fn.values(), key=lambda e: -e["count"])
+
+
 def cmd_taint_fwd(args):
     from .trace import load
     from .symbols import build_from_trace
@@ -215,11 +229,12 @@ def cmd_taint_fwd(args):
     if getattr(args, "through_mem", False):
         from .memshadow import MemShadow
         mem = MemShadow(t); mem.build()
-    results = forward_taint(t, args.start, args.reg, max_count=args.max, index=idx,
-                             exclude_regs=_parse_exclude_regs(args.exclude_regs),
-                             data_only=args.data_only,
-                             through_mem=getattr(args, "through_mem", False),
-                             mem=mem)
+    results, stopped_at_max = forward_taint(
+        t, args.start, args.reg, max_count=args.max, index=idx,
+        exclude_regs=_parse_exclude_regs(args.exclude_regs),
+        data_only=args.data_only,
+        through_mem=getattr(args, "through_mem", False),
+        mem=mem, return_status=True)
     rows = []
     for i, why in results:
         r = t.record(i); d = decode(r.pc, r.inst)
@@ -231,8 +246,11 @@ def cmd_taint_fwd(args):
             "asm": f"{d.mnemonic} {d.op_str}", "why": why,
         })
     t.close()
-    _emit({"from": args.start, "reg": args.reg, "data_only": args.data_only,
-           "count": len(rows), "hits": rows})
+    out = {"from": args.start, "reg": args.reg, "data_only": args.data_only,
+           "count": len(rows), "stopped_at_max": stopped_at_max, "hits": rows}
+    if getattr(args, "summary_by_fn", False):
+        out["summary_by_fn"] = _summarize_by_fn(rows)
+    _emit(out)
 
 
 def cmd_taint_bwd(args):
@@ -248,11 +266,12 @@ def cmd_taint_bwd(args):
     if getattr(args, "through_mem", False):
         from .memshadow import MemShadow
         mem = MemShadow(t); mem.build()
-    results = backward_taint(t, args.start, args.reg, max_count=args.max, index=idx,
-                              exclude_regs=_parse_exclude_regs(args.exclude_regs),
-                              data_only=args.data_only,
-                              through_mem=getattr(args, "through_mem", False),
-                              mem=mem)
+    results, stopped_at_max = backward_taint(
+        t, args.start, args.reg, max_count=args.max, index=idx,
+        exclude_regs=_parse_exclude_regs(args.exclude_regs),
+        data_only=args.data_only,
+        through_mem=getattr(args, "through_mem", False),
+        mem=mem, return_status=True)
     rows = []
     for i, via in results:
         r = t.record(i); d = decode(r.pc, r.inst)
@@ -264,8 +283,11 @@ def cmd_taint_bwd(args):
             "asm": f"{d.mnemonic} {d.op_str}", "via": via,
         })
     t.close()
-    _emit({"from": args.start, "reg": args.reg, "data_only": args.data_only,
-           "count": len(rows), "chain": rows})
+    out = {"from": args.start, "reg": args.reg, "data_only": args.data_only,
+           "count": len(rows), "stopped_at_max": stopped_at_max, "chain": rows}
+    if getattr(args, "summary_by_fn", False):
+        out["summary_by_fn"] = _summarize_by_fn(rows)
+    _emit(out)
 
 
 # ───────────────────────── data-chase (Gap-F) ─────────────────────────
@@ -1612,24 +1634,30 @@ def main():
     s.add_argument("trace")
     s.add_argument("--start", type=int, required=True)
     s.add_argument("--reg", required=True)
-    s.add_argument("--max", type=int, default=500)
+    s.add_argument("--max", type=int, default=5000,
+                    help="cap chain length (default 5000)")
     s.add_argument("--exclude-regs", default="", dest="exclude_regs",
                     help="comma-sep regs to skip (e.g. 'sp,fp,lr'). Default empty.")
     s.add_argument("--data-only", action="store_true", dest="data_only",
                     help="skip ldr base/idx regs + sp/fp/lr (LLM逆向 mode)")
     s.add_argument("--through-mem", action="store_true", dest="through_mem",
                     help="byte-level mem store→load 穿透 (对称 backward)")
+    s.add_argument("--summary-by-fn", action="store_true", dest="summary_by_fn",
+                    help="aggregate hits by function (count, first_idx, last_idx)")
 
     s = sub.add_parser("taint-bwd", help="backward def-chain from idx on a register")
     s.add_argument("trace")
     s.add_argument("--start", type=int, required=True)
     s.add_argument("--reg", required=True)
-    s.add_argument("--max", type=int, default=500)
+    s.add_argument("--max", type=int, default=5000,
+                    help="cap chain length (default 5000)")
     s.add_argument("--exclude-regs", default="", dest="exclude_regs",
                     help="comma-sep regs to skip (e.g. 'sp,fp,lr')")
     s.add_argument("--data-only", action="store_true", dest="data_only")
     s.add_argument("--through-mem", action="store_true", dest="through_mem",
                     help="byte-level mem overlap (穿透 8B-store + 1B-load 错配; 慢, 需 build MemShadow)")
+    s.add_argument("--summary-by-fn", action="store_true", dest="summary_by_fn",
+                    help="aggregate chain by function (count, first_idx, last_idx)")
 
     s = sub.add_parser("data-chase", help="single-path data chase (cross-fn, skips sp/fp noise)")
     s.add_argument("trace")

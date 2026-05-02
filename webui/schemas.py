@@ -369,6 +369,8 @@ class ForwardTaintReadyResponse(BaseModel):
     from_: int = Field(alias="from")
     reg: str
     hits: list[TaintHit]
+    stopped_at_max: bool = False
+    max_count_used: int = 0
 
     model_config = {"populate_by_name": True}
 
@@ -386,6 +388,8 @@ class BackwardTaintReadyResponse(BaseModel):
     from_: int = Field(alias="from")
     reg: str
     chain: list[TaintHit]
+    stopped_at_max: bool = False
+    max_count_used: int = 0
 
     model_config = {"populate_by_name": True}
 

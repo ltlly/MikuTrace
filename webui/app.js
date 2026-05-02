@@ -1704,7 +1704,11 @@ function initTaintTab() {
   });
 }
 
-async function doTaint(dir) {
+// 服务器侧 clamp 上限是 50000 (TAINT_MAX_COUNT_CEILING in webui/server.py).
+// 这里 50001 等价"无限": 多 1 让服务器 stopped_at_max=true 还能透传.
+const TAINT_LOAD_ALL_CAP = 50001;
+
+async function doTaint(dir, opts) {
   // cancel any in-flight taint first
   if (STATE._taintAbort) {
     try { STATE._taintAbort.abort(); } catch (_) {}
@@ -1714,28 +1718,48 @@ async function doTaint(dir) {
   const reg = $("taint-reg").value || "x0";
   const cont = $("taint-out");
   const startCursor = STATE.cursor;
-  cont.innerHTML = `<div class="dim">running ${dir} from #${startCursor} reg=${reg}…</div>`;
+  const loadAll = !!(opts && opts.loadAll);
+  cont.innerHTML = `<div class="dim">running ${dir} from #${startCursor} reg=${reg}` +
+                   (loadAll ? ' (load all)' : '') + '…</div>';
   $("taint-cancel").style.display = "";
   try {
     const params = new URLSearchParams({start: startCursor, reg});
-    if (STATE.settings.taintLimit > 0) params.set("max_count", STATE.settings.taintLimit);
+    if (loadAll) {
+      params.set("max_count", TAINT_LOAD_ALL_CAP);
+    } else if (STATE.settings.taintLimit > 0) {
+      params.set("max_count", STATE.settings.taintLimit);
+    }
     const url = `/api/${dir}-taint?` + params.toString();
     const resp = await fetch(url, {signal: ctrl.signal});
     const r = await resp.json();
     if (ctrl.signal.aborted) return;
     if (r.status === "building" || r.status === "idle") {
       cont.innerHTML = '<div class="dim">building index…</div>';
-      setTimeout(() => { if (STATE._taintAbort === ctrl) doTaint(dir); }, 1500);
+      setTimeout(() => { if (STATE._taintAbort === ctrl) doTaint(dir, opts); }, 1500);
       return;
     }
     const list = r.hits || r.chain || [];
+    const stopped = !!r.stopped_at_max;
     let html = `<div class="dim">${list.length} 条 (from #${startCursor})</div>`;
+    if (stopped) {
+      html += `<div class="dim taint-cap-banner">` +
+              `⚠ 已截断: 显示 ${list.length}/?, ` +
+              `<a href="#" id="taint-loadall">加载全部</a>` +
+              `</div>`;
+    }
     for (const h of list)
       html += `<div class="lp-row" data-idx="${h.idx}">` +
               `<span>${escapeHtml(h.asm)}</span>` +
               `<span class="meta">#${h.idx}</span></div>`;
     cont.innerHTML = html;
     bindRowClicks(cont);
+    if (stopped) {
+      const btn = document.getElementById("taint-loadall");
+      if (btn) btn.onclick = (ev) => {
+        ev.preventDefault();
+        doTaint(dir, {loadAll: true});
+      };
+    }
   } catch (e) {
     if (e.name === "AbortError") {
       cont.innerHTML = '<div class="dim">aborted</div>';

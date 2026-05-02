@@ -622,3 +622,6 @@ body.multi-so .row-insn { padding-left: 6px; }
   border-radius: 3px;
   font-family: var(--font-mono);
 }
+
+.taint-cap-banner { color: var(--warn); }
+.taint-cap-banner a { color: var(--accent); }
