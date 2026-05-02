@@ -288,6 +288,49 @@ def test_lift_udiv():
     assert e.operands[1].op == LLIL_DIVU
 
 
+# ─────────── bitfield + sysreg ───────────
+
+def test_lift_ubfx_lsb0_width32_yields_zx():
+    """ubfx xN, xM, #0, #32 = uxtw 等价 → LLIL_ZX with src_size=4."""
+    from viewer.decompiler.llil import LLIL_ZX
+    [e] = lift_arm64(0x1000, _asm("ubfx x0, x1, #0, #32"))
+    assert e.op == LLIL_SET_REG
+    body = e.operands[1]
+    assert body.op == LLIL_ZX
+    assert body.extra.get("src_size") == 4
+
+
+def test_lift_ubfx_general_bitfield():
+    """ubfx xN, xM, #4, #8 = (xM >> 4) & 0xff (general bitfield)."""
+    from viewer.decompiler.llil import LLIL_AND, LLIL_LSR
+    [e] = lift_arm64(0x1000, _asm("ubfx x0, x1, #4, #8"))
+    body = e.operands[1]
+    assert body.op == LLIL_AND
+    lsr_e, mask = body.operands
+    assert lsr_e.op == LLIL_LSR
+    assert mask.op == LLIL_CONST
+    assert mask.operands[0] == 0xff
+
+
+def test_lift_sbfx_lsb0_width16_yields_sx():
+    from viewer.decompiler.llil import LLIL_SX
+    [e] = lift_arm64(0x1000, _asm("sbfx x0, x1, #0, #16"))
+    body = e.operands[1]
+    assert body.op == LLIL_SX
+    assert body.extra.get("src_size") == 2
+
+
+def test_lift_mrs_tpidr_el0():
+    """mrs x8, tpidr_el0 → SET_REG(x8, INTRINSIC('_ReadMSR', 'tpidr_el0'))."""
+    [e] = lift_arm64(0x1000, _asm("mrs x8, tpidr_el0"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x8"
+    body = e.operands[1]
+    assert body.op == LLIL_INTRINSIC
+    assert body.extra.get("kind") == "read_sysreg"
+    assert body.extra.get("sysreg") == "tpidr_el0"
+
+
 # ─────────── unknown ───────────
 
 def test_lift_svc_intrinsic():

@@ -168,6 +168,31 @@ def _lift(d: Decoded) -> list:
     if base in ("sxtw", "uxtw", "sxtb", "uxtb", "sxth", "uxth"):
         return [_lift_extension(d, base)]
 
+    # ── bitfield extract ──
+    # ubfx xN, xM, #lsb, #width — 提取 xM 的 [lsb, lsb+width-1] bits.
+    # 特殊 case: lsb=0 + width=8/16/32 等价 ZX. 其他走 AND+LSR 表达.
+    if base == "ubfx":
+        return [_lift_ubfx(d)]
+    # sbfx 是 signed 版, 类似 SX
+    if base == "sbfx":
+        return [_lift_sbfx(d)]
+
+    # ── system register read ──
+    # mrs xN, sysreg — read system register. BN 译 _ReadMSR(name).
+    if base == "mrs":
+        if d.regs_def:
+            dst = d.regs_def[0]
+            # op_str 形如 'x0, tpidr_el0'
+            parts = [p.strip() for p in d.op_str.split(",")]
+            sysreg = parts[1] if len(parts) >= 2 else "?"
+            return [set_reg(dst,
+                LlilExpr(LLIL_INTRINSIC, size=8,
+                    operands=["_ReadMSR", sysreg],
+                    extra={"mnem": "mrs", "kind": "read_sysreg",
+                           "sysreg": sysreg}),
+                pc=d.pc)]
+        return [_intrinsic(d)]
+
     # ── divide ──
     if base in ("sdiv", "udiv"):
         from .expr import LLIL_DIVS, LLIL_DIVU
@@ -297,6 +322,60 @@ def _lift_smull(d: Decoded) -> LlilExpr:
     dst = d.regs_def[0]
     return set_reg(dst, mul(reg(d.regs_use[0]), reg(d.regs_use[1])),
                    pc=d.pc)
+
+
+def _lift_ubfx(d: Decoded) -> LlilExpr:
+    """ubfx xN, xM, #lsb, #width.
+    特殊 case: lsb=0 + width 是 8/16/32/64 → ZX (zero extend src_size=width/8).
+    其他: SET_REG(dst, AND(LSR(src, lsb), mask)) — 通用 bitfield.
+    """
+    from .expr import LLIL_ZX
+    if not d.regs_def or not d.regs_use:
+        return _intrinsic(d)
+    dst = d.regs_def[0]
+    src = reg(d.regs_use[0])
+    parts = [p.strip().lstrip("#") for p in d.op_str.split(",")]
+    # 期望 ['x0', 'x1', '0', '0x20'] — 4 个 token
+    if len(parts) < 4:
+        return _intrinsic(d)
+    try:
+        lsb = int(parts[2], 0)
+        width = int(parts[3], 0)
+    except ValueError:
+        return _intrinsic(d)
+    if lsb == 0 and width in (8, 16, 32):
+        # zero extend
+        return set_reg(dst,
+            LlilExpr(LLIL_ZX, size=8, operands=[src],
+                     extra={"src_size": width // 8}),
+            pc=d.pc)
+    # 通用: (src >> lsb) & ((1 << width) - 1)
+    mask = (1 << width) - 1
+    body = and_(lsr(src, const(lsb)), const(mask))
+    return set_reg(dst, body, pc=d.pc)
+
+
+def _lift_sbfx(d: Decoded) -> LlilExpr:
+    """sbfx xN, xM, #lsb, #width — signed 版 (lsb=0 + width=8/16/32 → SX)."""
+    from .expr import LLIL_SX
+    if not d.regs_def or not d.regs_use:
+        return _intrinsic(d)
+    dst = d.regs_def[0]
+    src = reg(d.regs_use[0])
+    parts = [p.strip().lstrip("#") for p in d.op_str.split(",")]
+    if len(parts) < 4:
+        return _intrinsic(d)
+    try:
+        lsb = int(parts[2], 0)
+        width = int(parts[3], 0)
+    except ValueError:
+        return _intrinsic(d)
+    if lsb == 0 and width in (8, 16, 32):
+        return set_reg(dst,
+            LlilExpr(LLIL_SX, size=8, operands=[src],
+                     extra={"src_size": width // 8}),
+            pc=d.pc)
+    return _intrinsic(d)
 
 
 def _lift_extension(d: Decoded, base: str) -> LlilExpr:
