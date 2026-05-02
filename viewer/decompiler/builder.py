@@ -121,6 +121,21 @@ def split_top_k_callees(top: TopIR, t: Trace, sym: SymbolMap,
         # PCs hit within mask
         own_pcs = pc_arr[mask]
         unique_pcs, counts = np.unique(own_pcs, return_counts=True)
+        # 预先算 mask 内每 PC 的 first_idx (O(n) 一次):
+        masked_pcs = pc_arr.copy()
+        # 用 sentinel 把 mask 外标 0 (PCs 都 != 0 实际, 但保险用 inverted index)
+        mask_first_idx: dict[int, int] = {}
+        # 走 mask 顺序 — first occurrence
+        idxs_in_mask = np.nonzero(mask)[0]
+        for i in idxs_in_mask:
+            p = int(pc_arr[i])
+            if p not in mask_first_idx:
+                mask_first_idx[p] = int(i)
+            # 限制扫描数 — 5M 已经够 sample / asm
+            if len(mask_first_idx) > 50000:
+                break
+        # 全 trace 静态 first_idx (preprocessed)
+        global_first = {int(p): int(i) for p, i in zip(*np.unique(pc_arr, return_index=True))}
         # 只留命中 cfg block 起点的 (不是块内中间指令)
         own_blocks: list[BlockIR] = []
         for pc, cnt in zip(unique_pcs, counts):
@@ -128,25 +143,20 @@ def split_top_k_callees(top: TopIR, t: Trace, sym: SymbolMap,
             if ipc not in block_pcs:
                 continue
             blk = cfg.blocks[ipc]
-            # samples 用全局首次出现 (跟 root 用一致逻辑, 简单)
-            mask_pc = pc_arr == np.uint64(ipc)
-            if mask_pc.any():
-                first_idx = int(np.argmax(mask_pc & mask))
-                if first_idx == 0 and not (mask[0] and pc_arr[0] == ipc):
-                    # argmax 0 表示无命中, 用全局
-                    first_idx = int(np.argmax(mask_pc))
+            # samples 用 mask 内首次出现, 没有就用全局
+            first_idx = mask_first_idx.get(ipc, global_first.get(ipc))
+            if first_idx is not None:
                 r = t.record(first_idx)
                 samples = {reg: r.reg(reg) for reg in ("x0", "x1", "x2", "x3")}
                 samples["sp"] = r.sp
             else:
                 samples = {}
-            # asm: 块内 disasm
+            # asm: 块内 disasm — 用 global_first dict (O(1) 替 mask scan)
             asm_lines = []
             for ins_pc in blk.insns:
-                mp = pc_arr == np.uint64(ins_pc)
-                if mp.any():
-                    fi = int(np.argmax(mp))
-                    iw = t.inst(fi)
+                fi = global_first.get(ins_pc)
+                if fi is not None:
+                    iw = t.inst(int(fi))
                     d = decode(ins_pc, iw)
                     asm_lines.append(f"  {ins_pc:#x}: {d.mnemonic} {d.op_str}".rstrip())
             # exits: cfg.edges 上有的边
@@ -276,15 +286,15 @@ def build_trace_ir(t: Trace,
     if n == 0:
         return top
 
-    # Build per-block first-idx map (已在 build_cfg 时记录每个 block 的指令 PCs,
-    # 但没记 first_idx). 再扫一遍 numpy pc_array 找每 block 首次 idx.
+    # Build per-block first-idx map. 用 numpy.unique(return_index=True) 一次
+    # O(n log n), 替代之前 N_blocks × O(n) 的 mask 扫描 (15M trace × 3228 块
+    # 慢到 1+ 分钟).
     pc_arr = t.pc_array()
-    first_idx_for_pc: dict[int, int] = {}
-    for blk_pc in cfg.blocks:
-        # np.argmax 第一个 True 索引; 若都 False 跳过 (不应发生, block 必有执行).
-        mask = (pc_arr == np.uint64(blk_pc))
-        if mask.any():
-            first_idx_for_pc[blk_pc] = int(np.argmax(mask))
+    unique_pcs, first_indices = np.unique(pc_arr, return_index=True)
+    pc_to_first = dict(zip(unique_pcs.tolist(), first_indices.tolist()))
+    first_idx_for_pc: dict[int, int] = {
+        pc: int(pc_to_first[pc]) for pc in cfg.blocks if pc in pc_to_first
+    }
 
     # ── Block IDs ────────────────────────────────────────────────────────
     # 排序: 按 entry_pc 起点 first, 确保稳定 (LLM 引用 B0 永远是同一块).
@@ -306,11 +316,10 @@ def build_trace_ir(t: Trace,
         # asm: 块内逐条 mnemonic + ops
         asm_lines = []
         for ins_pc in blk.insns:
-            # 找该 PC 首次 inst (静态指令字节, 取首次实测 inst).
-            mask = (pc_arr == np.uint64(ins_pc))
-            if mask.any():
-                first = int(np.argmax(mask))
-                inst_word = t.inst(first)
+            # 用预算好的 pc_to_first dict (O(1)) 替代 N×M numpy mask 扫描.
+            first = pc_to_first.get(ins_pc)
+            if first is not None:
+                inst_word = t.inst(int(first))
                 d = decode(ins_pc, inst_word)
                 asm_lines.append(f"  {ins_pc:#x}: {d.mnemonic} {d.op_str}".rstrip())
         # exits: 从 cfg.edges 取出 (src=blk.start_pc) 的所有边
