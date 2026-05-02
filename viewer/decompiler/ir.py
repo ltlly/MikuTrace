@@ -55,13 +55,28 @@ class EdgeIR:
 
 
 @dataclass
+class InductionVarIR:
+    """One induction var candidate. DEC3-C — 通用 numpy regression 出, 不假设
+    pattern. classification = 'arith' (等差) / 'complex' (其他)."""
+    reg: str
+    init: int
+    final: int
+    step: float
+    n_iters: int
+    classification: str
+    linearity_score: float
+    samples: list[int] = field(default_factory=list)
+
+
+@dataclass
 class LoopIR:
     """One loop (SCC of size>1 或 size=1 自环)."""
     id: str                              # 'L0', ...
     header: str                          # block id (loop header)
     body: list[str]                      # block id list
     iters: int                           # 实测迭代次数
-    induction_var: Optional[dict] = None # {reg, init, delta, exit_cond} — stage 2 才填
+    induction_var: Optional[dict] = None # legacy, MVP 用 induction_vars 列表
+    induction_vars: list["InductionVarIR"] = field(default_factory=list)  # DEC3-C
 
 
 @dataclass

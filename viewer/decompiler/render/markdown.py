@@ -151,7 +151,18 @@ def _fmt_loop(L: LoopIR) -> str:
     body_short = ", ".join(L.body[:10])
     if len(L.body) > 10: body_short += f", … ({len(L.body)} total)"
     extra = ""
-    if L.induction_var:
+    if L.induction_vars:
+        # 简洁列出: top-3 IV (按 score 降, builder 已排序)
+        iv_lines = []
+        for iv in L.induction_vars[:3]:
+            step_str = f"+{int(iv.step)}" if iv.step.is_integer() else f"{iv.step:+.2f}"
+            tag = ("🔁 arith" if iv.classification == "arith" else "🌀 complex")
+            iv_lines.append(
+                f"  - {tag} `{iv.reg}` {iv.init:#x} {step_str}/iter "
+                f"× {iv.n_iters} → {iv.final:#x} (score {iv.linearity_score:.2f})"
+            )
+        extra = "\n" + "\n".join(iv_lines)
+    elif L.induction_var:
         extra = f"\n  - induction: `{L.induction_var}`"
     return (f"- **{L.id}** header={L.header}, iters=**{L.iters}**, "
             f"body=[{body_short}]{extra}")

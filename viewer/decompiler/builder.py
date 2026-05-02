@@ -21,9 +21,11 @@ from ..disasm import decode, fmt as fmt_insn
 from ..symbols import build_from_trace, SymbolMap
 from .ir import (
     TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR, TypeAnchorIR, VmCandidateIR,
+    InductionVarIR,
 )
 from .type_anchor import load_type_specs, find_anchors, TypeSpec, TypeAnchor
 from .vm_candidate import detect_vm_candidates
+from .loop_fold import detect_induction_vars, InductionVar
 
 
 _TRACEMIKU_VERSION = "0.3.0-dec3b0"   # bump per ship stage
@@ -348,11 +350,19 @@ def build_trace_ir(t: Trace,
         header_bid = pc_to_bid[header_pc]
         # iters = header block executions (近似, 多入口循环会高估)
         iters = cfg.blocks[header_pc].executions if header_pc in cfg.blocks else 0
+        # DEC3-C: induction var 检测 — 通用 numpy regression
+        ivs_raw = detect_induction_vars(t, header_pc) if iters >= 3 else []
+        ivs = [InductionVarIR(
+            reg=iv.reg, init=iv.init, final=iv.final, step=iv.step,
+            n_iters=iv.n_iters, classification=iv.classification,
+            linearity_score=iv.linearity_score, samples=list(iv.samples),
+        ) for iv in ivs_raw]
         loops.append(LoopIR(
             id=f"L{i}",
             header=header_bid,
             body=body,
             iters=iters,
+            induction_vars=ivs,
         ))
 
     # ── CallIR ───────────────────────────────────────────────────────────
