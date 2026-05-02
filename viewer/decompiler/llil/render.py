@@ -180,17 +180,107 @@ def render_hlil(stmt, types: TypeEnv = None,
     return [f"{pad}/* unknown stmt {type(stmt).__name__} */"]
 
 
+def _is_prologue_root(root: LlilExpr) -> bool:
+    """识别 ARM64 prologue store: STORE([sp+N], xK) 或 SET_REG(sp, sp-N).
+
+    Prologue/epilogue 是 boilerplate, BN HLIL 也隐藏. 折叠成单行注释.
+    """
+    if not isinstance(root, LlilExpr):
+        return False
+    # SET_REG(sp, sp ± const)  — 栈分配/释放
+    if root.op == LLIL_SET_REG and root.operands[0] == "sp":
+        v = root.operands[1]
+        if isinstance(v, LlilExpr) and v.op in ("LLIL_ADD", "LLIL_SUB"):
+            ops = v.operands
+            if (len(ops) == 2 and isinstance(ops[0], LlilExpr)
+                    and ops[0].op == "LLIL_REG"
+                    and ops[0].operands[0] == "sp"
+                    and isinstance(ops[1], LlilExpr)
+                    and ops[1].op == "LLIL_CONST"):
+                return True
+    # SET_REG(fp, sp + const) — 设置 fp
+    if root.op == LLIL_SET_REG and root.operands[0] == "fp":
+        v = root.operands[1]
+        if isinstance(v, LlilExpr) and v.op == "LLIL_ADD":
+            ops = v.operands
+            if (len(ops) == 2 and isinstance(ops[0], LlilExpr)
+                    and ops[0].op == "LLIL_REG"
+                    and ops[0].operands[0] == "sp"
+                    and isinstance(ops[1], LlilExpr)
+                    and ops[1].op == "LLIL_CONST"):
+                return True
+    # STORE([sp+N], xK) 其中 xK 是 callee-saved (x19-x30, fp, lr, x29)
+    if root.op == LLIL_STORE and len(root.operands) == 2:
+        addr, val = root.operands
+        if not isinstance(val, LlilExpr) or val.op != "LLIL_REG":
+            return False
+        rname = val.operands[0]
+        if rname not in (
+            "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
+            "x27", "x28", "x29", "x30", "fp", "lr",
+        ):
+            return False
+        # addr 是 sp 或 sp + const
+        if isinstance(addr, LlilExpr):
+            if addr.op == "LLIL_REG" and addr.operands[0] == "sp":
+                return True
+            if addr.op == "LLIL_ADD":
+                ops = addr.operands
+                if (len(ops) == 2 and isinstance(ops[0], LlilExpr)
+                        and ops[0].op == "LLIL_REG"
+                        and ops[0].operands[0] == "sp"
+                        and isinstance(ops[1], LlilExpr)
+                        and ops[1].op == "LLIL_CONST"):
+                    return True
+    return False
+
+
 def _render_block(blk: SsaBlock, types: TypeEnv,
                   shapes: dict[tuple, StructShape],
-                  indent: int) -> list[str]:
+                  indent: int,
+                  collapse_prologue: bool = True) -> list[str]:
     pad = "    " * indent
     out: list[str] = [f"{pad}// block @ {blk.block_pc:#x}"]
-    for root in blk.roots:
+
+    # 检测 prologue / epilogue 区段 — 连续 N 条 prologue-style root, 折叠成
+    # 单行注释 (BN HLIL 类似行为).
+    roots = list(blk.roots)
+    if collapse_prologue:
+        # 前缀: 连续 prologue stores
+        prefix_n = 0
+        for r in roots:
+            if _is_prologue_root(r):
+                prefix_n += 1
+            else:
+                break
+        # 后缀: 反向找连续 prologue (epilogue)
+        suffix_n = 0
+        for r in reversed(roots):
+            if _is_prologue_root(r):
+                suffix_n += 1
+            else:
+                break
+        # 至少 3 条才折叠 (避免单 stp 被误隐藏)
+        if prefix_n >= 3:
+            out.append(f"{pad}// prologue: save callee-saved + alloc stack ({prefix_n} ops)")
+            roots = roots[prefix_n:]
+        # 后缀只在 prefix 没全吃完时折叠
+        if suffix_n >= 3 and len(roots) > 0:
+            epilogue = roots[-suffix_n:]
+            roots = roots[:-suffix_n]
+        else:
+            epilogue = []
+    else:
+        epilogue = []
+
+    for root in roots:
         if not isinstance(root, LlilExpr):
             continue
         line = _root_to_c(root, types, shapes, blk)
         if line:
             out.append(f"{pad}{line};")
+    if epilogue:
+        out.append(f"{pad}// epilogue: restore callee-saved ({len(epilogue)} ops)")
     return out
 
 
