@@ -59,7 +59,8 @@ def test_agent_flush_called_before_every_trace_end():
         r'send\(\s*\{\s*type:\s*"trace-end"', src))
     assert len(trace_end_sends) >= 2
     for m in trace_end_sends:
-        before = src[max(0, m.start() - 400):m.start()]
+        # 600-char window covers flushJni + flushExt + flushFork before trace-end
+        before = src[max(0, m.start() - 600):m.start()]
         assert ("flushJniHookEvents" in before or "flushJniStringEvents" in before), (
             f"trace-end @{m.start()} 之前没 JNI flush call")
 

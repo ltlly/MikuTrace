@@ -422,6 +422,11 @@ def cmd_trace(args):
                             kind = "fork-like" if ev.get("is_fork_like") else "thread-like"
                             wlog(f"[{tag}] [FORK] call#{ci} parent={sym_label} "
                                  f"({ev.get('syscall')}, {kind}) → child pid={ev.get('child_pid')}")
+                            # P1-C M3: kick off background lifecycle poll for fork-like children
+                            cpid = ev.get("child_pid")
+                            if (ev.get("is_fork_like") and cpid and cpid > 0
+                                    and getattr(args, "fork_poll_child", True)):
+                                _spawn_child_poller(ev, s["meta"], wlog, tag)
                     elif t == "ext-write":
                         # Boundary-diff events from --trace-deep mode.
                         # Each event: {attrIdx: u64, addr: "0x...", byte: u8}.
@@ -611,6 +616,7 @@ def cmd_trace(args):
 
     # 重新扫一遍 calls/, 写顶层 meta
     calls_summary = []
+    all_fork_events = []   # P1-C M5: 聚合用
     for cd in sorted(CALLS_DIR.iterdir()):
         if not cd.is_dir(): continue
         mp = cd/"meta.json"
@@ -623,6 +629,8 @@ def cmd_trace(args):
             "last_insn_is_ret": cm.get("last_insn_is_ret"),
             "dir": cd.name,
         })
+        for ev in (cm.get("fork_events") or []):
+            all_fork_events.append((cd.name, ev))
     top_meta["calls"] = calls_summary
     top_meta["stopped_at"] = time.time()
     json.dump(top_meta, open(OUT/"meta.json","w"), indent=2)
@@ -633,7 +641,90 @@ def cmd_trace(args):
     for c in sorted(calls_summary, key=lambda c: -c["records"])[:10]:
         flag = "✓" if (not c["truncated"] and c["last_insn_is_ret"]) else "?"
         print(f"  {flag} {c['dir']}  ret={c.get('retval')}")
+
+    # P1-C M5: fork summary table — 聚合所有 fork-event 按 attach_status + is_fork_like
+    if all_fork_events:
+        _print_fork_summary(all_fork_events)
     return 0
+
+
+def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
+                          max_wait_sec=30.0):
+    """P1-C M3: kick off background thread that polls /proc/<child_pid>/stat
+    until child exits, mutates fork_event in-place with Tier 3 lifecycle data.
+
+    fork_event is the dict already in parent_meta["fork_events"] — Python list
+    references mean any update to that dict propagates to the meta we'll later
+    serialize. No locking needed: only this thread mutates this fork_event.
+    """
+    import threading
+    from viewer.proc_poll import poll_child_lifecycle
+    cpid = fork_event["child_pid"]
+
+    def _poll():
+        try:
+            r = poll_child_lifecycle(cpid, max_wait_sec=max_wait_sec)
+            fork_event["lifecycle"] = {
+                "runtime_ms": r["runtime_ms"],
+                "alive_at_max_wait": r["alive_at_max_wait"],
+                "last_state": r["last_state"],
+                "comm": r["comm"],
+                "polls_alive": r["polls_alive"],
+            }
+            # Promote attach_status from "not_attempted" to a more informative
+            # post-mortem state (M2 will overwrite if it actually attached).
+            if fork_event.get("attach_status") == "not_attempted":
+                if r["alive_at_max_wait"]:
+                    fork_event["attach_status"] = "not_attempted_long_lived"
+                elif r["first_observed_at"] is None:
+                    fork_event["attach_status"] = "not_attempted_short_lived"
+                else:
+                    fork_event["attach_status"] = "not_attempted_observed"
+            wlog(f"[{tag}] [FORK]   poll done child={cpid} "
+                 f"runtime={r['runtime_ms']}ms "
+                 f"alive_at_timeout={r['alive_at_max_wait']} "
+                 f"last_state={r['last_state']}")
+        except Exception as e:
+            wlog(f"[{tag}] [FORK]   poll error child={cpid}: {e}")
+
+    th = threading.Thread(target=_poll, daemon=True,
+                           name=f"fork-poll-{cpid}")
+    th.start()
+
+
+def _print_fork_summary(all_fork_events):
+    """P1-C M5: print Fork Summary table at trace end.
+
+    all_fork_events: list of (call_dir_name, fork_event_dict).
+    """
+    fork_like = [e for _, e in all_fork_events if e.get("is_fork_like")]
+    thread_like = [e for _, e in all_fork_events if not e.get("is_fork_like")]
+    by_status = {}
+    for e in fork_like:
+        st = e.get("attach_status", "not_attempted")
+        by_status[st] = by_status.get(st, 0) + 1
+
+    n_fork = len(fork_like)
+    n_thread = len(thread_like)
+    n_success = by_status.get("success", 0)
+    n_partial = by_status.get("success_partial", 0)
+    n_failed = sum(v for k, v in by_status.items() if k.startswith("failed_"))
+    n_not_attempted = by_status.get("not_attempted", 0)
+
+    print("\n=== Fork Summary ===")
+    print(f"Total fork-like:   {n_fork}   "
+          f"(thread-like clones via pthread_create: {n_thread}, 不计)")
+    if n_success:    print(f"  ✓ Fully traced:  {n_success}")
+    if n_partial:    print(f"  ⚠ Partial:       {n_partial}")
+    if n_failed:     print(f"  ✗ Attach failed: {n_failed}   "
+                            f"({by_status})")
+    if n_not_attempted:
+        print(f"  · Not attempted: {n_not_attempted}   "
+              f"(--no-fork-trace 或 M2 child attach 未启用)")
+    print(f"详见 traces/<run>/calls/<dir>/meta.json `fork_events` 字段")
+    if n_failed and n_failed >= 2:
+        print("提示: 多个 child 抓不全, 可能这个 SO 用 fork-based anti-debug.")
+        print("      推 miku-shield (eBPF kernel): github.com/ltlly/miku-shield")
 
 
 def cmd_finalize(args):
@@ -1157,6 +1248,12 @@ def main():
                       help="hook libc fork/vfork/clone/__bionic_clone, 抓 fork-event Tier 1 "
                            "(parent_pc, child_pid, clone_flags) 写到 meta.json fork_events. "
                            "P1-C M1; 反调试 fork 检测必开. 默认关.")
+    p_tr.add_argument("--no-fork-poll-child", action="store_false", dest="fork_poll_child",
+                      default=True,
+                      help="禁用 child 进程 lifecycle 后台轮询 (Tier 3 数据). 默认开 — "
+                           "agent fork hook 抓到 child PID 后, 起一个后台线程 adb shell "
+                           "/proc/<pid>/stat 直到 child 退出, 记录 runtime_ms / last_state. "
+                           "P1-C M3 fallback.")
     p_tr.add_argument("--jni-hooks", default="tools/hooks/libart_jni.json", dest="jni_hooks",
                       help="JSON 描述要 hook 的 JNI vtable 函数 (offset/参数类型/返回类型). "
                            "默认 = libart string fns. 设 'none' 关闭. 输出 jni_hooks.jsonl per-call. "

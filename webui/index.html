@@ -30,6 +30,7 @@
     <button class="vtab active" data-vtab="funcs"   title="函数列表 — 列出 trace 中出现的所有函数, click 切到该函数 CFG">Functions</button>
     <button class="vtab"        data-vtab="back"    title="调用栈 — 当前 cursor 处的 call stack: 每帧是一次 bl/blr 还未 ret, 最上面是最深层 callee. click 跳到调用点">Backtrace</button>
     <button class="vtab"        data-vtab="calltree" title="Call Tree — 整 trace 的嵌套调用树 (从 bl/ret 配对建栈). click 跳到 enter idx">Call Tree</button>
+    <button class="vtab"        data-vtab="forks"   title="Forks — agent 抓到的 fork/clone 事件: parent_pc, child_pid, syscall, attach_status, runtime. 用 --enable-fork-hook 采集. P1-C">Forks</button>
     <button class="vtab"        data-vtab="strings" title="字符串 — 当前 cursor 内存中可见的 ASCII 字符串. 双击查看 provenance (谁逐字节写, 谁读)">Strings</button>
     <button class="vtab"        data-vtab="taint"   title="污点追踪 — 从 cursor 处的某寄存器开始, forward 看后续被污染的指令, backward 找该值的来源">Taint</button>
     <button class="vtab"        data-vtab="xref"    title="交叉引用 — 当前 cursor 的 PC 在 trace 中所有被执行的位置 (= PC 执行历史)">Cross Ref</button>
@@ -49,6 +50,7 @@
       <div class="lp-tab active" data-tab="funcs"   id="lp-funcs"></div>
       <div class="lp-tab"        data-tab="back"    id="lp-back"></div>
       <div class="lp-tab"        data-tab="calltree" id="lp-calltree"></div>
+      <div class="lp-tab"        data-tab="forks"   id="lp-forks"></div>
       <div class="lp-tab"        data-tab="strings" id="lp-strings"></div>
       <div class="lp-tab"        data-tab="taint"   id="lp-taint"></div>
       <div class="lp-tab"        data-tab="xref"    id="lp-xref"></div>

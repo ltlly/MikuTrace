@@ -1004,6 +1004,7 @@ function activateLeftTab(name) {
     t.classList.toggle("active", t.dataset.vtab === name));
   $("left-panel-title").textContent =
     {funcs: "Functions", back: "Backtrace", calltree: "Call Tree",
+     forks: "Forks",
      strings: "Strings",
      taint: "Taint", xref: "Cross Reference", sofilter: "SO Filter",
      settings: "Settings"}[name] || name;
@@ -1019,6 +1020,7 @@ function activateLeftTab(name) {
     else if (name === "xref") initXrefTab();
     else if (name === "back") initBacktraceTab();
     else if (name === "calltree") initCallTreeTab();
+    else if (name === "forks") initForksTab();
     else if (name === "sofilter") initSoFilterTab();
     else if (name === "settings") initSettingsTab();
   }
@@ -1813,6 +1815,64 @@ function renderCallTreeHtml(node, indent = 0) {
   for (const c of (node.children || []))
     html += renderCallTreeHtml(c, indent + 1);
   return html;
+}
+
+// ── Forks (P1-C M6) ──────────────────────────────────────────────────────
+function initForksTab() {
+  const cont = $("lp-forks");
+  cont.innerHTML = `
+    <div class="lp-toolbar">
+      <select id="fk-status-filter" class="inp">
+        <option value="">all</option>
+        <option value="success">success</option>
+        <option value="success_partial">partial</option>
+        <option value="failed_ptrace_conflict">F3 ptrace conflict</option>
+        <option value="failed_spawn_gate_unavailable">F7 spawn-gate</option>
+        <option value="not_attempted">not attempted</option>
+        <option value="not_attempted_long_lived">not_attempted (alive)</option>
+        <option value="not_attempted_short_lived">not_attempted (gone)</option>
+        <option value="not_attempted_observed">not_attempted (observed)</option>
+      </select>
+      <button class="btn" id="fk-load">load</button>
+    </div>
+    <div id="fk-out"><div class="dim">点 load 拉 fork events</div></div>`;
+  $("fk-load").onclick = loadForkEvents;
+}
+
+async function loadForkEvents() {
+  const cont = $("fk-out");
+  cont.innerHTML = '<div class="dim">loading…</div>';
+  const status = $("fk-status-filter").value;
+  const url = "/api/fork-events" + (status ? `?status=${status}` : "");
+  try {
+    const r = await fetch(url).then(x => x.json());
+    if (r.count === 0) {
+      cont.innerHTML = '<div class="dim">no fork events. ' +
+        'agent 端用 <code>--enable-fork-hook</code> 采集.</div>';
+      return;
+    }
+    let html = `<div class="dim">${r.count} fork events</div>`;
+    for (const e of r.events) {
+      const failed = (e.attach_status || "").startsWith("failed_");
+      const cls = failed ? "fk-row fk-failed" : "fk-row";
+      const sym = e.parent_pc_rel || e.parent_pc || "?";
+      const flags = e.clone_flags ? ` flags=${e.clone_flags}` : "";
+      const lc = e.lifecycle ? `, runtime=${e.lifecycle.runtime_ms}ms` : "";
+      html += `<div class="${cls} lp-row" data-idx="${e.trace_idx || 0}" ` +
+              `title="${escapeHtml(e.attach_status || 'unknown')}${flags}${lc}">` +
+              `<span>${escapeHtml(e.syscall || '?')} → child ${e.child_pid}</span>` +
+              `<span class="meta">@${sym} #${e.trace_idx || '?'}</span></div>`;
+    }
+    if (r.events.some(e => (e.attach_status || "").startsWith("failed_"))) {
+      html += `<div class="dim taint-cap-banner">⚠ 有失败的 fork — ` +
+              `推 <a href="https://github.com/ltlly/miku-shield">miku-shield</a> ` +
+              `处理 fork-based anti-debug</div>`;
+    }
+    cont.innerHTML = html;
+    bindRowClicks(cont, ".fk-row");
+  } catch (e) {
+    cont.innerHTML = `<div class="dim">error: ${e.message || e}</div>`;
+  }
 }
 
 function initXrefTab() {

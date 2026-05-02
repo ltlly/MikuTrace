@@ -627,3 +627,7 @@ body.multi-so .row-insn { padding-left: 6px; }
 
 .taint-cap-banner { color: var(--warn); }
 .taint-cap-banner a { color: var(--accent); }
+
+/* P1-C M6: failed fork events highlighted red */
+.fk-row.fk-failed { color: var(--warn); }
+.fk-row.fk-failed::before { content: "✗ "; color: var(--warn); }
