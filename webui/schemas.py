@@ -899,6 +899,21 @@ class RegAtIdxResponse(BaseModel):
     regs: dict[str, RegValue]
 
 
+# ── /api/call-tree (P0-1) ────────────────────────────────────────────────────
+
+class CallTreeNode(BaseModel):
+    fn: Optional[str] = None
+    enter_idx: int
+    exit_idx: int
+    depth: int = 0
+    children: list["CallTreeNode"] = []
+    truncated_children: Optional[int] = None
+    truncated: Optional[bool] = None
+
+class CallTreeResponse(BaseModel):
+    tree: CallTreeNode
+
+
 # ── /api/jni-events (P0-2) ───────────────────────────────────────────────────
 
 class JniEventsResponse(BaseModel):

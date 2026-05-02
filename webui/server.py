@@ -48,7 +48,7 @@ from webui.schemas import (
     CryptoScanAny, AutoPhaseDetectAny,
     HashInputSearchAny, HashInputSearchRequest,
     DiffTracesResponse, DiffTracesRequest,
-    JniEventsResponse,
+    JniEventsResponse, CallTreeResponse,
 )
 
 
@@ -1955,6 +1955,15 @@ def make_app(trace_path: pathlib.Path,
                 "seen_in_trace": (e.src, e.dst) in ovr["edges_seen"],
             } for e in edges],
         }
+
+    # ── P0-1: call tree ───────────────────────────────────────────────────────
+
+    @app.get("/api/call-tree", response_model=CallTreeResponse)
+    def api_call_tree(max_depth: int = 50):
+        """Build nested call tree from bl/ret pairs in trace."""
+        from viewer.calltree import build_call_tree
+        tree = build_call_tree(t, sym=sym, max_depth=max_depth)
+        return {"tree": tree}
 
     # ── P0-2: jni events ──────────────────────────────────────────────────────
 

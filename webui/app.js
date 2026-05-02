@@ -1003,7 +1003,8 @@ function activateLeftTab(name) {
   document.querySelectorAll("#left-tabs .vtab").forEach(t =>
     t.classList.toggle("active", t.dataset.vtab === name));
   $("left-panel-title").textContent =
-    {funcs: "Functions", back: "Backtrace", strings: "Strings",
+    {funcs: "Functions", back: "Backtrace", calltree: "Call Tree",
+     strings: "Strings",
      taint: "Taint", xref: "Cross Reference", sofilter: "SO Filter",
      settings: "Settings"}[name] || name;
   // 切换显示/隐藏对应 panel
@@ -1017,6 +1018,7 @@ function activateLeftTab(name) {
     else if (name === "taint") initTaintTab();
     else if (name === "xref") initXrefTab();
     else if (name === "back") initBacktraceTab();
+    else if (name === "calltree") initCallTreeTab();
     else if (name === "sofilter") initSoFilterTab();
     else if (name === "settings") initSettingsTab();
   }
@@ -1772,6 +1774,45 @@ async function doTaint(dir, opts) {
     if (STATE._taintAbort === ctrl) STATE._taintAbort = null;
     $("taint-cancel").style.display = "none";
   }
+}
+
+// ── Call Tree (P0-1) ────────────────────────────────────────────────────────
+function initCallTreeTab() {
+  const cont = $("lp-calltree");
+  cont.innerHTML = `
+    <div class="lp-toolbar">
+      depth <input id="ct-depth" class="inp" type="number" value="50" min="1" max="500" size="4">
+      <button class="btn" id="ct-load">load</button>
+    </div>
+    <div id="ct-out"><div class="dim">点 load 构建调用树</div></div>`;
+  $("ct-load").onclick = loadCallTree;
+}
+
+async function loadCallTree() {
+  const cont = $("ct-out");
+  cont.innerHTML = '<div class="dim">building tree...</div>';
+  const depth = $("ct-depth").value || 50;
+  try {
+    const r = await fetch(`/api/call-tree?max_depth=${depth}`).then(x => x.json());
+    cont.innerHTML = renderCallTreeHtml(r.tree);
+    bindRowClicks(cont, ".ct-node");
+  } catch (e) {
+    cont.innerHTML = `<div class="dim">error: ${e.message || e}</div>`;
+  }
+}
+
+function renderCallTreeHtml(node, indent = 0) {
+  const fn = node.fn || "?";
+  const trunc = node.truncated_children
+    ? ` <span class="dim">(+${node.truncated_children} 截断)</span>` : "";
+  const pad = "  ".repeat(indent);
+  let html = `<div class="ct-node lp-row" data-idx="${node.enter_idx}">` +
+             `<span>${pad}${escapeHtml(fn)}</span>` +
+             `<span class="meta">[#${node.enter_idx}–#${node.exit_idx}]${trunc}</span>` +
+             `</div>`;
+  for (const c of (node.children || []))
+    html += renderCallTreeHtml(c, indent + 1);
+  return html;
 }
 
 function initXrefTab() {
