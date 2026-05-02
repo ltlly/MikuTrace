@@ -57,7 +57,41 @@
 - `_hideMaps_filterLine` 用 STATE.soPattern 动态匹配
 - 8 处 docstring + webui dropdown 抽象化
 
-**累计**: 21 commits, 437 unit tests pass + 1 skip + 3 manual real-device smoke (M1 / M2 negative / M8 e2e).
+**累计**: 23 commits, 444 unit tests + 3 real-device smoke + 1 真机 anti-debug 复盘.
+
+## 真机 e2e 实测发现 (2026-05-02)
+
+完整 e2e (Taobao com.taobao.taobao + cmd 70102 doCommandNative) → 详见
+[docs/anti-debug-libart.md](docs/anti-debug-libart.md).
+
+**关键发现**: `--trace-deep` 触发 anti-debug self-kill. Stalker per-symbol exclude
+libart 时, 在 excluded symbol BOUNDARY 装 inline-hook 改 libart `.text`. libsgmainso
+anti-debug worker thread 周期性比对 libart bytes vs disk image, 检测到 → tgkill.
+
+实验对照:
+- minimal (无 deep/hide/patch): 15.4M records ✓
+- 仅 `--patch-suicide`: 7.7M+ ✓
+- 仅 `--hide-rwx-maps`: 9.7M ✓
+- **仅 `--trace-deep`: 60k → SI_USER ✗**
+- bare Frida attach (无 Stalker): 25s 0 kill events ✓
+
+主线程零 libart `.text` 读 — 检测在 worker thread, 我们没 trace 到 exact PC.
+
+**修复 (commit 6616d97)**: P0-6 诊断扩展 — SI_USER + 深栈 + `--trace-deep` 自动
+建议关 `--trace-deep`. 真机 verify 自动给出建议:
+```
+=== Trace 死前诊断 (P0-6) ===
+诊断: SI_USER + 深栈 — anti-debug 检测到 Frida 痕迹后 self-kill ...
+强烈建议: 关 --trace-deep 重跑. ...
+```
+
+**未来增强 (新 backlog)**:
+- `--block-self-kill` agent flag: hook libc tgkill/kill/pthread_kill/raise,
+  signal=11/6 时返回 0 不发. 拦所有 signal-based anti-debug 自杀, 不依赖
+  patch-suicide spec 完整性. ~1d 工作量.
+- 逆向 anti-debug worker thread 找 exact 检测 PC: 需 --follow-workers 完整
+  抓所有 libsgmainso 线程, 然后看哪条调用链通向 sub_45bbe0(arg, ...) 且 x6=131.
+  每版本要重逆, ROI 较低.
 
 ---
 

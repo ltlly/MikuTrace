@@ -156,6 +156,12 @@ JNIEnv 解析: Frida 17 删掉了 `Java` 全局, 直接 dlsym `JNI_GetCreatedJav
 **绕不过的层** (见根 [TODO.md](../TODO.md)): L3 fork+ptrace+SIGSEGV (race-attach
 F3, 架构性), L4 `frida_agent_main` symbol scan, L5 glib `gmain` 线程名.
 
+**实测警告 — `--trace-deep` 触发 anti-debug** (2026-05-02 真机, libsgmainso
+6.8.260403): Stalker per-symbol exclude libart 时, inline-hook libart `.text`
+被 anti-debug worker 检测 → tgkill self-kill. 完整复盘见
+[docs/anti-debug-libart.md](../docs/anti-debug-libart.md). P0-6 诊断已扩展自动
+建议关 `--trace-deep` (commit 6616d97).
+
 ## 已知问题
 
 - **anti-debug 检测线程名**: stealth server 把 `gum-js-loop` 改 `miku-js-loop`,
