@@ -43,6 +43,7 @@ from webui.schemas import (
     FindMemPatternResponse, JniCallsResponse,
     JobjHistoryResponse, JniStringsResponse,
     SoStatsResponse,
+    RegAtIdxResponse, CallChainResponse,
 )
 
 
@@ -1928,6 +1929,61 @@ def make_app(trace_path: pathlib.Path,
                 "seen_in_trace": (e.src, e.dst) in ovr["edges_seen"],
             } for e in edges],
         }
+
+    # ── P0-3: Web sync of CLI commands ────────────────────────────────────────
+
+    @app.get("/api/reg-at-idx", response_model=RegAtIdxResponse)
+    def api_reg_at_idx(idx: int, regs: str = ""):
+        """thin wrapper: 'reg 在 idx N 是多少'. mirrors `viewer reg-at-idx`."""
+        if idx < 0 or idx >= len(t):
+            raise HTTPException(400, f"idx out of range: {idx} not in [0, {len(t)})")
+        r = t.record(idx)
+        names = ([x.strip() for x in regs.split(",") if x.strip()] if regs
+                 else ["x0","x1","x2","x3","x4","x5","x6","x7","x8",
+                       "x14","x19","x20","x21","x25","sp","lr"])
+        out = {}
+        for rn in names:
+            if rn not in ALL_REGS: continue
+            v = r.reg(rn)
+            out[rn] = {"hex": hex(v), "dec": v, "byte0": v & 0xff}
+        return {"idx": idx, "pc": hex(t.pc(idx)), "regs": out}
+
+    @app.get("/api/call-chain", response_model=CallChainResponse)
+    def api_call_chain(idx: int, depth: int = 5):
+        """LR-walking caller chain. mirrors `viewer call-chain`."""
+        if idx < 0 or idx >= len(t):
+            raise HTTPException(400, f"idx out of range: {idx} not in [0, {len(t)})")
+        m = t.meta.module
+        base = m.base if m else 0
+        chain = []
+        cur_idx = idx
+        for d_i in range(depth):
+            r = t.record(cur_idx)
+            cur_pc = t.pc(cur_idx)
+            cur_fn, cur_off = sym.lookup(cur_pc)
+            lr = r.reg("lr")
+            caller_pc = lr - 4 if lr else 0
+            caller_fn, caller_off = (sym.lookup(caller_pc) if caller_pc
+                                     else ("?", 0))
+            chain.append({
+                "depth": d_i, "idx": cur_idx,
+                "pc": hex(cur_pc),
+                "rel": hex(cur_pc - base) if base else None,
+                "func": cur_fn if cur_fn != "?" else None,
+                "off": hex(cur_off) if cur_fn != "?" else None,
+                "lr": hex(lr),
+                "caller_pc": hex(caller_pc),
+                "caller_func": caller_fn if caller_fn != "?" else None,
+                "caller_off": hex(caller_pc - caller_off) if caller_fn != "?" else None,
+            })
+            if not caller_fn or caller_fn == "?": break
+            import numpy as np
+            pcs = t.pc_array()
+            hits = np.where(pcs == caller_off)[0]
+            before = hits[hits < cur_idx]
+            if len(before) == 0: break
+            cur_idx = int(before[-1])
+        return {"start_idx": idx, "depth": len(chain), "chain": chain}
 
     # static SPA
     @app.get("/", response_class=HTMLResponse)

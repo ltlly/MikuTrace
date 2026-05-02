@@ -886,6 +886,39 @@ BnCfgForPcResponse = Union[BnCfgOkResponse, BnCfgEmptyResponse,
                             BnCfgNoFunctionResponse, BnCfgPendingResponse]
 
 
+# ── /api/reg-at-idx (P0-3) ───────────────────────────────────────────────────
+
+class RegValue(BaseModel):
+    hex: str
+    dec: int
+    byte0: int
+
+class RegAtIdxResponse(BaseModel):
+    idx: int
+    pc: str
+    regs: dict[str, RegValue]
+
+
+# ── /api/call-chain (P0-3) ───────────────────────────────────────────────────
+
+class CallChainEntry(BaseModel):
+    depth: int
+    idx: int
+    pc: str
+    rel: Optional[str] = None
+    func: Optional[str] = None
+    off: Optional[str] = None
+    lr: str
+    caller_pc: str
+    caller_func: Optional[str] = None
+    caller_off: Optional[str] = None
+
+class CallChainResponse(BaseModel):
+    start_idx: int
+    depth: int
+    chain: list[CallChainEntry]
+
+
 # ── Backwards-compat aliases (server.py imports these names) ────────────────
 
 # Old single-name imports map to the Union types or specific models
