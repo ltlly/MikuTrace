@@ -124,3 +124,44 @@ def test_collect_uidf_on_synth_trace():
             found_const = True
     assert found_const
     t.close()
+
+
+def test_collect_uidf_observes_call_return():
+    """LLIL_CALL 后 trace 在 call.pc+4 处的 record 含 x0 = return value.
+    collect_uidf 应抓到这个 'ret_x0' ObservedValues."""
+    from tests.synth import build_trace
+    t = build_trace([
+        ('mov x0, #1',     {'x0': 1}),
+        # synth 模型: bl 的 deltas 是 callee 执行后 caller 视角的 net change —
+        # x30 (lr) + x0 (return value) 一并写入. 真实 trace 里 bl 后下条 record
+        # 是 callee 入口 (PC=0x2000), 但 PC=call.pc+4 处的 record (return 后)
+        # 含真正的 return 值. 我们这里压缩到一条记录.
+        ('bl #0x2000',     {'x30': 0x100008, 'x0': 0xff}),
+        ('mov x9, x0',     {'x9': 0xff}),    # PC=base+0x8: record.x0 = 0xff
+        ('ret',            {}),
+    ])
+    from viewer.decompiler.llil import lift_arm64, ssa_block
+    import numpy as np
+    n = len(t)
+    pc_arr = t.pc_array()
+    from viewer.trace import REC_SIZE
+    u32 = np.frombuffer(t._mm, dtype=np.uint32, count=t.n * (REC_SIZE // 4))
+    inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]
+    block_to_exprs: dict = {}
+    for i in range(n):
+        pc = int(pc_arr[i])
+        inst = int(inst_arr[i])
+        exprs = list(lift_arm64(pc, inst))
+        block_to_exprs.setdefault(pc, [])
+        if not block_to_exprs[pc]:
+            block_to_exprs[pc].extend(exprs)
+    ssa_map = {pc: ssa_block(pc, exprs) for pc, exprs in block_to_exprs.items()}
+    uidf = collect_uidf(t, ssa_map)
+    # 找 ret_x0 ObservedValues
+    found_ret = False
+    for key, ov in uidf.items():
+        if ov.reg == "ret_x0" and ov.is_const() and ov.const_value() == 0xff:
+            found_ret = True
+            break
+    assert found_ret, f"expected ret_x0 obs with value 0xff, got: {dict((k, ov.short()) for k, ov in uidf.items())}"
+    t.close()

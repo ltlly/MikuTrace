@@ -2814,7 +2814,7 @@ def make_app(trace_path: pathlib.Path,
                         if pc in cfg.blocks}
         lines = render_hlil(hlil, types=render_types, shapes=merged_shapes,
                             exec_counts=exec_counts, var_names=var_names,
-                            const_strings=const_strings)
+                            const_strings=const_strings, uidf=uidf)
         c_code = "\n".join(lines)
 
         return {

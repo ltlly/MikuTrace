@@ -274,7 +274,8 @@ def render_hlil(stmt, types: TypeEnv = None,
                 loc_names: dict | None = None,
                 exec_counts: dict | None = None,
                 var_names: dict | None = None,
-                const_strings: dict | None = None) -> list[str]:
+                const_strings: dict | None = None,
+                uidf: dict | None = None) -> list[str]:
     """递归 stmt → list of lines (markdown 安全, 包含 indent).
 
     loc_names: 跨整 fn 共享的 dict[(base, disp) → 'var_*']. None 时初始化空 dict.
@@ -288,7 +289,7 @@ def render_hlil(stmt, types: TypeEnv = None,
     if isinstance(stmt, HlilSeq):
         out = []
         for s in stmt.stmts:
-            out.extend(render_hlil(s, types, shapes, indent, loc_names, exec_counts, var_names, const_strings))
+            out.extend(render_hlil(s, types, shapes, indent, loc_names, exec_counts, var_names, const_strings, uidf))
         return out
 
     if isinstance(stmt, HlilLoop):
@@ -302,10 +303,10 @@ def render_hlil(stmt, types: TypeEnv = None,
                          loc_names=loc_names, var_names=var_names,
                          const_strings=const_strings)
         out = [f"{pad}if ({cond}) {{"]
-        out.extend(render_hlil(stmt.then_b, types, shapes, indent + 1, loc_names, exec_counts, var_names, const_strings))
+        out.extend(render_hlil(stmt.then_b, types, shapes, indent + 1, loc_names, exec_counts, var_names, const_strings, uidf))
         if stmt.else_b is not None:
             out.append(f"{pad}}} else {{")
-            out.extend(render_hlil(stmt.else_b, types, shapes, indent + 1, loc_names, exec_counts, var_names, const_strings))
+            out.extend(render_hlil(stmt.else_b, types, shapes, indent + 1, loc_names, exec_counts, var_names, const_strings, uidf))
         out.append(f"{pad}}}")
         return out
 
@@ -314,7 +315,8 @@ def render_hlil(stmt, types: TypeEnv = None,
                               loc_names=loc_names,
                               exec_counts=exec_counts,
                               var_names=var_names,
-                              const_strings=const_strings)
+                              const_strings=const_strings,
+                              uidf=uidf)
 
     if isinstance(stmt, HlilGoto):
         return [f"{pad}goto {stmt.target_pc:#x};"]
@@ -387,7 +389,8 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
                   loc_names: dict | None = None,
                   exec_counts: dict | None = None,
                   var_names: dict | None = None,
-                  const_strings: dict | None = None) -> list[str]:
+                  const_strings: dict | None = None,
+                  uidf: dict | None = None) -> list[str]:
     pad = "    " * indent
     head = f"// block @ {blk.block_pc:#x}"
     if exec_counts and blk.block_pc in exec_counts:
@@ -428,13 +431,29 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
     # 维护 cur_versions (block 内 reg 当前 SSA version), 在 LLIL_CALL 处
     # dump x0..x7 当前 version 用作 args (ARM64 ABI: args 在 x0..x7).
     cur_versions = dict(blk.entry_versions)
-    for root in roots:
+    for root_idx, root in enumerate(roots):
         if not isinstance(root, LlilExpr):
             continue
         line = _root_to_c(root, types, shapes, blk,
                           loc_names=loc_names, var_names=var_names,
                           cur_versions=cur_versions,
                           const_strings=const_strings)
+        # CALL 行附 trace 实测 return value (UIDF ret_x0)
+        if root.op == LLIL_CALL and uidf is not None:
+            # uidf 键是 (block_pc, root_idx) — 用原 blk.roots 的位置
+            try:
+                orig_idx = blk.roots.index(root)
+            except ValueError:
+                orig_idx = None
+            ov = uidf.get((blk.block_pc, orig_idx)) if orig_idx is not None else None
+            if ov is not None and ov.reg == "ret_x0":
+                if ov.is_const():
+                    line = f"{line}  // → x0={ov.first:#x}"
+                elif ov.distinct_count > 1:
+                    samp = ", ".join(f"{v:#x}" for v in ov.sample[:3])
+                    more = "+" if ov.distinct_count > 3 else ""
+                    line = (f"{line}  // → x0∈{{{samp}{more}}} "
+                            f"(d={ov.distinct_count})")
         # 更新 cur_versions
         if root.op == LLIL_SET_REG:
             rname = root.operands[0]

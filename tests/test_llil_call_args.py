@@ -84,3 +84,42 @@ def test_render_post_call_x0_uses_return_version():
     # call 前后: args 用 v1 (pre-call); 之后 x10 = x0_v2 (post-call return)
     assert "x0_v1" in text                          # call 的 arg
     assert "x0_v2" in text                          # post-call read
+
+
+def test_render_call_shows_trace_return_value():
+    """call 后附 ' // → x0=0xff' 注释 (从 UIDF ret_x0 拿)."""
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil,
+        const_ptr, call, ret, ObservedValues, unify_vars,
+    )
+    blk = ssa_block(0x1000, [
+        call(const_ptr(0x4000), pc=0x1004),
+        ret(),
+    ])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    var_names = unify_vars({0x1000: blk})
+    uidf = {
+        (0x1000, 0): ObservedValues(
+            pc=0x1008, reg="ret_x0", n_hits=5,
+            distinct_count=1, first=0xff, last=0xff, sample=[0xff],
+        ),
+    }
+    text = "\n".join(render_hlil(hlil, var_names=var_names, uidf=uidf))
+    assert "→ x0=0xff" in text
+
+
+def test_render_call_no_uidf_no_comment():
+    """没 uidf → call 行不附 return value 注释."""
+    from viewer.decompiler.llil import (
+        ssa_block, restructure, CfgInfo, render_hlil,
+        const_ptr, call, ret,
+    )
+    blk = ssa_block(0x1000, [
+        call(const_ptr(0x4000), pc=0x1004),
+        ret(),
+    ])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    text = "\n".join(render_hlil(hlil))
+    assert "→ x0" not in text

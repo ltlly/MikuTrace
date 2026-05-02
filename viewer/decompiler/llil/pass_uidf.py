@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np
-from .expr import LlilExpr, LLIL_SET_REG, LLIL_SET_FLAG
+from .expr import LlilExpr, LLIL_SET_REG, LLIL_SET_FLAG, LLIL_CALL
 from .ssa import SsaBlock
 
 
@@ -133,33 +133,52 @@ def collect_uidf(trace,
                 break
             if not isinstance(root, LlilExpr):
                 continue
-            if root.op != LLIL_SET_REG:
-                continue
-            reg_name = root.operands[0]
-            query = _norm_reg_to_query(reg_name)
-            if query is None:
-                continue
-            # SET_REG 是"写完后该 reg = value", trace 中 record.regs 是
-            # **写之前** state. 我们要写后值 — 用 record(i+1).reg, 但更容易:
-            # 直接对该 root 的 PC 之 *next* idx 取 reg 值.
-            next_idx_query = _NextIdxRegQuery(trace, root.pc, query)
-            n_hits, vals = next_idx_query.run()
-            if n_hits == 0:
-                continue
-            # mask & 64-bit
-            mask = (1 << 64) - 1
-            vals_masked = [v & mask for v in vals]
-            unique = list(dict.fromkeys(vals_masked))   # preserve order
-            ov = ObservedValues(
-                pc=root.pc, reg=reg_name,
-                n_hits=n_hits,
-                distinct_count=len(unique),
-                first=vals_masked[0] if vals_masked else None,
-                last=vals_masked[-1] if vals_masked else None,
-                sample=unique[:8],
-            )
-            out[(block_pc, root_idx)] = ov
+            if root.op == LLIL_SET_REG:
+                reg_name = root.operands[0]
+                _record_uidf_for_reg(trace, out, block_pc, root_idx,
+                                     root.pc, reg_name)
+            elif root.op == LLIL_CALL:
+                # AAPCS64 return value 在 x0 (大值 x0+x1). trace 在 call 命中
+                # 的下一条 record (== 被叫 fn 的入口 OR ret 后) 通常不直接是
+                # caller PC + 4. 但如果 fn 完整返回 + 没插指令, record(idx_of_call+1)
+                # 之后某点的 x0 就是 return. MVP: 用 next_pc=call.pc+4 PC 命中
+                # 抓 x0 — 这是 return 后第一条 caller insn 的 record 值.
+                _record_uidf_for_reg(trace, out, block_pc, root_idx,
+                                     root.pc + 4, "x0", reg_alias="ret_x0")
     return out
+
+
+def _record_uidf_for_reg(trace, out: dict, block_pc: int, root_idx: int,
+                         pc: int, reg_name: str,
+                         reg_alias: str | None = None,
+                         use_same_idx: bool | None = None) -> None:
+    """跑一次 ObservedValues 收集, 写入 out[(block_pc, root_idx)].
+
+    pc: 静态 PC 用于 trace 命中匹配 (SET_REG 用 root.pc; CALL 用 root.pc+4
+        — 即 call 后第一条 record 处 x0 = return value)
+    reg_alias: 别名 (e.g. 'ret_x0' for call return), 用于 reg 字段标记来源.
+    use_same_idx: None (auto: alias 含 'ret_' → True, 否则 False).
+    """
+    query = _norm_reg_to_query(reg_name)
+    if query is None:
+        return
+    if use_same_idx is None:
+        use_same_idx = bool(reg_alias and reg_alias.startswith("ret_"))
+    n_hits, vals = _NextIdxRegQuery(trace, pc, query).run(use_same_idx=use_same_idx)
+    if n_hits == 0:
+        return
+    mask = (1 << 64) - 1
+    vals_masked = [v & mask for v in vals]
+    unique = list(dict.fromkeys(vals_masked))
+    ov = ObservedValues(
+        pc=pc, reg=(reg_alias or reg_name),
+        n_hits=n_hits,
+        distinct_count=len(unique),
+        first=vals_masked[0] if vals_masked else None,
+        last=vals_masked[-1] if vals_masked else None,
+        sample=unique[:8],
+    )
+    out[(block_pc, root_idx)] = ov
 
 
 class _NextIdxRegQuery:
@@ -170,7 +189,12 @@ class _NextIdxRegQuery:
         self.pc = pc
         self.q = reg_query
 
-    def run(self) -> tuple[int, list]:
+    def run(self, use_same_idx: bool = False) -> tuple[int, list]:
+        """use_same_idx=False (default): 取 record(i+1) — 即 PC 命中后的下条
+        record, reg 是 SET_REG 写后值.
+        use_same_idx=True: 取 record(i) — 即 PC 命中处, reg 是该指令执行 *前*
+        的状态. 用于 CALL+4 PC 的场景 (record at PC+4 已是 call 返回后).
+        """
         n = len(self.t)
         pc_arr = self.t.pc_array()
         mask = pc_arr == np.uint64(self.pc)
@@ -178,14 +202,13 @@ class _NextIdxRegQuery:
             return (0, [])
         idxs = np.nonzero(mask)[0]
         n_hits = len(idxs)
-        # cap
         if n_hits > 5000:
             step = n_hits // 5000
             idxs = idxs[::step]
         vals: list = []
         for i in idxs:
-            ni = int(i) + 1
-            if ni >= n:
+            ni = int(i) if use_same_idx else int(i) + 1
+            if ni >= n or ni < 0:
                 continue
             r = self.t.record(ni)
             if isinstance(self.q, str):
