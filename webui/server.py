@@ -2805,6 +2805,100 @@ def make_app(trace_path: pathlib.Path,
             },
         }
 
+    @app.post("/api/llil/llm")
+    def llil_llm(payload: dict):
+        """LLIL→LLM (skeleton/skin style): 先跑 8-pass 出干净 C-like 中间表示,
+        再喂 LLM 做 variable 命名 / 业务语义注释 / 简化高级控制流.
+        SK²Decompile (arXiv 2509.22114) 实证此模式 > 纯 raw asm + LLM.
+
+        body: {fn_id, model, max_tokens?, lang?, hooks?, with_memshadow?,
+               split_top_k?, split_min_records?}
+        """
+        from viewer.decompiler import make_llm_model
+        fn_id = str(payload.get("fn_id") or "")
+        model_name = str(payload.get("model") or "mimo")
+        max_tokens = int(payload.get("max_tokens") or 4096)
+        lang = str(payload.get("lang") or "zh")
+        hooks = payload.get("hooks") or []
+        with_memshadow = bool(payload.get("with_memshadow") or False)
+        split_top_k = int(payload.get("split_top_k") or 40)
+        split_min_records = int(payload.get("split_min_records") or 10)
+        if isinstance(hooks, str):
+            hooks = [s.strip() for s in hooks.split(",") if s.strip()]
+        hk = tuple(hooks)
+        # cache (跟 LLM 输出 cache 同语义)
+        cache_key = ("llil_llm", fn_id, model_name, lang, with_memshadow,
+                     hk, max_tokens, split_top_k, split_min_records)
+        if cache_key in cache:
+            return {**cache[cache_key], "cache_hit": True}
+        # 1. LLIL pipeline → c_code (skeleton)
+        try:
+            pipeline_res = _llil_pipeline_for_fn(
+                fn_id, hk, with_memshadow, split_top_k, split_min_records)
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            return {"ok": False, "error": f"pipeline: {e}",
+                    "traceback": traceback.format_exc()[-800:]}
+        skeleton = pipeline_res["c_code"]
+        stats = pipeline_res["stats"]
+        fn_name = pipeline_res["name"]
+        # 2. system prompt — SK²Decompile 风格: 机器骨架, LLM 命名/语义
+        if lang == "zh":
+            sys_prompt = (
+                "你是反编译 skin 助手 (SK²Decompile 风格). 输入是 trace 反编译器"
+                "(traceMiku LLIL 8-pass) 出的 C-like skeleton, 已含: SSA 折叠后的"
+                "常量, dead code 删除, struct field 还原 (`reg->f0xN`), trace 实测"
+                "indirect jump 已 resolve 到具体 PC. \n\n"
+                "你的任务 — 输出**重命名 + 注释**后的 C 伪代码:\n"
+                "1. 给 reg (x0..x30/sp/fp) 起业务语义名 (e.g. `ctx` / `cmd_idx` / `key`)\n"
+                "2. 给 `xN->fN` struct field 起名 (e.g. `ctx->mutex` / `ctx->cmd_table`)\n"
+                "3. 把 LLIL `intrinsic(...)` 的 ARM64 op 翻译成等价 C 表达式或注释\n"
+                "4. 不要重新推断逻辑 — skeleton 已经是机器算法的最终结论, 你只补语义\n"
+                "5. 用 ```c 块包代码; 块外用中文写一段简短的高层语义说明\n"
+                "6. 不要保留 `goto 0x...;` 的具体地址, 改成 `// jump back to dispatcher` 等注释"
+            )
+        else:
+            sys_prompt = (
+                "You are a decompilation skin assistant (SK²Decompile style). "
+                "Input is a C-like skeleton from a trace decompiler's LLIL 8-pass "
+                "pipeline. Already has: SSA-folded constants, dead code removed, "
+                "struct fields recovered (reg->f0xN), trace-resolved indirect jumps.\n\n"
+                "Your task: rename regs to semantic names, name struct fields, "
+                "translate `intrinsic(...)` to C-equivalent or comment, write a "
+                "brief high-level summary, output a single ```c block."
+            )
+        user_prompt = (
+            f"## fn_id: {fn_id}\n## name: {fn_name}\n"
+            f"## stats: {stats}\n\n"
+            f"## skeleton (LLIL 8-pass output):\n```c\n{skeleton}\n```\n"
+        )
+        # 3. call LLM
+        try:
+            model = make_llm_model(model_name)
+        except KeyError as e:
+            raise HTTPException(400, f"{e}")
+        result = model.call(user_prompt, system=sys_prompt,
+                            max_tokens=max_tokens)
+        out = {
+            "ok": result.error is None,
+            "fn_id": fn_id,
+            "name": fn_name,
+            "model": result.model,
+            "error": result.error,
+            "c_code": result.c_code,
+            "skeleton": skeleton,
+            "stats": stats,
+            "in_tokens": result.prompt_tokens,
+            "out_tokens": result.output_tokens,
+            "latency_ms": result.latency_ms,
+            "cache_hit": False,
+        }
+        if out["ok"]:
+            cache[cache_key] = out
+        return out
+
     @app.post("/api/llil/render")
     def llil_render(payload: dict):
         """跑 LLIL 8-pass pipeline → C-like markdown. 不调 LLM."""

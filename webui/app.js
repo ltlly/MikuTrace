@@ -2437,6 +2437,7 @@ async function initDecompileTab() {
   $("dec-refresh").addEventListener("click", loadDecSummary);
   $("dec-llm-call").addEventListener("click", runDecLlmCall);
   $("dec-llil").addEventListener("click", runDecLlilRender);
+  $("dec-llil-llm").addEventListener("click", runDecLlilLlm);
   $("dec-vm-mem").addEventListener("change", loadDecSummary);
   $("dec-tier").addEventListener("change", () => {
     if (DEC_SELECTED_FN) selectDecFn(DEC_SELECTED_FN);
@@ -2578,6 +2579,46 @@ function _renderDecResult(r, fromCache) {
   const meta = `<div class="dim small">${r.model} · ${r.in_tokens}→${r.out_tokens} tok` +
                ` · server ${r.latency_ms}ms${tag}</div>`;
   return meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
+}
+
+async function runDecLlilLlm() {
+  if (!DEC_SELECTED_FN) { alert("先选一个 fn"); return; }
+  const model = $("dec-model").value;
+  const useMem = $("dec-vm-mem").checked;
+  const lang = $("dec-zh").checked ? "zh" : "en";
+  const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
+  const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
+  const out = $("dec-output");
+  out.innerHTML = `<div class="dim">LLIL 8-pass + ${model} (skeleton/skin) — 慢, 30-90s...</div>`;
+  const t0 = Date.now();
+  try {
+    const r = await fetch("/api/llil/llm", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        fn_id: DEC_SELECTED_FN,
+        model: model,
+        with_memshadow: useMem,
+        lang: lang,
+        split_top_k: parseInt(k, 10),
+        split_min_records: parseInt(m, 10),
+      }),
+    }).then(r => r.json());
+    const dt = Date.now() - t0;
+    if (!r.ok) {
+      out.innerHTML = `<div class="dec-error">error: ${escapeHtml(r.error || "")}<br><pre>${escapeHtml(r.traceback || "")}</pre></div>`;
+      return;
+    }
+    const cacheTag = r.cache_hit ? " <b>(cache)</b>" : "";
+    const s = r.stats || {};
+    const meta = `<div class="dim small">LLIL→LLM · ${r.model} · skeleton blocks=${s.blocks} `
+               + `lift=${s.lift_total} (${(s.lift_coverage*100).toFixed(0)}%) `
+               + `UIDF=${s.uidf_const}/${s.uidf_observed} const · `
+               + `${r.in_tokens}→${r.out_tokens} tok · ${dt}ms${cacheTag}</div>`;
+    out.innerHTML = meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
+  } catch (e) {
+    out.innerHTML = '<div class="dec-error">request failed: ' + escapeHtml(String(e)) + '</div>';
+  }
 }
 
 async function runDecLlilRender() {
