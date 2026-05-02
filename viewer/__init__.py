@@ -70,10 +70,13 @@ def build_trace_ir(t, sym=None, only_module: bool = True):
     return _b(t, sym=sym, only_module=only_module)
 
 
-def write_decompile_dir(top, out_dir):
-    """Write summary.md + fns/<id>.md → out_dir/decompile/."""
+def write_decompile_dir(top, out_dir, tier: str = "full"):
+    """Write summary.md + fns/<id>.md → out_dir/decompile/.
+
+    tier ∈ {'full','hot','summary'} — see render_func_md.
+    """
     from .decompiler import write_decompile_dir as _w
-    return _w(top, out_dir)
+    return _w(top, out_dir, tier=tier)
 
 
 __version__ = "0.3.0"
