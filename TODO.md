@@ -41,18 +41,20 @@
 
 # 待办优先级
 
-## 🔥 P0 — 立刻做 (≤ 2 天, 一周内 ship)
+## ✅ P0 — 全部完成 (2026-05-02 single session)
 
-| # | 项 | 工作量 | 来源 |
+| # | 项 | 状态 | commit |
 |---|---|---|---|
-| 1 | **Tree View 调用层次 UI** (web SPA) | 2d | 新 |
-| 2 | **viewer 集成 jni_hooks.jsonl** | 1d | TODO |
-| 3 | **Web 同步 11 个 CLI endpoint** | 1d | TODO |
-| 4 | **viewer 集成 external_writes 视觉区分** | 0.5d | TODO |
-| 5 | **taint --max=5000 默认 + truncated 警告 + web "加载全部" 按钮** | 0.5d + UX | 反思 |
-| 6 | **trace 报错时提示反调试 + 推荐 miku-shield / 自写 frida 脚本** | 0.5d | 新 |
+| 1 | Tree View 调用层次 UI (web SPA) | ✅ | 23c0829 |
+| 2 | viewer 集成 jni_hooks.jsonl | ✅ | 6ff4860 |
+| 3 | Web 同步 11 个 CLI endpoint (4 batches) | ✅ | b9cd80c, 2788a47, f29afdf, 6b04e3c |
+| 4 | viewer 集成 external_writes 视觉区分 | ✅ | 174d063 |
+| 5 | taint cap=5000 + stopped_at_max + 加载全部按钮 | ✅ | 644b316 |
+| 6 | trace 报错提示反调试 + miku-shield URL | ✅ | ba14908 |
 
-**总计 ≈ 5.5 天**.
+**实际耗时 ~1 session, 9 commits, +401 tests, 测试 401 pass + 1 skip.**
+
+下面是 P0 原始设计 spec (保留作历史 / next session 参考):
 
 ### P0-1: Tree View 调用层次 UI
 
