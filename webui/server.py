@@ -2659,6 +2659,173 @@ def make_app(trace_path: pathlib.Path,
             cache[cache_key] = out
         return out
 
+    # ─────────────── LLIL 8-pass pipeline (路线 B v2, BN 风格) ───────────────
+    # 跑完整 pipeline (lift → SSA → constfold → dce → typelat → struct →
+    # restructure → render) 直接出 C-like markdown. **不调 LLM**, 0 cost.
+
+    def _llil_pipeline_for_fn(fn_id: str, hooks_paths: tuple,
+                              with_memshadow: bool,
+                              split_top_k: int, split_min_records: int) -> dict:
+        """跑全 pipeline, 返回 {fn_id, name, c_code, stats}."""
+        from viewer.decompiler.llil import (
+            lift_static, ssa_block, ssa_blocks,
+            constfold_block, dce_block, typelat_block,
+            struct_recover_block, merge_shapes,
+            restructure, from_viewer_cfg, render_hlil, expr_to_c,
+        )
+        from viewer.cfg import build_cfg as _build_cfg
+        import numpy as np
+        from viewer.trace import REC_SIZE
+        # 1. 静态 IR (用 v1 builder 切 fn 范围)
+        top = _get_dec_ir(hooks_paths=hooks_paths,
+                          with_memshadow=with_memshadow,
+                          split_top_k=split_top_k,
+                          split_min_records=split_min_records)
+        fn = top.fn(fn_id)
+        if fn is None:
+            raise HTTPException(404, f"no such fn {fn_id}")
+
+        # 2. CFG (cached) — 用 viewer/cfg.py 的输出, 转 LLIL CfgInfo
+        cfg = cache.get("dec_cfg")
+        if cfg is None:
+            cfg = _build_cfg(t, only_module=True)
+            cache["dec_cfg"] = cfg
+
+        # 3. lift — 跑 fn 内的 PCs (block.insns 的 union)
+        fn_block_pcs = {b.pc for b in fn.blocks}
+        # 收集每个 fn block 内所有指令 PC 的 (pc, inst)
+        from viewer.disasm import decode as _dec
+        items: list = []
+        for b in fn.blocks:
+            cfgblk = cfg.blocks.get(b.pc)
+            if cfgblk is None: continue
+            for ins_pc in cfgblk.insns:
+                # 找 inst — 用 pc_arr first hit
+                pc_arr = t.pc_array()
+                u32 = np.frombuffer(t._mm, dtype=np.uint32,
+                                    count=t.n * (REC_SIZE // 4))
+                inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]
+                mask = pc_arr == np.uint64(ins_pc)
+                if mask.any():
+                    fi = int(np.argmax(mask))
+                    items.append((ins_pc, int(inst_arr[fi])))
+
+        ir_lift, lift_stats = lift_static(items)
+
+        # 4. 把 lift 结果按 cfg block 重组 → {block_pc: list[LlilExpr]}
+        block_to_exprs: dict[int, list] = {}
+        for b in fn.blocks:
+            cfgblk = cfg.blocks.get(b.pc)
+            if cfgblk is None: continue
+            exprs: list = []
+            for ins_pc in cfgblk.insns:
+                exprs.extend(ir_lift.get(ins_pc, []))
+            block_to_exprs[b.pc] = exprs
+
+        # 5. SSA
+        ssa_map = ssa_blocks(block_to_exprs)
+
+        # 6. constfold (block-by-block)
+        from viewer.decompiler.llil import constfold_block as _cf
+        cf_count = 0
+        for pc, blk in list(ssa_map.items()):
+            new = _cf(blk)
+            ssa_map[pc] = new
+            cf_count += sum(1 for r in new.roots
+                            if hasattr(r, "operands") and len(r.operands) >= 2
+                            and hasattr(r.operands[1], "extra")
+                            and r.operands[1].extra.get("_folded_from"))
+
+        # 7. dce
+        dce_removed = 0
+        for pc, blk in list(ssa_map.items()):
+            new = dce_block(blk)
+            dce_removed += len(blk.roots) - len(new.roots)
+            ssa_map[pc] = new
+
+        # 8. typelat + struct
+        types_per_block: dict = {}
+        shapes_per_block: list = []
+        for pc, blk in ssa_map.items():
+            types_per_block[pc] = typelat_block(blk)
+            shapes_per_block.append(struct_recover_block(blk, types_per_block[pc]))
+        merged_shapes = merge_shapes(shapes_per_block)
+        # 用 fn 第一 block 的 types 作 render env (粗近似)
+        if fn.blocks and fn.blocks[0].pc in types_per_block:
+            render_types = types_per_block[fn.blocks[0].pc]
+        else:
+            from viewer.decompiler.llil import TypeEnv as _TE
+            render_types = _TE()
+
+        # 9. restructure — 用 viewer cfg 的 fn-restricted view
+        cfg_info = from_viewer_cfg(cfg)
+        # restructure 假设 entry = 整个 cfg.entry; fn 内可能不同 entry, 我们
+        # 用 fn.pc_start.
+        cfg_info.entry = fn.pc_start
+        # 限制 succs/preds 到 fn 内 blocks
+        fn_blocks_set = set(block_to_exprs.keys())
+        cfg_info.succs = {
+            pc: [s for s in succs if s in fn_blocks_set]
+            for pc, succs in cfg_info.succs.items()
+            if pc in fn_blocks_set
+        }
+        cfg_info.preds = {
+            pc: [p for p in preds if p in fn_blocks_set]
+            for pc, preds in cfg_info.preds.items()
+            if pc in fn_blocks_set
+        }
+        hlil = restructure(cfg_info, ssa_map)
+
+        # 10. render
+        lines = render_hlil(hlil, types=render_types, shapes=merged_shapes)
+        c_code = "\n".join(lines)
+
+        return {
+            "ok": True,
+            "fn_id": fn_id,
+            "name": fn.name,
+            "c_code": c_code,
+            "stats": {
+                "blocks": len(block_to_exprs),
+                "lift_total": lift_stats.total,
+                "lift_intrinsic": lift_stats.intrinsic,
+                "lift_coverage": round(lift_stats.coverage(), 3),
+                "constfold_count": cf_count,
+                "dce_removed": dce_removed,
+                "struct_shapes": len(merged_shapes),
+            },
+        }
+
+    @app.post("/api/llil/render")
+    def llil_render(payload: dict):
+        """跑 LLIL 8-pass pipeline → C-like markdown. 不调 LLM."""
+        fn_id = str(payload.get("fn_id") or "")
+        hooks = payload.get("hooks") or []
+        with_memshadow = bool(payload.get("with_memshadow") or False)
+        split_top_k = int(payload.get("split_top_k") or 40)
+        split_min_records = int(payload.get("split_min_records") or 10)
+        if isinstance(hooks, str):
+            hooks = [s.strip() for s in hooks.split(",") if s.strip()]
+        hk = tuple(hooks)
+        # cache key
+        cache_key = ("llil_render", fn_id, hk, with_memshadow,
+                     split_top_k, split_min_records)
+        if cache_key in cache:
+            return {**cache[cache_key], "cache_hit": True}
+        try:
+            res = _llil_pipeline_for_fn(fn_id, hk, with_memshadow,
+                                        split_top_k, split_min_records)
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            return {"ok": False,
+                    "error": f"{type(e).__name__}: {e}",
+                    "traceback": traceback.format_exc()[-800:]}
+        res["cache_hit"] = False
+        cache[cache_key] = res
+        return res
+
     # static SPA
     @app.get("/", response_class=HTMLResponse)
     def index():

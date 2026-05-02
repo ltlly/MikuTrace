@@ -2436,6 +2436,7 @@ async function initDecompileTab() {
   }
   $("dec-refresh").addEventListener("click", loadDecSummary);
   $("dec-llm-call").addEventListener("click", runDecLlmCall);
+  $("dec-llil").addEventListener("click", runDecLlilRender);
   $("dec-vm-mem").addEventListener("change", loadDecSummary);
   $("dec-tier").addEventListener("change", () => {
     if (DEC_SELECTED_FN) selectDecFn(DEC_SELECTED_FN);
@@ -2577,6 +2578,42 @@ function _renderDecResult(r, fromCache) {
   const meta = `<div class="dim small">${r.model} · ${r.in_tokens}→${r.out_tokens} tok` +
                ` · server ${r.latency_ms}ms${tag}</div>`;
   return meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
+}
+
+async function runDecLlilRender() {
+  if (!DEC_SELECTED_FN) { alert("先选一个 fn"); return; }
+  const useMem = $("dec-vm-mem").checked;
+  const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
+  const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
+  const out = $("dec-output");
+  out.innerHTML = `<div class="dim">running LLIL 8-pass pipeline (lift→SSA→constfold→dce→typelat→struct→restructure→render)...</div>`;
+  const t0 = Date.now();
+  try {
+    const r = await fetch("/api/llil/render", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        fn_id: DEC_SELECTED_FN,
+        with_memshadow: useMem,
+        split_top_k: parseInt(k, 10),
+        split_min_records: parseInt(m, 10),
+      }),
+    }).then(r => r.json());
+    const dt = Date.now() - t0;
+    if (!r.ok) {
+      out.innerHTML = `<div class="dec-error">LLIL pipeline error: ${escapeHtml(r.error || "")}<br><pre>${escapeHtml(r.traceback || "")}</pre></div>`;
+      return;
+    }
+    const cacheTag = r.cache_hit ? " <b>(cache 命中)</b>" : "";
+    const s = r.stats || {};
+    const meta = `<div class="dim small">LLIL 8-pass · fn=${r.fn_id} ${r.name || ""} · `
+               + `blocks=${s.blocks} · lift=${s.lift_total} (${(s.lift_coverage*100).toFixed(1)}%覆盖) · `
+               + `constfold=${s.constfold_count} · dce=${s.dce_removed} · `
+               + `structs=${s.struct_shapes} · ${dt}ms${cacheTag}</div>`;
+    out.innerHTML = meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
+  } catch (e) {
+    out.innerHTML = '<div class="dec-error">request failed: ' + escapeHtml(String(e)) + '</div>';
+  }
 }
 
 // ---------------- go ----------------

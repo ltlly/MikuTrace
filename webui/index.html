@@ -144,7 +144,8 @@
             min<input type="number" id="dec-split-min" value="10" min="1" max="500" style="width:50px;margin-left:2px">
           </label>
           <button id="dec-refresh" title="重建 TraceIR (改设置后)">Build IR</button>
-          <button id="dec-llm-call" title="调 LLM 反编译当前选中 fn">反编译</button>
+          <button id="dec-llil" title="LLIL 8-pass pipeline 直接出 C-like 代码 (机器算法, 不调 LLM, 0 cost)">LLIL→C</button>
+          <button id="dec-llm-call" title="调 LLM 反编译当前选中 fn (慢, 烧 token)">LLM 反编译</button>
         </div>
         <div id="dec-key-status" class="dim small"></div>
         <div id="dec-cost-hint" class="dim small"></div>
