@@ -254,25 +254,37 @@ miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypas
 
 ## P2-DEC: trace decompiler — LLM-friendly skeleton IR (路线 B, ~2 周)
 
-**研究**: [`docs/trace-decompiler-research.md`](docs/trace-decompiler-research.md) (commit fc7dcd0)
-**设计**: [`docs/trace-decompiler-design.md`](docs/trace-decompiler-design.md) (commit dee8d7d)
+**研究**: [`docs/trace-decompiler-research.md`](docs/trace-decompiler-research.md)
+**设计**: [`docs/trace-decompiler-design.md`](docs/trace-decompiler-design.md)
+  含 **§7.0 普适性原则** — 所有 PR 必须自查通过 (无硬编码变种).
+**实测**: [`docs/poc-mimo-libsgmainso-2026-05.md`](docs/poc-mimo-libsgmainso-2026-05.md)
 
 **定位**: 机器把 trace 折叠/类型推导/反 OLLVM, 输出紧凑结构化 IR;
-反编译这一步交给 Claude/DeepSeek-R1/Qwen. 不写传统 19-stage codegen.
+反编译这一步交给 Claude/DeepSeek-R1/Qwen/mimo. 不写 19-stage codegen.
 
-**ship 计划** (每 stage 一次 commit):
+**ship 进度** (feat/trace-decompiler 分支):
 
-| # | Stage | 工作量 | 验证 |
-|---|---|---|---|
-| P2-DEC1 | 骨架 + IR — `viewer/decompiler/{ir,builder,render/*}.py`, `tracemiku dec` CLI | 1 周 | 跑 fail-path 4675 records 出 IR, 手 copy F0.md 到 Claude Code 看伪代码 |
-| P2-DEC2 | LLM 集成 — `llm_client.py` (Claude/DeepSeek/Qwen), `--call-llm`, REST `/api/dec/*` | 3-4d | env API key + 一键调用, 输出落 `decompile/llm_results/` |
-| P2-DEC3 | 折叠 + 类型 — `loop_fold.py` (Larus/Ball-Larus), `type_anchor.py` (REWARDS/Howard, JNI/libc sink) | 1 周 | cold-path 2M records 端到端, 单 fn IR < 60KB |
-| P2-DEC4 | Benchmark — `benchmark/{trace_metrics,decompile_eval}.py`, `tracemiku dec-bench` | 3-4d | 4 自建 metric (branch/loop/call/type) + Decompile-Eval re-exec |
-| P2-DEC5 | docs / CODE_REVIEW 同步 + README 更新 | 半天 | tests 全绿, ship |
+| # | Stage | 状态 | 普适? | commit |
+|---|---|---|---|---|
+| DEC1 | 骨架 + IR + `tracemiku dec` CLI | ✅ | ✓ | 7749dd2 |
+| DEC2 | Claude/DeepSeek/Qwen adapter + prompts | ✅ | ✓ | 1ee49a1 |
+| DEC2+ | OpenCode/mimo backend + 端到端 PoC | ✅ | ✓ | 1032641 |
+| DEC3-A | hot/warm/cold tier 渲染 (真机 -73%) | ✅ | ✓ | da22070 |
+| DEC3-B0 | calltree 切子 FuncIR (1 fn → 10 fn) | ✅ | ✓ | baf4300 |
+| DEC3-B | 类型锚点 (JSON-spec driven) | 🔨 next | ✓ 设计 | — |
+| DEC3-C | 循环 induction var (numpy regression) | 📋 | ✓ 设计 | — |
+| DEC3-D | VM 候选区段提取 (复用 ollvmdet, 不 disasm) | 📋 | ✓ 设计 | — |
+| DEC4 | 4 模型 benchmark + Decompile-Eval | 📋 | ✓ | — |
+| DEC5 | docs / CODE_REVIEW 同步 | 📋 | n/a | — |
 
-**总工作量**: ~3300 LOC, 1.5-2 周一个人. 风险表见设计文档 §12.
+**累计**: 8 commits / ~3500 LOC / 486 tests pass. 真机 libsgmainso
+e2e: F1 sub_54820 → mimo 给出 3 层嵌套查找 + XOR 计算的具体 C + ABI.
 
-**先在 worktree 做** (`feat/trace-decompiler` 分支), 不污染 main.
+**普适性合规要点** (设计 §7.0 强约束, PR review 必查):
+- 不写死 SO 名 / opcode 编码 / fn 偏移 / 寄存器名
+- "硬"知识全部从 JSON spec 读 (`tools/hooks/*.json` 用户驱动)
+- 检测 ≠ 决定; 输出 confidence + reasons, 让 LLM 决
+- ollvmdet.py 是先例正例 ("NEVER decode VM bytecode")
 
 ---
 

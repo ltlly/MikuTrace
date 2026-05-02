@@ -310,6 +310,47 @@ print(result.c_code)
 
 ## 7. 关键算法决策
 
+### 7.0 普适性原则 (anti-hardcoding) — 所有后续工作必须遵守
+
+**核心**: 我们做的所有东西是 **"提供结构化 evidence, 不假设语义"**.
+LLM 才是通用变种识别器, 我们只做工程脚手架.
+
+**为什么**: OLLVM / VM 有大量变种 (stock OLLVM / AVMP / LiteVM / Tencent Legu /
+Bangcle / 360 / VMProtect / Themida / Tigress) — 任何 hardcoded 实现都会在
+变种切换时翻车. 路线 B 的根本假设是 LLM 能识别变种 (Deconstructing Obfuscation
+2025 实证, mimo PoC 实证), 我们的工作是给它**最强 evidence**.
+
+**已有正例**: `viewer/ollvmdet.py` — heuristic 评分 + 不 decode bytecode.
+注释里明文写: "NEVER decode VM bytecode". 这就是这个原则的实操.
+
+**对照表 (做与不做)**:
+
+| 方向 | hardcoded 危险做法 (不做) | 普适做法 (做) |
+|---|---|---|
+| 类型锚点 (DEC3-B) | JNI vtable / libssl 表写死代码 | hook spec JSON-driven (`tools/hooks/*`), 通用 `bl_target → type_inject` 接口, 表外置 |
+| 循环 induction (DEC3-C) | hardcode `i++` / `i*=2` 等模式 | numpy regression on loop-end reg deltas, 输出统计特征 (mean / variance / linearity), LLM 推语义 |
+| VM 处理 (DEC3-D) | 写死 "16-bit op + 64-bit imm" disasm | (a) 复用 ollvmdet 检测 (b) trace 内 "重复 fetch + 不同地址" 找 bytecode pointer (c) memshadow 抓字节 → hex dump 喂 LLM, **不 disasm** |
+| CFG flatten 反混淆 | hardcode "state register on x24" / 单一 dispatcher 模式 | 通用 SCC + 入参为 imm 的 cond branch 检测, 输出 dispatcher 候选 |
+| crypto 识别 | hardcode "AES sbox in lib X offset Y" | crypto-scan 已有 — 通用常量 pattern + 字节序 + 窗口扫 |
+
+**反例 (PR 该被打回)**:
+- "只对 libsgmainso 6.8.x AVMP work"
+- "硬编码 sub_57770 是 doCommandNative"
+- "假设 trace 第 5 块是 VM dispatcher"
+- "把 mimo 一次推出来的 VM 编码写进 disasm"
+
+**正例 (PR 该过)**:
+- "检测条件 X (评分 + reasons), 不做语义判断, 给 LLM/用户看"
+- "用户提供 JSON spec, 我们读"
+- "trace 数据驱动, numpy mask + 统计输出"
+
+**PR review 自查清单** (合 PR 前必过一遍):
+- [ ] 没有写死任何 SO 名 / 函数名 / 偏移 / 寄存器名 / opcode 编码
+- [ ] 没有 "只支持 X" 的限定; 任何 evidence 输出都有 confidence + reasons
+- [ ] 用户可扩展 (JSON spec / config / args), 不需改代码就能换变种
+- [ ] 不替 LLM / 用户做语义决定; 检测和提取分开
+- [ ] 反例 case (变种切换) 在 docstring 里有提及
+
 ### 7.1 循环折叠 (loop_fold.py)
 
 输入: trace pc 序列 + cfg blocks.
@@ -320,14 +361,29 @@ print(result.c_code)
 
 源参考: research.md §2.2 (HotpathVM + Larus PLDI 1999 思想). 不抄代码, 算法直接复刻.
 
-### 7.2 类型推导锚点 (type_anchor.py)
+### 7.2 类型推导锚点 (type_anchor.py) — JSON-spec driven, **遵守 §7.0**
 
-API sink 列表 (硬编码 + 可扩展 jsonl):
-- JNI: `FindClass(env, name) → x0=JNIEnv*, x1=const char*` 
-- libc: `pthread_mutex_lock(m) → x0=pthread_mutex_t*`
-- libssl: `EVP_aes_128_ecb() → ret=EVP_CIPHER*`
+**所有 API sink 都从外部 JSON 读, 代码里零硬编码**. 复用已有
+`tools/hooks/*.json` 格式 (libart_jni.json 等), 加扩展字段表达
+"reg → type" 注入规则.
 
-实现: 看到 `bl <addr>` 且 `<addr>` 在 hook json 里, 把那一刻 reg 类型注入. 然后用现有 `viewer/taint.py` backward-propagate.
+实现:
+1. 加载用户 JSON spec (任意路径, default `tools/hooks/*.json`):
+   ```json
+   {"name": "FindClass",  "address": "0x...", "callee_pc": "0x...",
+    "params": [{"reg": "x0", "type": "JNIEnv*"},
+               {"reg": "x1", "type": "const char*"}],
+    "ret":   {"reg": "x0", "type": "jclass"}}
+   ```
+2. 扫 trace, 看到 `bl <pc>` 且 pc 命中 spec → 在该 idx 标 anchor
+3. 用 `viewer/taint.py` backward / forward propagate 类型 (谁的 def-chain
+   通过这个 reg, 都打同 type)
+4. 输出: `BlockIR.type_anchors[]`, render 时 fn-md 加 "Type anchors" section
+
+**普适性要点 (§7.0 自查)**:
+- ✓ 表外置, 用户可加任意 API (libssl / libc / 自定义 SDK)
+- ✓ 没有 "只支持 JNI" 的硬编码
+- ✓ 反例 case 文档化: "如果 spec 里没 SDK X, 就没 anchor; 加 JSON 即可"
 
 源参考: REWARDS NDSS 2010 (research.md §2.5).
 
