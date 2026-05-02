@@ -24,6 +24,10 @@ from .pass_typelat import (
     TypeEnv, typelat_block, join,
     T_TOP, T_INT, T_PTR, T_HANDLE, T_BOOL, T_BOT,
 )
+from .pass_struct import (
+    FieldAccess, StructShape,
+    struct_recover_block, merge_shapes,
+)
 
 from .expr import (
     LlilExpr,
@@ -87,4 +91,5 @@ __all__ = [
     "dce_block", "dce_blocks",
     "TypeEnv", "typelat_block", "join",
     "T_TOP", "T_INT", "T_PTR", "T_HANDLE", "T_BOOL", "T_BOT",
+    "FieldAccess", "StructShape", "struct_recover_block", "merge_shapes",
 ]
