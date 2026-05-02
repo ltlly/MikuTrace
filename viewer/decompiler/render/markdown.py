@@ -31,6 +31,46 @@ def render_summary_md(top: TopIR) -> str:
     lines.append(f"- last_insn_is_ret: {top.last_insn_is_ret}")
     lines.append(f"- generated: {top.generated_at} (tracemiku {top.tracemiku_version})")
     lines.append("")
+    if top.vm_candidates:
+        lines.append(f"## VM Candidates ({len(top.vm_candidates)})")
+        lines.append("")
+        lines.append("> 来自 ollvmdet + bytecode reader 检测 (DEC3-D). "
+                     "**evidence only — 不解码**, LLM 看 hex dump 自己推编码.")
+        lines.append("")
+        for i, vc in enumerate(top.vm_candidates):
+            lines.append(f"### Candidate #{i}")
+            lines.append("")
+            lines.append(f"- dispatcher_pc: `{vc.dispatcher_pc:#x}`")
+            lines.append(f"- confidence: **{vc.confidence:.2f}**")
+            if vc.reasons:
+                lines.append(f"- reasons:")
+                for r in vc.reasons:
+                    lines.append(f"  - {r}")
+            if vc.reader_pc:
+                lines.append(f"- bytecode reader: `{vc.reader_inst}` "
+                             f"@ `{vc.reader_pc:#x}` (×{vc.reader_hits} hits, "
+                             f"base reg = `{vc.reader_base_reg}`)")
+            if vc.bytecode_addr:
+                # > 64KB: 跨 mmap region, length 不可靠, 不展示原值避免误导
+                if vc.bytecode_len > 65536:
+                    lines.append(f"- bytecode start: `{vc.bytecode_addr:#x}` "
+                                 f"(length unreliable: base reg spans "
+                                 f"~{vc.bytecode_len:,} bytes — likely "
+                                 f"multiple mmap regions, hex dump shows first 256B)")
+                else:
+                    lines.append(f"- bytecode range: `{vc.bytecode_addr:#x}` "
+                                 f"+ `{vc.bytecode_len}` bytes")
+            if vc.hex_dump:
+                lines.append("")
+                lines.append("**bytecode hex dump** (memshadow snapshot at trace end):")
+                lines.append("")
+                lines.append("```")
+                for ln in vc.hex_dump[:16]:
+                    lines.append(ln)
+                lines.append("```")
+            lines.append("")
+        lines.append("")
+
     lines.append(f"## Functions ({len(top.fns)})")
     lines.append("")
     lines.append("| id | name | blocks | loops | calls | idx range |")

@@ -117,6 +117,25 @@ class FuncIR:
 
 
 @dataclass
+class VmCandidateIR:
+    """One VM dispatcher 候选区. DEC3-D.
+
+    严守 §7.0: 我们给 evidence (dispatcher PC, confidence, reasons,
+    bytecode addr, hex dump), LLM 推编码 + 反汇编. 不假设特定 VM 变种.
+    """
+    dispatcher_pc: int
+    confidence: float
+    reasons: list[str] = field(default_factory=list)
+    reader_pc: int = 0
+    reader_inst: str = ""               # disasm 文本
+    reader_hits: int = 0
+    reader_base_reg: str = ""
+    bytecode_addr: int = 0
+    bytecode_len: int = 0
+    hex_dump: list[str] = field(default_factory=list)
+
+
+@dataclass
 class TopIR:
     """Trace 顶层 IR — summary 级."""
     records: int                         # trace 总指令数
@@ -128,6 +147,9 @@ class TopIR:
     cmd: Optional[int] = None            # 业务命令 (如 sgmain cmdId)
     method: str = ""
     fns: list[FuncIR] = field(default_factory=list)
+    # P2-DEC3-D: VM 候选区. ollvmdet + bytecode reader 检测的产物.
+    # 没检测到 → 空列表, 不影响其他.
+    vm_candidates: list["VmCandidateIR"] = field(default_factory=list)
     # 工具版本 / 生成时间, 给 LLM 看上下文.
     tracemiku_version: str = ""
     generated_at: str = ""               # ISO timestamp

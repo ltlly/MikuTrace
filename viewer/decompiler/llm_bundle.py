@@ -134,9 +134,26 @@ def build_fn_decompile_prompt(top: TopIR, fn_id: str,
                   f"only the top {len(truncated_fn.blocks)} by exec_count shown to "
                   f"fit token budget. Cold blocks dropped.\n")
 
+    # DEC3-D: VM 候选区是 trace-level evidence, 但跟 fn-level 反编译相关
+    # (尤其是 LLM 已识别的 VM 函数). 把 VM section prepend 进 user, 让 LLM
+    # 看到 hex 后能尝试反汇编.
+    vm_context = ""
+    if top.vm_candidates:
+        vm_context = "## Trace-level evidence: VM Candidates\n\n"
+        from .render.markdown import render_summary_md as _rs
+        full_summary = _rs(top)
+        # 提取 VM Candidates 段
+        marker = "## VM Candidates"
+        if marker in full_summary:
+            start = full_summary.index(marker)
+            end = full_summary.find("\n## ", start + 1)
+            vm_context = (full_summary[start:end if end >= 0 else None]
+                          + "\n\n---\n\n")
+
     user = (
         f"Decompile this function from its execution trace. Output the "
         f"logical C pseudocode for THIS execution path.\n\n"
+        + vm_context
         + fn_md
     )
 

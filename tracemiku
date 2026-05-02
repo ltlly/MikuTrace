@@ -947,11 +947,22 @@ def cmd_dec(args):
     if hook_paths:
         print(f"[dec] loading {len(hook_paths)} type spec(s): "
               f"{[str(h) for h in hook_paths]}", file=sys.stderr)
-    top = build_trace_ir(t, type_spec_paths=hook_paths or None)
+    mem = None
+    if getattr(args, "vm_with_memshadow", False):
+        from viewer import MemShadow
+        print("[dec] building MemShadow (cold ~30s)...", file=sys.stderr)
+        mem = MemShadow(t)
+        mem.build()
+    top = build_trace_ir(
+        t, type_spec_paths=hook_paths or None,
+        detect_vm=not args.no_detect_vm,
+        memshadow=mem,
+    )
     n_anchors = sum(len(f.type_anchors) for f in top.fns)
+    n_vm = len(top.vm_candidates)
     print(f"[dec] built IR: {len(top.fns)} fn, "
           f"{sum(len(f.blocks) for f in top.fns)} blocks, "
-          f"{n_anchors} type anchors", file=sys.stderr)
+          f"{n_anchors} type anchors, {n_vm} VM candidates", file=sys.stderr)
 
     # ── 只输出 summary / fn-md ────────────────────────────────────────
     if args.summary:
@@ -1548,6 +1559,13 @@ def main():
     p_dc.add_argument("--hooks", action="append", default=[], metavar="JSON",
                       help="加载额外 type spec JSON (callee_pc → reg/type 映射). "
                            "可多次指定. 用户驱动, 代码零硬编码. 没指定就没 anchor.")
+    # P2-DEC3-D — VM 候选区检测 (普适, 复用 ollvmdet, 不 disasm)
+    p_dc.add_argument("--no-detect-vm", action="store_true",
+                      help="关 VM 候选检测 (默认开). 检测靠 ollvmdet heuristic, "
+                           "不假设 VM 变种, 输出 hex dump 给 LLM, 不 disasm.")
+    p_dc.add_argument("--vm-with-memshadow", action="store_true",
+                      help="VM hex dump 启用 (建 MemShadow, 冷启动慢 ~30s, "
+                           "能拿真字节). 默认关只出 dispatcher 候选不出 hex.")
 
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")

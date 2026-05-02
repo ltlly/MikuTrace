@@ -19,8 +19,11 @@ from ..cfg import build_cfg, loop_sccs
 from ..calltree import build_call_tree
 from ..disasm import decode, fmt as fmt_insn
 from ..symbols import build_from_trace, SymbolMap
-from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR, TypeAnchorIR
+from .ir import (
+    TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR, TypeAnchorIR, VmCandidateIR,
+)
 from .type_anchor import load_type_specs, find_anchors, TypeSpec, TypeAnchor
+from .vm_candidate import detect_vm_candidates
 
 
 _TRACEMIKU_VERSION = "0.3.0-dec3b0"   # bump per ship stage
@@ -231,7 +234,9 @@ def build_trace_ir(t: Trace,
                    only_module: bool = True,
                    split_top_k: int = 10,
                    split_min_records: int = 50,
-                   type_spec_paths: Optional[list] = None) -> TopIR:
+                   type_spec_paths: Optional[list] = None,
+                   detect_vm: bool = True,
+                   memshadow=None) -> TopIR:
     """Build TopIR from a loaded Trace.
 
     Args:
@@ -422,6 +427,14 @@ def build_trace_ir(t: Trace,
     # P2-DEC3-B: 类型锚点 (JSON-spec driven). 没 spec → 跳过, 不影响其他.
     if type_spec_paths and n > 0:
         attach_type_anchors(top, t, type_spec_paths)
+
+    # P2-DEC3-D: VM 候选区检测. 复用 ollvmdet, 不假设变种, 不 disasm.
+    # 没 ollvm 痕迹 → 空列表. memshadow 提供时附 hex dump.
+    if detect_vm and n > 0:
+        try:
+            top.vm_candidates = detect_vm_candidates(t, cfg, mem=memshadow)
+        except Exception:
+            top.vm_candidates = []
 
     # P2-DEC3-A: 默认按 exec_count 分级 hot/warm. 调用方可通过 render
     # 的 tier_filter 选择只渲染热块.
