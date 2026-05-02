@@ -87,6 +87,31 @@ mimo **正确识别 trace 局限**:
 - DEC3-C 真循环 induction var
 - DEC3-D (新) — VM bytecode 提取, 处理 OLLVM-VM 那 800+ 块 (mimo 已识别 VM)
 
+## DEC3-B ship 后实测 (类型锚点效果)
+
+DEC3-B (commit 92af597) 让用户提供 type spec JSON, 我们扫 trace 注入
+"reg → type" anchor. **代码零硬编码 SDK 表**, 严守 §7.0 普适性原则.
+
+实测: `--hooks sgmainso_specs.json` 给 4 个 demo spec
+(cmd_init / cmd_resolve / lock_acquire / lock_release), trace 命中
+**18 anchors 在 F0 + 12 在子 fn**, 正好对应 mimo 之前推断的 4 次外层循环.
+
+mimo 看带 anchor 的 F0:
+
+| 维度 | DEC1+B0 (无 anchor) | + DEC3-B (有 anchor) |
+|---|---|---|
+| 输出函数名 | `sub_54fe8(ctx)`, `sub_547b0(ctx)` | **`cmd_init(ctx)`**, **`cmd_resolve(ctx, cmd_idx)`** |
+| 参数语义 | "x1 unknown (likely cmd index)" | "x1 = cmd_idx (from spec uint32_t)" |
+| Mutex 识别 | "sub_1afcc0/cb0 = lock pair" | **"`lock_acquire(&ctx->mutex)`"**, 含 Mutex* 类型 |
+| output token | 2070 | 1158 (-44%, 不用花字解释) |
+| latency | 53s | 33s (-38%) |
+
+LLM 不再用花字解释 "sub_54fe8 looks like init", 因为 anchor 直接告诉它名字
+和参数类型. 这就是把 trace 不知道的 ABI 信息给 LLM 的价值.
+
+**普适性兑现**: 同样的代码框架, 换其他 SDK (libssl / libavcodec / 自定义) 只
+要换 spec JSON 即可, 不改一行代码.
+
 ## DEC3-B0 ship 后实测对比
 
 同一个 mimo-v2.5-pro, **不同粒度 IR** 输入:
