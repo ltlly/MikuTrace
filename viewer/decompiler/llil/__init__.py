@@ -32,6 +32,7 @@ from .pass_restructure import (
     HlilSeq, HlilLoop, HlilIfElse, HlilBlock, HlilGoto, HlilRet,
     CfgInfo, restructure, from_viewer_cfg,
 )
+from .render import expr_to_c, render_hlil
 
 from .expr import (
     LlilExpr,
@@ -98,4 +99,5 @@ __all__ = [
     "FieldAccess", "StructShape", "struct_recover_block", "merge_shapes",
     "HlilSeq", "HlilLoop", "HlilIfElse", "HlilBlock", "HlilGoto", "HlilRet",
     "CfgInfo", "restructure", "from_viewer_cfg",
+    "expr_to_c", "render_hlil",
 ]
