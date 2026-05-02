@@ -23,7 +23,7 @@
 | P0-6 | trace 失败诊断 + miku-shield URL hint | ba14908 |
 | P0-1 | Call Tree tab (bl/ret pair walking) | 23c0829 |
 
-### P1 (3.5/4) — A/B/D 全 ship, C 进行中
+### P1 (4/4) — 全部完成
 
 | # | 项 | commit | 备注 |
 |---|---|---|---|
@@ -31,7 +31,12 @@
 | P1-B | hash-finalize-detect (闭环 crypto-scan) | fbf735d | u32x5 / byte_seq, window-based |
 | P1-D | ollvm-detect-vm heuristic | 4328364 | confidence-scored, 仅 detect 不 decode |
 | P1-C M1 | agent fork hook (libc fork/clone/__bionic_clone) | 3406512 | **真机 PASS**, vfork 因 Bionic 调用约定不抓 |
+| P1-C M2 | race-attach child + child sessions teardown | 16a8500 | 实测 spawn_gating 不抓 fork; race-attach 在 ptrace 服务上 F3 timeout (架构限制) |
+| P1-C M3 | proc poll lifecycle fallback (`/proc/<pid>/stat`) | 8afc2d9 | Tier 3 数据: runtime_ms, last_state, comm |
+| P1-C M5 | CLI fork summary at trace end | 8afc2d9 | Total / Fully traced / Partial / Failed; ≥2 fail 推 miku-shield |
+| P1-C M6 | Web SPA Forks tab UI | 8afc2d9 | 状态过滤下拉, 失败 fork 红色 + miku-shield banner |
 | P1-C M7 | viewer fork-events read (CLI + /api + Trace.meta) | 5976c51 | 接收 agent 落盘 fork_events |
+| P1-C M8 | e2e real-device smoke | 2e10dd4 | **真机 PASS** — 验证 F3 ptrace conflict 是真实约束, 文档化 |
 
 ### 反 OLLVM 实战补强 — CLI 工具批 (基础已落地)
 
@@ -52,31 +57,35 @@
 - `_hideMaps_filterLine` 用 STATE.soPattern 动态匹配
 - 8 处 docstring + webui dropdown 抽象化
 
-**累计 (含 M1 真机)**: 16 commits, 426 unit tests pass + 1 skip + 1 manual smoke (real device).
+**累计**: 21 commits, 437 unit tests pass + 1 skip + 3 manual real-device smoke (M1 / M2 negative / M8 e2e).
 
 ---
 
-## ⏳ 进行中: P1-C fork tracing M2-M8
+## P1-C 真机验证发现 (重要架构事实)
 
-M1+M7 已 ship + 真机验证. 剩余 milestone:
+实测两个 Frida 限制确认了 traceMiku 在 fork-tracing 上的能力边界:
 
-| 步骤 | 工作量 | 输出 | 真机依赖 |
-|---|---|---|---|
-| M2 | 1d | host 接 child 事件 + spawn-gating attach + 注入 agent | ✓ |
-| M3 | 0.5d | attach 失败 fallback (proc 轮询 + exit code, Tier 3) | ✓ |
-| M4 | 0.5d | child 独立 trace dir `call_NNN_pid_tid_...` + per-call meta `fork_events` | ✓ (M1 已写部分) |
-| M5 | 0.5d | CLI 实时警告 + trace 末 fork summary 表 | 部分 |
-| M6 | 1d | Web SPA "Forks" tab + 主 timeline ⏎ 标记 + 跳 child trace | — |
-| M8 | 1d | 测试: synth fork + 真机 anti-debug fork 模拟 (detect_suicide.js 改造) | ✓ |
+1. **`enable_spawn_gating()` 不抓 fork()** — 只对 `device.spawn()` 后裔生效.
+   `manual_child_gating_smoke.py` 真机 verify (2026-05). attach 到运行中
+   进程后 fork 不发 `child-added` 事件.
 
-**已知 gap (P1-C)**:
-- vfork() 在 Bionic 上 hook 不到 (特殊调用约定 bypass Interceptor.onLeave). 已 deprecated, 实际反调试场景几乎不用 → 不修.
-- M2 需要 Frida 17 child-gating, 待验证 miku-srv 是否支持.
-- F5 (parent 因 child 减速崩) 需要 timing detection 真机复现.
+2. **race-attach 在 ptrace-based Frida server 上 F3** — child 继承 parent 的
+   ptrace 关系, 后续 `device.attach(child_pid)` 永久 block.
+   `manual_m8_e2e_smoke.py` 真机 verify: 3/3 fork children timeout.
+
+**结论**: traceMiku P1-C 在 ptrace-based Frida 配置 (含 miku-srv) 下:
+- ✅ M1 fork-event Tier 1 (parent_pc, child_pid, syscall) 永远抓得到
+- ✅ M3 proc poll lifecycle (Tier 3, runtime_ms 等) 永远抓得到
+- ⚠ M2 race-attach 仅在 child 生命周期与 Frida 内部 ptrace 不冲突时偶尔成功 (实际几乎从不)
+- ➜ **fork-based anti-debug 真正解决方案: miku-shield (eBPF kernel breakpoint, 无 ptrace)**
+
+**已知 gap**:
+- vfork() 在 Bionic 上 hook 不到 (特殊调用约定 bypass Interceptor.onLeave). 已 deprecated.
+- F5 (parent 因 child 减速崩) 在 race-attach F3 主导下不太可能复现 (race-attach 直接超时, 不影响 parent timing).
 
 ---
 
-# P1-C 设计 spec (M2-M8 实施参考)
+# P1-C 设计 spec (历史参考, M1-M8 已 ship)
 
 ## 决定 (已全部锁定)
 
