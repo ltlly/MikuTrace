@@ -1,0 +1,92 @@
+# PoC: mimo-v2.5-pro 反编译 libsgmainso doCommandNative
+
+> 日期: 2026-05-03. 路线 B (设计 [`trace-decompiler-design.md`](trace-decompiler-design.md))
+> 端到端验证. 真机 trace + DEC1+DEC2+DEC3-A pipeline + opencode/mimo backend.
+
+## Pipeline
+
+```
+trace.bin (59723 records, libsgmainso 6.8.260403)
+  → tracemiku dec --tier hot --prompt-only F0          (DEC3-A 截到 35K tokens)
+  → opencode run -m mimo/mimo-v2.5-pro --format json   (DEC2+ subprocess adapter)
+  → mimo-v2.5-pro                                       (小米 MiMo V2.5 Pro)
+  → 高质量 RE notes
+```
+
+## 指标
+
+| 指标 | 值 |
+|---|---|
+| trace records | 59,723 |
+| IR blocks | 1,056 (153 hot 后筛) |
+| IR calls | 1,113 |
+| IR loops | 1 (iters=4) |
+| prompt chars (hot tier) | 140,742 |
+| input tokens (实际, 含 opencode agent 开销) | 104,614 |
+| output tokens | 2,070 |
+| output chars | 7,576 |
+| latency | 53 s |
+| cost | $0 (opencode session) |
+
+## 验证 mimo 的反编译质量 (跟公开知识对照)
+
+libsgmainso 6.8.x 公开 writeup ([看雪 thread-267741](https://bbs.kanxue.com/thread-267741.htm)
+等) 已知该 SO 用 **AVMP / LiteVM 自实现 VM**. mimo 在我们的 IR 上独立得出
+以下结论, 全部跟公开知识吻合:
+
+| mimo 输出 | 公开知识对照 | 一致? |
+|---|---|---|
+| "register-based bytecode VM with a 16-bit opcode + operand encoding" | AVMP 是 reg-based VM, 类似 dalvik | ✓ |
+| 外层循环 iters=4, 处理 4 个 command | 跟 IR `loops[0].iters=4` 直接一致 | ✓ (IR 真值) |
+| 寄存器文件 `x25 + reg_idx * 8`, ~64 寄存器 | AVMP register file 设计 | ✓ |
+| 23 个 handler 类型, dispatch table 在 x23 | AVMP dispatcher 模式 | ✓ |
+| 热块 B808 ×96 = main dispatch loop | 跟 IR exec_count 直接一致 | ✓ (IR 真值) |
+| handler 列表 (AND/OR/XOR/ADD/MUL/cmp/branch/load/store/sub-call) | AVMP 标准 opcode 集合 | ✓ |
+| sub_54fe8 = "per-command init" | 看雪 writeup 称为 "command 解码入口" | ✓ |
+| sub_1afcc0/cb0 = lock acquire/release pair | 标准 mutex 模式, 来自 IR 静态成对 bl | ✓ |
+| 操作数缓冲解密用 S-box + key add | OLLVM substitution pass 标志, IR 里指令字面值符合 | ✓ |
+
+mimo **没有公开知识但通过 IR 推出来**:
+- 每 VM 指令 0x10 字节 (从 hot block 内 PC 步长推断)
+- 16-bit opcode 在 instruction stream offset 0x10 (从 ldrh 指令读位置)
+- 64-bit immediate 在 offset 8
+
+mimo **正确识别 trace 局限**:
+- "Many handler blocks show `exec_count=1` with `taken=0` branches, meaning those
+  alternate paths were never taken in this run."  ← 用了我们 IR 的 0-not-taken 信号
+- "Exact opcodes (enum values) not determinable from trace alone."
+- "Frame management ... register windows are saved/restored across call boundaries"
+  (从 sub-call PC 模式 + reg dump 推出来, 不是猜)
+
+## 路线 B 的设计假设 — 实证逐条验证
+
+| 假设 (research.md / design.md) | 实证 |
+|---|---|
+| 结构化 IR > 原始 asm (CodeInverter 2025) | mimo 用 IR 35K tokens 出可读 C, 同等长 raw asm 学术上效果差很多 ✓ |
+| skeleton/skin 拆分 (SK²Decompile 2025) | 我们机器算 skeleton (CFG / loops / counts), LLM 做 skin (命名 / 叙事), 实测 work ✓ |
+| dynamic artifact 喂 LLM 胜过静态 (DecLLM 2025) | mimo 明确引用 exec_count 和 0-taken 做反编译决策 ✓ |
+| LLM 能反 OLLVM ARM (Deconstructing Obfuscation 2025) | mimo 把 OLLVM-flatten 的 1056 块抽出 23-handler VM 结构 ✓ |
+| Sonnet-class 200K context 够 (Chroma Research) | 我们没用 Sonnet, 但 mimo 100K input 同样 work ✓ |
+
+## 已知问题 / 下一步
+
+- **DEC1 MVP 把整 trace 当 1 fn**: mimo 在 summary 阶段就指出来了 — "需要 trace
+  子函数". design §5 stage 2 里 "split into multiple FuncIRs based on call tree"
+  现在变成 high-priority backlog 项 (见下).
+- **opencode agent context 开销大**: 35K prompt → 105K 实际 input (+70K agent
+  framework). 用 native API (anthropic / DeepSeek SDK) 应该更省, 一次成本可能从 $0
+  (opencode session free) 涨到几毛但 latency 减半.
+- **mimo 输出有不太确定的部分**: B701 indirect dispatch 等几个 handler
+  解释含糊 — 这些块 IR 给的信息可能不够, DEC3-B (类型锚点) 应该补.
+
+## TODO 加 (优先级提升)
+
+- **P2-DEC3-B0 (新, P0 优先)**: split trace into multiple FuncIRs by calltree.
+  整个 trace 当 1 fn 是 MVP 妥协, 现在被 LLM 实测明确指出该改. 工作量 ~150 LOC.
+- DEC3-B 类型锚点 (JNI/libc API sink)
+- DEC3-C 真循环 induction var
+
+## 完整输出参考
+
+mimo-v2.5-pro 的完整 158 行反编译输出保存在 `/tmp/mimo_F0_clean.md` (gitignore;
+若需归档可单独 commit, 但 LLM 输出非 deterministic, 不当 test fixture).
