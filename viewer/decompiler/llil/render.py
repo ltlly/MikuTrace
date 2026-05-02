@@ -191,11 +191,13 @@ def _size_cast(size: int) -> str:
 def render_hlil(stmt, types: TypeEnv = None,
                 shapes: dict[tuple, StructShape] = None,
                 indent: int = 0,
-                loc_names: dict | None = None) -> list[str]:
+                loc_names: dict | None = None,
+                exec_counts: dict | None = None) -> list[str]:
     """递归 stmt → list of lines (markdown 安全, 包含 indent).
 
-    loc_names: 跨整 fn 共享的 dict[(base, disp) → 'var_*']. None 时初始化空 dict
-    (默认开启命名).
+    loc_names: 跨整 fn 共享的 dict[(base, disp) → 'var_*']. None 时初始化空 dict.
+    exec_counts: dict[block_pc → int] — trace 实测每块执行次数. 渲染在
+                 '// block @ 0xN' 注释里加 ×count, 让用户看 hot block.
     """
     pad = "    " * indent
     if loc_names is None:
@@ -204,7 +206,7 @@ def render_hlil(stmt, types: TypeEnv = None,
     if isinstance(stmt, HlilSeq):
         out = []
         for s in stmt.stmts:
-            out.extend(render_hlil(s, types, shapes, indent, loc_names))
+            out.extend(render_hlil(s, types, shapes, indent, loc_names, exec_counts))
         return out
 
     if isinstance(stmt, HlilLoop):
@@ -225,7 +227,8 @@ def render_hlil(stmt, types: TypeEnv = None,
 
     if isinstance(stmt, HlilBlock):
         return _render_block(stmt.block, types, shapes, indent,
-                              loc_names=loc_names)
+                              loc_names=loc_names,
+                              exec_counts=exec_counts)
 
     if isinstance(stmt, HlilGoto):
         return [f"{pad}goto {stmt.target_pc:#x};"]
@@ -295,9 +298,13 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
                   shapes: dict[tuple, StructShape],
                   indent: int,
                   collapse_prologue: bool = True,
-                  loc_names: dict | None = None) -> list[str]:
+                  loc_names: dict | None = None,
+                  exec_counts: dict | None = None) -> list[str]:
     pad = "    " * indent
-    out: list[str] = [f"{pad}// block @ {blk.block_pc:#x}"]
+    head = f"// block @ {blk.block_pc:#x}"
+    if exec_counts and blk.block_pc in exec_counts:
+        head += f"  ×{exec_counts[blk.block_pc]}"
+    out: list[str] = [f"{pad}{head}"]
 
     # 检测 prologue / epilogue 区段 — 连续 N 条 prologue-style root, 折叠成
     # 单行注释 (BN HLIL 类似行为).

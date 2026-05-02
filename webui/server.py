@@ -2798,8 +2798,11 @@ def make_app(trace_path: pathlib.Path,
         }
         hlil = restructure(cfg_info, ssa_map)
 
-        # 10. render
-        lines = render_hlil(hlil, types=render_types, shapes=merged_shapes)
+        # 10. render — 含 exec_counts (trace 实测每块执行次数), local var 命名
+        exec_counts = {pc: cfg.blocks[pc].executions for pc in fn_blocks_set
+                        if pc in cfg.blocks}
+        lines = render_hlil(hlil, types=render_types, shapes=merged_shapes,
+                            exec_counts=exec_counts)
         c_code = "\n".join(lines)
 
         return {

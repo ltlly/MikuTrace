@@ -98,3 +98,21 @@ def test_render_loc_names_disabled():
     # dict, 实质 enabled. 验证默认 enabled (disable 走 expr_to_c 直接调).
     text = "\n".join(render_hlil(hlil))
     assert "var_sp_10" in text   # 默认 enabled
+
+
+def test_render_with_exec_counts():
+    """exec_counts dict → block 注释带 ×N."""
+    blk = ssa_block(0x1000, [ret()])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    text = "\n".join(render_hlil(hlil, exec_counts={0x1000: 42}))
+    assert "×42" in text
+
+
+def test_render_without_exec_counts():
+    """没 exec_counts → 块注释不含 ×."""
+    blk = ssa_block(0x1000, [ret()])
+    cfg = CfgInfo(succs={}, preds={}, entry=0x1000)
+    hlil = restructure(cfg, {0x1000: blk})
+    text = "\n".join(render_hlil(hlil))
+    assert "×" not in text
