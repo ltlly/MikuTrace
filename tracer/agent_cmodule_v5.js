@@ -670,6 +670,10 @@ function getJNIEnvDirect() {
     } catch (e) { return null; }
 }
 
+// Android 14+ MTE: 指针上字节有 tag, Frida 直接 readUtf8String 失败.
+// 对 cstring/utf16/bytes 这种内存读类型, 先 untag (mask top byte 0x00ffff...).
+const _PTR_UNTAG_MASK = ptr("0x00ffffffffffffff");
+
 function _readArgVal(arg, spec) {
     if (!spec || !spec.type) return arg.toString();
     const maxLen = spec.max_len || 256;
@@ -678,18 +682,33 @@ function _readArgVal(arg, spec) {
         case "int":     return arg.toInt32();
         case "long":    return arg.toString();
         case "void":    return null;
-        case "cstring":
-            try { return arg.readUtf8String(maxLen); } catch (_) { return null; }
-        case "utf16":
-            try { return arg.readUtf16String(maxLen); } catch (_) { return null; }
+        case "cstring": {
+            // 先 read-until-null (cheap, 不读越界); 失败再试 fixed maxLen.
+            // 大 maxLen (e.g. 512) 容易跨 unmapped page boundary → throw.
+            // MTE untag 作最后兜底 (Android 14+).
+            try { return arg.readUtf8String(); } catch (_) {}
+            try { return arg.readUtf8String(maxLen); } catch (_) {}
+            try { return arg.and(_PTR_UNTAG_MASK).readUtf8String(); } catch (_) {}
+            try { return arg.and(_PTR_UNTAG_MASK).readUtf8String(maxLen); } catch (_) {}
+            return null;
+        }
+        case "utf16": {
+            try { return arg.readUtf16String(); } catch (_) {}
+            try { return arg.readUtf16String(maxLen); } catch (_) {}
+            try { return arg.and(_PTR_UNTAG_MASK).readUtf16String(); } catch (_) {}
+            return null;
+        }
         case "bytes": {
-            try {
-                const buf = arg.readByteArray(maxLen);
-                const u8 = new Uint8Array(buf);
-                let hex = "";
-                for (let i = 0; i < u8.length; i++) hex += u8[i].toString(16).padStart(2, "0");
-                return hex;
-            } catch (_) { return null; }
+            const tryRead = (p) => {
+                try {
+                    const buf = p.readByteArray(maxLen);
+                    const u8 = new Uint8Array(buf);
+                    let hex = "";
+                    for (let i = 0; i < u8.length; i++) hex += u8[i].toString(16).padStart(2, "0");
+                    return hex;
+                } catch (_) { return null; }
+            };
+            return tryRead(arg) || tryRead(arg.and(_PTR_UNTAG_MASK));
         }
         default: return arg.toString();
     }
