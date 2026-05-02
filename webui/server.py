@@ -2686,6 +2686,11 @@ def make_app(trace_path: pathlib.Path,
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
 
+        # 1.5. memshadow (lazy build, cached). _get_dec_ir 已建过, 复用.
+        mem = None
+        if with_memshadow:
+            mem = cache.get("dec_memshadow")
+
         # 2. CFG (cached) — 用 viewer/cfg.py 的输出, 转 LLIL CfgInfo
         cfg = cache.get("dec_cfg")
         if cfg is None:
