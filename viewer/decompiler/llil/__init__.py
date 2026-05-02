@@ -32,6 +32,7 @@ from .pass_struct import (
     FieldAccess, StructShape,
     struct_recover_block, merge_shapes,
 )
+from .pass_var_unify import unify_vars
 from .pass_restructure import (
     HlilSeq, HlilLoop, HlilIfElse, HlilBlock, HlilGoto, HlilRet,
     CfgInfo, restructure, from_viewer_cfg,
@@ -103,6 +104,7 @@ __all__ = [
     "TypeEnv", "typelat_block", "join",
     "T_TOP", "T_INT", "T_PTR", "T_HANDLE", "T_BOOL", "T_BOT",
     "FieldAccess", "StructShape", "struct_recover_block", "merge_shapes",
+    "unify_vars",
     "HlilSeq", "HlilLoop", "HlilIfElse", "HlilBlock", "HlilGoto", "HlilRet",
     "CfgInfo", "restructure", "from_viewer_cfg",
     "expr_to_c", "render_hlil",

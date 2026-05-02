@@ -2672,7 +2672,7 @@ def make_app(trace_path: pathlib.Path,
             constfold_block, dce_block, typelat_block,
             struct_recover_block, merge_shapes,
             restructure, from_viewer_cfg, render_hlil, expr_to_c,
-            collect_uidf, flag_elim_block,
+            collect_uidf, flag_elim_block, unify_vars,
         )
         from viewer.cfg import build_cfg as _build_cfg
         import numpy as np
@@ -2798,11 +2798,15 @@ def make_app(trace_path: pathlib.Path,
         }
         hlil = restructure(cfg_info, ssa_map)
 
-        # 10. render — 含 exec_counts (trace 实测每块执行次数), local var 命名
+        # 9.5. var unification — 跨 SSA version 同 reg → BN var_NN 风格
+        var_names = unify_vars(ssa_map)
+
+        # 10. render — 含 exec_counts (trace 实测每块执行次数), local var 命名,
+        #              + var unification (arg_N / cs_xN / xN_v)
         exec_counts = {pc: cfg.blocks[pc].executions for pc in fn_blocks_set
                         if pc in cfg.blocks}
         lines = render_hlil(hlil, types=render_types, shapes=merged_shapes,
-                            exec_counts=exec_counts)
+                            exec_counts=exec_counts, var_names=var_names)
         c_code = "\n".join(lines)
 
         return {
@@ -2821,6 +2825,7 @@ def make_app(trace_path: pathlib.Path,
                 "dce_removed": dce_removed,
                 "flag_merged": flag_merged,
                 "struct_shapes": len(merged_shapes),
+                "var_names": len(var_names),
             },
         }
 

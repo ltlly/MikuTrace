@@ -85,11 +85,12 @@ def expr_to_c(expr, types: TypeEnv = None,
               shapes: dict[tuple, StructShape] = None,
               tag=None,
               entry_versions: dict[str, int] = None,
-              loc_names: dict | None = None) -> str:
+              loc_names: dict | None = None,
+              var_names: dict | None = None) -> str:
     """递归 LlilExpr → C 表达式字符串.
 
-    loc_names: optional dict — 启用 stack location 命名 (sp/fp + offset →
-    var_<reg>_<offset>). 跟 BN HLIL var_NN 风格类似.
+    loc_names: stack location 命名 (sp/fp + offset → var_*).
+    var_names: (reg, version) → var name 映射 (来自 pass_var_unify), 替代 reg 名.
     """
     if not isinstance(expr, LlilExpr):
         if isinstance(expr, int):
@@ -99,7 +100,14 @@ def expr_to_c(expr, types: TypeEnv = None,
 
     # leaf
     if op == LLIL_REG:
-        return expr.operands[0]
+        rname = expr.operands[0]
+        if var_names and tag is not None:
+            v = tag.get(expr) if hasattr(tag, "get") else 0
+            if v == 0:
+                v = (entry_versions or {}).get(rname, 0)
+            if (rname, v) in var_names:
+                return var_names[(rname, v)]
+        return rname
     if op == LLIL_CONST:
         v = expr.operands[0]
         return f"{v:#x}" if abs(v) >= 16 else str(v)
@@ -120,11 +128,11 @@ def expr_to_c(expr, types: TypeEnv = None,
         f = _try_field(addr, types, shapes, tag, entry_versions)
         if f:
             return f
-        return f"*({_size_cast(expr.size)}*)({expr_to_c(addr, types, shapes, tag, entry_versions, loc_names)})"
+        return f"*({_size_cast(expr.size)}*)({expr_to_c(addr, types, shapes, tag, entry_versions, loc_names, var_names)})"
     if op == LLIL_STORE:
         addr = expr.operands[0]
         val = expr.operands[1]
-        rhs = expr_to_c(val, types, shapes, tag, entry_versions, loc_names)
+        rhs = expr_to_c(val, types, shapes, tag, entry_versions, loc_names, var_names)
         v = _try_local_var(addr, loc_names)
         if v:
             return f"{v} = {rhs}"
@@ -132,20 +140,20 @@ def expr_to_c(expr, types: TypeEnv = None,
         if f:
             return f"{f} = {rhs}"
         cast = _size_cast(expr.size)
-        return f"*({cast}*)({expr_to_c(addr, types, shapes, tag, entry_versions, loc_names)}) = {rhs}"
+        return f"*({cast}*)({expr_to_c(addr, types, shapes, tag, entry_versions, loc_names, var_names)}) = {rhs}"
 
     # binary arith / bit / cmp
     if op in ARITH_OPS or op in BITWISE_OPS or op in CMP_OPS:
         sym = _OP_SYM.get(op, op)
         if len(expr.operands) == 2:
-            l = expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names)
-            r = expr_to_c(expr.operands[1], types, shapes, tag, entry_versions, loc_names)
+            l = expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names, var_names)
+            r = expr_to_c(expr.operands[1], types, shapes, tag, entry_versions, loc_names, var_names)
             return f"({l} {sym} {r})"
         if len(expr.operands) == 1:
-            return f"{sym}{expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names)}"
+            return f"{sym}{expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names, var_names)}"
 
     if op == LLIL_CALL:
-        target = expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names)
+        target = expr_to_c(expr.operands[0], types, shapes, tag, entry_versions, loc_names, var_names)
         return f"call({target})"
 
     if op == LLIL_INTRINSIC:
@@ -192,12 +200,13 @@ def render_hlil(stmt, types: TypeEnv = None,
                 shapes: dict[tuple, StructShape] = None,
                 indent: int = 0,
                 loc_names: dict | None = None,
-                exec_counts: dict | None = None) -> list[str]:
+                exec_counts: dict | None = None,
+                var_names: dict | None = None) -> list[str]:
     """递归 stmt → list of lines (markdown 安全, 包含 indent).
 
     loc_names: 跨整 fn 共享的 dict[(base, disp) → 'var_*']. None 时初始化空 dict.
-    exec_counts: dict[block_pc → int] — trace 实测每块执行次数. 渲染在
-                 '// block @ 0xN' 注释里加 ×count, 让用户看 hot block.
+    exec_counts: dict[block_pc → int] — trace 实测每块执行次数.
+    var_names: (reg, version) → var name 映射 (来自 unify_vars). 替代 reg 名.
     """
     pad = "    " * indent
     if loc_names is None:
@@ -206,29 +215,30 @@ def render_hlil(stmt, types: TypeEnv = None,
     if isinstance(stmt, HlilSeq):
         out = []
         for s in stmt.stmts:
-            out.extend(render_hlil(s, types, shapes, indent, loc_names, exec_counts))
+            out.extend(render_hlil(s, types, shapes, indent, loc_names, exec_counts, var_names))
         return out
 
     if isinstance(stmt, HlilLoop):
         head = f"{pad}while (true) {{   // header={stmt.header_pc:#x}, iters={stmt.iters}"
-        body_lines = render_hlil(stmt.body, types, shapes, indent + 1, loc_names)
+        body_lines = render_hlil(stmt.body, types, shapes, indent + 1, loc_names, exec_counts, var_names)
         return [head] + body_lines + [f"{pad}}}"]
 
     if isinstance(stmt, HlilIfElse):
         cond = expr_to_c(stmt.cond, types, shapes,
                          tag=None, entry_versions={})
         out = [f"{pad}if ({cond}) {{"]
-        out.extend(render_hlil(stmt.then_b, types, shapes, indent + 1, loc_names))
+        out.extend(render_hlil(stmt.then_b, types, shapes, indent + 1, loc_names, exec_counts, var_names))
         if stmt.else_b is not None:
             out.append(f"{pad}}} else {{")
-            out.extend(render_hlil(stmt.else_b, types, shapes, indent + 1, loc_names))
+            out.extend(render_hlil(stmt.else_b, types, shapes, indent + 1, loc_names, exec_counts, var_names))
         out.append(f"{pad}}}")
         return out
 
     if isinstance(stmt, HlilBlock):
         return _render_block(stmt.block, types, shapes, indent,
                               loc_names=loc_names,
-                              exec_counts=exec_counts)
+                              exec_counts=exec_counts,
+                              var_names=var_names)
 
     if isinstance(stmt, HlilGoto):
         return [f"{pad}goto {stmt.target_pc:#x};"]
@@ -299,7 +309,8 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
                   indent: int,
                   collapse_prologue: bool = True,
                   loc_names: dict | None = None,
-                  exec_counts: dict | None = None) -> list[str]:
+                  exec_counts: dict | None = None,
+                  var_names: dict | None = None) -> list[str]:
     pad = "    " * indent
     head = f"// block @ {blk.block_pc:#x}"
     if exec_counts and blk.block_pc in exec_counts:
@@ -340,7 +351,8 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
     for root in roots:
         if not isinstance(root, LlilExpr):
             continue
-        line = _root_to_c(root, types, shapes, blk, loc_names=loc_names)
+        line = _root_to_c(root, types, shapes, blk,
+                          loc_names=loc_names, var_names=var_names)
         if line:
             out.append(f"{pad}{line};")
     if epilogue:
@@ -352,7 +364,8 @@ def _root_to_c(root: LlilExpr,
                types: TypeEnv,
                shapes: dict[tuple, StructShape],
                blk: SsaBlock,
-               loc_names: dict | None = None) -> str:
+               loc_names: dict | None = None,
+               var_names: dict | None = None) -> str:
     """root expr → C statement (no semicolon, 调用方加)."""
     op = root.op
     if op == LLIL_SET_REG:
@@ -360,36 +373,41 @@ def _root_to_c(root: LlilExpr,
         val = root.operands[1]
         rhs = expr_to_c(val, types, shapes, tag=blk.tag,
                         entry_versions=blk.entry_versions,
-                        loc_names=loc_names)
-        return f"{rname} = {rhs}"
+                        loc_names=loc_names, var_names=var_names)
+        # dst 也用 var_name
+        dst_name = rname
+        if var_names is not None:
+            dv = blk.tag.get(root)
+            if (rname, dv) in var_names:
+                dst_name = var_names[(rname, dv)]
+        return f"{dst_name} = {rhs}"
     if op == LLIL_STORE:
         return expr_to_c(root, types, shapes, tag=blk.tag,
                          entry_versions=blk.entry_versions,
-                         loc_names=loc_names)
+                         loc_names=loc_names, var_names=var_names)
     if op == LLIL_SET_FLAG:
         fname = root.operands[0]
         rhs = expr_to_c(root.operands[1], types, shapes, tag=blk.tag,
                         entry_versions=blk.entry_versions,
-                        loc_names=loc_names)
+                        loc_names=loc_names, var_names=var_names)
         return f"flag.{fname} = {rhs}"
     if op == LLIL_GOTO:
         return f"goto {root.operands[0]:#x}"
     if op == LLIL_IF:
-        # 通常 IF 在 restructure 阶段被吃掉, 残留 case 输出原始
         cond = expr_to_c(root.operands[0], types, shapes, tag=blk.tag,
                          entry_versions=blk.entry_versions,
-                         loc_names=loc_names)
+                         loc_names=loc_names, var_names=var_names)
         return f"if ({cond}) goto {root.operands[1]:#x} else goto {root.operands[2]:#x}"
     if op == LLIL_CALL:
         return expr_to_c(root, types, shapes, tag=blk.tag,
                          entry_versions=blk.entry_versions,
-                         loc_names=loc_names)
+                         loc_names=loc_names, var_names=var_names)
     if op == LLIL_RET:
         return "return"
     if op == LLIL_JUMP:
         target = expr_to_c(root.operands[0], types, shapes, tag=blk.tag,
                            entry_versions=blk.entry_versions,
-                           loc_names=loc_names)
+                           loc_names=loc_names, var_names=var_names)
         return f"goto *{target}  // indirect"
     if op == LLIL_NOP:
         return ""
