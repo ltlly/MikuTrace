@@ -531,12 +531,35 @@ def cmd_trace(args):
         wlog(f"[!] 找不到目标进程 (pkg={args.pkg}); 先启动 app 或 --attach-pid <pid>")
         log_fp.close(); return 1
     wlog(f"attach pid={pid}")
-    sess = device.attach(pid)
-    scr = sess.create_script(AGENT)
-    scr.on("message", make_cb(pid, args.pkg or f"pid{pid}"))
-    scr.load()
-    r = scr.exports_sync.init(AGENT_OPTS)
-    wlog(f"init -> {r}")
+    try:
+        sess = device.attach(pid)
+        scr = sess.create_script(AGENT)
+        scr.on("message", make_cb(pid, args.pkg or f"pid{pid}"))
+        scr.load()
+        r = scr.exports_sync.init(AGENT_OPTS)
+        wlog(f"init -> {r}")
+    except Exception as _e:
+        # P0-6: pull last logcat + tombstone, run diagnostic, output hints
+        from tracemiku_diag import diagnose_trace_failure
+        wlog(f"[!] attach/init 失败: {type(_e).__name__}: {_e}")
+        try:
+            lc = subprocess.run(["adb", "shell", "logcat", "-d", "-t", "200"],
+                                capture_output=True, text=True, timeout=10).stdout or ""
+        except Exception: lc = ""
+        try:
+            ts_ls = subprocess.run(
+                ["adb", "shell", "ls", "-t", "/data/tombstones/"],
+                capture_output=True, text=True, timeout=5).stdout or ""
+            latest = ts_ls.splitlines()[0].strip() if ts_ls.strip() else ""
+            if latest:
+                tb = subprocess.run(
+                    ["adb", "shell", "cat", f"/data/tombstones/{latest}"],
+                    capture_output=True, text=True, timeout=10).stdout or ""
+            else: tb = ""
+        except Exception: tb = ""
+        for h in diagnose_trace_failure(logcat=lc, tombstone=tb, exception=_e):
+            wlog(h)
+        log_fp.close(); return 2
 
     stop = [False]
     signal.signal(signal.SIGINT, lambda *_: stop.__setitem__(0, True))
