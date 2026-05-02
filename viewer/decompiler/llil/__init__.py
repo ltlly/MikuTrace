@@ -16,6 +16,8 @@ sub-expression. visitor pattern 走树.
   7. restructure — loop / if 重建 (高级 IL)
   8. render    — 输出 markdown / Tenet / LLM bundle
 """
+from .lift import lift_arm64, lift_static, LiftStats
+
 from .expr import (
     LlilExpr,
     # Op constants — BN naming (LLIL_*)
@@ -72,4 +74,5 @@ __all__ = [
     "lsl", "lsr", "asr",
     "goto", "jump", "if_", "call", "ret", "nop", "intrinsic",
     "cmp_e", "cmp_ne",
+    "lift_arm64", "lift_static", "LiftStats",
 ]
