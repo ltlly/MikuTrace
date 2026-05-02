@@ -158,6 +158,26 @@ def _lift(d: Decoded) -> list:
     if base == "movk":
         return [_intrinsic(d)]      # 复杂, 走 intrinsic
 
+    # ── multiply-add/sub: madd/msub/smull/umull/smaddl/umaddl/smulh/umulh ──
+    if base in ("madd", "msub", "smaddl", "umaddl", "smsubl", "umsubl"):
+        return [_lift_madd_msub(d, sub_op=base in ("msub", "smsubl", "umsubl"))]
+    if base in ("smull", "umull", "smulh", "umulh"):
+        return [_lift_smull(d)]
+
+    # ── extension: sxtw / uxtw / sxtb/h / uxtb/h ──
+    if base in ("sxtw", "uxtw", "sxtb", "uxtb", "sxth", "uxth"):
+        return [_lift_extension(d, base)]
+
+    # ── divide ──
+    if base in ("sdiv", "udiv"):
+        from .expr import LLIL_DIVS, LLIL_DIVU
+        op_const = LLIL_DIVS if base == "sdiv" else LLIL_DIVU
+        if d.regs_def and len(d.regs_use) >= 2:
+            dst = d.regs_def[0]
+            return [set_reg(dst, LlilExpr(op_const, size=8,
+                operands=[reg(d.regs_use[0]), reg(d.regs_use[1])]),
+                pc=d.pc)]
+
     # ── load / store ──
     if base.startswith("ldr") or base in ("ldur", "ldp", "ldnp"):
         return _lift_load(d)
@@ -251,6 +271,49 @@ def _lift_arith_unary(d: Decoded, builder) -> LlilExpr:
     if not d.regs_use:
         return _intrinsic(d)
     return set_reg(dst, builder(reg(d.regs_use[0])), pc=d.pc)
+
+
+def _lift_madd_msub(d: Decoded, sub_op: bool = False) -> LlilExpr:
+    """madd dst, rn, rm, ra → SET_REG(dst, ADD(MUL(rn,rm), ra)).
+    msub → SET_REG(dst, SUB(ra, MUL(rn,rm))).
+    smaddl/umaddl/smsubl/umsubl 同结构, 简化忽略宽度差 (32→64 ext).
+    """
+    if len(d.regs_use) < 3 or not d.regs_def:
+        return _intrinsic(d)
+    dst = d.regs_def[0]
+    rn, rm, ra = d.regs_use[0], d.regs_use[1], d.regs_use[2]
+    prod = mul(reg(rn), reg(rm))
+    if sub_op:
+        body = sub(reg(ra), prod)
+    else:
+        body = add(prod, reg(ra))
+    return set_reg(dst, body, pc=d.pc)
+
+
+def _lift_smull(d: Decoded) -> LlilExpr:
+    """smull/umull/smulh/umulh dst, rn, rm → SET_REG(dst, MUL(rn,rm))."""
+    if len(d.regs_use) < 2 or not d.regs_def:
+        return _intrinsic(d)
+    dst = d.regs_def[0]
+    return set_reg(dst, mul(reg(d.regs_use[0]), reg(d.regs_use[1])),
+                   pc=d.pc)
+
+
+def _lift_extension(d: Decoded, base: str) -> LlilExpr:
+    """sxtw/uxtw/sxtb/uxtb/sxth/uxth dst, src → SET_REG(dst, SX/ZX(src)).
+    base: 's' = sign extend, 'u' = zero extend; suffix 'b'/'h'/'w' 是源宽度.
+    """
+    from .expr import LLIL_SX, LLIL_ZX
+    if not d.regs_def or not d.regs_use:
+        return _intrinsic(d)
+    dst = d.regs_def[0]
+    src = reg(d.regs_use[0])
+    op = LLIL_SX if base.startswith("s") else LLIL_ZX
+    src_size = {"b": 1, "h": 2, "w": 4}.get(base[-1], 4)
+    return set_reg(dst,
+                   LlilExpr(op, size=8, operands=[src],
+                            extra={"src_size": src_size}),
+                   pc=d.pc)
 
 
 def _lift_mov(d: Decoded) -> LlilExpr:

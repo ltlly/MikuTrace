@@ -188,6 +188,106 @@ def test_lift_cbnz_uses_ne():
     assert cond.op == LLIL_CMP_NE
 
 
+# ─────────── PC-relative + 算术扩展 ───────────
+
+def test_lift_adr():
+    """adr xN, #addr → SET_REG(xN, CONST_PTR(addr))."""
+    [e] = lift_arm64(0x1000, _asm("adr x0, #0x100"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    val = e.operands[1]
+    assert val.op == LLIL_CONST_PTR
+
+
+def test_lift_adrp():
+    [e] = lift_arm64(0x1000, _asm("adrp x0, #0x10000"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[1].op == LLIL_CONST_PTR
+
+
+def test_lift_madd():
+    """madd dst, rn, rm, ra → SET_REG(dst, ADD(MUL(rn,rm), ra))."""
+    from viewer.decompiler.llil import LLIL_ADD, LLIL_MUL
+    [e] = lift_arm64(0x1000, _asm("madd x0, x1, x2, x3"))
+    assert e.op == LLIL_SET_REG
+    body = e.operands[1]
+    assert body.op == LLIL_ADD
+    mul_e, ra = body.operands
+    assert mul_e.op == LLIL_MUL
+    assert ra.op == LLIL_REG and ra.operands == ["x3"]
+
+
+def test_lift_msub():
+    """msub dst, rn, rm, ra → SET_REG(dst, SUB(ra, MUL(rn,rm)))."""
+    from viewer.decompiler.llil import LLIL_SUB, LLIL_MUL
+    [e] = lift_arm64(0x1000, _asm("msub x0, x1, x2, x3"))
+    body = e.operands[1]
+    assert body.op == LLIL_SUB
+    ra, mul_e = body.operands
+    assert ra.operands == ["x3"]
+    assert mul_e.op == LLIL_MUL
+
+
+def test_lift_smull():
+    from viewer.decompiler.llil import LLIL_MUL
+    [e] = lift_arm64(0x1000, _asm("smull x0, w1, w2"))
+    assert e.operands[1].op == LLIL_MUL
+
+
+def test_lift_umull():
+    from viewer.decompiler.llil import LLIL_MUL
+    [e] = lift_arm64(0x1000, _asm("umull x0, w1, w2"))
+    assert e.operands[1].op == LLIL_MUL
+
+
+def test_lift_sxtw():
+    from viewer.decompiler.llil import LLIL_SX
+    [e] = lift_arm64(0x1000, _asm("sxtw x0, w1"))
+    body = e.operands[1]
+    assert body.op == LLIL_SX
+    assert body.extra.get("src_size") == 4
+
+
+# uxtw: ARM64 ISA 别名 → capstone disasm 成 ubfx, 留待 ubfx lift commit
+# (当前 lift 表不命中, 走 intrinsic. 不 fail).
+
+
+def test_lift_sxtb():
+    from viewer.decompiler.llil import LLIL_SX
+    [e] = lift_arm64(0x1000, _asm("sxtb w0, w1"))
+    assert e.operands[1].extra.get("src_size") == 1
+
+
+def test_lift_uxtb():
+    from viewer.decompiler.llil import LLIL_ZX
+    [e] = lift_arm64(0x1000, _asm("uxtb w0, w1"))
+    assert e.operands[1].extra.get("src_size") == 1
+
+
+def test_lift_sxth():
+    from viewer.decompiler.llil import LLIL_SX
+    [e] = lift_arm64(0x1000, _asm("sxth w0, w1"))
+    assert e.operands[1].extra.get("src_size") == 2
+
+
+def test_lift_uxth():
+    from viewer.decompiler.llil import LLIL_ZX
+    [e] = lift_arm64(0x1000, _asm("uxth w0, w1"))
+    assert e.operands[1].extra.get("src_size") == 2
+
+
+def test_lift_sdiv():
+    from viewer.decompiler.llil import LLIL_DIVS
+    [e] = lift_arm64(0x1000, _asm("sdiv x0, x1, x2"))
+    assert e.operands[1].op == LLIL_DIVS
+
+
+def test_lift_udiv():
+    from viewer.decompiler.llil import LLIL_DIVU
+    [e] = lift_arm64(0x1000, _asm("udiv x0, x1, x2"))
+    assert e.operands[1].op == LLIL_DIVU
+
+
 # ─────────── unknown ───────────
 
 def test_lift_svc_intrinsic():
