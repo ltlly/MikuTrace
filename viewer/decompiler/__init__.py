@@ -24,6 +24,9 @@ from .render import render_summary_md, render_func_md, write_decompile_dir
 from .type_anchor import TypeSpec, TypeAnchor, load_type_specs, find_anchors
 from .vm_candidate import VmCandidate, detect_vm_candidates
 from .loop_fold import InductionVar, detect_induction_vars
+from .benchmark import (
+    BenchResult, run_bench, run_bench_one, render_compare_md,
+)
 from .llm_bundle import (
     Bundle, build_fn_decompile_prompt, build_summary_prompt,
     SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_SUMMARY,
@@ -44,6 +47,7 @@ __all__ = [
     "TypeSpec", "TypeAnchor", "load_type_specs", "find_anchors",
     "VmCandidate", "detect_vm_candidates",
     "InductionVar", "detect_induction_vars",
+    "BenchResult", "run_bench", "run_bench_one", "render_compare_md",
     "render_summary_md", "render_func_md", "write_decompile_dir",
     # LLM (P2-DEC2)
     "Bundle", "build_fn_decompile_prompt", "build_summary_prompt",

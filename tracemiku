@@ -1031,6 +1031,71 @@ def cmd_dec(args):
     return 0
 
 
+def cmd_dec_bench(args):
+    """P2-DEC4 — 多模型 benchmark.
+
+    跑 N 个 model 同 IR, 收集 token / latency / 关键词命中, 落
+    decompile/bench/<fn>_compare.md + 各模型独立 llm_results/<model>_<fn>.md.
+    """
+    from viewer import load, build_trace_ir, write_decompile_dir
+    from viewer.decompiler import (
+        run_bench, render_compare_md,
+    )
+    p = pathlib.Path(args.path)
+    if not p.exists():
+        print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
+    t = load(str(p))
+    print(f"[bench] loading: {p} ({len(t)} records)", file=sys.stderr)
+    hook_paths = [pathlib.Path(h) for h in (args.hooks or [])]
+    mem = None
+    if args.vm_with_memshadow:
+        from viewer import MemShadow
+        print("[bench] building MemShadow...", file=sys.stderr)
+        mem = MemShadow(t); mem.build()
+    top = build_trace_ir(t, type_spec_paths=hook_paths or None,
+                         memshadow=mem)
+    if top.fn(args.fn) is None:
+        print(f"[!] no such fn {args.fn} (have {[f.id for f in top.fns]})",
+              file=sys.stderr); t.close(); return 1
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    print(f"[bench] {len(models)} models on {args.fn}: {models}", file=sys.stderr)
+
+    out_root = pathlib.Path(args.out) if args.out else p
+    dec_dir = write_decompile_dir(top, out_root, tier="hot")
+
+    def _progress(i, total, name):
+        print(f"[bench] [{i+1}/{total}] {name} ...", file=sys.stderr)
+
+    results = run_bench(top, args.fn, models,
+                        max_tokens=args.max_tokens,
+                        progress_callback=_progress)
+
+    # 写每个 model 的输出
+    results_dir = dec_dir / "llm_results"; results_dir.mkdir(exist_ok=True)
+    for r in results:
+        if not r.ok:
+            print(f"[bench] {r.model}: FAILED ({r.error})", file=sys.stderr)
+            continue
+        out_file = results_dir / f"{r.model}_{r.fn_id}.md"
+        out_file.write_text(
+            f"<!-- model: {r.model}  in: {r.in_tokens}  out: {r.out_tokens}  "
+            f"latency: {r.latency_ms} ms  has_c_code: {r.has_c_code}  "
+            f"vm_hit: {r.vm_hit}  loop_hit: {r.loop_hit} -->\n\n"
+            + r.output_text, encoding="utf-8"
+        )
+        print(f"[bench] {r.model}: ok ({r.in_tokens}→{r.out_tokens} tok, "
+              f"{r.latency_ms} ms, anchors {sum(1 for v in r.anchor_hit.values() if v>0)}/"
+              f"{len(r.anchor_hit)})", file=sys.stderr)
+
+    # 落对比表
+    bench_dir = dec_dir / "bench"; bench_dir.mkdir(exist_ok=True)
+    cmp_path = bench_dir / f"{args.fn}_compare.md"
+    cmp_path.write_text(render_compare_md(results), encoding="utf-8")
+    print(f"[bench] compare table: {cmp_path}", file=sys.stderr)
+    t.close()
+    return 0
+
+
 def cmd_web(args):
     from webui.server import serve
     so = pathlib.Path(args.so).expanduser() if args.so else None
@@ -1567,6 +1632,22 @@ def main():
                       help="VM hex dump 启用 (建 MemShadow, 冷启动慢 ~30s, "
                            "能拿真字节). 默认关只出 dispatcher 候选不出 hex.")
 
+    # dec-bench (P2-DEC4 — 多模型反编译 benchmark)
+    p_db = sp.add_parser("dec-bench",
+                         help="多模型 benchmark — 同一 IR 喂给 N 个 LLM, "
+                              "落 decompile/bench/<fn>_compare.md")
+    p_db.add_argument("path", help="trace 目录")
+    p_db.add_argument("--fn", default="F0", help="目标 fn id (默认 F0)")
+    p_db.add_argument("--models", default="mimo",
+                      help="逗号分隔, 如 'claude,deepseek,mimo' (默认 mimo). "
+                           "可用列表见 'tracemiku dec --call-llm <invalid>' 报错")
+    p_db.add_argument("--hooks", action="append", default=[], metavar="JSON",
+                      help="同 dec --hooks")
+    p_db.add_argument("--max-tokens", type=int, default=4096)
+    p_db.add_argument("--vm-with-memshadow", action="store_true",
+                      help="带 memshadow VM hex (~30s 冷启动)")
+    p_db.add_argument("--out", default=None, help="输出根 (默认 = path/decompile)")
+
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")
     p_web.add_argument("path", help="trace 目录 (run 或 per-call)")
@@ -1588,6 +1669,7 @@ def main():
     if args.subcommand == "finalize":return cmd_finalize(args)
     if args.subcommand == "web":     return cmd_web(args)
     if args.subcommand == "dec":     return cmd_dec(args)
+    if args.subcommand == "dec-bench": return cmd_dec_bench(args)
     ap.print_help(); return 1
 
 
