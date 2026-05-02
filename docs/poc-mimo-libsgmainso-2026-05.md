@@ -81,10 +81,32 @@ mimo **正确识别 trace 局限**:
 
 ## TODO 加 (优先级提升)
 
-- **P2-DEC3-B0 (新, P0 优先)**: split trace into multiple FuncIRs by calltree.
-  整个 trace 当 1 fn 是 MVP 妥协, 现在被 LLM 实测明确指出该改. 工作量 ~150 LOC.
+- ~~**P2-DEC3-B0 (新, P0 优先)**: split trace into multiple FuncIRs by calltree.~~
+  ✅ ship 在 commit `baf4300`. 真机 libsgmainso 切出 10 fn (F0 + 9 helper).
 - DEC3-B 类型锚点 (JNI/libc API sink)
 - DEC3-C 真循环 induction var
+- DEC3-D (新) — VM bytecode 提取, 处理 OLLVM-VM 那 800+ 块 (mimo 已识别 VM)
+
+## DEC3-B0 ship 后实测对比
+
+同一个 mimo-v2.5-pro, **不同粒度 IR** 输入:
+
+| 视角 | prompt (tokens) | output | 输出质量 |
+|---|---|---|---|
+| F0 整 trace (DEC1) | 35K | "这是 reg-based VM, 23 handler 类型" | high-level 结构 |
+| **F1 sub_54820 (DEC3-B0)** | **3.8K** | "3-level nested key lookup + XOR, ABI: (obj, k1, k2, k3, flag, *out)" | 具体 C 反编译 + 完整 ABI |
+
+DEC3-B0 commit `baf4300` 后跑 `tracemiku dec --fn F1 --call-llm mimo` 输出
+保存在 trace/decompile/llm_results/opencode_F1.md (32s, 0 cost).
+
+mimo 在 F1 上不仅给出可执行 C, 还利用 trace 真值标注:
+- "flag is always 0 in this trace, enabling the XOR path"
+- "found2 is always non-null when reaching level 3 (trace never shows null case)"
+- "OLLVM indirect branches via computed gotos (dispatcher at 0x75f8a440e0), but
+  the logical flow is a straightforward nested search"
+
+最后一句尤其重要 — mimo 自己识别出 OLLVM dispatcher 并 unflatten 成原始逻辑.
+路线 B 的"LLM 做反混淆"假设兑现.
 
 ## 完整输出参考
 
