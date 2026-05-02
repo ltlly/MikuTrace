@@ -50,6 +50,7 @@ from webui.schemas import (
     DiffTracesResponse, DiffTracesRequest,
     JniEventsResponse, CallTreeResponse,
     HashFinalizeDetectAny, OllvmDetectResponse,
+    ForkEventsResponse,
 )
 
 
@@ -1979,6 +1980,20 @@ def make_app(trace_path: pathlib.Path,
         from viewer.calltree import build_call_tree
         tree = build_call_tree(t, sym=sym, max_depth=max_depth)
         return {"tree": tree}
+
+    # ── P1-C (partial): fork events ───────────────────────────────────────────
+
+    @app.get("/api/fork-events", response_model=ForkEventsResponse)
+    def api_fork_events(status: Optional[str] = None,
+                        is_fork_like: Optional[bool] = None):
+        """Fork-event records from meta.json. Filter by attach_status / is_fork_like.
+        Agent-side fork hook (M1) writes these to per-call meta.json."""
+        evs = list(t.meta.fork_events)
+        if status is not None:
+            evs = [e for e in evs if e.get("attach_status") == status]
+        if is_fork_like is not None:
+            evs = [e for e in evs if e.get("is_fork_like") == is_fork_like]
+        return {"count": len(evs), "events": evs}
 
     # ── P0-2: jni events ──────────────────────────────────────────────────────
 

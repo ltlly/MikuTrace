@@ -57,6 +57,7 @@ class TraceMeta:
     fn_addr: Optional[int] = None
     trace_begin: dict = field(default_factory=dict)
     trace_end: dict = field(default_factory=dict)
+    fork_events: list[dict] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
 
@@ -235,6 +236,8 @@ def _populate_meta(meta: TraceMeta, raw: dict):
         meta.fn_addr = int(raw["fn_addr"], 16) if isinstance(raw["fn_addr"], str) else raw["fn_addr"]
     if "trace_begin" in raw: meta.trace_begin = raw["trace_begin"]
     if "trace_end" in raw: meta.trace_end = raw["trace_end"]
+    if "fork_events" in raw and isinstance(raw["fork_events"], list):
+        meta.fork_events = list(raw["fork_events"])
     if "hello" in raw and isinstance(raw["hello"], dict):
         if not meta.method:
             meta.method = raw["hello"].get("method", "")

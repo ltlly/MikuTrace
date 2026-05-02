@@ -1070,6 +1070,22 @@ def cmd_diff_traces(args):
     })
 
 
+# ───────────────────────── fork-events (P1-C partial) ─────────────────────────
+
+def cmd_fork_events(args):
+    """List fork-events from meta.json. Agent-side fork hook (P1-C M1)
+    writes these; viewer just exposes for review."""
+    from .trace import load
+    t = load(args.trace)
+    evs = list(t.meta.fork_events)
+    if args.status:
+        evs = [e for e in evs if e.get("attach_status") == args.status]
+    if args.is_fork_like is not None:
+        evs = [e for e in evs if e.get("is_fork_like") == args.is_fork_like]
+    t.close()
+    _emit({"count": len(evs), "events": evs})
+
+
 # ───────────────────────── ollvm-detect-vm ─────────────────────────
 
 def cmd_ollvm_detect_vm(args):
@@ -1639,7 +1655,7 @@ _KNOWN_SUBCOMMANDS = {
     "mem-writes-in-range", "mem-flow", "crypto-scan",
     # 第二轮 xsign 实战后追加 (P0 + P1):
     "reg-at-idx", "call-chain", "hash-input-search", "auto-phase-detect",
-    "hash-finalize-detect", "ollvm-detect-vm",
+    "hash-finalize-detect", "ollvm-detect-vm", "fork-events",
     # 多 trace 差分 (P2 → 现需求做了):
     "diff-traces",
 }
@@ -1871,6 +1887,15 @@ def main():
     s.add_argument("--search-in-mem", action="store_true", dest="search_in_mem",
                    help="also search if computed hash bytes appear in mem (= used for tag)")
 
+    s = sub.add_parser("fork-events",
+                       help="list fork-events from meta.json (P1-C partial)")
+    s.add_argument("trace")
+    s.add_argument("--status", default=None,
+                   help="filter by attach_status (success / failed_* / not_attempted)")
+    s.add_argument("--is-fork-like", type=lambda x: x.lower() in ("1","true","yes"),
+                   default=None, dest="is_fork_like",
+                   help="true=fork-like only, false=thread-like only")
+
     s = sub.add_parser("ollvm-detect-vm",
                        help="heuristic VM dispatcher detection (P1-D, only detect 不 decode)")
     s.add_argument("trace")
@@ -1934,6 +1959,7 @@ def main():
         "diff-traces": cmd_diff_traces,
         "hash-finalize-detect": cmd_hash_finalize_detect,
         "ollvm-detect-vm": cmd_ollvm_detect_vm,
+        "fork-events": cmd_fork_events,
     }
     h = handlers.get(args.subcommand)
     if h is None:

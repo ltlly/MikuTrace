@@ -915,6 +915,13 @@ class CallTreeResponse(BaseModel):
     tree: CallTreeNode
 
 
+# ── /api/fork-events (P1-C partial) ──────────────────────────────────────────
+
+class ForkEventsResponse(BaseModel):
+    count: int
+    events: list[dict[str, Any]]
+
+
 # ── /api/jni-events (P0-2) ───────────────────────────────────────────────────
 
 class JniEventsResponse(BaseModel):
