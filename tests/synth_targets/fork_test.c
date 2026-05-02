@@ -15,23 +15,28 @@
 #include <sched.h>
 #include <signal.h>
 
+static int g_clone_sleep_ms = 150;
 static int clone_child(void *_arg) {
-    usleep(150000);
+    usleep(g_clone_sleep_ms * 1000);
     return 0;
 }
 
 int main(int argc, char **argv) {
-    fprintf(stderr, "[parent] pid=%d, sleeping 3s for frida attach\n", getpid());
+    int long_lived = (argc >= 2 && argv[1][0] == 'l');  // 'long' arg → children sleep 5s
+    int sleep_ms = long_lived ? 5000 : 150;
+    g_clone_sleep_ms = sleep_ms;
+    fprintf(stderr, "[parent] pid=%d, sleeping 3s for frida attach (%s mode)\n",
+            getpid(), long_lived ? "long-lived" : "short-lived");
     fflush(stderr);
     sleep(3);
-    fprintf(stderr, "[parent] forking 3 children\n");
+    fprintf(stderr, "[parent] forking 3 children (each sleeps %dms)\n", sleep_ms);
     fflush(stderr);
 
     // 1. fork()
     pid_t c1 = fork();
     if (c1 == 0) {
         fprintf(stderr, "[child1 fork] pid=%d\n", getpid()); fflush(stderr);
-        usleep(150000);
+        usleep(sleep_ms * 1000);
         _exit(0);
     }
     fprintf(stderr, "[parent] fork() → %d\n", c1); fflush(stderr);
@@ -50,7 +55,11 @@ int main(int argc, char **argv) {
     if (stack) {
         pid_t c3 = clone(clone_child, (char *)stack + 64*1024,
                          SIGCHLD, NULL);
-        fprintf(stderr, "[parent] clone() → %d\n", c3); fflush(stderr);
+        if (c3 < 0) {
+            // clone returned in child path? Safe-guard
+        } else {
+            fprintf(stderr, "[parent] clone() → %d\n", c3); fflush(stderr);
+        }
     }
 
     // wait for all
