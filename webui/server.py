@@ -2672,7 +2672,7 @@ def make_app(trace_path: pathlib.Path,
             constfold_block, dce_block, typelat_block,
             struct_recover_block, merge_shapes,
             restructure, from_viewer_cfg, render_hlil, expr_to_c,
-            collect_uidf,
+            collect_uidf, flag_elim_block,
         )
         from viewer.cfg import build_cfg as _build_cfg
         import numpy as np
@@ -2757,6 +2757,14 @@ def make_app(trace_path: pathlib.Path,
             dce_removed += len(blk.roots) - len(new.roots)
             ssa_map[pc] = new
 
+        # 7.5. flag elimination — 合并 SET_FLAG('cmp_result',SUB) + IF(FLAG_COND)
+        # → IF(LLIL_CMP_X). 跟 BN MLIL flag analysis 一致, 大幅提升可读性.
+        flag_merged = 0
+        for pc, blk in list(ssa_map.items()):
+            new = flag_elim_block(blk)
+            flag_merged += len(blk.roots) - len(new.roots)
+            ssa_map[pc] = new
+
         # 8. typelat + struct
         types_per_block: dict = {}
         shapes_per_block: list = []
@@ -2808,6 +2816,7 @@ def make_app(trace_path: pathlib.Path,
                 "uidf_const": sum(1 for ov in uidf.values() if ov.is_const()),
                 "constfold_count": cf_count,
                 "dce_removed": dce_removed,
+                "flag_merged": flag_merged,
                 "struct_shapes": len(merged_shapes),
             },
         }

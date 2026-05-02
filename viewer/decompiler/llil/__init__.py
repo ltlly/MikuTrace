@@ -23,6 +23,7 @@ from .pass_uidf import (
 )
 from .pass_constfold import fold_expr, constfold_block, constfold_blocks
 from .pass_dce import dce_block, dce_blocks
+from .pass_flag_elim import flag_elim_block, flag_elim_blocks
 from .pass_typelat import (
     TypeEnv, typelat_block, join,
     T_TOP, T_INT, T_PTR, T_HANDLE, T_BOOL, T_BOT,
@@ -98,6 +99,7 @@ __all__ = [
     "ObservedValues", "collect_uidf", "apply_uidf_to_constfold_env",
     "fold_expr", "constfold_block", "constfold_blocks",
     "dce_block", "dce_blocks",
+    "flag_elim_block", "flag_elim_blocks",
     "TypeEnv", "typelat_block", "join",
     "T_TOP", "T_INT", "T_PTR", "T_HANDLE", "T_BOOL", "T_BOT",
     "FieldAccess", "StructShape", "struct_recover_block", "merge_shapes",
