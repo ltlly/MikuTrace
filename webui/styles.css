@@ -298,12 +298,14 @@ body.multi-so #stream-header { padding-left: 6px; }
 .mem-line .addr { color: var(--accent2); }
 .mem-line .hex  { color: var(--fg); }
 .mem-line .ascii { color: var(--dim); }
-/* per-byte coloring (read=灰, write=绿, unread=暗灰) */
+/* per-byte coloring (read=灰, write=绿, extern=紫, unread=暗灰) */
 .mem-line .b-unread { color: var(--dim); }
 .mem-line .b-read   { color: var(--fg); }
 .mem-line .b-write  { color: var(--good); cursor: pointer; }
+.mem-line .b-extern { color: #c39bf7; cursor: pointer; }
 .mem-line .hex .b-read,
-.mem-line .hex .b-write { cursor: pointer; }
+.mem-line .hex .b-write,
+.mem-line .hex .b-extern { cursor: pointer; }
 .mem-line .sel { background: var(--hl); border-radius: 2px; }
 
 /* context menu — for memory cell right click */

@@ -1378,8 +1378,10 @@ async function refreshMemDump() {
         hex += `<span class="b-unread">??</span> `;
         ascii += `<span class="b-unread">·</span>`;
       } else {
-        const cls = b.kind === "w" ? "b-write" : "b-read";
-        hex += `<span class="${cls}" data-addr="${b.addr}" title="from #${b.src_idx} (${b.kind})">${b.byte.toString(16).padStart(2,'0')}</span> `;
+        const cls = b.kind === "x" ? "b-extern"
+                  : b.kind === "w" ? "b-write" : "b-read";
+        const titleKind = b.kind === "x" ? "external write" : b.kind;
+        hex += `<span class="${cls}" data-addr="${b.addr}" title="from #${b.src_idx} (${titleKind})">${b.byte.toString(16).padStart(2,'0')}</span> `;
         const ch = b.byte;
         const cc = (ch >= 0x20 && ch < 0x7f) ? String.fromCharCode(ch) : "·";
         ascii += `<span class="${cls}">${escapeHtml(cc)}</span>`;
@@ -1659,9 +1661,9 @@ async function jumpToFirstWriteOfAddr(addr) {
   // PDF p.5: 双击地址跳到定义 (第一次 write 该字节)
   const r = await api("/api/idxs-touching-addr", {addr, cursor: 0, limit: 5});
   if (r.status !== "ready") return;
-  // 偏好 write (kind=w), 否则首个 read
+  // 偏好 write (kind='w' in-trace / 'x' external), 否则首个 read
   const all = [...r.after, ...r.before];
-  const first = all.find(e => e.kind === "w") || all[0];
+  const first = all.find(e => e.kind === "w" || e.kind === "x") || all[0];
   if (first) setCursor(first.idx, true);
 }
 
