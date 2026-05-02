@@ -28,6 +28,9 @@ dist/
 *.log
 *.bak
 
+# git worktrees (本地隔离工作区)
+.worktrees/
+
 # Frida
 *.frida-script-cache
 
