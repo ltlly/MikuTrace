@@ -1007,6 +1007,7 @@ function activateLeftTab(name) {
      forks: "Forks",
      strings: "Strings",
      taint: "Taint", xref: "Cross Reference", sofilter: "SO Filter",
+     decompile: "Decompile (LLM)",
      settings: "Settings"}[name] || name;
   // 切换显示/隐藏对应 panel
   document.querySelectorAll("#left-panel-body > .lp-tab").forEach(b =>
@@ -1022,6 +1023,7 @@ function activateLeftTab(name) {
     else if (name === "calltree") initCallTreeTab();
     else if (name === "forks") initForksTab();
     else if (name === "sofilter") initSoFilterTab();
+    else if (name === "decompile") initDecompileTab();
     else if (name === "settings") initSettingsTab();
   }
   // 切到 backtrace 时刷一下当前 cursor 的 stack
@@ -2404,6 +2406,119 @@ function hideHelp() {
   if (pop && !pop.classList.contains("hidden")) {
     pop.classList.add("hidden");
     HELP_OPEN_FOR = null;
+  }
+}
+
+// ---------------- DEC4 — Trace Decompiler tab ----------------
+async function initDecompileTab() {
+  const cont = $("lp-decompile");
+  // 已有 toolbar 在 HTML 里, 我们只 wire events + 初始化 data
+  // 1. 拉 model key status
+  try {
+    const r = await fetch("/api/dec/models").then(r => r.json());
+    const k = r.api_keys_configured || {};
+    const status = Object.entries(k).map(([n, v]) =>
+      `${n}: ${v ? "✓" : "✗"}`).join(" · ");
+    $("dec-key-status").textContent = "API keys env: " + status;
+  } catch (e) {
+    $("dec-key-status").textContent = "load model status fail: " + e;
+  }
+  $("dec-refresh").addEventListener("click", loadDecSummary);
+  $("dec-llm-call").addEventListener("click", runDecLlmCall);
+  loadDecSummary();
+}
+
+async function loadDecSummary() {
+  const list = $("dec-fn-list");
+  list.innerHTML = '<div class="dim">building IR (1-3s)…</div>';
+  const useMem = $("dec-vm-mem").checked;
+  const url = "/api/dec/summary" + (useMem ? "?with_memshadow=1" : "");
+  let s;
+  try {
+    s = await fetch(url).then(r => r.json());
+  } catch (e) {
+    list.innerHTML = '<div class="dim">load failed: ' + e + '</div>';
+    return;
+  }
+  // VM candidates summary
+  let vm = "";
+  if (s.vm_candidates && s.vm_candidates.length) {
+    const v = s.vm_candidates[0];
+    vm = `<div class="dec-vm-summary">VM: dispatcher 0x${v.dispatcher_pc.toString(16)}` +
+         ` (conf ${v.confidence.toFixed(2)})` +
+         (v.reader_inst ? ` · reader: <code>${escapeHtml(v.reader_inst)}</code>` : "") +
+         (v.bytecode_addr ? ` · bytecode @0x${v.bytecode_addr.toString(16)}` +
+           ` (${v.hex_dump_lines} hex lines)` : "") +
+         "</div>";
+  }
+  // fn list
+  const items = (s.fns || []).map(f =>
+    `<div class="dec-fn-item" data-fn="${f.id}" title="entry idx=${f.entry_idx}, exit=${f.exit_idx}">
+       <span class="dec-fn-id">${f.id}</span>
+       <span class="dec-fn-name">${escapeHtml(f.name)}</span>
+       <span class="dec-fn-stats dim">blocks=${f.blocks} loops=${f.loops} calls=${f.calls}` +
+       (f.type_anchors ? ` anchors=${f.type_anchors}` : "") +
+       `</span>
+     </div>`).join("");
+  list.innerHTML =
+    `<div class="dim small">trace: ${s.records} records, module ${s.module_name || "?"}</div>` +
+    vm + items;
+  list.querySelectorAll(".dec-fn-item").forEach(el => {
+    el.addEventListener("click", () => selectDecFn(el.dataset.fn));
+  });
+  if (s.fns && s.fns.length) selectDecFn(s.fns[0].id);
+}
+
+let DEC_SELECTED_FN = null;
+
+async function selectDecFn(fnId) {
+  DEC_SELECTED_FN = fnId;
+  const list = $("dec-fn-list");
+  list.querySelectorAll(".dec-fn-item").forEach(el =>
+    el.classList.toggle("dec-fn-selected", el.dataset.fn === fnId));
+  const out = $("dec-output");
+  out.innerHTML = '<div class="dim">loading IR…</div>';
+  const useMem = $("dec-vm-mem").checked;
+  const url = `/api/dec/fn/${encodeURIComponent(fnId)}?tier=hot` +
+              (useMem ? "&with_memshadow=1" : "");
+  try {
+    const r = await fetch(url).then(r => r.json());
+    out.innerHTML = `<div class="dec-fn-md"><pre>${escapeHtml(r.markdown || "")}</pre></div>`;
+  } catch (e) {
+    out.innerHTML = '<div class="dim">load failed: ' + e + '</div>';
+  }
+}
+
+async function runDecLlmCall() {
+  if (!DEC_SELECTED_FN) {
+    alert("先选一个 fn");
+    return;
+  }
+  const model = $("dec-model").value;
+  const useMem = $("dec-vm-mem").checked;
+  const out = $("dec-output");
+  out.innerHTML = `<div class="dim">calling LLM (${model}) — 30-90s, 请稍等…</div>`;
+  const t0 = Date.now();
+  try {
+    const r = await fetch("/api/dec/llm-call", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        fn_id: DEC_SELECTED_FN,
+        model: model,
+        with_memshadow: useMem,
+      }),
+    }).then(r => r.json());
+    const dt = Date.now() - t0;
+    if (!r.ok) {
+      out.innerHTML = `<div class="dec-error">LLM error: ${escapeHtml(r.error || "")}</div>`;
+      return;
+    }
+    const meta = `<div class="dim small">model: ${r.model} · ${r.in_tokens}→${r.out_tokens} tok` +
+                 ` · server ${r.latency_ms}ms · client ${dt}ms</div>`;
+    out.innerHTML = meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
+  } catch (e) {
+    out.innerHTML = '<div class="dec-error">request failed: ' + escapeHtml(String(e)) + '</div>';
   }
 }
 

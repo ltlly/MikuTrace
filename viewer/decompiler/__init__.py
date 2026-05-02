@@ -32,7 +32,8 @@ from .llm_bundle import (
     SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_SUMMARY,
 )
 from .llm_client import (
-    LlmModel, LlmResult, ClaudeModel, DeepSeekModel, QwenModel, OpenCodeModel,
+    LlmModel, LlmResult,
+    ClaudeModel, DeepSeekModel, QwenModel, MimoModel, OpenCodeModel,
     make_llm_model, list_llm_models,
 )
 
@@ -53,6 +54,6 @@ __all__ = [
     "Bundle", "build_fn_decompile_prompt", "build_summary_prompt",
     "SYSTEM_PROMPT_DECOMPILE", "SYSTEM_PROMPT_SUMMARY",
     "LlmModel", "LlmResult",
-    "ClaudeModel", "DeepSeekModel", "QwenModel", "OpenCodeModel",
+    "ClaudeModel", "DeepSeekModel", "QwenModel", "MimoModel", "OpenCodeModel",
     "make_llm_model", "list_llm_models",
 ]

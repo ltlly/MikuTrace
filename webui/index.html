@@ -35,6 +35,7 @@
     <button class="vtab"        data-vtab="taint"   title="污点追踪 — 从 cursor 处的某寄存器开始, forward 看后续被污染的指令, backward 找该值的来源">Taint</button>
     <button class="vtab"        data-vtab="xref"    title="交叉引用 — 当前 cursor 的 PC 在 trace 中所有被执行的位置 (= PC 执行历史)">Cross Ref</button>
     <button class="vtab"        data-vtab="sofilter" title="SO Filter — multi-SO trace 时按 SO 折叠 / 显示. checkbox 关掉的 SO 在 trace 流里折叠为 [N records] 占位符">SO Filter</button>
+    <button class="vtab"        data-vtab="decompile" title="Decompile — trace IR + LLM 反编译 (路线 B). DEC1-DEC4 全 stage. 选 fn → 查看 IR markdown → 一键 LLM 反编译 (mimo/claude/deepseek)">Decompile</button>
     <button class="vtab"        data-vtab="settings" title="设置: 限制条数, 地址显示格式">Settings</button>
   </aside>
 
@@ -55,6 +56,28 @@
       <div class="lp-tab"        data-tab="taint"   id="lp-taint"></div>
       <div class="lp-tab"        data-tab="xref"    id="lp-xref"></div>
       <div class="lp-tab"        data-tab="sofilter" id="lp-sofilter"></div>
+      <div class="lp-tab"        data-tab="decompile" id="lp-decompile">
+        <!-- DEC4 — trace decompiler 接入 webui -->
+        <div class="dec-toolbar">
+          <select id="dec-model">
+            <option value="mimo">mimo (direct API)</option>
+            <option value="mimo-opencode">mimo (via opencode)</option>
+            <option value="claude">claude-sonnet-4-6</option>
+            <option value="claude-opus-4-7">claude-opus-4-7</option>
+            <option value="deepseek">deepseek-r1</option>
+            <option value="deepseek-chat">deepseek-chat</option>
+            <option value="qwen">qwen-coder</option>
+          </select>
+          <label class="toggle">
+            <input type="checkbox" id="dec-vm-mem"> VM memshadow
+          </label>
+          <button id="dec-refresh">Build IR</button>
+          <button id="dec-llm-call">LLM 反编译</button>
+        </div>
+        <div id="dec-key-status" class="dim small"></div>
+        <div id="dec-fn-list"></div>
+        <div id="dec-output"></div>
+      </div>
       <div class="lp-tab"        data-tab="settings" id="lp-settings"></div>
     </div>
   </section>

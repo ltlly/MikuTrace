@@ -142,12 +142,16 @@ def test_deepseek_no_key_returns_error_result(monkeypatch):
 
 
 def test_opencode_factory_resolves():
-    from viewer.decompiler import OpenCodeModel
+    from viewer.decompiler import OpenCodeModel, MimoModel
     m = make_llm_model("opencode")
     assert isinstance(m, OpenCodeModel)
     assert m.model_id == "mimo/mimo-v2.5-pro"
+    # 'mimo' / 'mimo-v2.5-pro' 现在 → 直连 MimoModel (DEC4 web 集成时改的, 更快)
     m2 = make_llm_model("mimo-v2.5-pro")
-    assert isinstance(m2, OpenCodeModel)
+    assert isinstance(m2, MimoModel)
+    # 'mimo-opencode' 仍走 subprocess
+    m3 = make_llm_model("mimo-opencode")
+    assert isinstance(m3, OpenCodeModel)
 
 
 def test_opencode_no_cli_returns_error(monkeypatch):

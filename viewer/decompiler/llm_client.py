@@ -150,6 +150,29 @@ class DeepSeekModel(_OpenAICompatModel):
         )
 
 
+class MimoModel(_OpenAICompatModel):
+    """MiMo 直接 API (OpenAI-compatible). 比 opencode subprocess 路径更快.
+
+    Env:
+      MIMO_API_KEY  必需 (永不硬编码进代码)
+      MIMO_BASE_URL 可选, 默认 https://token-plan-cn.xiaomimimo.com/v1
+
+    默认 model_id: mimo-v2.5-pro. 也支持 mimo-v2-pro / mimo-v2.5 / mimo-v2-omni.
+    """
+    name = "mimo-direct"
+
+    def __init__(self, model_id: str = "mimo-v2.5-pro",
+                 api_key: Optional[str] = None,
+                 base_url: Optional[str] = None):
+        super().__init__(
+            model_id=model_id,
+            api_key=api_key or os.environ.get("MIMO_API_KEY"),
+            base_url=(base_url
+                      or os.environ.get("MIMO_BASE_URL")
+                      or "https://token-plan-cn.xiaomimimo.com/v1"),
+        )
+
+
 class QwenModel(_OpenAICompatModel):
     """Qwen — 走 dashscope (云) 或本地 vLLM (设 QWEN_BASE_URL).
 
@@ -265,8 +288,15 @@ _REGISTRY = {
     "opencode": lambda: OpenCodeModel(
         model_id=os.environ.get("OPENCODE_MODEL", "mimo/mimo-v2.5-pro")
     ),
-    "mimo": lambda: OpenCodeModel(model_id="mimo/mimo-v2.5-pro"),
-    "mimo-v2.5-pro": lambda: OpenCodeModel(model_id="mimo/mimo-v2.5-pro"),
+    # 通过 opencode subprocess 走 mimo (慢, 但不需配 MIMO_API_KEY 直连)
+    "mimo-opencode": lambda: OpenCodeModel(model_id="mimo/mimo-v2.5-pro"),
+    # 直接 API (推荐, 需 MIMO_API_KEY env)
+    "mimo": MimoModel,
+    "mimo-direct": MimoModel,
+    "mimo-v2.5-pro": MimoModel,
+    "mimo-v2-pro": lambda: MimoModel(model_id="mimo-v2-pro"),
+    "mimo-v2.5": lambda: MimoModel(model_id="mimo-v2.5"),
+    "mimo-v2-omni": lambda: MimoModel(model_id="mimo-v2-omni"),
 }
 
 

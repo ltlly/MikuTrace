@@ -631,3 +631,52 @@ body.multi-so .row-insn { padding-left: 6px; }
 /* P1-C M6: failed fork events highlighted red */
 .fk-row.fk-failed { color: var(--warn); }
 .fk-row.fk-failed::before { content: "✗ "; color: var(--warn); }
+
+/* DEC4 — Trace decompiler tab */
+.dec-toolbar {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 6px; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.dec-toolbar select, .dec-toolbar button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+#dec-key-status {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.dec-vm-summary {
+  padding: 6px 8px;
+  background: var(--bg2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.dec-fn-item {
+  padding: 4px 8px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  display: flex; gap: 8px; align-items: baseline;
+  font-size: 12px;
+}
+.dec-fn-item:hover { background: var(--hover); }
+.dec-fn-selected { background: var(--accent-bg); }
+.dec-fn-id { font-weight: bold; min-width: 32px; font-family: var(--font-mono); }
+.dec-fn-name { font-family: var(--font-mono); flex: 1; min-width: 0;
+               overflow: hidden; text-overflow: ellipsis; }
+.dec-fn-stats { font-size: 11px; }
+#dec-output {
+  border-top: 2px solid var(--border);
+  padding: 6px;
+  max-height: 60vh; overflow-y: auto;
+}
+.dec-fn-md pre, .dec-llm-out pre {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dec-error { color: var(--warn); padding: 8px; }
+.small { font-size: 11px; }

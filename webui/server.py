@@ -4,7 +4,7 @@
 mmap 在后端, 客户端按 viewport 拉切片, 200 万条 trace 滚动丝滑.
 """
 from __future__ import annotations
-import pathlib, time, threading, multiprocessing as mp, logging
+import os, pathlib, time, threading, multiprocessing as mp, logging
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
@@ -2499,6 +2499,129 @@ def make_app(trace_path: pathlib.Path,
             if len(before) == 0: break
             cur_idx = int(before[-1])
         return {"start_idx": idx, "depth": len(chain), "chain": chain}
+
+    # ─────────────── P2-DEC4 Trace Decompiler 接入 webui ───────────────
+    #
+    # 4 个 endpoint, 复用 viewer.decompiler 全栈. TraceIR 按 (hooks, memshadow)
+    # 缓存, 第一次访问建 IR (~1-3s for 60K trace), 后续命中 ms 级.
+    #
+    # API key 严守: 所有 LLM 调用走 LlmModel.call(), API key 在 model adapter
+    # 内从环境变量读, **服务器永不接受/转发 client 提供的 key**.
+
+    def _get_dec_ir(hooks_paths: tuple = (), with_memshadow: bool = False):
+        key = ("dec_ir", hooks_paths, with_memshadow)
+        if key in cache:
+            return cache[key]
+        from viewer import build_trace_ir as _build_ir
+        from viewer.memshadow import MemShadow as _MS
+        mem = None
+        if with_memshadow:
+            mem = cache.get("dec_memshadow")
+            if mem is None:
+                mem = _MS(t); mem.build(); cache["dec_memshadow"] = mem
+        top = _build_ir(
+            t, sym=sym,
+            type_spec_paths=[pathlib.Path(p) for p in hooks_paths] or None,
+            memshadow=mem,
+        )
+        cache[key] = top
+        return top
+
+    @app.get("/api/dec/summary")
+    def dec_summary(hooks: str = "", with_memshadow: bool = False):
+        """trace 顶层 IR + summary markdown.
+
+        hooks: 逗号分隔 JSON spec 路径; with_memshadow: 抓 VM hex.
+        """
+        from viewer.decompiler import render_summary_md
+        hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
+        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow)
+        return {
+            "records": top.records,
+            "module_name": top.module_name,
+            "module_base": top.module_base,
+            "module_size": top.module_size,
+            "truncated": top.truncated,
+            "fns": [
+                {"id": f.id, "name": f.name, "blocks": len(f.blocks),
+                 "loops": len(f.loops), "calls": len(f.calls),
+                 "type_anchors": len(f.type_anchors),
+                 "entry_idx": f.entry_idx, "exit_idx": f.exit_idx}
+                for f in top.fns
+            ],
+            "vm_candidates": [
+                {"dispatcher_pc": vc.dispatcher_pc, "confidence": vc.confidence,
+                 "reasons": vc.reasons, "reader_pc": vc.reader_pc,
+                 "reader_inst": vc.reader_inst, "reader_hits": vc.reader_hits,
+                 "bytecode_addr": vc.bytecode_addr,
+                 "bytecode_len": vc.bytecode_len,
+                 "hex_dump_lines": len(vc.hex_dump)}
+                for vc in top.vm_candidates
+            ],
+            "summary_md": render_summary_md(top),
+        }
+
+    @app.get("/api/dec/fn/{fn_id}")
+    def dec_fn(fn_id: str, tier: str = "hot",
+               hooks: str = "", with_memshadow: bool = False):
+        """单个 fn 的 IR markdown."""
+        from viewer.decompiler import render_func_md
+        hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
+        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow)
+        fn = top.fn(fn_id)
+        if fn is None:
+            raise HTTPException(404, f"no such fn {fn_id}")
+        return {"fn_id": fn_id, "name": fn.name, "tier": tier,
+                "markdown": render_func_md(fn, tier=tier)}
+
+    @app.get("/api/dec/models")
+    def dec_models():
+        """list 可用 models + 各自 API key 配置状态 (不返回 key 值)."""
+        from viewer.decompiler import list_llm_models
+        env_status = {
+            "MIMO_API_KEY": bool(os.environ.get("MIMO_API_KEY")),
+            "ANTHROPIC_API_KEY": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "DEEPSEEK_API_KEY": bool(os.environ.get("DEEPSEEK_API_KEY")),
+            "DASHSCOPE_API_KEY": bool(os.environ.get("DASHSCOPE_API_KEY")),
+        }
+        return {"models": list_llm_models(), "api_keys_configured": env_status}
+
+    @app.post("/api/dec/llm-call")
+    def dec_llm_call(payload: dict):
+        """同步调 LLM 反编译. body: {fn_id, model, max_tokens?, hooks?,
+        with_memshadow?}. API key 服务端从 env 读, 不接受 client 提供.
+        """
+        from viewer.decompiler import (
+            build_fn_decompile_prompt, make_llm_model,
+        )
+        fn_id = str(payload.get("fn_id") or "")
+        model_name = str(payload.get("model") or "mimo")
+        max_tokens = int(payload.get("max_tokens") or 4096)
+        hooks = payload.get("hooks") or []
+        with_memshadow = bool(payload.get("with_memshadow") or False)
+        if isinstance(hooks, str):
+            hooks = [s.strip() for s in hooks.split(",") if s.strip()]
+        hk = tuple(hooks)
+        top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow)
+        if top.fn(fn_id) is None:
+            raise HTTPException(404, f"no such fn {fn_id}")
+        try:
+            bundle = build_fn_decompile_prompt(top, fn_id)
+            model = make_llm_model(model_name)
+        except KeyError as e:
+            raise HTTPException(400, f"{e}")
+        result = model.call(bundle.user, system=bundle.system,
+                            max_tokens=max_tokens)
+        return {
+            "ok": result.error is None,
+            "model": result.model,
+            "error": result.error,
+            "c_code": result.c_code,
+            "in_tokens": result.prompt_tokens,
+            "out_tokens": result.output_tokens,
+            "latency_ms": result.latency_ms,
+            "estimated_prompt_tokens": bundle.estimated_tokens,
+        }
 
     # static SPA
     @app.get("/", response_class=HTMLResponse)
