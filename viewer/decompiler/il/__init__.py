@@ -1,0 +1,26 @@
+"""Trace IL pipeline (路线 B v2).
+
+设计: docs/trace-decompiler-il-design.md.
+入口: lift_static() → SSA → pass_constfold → pass_dce → ... → render.
+
+Pass 1 (lift) ship in 同 commit. 后续 pass 单独 commit.
+"""
+from .ops import (
+    TlilOp, OP_MOV_IMM, OP_MOV_REG, OP_ADD, OP_SUB, OP_AND, OP_OR, OP_XOR,
+    OP_LSL, OP_LSR, OP_ASR, OP_NEG, OP_NOT, OP_MUL, OP_LOAD, OP_STORE,
+    OP_CMP, OP_BRANCH_UNCOND, OP_BRANCH_COND, OP_BRANCH_INDIRECT,
+    OP_CALL, OP_CALL_INDIRECT, OP_RET, OP_NOP, OP_RAW,
+    OPS_ALL, OPS_ARITH, OPS_BRANCH,
+)
+from .lift import lift_arm64, lift_static, LiftStats
+
+__all__ = [
+    "TlilOp",
+    "OP_MOV_IMM", "OP_MOV_REG", "OP_ADD", "OP_SUB", "OP_AND", "OP_OR",
+    "OP_XOR", "OP_LSL", "OP_LSR", "OP_ASR", "OP_NEG", "OP_NOT", "OP_MUL",
+    "OP_LOAD", "OP_STORE", "OP_CMP",
+    "OP_BRANCH_UNCOND", "OP_BRANCH_COND", "OP_BRANCH_INDIRECT",
+    "OP_CALL", "OP_CALL_INDIRECT", "OP_RET", "OP_NOP", "OP_RAW",
+    "OPS_ALL", "OPS_ARITH", "OPS_BRANCH",
+    "lift_arm64", "lift_static", "LiftStats",
+]
