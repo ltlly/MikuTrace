@@ -188,6 +188,75 @@ trace.bin 物理格式 (272B/rec) 三种模式相同。
 
 ---
 
+## Trace 反编译 (`tracemiku dec` / `dec-bench`, 路线 B)
+
+设计文档: [`docs/trace-decompiler-design.md`](docs/trace-decompiler-design.md)
+(包含 §7.0 普适性原则 — 无 hardcoded 变种).
+研究: [`docs/trace-decompiler-research.md`](docs/trace-decompiler-research.md).
+真机实测: [`docs/poc-mimo-libsgmainso-2026-05.md`](docs/poc-mimo-libsgmainso-2026-05.md).
+
+**定位**: 机器把 trace → 紧凑结构化 IR (markdown), LLM 反编译.
+我们做 evidence (CFG / 子 fn 切分 / hot tier / 类型锚点 / VM 候选 /
+循环 induction var), LLM 做语义.
+
+### 一行用法
+
+```bash
+# 落 IR markdown 到 <trace>/decompile/{summary.md, fns/F<id>.md}
+./tracemiku dec traces/run1/calls/call_002_*
+
+# 含类型锚点 (用户 JSON spec, 见 tools/hooks/type_specs_example.json)
+./tracemiku dec <trace> --hooks tools/hooks/my_specs.json
+
+# 一键 LLM 反编译 (4 backend 任选, 落 decompile/llm_results/)
+./tracemiku dec <trace> --fn F1 --call-llm mimo            # opencode/mimo-v2.5-pro
+./tracemiku dec <trace> --fn F1 --call-llm claude          # 需 ANTHROPIC_API_KEY
+./tracemiku dec <trace> --fn F1 --call-llm deepseek        # 需 DEEPSEEK_API_KEY
+./tracemiku dec <trace> --fn F1 --call-llm qwen            # 需 DASHSCOPE_API_KEY
+
+# 输出 prompt 让你 copy-paste 给任何 chat
+./tracemiku dec <trace> --prompt-only F1
+
+# VM 函数处理: 加 memshadow 抓 bytecode hex 喂 LLM 推编码
+./tracemiku dec <trace> --vm-with-memshadow --fn F0 --call-llm mimo
+
+# 多模型对比 (落 decompile/bench/<fn>_compare.md)
+./tracemiku dec-bench <trace> --models claude,deepseek,mimo --fn F1
+```
+
+### 输出文件结构
+
+```
+<trace>/decompile/
+├── summary.md                       # trace 顶层 (~3KB) — fn 列表 + VM 候选
+├── fns/
+│   ├── F0.md                        # 主 fn IR (~30-150KB)
+│   ├── F1.md                        # 子 fn (calltree 切的 helper)
+│   └── ...
+├── llm_results/                     # --call-llm 时落
+│   ├── opencode_F1.md
+│   └── claude_F1.md
+└── bench/                           # dec-bench 时落
+    └── F1_compare.md                # 多模型对比表
+```
+
+### 能力速览 (实测真机 libsgmainso 59723 records)
+
+| 能力 | stage | 实测 |
+|---|---|---|
+| trace → markdown IR | DEC1 | 1056 块, 0.5s |
+| 多 LLM backend (Claude/DeepSeek/Qwen/mimo) | DEC2 | 4 模型可切 |
+| hot/warm/cold 块分级 | DEC3-A | 506KB → 139KB (-73%) |
+| calltree 切子 fn | DEC3-B0 | 1 fn → 10 fn |
+| 类型锚点 (JSON-spec driven) | DEC3-B | mimo 输出业务名 cmd_init / lock_acquire |
+| VM 候选 + bytecode hex evidence | DEC3-D | mimo 给完整 VM dispatcher C 代码 |
+| 循环 induction var (numpy regression) | DEC3-C | arith / complex 自动分类 |
+| 多模型对比 | DEC4 | latency / token / 关键词命中 表格 |
+
+详见 [`docs/poc-mimo-libsgmainso-2026-05.md`](docs/poc-mimo-libsgmainso-2026-05.md).
+
+---
+
 ## Web SPA (主分析入口)
 
 ```bash

@@ -271,14 +271,17 @@ miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypas
 | DEC2+ | OpenCode/mimo backend + 端到端 PoC | ✅ | ✓ | 1032641 |
 | DEC3-A | hot/warm/cold tier 渲染 (真机 -73%) | ✅ | ✓ | da22070 |
 | DEC3-B0 | calltree 切子 FuncIR (1 fn → 10 fn) | ✅ | ✓ | baf4300 |
-| DEC3-B | 类型锚点 (JSON-spec driven) | 🔨 next | ✓ 设计 | — |
-| DEC3-C | 循环 induction var (numpy regression) | 📋 | ✓ 设计 | — |
-| DEC3-D | VM 候选区段提取 (复用 ollvmdet, 不 disasm) | 📋 | ✓ 设计 | — |
-| DEC4 | 4 模型 benchmark + Decompile-Eval | 📋 | ✓ | — |
-| DEC5 | docs / CODE_REVIEW 同步 | 📋 | n/a | — |
+| DEC3-B | 类型锚点 (JSON-spec driven) | ✅ | ✓ | 92af597 |
+| DEC3-D | VM 候选区段提取 (复用 ollvmdet, 不 disasm) | ✅ | ✓ | 2d171be |
+| DEC3-C | 循环 induction var (numpy regression) | ✅ | ✓ | 345ae6a |
+| DEC4 | 多模型 benchmark (`tracemiku dec-bench`) | ✅ | ✓ | 7a10f2c |
+| DEC5 | README + TODO 同步 | ✅ | n/a | (本 commit) |
 
-**累计**: 8 commits / ~3500 LOC / 486 tests pass. 真机 libsgmainso
-e2e: F1 sub_54820 → mimo 给出 3 层嵌套查找 + XOR 计算的具体 C + ABI.
+**累计**: 16 commits / ~6000 LOC / 525 tests pass. 真机 libsgmainso e2e:
+- F1 sub_54820 → mimo 给出 3 层嵌套查找 + XOR 计算的具体 C + ABI
+- F0 doCommandNative 含 VM hex evidence → mimo 给出完整 VM dispatcher
+  (`uint16_t opcode = *(vm_pc+0x10); vm_pc += 0x10; handler_table[opcode]()`)
+- 类型锚点 (cmd_init / lock_acquire / Mutex* / SgmainCtx*) 完整注入
 
 **普适性合规要点** (设计 §7.0 强约束, PR review 必查):
 - 不写死 SO 名 / opcode 编码 / fn 偏移 / 寄存器名
