@@ -141,6 +141,79 @@ def test_deepseek_no_key_returns_error_result(monkeypatch):
     assert r.error is not None
 
 
+def test_opencode_factory_resolves():
+    from viewer.decompiler import OpenCodeModel
+    m = make_llm_model("opencode")
+    assert isinstance(m, OpenCodeModel)
+    assert m.model_id == "mimo/mimo-v2.5-pro"
+    m2 = make_llm_model("mimo-v2.5-pro")
+    assert isinstance(m2, OpenCodeModel)
+
+
+def test_opencode_no_cli_returns_error(monkeypatch):
+    """opencode 不在 PATH → call() 返回 error, 不崩."""
+    from viewer.decompiler import OpenCodeModel
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    m = OpenCodeModel()
+    r = m.call("test")
+    assert r.error is not None
+    assert "opencode" in r.error.lower()
+
+
+def test_opencode_parses_jsonl_stdout(monkeypatch, tmp_path):
+    """模拟 opencode JSONL 输出 → 正确解析为 LlmResult."""
+    from viewer.decompiler import OpenCodeModel
+    import subprocess
+    monkeypatch.setattr("shutil.which", lambda _: "/fake/opencode")
+
+    fake_stdout = (
+        '{"type":"step_start","timestamp":1,"part":{"id":"a"}}\n'
+        '{"type":"text","timestamp":2,"part":{"text":"hello "}}\n'
+        '{"type":"text","timestamp":3,"part":{"text":"world"}}\n'
+        '{"type":"step_finish","timestamp":4,"part":{"reason":"stop",'
+        '"tokens":{"input":100,"output":42,"total":142}}}\n'
+    )
+    class FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeProc())
+    m = OpenCodeModel(cwd=str(tmp_path))
+    r = m.call("p", system="s")
+    assert r.error is None
+    assert r.c_code == "hello world"
+    assert r.prompt_tokens == 100
+    assert r.output_tokens == 42
+
+
+def test_opencode_nonzero_returncode_is_error(monkeypatch, tmp_path):
+    from viewer.decompiler import OpenCodeModel
+    import subprocess
+    monkeypatch.setattr("shutil.which", lambda _: "/fake/opencode")
+    class FakeProc:
+        returncode = 2
+        stdout = ""
+        stderr = "boom"
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeProc())
+    m = OpenCodeModel(cwd=str(tmp_path))
+    r = m.call("p")
+    assert r.error is not None
+    assert "rc=2" in r.error
+
+
+def test_opencode_timeout_is_error(monkeypatch, tmp_path):
+    from viewer.decompiler import OpenCodeModel
+    import subprocess
+    monkeypatch.setattr("shutil.which", lambda _: "/fake/opencode")
+    def _raise(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="opencode", timeout=1)
+    monkeypatch.setattr(subprocess, "run", _raise)
+    m = OpenCodeModel(cwd=str(tmp_path), timeout_s=1)
+    r = m.call("p")
+    assert r.error is not None
+    assert "timeout" in r.error.lower()
+
+
 def test_claude_with_fake_key_no_sdk_returns_clear_error(monkeypatch):
     """有 key 但 anthropic SDK 没装 — 应返回 'SDK 未装' 报错."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")

@@ -168,6 +168,86 @@ class QwenModel(_OpenAICompatModel):
         super().__init__(model_id=model_id, api_key=api_key, base_url=base_url)
 
 
+# ─────────────────────── OpenCode CLI adapter ───────────────────────
+
+class OpenCodeModel:
+    """opencode CLI adapter — 通过 subprocess 走 `opencode run --format json`.
+
+    优点: 不依赖 anthropic/openai SDK, 用户已配的 provider 全 fall through.
+    支持的 provider 范围跟 opencode 一致 (`opencode models` 看). 默认走小米
+    MiMo V2.5 Pro (mimo/mimo-v2.5-pro), 用户可换任意.
+
+    注意:
+    - opencode 没 system role, 把 system 拼 user 前
+    - opencode 默认 agent 模式 (会用 tools), 我们用 --pure 关掉 plugins
+      减少噪声 (但仍可能起 tool round-trip; LLM 输出未必是单段文本)
+    - cwd 必须存在; 默认 /tmp/tracemiku-opencode/, 自动创建
+    - 需要 opencode 在 PATH; 没装 → error
+    """
+    name = "opencode"
+
+    def __init__(self, model_id: str = "mimo/mimo-v2.5-pro",
+                 cwd: Optional[str] = None,
+                 timeout_s: int = 600):
+        self.model_id = model_id
+        self.cwd = cwd or "/tmp/tracemiku-opencode"
+        self.timeout_s = timeout_s
+
+    def call(self, prompt: str, system: str = "",
+             max_tokens: int = 4096) -> LlmResult:
+        import subprocess, shutil, json as _json, pathlib
+        oc = shutil.which("opencode")
+        if not oc:
+            return LlmResult(c_code="", model=self.model_id,
+                             error="opencode CLI 不在 PATH")
+        cwd = pathlib.Path(self.cwd)
+        cwd.mkdir(parents=True, exist_ok=True)
+        full_prompt = f"{system}\n\n---\n\n{prompt}" if system else prompt
+        t0 = time.monotonic()
+        try:
+            proc = subprocess.run(
+                [oc, "run", "-m", self.model_id, "--format", "json",
+                 "--pure", "--dangerously-skip-permissions",
+                 "--dir", str(cwd)],
+                input=full_prompt,
+                capture_output=True, text=True,
+                timeout=self.timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            return LlmResult(c_code="", model=self.model_id,
+                             error=f"opencode timeout after {self.timeout_s}s")
+        latency = int((time.monotonic() - t0) * 1000)
+        if proc.returncode != 0:
+            return LlmResult(c_code="", model=self.model_id,
+                             error=f"opencode rc={proc.returncode}: "
+                                   f"{proc.stderr[-500:]}")
+        # JSONL parse: 拼接所有 type=text 的 part.text, 取最后 step_finish 的 tokens
+        text_parts: list[str] = []
+        in_tok = out_tok = 0
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            try:
+                ev = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            if ev.get("type") == "text":
+                t = ev.get("part", {}).get("text", "")
+                if t: text_parts.append(t)
+            elif ev.get("type") == "step_finish":
+                tok = ev.get("part", {}).get("tokens", {})
+                in_tok = max(in_tok, tok.get("input", 0))
+                out_tok = max(out_tok, tok.get("output", 0))
+        return LlmResult(
+            c_code="".join(text_parts),
+            model=self.model_id,
+            prompt_tokens=in_tok,
+            output_tokens=out_tok,
+            latency_ms=latency,
+            raw={"opencode_stdout_lines": len(proc.stdout.splitlines())},
+        )
+
+
 # ─────────────────────── Factory ───────────────────────
 
 _REGISTRY = {
@@ -180,6 +260,13 @@ _REGISTRY = {
     "deepseek-chat": lambda: DeepSeekModel(model_id="deepseek-chat"),
     "qwen": QwenModel,
     "qwen-coder": QwenModel,
+    # opencode CLI passthrough — 任意 provider/model 走 `opencode run`.
+    # 默认 mimo-v2.5-pro (小米), 通过 OPENCODE_MODEL 覆盖.
+    "opencode": lambda: OpenCodeModel(
+        model_id=os.environ.get("OPENCODE_MODEL", "mimo/mimo-v2.5-pro")
+    ),
+    "mimo": lambda: OpenCodeModel(model_id="mimo/mimo-v2.5-pro"),
+    "mimo-v2.5-pro": lambda: OpenCodeModel(model_id="mimo/mimo-v2.5-pro"),
 }
 
 
