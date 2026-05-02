@@ -17,7 +17,10 @@
 > ✅ Gap-L (jni-strings — list all JNI string ops + buffer content from MemShadow)
 > ✅ jstring 实际内容: tracer 端 JSON-driven JNI hooks (Task #56), per-call
 >    `jni_hooks.jsonl` 落盘 NewStringUTF / GetStringUTFChars 等 6 个 op 的实际 utf8 内容
-> ⏸ Gap-G (cross-fn-call taint) 留 backlog — 见根 [TODO.md](../TODO.md#cli-gaps-来自-docscli_gapsmd-仍-open)
+> ✅ Gap-G partial (P1-A taint --cross-fn-call) — frame_depth 标注每个 hit 在
+>    哪个 call frame, viewer-only 无 agent 改动. 全量 propagation (caller x0..x7
+>    → callee 入口同名 reg taint, ret 时 transfer ret reg) 待真机验证后再扩展.
+>    见 [TODO.md](../TODO.md) P1-A 与 commit 416c4fa.
 >
 > **实证 (实战 trace TB doCommandNative 70102 cold-path 7.6M records)**:
 > - taint-bwd 旧: final ret x0 chain 26 hits 里 20+ 是 sp/fp 噪音

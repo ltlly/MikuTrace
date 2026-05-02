@@ -83,27 +83,57 @@ python examples/llm_cookbook.py taint_x0         # 跑单个
 
 ## CLI 子命令 (LLM/scripting)
 
-`viewer/__main__.py` 暴露 12 个子命令, 默认 JSON 输出:
+`viewer/__main__.py` 暴露 31 个子命令, 默认 JSON 输出:
 
 ```bash
 # 元信息 / 导出
-python -m viewer stats <trace>
+python -m viewer stats <trace> [--top-modules N | --all-modules]
 python -m viewer export <trace> --format sqlite [-o out.db]
 
 # 索引 / 搜索
 python -m viewer search-pc <trace> 0x... [--limit N]
 python -m viewer idxs-for-pc <trace> 0x... [--cursor N --limit M]
 python -m viewer search-asm <trace> 'regex' [--max N]
+python -m viewer records <trace> --start N --count M [--regs x0,x1]
+python -m viewer reg-at-idx <trace> --idx N [--regs ...]
+python -m viewer call-chain <trace> --idx N [--depth K]
 
-# 污点 / 内存
-python -m viewer taint-fwd <trace> --start N --reg x0 [--max N]
-python -m viewer taint-bwd <trace> --start N --reg x0 [--max N]
+# 污点追踪 / 数据流
+python -m viewer taint-fwd <trace> --start N --reg x0 [--max 5000]
+       [--data-only] [--through-mem] [--cross-fn-call] [--summary-by-fn]
+python -m viewer taint-bwd <trace> --start N --reg x0 [--max 5000] [...]
+python -m viewer data-chase <trace> --start N --reg x0 [--max-steps 50]
+
+# 内存
 python -m viewer mem-dump <trace> --addr 0x... [--count N --cursor N]
-
-# 高级查询
-python -m viewer reg-timeline <trace> --reg x0 --start 0 --end 1000
 python -m viewer mem-diff <trace> --idx 100 --addr 0x... --size 32
+python -m viewer mem-writes-in-range <trace> --idx-lo A --idx-hi B
+       [--src-byte 0xNN --addr-lo/hi]
+python -m viewer mem-flow <trace> --addr 0x... --count N
+       [--writers-only | --readers-only]
+python -m viewer last-write-of-addr <trace> --addr 0x... --before-idx N
+python -m viewer find-mem-pattern <trace> --bytes-hex AABB [--idx-lo/hi]
+
+# 加密 / 算法识别
+python -m viewer crypto-scan <trace>      # 22 IV/SBOX patterns
+python -m viewer hash-finalize-detect <trace> [--window 500 --min-size 16]
+python -m viewer hash-input-search <trace> --target-bytes ABCD
+       --inputs hello,world --algos sha1,md5
+python -m viewer auto-phase-detect <trace>
+python -m viewer ollvm-detect-vm <trace> [--min-entries 10 --threshold 0.5]
+python -m viewer diff-traces TRACE1 TRACE2 [TRACE3...]
+
+# JNI / 函数
+python -m viewer jni-calls <trace> [--in-fn 'doCommandNative']
+python -m viewer jni-strings <trace>
+python -m viewer jobj-history <trace> --jobject 0x...
 python -m viewer fn-summary <trace> --fn doCommandNative
+python -m viewer reg-timeline <trace> --reg x0 --start 0 --end 1000
+python -m viewer so-stats <trace>
+
+# Fork events (P1-C)
+python -m viewer fork-events <trace> [--status success/failed_*]
+                                       [--is-fork-like true]
 
 # BN HLIL 字段语义 (需 BN backend)
 python -m viewer field-at <trace> --pc 0x... --reg x8 --offset 0x80 \
@@ -140,15 +170,19 @@ python -m viewer taint-fwd "$TRACE" --start 0 --reg x2 --max 200
 ```
 viewer/
 ├── __init__.py        # 公共 API exports (29 names)
-├── __main__.py        # 12 个 CLI 子命令 + dispatcher
+├── __main__.py        # 31 个 CLI 子命令 + dispatcher
 ├── trace.py           # mmap binary trace 解析 + Record + addr_of
 ├── disasm.py          # capstone 包装 + def/use 提取 (lru_cache 200K)
 ├── symbols.py         # SymbolMap + auto_known_offsets discovery
 ├── cfg.py             # build_cfg + Tarjan SCC + write_dot (TUI 用)
 ├── index.py           # def/use chain + mem_addr_to_writes
-├── memshadow.py       # 稀疏内存 shadow + find_strings + hex_dump
-├── taint.py           # 正向/反向污点 (heap-based, O(|hits|·log N))
-├── display.py         # pwndbg 风 classify + multi-module collector
+├── memshadow.py       # 稀疏内存 shadow + find_strings + hex_dump + sidecar
+├── taint.py           # 正向/反向污点 (heap-based, O(|hits|·log N)) + frame_depth
+├── display.py         # pwndbg 风 classify + multi-module collector + JNI annot
+├── hashfin.py         # P1-B hash-finalize-detect (闭环 crypto-scan)
+├── ollvmdet.py        # P1-D ollvm-detect-vm heuristic (confidence-scored)
+├── calltree.py        # P0-1 build_call_tree from bl/ret pairs
+├── proc_poll.py       # P1-C M3 child lifecycle poll via /proc/<pid>/stat
 ├── decompiler/        # BN/Ghidra/IDA backend 抽象 + binja 实现
 │   ├── backend.py     # FieldHint / Function / Variable 等 dataclasses
 │   └── backends/

@@ -197,22 +197,10 @@ trace.bin 物理格式 (272B/rec) 三种模式相同。
 ./tracemiku web traces/run1 --so /path/to/lib.so  # 加载 BN backend, 启用 HLIL
 ```
 
-### 布局 (IDA 风格)
+### 左侧 vtab 列表
 
-```
-┌──────┬──────────┬──────────────────┬──────────┬──────┐
-│ vert │ Func     │ Disassembly      │ CFG /    │ vert │
-│ tabs │ list /   │ (asm stream)     │ Regs /   │ tabs │
-│      │ Backtrac │                  │ HLIL     │      │
-│      │ Strings  ├──────────────────┤          │      │
-│ Func │ Taint    │ Memory / Call    │          │ Graph│
-│ Back │ XRef     │ Tree / Nav /     │          │ Reg  │
-│ Str  │ Settings │ Trace-for-PC     │          │ HLIL │
-│ Taint│          │                  │          │      │
-│ XRef │          │                  │          │      │
-│ Set  │          │                  │          │      │
-└──────┴──────────┴──────────────────┴──────────┴──────┘
-```
+`Functions` · `Backtrace` · `Call Tree` (P0-1) · `Forks` (P1-C M6) ·
+`Strings` · `Taint` · `Cross Ref` · `SO Filter` · `Settings`
 
 ### 核心功能
 
@@ -223,6 +211,12 @@ trace.bin 物理格式 (272B/rec) 三种模式相同。
 - **BN-CFG** (有 `--so`): BN HLIL 静态 CFG + trace overlay 覆盖率, 红色虚线
   标 dynamic-only 边 (OLLVM 间接跳真 target 但 BN 没标的)。
 - **HLIL** (有 `--so`): BN HLIL 行级 + token 级着色, 当前 PC 高亮。
+- **Call Tree**: bl/ret 配对建嵌套调用树, 点击跳 enter idx, max_depth 防 OLLVM
+  自递归爆炸 (P0-1).
+- **Forks**: agent 抓的 fork-event 列表, 按 attach_status 过滤,
+  失败 fork 红色 + miku-shield 引导 (P1-C M6).
+- **Taint**: forward / backward + `--data-only` / `--through-mem` /
+  `--cross-fn-call` (frame_depth 标注), stopped_at_max 截断时显"加载全部"按钮.
 - **寄存器**: pwndbg 风注释 `[func+0xN]` / `→ "string"` / `[SP+0xN]` /
   `(JavaHeap)` / `(libart?)`, 多级 deref。**`field_at` hint**: ldr/str
   指令的 base reg 自动注释 `[struct.field]` (有 `--so` 且 BN 后端 ready 时)。
@@ -241,50 +235,54 @@ trace.bin 物理格式 (272B/rec) 三种模式相同。
 
 ## CLI (LLM/scripting 入口)
 
-`viewer/__main__.py` 提供 12 个子命令, 全部默认 JSON 输出 (LLM 用 BashTool
-一行调用):
+`viewer/__main__.py` 提供 31 个子命令, 全部默认 JSON 输出 (LLM 用 BashTool
+一行调用). 完整列表见 [viewer/README.md](viewer/README.md). 速览:
 
 ```bash
-# 元信息 / 导出
-python -m viewer stats <trace>                          # 完整元信息 JSON
-python -m viewer export <trace> --format sqlite         # SQLite + pc index
+# 元信息 / 索引 / 搜索
+python -m viewer stats <trace>                            # 完整元信息
+python -m viewer export <trace> --format sqlite           # SQLite + pc index
+python -m viewer search-pc <trace> 0x... [--limit N]
+python -m viewer idxs-for-pc <trace> 0x... [--cursor N --limit M]
+python -m viewer search-asm <trace> 'regex'
+python -m viewer records <trace> --start N --count M
+python -m viewer reg-at-idx <trace> --idx N [--regs ...]
+python -m viewer call-chain <trace> --idx N [--depth K]   # LR-walking caller
 
-# 索引 / 搜索
-python -m viewer search-pc <trace> 0x... [--limit N]    # 所有 idx where PC == X
-python -m viewer idxs-for-pc <trace> 0x... \
-       [--cursor N --limit M]                           # cursor-relative 邻域
-python -m viewer search-asm <trace> 'regex' [--max N]   # 反汇编正则
+# 污点追踪 / 数据流 (反向 OLLVM 主路径)
+python -m viewer taint-fwd/bwd <trace> --start N --reg x0 \
+       [--max 5000] [--data-only] [--through-mem] \
+       [--cross-fn-call] [--summary-by-fn]
+python -m viewer data-chase <trace> --start N --reg x0    # 单路径 chase
 
-# 污点 / 内存
-python -m viewer taint-fwd <trace> --start N --reg x0   # 正向污点
-python -m viewer taint-bwd <trace> --start N --reg x0   # 反向 def-chain
-python -m viewer mem-dump <trace> --addr 0x... \
-       [--count N --cursor N]                           # MemShadow hex dump
+# 内存
+python -m viewer mem-dump <trace> --addr 0x... [--count N --cursor N]
+python -m viewer mem-diff <trace> --idx N --addr 0x... --size N
+python -m viewer mem-writes-in-range <trace> --idx-lo A --idx-hi B
+python -m viewer mem-flow <trace> --addr 0x... --count N  # per-byte timeline
+python -m viewer last-write-of-addr <trace> --addr 0x... --before-idx N
+python -m viewer find-mem-pattern <trace> --bytes-hex AA BB [--idx-lo/hi]
 
-# 高级查询 (LLM 友好)
-python -m viewer reg-timeline <trace> --reg x0 \
-       --start 0 --end 1000                             # reg 值变化时间线
-python -m viewer mem-diff <trace> --idx 100 \
-       --addr 0x... --size 32                           # idx-1 vs idx 字节级 diff
-python -m viewer fn-summary <trace> --fn doCommandNative
-                                                         # 一次性 fn 概览
+# 加密 / 算法识别 (闭环 crypto 工作流)
+python -m viewer crypto-scan <trace>                      # 22 IV/SBOX patterns
+python -m viewer hash-finalize-detect <trace>             # 找 hash 输出位置
+python -m viewer hash-input-search <trace> --target-bytes ABCD --inputs hello
+python -m viewer auto-phase-detect <trace>                # heuristic 算法阶段
+python -m viewer ollvm-detect-vm <trace>                  # OLLVM VM dispatcher hint
+python -m viewer diff-traces TRACE1 TRACE2 [...]          # 跨 trace byte-diff
 
-# 反向追踪 (OLLVM 卡点专用, post-xsign session)
-python -m viewer mem-writes-in-range <trace> --idx-lo A --idx-hi B \
-       [--src-byte 0xNN] [--addr-lo 0x... --addr-hi 0x...]
-                                                         # 整段 mem 写出, 找算法生成阶段
-python -m viewer mem-flow <trace> --addr 0x... --count N
-                                                         # 每 byte 完整事件 timeline
-python -m viewer crypto-scan <trace>                    # 一发 13 标准 crypto 常量扫描
-python -m viewer taint-bwd <trace> --start N --reg x0 --through-mem
-                                                         # byte 级 mem overlap (穿 8B-store + 1B-load 错配)
+# JNI / 函数 / fork
+python -m viewer jni-calls <trace> [--in-fn ...]
+python -m viewer jni-strings <trace>
+python -m viewer jobj-history <trace> --jobject 0x...
+python -m viewer fn-summary <trace> --fn ...
+python -m viewer reg-timeline <trace> --reg x0 --start 0 --end 1000
+python -m viewer so-stats <trace>
+python -m viewer fork-events <trace> [--status success/failed_*]  # P1-C
 
 # BN HLIL 字段语义 (需 --so)
-python -m viewer field-at <trace> --pc 0x... --reg x8 \
-       --offset 0x80 --so /path/to/lib.so
-
-# 启动 TUI (legacy, 兼容裸路径)
-python -m viewer <trace_dir>
+python -m viewer field-at <trace> --pc 0x... --reg x8 --offset 0x80 \
+       --so /path/to/lib.so
 ```
 
 每条命令的 `--help` 写得像 MCP tool description, LLM agent 能直接挑工具。

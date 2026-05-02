@@ -149,9 +149,12 @@ JNIEnv 解析: Frida 17 删掉了 `Java` 全局, 直接 dlsym `JNI_GetCreatedJav
 |---|---|---|
 | `--patch-suicide` | `patchSgmainsoSuicide()` | overwrite 6 个 sgmainso 内联 svc#0 (tgkill 自杀) 偏移 — `[0x54f24, 0x5beb0, 0x67274, 0xfe334, 0x14829c, 0x15b6d4]`. **仅对该 SO 版本有效**. |
 | `--hide-rwx-maps` | `installRwxMapsHider()` | hook libc `open/openat/read/pread64`, 当 fd 指向 `/proc/self/maps` 时把 anon rwx 行 (Frida 8MB block cache) 从结果里去掉 |
+| `--enable-fork-hook` | `installForkHooksOnce()` | hook libc `fork` / `vfork` / `clone` / `__bionic_clone` 抓 fork-event Tier 1 (parent_pc, child_pid, clone_flags), 写 per-call meta.json `fork_events`. P1-C M1, 反调试 fork 检测必开. **真机 PASS**, vfork() 因 Bionic 调用约定 hook 不到 (已知 gap). |
+| `--child-trace-mode={off,full,safe}` | host race-attach (P1-C M2) | full = fork-event 一到立即 attach child + 注入 same agent. 注意: ptrace-based Frida server (含 miku-srv) 上 attach fork()'d child 全部 F3 timeout (架构限制, child 继承 parent 的 ptrace 关系). 真正的 fork-based anti-debug 突破需 miku-shield (eBPF). |
+| `--no-fork-poll-child` | host bg poll (P1-C M3) | 默认开. fork-event 抓到 child PID 后起后台线程轮询 `/proc/<pid>/stat` 直到 child 退出, 记录 runtime_ms / last_state / comm 到 fork-event lifecycle. Tier 3 数据, 不依赖 attach. |
 
-**绕不过的层** (见根 [TODO.md](../TODO.md)): L3 fork+ptrace+SIGSEGV, L4
-`frida_agent_main` symbol scan, L5 glib `gmain` 线程名.
+**绕不过的层** (见根 [TODO.md](../TODO.md)): L3 fork+ptrace+SIGSEGV (race-attach
+F3, 架构性), L4 `frida_agent_main` symbol scan, L5 glib `gmain` 线程名.
 
 ## 已知问题
 
