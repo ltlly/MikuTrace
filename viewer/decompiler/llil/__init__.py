@@ -19,6 +19,7 @@ sub-expression. visitor pattern 走树.
 from .lift import lift_arm64, lift_static, LiftStats
 from .ssa import SsaTag, SsaBlock, ssa_block, ssa_blocks
 from .pass_constfold import fold_expr, constfold_block, constfold_blocks
+from .pass_dce import dce_block, dce_blocks
 
 from .expr import (
     LlilExpr,
@@ -79,4 +80,5 @@ __all__ = [
     "lift_arm64", "lift_static", "LiftStats",
     "SsaTag", "SsaBlock", "ssa_block", "ssa_blocks",
     "fold_expr", "constfold_block", "constfold_blocks",
+    "dce_block", "dce_blocks",
 ]
