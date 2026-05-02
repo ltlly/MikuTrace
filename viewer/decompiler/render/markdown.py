@@ -153,6 +153,30 @@ def render_func_md(fn: FuncIR, tier: str = "full") -> str:
             lines.append(_fmt_loop(L))
         lines.append("")
 
+    if fn.type_anchors:
+        lines.append(f"## Type anchors ({len(fn.type_anchors)})")
+        lines.append("")
+        lines.append("> 来自 user-provided JSON spec (DEC3-B). LLM 优先信这些"
+                     "类型, 它们是真实运行时 ABI 锚点.")
+        lines.append("")
+        # group by callee_name 减少冗余
+        from collections import defaultdict as _dd
+        grouped: dict[str, list] = _dd(list)
+        for a in fn.type_anchors:
+            key = a.callee_name or f"sub_{a.callee_pc:x}"
+            grouped[key].append(a)
+        for name, anchors in grouped.items():
+            a0 = anchors[0]
+            params_str = ", ".join(f"{r}:{tp}" for r, tp in a0.params)
+            ret_str = (f"{a0.ret_reg}:{a0.ret_type}"
+                       if a0.ret_type else a0.ret_reg)
+            lines.append(f"- **{name}** ({a0.callee_pc:#x}, ×{len(anchors)})"
+                         f" `({params_str})` → `{ret_str}`")
+            idxs = sorted(a.idx for a in anchors)[:5]
+            lines.append(f"  - hit idx: {idxs}{'...' if len(anchors) > 5 else ''}")
+            lines.append(f"  - source: `{a0.provenance}`")
+        lines.append("")
+
     if fn.calls:
         lines.append(f"## Calls ({len(fn.calls)})")
         lines.append("")

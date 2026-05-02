@@ -15,9 +15,10 @@ from .factory import make_backend, list_backends
 
 # Trace decompiler (路线 B — LLM-friendly skeleton IR).
 # 设计: docs/trace-decompiler-design.md
-from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR
-from .builder import build_trace_ir
+from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR, TypeAnchorIR
+from .builder import build_trace_ir, attach_type_anchors
 from .render import render_summary_md, render_func_md, write_decompile_dir
+from .type_anchor import TypeSpec, TypeAnchor, load_type_specs, find_anchors
 from .llm_bundle import (
     Bundle, build_fn_decompile_prompt, build_summary_prompt,
     SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_SUMMARY,
@@ -31,9 +32,10 @@ __all__ = [
     # static decompiler bridge (existing)
     "DecompilerBackend", "Function", "HlilLine", "FieldHint", "VarType",
     "DecompCache", "make_backend", "list_backends",
-    # trace decompiler IR (P2-DEC1)
-    "TopIR", "FuncIR", "BlockIR", "LoopIR", "CallIR", "EdgeIR",
-    "build_trace_ir",
+    # trace decompiler IR (P2-DEC1 + DEC3-B)
+    "TopIR", "FuncIR", "BlockIR", "LoopIR", "CallIR", "EdgeIR", "TypeAnchorIR",
+    "build_trace_ir", "attach_type_anchors",
+    "TypeSpec", "TypeAnchor", "load_type_specs", "find_anchors",
     "render_summary_md", "render_func_md", "write_decompile_dir",
     # LLM (P2-DEC2)
     "Bundle", "build_fn_decompile_prompt", "build_summary_prompt",

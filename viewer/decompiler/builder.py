@@ -19,7 +19,8 @@ from ..cfg import build_cfg, loop_sccs
 from ..calltree import build_call_tree
 from ..disasm import decode, fmt as fmt_insn
 from ..symbols import build_from_trace, SymbolMap
-from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR
+from .ir import TopIR, FuncIR, BlockIR, LoopIR, CallIR, EdgeIR, TypeAnchorIR
+from .type_anchor import load_type_specs, find_anchors, TypeSpec, TypeAnchor
 
 
 _TRACEMIKU_VERSION = "0.3.0-dec3b0"   # bump per ship stage
@@ -229,7 +230,8 @@ def build_trace_ir(t: Trace,
                    sym: Optional[SymbolMap] = None,
                    only_module: bool = True,
                    split_top_k: int = 10,
-                   split_min_records: int = 50) -> TopIR:
+                   split_min_records: int = 50,
+                   type_spec_paths: Optional[list] = None) -> TopIR:
     """Build TopIR from a loaded Trace.
 
     Args:
@@ -238,6 +240,8 @@ def build_trace_ir(t: Trace,
         only_module: keep only main-module blocks (跟 cfg 一致默认)
         split_top_k: 升级 top-K callee 为独立 FuncIR (DEC3-B0). 0 = 不切.
         split_min_records: 子 fn 至少这么多 records 才独立, 否则留 F0.
+        type_spec_paths: list of JSON paths with type specs (DEC3-B).
+                         None / [] = 不注入类型锚点 (普适, 没 spec 就没 anchor).
 
     Returns:
         TopIR with one root FuncIR (F0) + up to split_top_k child fns.
@@ -415,8 +419,48 @@ def build_trace_ir(t: Trace,
                             top_k=split_top_k,
                             min_records=split_min_records)
 
+    # P2-DEC3-B: 类型锚点 (JSON-spec driven). 没 spec → 跳过, 不影响其他.
+    if type_spec_paths and n > 0:
+        attach_type_anchors(top, t, type_spec_paths)
+
     # P2-DEC3-A: 默认按 exec_count 分级 hot/warm. 调用方可通过 render
     # 的 tier_filter 选择只渲染热块.
     classify_blocks_by_tier(top)
 
     return top
+
+
+def attach_type_anchors(top: TopIR, t: Trace, spec_paths: list) -> None:
+    """In-place: 给每个 fn 填入落在其 idx 范围内的 type_anchors.
+
+    流程:
+      1. load_type_specs(spec_paths) — 读多个 JSON spec 文件
+      2. find_anchors(trace, specs) — 扫 trace 找命中 bl idx
+      3. 按 fn.[entry_idx, exit_idx] 分配 anchor 到 fn
+
+    一个 anchor 可能落在多个 fn 内 (子 fn 是父 fn 区间的子集). 我们 dedup
+    给最深的 fn — 即 idx 范围最窄的那个 (典型: child 比 parent 优先).
+    """
+    specs = load_type_specs(spec_paths)
+    if not specs:
+        return
+    anchors = find_anchors(t, specs)
+    if not anchors:
+        return
+    for a in anchors:
+        # 找 idx 范围最窄且包含该 anchor 的 fn
+        candidates = [
+            f for f in top.fns
+            if f.entry_idx <= a.idx <= f.exit_idx
+        ]
+        if not candidates:
+            continue
+        narrow = min(candidates, key=lambda f: f.exit_idx - f.entry_idx)
+        narrow.type_anchors.append(TypeAnchorIR(
+            idx=a.idx, callee_pc=a.callee_pc,
+            callee_name=a.spec.name,
+            params=list(a.spec.params),
+            ret_reg=a.spec.ret_reg,
+            ret_type=a.spec.ret_type,
+            provenance=a.spec.provenance,
+        ))

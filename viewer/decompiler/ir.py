@@ -77,6 +77,22 @@ class CallIR:
 
 
 @dataclass
+class TypeAnchorIR:
+    """One type anchor at a specific bl idx. DEC3-B.
+
+    Provenance 字段标 spec 来源 (e.g. 'libart_jni.json#FindClass') —
+    给 LLM/用户看类型从哪来, 不至于盲信.
+    """
+    idx: int                             # trace record idx (bl 处)
+    callee_pc: int
+    callee_name: str                     # spec 给的友好名
+    params: list[tuple[str, str]] = field(default_factory=list)  # [(reg, type)]
+    ret_reg: str = "x0"
+    ret_type: str = ""
+    provenance: str = ""
+
+
+@dataclass
 class FuncIR:
     """One function. MVP: 用 calltree 划分, 没 BN 时 name='?'."""
     id: str                              # 'F0', ...
@@ -95,6 +111,9 @@ class FuncIR:
     static: Optional[dict] = None
     # 执行次数 (一个 fn 在 trace 里被调几次). 顶层 fn 通常 1, 子 fn 可能 >1.
     exec_count: int = 1
+    # P2-DEC3-B 类型锚点. 每条命中 spec 的 bl idx 一个 TypeAnchorIR.
+    # 落在该 fn 的 idx 范围内的所有 anchors. JSON-spec driven (§7.0).
+    type_anchors: list["TypeAnchorIR"] = field(default_factory=list)
 
 
 @dataclass
