@@ -422,8 +422,12 @@ def cmd_trace(args):
                             kind = "fork-like" if ev.get("is_fork_like") else "thread-like"
                             wlog(f"[{tag}] [FORK] call#{ci} parent={sym_label} "
                                  f"({ev.get('syscall')}, {kind}) → child pid={ev.get('child_pid')}")
-                            # P1-C M3: kick off background lifecycle poll for fork-like children
                             cpid = ev.get("child_pid")
+                            # P1-C M2: race-attach to fork-like children
+                            if (ev.get("is_fork_like") and cpid and cpid > 0
+                                    and child_trace_mode in ("full", "safe")):
+                                _race_attach_child(ev)
+                            # P1-C M3: kick off background lifecycle poll
                             if (ev.get("is_fork_like") and cpid and cpid > 0
                                     and getattr(args, "fork_poll_child", True)):
                                 _spawn_child_poller(ev, s["meta"], wlog, tag)
@@ -554,6 +558,52 @@ def cmd_trace(args):
         wlog(f"[!] 找不到目标进程 (pkg={args.pkg}); 先启动 app 或 --attach-pid <pid>")
         log_fp.close(); return 1
     wlog(f"attach pid={pid}")
+    # P1-C M2: child-attach — race-attach to fork()'d children by PID.
+    # Note: enable_spawn_gating() doesn't catch arbitrary fork() of an
+    # already-attached non-spawned process (Frida limitation, verified
+    # 2026-05). So we use race-attach: agent fork-hook (M1) sends fork-event
+    # IPC with child_pid → host immediately attaches BY PID.
+    # Short-lived children (anti-debug 50-200ms) may exit before attach completes;
+    # those get attach_status=failed_short_lived. Long-running children get traced.
+    child_sessions = {}   # child_pid → {sess, scr}
+    child_trace_mode = getattr(args, "child_trace_mode", "off")
+
+    def _race_attach_child(fork_event):
+        """P1-C M2: try to attach + inject agent into a freshly fork()'d child.
+        Mutates fork_event['attach_status'] in-place."""
+        cpid = fork_event.get("child_pid")
+        if not cpid or cpid <= 0:
+            fork_event["attach_status"] = "failed_unknown"
+            return
+        t0 = time.time()
+        try:
+            csess = device.attach(cpid)
+        except Exception as e:
+            msg = str(e).lower()
+            if "process not found" in msg or "no such" in msg:
+                fork_event["attach_status"] = "failed_short_lived"
+            elif "trace" in msg or "ptrace" in msg:
+                fork_event["attach_status"] = "failed_ptrace_conflict"
+            else:
+                fork_event["attach_status"] = "failed_unknown"
+            wlog(f"[fork-attach][!] child {cpid}: {fork_event['attach_status']} ({e})")
+            return
+        try:
+            cscr = csess.create_script(AGENT)
+            cscr.on("message", make_cb(cpid, f"child{cpid}"))
+            cscr.load()
+            cscr.exports_sync.init(AGENT_OPTS)
+            child_sessions[cpid] = {"sess": csess, "scr": cscr}
+            elapsed = int((time.time() - t0) * 1000)
+            fork_event["attach_status"] = "success"
+            fork_event["attach_latency_ms"] = elapsed
+            wlog(f"[fork-attach] child {cpid} attached + agent loaded ({elapsed}ms)")
+        except Exception as e:
+            try: csess.detach()
+            except Exception: pass
+            fork_event["attach_status"] = "failed_unknown"
+            wlog(f"[fork-attach][!] child {cpid} script load failed: {e}")
+
     try:
         sess = device.attach(pid)
         scr = sess.create_script(AGENT)
@@ -605,6 +655,12 @@ def cmd_trace(args):
     _try_with_timeout(lambda: scr.exports_sync.force_flush(), "force_flush")
     _try_with_timeout(lambda: scr.unload(), "scr.unload")
     _try_with_timeout(lambda: sess.detach(), "sess.detach")
+    # P1-C M2: tear down child sessions (best-effort; some children may already exited)
+    for cpid, cs in list(child_sessions.items()):
+        _try_with_timeout(lambda cs=cs: cs["scr"].exports_sync.force_flush(),
+                           f"child{cpid} flush", timeout=2)
+        _try_with_timeout(lambda cs=cs: cs["scr"].unload(), f"child{cpid} unload", timeout=2)
+        _try_with_timeout(lambda cs=cs: cs["sess"].detach(), f"child{cpid} detach", timeout=2)
 
     # 任何 teardown 时仍未结束的 call → 强制关 + 标 truncated
     pending = list(sess_files.values())
@@ -1254,6 +1310,14 @@ def main():
                            "agent fork hook 抓到 child PID 后, 起一个后台线程 adb shell "
                            "/proc/<pid>/stat 直到 child 退出, 记录 runtime_ms / last_state. "
                            "P1-C M3 fallback.")
+    p_tr.add_argument("--child-trace-mode", default="off", dest="child_trace_mode",
+                      choices=["off", "full", "safe"],
+                      help="P1-C M2 child race-attach. off (默认) = 只 Tier 1 fork-event; "
+                           "full = agent fork-event 一到立即 attach child PID + 注入 same agent. "
+                           "短命 child (anti-debug 50-200ms) 可能 attach 不上, 标 "
+                           "failed_short_lived. safe = 同 full 但额外限制. "
+                           "注意: Frida enable_spawn_gating 不抓 fork() 子进程 "
+                           "(只对 device.spawn() 后裔生效, 实测 2026-05), 故走 race-attach.")
     p_tr.add_argument("--jni-hooks", default="tools/hooks/libart_jni.json", dest="jni_hooks",
                       help="JSON 描述要 hook 的 JNI vtable 函数 (offset/参数类型/返回类型). "
                            "默认 = libart string fns. 设 'none' 关闭. 输出 jni_hooks.jsonl per-call. "
