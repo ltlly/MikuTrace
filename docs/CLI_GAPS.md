@@ -3,7 +3,7 @@
 > 实际逆向 TB libsgmainso x-sign 时发现的 CLI 工具不足。
 > 2026-05-01.
 
-> **状态 (2026-05-01 同日修完, K/L 也补齐)**:
+> **状态 (2026-05-02 update)**:
 > ✅ Gap-A (taint --data-only --exclude-regs)
 > ✅ Gap-B (last-write-of-addr CLI + REST)
 > ✅ Gap-C (stats --top-modules / --all-modules)
@@ -15,8 +15,9 @@
 > ✅ Gap-J (jni-calls — vtable map BN-parsed from vendor/jni/jni_bn.h, NOT hardcoded)
 > ✅ Gap-K (jobj-history — track jobject through all JNI calls)
 > ✅ Gap-L (jni-strings — list all JNI string ops + buffer content from MemShadow)
-> ⏸ Gap-G (cross-fn-call taint) 留 backlog
-> ⏸ jstring 实际内容: tracer 端需加 GetStringUTFChars hook; 单 viewer 修不了
+> ✅ jstring 实际内容: tracer 端 JSON-driven JNI hooks (Task #56), per-call
+>    `jni_hooks.jsonl` 落盘 NewStringUTF / GetStringUTFChars 等 6 个 op 的实际 utf8 内容
+> ⏸ Gap-G (cross-fn-call taint) 留 backlog — 见根 [TODO.md](../TODO.md#cli-gaps-来自-docscli_gapsmd-仍-open)
 >
 > **实证 (实战 trace TB doCommandNative 70102 cold-path 7.6M records)**:
 > - taint-bwd 旧: final ret x0 chain 26 hits 里 20+ 是 sp/fp 噪音

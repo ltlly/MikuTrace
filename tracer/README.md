@@ -108,6 +108,51 @@ viewer / webui 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.
 ./tracemiku trace ... --mode cmodule-v3 ...
 ```
 
+## Deep-trace 模式 (`--trace-deep`)
+
+默认 trace 只 instrument 主 SO + `--include-so` 指定的列表. Deep 模式反过来 — 全
+模块 instrument, **per-symbol** `Stalker.exclude` hostile 函数 (linker / libdl /
+某些 libc atomic), 同时在 hostile 边界用 Interceptor 做 ptr-diff 把传参指针指向
+的内存变化抓回来, 写入 `external_writes.bin` (17B 记录 `<Q attr_idx><Q addr><B byte>`)
+给 viewer MemShadow 重建. 这样系统 .so 调用既不污染 trace.bin, 又不丢内存写副作用.
+
+```js
+// agent_cmodule_v5.js 关键变量
+STALKER_EXCLUDE_PATTERNS         // 安全可 Stalker.exclude 的 hostile 列表
+DEFAULT_BOUNDARY_DIFF_PATTERNS   // 默认空, 由 host --boundary-diff-patterns 注入
+DEEP_KEEP_EXCL = ["linker","linker64","libdl.so"]  // 任何模式下都 exclude
+```
+
+**坑**: `DEFAULT_BOUNDARY_DIFF_PATTERNS` 千万别塞 `pthread_*` / `malloc` /
+`__atomic_*` — Frida Interceptor 会自递归 SIGABRT (Frida 自己内部就用这些).
+所以默认空, host 显式传哪些就跟哪些.
+
+## JSON-driven JNI hooks (Task #56)
+
+`--jni-hooks tools/hooks/libart_jni.json` 加载一份 JSON spec, agent 据此用
+`Interceptor` 装 JNIEnv vtable 上的字符串相关函数. 输出走 `type='jni-hooks'` IPC
+消息, host 落盘 per-call `jni_hooks.jsonl`, schema = `{id, trace_idx, args:{...}, ret}`.
+
+JNIEnv 解析: Frida 17 删掉了 `Java` 全局, 直接 dlsym `JNI_GetCreatedJavaVMs` →
+`JavaVM->GetEnv` (vtable 偏移 `0x30`). 见 `getJNIEnvDirect()`.
+
+支持 arg type: `ptr / int / long / void / cstring / utf16 / bytes`. cstring 实现踩过
+坑 — `readUtf8String(maxLen)` 在 maxLen 跨过 unmapped page 时会 throw, 必须先 try
+不带 maxLen 的版本 (内部读到 NUL 就停).
+
+扩展新 hook 改 JSON 不改 JS. JSON 里 `vtable_offset` 是 hex 字符串, 例如
+`"0x538"` = NewStringUTF (libart Android 14/15 ABI).
+
+## Anti-debug 主动绕过 hooks
+
+| flag | agent 函数 | 说明 |
+|---|---|---|
+| `--patch-suicide` | `patchSgmainsoSuicide()` | overwrite 6 个 sgmainso 内联 svc#0 (tgkill 自杀) 偏移 — `[0x54f24, 0x5beb0, 0x67274, 0xfe334, 0x14829c, 0x15b6d4]`. **仅对该 SO 版本有效**. |
+| `--hide-rwx-maps` | `installRwxMapsHider()` | hook libc `open/openat/read/pread64`, 当 fd 指向 `/proc/self/maps` 时把 anon rwx 行 (Frida 8MB block cache) 从结果里去掉 |
+
+**绕不过的层** (见根 [TODO.md](../TODO.md)): L3 fork+ptrace+SIGSEGV, L4
+`frida_agent_main` symbol scan, L5 glib `gmain` 线程名.
+
 ## 已知问题
 
 - **anti-debug 检测线程名**: stealth server 把 `gum-js-loop` 改 `miku-js-loop`,
@@ -118,3 +163,6 @@ viewer / webui 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.
   累积.
 - **frida_agent_main symbol** 仍可被 anti-detect 扫到 (改它需要重 link agent.so).
   当前 trace 工作正常, 后续 stealth 增强可考虑.
+- **Frida 真机 crash 三类根因** (memory `feedback_frida_crash_modes`):
+  Interceptor 自递归 / Stalker block-cache RWX 被反检测扫 / 冻结无 tombstone.
+  排查关键: tombstone 看 SI_USER + 1 帧 = anti-debug 自杀.

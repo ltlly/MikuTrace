@@ -1,8 +1,14 @@
 # traceMiku 测试覆盖盘点
 
-> Last reviewed: 2026-05-02. 105 个测试 / 12 个测试文件覆盖了核心数据通路。这份文档把
-> **每个小功能** 列一遍, 标出 ✅ 有测试 / ⚠️ 部分覆盖 / ❌ 无测试, 并对每条 ❌ 给出
-> 测试该写什么 (testable invariants).
+> Last reviewed: 2026-05-02 (post xsign-RE 工具改进). **342 个测试 / 31 个测试文件**
+> 覆盖了核心数据通路. 新增:
+> - `test_ext_write_pipeline.py` (deep-trace 边界 ptr-diff + external_writes.bin)
+> - `test_jni_string_wiring.py` (JSON-driven JNI hooks 配置/agent/host wiring)
+> - `test_mem_writes_in_range.py` (mem-writes-in-range / mem-flow / crypto-scan /
+>   taint-bwd --through-mem / MemShadow sidecar 持久化)
+>
+> 这份文档把 **每个小功能** 列一遍, 标出 ✅ 有测试 / ⚠️ 部分覆盖 / ❌ 无测试, 并对
+> 每条 ❌ 给出测试该写什么 (testable invariants).
 
 跑法:
 ```bash

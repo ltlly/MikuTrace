@@ -12,8 +12,15 @@ traceMiku/
 ├── tracer/             # Stage-1 在设备上采集 ARM64 指令级 trace
 ├── viewer/             # 离线分析 core 库 + CLI 子命令 + Python SDK
 ├── webui/              # 单页 Web SPA (主 UI) — FastAPI + vanilla JS
+├── tools/              # 单文件 Frida 辅助脚本 + JSON hook 配置
+│   ├── hooks/          # JSON-driven JNI hook specs (libart_jni.json 等)
+│   ├── detect_suicide.js / patch_sgmainso_tgkill.js
+│   ├── hide_rwx_maps.js / probe_deep_safe.js
+│   └── regen_jni_offsets.py
 ├── examples/           # llm_cookbook.py + 已知 SO 偏移样例 (libsgmainso/)
-├── tests/              # pytest 单元 + 集成测试
+├── tests/              # pytest 单元 + 集成测试 (30 文件 / 341 测试)
+├── docs/               # 设计 + 排坑文档
+├── TODO.md             # 唯一 backlog 入口
 └── traces/             # 已采集 trace 输出 (gitignored)
 ```
 
@@ -107,7 +114,61 @@ traces/run1/
 # SO 内固定偏移 / SO 导出函数
 ./tracemiku trace ... --fn-offset 0x57770
 ./tracemiku trace ... --export JNI_OnLoad
+
+# 多 SO 一起 trace (默认只 trace 主 SO, --include-so 把额外 SO 加入 instrument 范围)
+./tracemiku trace ... --include-so libsgsecuritybody.so,libutsec.so
 ```
+
+### Deep-trace + JNI hooks + anti-debug 绕过 (`--trace-deep` 系)
+
+针对 OLLVM + 反调试 SO (libsgmainso 等), 把"系统 .so 调用全跟"用 boundary ptr-diff +
+JNI 字符串 hook + 主动反反调试组合实现:
+
+```bash
+./tracemiku trace ... \
+  --trace-deep \
+  --boundary-diff-patterns 'libart.so:NewStringUTF,libart.so:GetStringUTFChars' \
+  --jni-hooks tools/hooks/libart_jni.json \
+  --patch-suicide \
+  --hide-rwx-maps
+```
+
+| flag | 作用 | 备注 |
+|---|---|---|
+| `--trace-deep` | 全模块 instrument, 对 hostile 符号 (linker/libdl) 用 `Stalker.exclude` 而非 include skip | Task #47 |
+| `--stalker-exclude-patterns` | 覆盖默认 hostile 名单 | Task #47 |
+| `--boundary-diff-patterns` | 在 hostile fn entry/exit 用 Interceptor diff 显式传参指针的内存, 写 `external_writes.bin` 给 viewer MemShadow | Task #48-50, **默认空, 不要塞 pthread/malloc/atomic 否则 Frida 自递归 SIGABRT** |
+| `--jni-hooks PATH` | 加载 JSON hook spec, 对 JNIEnv vtable 上的字符串相关函数下 Interceptor; per-call 落盘 `jni_hooks.jsonl` | Task #56, 默认 `tools/hooks/libart_jni.json` 含 6 个 JNI ops |
+| `--patch-suicide` | patch 6 处 sgmainso 内联 `svc #0` (tgkill) 防 anti-frida 自杀 | Task #53, **仅对该 SO 版本有效 (offset 硬编码)** |
+| `--hide-rwx-maps` | hook libc open/read/pread64 过滤 `/proc/self/maps` 里 anon RWX (Frida block cache) 行 | Task #54 |
+
+JSON hook spec 格式 (`tools/hooks/libart_jni.json`):
+
+```json
+{ "kind": "jni_vtable", "hooks": [
+    { "id": "NewStringUTF", "vtable_offset": "0x538",
+      "args": [{"name":"env","type":"ptr"}, {"name":"bytes","type":"cstring","max_len":512}],
+      "ret":  {"type":"ptr"} }, ...
+] }
+```
+
+支持的 arg type: `ptr / int / long / void / cstring / utf16 / bytes`. Agent 用 `dlsym
+JNI_GetCreatedJavaVMs` 直接拿 JNIEnv (Frida 17 删了 `Java` 全局, 必须直接 dlsym).
+扩展新 hook 改 JSON 即可, 不用改 JS.
+
+### 反调试 / 多 SO trace 现状 (实战)
+
+抓 libsgmainso 时遇到 4 层 anti-frida:
+
+| 层 | 检测 | 当前对策 | 状态 |
+|---|---|---|---|
+| L1 | inline `svc #0` (tgkill, x8=131) 自杀 | `--patch-suicide` patch 6 个入口 | ✅ 概率绕过 (sgmainso 有 1067 个 generic svc thunks, 6 个入口不全覆盖, 偶尔仍触发) |
+| L2 | scan `/proc/self/maps` 找 anon rwx | `--hide-rwx-maps` 过滤 maps 读 | ✅ |
+| L3 | fork 子进程 ptrace 父 + SIGSEGV | (未做, 见 [TODO.md](TODO.md)) | ❌ |
+| L4 | scan `frida_agent_main` 等 symbol | (未做, 改名要 rebuild frida-agent) | ❌ |
+
+非反调试 app (xhs / 小红书等) 直接跑 `--trace-deep` 不需要 patch, 已通过隔离测试
+(`tools/probe_deep_safe.js`) 证明 deep-trace 实现本身正确, taobao 崩是 SO 反调试特定问题.
 
 ### `--cold-launch` (TB 类首启隐私协议自动化)
 
@@ -207,6 +268,16 @@ python -m viewer mem-diff <trace> --idx 100 \
        --addr 0x... --size 32                           # idx-1 vs idx 字节级 diff
 python -m viewer fn-summary <trace> --fn doCommandNative
                                                          # 一次性 fn 概览
+
+# 反向追踪 (OLLVM 卡点专用, post-xsign session)
+python -m viewer mem-writes-in-range <trace> --idx-lo A --idx-hi B \
+       [--src-byte 0xNN] [--addr-lo 0x... --addr-hi 0x...]
+                                                         # 整段 mem 写出, 找算法生成阶段
+python -m viewer mem-flow <trace> --addr 0x... --count N
+                                                         # 每 byte 完整事件 timeline
+python -m viewer crypto-scan <trace>                    # 一发 13 标准 crypto 常量扫描
+python -m viewer taint-bwd <trace> --start N --reg x0 --through-mem
+                                                         # byte 级 mem overlap (穿 8B-store + 1B-load 错配)
 
 # BN HLIL 字段语义 (需 --so)
 python -m viewer field-at <trace> --pc 0x... --reg x8 \
@@ -336,7 +407,7 @@ traceMiku/
 ├── examples/
 │   ├── llm_cookbook.py             # 10 个 SDK 示例
 │   └── libsgmainso/known_offsets.json  # sample 已知函数偏移
-└── tests/              # 41 unit + integration tests
+└── tests/              # 30 文件 / 341 unit + integration tests
 ```
 
 ## TUI (deprecated, 不维护)
@@ -382,32 +453,31 @@ Web 上做。彻底弃用后会一起删 (`viewer/app.py` + `cfg.py:write_dot`
 - numpy `pc_array()` 零拷贝 PC 列, vectorized scan 替代 Python loop
 - 子进程独立 GIL build CFG / pc_inst / pc_to_block / block_idxs
 
-## 已知限制
+## 已知限制 / Backlog
 
-- **NEON/FP 寄存器没记**: record 格式只有 GPR (OLLVM 用 SIMD 算 jump table 时
-  需扩展 record 格式 v2)。
-- **字符串只能从内存 shadow 抠**: trace 没读到的字节没法识别字符串。
-- **CFG 布局用 graphviz `dot`**: 不是 krash 自研的 Decompiler Layout (可改
-  ghidra 算法重写)。
+详见 [`TODO.md`](TODO.md). 简要:
 
-## 后续 backlog
-
-- C/C++ 原生 tracer (`libgumTraceMiku.so`): 目标 50K+ rec/s 流, 减少 JS
-  bridge 开销和 GC 抖动。参考: [revercc/gumTVM](https://github.com/revercc/gumTVM)
-- NEON/FP 寄存器记录: record 格式 v2, 支持 OLLVM SIMD 跳表场景
-- WebSocket streaming trace: 边采边看, 取代采完再分析的两步流程
+- NEON/FP 寄存器未记录 (P1, 需 record 格式 v2)
+- 字符串只能从 MemShadow 抠 (设计如此)
+- CFG 布局用 graphviz dot
+- TUI 冻结, Web 唯一 UI
+- Anti-debug L3+ 未突破 (libsgmainso fork+ptrace+SIGSEGV)
+- page-dirty 模式 (Task #52) 暂不做, 实战命中率低
 
 ## 文档
 
+- [`TODO.md`](TODO.md) — 唯一 backlog 入口 (新增条目都加这里)
 - [`viewer/README.md`](viewer/README.md) — Python SDK + CLI 详细说明
 - [`tracer/README.md`](tracer/README.md) — 采集器内部细节
 - [`docs/frida-codeslab-patch.md`](docs/frida-codeslab-patch.md) — patched
   frida-server 原理
 - [`docs/PER_CALL_TRACE_DESIGN.md`](docs/PER_CALL_TRACE_DESIGN.md) — per-call
   trace dir 设计
+- [`docs/CLI_GAPS.md`](docs/CLI_GAPS.md) — 实战 LLM 逆向时发现的 CLI 缺口清单
 - [`docs/PDF_FEATURE_PARITY.md`](docs/PDF_FEATURE_PARITY.md) — krash PDF 功能
   对照 (历史参考)
-- [`CODE_REVIEW.md`](CODE_REVIEW.md) — 历次代码审查 + 待办
+- [`tests/COVERAGE.md`](tests/COVERAGE.md) — 测试覆盖盘点
+- [`CODE_REVIEW.md`](CODE_REVIEW.md) — 2026-05-01 代码审查报告 (大部分已实施)
 
 ## 来源 / 感谢
 
