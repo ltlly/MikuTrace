@@ -137,6 +137,12 @@
             <option value="full">full asm</option>
             <option value="summary">summary 仅</option>
           </select>
+          <label class="toggle" title="升级前 N 个 callee 为独立 fn">
+            top<input type="number" id="dec-split-k" value="40" min="1" max="200" style="width:46px;margin-left:2px">
+          </label>
+          <label class="toggle" title="子 fn 至少 N records 才独立 (调小 = 更多短 fn)">
+            min<input type="number" id="dec-split-min" value="10" min="1" max="500" style="width:50px;margin-left:2px">
+          </label>
           <button id="dec-refresh" title="重建 TraceIR (改设置后)">Build IR</button>
           <button id="dec-llm-call" title="调 LLM 反编译当前选中 fn">反编译</button>
         </div>
