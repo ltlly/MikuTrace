@@ -20,6 +20,10 @@ from .lift import lift_arm64, lift_static, LiftStats
 from .ssa import SsaTag, SsaBlock, ssa_block, ssa_blocks
 from .pass_constfold import fold_expr, constfold_block, constfold_blocks
 from .pass_dce import dce_block, dce_blocks
+from .pass_typelat import (
+    TypeEnv, typelat_block, join,
+    T_TOP, T_INT, T_PTR, T_HANDLE, T_BOOL, T_BOT,
+)
 
 from .expr import (
     LlilExpr,
@@ -81,4 +85,6 @@ __all__ = [
     "SsaTag", "SsaBlock", "ssa_block", "ssa_blocks",
     "fold_expr", "constfold_block", "constfold_blocks",
     "dce_block", "dce_blocks",
+    "TypeEnv", "typelat_block", "join",
+    "T_TOP", "T_INT", "T_PTR", "T_HANDLE", "T_BOOL", "T_BOT",
 ]
