@@ -52,7 +52,23 @@
 | 5 | taint cap=5000 + stopped_at_max + 加载全部按钮 | ✅ | 644b316 |
 | 6 | trace 报错提示反调试 + miku-shield URL | ✅ | ba14908 |
 
-**实际耗时 ~1 session, 9 commits, +401 tests, 测试 401 pass + 1 skip.**
+## ✅ P1 — 大部分完成 (同 session 续)
+
+| # | 项 | 状态 | commit | 备注 |
+|---|---|---|---|---|
+| A | taint --cross-fn-call (frame_depth 标注) | ✅ | 416c4fa | viewer-only, 全量 propagation 待真机 |
+| B | hash-finalize-detect (闭环 crypto-scan) | ✅ | fbf735d | u32x5 / byte_seq, window-based |
+| D | ollvm-detect-vm heuristic | ✅ | 4328364 | confidence-scored, 仅 detect 不 decode |
+| C | fork tracing M7 (viewer read fork_events) | ✅ partial | 5976c51 | M1-M6/M8 待真机 |
+
+**P1 真机依赖项推迟**:
+- P1-C M1: agent hook fork/clone/vfork/clone3 → 写 fork_events 到 meta.json
+- P1-C M2: host spawn-gating attach child + 注入 agent (复用 RPC opts)
+- P1-C M3: attach 失败 fallback (proc 轮询 + exit code)
+- P1-C M6: Web SPA Forks tab UI
+- P1-C M8: 真机集成测试 (synth fork + anti-debug fork)
+
+**累计**: 14 commits, +426 tests, 测试 426 pass + 1 skip.
 
 下面是 P0 原始设计 spec (保留作历史 / next session 参考):
 
