@@ -41,6 +41,12 @@ def unify_vars(blocks: dict[int, SsaBlock]
     实际产出 var 数 = sum of unique (reg, version) across blocks.
     """
     seen: set[tuple] = set()
+    # 默认补全 ARM64 args 8 项 + sp/fp — 即使 fn 没显式 use 也保证 render
+    # 时 call 等地方能查到 arg_N / sp / fp 名.
+    for r in _ARG_REGS:
+        seen.add((r, 0))
+    seen.add(("sp", 0))
+    seen.add(("fp", 0))
     for blk in blocks.values():
         # block 入口 versions
         for r, v in blk.entry_versions.items():

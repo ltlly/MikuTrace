@@ -85,10 +85,15 @@ def test_unify_cross_block():
     assert names[("x0", 0)] == "arg_0"
 
 
-def test_unify_empty_blocks():
+def test_unify_empty_blocks_returns_default_args():
+    """空 block — unify 仍返回 default args (arg_0..arg_7, sp, fp).
+    保证 render 时这些 fallback 名一直可查."""
     blk = ssa_block(0x1000, [])
     names = unify_vars({0x1000: blk})
-    assert names == {}
+    assert names[("x0", 0)] == "arg_0"
+    assert names[("x7", 0)] == "arg_7"
+    assert names[("sp", 0)] == "sp"
+    assert names[("fp", 0)] == "fp"
 
 
 def test_unify_uses_walk():

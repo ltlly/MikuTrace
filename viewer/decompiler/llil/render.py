@@ -348,11 +348,19 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
     else:
         epilogue = []
 
+    # 维护 cur_versions (block 内 reg 当前 SSA version), 在 LLIL_CALL 处
+    # dump x0..x7 当前 version 用作 args (ARM64 ABI: args 在 x0..x7).
+    cur_versions = dict(blk.entry_versions)
     for root in roots:
         if not isinstance(root, LlilExpr):
             continue
         line = _root_to_c(root, types, shapes, blk,
-                          loc_names=loc_names, var_names=var_names)
+                          loc_names=loc_names, var_names=var_names,
+                          cur_versions=cur_versions)
+        # 更新 cur_versions
+        if root.op == LLIL_SET_REG:
+            rname = root.operands[0]
+            cur_versions[rname] = blk.tag.get(root)
         if line:
             out.append(f"{pad}{line};")
     if epilogue:
@@ -365,8 +373,13 @@ def _root_to_c(root: LlilExpr,
                shapes: dict[tuple, StructShape],
                blk: SsaBlock,
                loc_names: dict | None = None,
-               var_names: dict | None = None) -> str:
-    """root expr → C statement (no semicolon, 调用方加)."""
+               var_names: dict | None = None,
+               cur_versions: dict | None = None) -> str:
+    """root expr → C statement (no semicolon, 调用方加).
+
+    cur_versions: 当前 SSA reg → version dict (block 内动态维护, 调用方更新).
+                  LLIL_CALL 时 dump x0..x7 作 args (ARM64 ABI).
+    """
     op = root.op
     if op == LLIL_SET_REG:
         rname = root.operands[0]
@@ -399,9 +412,24 @@ def _root_to_c(root: LlilExpr,
                          loc_names=loc_names, var_names=var_names)
         return f"if ({cond}) goto {root.operands[1]:#x} else goto {root.operands[2]:#x}"
     if op == LLIL_CALL:
-        return expr_to_c(root, types, shapes, tag=blk.tag,
-                         entry_versions=blk.entry_versions,
-                         loc_names=loc_names, var_names=var_names)
+        target = expr_to_c(root.operands[0], types, shapes, tag=blk.tag,
+                           entry_versions=blk.entry_versions,
+                           loc_names=loc_names, var_names=var_names)
+        # 检测 args: x0..x7 当前 version 在 var_names 里查名字
+        args_str = ""
+        if cur_versions is not None and var_names is not None:
+            argv: list[str] = []
+            for i, rname in enumerate(("x0", "x1", "x2", "x3",
+                                        "x4", "x5", "x6", "x7")):
+                v = cur_versions.get(rname, 0)
+                name = var_names.get((rname, v), rname)
+                # 跳过 callee-saved 默认 (它们不是 args, 但 x0-x7 都是
+                # potential args). MVP 显示前 4 个 (主流 fn 大多 ≤4 args).
+                argv.append(name)
+                if i >= 3:
+                    break
+            args_str = ", ".join(argv)
+        return f"call({target}, {args_str})" if args_str else f"call({target})"
     if op == LLIL_RET:
         return "return"
     if op == LLIL_JUMP:
