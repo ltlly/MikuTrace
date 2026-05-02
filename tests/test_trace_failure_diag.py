@@ -64,6 +64,51 @@ def test_no_diag_when_clean():
         f"clean state should produce no hints (or only soft hints): {hints}"
 
 
+def test_si_user_deep_stack_with_trace_deep_flag_recommends_disabling():
+    """SI_USER + deep stack + cli_args has trace_deep=True → recommend
+    removing --trace-deep. Real-world finding 2026-05: libsgmainso 6.8.260403
+    detects Stalker rewrites in libart code section via CRC, self-kills."""
+    tombstone = """
+pid: 19046, tid: 19406, name: MTOPSDK Request
+signal 11 (SIGSEGV), code 0 (SI_USER), fault addr --
+backtrace:
+      #00 pc 0000000000123456  /apex/com.android.art/lib64/libart.so
+      #01 pc 0000000000234567  /apex/com.android.art/lib64/libart.so
+      #02 pc 0000000000345678  /apex/com.android.art/lib64/libart.so
+      #03 pc 0000000000456789  /data/app/.../libsgmainso.so
+      #04 pc 000000000056789a  /data/app/.../libsgmainso.so
+      #05 pc 0000000000678901  /data/app/.../libsgmainso.so
+      #06 pc 0000000000789012  /data/app/.../libsgmainso.so
+"""
+    hints = diagnose_trace_failure(tombstone=tombstone,
+                                    cli_args={"trace_deep": True})
+    full = "\n".join(hints)
+    assert "trace-deep" in full or "--trace-deep" in full
+    assert "深栈" in full or "deep" in full.lower()
+    # Should NOT push miku-shield as primary fix when trace_deep is the cause
+    # (priority order: 先关 trace-deep, 失败再考虑 miku-shield)
+    primary_first = hints[0] if hints else ""
+    assert "深栈" in primary_first
+
+
+def test_si_user_deep_stack_without_trace_deep_recommends_other():
+    """SI_USER + deep stack but trace_deep=False → suggest miku-shield or
+    narrow Stalker scope (not 'remove --trace-deep')."""
+    tombstone = """
+signal 11 (SIGSEGV), code 0 (SI_USER), fault addr --
+backtrace:
+      #00 pc 1  /apex/com.android.art/lib64/libart.so
+      #01 pc 2  /apex/com.android.art/lib64/libart.so
+      #02 pc 3  /data/app/.../libsgmainso.so
+      #03 pc 4  /data/app/.../libsgmainso.so
+      #04 pc 5  /data/app/.../libsgmainso.so
+"""
+    hints = diagnose_trace_failure(tombstone=tombstone,
+                                    cli_args={"trace_deep": False})
+    full = "\n".join(hints)
+    assert "miku-shield" in full or "Stalker include" in full
+
+
 def test_diag_returns_list_of_strings():
     """Return type contract: list[str], non-empty hint contains URL."""
     tombstone = "signal 11 (SIGSEGV), code 0 (SI_USER)\nbacktrace:\n  #00 pc 0 lib"

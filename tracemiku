@@ -630,7 +630,14 @@ def cmd_trace(args):
                     capture_output=True, text=True, timeout=10).stdout or ""
             else: tb = ""
         except Exception: tb = ""
-        for h in diagnose_trace_failure(logcat=lc, tombstone=tb, exception=_e):
+        cli_flags = {
+            "trace_deep": bool(getattr(args, "trace_deep", False)),
+            "patch_suicide": bool(getattr(args, "patch_suicide", False)),
+            "hide_rwx_maps": bool(getattr(args, "hide_rwx_maps", False)),
+            "jni_hooks": getattr(args, "jni_hooks", None),
+        }
+        for h in diagnose_trace_failure(logcat=lc, tombstone=tb,
+                                          exception=_e, cli_args=cli_flags):
             wlog(h)
         log_fp.close(); return 2
 
@@ -701,7 +708,43 @@ def cmd_trace(args):
     # P1-C M5: fork summary table — 聚合所有 fork-event 按 attach_status + is_fork_like
     if all_fork_events:
         _print_fork_summary(all_fork_events)
+
+    # P0-6 extension: if trace finished with NO successful call (every call
+    # truncated or zero records), run anti-debug diagnostic on latest tombstone.
+    has_success = any(not c["truncated"] and c["records"] > 1000
+                       for c in calls_summary)
+    if not has_success and len(calls_summary) > 0:
+        _post_trace_diagnose(args, wlog)
     return 0
+
+
+def _post_trace_diagnose(args, wlog):
+    """P0-6: when trace died mid-flight (init succeeded but no clean call recovered),
+    pull latest tombstone + diagnose. Reuses tracemiku_diag.diagnose_trace_failure."""
+    from tracemiku_diag import diagnose_trace_failure
+    try:
+        ts_ls = subprocess.run(["adb", "shell", "ls", "-t", "/data/tombstones/"],
+                                capture_output=True, text=True, timeout=5).stdout or ""
+        latest = ts_ls.splitlines()[0].strip() if ts_ls.strip() else ""
+        if not latest: return
+        tb = subprocess.run(["adb", "shell", "cat",
+                              f"/data/tombstones/{latest}"],
+                             capture_output=True, text=True, timeout=10).stdout or ""
+    except Exception: tb = ""
+    try:
+        lc = subprocess.run(["adb", "shell", "logcat", "-d", "-t", "200"],
+                             capture_output=True, text=True, timeout=10).stdout or ""
+    except Exception: lc = ""
+    cli_flags = {
+        "trace_deep": bool(getattr(args, "trace_deep", False)),
+        "patch_suicide": bool(getattr(args, "patch_suicide", False)),
+        "hide_rwx_maps": bool(getattr(args, "hide_rwx_maps", False)),
+        "jni_hooks": getattr(args, "jni_hooks", None),
+    }
+    hints = diagnose_trace_failure(logcat=lc, tombstone=tb, cli_args=cli_flags)
+    if hints:
+        print("\n=== Trace 死前诊断 (P0-6) ===")
+        for h in hints: print(h)
 
 
 def _spawn_child_poller(fork_event, parent_meta, wlog, tag,

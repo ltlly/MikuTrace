@@ -17,15 +17,19 @@ MIKU_SHIELD_URL = "https://github.com/ltlly/miku-shield"
 
 def diagnose_trace_failure(logcat: str = "",
                            tombstone: str = "",
-                           exception: Exception | None = None) -> list[str]:
+                           exception: Exception | None = None,
+                           cli_args: dict | None = None) -> list[str]:
     """Return user-facing hints (中文) based on observed failure indicators.
 
     Inputs:
       logcat:    last N lines of `adb logcat -d` output
       tombstone: contents of /data/tombstones/tombstone_NN if present
       exception: Python exception caught at attach/init/teardown
+      cli_args:  dict of CLI flags (trace_deep, patch_suicide, hide_rwx_maps,
+                 jni_hooks etc) — used to suggest scaling back invasive flags.
     """
     hints: list[str] = []
+    cli_args = cli_args or {}
 
     if tombstone:
         # SI_USER → kernel-injected signal (tgkill/kill from userspace, not a fault).
@@ -41,6 +45,25 @@ def diagnose_trace_failure(logcat: str = "",
                 f"{MIKU_SHIELD_URL}")
             hints.append(
                 "或自写 Frida bypass: hook tgkill/kill 系列 syscall 在 svc 前替换 nop.")
+        elif si_user:
+            # SI_USER + DEEP backtrace = anti-debug detected something Frida-related
+            # (Stalker block-cache rewrites in libart, /proc/self/maps, etc.) and called
+            # self-kill via a non-trivial code path. Most common cause: --trace-deep
+            # follows libart → Stalker rewrites libart code → libsgmainso integrity check
+            # detects the rewrite → tgkill self-kill. 实测 2026-05 (libsgmainso 6.8.260403).
+            hints.append(
+                "诊断: SI_USER + 深栈 — anti-debug 检测到 Frida 痕迹后 self-kill "
+                "(常见: Stalker 重写 libart 代码段被 CRC 校验抓到).")
+            if cli_args.get("trace_deep"):
+                hints.append(
+                    "强烈建议: 关 --trace-deep 重跑. trace-deep 让 Stalker 跟进 libart, "
+                    "block-cache rewrites 容易被 anti-debug 校验抓. 实测 libsgmainso "
+                    "6.8.260403 在 cmd=70102 跑到 ~60k records 必崩 (无 --trace-deep "
+                    "可跑完 15M+ records).")
+            else:
+                hints.append(
+                    "建议: 试 miku-shield (eBPF, 无 ptrace 无 RWX 痕迹) 或自写更窄的 "
+                    "Stalker include 范围, 减少跟踪到 libart/libc 的可能.")
         # SIGABRT in libfrida-agent.so → Frida 自递归崩溃
         if ("SIGABRT" in tombstone or "signal 6" in tombstone) and \
            "libfrida-agent.so" in tombstone:
