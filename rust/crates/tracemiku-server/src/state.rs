@@ -37,7 +37,20 @@ impl AppState {
             .as_ref()
             .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
             .unwrap_or(0);
-        let known_offsets = parse_known_offsets(&trace_dir).unwrap_or_default();
+        let mut known_offsets = parse_known_offsets(&trace_dir).unwrap_or_default();
+        // Mirror Python's priority: when fn_addr aligns to an offset in known_offsets
+        // AND meta.method is non-empty, replace that entry's name with method.
+        // (Python: `name = m.method or known_offsets.get(off, "func")` when pc==fn_addr)
+        if !meta.method.is_empty() {
+            if let Some(fn_addr_str) = &meta.fn_addr {
+                let fn_abs = u64::from_str_radix(fn_addr_str.trim_start_matches("0x"), 16)
+                    .unwrap_or(0);
+                let fn_off = fn_abs.wrapping_sub(primary_base);
+                if known_offsets.contains_key(&fn_off) {
+                    known_offsets.insert(fn_off, meta.method.clone());
+                }
+            }
+        }
         let symbols = build_from_trace(&trace, primary_base, &known_offsets);
 
         Ok(Self {
