@@ -43,3 +43,25 @@ fn module_end_computed_from_base_plus_size() {
     // 0x100000 + 0x10000 = 0x110000
     assert_eq!(m.end, "0x110000");
 }
+
+#[test]
+fn module_end_overflow_yields_error() {
+    use std::fs;
+    let tmp = tempfile::tempdir().unwrap();
+    let run = tmp.path().join("run");
+    fs::create_dir(&run).unwrap();
+    fs::create_dir(run.join("calls")).unwrap();
+    let cd = run.join("calls").join("call_001_tid100_9r_2ms");
+    fs::create_dir(&cd).unwrap();
+    fs::write(cd.join("trace.bin"), []).unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records": 9}"#).unwrap();
+    fs::write(
+        run.join("meta.json"),
+        // Overflowing base+size: 0xFFFFFFFFFFFFFF00 + 256 → wrap.
+        r#"{"module": {"name":"x","base":"0xFFFFFFFFFFFFFF00","size":256}}"#,
+    )
+    .unwrap();
+
+    let result = TraceMeta::load(&cd);
+    assert!(result.is_err(), "overflow must surface as Err, not panic");
+}

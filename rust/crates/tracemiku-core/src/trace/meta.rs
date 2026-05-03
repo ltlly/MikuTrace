@@ -53,7 +53,13 @@ pub struct ModuleInfo {
 impl ModuleInfo {
     fn fill_end(mut self) -> Result<Self, MetaError> {
         let base_int = parse_hex(&self.base, "module.base")?;
-        self.end = format!("{:#x}", base_int + self.size);
+        let end_int = base_int.checked_add(self.size).ok_or_else(|| {
+            MetaError::BadHex(
+                format!("base={} + size={}", self.base, self.size),
+                "module.end (overflow)",
+            )
+        })?;
+        self.end = format!("{:#x}", end_int);
         Ok(self)
     }
 }
