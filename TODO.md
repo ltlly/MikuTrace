@@ -345,9 +345,7 @@ extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 | 8 | c6cf114 | UIDF + render: call return-value 注释 (trace ret_x0 → `// → x0=0xff`) |
 
 **P2-LLIL 下一步候选** (按优先级):
-- movk lift (现走 intrinsic, OLLVM 大常量构造常用)
-- mov w/x reg, w/x reg 的 size-aware 语义 (zero-extend semantics)
-- 跨 block SSA / phi 节点 (loop induction variable 完整支持)
+- 跨 block SSA full loop-phi refinement: worklist 不动点. 当前 `ssa_blocks_cfg` 已有 synthetic phi entry version + 一次性 backedge incoming metadata refinement, 但循环内 use/exit version 尚未迭代到不动点.
 - float / SIMD lift (NEON 寄存器目前没记, 见已知限制)
 - 真机 BN HLIL 对比扫描 — 选 top-N `sub_*` 跑 viewer + BN 输出 diff
 - LLIL-level taint propagation (复用 SSA def-use)

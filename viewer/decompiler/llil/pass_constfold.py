@@ -26,6 +26,7 @@ from .expr import (
     LLIL_ADD, LLIL_SUB, LLIL_MUL, LLIL_NEG,
     LLIL_AND, LLIL_OR, LLIL_XOR, LLIL_NOT,
     LLIL_LSL, LLIL_LSR, LLIL_ASR,
+    LLIL_SX, LLIL_ZX, LLIL_LOW_PART,
     LLIL_CMP_E, LLIL_CMP_NE, LLIL_CMP_SLT, LLIL_CMP_SGT,
     const,
 )
@@ -84,6 +85,15 @@ def _read_mem_bytes(mem, addr: int, size: int, t_idx: int) -> int | None:
     return val
 
 
+def _fold_extend(op: str, val: int, src_size: int) -> int:
+    bits = max(1, int(src_size) * 8)
+    mask = (1 << bits) - 1
+    val &= mask
+    if op == LLIL_SX and (val & (1 << (bits - 1))):
+        val -= 1 << bits
+    return val & _MASK
+
+
 def fold_expr(node: LlilExpr,
               tag: SsaTag,
               env: dict[tuple, int],
@@ -127,6 +137,20 @@ def fold_expr(node: LlilExpr,
             return node
         return LlilExpr(node.op, size=node.size,
                         operands=[new_addr], extra=dict(node.extra),
+                        pc=node.pc)
+    if node.op in (LLIL_SX, LLIL_ZX, LLIL_LOW_PART):
+        child = node.operands[0] if node.operands else None
+        new_child = fold_expr(child, tag, env, mem, mem_t_idx) \
+            if isinstance(child, LlilExpr) else child
+        if isinstance(new_child, LlilExpr) and new_child.op == LLIL_CONST:
+            src_size = int(node.extra.get("src_size") or new_child.size or node.size or 8)
+            return LlilExpr(LLIL_CONST, size=node.size or 8,
+                            operands=[_fold_extend(node.op, new_child.operands[0], src_size)],
+                            extra={"_folded_from": node.op})
+        if new_child is child:
+            return node
+        return LlilExpr(node.op, size=node.size,
+                        operands=[new_child], extra=dict(node.extra),
                         pc=node.pc)
     if node.op == LLIL_STORE:
         # fold sub addr / value 但 op 本身不 fold (有副作用)

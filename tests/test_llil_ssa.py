@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 from viewer.decompiler.llil import (
-    LlilExpr, ssa_block, ssa_blocks,
+    LlilExpr, ssa_block, ssa_blocks, ssa_blocks_cfg,
     set_reg, reg, const, add, load, store, ret, nop,
     LLIL_SET_REG, LLIL_REG, LLIL_ADD, LLIL_CONST,
 )
@@ -185,3 +185,89 @@ def test_ssa_call_kills_cmp_result_flag():
     ])
     # post-call cmp_result v2 (call bump)
     assert blk.tag.get(use_cmp) == 2
+
+
+# ─────────── cross-block SSA / synthetic phi ───────────
+
+
+def test_ssa_blocks_cfg_single_pred_propagates_versions():
+    use_x0 = reg("x0")
+    blocks = {
+        0x1000: [set_reg("x0", const(5))],
+        0x2000: [set_reg("x1", use_x0)],
+    }
+    out = ssa_blocks_cfg(
+        blocks,
+        succs={0x1000: [0x2000], 0x2000: []},
+        preds={0x2000: [0x1000]},
+        entry=0x1000,
+    )
+    assert out[0x2000].entry_versions["x0"] == 1
+    assert out[0x2000].tag.get(use_x0) == 1
+
+
+def test_ssa_blocks_cfg_join_allocates_phi_version():
+    use_x0 = reg("x0")
+    blocks = {
+        0x1000: [],
+        0x2000: [set_reg("x0", const(1))],
+        0x3000: [set_reg("x0", const(2))],
+        0x4000: [set_reg("x1", use_x0)],
+    }
+    out = ssa_blocks_cfg(
+        blocks,
+        succs={0x1000: [0x2000, 0x3000], 0x2000: [0x4000], 0x3000: [0x4000], 0x4000: []},
+        preds={0x2000: [0x1000], 0x3000: [0x1000], 0x4000: [0x2000, 0x3000]},
+        entry=0x1000,
+    )
+    join = out[0x4000]
+    assert join.phi_versions["x0"] == (1, 2)
+    assert join.entry_versions["x0"] == 3
+    assert join.tag.get(use_x0) == 3
+
+
+def test_ssa_blocks_cfg_global_versions_do_not_collide_across_branches():
+    blocks = {
+        0x1000: [],
+        0x2000: [set_reg("x0", const(1))],
+        0x3000: [set_reg("x0", const(2))],
+    }
+    out = ssa_blocks_cfg(
+        blocks,
+        succs={0x1000: [0x2000, 0x3000], 0x2000: [], 0x3000: []},
+        preds={0x2000: [0x1000], 0x3000: [0x1000]},
+        entry=0x1000,
+    )
+    b1 = out[0x2000].roots[0]
+    b2 = out[0x3000].roots[0]
+    assert out[0x2000].tag.get(b1) == 1
+    assert out[0x3000].tag.get(b2) == 2
+
+
+def test_ssa_blocks_cfg_loop_header_refines_backedge_phi():
+    """Loop header should record real backedge incoming after CFG pass.
+
+    Shape: A -> B -> C -> B and B -> D. B reads x0 with one processed pred (A)
+    and one initially pending backedge pred (C). It must allocate a synthetic
+    phi entry version and then refine phi metadata to include C's exit version.
+    """
+    use_in_b = reg("x0")
+    use_in_d = reg("x0")
+    blocks = {
+        0x1000: [set_reg("x0", const(1))],
+        0x2000: [set_reg("x1", use_in_b)],
+        0x3000: [set_reg("x0", add(reg("x0"), const(1)))],
+        0x4000: [set_reg("x2", use_in_d)],
+    }
+    out = ssa_blocks_cfg(
+        blocks,
+        succs={0x1000: [0x2000], 0x2000: [0x3000, 0x4000], 0x3000: [0x2000], 0x4000: []},
+        preds={0x2000: [0x1000, 0x3000], 0x3000: [0x2000], 0x4000: [0x2000]},
+        entry=0x1000,
+    )
+    header = out[0x2000]
+    backedge_x0 = out[0x3000].exit_versions["x0"]
+    assert header.phi_versions["x0"] == (1, backedge_x0)
+    assert header.entry_versions["x0"] > 1
+    assert header.tag.get(use_in_b) == header.entry_versions["x0"]
+    assert out[0x4000].tag.get(use_in_d) == header.exit_versions["x0"]

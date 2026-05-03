@@ -405,12 +405,22 @@ def _lift_mov(d: Decoded) -> LlilExpr:
         return _intrinsic(d)
     dst = d.regs_def[0]
     parts = [p.strip() for p in d.op_str.split(",")]
+    dst_is_w = bool(parts and parts[0].lower().startswith("w"))
     if len(parts) == 2 and parts[1].startswith("#"):
         v = _parse_imm(parts[1])
         if v is not None:
+            if dst_is_w:
+                v &= 0xFFFFFFFF
             return set_reg(dst, const(v), pc=d.pc)
     if d.regs_use:
-        return set_reg(dst, reg(d.regs_use[0]), pc=d.pc)
+        src = reg(d.regs_use[0])
+        # ARM64 writes to wN zero-extend into xN. The disasm layer normalizes
+        # wN/xN to one canonical xN name, so keep the width semantics here.
+        if dst_is_w:
+            from .expr import LLIL_ZX
+            src = LlilExpr(LLIL_ZX, size=8, operands=[src],
+                           extra={"src_size": 4})
+        return set_reg(dst, src, pc=d.pc)
     return _intrinsic(d)
 
 

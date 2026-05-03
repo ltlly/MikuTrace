@@ -61,6 +61,9 @@ class SsaBlock:
     tag: SsaTag = field(default_factory=SsaTag)
     entry_versions: dict[str, int] = field(default_factory=dict)
     exit_versions: dict[str, int] = field(default_factory=dict)
+    # reg -> incoming versions when this block merges multiple predecessor defs.
+    # The block entry version is the synthetic phi version allocated for reg.
+    phi_versions: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
 
 def _walk_with_parent(node: LlilExpr, parent: Optional[LlilExpr] = None):
@@ -72,7 +75,8 @@ def _walk_with_parent(node: LlilExpr, parent: Optional[LlilExpr] = None):
 
 
 def ssa_block(block_pc: int, roots: list[LlilExpr],
-              entry_versions: Optional[dict[str, int]] = None) -> SsaBlock:
+              entry_versions: Optional[dict[str, int]] = None,
+              version_counters: Optional[dict[str, int]] = None) -> SsaBlock:
     """Block-local SSA pass.
 
     遍历每条 root expr (statement). 在 root 内部:
@@ -82,6 +86,10 @@ def ssa_block(block_pc: int, roots: list[LlilExpr],
     若 LLIL_SET_FLAG → flag version 递增.
     """
     cur_reg: dict[str, int] = dict(entry_versions or {})
+    counters = version_counters
+    if counters is not None:
+        for r, v in cur_reg.items():
+            counters[r] = max(counters.get(r, 0), v)
     cur_flag: dict[str, int] = {}
     blk = SsaBlock(block_pc=block_pc,
                    roots=list(roots),
@@ -103,7 +111,11 @@ def ssa_block(block_pc: int, roots: list[LlilExpr],
         # 再处理 root: 若 SET_REG / SET_FLAG / CALL 则 bump
         if root.op == LLIL_SET_REG:
             rname = root.operands[0]
-            cur_reg[rname] = cur_reg.get(rname, 0) + 1
+            if counters is None:
+                cur_reg[rname] = cur_reg.get(rname, 0) + 1
+            else:
+                counters[rname] = max(counters.get(rname, 0), cur_reg.get(rname, 0)) + 1
+                cur_reg[rname] = counters[rname]
             blk.tag.set(root, cur_reg[rname])
         elif root.op == LLIL_SET_FLAG:
             fname = root.operands[0]
@@ -113,7 +125,11 @@ def ssa_block(block_pc: int, roots: list[LlilExpr],
             # AAPCS64: caller-saved 全 kill — 之后的读应链到新 version,
             # 不能错指 call 前的 def. 这是 BN MLIL_SSA call 的标准行为.
             for r in _CALLER_SAVED:
-                cur_reg[r] = cur_reg.get(r, 0) + 1
+                if counters is None:
+                    cur_reg[r] = cur_reg.get(r, 0) + 1
+                else:
+                    counters[r] = max(counters.get(r, 0), cur_reg.get(r, 0)) + 1
+                    cur_reg[r] = counters[r]
             for fl in _CALLER_SAVED_FLAGS:
                 cur_flag[fl] = cur_flag.get(fl, 0) + 1
 
@@ -124,3 +140,103 @@ def ssa_block(block_pc: int, roots: list[LlilExpr],
 def ssa_blocks(blocks: dict[int, list[LlilExpr]]) -> dict[int, SsaBlock]:
     """对每个 cfg block 跑 SSA, 各自从 0 起 (跨块由 caller 串)."""
     return {pc: ssa_block(pc, exprs) for pc, exprs in blocks.items()}
+
+
+def _merge_pred_versions(pred_exits: list[dict[str, int]],
+                         pending_preds: int,
+                         counters: dict[str, int]) -> tuple[dict[str, int], dict[str, tuple[int, ...]]]:
+    """Merge predecessor exits into block entry versions.
+
+    Single incoming version is propagated. Multiple distinct incoming versions
+    allocate a synthetic phi version and record the incoming tuple in
+    SsaBlock.phi_versions. Missing defs are version 0, same as block-local SSA.
+    """
+    if not pred_exits:
+        return {}, {}
+    regs = sorted({r for ex in pred_exits for r in ex})
+    entry: dict[str, int] = {}
+    phis: dict[str, tuple[int, ...]] = {}
+    for r in regs:
+        incoming = tuple(ex.get(r, 0) for ex in pred_exits)
+        uniq = set(incoming)
+        # If some predecessors are not processed yet (typical backedge), do not
+        # silently trust the pre-loop value as exact. Allocate a synthetic phi
+        # entry version so downstream render shows a merged value, not a precise
+        # but wrong predecessor version. Full fixed-point loop phi remains later.
+        if len(uniq) == 1 and pending_preds == 0:
+            entry[r] = incoming[0]
+            counters[r] = max(counters.get(r, 0), incoming[0])
+        else:
+            counters[r] = max(counters.get(r, 0), max(uniq)) + 1
+            entry[r] = counters[r]
+            phis[r] = incoming + tuple(0 for _ in range(pending_preds))
+    return entry, phis
+
+
+def ssa_blocks_cfg(blocks: dict[int, list[LlilExpr]],
+                   succs: dict[int, list[int]],
+                   preds: dict[int, list[int]],
+                   entry: int = 0) -> dict[int, SsaBlock]:
+    """Cross-block SSA for acyclic/mostly-acyclic CFGs.
+
+    This keeps the old block-local `ssa_blocks()` untouched, but offers a CFG
+    aware path with globally unique versions and synthetic phi entry versions at
+    multi-predecessor joins. Complex loops are handled conservatively by the
+    first stable predecessor snapshot; full loop phi refinement remains a later
+    pass.
+    """
+    if not blocks:
+        return {}
+    entry_pc = entry if entry in blocks else next(iter(blocks))
+    counters: dict[str, int] = {}
+    out: dict[int, SsaBlock] = {}
+    work: list[int] = [entry_pc]
+    queued: set[int] = {entry_pc}
+
+    while work:
+        pc = work.pop(0)
+        queued.discard(pc)
+        all_pred_pcs = [p for p in preds.get(pc, []) if p in blocks]
+        pred_pcs = [p for p in all_pred_pcs if p in out]
+        pred_exits = [out[p].exit_versions for p in pred_pcs]
+        pending_preds = len([p for p in all_pred_pcs if p not in out])
+        entry_versions, phi_versions = _merge_pred_versions(pred_exits, pending_preds, counters)
+        blk = ssa_block(pc, blocks.get(pc, []), entry_versions, counters)
+        blk.phi_versions = phi_versions
+        out[pc] = blk
+
+        for s in succs.get(pc, []):
+            if s not in blocks:
+                continue
+            if s in out:
+                continue
+            # Queue a successor once all known predecessors are available. For
+            # cycles, allow progress when the only missing predecessor is the
+            # successor itself/backedge not processed yet.
+            known_preds = [p for p in preds.get(s, []) if p in blocks]
+            missing = [p for p in known_preds if p not in out]
+            if missing and not all(m == s for m in missing):
+                if s not in queued:
+                    work.append(s); queued.add(s)
+                continue
+            if s not in queued:
+                work.append(s); queued.add(s)
+
+    # Keep visibility for disconnected blocks; they start from empty entry.
+    for pc, roots in blocks.items():
+        if pc not in out:
+            out[pc] = ssa_block(pc, roots, version_counters=counters)
+    # One-shot loop/backedge refinement: replace pending predecessor placeholders
+    # in phi_versions with the predecessor exit versions now that all blocks are
+    # available. This does not re-run SSA to a fixed point, but it makes phi
+    # metadata honest and useful for render/diagnostics.
+    for pc, blk in out.items():
+        if not blk.phi_versions:
+            continue
+        pred_pcs = [p for p in preds.get(pc, []) if p in out]
+        refined: dict[str, tuple[int, ...]] = {}
+        for r in blk.phi_versions:
+            incoming = tuple(out[p].exit_versions.get(r, 0) for p in pred_pcs)
+            refined[r] = incoming
+        blk.phi_versions = refined
+    return out

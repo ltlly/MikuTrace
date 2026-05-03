@@ -17,7 +17,7 @@ sub-expression. visitor pattern 走树.
   8. render    — 输出 markdown / Tenet / LLM bundle
 """
 from .lift import lift_arm64, lift_static, LiftStats
-from .ssa import SsaTag, SsaBlock, ssa_block, ssa_blocks
+from .ssa import SsaTag, SsaBlock, ssa_block, ssa_blocks, ssa_blocks_cfg
 from .pass_uidf import (
     ObservedValues, collect_uidf, apply_uidf_to_constfold_env,
 )
@@ -96,7 +96,7 @@ __all__ = [
     "goto", "jump", "if_", "call", "ret", "nop", "intrinsic",
     "cmp_e", "cmp_ne",
     "lift_arm64", "lift_static", "LiftStats",
-    "SsaTag", "SsaBlock", "ssa_block", "ssa_blocks",
+    "SsaTag", "SsaBlock", "ssa_block", "ssa_blocks", "ssa_blocks_cfg",
     "ObservedValues", "collect_uidf", "apply_uidf_to_constfold_env",
     "fold_expr", "constfold_block", "constfold_blocks",
     "dce_block", "dce_blocks",

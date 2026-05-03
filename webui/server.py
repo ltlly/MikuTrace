@@ -2668,7 +2668,7 @@ def make_app(trace_path: pathlib.Path,
                               split_top_k: int, split_min_records: int) -> dict:
         """跑全 pipeline, 返回 {fn_id, name, c_code, stats}."""
         from viewer.decompiler.llil import (
-            lift_static, ssa_block, ssa_blocks,
+            lift_static, ssa_block, ssa_blocks_cfg,
             constfold_block, dce_block, typelat_block,
             struct_recover_block, merge_shapes,
             restructure, from_viewer_cfg, render_hlil, expr_to_c,
@@ -2731,8 +2731,24 @@ def make_app(trace_path: pathlib.Path,
                 exprs.extend(ir_lift.get(ins_pc, []))
             block_to_exprs[b.pc] = exprs
 
-        # 5. SSA
-        ssa_map = ssa_blocks(block_to_exprs)
+        # 5. SSA — CFG-aware path gives globally unique versions and synthetic
+        # phi entry versions at joins. This fixes branch version collisions
+        # while keeping full loop-phi refinement as a later pass.
+        cfg_info = from_viewer_cfg(cfg)
+        cfg_info.entry = fn.pc_start
+        fn_blocks_set = set(block_to_exprs.keys())
+        cfg_info.succs = {
+            pc: [s for s in succs if s in fn_blocks_set]
+            for pc, succs in cfg_info.succs.items()
+            if pc in fn_blocks_set
+        }
+        cfg_info.preds = {
+            pc: [p for p in preds if p in fn_blocks_set]
+            for pc, preds in cfg_info.preds.items()
+            if pc in fn_blocks_set
+        }
+        ssa_map = ssa_blocks_cfg(block_to_exprs, cfg_info.succs,
+                                 cfg_info.preds, entry=cfg_info.entry)
 
         # 5.5 UIDF — User-Informed DataFlow from trace 真值 (BN docs/dev/uidf).
         # trace 是天然 UIDF 输入: 每条 SET_REG 在 trace 中实际命中位置该 reg
@@ -2783,22 +2799,6 @@ def make_app(trace_path: pathlib.Path,
             render_types = _TE()
 
         # 9. restructure — 用 viewer cfg 的 fn-restricted view
-        cfg_info = from_viewer_cfg(cfg)
-        # restructure 假设 entry = 整个 cfg.entry; fn 内可能不同 entry, 我们
-        # 用 fn.pc_start.
-        cfg_info.entry = fn.pc_start
-        # 限制 succs/preds 到 fn 内 blocks
-        fn_blocks_set = set(block_to_exprs.keys())
-        cfg_info.succs = {
-            pc: [s for s in succs if s in fn_blocks_set]
-            for pc, succs in cfg_info.succs.items()
-            if pc in fn_blocks_set
-        }
-        cfg_info.preds = {
-            pc: [p for p in preds if p in fn_blocks_set]
-            for pc, preds in cfg_info.preds.items()
-            if pc in fn_blocks_set
-        }
         hlil = restructure(cfg_info, ssa_map)
 
         # 9.5. var unification — 跨 SSA version 同 reg → BN var_NN 风格

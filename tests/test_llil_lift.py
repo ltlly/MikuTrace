@@ -411,6 +411,29 @@ def test_lift_wreg_mov_normalizes():
     assert e.operands[0] == "x0"
 
 
+def test_lift_mov_wreg_reg_zero_extends():
+    """mov w0, w1 writes low 32 bits and zero-extends x0."""
+    from viewer.decompiler.llil import LLIL_ZX
+    [e] = lift_arm64(0x1000, _asm("mov w0, w1"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    body = e.operands[1]
+    assert body.op == LLIL_ZX
+    assert body.extra["src_size"] == 4
+    src = body.operands[0]
+    assert src.op == LLIL_REG and src.operands == ["x1"]
+
+
+def test_lift_mov_wreg_imm_masks_32_bits():
+    """mov w0, #-1 is x0 = 0xffffffff, not 0xffffffffffffffff."""
+    [e] = lift_arm64(0x1000, _asm("mov w0, #-1"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    body = e.operands[1]
+    assert body.op == LLIL_CONST
+    assert body.operands == [0xFFFFFFFF]
+
+
 def test_lift_cbz_wreg_normalizes_to_x():
     """cbz w0, target → cmp_e(reg(x0), 0) — _first_reg_token normalize 后."""
     [e] = lift_arm64(0x1000, _asm("cbz w0, #0x2000"))
@@ -433,10 +456,13 @@ def test_lift_tbz_wreg_normalizes_to_x():
 
 def test_lift_wzr_normalizes_to_xzr():
     """mov w0, wzr → src 是 xzr (规范化)."""
+    from viewer.decompiler.llil import LLIL_ZX
     [e] = lift_arm64(0x1000, _asm("mov w0, wzr"))
     assert e.op == LLIL_SET_REG
     assert e.operands[0] == "x0"
-    src = e.operands[1]
+    body = e.operands[1]
+    assert body.op == LLIL_ZX
+    src = body.operands[0]
     assert src.op == LLIL_REG and src.operands == ["xzr"]
 
 

@@ -16,6 +16,7 @@ from .expr import (
     LLIL_ADD, LLIL_SUB, LLIL_MUL, LLIL_NEG,
     LLIL_AND, LLIL_OR, LLIL_XOR, LLIL_NOT,
     LLIL_LSL, LLIL_LSR, LLIL_ASR, LLIL_ROL, LLIL_ROR,
+    LLIL_SX, LLIL_ZX, LLIL_LOW_PART,
     LLIL_CMP_E, LLIL_CMP_NE, LLIL_CMP_SLT, LLIL_CMP_SLE,
     LLIL_CMP_SGE, LLIL_CMP_SGT, LLIL_CMP_ULT, LLIL_CMP_ULE,
     LLIL_CMP_UGE, LLIL_CMP_UGT,
@@ -184,6 +185,15 @@ def expr_to_c(expr, types: TypeEnv = None,
         return f"flag.{expr.operands[0]}"
     if op == LLIL_FLAG_COND:
         return f"flag_cond({expr.operands[0]})"
+
+    if op in (LLIL_SX, LLIL_ZX, LLIL_LOW_PART):
+        inner = expr_to_c(expr.operands[0], types, shapes, tag, entry_versions,
+                          loc_names, var_names, const_strings)
+        src_size = int(expr.extra.get("src_size") or expr.size or 8)
+        ctype = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}.get(src_size, "uint64_t")
+        if op == LLIL_SX:
+            ctype = {1: "int8_t", 2: "int16_t", 4: "int32_t", 8: "int64_t"}.get(src_size, "int64_t")
+        return f"(({ctype}){inner})"
 
     # mem ops — 优先 stack local var 命名 (sp/fp+disp); 然后 struct field;
     # 兜底 *(T*)(addr).

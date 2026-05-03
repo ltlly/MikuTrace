@@ -6,6 +6,7 @@ from viewer.decompiler.llil import (
     set_reg, reg, const, add, sub, mul, xor, and_, or_, lsl, neg,
     load, store,
     LLIL_SET_REG, LLIL_REG, LLIL_CONST, LLIL_ADD, LLIL_LOAD, LLIL_STORE,
+    LLIL_SX, LLIL_ZX,
 )
 
 
@@ -129,3 +130,25 @@ def test_fold_blocks_count():
     assert n == 2
     assert out[0x1000].roots[1].operands[1].operands == [3]
     assert out[0x2000].roots[1].operands[1].operands == [15]
+
+
+def test_fold_zx_const():
+    e = set_reg("x0", LlilExpr(LLIL_ZX, size=8,
+                               operands=[const(0x123456789ABCDEF0)],
+                               extra={"src_size": 4}))
+    blk = ssa_block(0x1000, [e])
+    new = constfold_block(blk)
+    val = new.roots[0].operands[1]
+    assert val.op == LLIL_CONST
+    assert val.operands == [0x9ABCDEF0]
+
+
+def test_fold_sx_const():
+    e = set_reg("x0", LlilExpr(LLIL_SX, size=8,
+                               operands=[const(0xFFFFFFFF)],
+                               extra={"src_size": 4}))
+    blk = ssa_block(0x1000, [e])
+    new = constfold_block(blk)
+    val = new.roots[0].operands[1]
+    assert val.op == LLIL_CONST
+    assert val.operands == [0xFFFFFFFFFFFFFFFF]

@@ -101,3 +101,13 @@ def test_search(client):
     r = client.get("/api/search?pattern=ret").json()
     assert r["count"] >= 1
     assert any(h["asm"].startswith("ret") for h in r["hits"])
+
+
+def test_llil_render_endpoint_smoke(client):
+    """LLIL web pipeline should run through CFG-aware SSA without crashing."""
+    payload = {"fn_id": "F0", "split_top_k": 10, "split_min_records": 1}
+    j = client.post("/api/llil/render", json=payload).json()
+    assert j["ok"] is True, j
+    assert j["stats"]["blocks"] >= 1
+    assert "lift_total" in j["stats"]
+    assert isinstance(j["c_code"], str)
