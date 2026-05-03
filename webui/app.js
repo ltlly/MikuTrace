@@ -40,6 +40,8 @@ const STATE = {
   cfg: null,
   cfgFunc: null,
   allFuncs: [],
+  functionIndex: null,            // {functions: [...], counts: {...}} from /api/functions
+  functionIndexAt: 0,             // ms timestamp of last fetch (cache TTL)
   activeBlockPc: null,
   activeInsnPc: null,
   prevRegs: null,
@@ -587,6 +589,37 @@ function normalizeReg(name) {
 
 function escapeHtml(s) {
   return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+}
+
+async function loadFunctionIndex(force = false) {
+  if (!force && STATE.functionIndex && (Date.now() - STATE.functionIndexAt) < 2000) {
+    return STATE.functionIndex;
+  }
+  try {
+    const r = await fetch("/api/functions").then(r => r.json());
+    if (r && Array.isArray(r.functions)) {
+      STATE.functionIndex = r;
+      STATE.functionIndexAt = Date.now();
+    }
+  } catch (e) {
+    console.warn("loadFunctionIndex failed:", e);
+  }
+  return STATE.functionIndex;
+}
+
+function fnEntryById(fnId) {
+  if (!STATE.functionIndex) return null;
+  return (STATE.functionIndex.functions || []).find(f =>
+    f.id === fnId
+    || f.trace_ir_id === fnId
+    || ("cfg:" + f.name) === fnId
+    || ("sym:" + f.name) === fnId
+  );
+}
+
+function fnEntryByName(name) {
+  if (!STATE.functionIndex) return null;
+  return (STATE.functionIndex.functions || []).find(f => f.name === name);
 }
 
 // Event-delegated row click → setCursor. 替代 querySelectorAll().forEach(addEventListener)
@@ -1504,27 +1537,47 @@ function switchBottomTab(name) {
 async function loadFuncsList() {
   const cont = $("lp-funcs");
   cont.innerHTML = '<div class="dim">loading…</div>';
-  // 等 cfg subprocess 给 funcs 列表
-  while (true) {
-    const cfg = await api("/api/cfg", {});
-    if (cfg.status === "ready") {
-      STATE.allFuncs = cfg.funcs || [];
-      break;
+
+  // Prefer the unified FunctionIndex; fall back to /api/cfg.funcs if it fails.
+  await loadFunctionIndex(true);
+  let entries = (STATE.functionIndex && STATE.functionIndex.functions) || null;
+
+  if (!entries) {
+    // Fallback path: poll /api/cfg until ready.
+    while (true) {
+      const cfg = await api("/api/cfg", {});
+      if (cfg.status === "ready") {
+        STATE.allFuncs = cfg.funcs || [];
+        entries = STATE.allFuncs.map(f => ({
+          id: "sym:" + f.name, name: f.name, source: "symbol",
+          blocks: f.blocks,
+        }));
+        break;
+      }
+      if (cfg.status === "building") {
+        cont.innerHTML = `<div class="dim">cfg building… (${cfg.cfg})</div>`;
+        await new Promise(res => setTimeout(res, 1500));
+        continue;
+      }
+      cont.innerHTML = `<div class="dim">cfg ${cfg.status}</div>`;
+      return;
     }
-    if (cfg.status === "building") {
-      cont.innerHTML = `<div class="dim">cfg building… (${cfg.cfg})</div>`;
-      await new Promise(res => setTimeout(res, 1500));
-      continue;
-    }
-    cont.innerHTML = `<div class="dim">cfg ${cfg.status}</div>`;
-    return;
+  } else {
+    // Mirror to STATE.allFuncs so the CFG dropdown population (which reads
+    // STATE.allFuncs) keeps working without changes.
+    STATE.allFuncs = entries.map(f => ({name: f.name, blocks: f.blocks}));
   }
+
   let html = "";
-  for (const f of STATE.allFuncs) {
+  for (const f of entries) {
     const active = f.name === STATE.cfgFunc ? " active" : "";
-    html += `<div class="lp-row${active}" data-fn="${escapeHtml(f.name)}">` +
+    const tag = f.source === "trace-ir" ? "TR" :
+                f.source === "bn" ? "BN" : "SY";
+    html += `<div class="lp-row${active}"` +
+            ` data-fn="${escapeHtml(f.name)}"` +
+            ` data-fn-id="${escapeHtml(f.id)}">` +
             `<span>${escapeHtml(f.name)}</span>` +
-            `<span class="meta">${f.blocks} bb · dec</span></div>`;
+            `<span class="meta">${f.blocks} bb · ${tag}</span></div>`;
   }
   cont.innerHTML = html || '<div class="dim">no funcs</div>';
   cont.querySelectorAll(".lp-row").forEach(r => {
@@ -1532,23 +1585,22 @@ async function loadFuncsList() {
       pollCFG(r.dataset.fn);
       cont.querySelectorAll(".lp-row").forEach(o => o.classList.toggle("active", o === r));
     });
-    r.addEventListener("dblclick", () => openDecompileForCfgFn(r.dataset.fn));
+    r.addEventListener("dblclick", () => openDecompileForFn(r.dataset.fnId));
   });
-  $("left-panel-info").textContent = `${STATE.allFuncs.length}`;
+  $("left-panel-info").textContent = `${entries.length}`;
 }
 
-function openDecompileForCfgFn(fnName) {
-  if (!fnName) return;
+function openDecompileForFn(fnId) {
+  if (!fnId) return;
   activateRightTab("dec");
-  const targetId = "cfg:" + fnName;
   let attempts = 0;
   const pick = () => {
     if (TAB_INIT.dec && $("dec-fn-list")) {
-      selectDecFn(targetId);
+      selectDecFn(fnId);
       return;
     }
     if (attempts++ > 25) {
-      console.warn("openDecompileForCfgFn: dec tab never initialized for", fnName);
+      console.warn("openDecompileForFn: dec tab never initialized for", fnId);
       return;
     }
     setTimeout(pick, 200);
@@ -2500,6 +2552,7 @@ function _decUrl(useMem) {
 async function loadDecSummary() {
   const list = $("dec-fn-list");
   list.innerHTML = '<div class="dim">building IR (1-3s)…</div>';
+  await loadFunctionIndex();  // hot cache for double-click + future consumers
   const useMem = $("dec-vm-mem").checked;
   const url = "/api/dec/summary" + _decUrl(useMem);
   let s;
