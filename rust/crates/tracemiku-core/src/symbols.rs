@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use crate::disasm::decode;
 use crate::trace::{ModuleInfo, Trace};
 
 /// Lookup PC → (function-name, offset-within).
@@ -140,4 +141,46 @@ impl ModuleResolver {
     pub fn len(&self) -> usize {
         self.modules.len()
     }
+}
+
+/// Walk the trace looking for `bl <target>` instructions; each unique target
+/// becomes a synthetic function entry. Names follow `f_<hex>` convention.
+///
+/// Returns map keyed by ABSOLUTE PC. Use [`auto_known_offsets_with_base`]
+/// to get module-relative keys.
+pub fn auto_known_offsets(trace: &Trace) -> HashMap<u64, String> {
+    auto_known_offsets_with_base(trace, 0)
+}
+
+/// Same as [`auto_known_offsets`] but keys are relative to `base`. Useful
+/// for merging into a static known_offsets dict (which uses module-relative
+/// hex keys per the per-call meta.json contract).
+pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, String> {
+    let mut out = HashMap::new();
+    let n = trace.len();
+    for i in 0..n {
+        let pc = trace.pc(i);
+        let inst = trace.inst(i);
+        let d = decode(pc, inst);
+        if !d.is_call {
+            continue;
+        }
+        let Some(target) = parse_branch_target(&d.op_str) else {
+            continue;
+        };
+        let key = target.wrapping_sub(base);
+        out.entry(key).or_insert_with(|| format!("f_{key:#x}"));
+    }
+    out
+}
+
+/// Parse a hex address from capstone's op_str (e.g. "0x100100" or "#0x100100").
+/// Returns None for non-hex / indirect targets.
+fn parse_branch_target(op_str: &str) -> Option<u64> {
+    let s = op_str.trim().trim_start_matches('#');
+    let token = s.split([',', ' ']).next()?;
+    if !token.starts_with("0x") && !token.starts_with("0X") {
+        return None;
+    }
+    u64::from_str_radix(token.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
 }
