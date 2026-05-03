@@ -139,7 +139,7 @@ JNI 字符串 hook + 主动反反调试组合实现:
 | `--stalker-exclude-patterns` | 覆盖默认 hostile 名单 | Task #47 |
 | `--boundary-diff-patterns` | 在 hostile fn entry/exit 用 Interceptor diff 显式传参指针的内存, 写 `external_writes.bin` 给 viewer MemShadow | Task #48-50, **默认空, 不要塞 pthread/malloc/atomic 否则 Frida 自递归 SIGABRT** |
 | `--jni-hooks PATH` | 加载 JSON hook spec, 对 JNIEnv vtable 上的字符串相关函数下 Interceptor; per-call 落盘 `jni_hooks.jsonl` | Task #56, 默认 `tools/hooks/libart_jni.json` 含 6 个 JNI ops |
-| `--patch-suicide` | patch 6 处 sgmainso 内联 `svc #0` (tgkill) 防 anti-frida 自杀 | Task #53, **仅对该 SO 版本有效 (offset 硬编码)** |
+| `--patch-suicide` | 按 JSON spec patch 目标 SO 内联 `svc #0` (tgkill) 防 anti-frida 自杀 | Task #53, 默认 spec = `tools/hooks/sgmainso_6.8.260403_suicide.json`; 其他版本用 `--suicide-patch-spec PATH` |
 | `--hide-rwx-maps` | hook libc open/read/pread64 过滤 `/proc/self/maps` 里 anon RWX (Frida block cache) 行 | Task #54 |
 
 JSON hook spec 格式 (`tools/hooks/libart_jni.json`):
@@ -162,7 +162,7 @@ JNI_GetCreatedJavaVMs` 直接拿 JNIEnv (Frida 17 删了 `Java` 全局, 必须�
 
 | 层 | 检测 | 当前对策 | 状态 |
 |---|---|---|---|
-| L1 | inline `svc #0` (tgkill, x8=131) 自杀 | `--patch-suicide` patch 6 个入口 | ✅ 概率绕过 (sgmainso 有 1067 个 generic svc thunks, 6 个入口不全覆盖, 偶尔仍触发) |
+| L1 | inline `svc #0` (tgkill, x8=131) 自杀 | `--patch-suicide` 按 spec patch 入口 | ✅ 默认 spec 覆盖 libsgmainso 6.8.260403 的 6 个入口; 其他版本需传 `--suicide-patch-spec` |
 | L2 | scan `/proc/self/maps` 找 anon rwx | `--hide-rwx-maps` 过滤 maps 读 | ✅ |
 | L3 | fork 子进程 ptrace 父 + SIGSEGV | (未做, 见 [TODO.md](TODO.md)) | ❌ |
 | L4 | scan `frida_agent_main` 等 symbol | (未做, 改名要 rebuild frida-agent) | ❌ |

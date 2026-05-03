@@ -124,7 +124,12 @@ def _drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
 
 def cmd_trace(args):
     """spawn frida agent, save trace."""
-    import frida, signal, threading
+    try:
+        import frida
+    except ImportError:
+        print("error: trace 子命令需要 frida; install with: pip install frida", file=sys.stderr)
+        return 1
+    import signal, threading
     cold_pid = None
     consent_thread = None
     if getattr(args, "cold_launch", False) and args.pkg:
@@ -1538,7 +1543,7 @@ def main():
                       help="P1-C M2 child race-attach. off (默认) = 只 Tier 1 fork-event; "
                            "full = agent fork-event 一到立即 attach child PID + 注入 same agent. "
                            "短命 child (anti-debug 50-200ms) 可能 attach 不上, 标 "
-                           "failed_short_lived. safe = 同 full 但额外限制. "
+                           "failed_short_lived. safe = 当前实现同 full (限制语义待后续实现). "
                            "注意: Frida enable_spawn_gating 不抓 fork() 子进程 "
                            "(只对 device.spawn() 后裔生效, 实测 2026-05), 故走 race-attach.")
     p_tr.add_argument("--jni-hooks", default="tools/hooks/libart_jni.json", dest="jni_hooks",

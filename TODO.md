@@ -119,7 +119,12 @@ anti-debug worker thread 周期性比对 libart bytes vs disk image, 检测到 �
 
 ---
 
-# P1-C 设计 spec (历史参考, M1-M8 已 ship)
+# P1-C 设计 spec (历史归档, M1-M8 已 ship)
+
+> 历史设计归档, 不作为当前 CLI 行为的权威说明. 当前 CLI 以
+> `./tracemiku trace --help` 为准: `--child-trace-mode` 默认 `off`,
+> `full/safe` 需要显式打开; fork lifecycle 轮询默认开, 用
+> `--no-fork-poll-child` 关闭.
 
 ## 决定 (已全部锁定)
 
@@ -128,7 +133,7 @@ anti-debug worker thread 周期性比对 libart bytes vs disk image, 检测到 �
 | child 进入方式 | **spawn-gated**: child SIGSTOP, agent 注入后 resume |
 | trace 输出组织 | **parent_pid/child_pid 两份独立 trace dir**, viewer 可同时 load |
 | JNI hooks 在 child 是否重装 | **是, 都装** (反调试 fork 也是功能实现一部分) |
-| F5 处理 | **`--child-trace-mode=full\|safe`, 默认 `full`** (= 抓到啥算啥, 红警告). 改 `safe` = 超 1s detach 保 parent |
+| F5 处理 | 历史设计: **`--child-trace-mode=full\|safe`**. 当前 CLI 默认 `off`; `full/safe` 显式 opt-in. `safe` 语义保留为后续收敛项. |
 | `clone(2)` flags 区分 | **fork-like (`CLONE_THREAD==0`) 走 P1-C; thread-like 仍走 `pthread_create` follow** |
 
 ## 7 种失败模式 (F1-F7)
@@ -203,12 +208,13 @@ viewer fork-events traces/run1 --status failed_ptrace_conflict
 GET /api/fork-events?status=failed_ptrace_conflict
 ```
 
-## --child-trace-mode 选项
+## --child-trace-mode 选项 (当前 CLI 摘要)
 
 ```
-tracemiku trace ... --child-trace-mode=full     # 默认: 抓到啥算啥, F5 红警告
-tracemiku trace ... --child-trace-mode=safe     # F5 防御: child 超 1s 强 detach
-tracemiku trace ... --no-fork-trace             # 禁用 P1-C, 仅 parent 记录 Tier 1
+tracemiku trace ...                             # 默认: --child-trace-mode=off, 仅 Tier 1 fork-event + lifecycle poll
+tracemiku trace ... --child-trace-mode=full     # fork-event 一到立即 race-attach child + 注入 same agent
+tracemiku trace ... --child-trace-mode=safe     # 当前实现按 full 路径走; safe 限制语义待后续实现
+tracemiku trace ... --no-fork-poll-child        # 关闭 child lifecycle 后台轮询
 ```
 
 ## 参考
@@ -222,14 +228,14 @@ tracemiku trace ... --no-fork-trace             # 禁用 P1-C, 仅 parent 记录
 
 # P2 — 战略 / 待讨论
 
-## P2-A: NEON / FP register record format v2 (1 周)
+## P2-A: NEON / FP register record format v2 (future / 未实现)
 
-**确认要做** (用户接受 "不在乎向后兼容, 全量采集"):
-- `--include-neon` 选项, 开启后 record v2 加 32 个 V0..V31 (16B each)
+**确认要做, 但当前 CLI 尚无 `--include-neon`** (用户接受 "不在乎向后兼容, 全量采集"):
+- future `--include-neon` 选项, 开启后 record v2 加 32 个 V0..V31 (16B each)
 - record 大小 272 → 784 字节, trace.bin 16GB → 47GB on 67M rec
 - `meta.json` 加 `record_version: 2`, viewer 自适应 stride
-- **自动检测**: trace 完毕 disasm 扫到 v?/s?/d?/q? operand → 日志提示
-  "目标含 NEON, 建议加 --include-neon 重采"
+- **自动检测**: trace 完毕 disasm 扫到 v?/s?/d?/q? operand → 当前先日志提示
+  "目标含 NEON/FP, 当前未采集 SIMD 寄存器; 等 future --include-neon 支持后重采"
 
 实现: agent CModule 加 NEON regfile 读取 (ARM64 fpsimd state) + record v2 写入;
 viewer trace.py / disasm.py / index.py / display.py 全链路 stride 改;
