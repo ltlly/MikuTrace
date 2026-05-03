@@ -176,3 +176,52 @@ async fn records_with_regs_filter() {
         "x0 must be absent when not filtered"
     );
 }
+
+#[tokio::test]
+async fn record_single_returns_full_regs() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/record/0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"], 0);
+    assert_eq!(v["pc"], "0x100000");
+    assert!(v["asm"].as_str().unwrap().contains("nop"));
+
+    let regs = v["regs"].as_object().expect("regs always required");
+    // 31 GPR (x0..x28, fp, lr) + sp + pc + nzcv = 34 entries.
+    assert!(
+        regs.len() >= 33,
+        "expected ≥33 reg entries, got {}",
+        regs.len()
+    );
+    assert_eq!(regs["pc"], "0x100000");
+    assert_eq!(regs["sp"], "0x7000");
+    assert_eq!(regs["x0"], "0x0");
+}
+
+#[tokio::test]
+async fn record_out_of_range_404() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/record/999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
