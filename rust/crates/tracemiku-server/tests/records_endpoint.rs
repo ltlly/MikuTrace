@@ -281,13 +281,19 @@ async fn records_with_symbols_populates_func_off() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(v["records"][0]["func"], "f_root");
+    // The fixture sets meta.method="f" + fn_addr=0x100000, which matches
+    // known_offsets["0x0"]="f_root". Python's symbols.py priority rule (and
+    // Rust's mirror) substitutes meta.method ("f") for the hooked function,
+    // so idx 0/1 resolve to "f" not "f_root". This is wire-parity with Python.
+    assert_eq!(v["records"][0]["func"], "f");
     assert_eq!(v["records"][0]["off"], "0x0");
     assert_eq!(v["records"][0]["module"], "libt.so");
 
-    assert_eq!(v["records"][1]["func"], "f_root");
+    assert_eq!(v["records"][1]["func"], "f");
     assert_eq!(v["records"][1]["off"], "0x4");
 
+    // f_alpha (0x100100) and f_beta (0x100200) are not the hooked fn; their
+    // names come straight from known_offsets.
     assert_eq!(v["records"][2]["func"], "f_alpha");
     assert_eq!(v["records"][2]["off"], "0x0");
 
