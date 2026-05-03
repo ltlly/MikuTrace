@@ -5,7 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "traceMiku v2 — CLI"
+description = "traceMiku v2 — CLI subcommands (parser, cfg, taint, dec, ...)"
+
+[[bin]]
+name = "tracemiku-cli"
+path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
 tracemiku-core.workspace = true
