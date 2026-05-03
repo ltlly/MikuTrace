@@ -15,6 +15,7 @@ thiserror.workspace = true
 tracing.workspace = true
 memmap2.workspace = true
 bytemuck.workspace = true
+capstone.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

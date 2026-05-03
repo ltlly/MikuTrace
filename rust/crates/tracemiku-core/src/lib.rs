@@ -9,5 +9,6 @@
 #![deny(unused_must_use)]
 #![warn(clippy::all)]
 
+pub mod disasm;
 pub mod prelude;
 pub mod trace;
