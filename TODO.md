@@ -8,35 +8,34 @@
 
 ---
 
-# P0 Next — FunctionIndex / Web Refactor
-
-> See `REFACTOR_HANDOFF.md` before starting. The refactor must preserve current
-> behavior with before/after comparison tests for every touched feature.
-
-- Introduce a unified `/api/functions` FunctionIndex shared by Functions, CFG,
-  HLIL, and Decompile.
-- Replace user-facing reliance on internal TraceIR ids (`F0`, `F1`, ...) with
-  stable function ids such as `trace:F0`, `sym:<name>`, and `bn:<addr>`.
-- Keep `F0`/existing ids working during migration, or document and test any
-  deliberate compatibility break.
-- Add equivalence tests before refactor for:
-  - `/api/cfg` function list and function filtering,
-  - left Functions panel data,
-  - `/api/dec/summary` TraceIR + symbol/on-demand entries,
-  - `/api/dec/fn/{id}` for both TraceIR and on-demand symbol functions,
-  - `/api/llil/render` `scope=body` vs `scope=trace`,
-  - `/api/hlil-for-pc` current-line mapping and truncation reporting,
-  - UI smoke for Scope selector and Functions→Decompile navigation.
-- Convert Decompile, HLIL, and CFG selection to consume FunctionIndex instead of
-  each reconstructing its own function model.
-- Replace fragile Decompile dependency on background CFG readiness with a clear
-  job/cache model or a tested synchronous fallback.
-- Keep BN HLIL truncation visible. Current cap is controlled by
-  `TRACEMIKU_BN_HLIL_MAX_LINES` (`0` = unlimited).
-
----
-
 # 进度概览
+
+## ✅ 已完成 (2026-05-03 — FunctionIndex / Web Refactor)
+
+P0: unified `/api/functions` FunctionIndex shared by Functions panel, CFG,
+HLIL, and Decompile. Stable ids `trace:F0` / `sym:<name>` / `bn:<addr>`.
+Legacy `F0` and `cfg:<name>` keep resolving via `viewer.function_index.parse_id`.
+Decompile no longer blocks on background CFG (sync fallback pinned by test).
+Plan + handoff: `docs/superpowers/plans/2026-05-03-function-index-refactor.md`,
+`REFACTOR_HANDOFF.md`. **807 passed / 10 skipped / 0 failed** on full suite.
+
+| # | 项 | commit |
+|---|---|---|
+| T0 | refactor(web) handoff baseline — BN HLIL cap + LLIL scope + dec sym-fn fallback | 649a67b |
+| T0+ | fix(web) baseline review — non-mutating llm-call + source-tag align + cfg sync | fba791d |
+| T1 | test(fixture) trace_root_two_callees — root calls f_alpha + f_beta | 8a8cae6 |
+| T2 | test(web) pin equivalence snapshots before refactor | 3472c11 |
+| T3 | feat(viewer) FunctionIndex — unified fn model for web/cli/sdk | b28eb1c |
+| T3+ | fix(viewer) FunctionIndex polish — strict parse_id, drop private call | 5b7ce93 |
+| T4 | feat(web) GET /api/functions — unified FunctionIndex endpoint | ca7f66c |
+| T5 | feat(web) dec endpoints migrate to prefixed fn ids | f09c265 |
+| T6 | feat(web ui) Functions panel + Decompile consume /api/functions | 3708e06 |
+| T7 | test(web) pin dec/fn sync-CFG fallback — sym:* must not block on BG | 456aaa0 |
+| T8 | feat(web) /api/hlil-for-fn — FunctionIndex-keyed HLIL lookup | 62af3ec |
+
+新增模块: `viewer/function_index.py` (FunctionEntry / FunctionIndex / parse_id).
+新增 endpoint: `GET /api/functions`, `GET /api/hlil-for-fn`.
+SDK exports: `from viewer import FunctionIndex, FunctionEntry, parse_id, make_*_id`.
 
 ## ✅ 已完成 (2026-05-02 single session)
 
