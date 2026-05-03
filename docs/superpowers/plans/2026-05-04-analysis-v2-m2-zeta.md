@@ -118,8 +118,11 @@ fn strb_records_size_1() {
 
 #[test]
 fn stp_pair_splits_into_two_mem_ops_with_disp_offset() {
-    // stp x0, x1, [sp, #16] = 0xa9018be0 (x0+x1 → [sp+16], 8+8B)
-    let d = decode(0x100000, 0xa9018be0);
+    // stp x0, x1, [sp, #16] = 0xa90107e0 (x0+x1 → [sp+16], 8+8B)
+    // (The previous draft used 0xa9018be0, which actually decodes to
+    //  `stp x0, x2, [sp, #0x18]` — wrong Rt2 + wrong imm7. Verified via
+    //  capstone-py during M2-ζ Task 1 implementation.)
+    let d = decode(0x100000, 0xa90107e0);
     assert_eq!(d.mem_op.len(), 2, "stp must split into 2 mem_ops");
     assert_eq!(d.mem_op[0].size, 8);
     assert_eq!(d.mem_op[1].size, 8);
@@ -132,8 +135,9 @@ fn stp_pair_splits_into_two_mem_ops_with_disp_offset() {
 
 #[test]
 fn ldp_pair_splits_with_dest_regs() {
-    // ldp x0, x1, [sp] = 0xa9400be0
-    let d = decode(0x100000, 0xa9400be0);
+    // ldp x0, x1, [sp] = 0xa94007e0  (corrected from earlier 0xa9400be0
+    // which decoded as `ldp x0, x2, [sp]`).
+    let d = decode(0x100000, 0xa94007e0);
     assert_eq!(d.mem_op.len(), 2);
     assert!(!d.mem_op[0].is_write);
     assert!(!d.mem_op[1].is_write);

@@ -49,8 +49,13 @@ impl Record {
     /// Symbolic register lookup tolerant of `xzr`/`wzr`/`w*` aliases. Used by
     /// `addr_of` so MemOp consumers don't have to pre-normalize. Returns
     /// `None` for unknown names, `Some(0)` for the zero registers, and the
-    /// 32-bit-masked value for `w0..w30`. Mirrors the lenient lookup the
-    /// Python `addr_of` does via `rec.reg(...) if reg in ALL_REGS else 0`.
+    /// 32-bit-masked value for `w0..w30`.
+    ///
+    /// More lenient than the Python `addr_of`'s strict `if reg in ALL_REGS
+    /// else 0` check — the Rust version accepts canonical aliases (e.g. a
+    /// raw `"x29"` instead of the normalized `"fp"`). In practice consumers
+    /// run names through `normalize_disasm_reg` first, so the divergence
+    /// only fires on hand-built MemOps in tests.
     pub fn reg_by_name(&self, name: &str) -> Option<u64> {
         if name.is_empty() {
             return None;
@@ -82,12 +87,7 @@ impl Record {
         if idx > 30 {
             return None;
         }
-        let v = if idx == 31 {
-            // x31/w31 is sp on ARM64; not stored in `regs`. Defensive.
-            self.sp
-        } else {
-            self.regs[idx]
-        };
+        let v = self.regs[idx];
         Some(if is_w { v & 0xffff_ffff } else { v })
     }
 }
