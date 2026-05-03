@@ -29,6 +29,7 @@ clap = { version = "4", features = ["derive"] }
 memmap2 = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
 capstone = "0.13"
+petgraph = "0.6"
 # Internal
 tracemiku-core = { path = "crates/tracemiku-core" }
 
