@@ -391,13 +391,13 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 |---|---|---|---|
 | `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | ✅ M2-α | memmap2 + bytemuck zero-copy; 15 unit/integration tests + scripts/m2_alpha_parity.py |
 | `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | ✅ M2-γ | capstone-rs 0.13 detail=true; thread-local FIFO cache (200k); regs_def/regs_use via two-pass operand walk + cmp-style fix |
-| `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | 🟡 M2-γ: reg side done; mem ops M2-δ | sequential build; reg_defs/reg_uses HashMap<String, Vec<usize>>; rayon parallel deferred to M2-δ |
+| `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | ✅ M2-ζ | sequential build; reg + mem sides both populated in single trace-walk; mem_addr_to_writes holds trace record indices |
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | ✅ M2-δ | petgraph 0.6; tarjan_scc; 6 unit/integration tests |
 | `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
 | `taint.py` (forward/backward, --through-mem) | `tracemiku-core::taint` | 🔜 M2 | rayon-parallel |
 | `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | 🔜 M2 | ~50 LOC: O(n) walk classifying bl/ret depth + Option<u32> field on each hit. Not the same as semantic cross-fn taint (see below) |
 | (future) **semantic cross-fn taint propagation** (ABI arg tracking, caller-saved kill, callee→caller return flow) | `tracemiku-core::taint::cross_fn` | ⏸ | Brand-new feature; needs its own design. Python never implemented this; the Python TODO note "全量 propagation 待真机" referred to *this*, not to frame_depth annotation. Do after v2 cutover and after real-trace need is documented. |
-| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | 🔜 M2 | bumped to `.memshadow.v3.bin` (D10) |
+| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | ✅ M2-ζ | core port (BTreeMap byte index, build/byte_at/find_strings/hex_dump). Sidecar caching deferred (eager build only); v3 binary sidecar lands when cold-build on real 7M-record traces becomes the bottleneck |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
 | `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | ✅ M2-ε | bl-target heuristic + examples/<so>/known_offsets.json overlay; merged into AppState symbols with priority: static > examples > auto |
@@ -495,9 +495,9 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/search` | 🔜 M3 | |
 | `/api/forward-taint` | 🔜 M3 | |
 | `/api/backward-taint` | 🔜 M3 | |
-| `/api/strings` | 🔜 M3 | needs MemShadow ready |
+| `/api/strings` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
 | `/api/string-provenance` | 🔜 M3 | |
-| `/api/mem-dump` | 🔜 M3 | |
+| `/api/mem-dump` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
 | `/api/last-write-of-reg` | ✅ M2-ε | linear backward scan from idx; returns {idx, pc, value} |
 | `/api/last-write-of-addr` | 🔜 M3 | needs MemShadow |
 | `/api/reg-value-at`, `/api/reg-at-idx` | 🔜 M3 | |

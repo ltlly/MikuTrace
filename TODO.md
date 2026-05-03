@@ -39,7 +39,12 @@
 - M2-ε `/api/last-write-of-reg`: ✅ 2026-05-04
 - M2-ε examples/<so>/known_offsets.json overlay: ✅ 2026-05-04
 - M2-ε frontend Functions panel (source-tagged list): ✅ 2026-05-04
-- M2-ζ (final M2, future session): MemShadow + Index mem ops + mem_op extraction + taint (forward + backward + cross-fn-call) + calltree + decompiler::backend stub + Graph panel SVG + final M2 parity gate + Python viewer cutover prep
+- M2-ζ disasm mem_op extraction + Index mem ops: ✅ 2026-05-04
+- M2-ζ tracemiku-core::memshadow port: ✅ 2026-05-04 (eager build; sidecar deferred)
+- M2-ζ /api/strings + /api/mem-dump + StringsPanel: ✅ 2026-05-04
+- M2-ζ scripts/m2_zeta_parity.py: ✅ 2026-05-04
+
+- M3 (next): calltree + taint forward/backward (rayon) + taint cross-fn-call frame_depth + decompiler::backend stub + Graph panel SVG + Python viewer cutover prep + memshadow v3 binary sidecar
 - M3-M7: 见 spec §9 milestones
 
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
