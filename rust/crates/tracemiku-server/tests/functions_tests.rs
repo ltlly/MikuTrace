@@ -118,3 +118,77 @@ async fn functions_empty_trace_yields_empty() {
     assert!(v["functions"].as_array().unwrap().is_empty());
     assert_eq!(v["counts"]["symbol"].as_u64().unwrap(), 0);
 }
+
+#[tokio::test]
+async fn last_write_of_reg_finds_last_def() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_2r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * 2];
+    // idx 0: pc=0x100000 mov x0, x1 (0xaa0103e0)
+    buf[0..8].copy_from_slice(&0x100000u64.to_le_bytes());
+    buf[268..272].copy_from_slice(&0xaa0103e0u32.to_le_bytes());
+    // idx 1: pc=0x100004 mov x0, x2 (0xaa0203e0)
+    buf[272..280].copy_from_slice(&0x100004u64.to_le_bytes());
+    buf[272 + 268..272 + 272].copy_from_slice(&0xaa0203e0u32.to_le_bytes());
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":2}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let app = tracemiku_server::build_router(cd).expect("build router");
+
+    // last write of x0 BEFORE idx 5 → idx 1
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/last-write-of-reg?reg=x0&before=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
+
+    // last write of x0 BEFORE idx 1 → idx 0
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/last-write-of-reg?reg=x0&before=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 0);
+
+    // x99 has no defs → null
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/last-write-of-reg?reg=x99&before=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["idx"].is_null(), "non-existent reg should return null");
+}
