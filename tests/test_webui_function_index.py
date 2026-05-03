@@ -136,6 +136,96 @@ def test_hlil_for_fn_404_on_unknown_id(trace_root_two_callees):
     assert r.status_code == 404
 
 
+def test_dec_llm_call_accepts_trace_prefixed_id(trace_root_two_callees, monkeypatch):
+    """Regression: POST /api/dec/llm-call with fn_id="trace:F0" must NOT 400.
+
+    Pre-fix path:
+      _resolve_dec_fn returned only FuncIR -> caller passed the original
+      "trace:F0" to TopIR.fn() (line 2845 pre-fix) and to
+      build_fn_decompile_prompt() (line 2851 pre-fix). TopIR.fn() only
+      matches FuncIR.id == fn_id, so "trace:F0" missed; build_fn_decompile_prompt
+      raised KeyError; server caught it and returned HTTP 400. The default
+      UI-selected fn_id is now "trace:F0" post-Task-5, so every "LLM raw"
+      click hit this regression.
+
+    Fix: _resolve_dec_fn now returns (fn, canonical_id); callers feed
+    canonical_id (e.g. "F0") to TopIR-aware downstream code.
+    """
+    class _StubResult:
+        error = None
+        model = "stub"
+        c_code = "int f(){}"
+        prompt_tokens = 1
+        output_tokens = 1
+        latency_ms = 1
+
+    class _StubModel:
+        def call(self, user, system=None, max_tokens=4096):
+            return _StubResult()
+
+    import viewer.decompiler
+    monkeypatch.setattr(viewer.decompiler, "make_llm_model",
+                        lambda name: _StubModel())
+
+    c = _client(trace_root_two_callees)
+    _wait_cfg(c)
+    r = c.post("/api/dec/llm-call",
+               json={"fn_id": "trace:F0", "model": "stub"})
+    assert r.status_code == 200, \
+        f"trace:F0 LLM raw regressed: {r.status_code} {r.text[:300]}"
+    body = r.json()
+    assert body["ok"] is True
+    assert body["error"] is None
+
+
+def test_dec_llm_call_accepts_sym_prefixed_id(trace_root_two_callees, monkeypatch):
+    """Regression cousin of the trace:F0 test for sym:<name>.
+
+    Same root cause class: sym:<name> resolves via _func_ir_from_cfg_name
+    which returns a FuncIR whose .id is "cfg:<name>" (the on-demand id).
+    Without canonical_id, build_fn_decompile_prompt would receive the raw
+    sym:<name> and fail to find it. canonical_id fixes that.
+    """
+    class _StubResult:
+        error = None
+        model = "stub"
+        c_code = "int g(){}"
+        prompt_tokens = 1
+        output_tokens = 1
+        latency_ms = 1
+
+    class _StubModel:
+        def call(self, user, system=None, max_tokens=4096):
+            return _StubResult()
+
+    import viewer.decompiler
+    monkeypatch.setattr(viewer.decompiler, "make_llm_model",
+                        lambda name: _StubModel())
+
+    c = _client(trace_root_two_callees)
+    _wait_cfg(c)
+    # Drive split_top_k=1 so f_alpha / f_beta land in the symbol-source
+    # path (not trace-ir top-K).
+    j = c.get("/api/dec/summary",
+              params={"split_top_k": 1, "split_min_records": 1}).json()
+    sym_fns = [f for f in j["fns"] if f["source"] == "symbol"]
+    if not sym_fns:
+        # Hand-build one if the fixture happens to fully cover everything.
+        sym_id = "sym:f_alpha"
+    else:
+        sym_id = sym_fns[0]["id"]
+    r = c.post("/api/dec/llm-call",
+               json={"fn_id": sym_id, "model": "stub",
+                     "split_top_k": 1, "split_min_records": 1})
+    # 200 on resolved sym; if the fixture's FuncIR has no matching CFG
+    # block (defensive 404) accept that — but explicitly disallow 400
+    # which would mean the canonical-id wiring is broken again.
+    assert r.status_code in (200, 404), \
+        f"sym:* LLM raw regressed: {r.status_code} {r.text[:300]}"
+    if r.status_code == 200:
+        assert r.json()["ok"] is True
+
+
 def test_dec_fn_resolves_when_bg_cfg_not_ready(trace_root_two_callees):
     """sym:<name> resolution must not block on /api/cfg readiness.
 

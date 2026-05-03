@@ -10,14 +10,61 @@
 
 # 进度概览
 
-## ✅ 已完成 (2026-05-03 — FunctionIndex / Web Refactor)
+## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
 
-P0: unified `/api/functions` FunctionIndex shared by Functions panel, CFG,
-HLIL, and Decompile. Stable ids `trace:F0` / `sym:<name>` / `bn:<addr>`.
-Legacy `F0` and `cfg:<name>` keep resolving via `viewer.function_index.parse_id`.
-Decompile no longer blocks on background CFG (sync fallback pinned by test).
-Plan + handoff: `docs/superpowers/plans/2026-05-03-function-index-refactor.md`,
-`REFACTOR_HANDOFF.md`. **807 passed / 10 skipped / 0 failed** on full suite.
+**已落地**: `viewer.function_index` 模块, `/api/functions` 端点, `trace:F0` / `sym:<name>`
+稳定 id, 老 `F0` / `cfg:<name>` 兼容, Decompile 不再卡 BG CFG (sync fallback 测试钉住),
+前端 Functions 面板改吃 `/api/functions`. **807 passed / 10 skipped / 0 failed**.
+
+**未达成**(独立审查发现, 见下面 P0-Next-FollowUp):
+
+1. `bn:<addr>` 仅模型层支持, **`/api/functions` 不枚举 BN 函数**
+   (`_build_function_index` 不传 `bn_funcs`, `counts.bn` 永远 0).
+2. 前端 HLIL tab 仍按 cursor PC 查 `/api/hlil-for-pc`, **没消费 `/api/hlil-for-fn`**.
+   FunctionIndex 不是 HLIL 的 canonical source.
+3. LLIL `scope=body` 只对 `trace:F0` 生效 (root trace view), UI 文案没说清楚.
+
+**已修(本节追加)**:
+
+- `_resolve_dec_fn` 改返回 `(fn, canonical_id)`, 调 `top.fn()` / `build_fn_decompile_prompt()`
+  用 canonical id; 之前默认选 `trace:F0` 点 LLM raw 必挂 (HTTP 400, KeyError).
+- 前端 LLM raw cache key 加 `split_top_k` / `split_min_records` (改参数后不复用旧 cache).
+
+| # | 项 | commit |
+|---|---|---|
+| T0 | refactor(web) handoff baseline — BN HLIL cap + LLIL scope + dec sym-fn fallback | 649a67b |
+| T0+ | fix(web) baseline review — non-mutating llm-call + source-tag align + cfg sync | fba791d |
+| T1 | test(fixture) trace_root_two_callees — root calls f_alpha + f_beta | 8a8cae6 |
+| T2 | test(web) pin equivalence snapshots before refactor | 3472c11 |
+| T3 | feat(viewer) FunctionIndex — unified fn model for web/cli/sdk | b28eb1c |
+| T3+ | fix(viewer) FunctionIndex polish — strict parse_id, drop private call | 5b7ce93 |
+| T4 | feat(web) GET /api/functions — unified FunctionIndex endpoint | ca7f66c |
+| T5 | feat(web) dec endpoints migrate to prefixed fn ids | f09c265 |
+| T6 | feat(web ui) Functions panel + Decompile consume /api/functions | 3708e06 |
+| T7 | test(web) pin dec/fn sync-CFG fallback — sym:* must not block on BG | 456aaa0 |
+| T8 | feat(web) /api/hlil-for-fn — FunctionIndex-keyed HLIL lookup (端点已开, 前端未接) | 62af3ec |
+
+(再加 T9 / 修复 commit 见 git log)
+
+---
+
+# P0-Next-FollowUp — FunctionIndex 真正全量统一
+
+> 上一轮宣称"完成", 实际只覆盖 trace:* + sym:*. 这三项做完才算真正符合
+> 设计文档 ("/api/functions canonical source across Functions / CFG / HLIL / Decompile").
+
+- **F1**: `_build_function_index` 在 `DECOMP["status"] == "ready"` 时从 BN backend
+  枚举 functions 传入 `bn_funcs`. `_resolve_dec_fn` 加 `src == "bn"` 分支
+  (resolve 到 BN-backed FuncIR 或 fallback 到 HLIL). 加 `test_api_functions_includes_bn`
+  (BN-gated). 接入后 `counts.bn > 0` for `--so` 启动的 trace.
+- **F2**: 前端 HLIL tab 加 "follow function selection" 模式: 当 Functions 面板/Decompile
+  选中 fn 时自动调 `/api/hlil-for-fn` 而不是按 cursor PC. 至少 Functions 面板
+  双击/右键给 "在 HLIL 里看" 选项.
+- **F3**: LLIL `scope=body` 通用化到任意 fn (用 calltree per-frame range),
+  stats 加 `body_only_applied: bool` 让前端区分 "无 callee 排除" vs
+  "filter 不适用此 fn". 或保持现状但 UI 文案改成 "Body only (root only)".
+
+合入门槛: F1 + F2 + F3 任一项实现就更新本节, 或写明 deferred reason.
 
 | # | 项 | commit |
 |---|---|---|

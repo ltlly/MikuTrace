@@ -2641,7 +2641,12 @@ async function runDecLlmCall() {
   const useMem = $("dec-vm-mem").checked;
   const lang = $("dec-zh").checked ? "zh" : "en";
   const tier = $("dec-tier").value || "hot";
-  const cacheKey = `${DEC_SELECTED_FN}|${model}|${lang}|${useMem}|${tier}`;
+  // split_top_k / split_min_records change which fns get split into trace-ir
+  // and thus the IR/markdown the LLM sees — must be in the cache key or
+  // the user can hit a stale result after changing these.
+  const splitK = parseInt(($("dec-split-k") && $("dec-split-k").value) || "40", 10);
+  const splitMin = parseInt(($("dec-split-min") && $("dec-split-min").value) || "10", 10);
+  const cacheKey = `${DEC_SELECTED_FN}|${model}|${lang}|${useMem}|${tier}|${splitK}|${splitMin}`;
   const out = $("dec-output");
   // client cache 命中 → 不重发, 省 token
   if (DEC_CACHE[cacheKey]) {
@@ -2661,8 +2666,8 @@ async function runDecLlmCall() {
         with_memshadow: useMem,
         lang: lang,
         tier: tier,
-        split_top_k: parseInt(($("dec-split-k") && $("dec-split-k").value) || "40", 10),
-        split_min_records: parseInt(($("dec-split-min") && $("dec-split-min").value) || "10", 10),
+        split_top_k: splitK,
+        split_min_records: splitMin,
       }),
     }).then(r => r.json());
     r._client_ms = Date.now() - t0;

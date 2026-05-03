@@ -2675,23 +2675,34 @@ def make_app(trace_path: pathlib.Path,
     def _resolve_dec_fn(top, fn_id: str):
         """Resolve any of: trace:F0, sym:<name>, bn:<addr>, F0, cfg:<name>.
 
-        Returns the FuncIR (TraceIR fn or on-demand-built CFG fn) or None.
-        Routes by source via viewer.function_index.parse_id.
+        Returns (FuncIR, canonical_id) or (None, None).
+
+        canonical_id is the form that TopIR.fn() / build_fn_decompile_prompt()
+        actually accept — i.e. the FuncIR.id field, NOT the public prefixed id.
+        For trace:F0 -> "F0"; for sym:<name> -> the on-demand FuncIR's own id
+        (currently still "cfg:<name>" until Task 5 follow-up unifies that side).
+        Callers MUST pass canonical_id to any TopIR-aware downstream code,
+        or they'll re-trigger the trace:F0 -> top.fn() KeyError regression.
         """
         from viewer.function_index import parse_id
         try:
             src, payload = parse_id(fn_id)
         except ValueError:
-            return None
+            return None, None
         if src == "trace":
-            return top.fn(payload)
+            fn = top.fn(payload)
+            return (fn, payload) if fn is not None else (None, None)
         if src == "sym":
             try:
-                return _func_ir_from_cfg_name(payload)
+                fn = _func_ir_from_cfg_name(payload)
             except HTTPException:
-                return None
+                return None, None
+            # _func_ir_from_cfg_name currently sets FuncIR.id to "cfg:<name>"
+            # via _cfg_func_id-equivalent inline construction. canonical_id
+            # is whatever id it actually used.
+            return fn, fn.id
         # src == "bn": dec route does not yet wire BN-sourced fns
-        return None
+        return None, None
 
     @app.get("/api/functions", response_model=FunctionIndexResponse)
     def functions_index():
@@ -2771,9 +2782,10 @@ def make_app(trace_path: pathlib.Path,
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
-        fn = _resolve_dec_fn(top, fn_id)
+        fn, _canonical = _resolve_dec_fn(top, fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
+        # render_func_md takes a FuncIR directly; no canonical_id round-trip needed here.
         return {"fn_id": fn_id, "name": fn.name, "tier": tier,
                 "markdown": render_func_md(fn, tier=tier)}
 
@@ -2817,11 +2829,13 @@ def make_app(trace_path: pathlib.Path,
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
-        fn = _resolve_dec_fn(top, fn_id)
+        fn, canonical_id = _resolve_dec_fn(top, fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
 
         # server-side LLM 输出 cache. key 含所有可能影响输出的参数.
+        # NOTE: cache key uses public fn_id (caller-stable). canonical_id is
+        # used only to feed TopIR-aware code below.
         cache_key = ("dec_llm_out", fn_id, model_name, lang, tier,
                      with_memshadow, hk, max_tokens, split_top_k,
                      split_min_records)
@@ -2830,13 +2844,18 @@ def make_app(trace_path: pathlib.Path,
             return {**cached, "cache_hit": True}
 
         try:
-            if top.fn(fn_id) is None:
+            # build_fn_decompile_prompt and TopIR.fn() only know about FuncIR.id
+            # values, not the public prefixed forms. Use canonical_id so a
+            # caller passing trace:F0 / sym:foo doesn't trip a KeyError inside
+            # llm_bundle.py:154 (which would surface as HTTP 400).
+            if top.fn(canonical_id) is None:
                 # Don't mutate the cached top — build a per-request view.
                 import dataclasses
                 top_view = dataclasses.replace(top, fns=list(top.fns) + [fn])
             else:
                 top_view = top
-            bundle = build_fn_decompile_prompt(top_view, fn_id, tier=tier, lang=lang)
+            bundle = build_fn_decompile_prompt(top_view, canonical_id,
+                                               tier=tier, lang=lang)
             model = make_llm_model(model_name)
         except KeyError as e:
             raise HTTPException(400, f"{e}")
@@ -2898,7 +2917,7 @@ def make_app(trace_path: pathlib.Path,
                           with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
-        fn = _resolve_dec_fn(top, fn_id)
+        fn, _canonical = _resolve_dec_fn(top, fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
 
