@@ -14,7 +14,7 @@ struct Cli {
     #[arg(long, default_value_t = 18900)]
     port: u16,
     /// Bind host.
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "0.0.0.0")]
     host: String,
 }
 
