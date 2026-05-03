@@ -389,7 +389,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 
 | Python module | v2 home | Status | Note |
 |---|---|---|---|
-| `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | 🟡 M1: TraceMeta done; full Trace mmap M2 | memmap2 + bytemuck zero-copy |
+| `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | ✅ M2-α | memmap2 + bytemuck zero-copy; 15 unit/integration tests + scripts/m2_alpha_parity.py |
 | `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | 🔜 M2 | capstone-rs |
 | `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | 🔜 M2 | rayon-parallel build |
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | 🔜 M2 | petgraph |
