@@ -12,4 +12,5 @@
 pub mod disasm;
 pub mod index;
 pub mod prelude;
+pub mod symbols;
 pub mod trace;
