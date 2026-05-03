@@ -133,3 +133,78 @@ fn classifier_beep_not_a_branch() {
     assert!(!is_branch_mnem("bx")); // not present in ARM64 (it's ARM32)
     assert!(is_branch_mnem("br")); // explicit set
 }
+
+// ── regs_access (def/use) — Task 2 ─────────────────────────────────────────
+
+#[test]
+fn decode_extracts_regs_def_use_for_mov() {
+    // mov x0, x1 → 0xaa0103e0
+    let d = raw_decode(0x100000, 0xaa0103e0);
+    assert!(
+        d.regs_def.contains(&"x0".to_string()),
+        "mov x0, x1 must def x0; got defs={:?}",
+        d.regs_def
+    );
+    assert!(
+        d.regs_use.contains(&"x1".to_string()),
+        "mov x0, x1 must use x1; got uses={:?}",
+        d.regs_use
+    );
+}
+
+#[test]
+fn decode_cmp_writes_only_nzcv() {
+    // cmp x0, x1 → 0xeb01001f (subs xzr, x0, x1)
+    let d = raw_decode(0x100000, 0xeb01001f);
+    assert!(
+        d.regs_def == vec!["nzcv".to_string()] || d.regs_def.is_empty(),
+        "cmp must NOT def operand register; got defs={:?}",
+        d.regs_def
+    );
+    let uses_set: std::collections::HashSet<&String> = d.regs_use.iter().collect();
+    assert!(
+        uses_set.contains(&"x0".to_string()),
+        "cmp must use x0; got uses={:?}",
+        d.regs_use
+    );
+    assert!(
+        uses_set.contains(&"x1".to_string()),
+        "cmp must use x1; got uses={:?}",
+        d.regs_use
+    );
+}
+
+#[test]
+fn decode_w_alias_normalized_to_x() {
+    // mov w0, w1 → 0x2a0103e0 (32-bit reg variant; capstone reports w0/w1)
+    let d = raw_decode(0x100000, 0x2a0103e0);
+    assert!(
+        d.regs_def.contains(&"x0".to_string()),
+        "w0 alias must normalize to x0; got defs={:?}",
+        d.regs_def
+    );
+    assert!(
+        d.regs_use.contains(&"x1".to_string()),
+        "w1 alias must normalize to x1; got uses={:?}",
+        d.regs_use
+    );
+    assert!(
+        !d.regs_def.contains(&"w0".to_string()),
+        "raw w0 must not appear in defs (post-normalize)"
+    );
+}
+
+#[test]
+fn decode_nop_has_empty_regs() {
+    let d = raw_decode(0x100000, 0xd503201f);
+    assert!(
+        d.regs_def.is_empty(),
+        "nop has no def, got {:?}",
+        d.regs_def
+    );
+    assert!(
+        d.regs_use.is_empty(),
+        "nop has no use, got {:?}",
+        d.regs_use
+    );
+}
