@@ -74,3 +74,62 @@ fn decodes_unknown_bytes_yields_bad() {
         d.mnemonic
     );
 }
+
+// ── Classifier sweep ───────────────────────────────────────────────────────
+
+use tracemiku_core::disasm::classify::{is_branch_mnem, is_call_mnem, is_ret_mnem};
+
+#[test]
+fn classifier_branch_set() {
+    for m in [
+        "b", "bl", "br", "blr", "ret", "cbz", "cbnz", "tbz", "tbnz", "b.eq", "b.ne", "b.gt",
+        "b.lt", "b.al",
+    ] {
+        assert!(is_branch_mnem(m), "{m} should be a branch");
+    }
+}
+
+#[test]
+fn classifier_call_set() {
+    for m in ["bl", "blr"] {
+        assert!(is_call_mnem(m), "{m} should be a call");
+    }
+    for m in ["b", "br", "ret", "cbz", "b.eq"] {
+        assert!(!is_call_mnem(m), "{m} should NOT be a call");
+    }
+}
+
+#[test]
+fn classifier_ret_set() {
+    assert!(is_ret_mnem("ret"));
+    for m in ["b", "bl", "br", "blr", "cbz", "b.eq"] {
+        assert!(!is_ret_mnem(m), "{m} should NOT be a ret");
+    }
+}
+
+#[test]
+fn classifier_negatives() {
+    for m in ["nop", "mov", "add", "sub", "ldr", "str", "cmp", "beep"] {
+        // "beep" must NOT match starts_with("b.") — verify the "." matters
+        let expected_branch = m.starts_with("b.")
+            || matches!(
+                m,
+                "b" | "bl" | "br" | "blr" | "ret" | "cbz" | "cbnz" | "tbz" | "tbnz"
+            );
+        assert_eq!(
+            is_branch_mnem(m),
+            expected_branch,
+            "branch classify of {m:?}"
+        );
+    }
+}
+
+#[test]
+fn classifier_beep_not_a_branch() {
+    // Regression: ensure starts_with("b.") doesn't accidentally match "beep" or "br"
+    // (br is in the explicit set; "beep" must be false).
+    assert!(!is_branch_mnem("beep"));
+    assert!(!is_branch_mnem("blob"));
+    assert!(!is_branch_mnem("bx")); // not present in ARM64 (it's ARM32)
+    assert!(is_branch_mnem("br")); // explicit set
+}
