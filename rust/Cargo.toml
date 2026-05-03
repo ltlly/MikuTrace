@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tracemiku-core",
+    "crates/tracemiku-server",
+    "crates/tracemiku-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["traceMiku contributors"]
+
+[workspace.dependencies]
+# Shared deps; pinned at workspace level so all crates use the same version.
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+clap = { version = "4", features = ["derive"] }
+memmap2 = "0.9"
+bytemuck = { version = "1", features = ["derive"] }
+# Internal
+tracemiku-core = { path = "crates/tracemiku-core" }
+
+[profile.dev]
+opt-level = 1     # debug builds are still fast on mmap workloads
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
