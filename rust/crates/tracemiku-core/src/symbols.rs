@@ -60,6 +60,12 @@ impl SymbolMap {
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
     }
+
+    /// Iterate over `(start_pc, name)` pairs in sorted order.
+    /// Caller must have called `freeze()`.
+    pub fn iter_functions(&self) -> impl Iterator<Item = (u64, String)> + '_ {
+        self.functions.iter().map(|(pc, name)| (*pc, name.clone()))
+    }
 }
 
 /// Build a SymbolMap from per-call meta.json::known_offsets and run-meta

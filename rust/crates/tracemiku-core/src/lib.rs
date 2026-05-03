@@ -11,6 +11,7 @@
 
 pub mod cfg;
 pub mod disasm;
+pub mod function_index;
 pub mod index;
 pub mod prelude;
 pub mod symbols;

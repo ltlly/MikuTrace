@@ -1,0 +1,172 @@
+//! Unified FunctionIndex consumed by the SPA Functions panel and CLI.
+//!
+//! Direct port of viewer/function_index.py. Stable id format:
+//!   - `trace:F0` / `trace:F1` / ...
+//!   - `sym:<name>`
+//!   - `bn:<hex_addr>`
+//!
+//! Legacy aliases the parser still accepts:
+//!   - bare `F0` → ("trace", "F0")
+//!   - `cfg:<name>` → ("sym", "<name>")
+
+use serde::Serialize;
+
+const TRACE_PREFIX: &str = "trace:";
+const SYM_PREFIX: &str = "sym:";
+const BN_PREFIX: &str = "bn:";
+const LEGACY_CFG_PREFIX: &str = "cfg:";
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("empty fn_id")]
+    Empty,
+    #[error("empty {0} payload: {1:?}")]
+    EmptyPayload(&'static str, String),
+    #[error("bn payload is not valid hex: {0:?}")]
+    BnNotHex(String),
+    #[error("unrecognized fn_id: {0:?}")]
+    Unrecognized(String),
+}
+
+pub fn parse_id(fn_id: &str) -> Result<(String, String), ParseError> {
+    if fn_id.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    if let Some(payload) = fn_id.strip_prefix(TRACE_PREFIX) {
+        if payload.is_empty() {
+            return Err(ParseError::EmptyPayload("trace", fn_id.to_string()));
+        }
+        return Ok(("trace".to_string(), payload.to_string()));
+    }
+    if let Some(payload) = fn_id.strip_prefix(SYM_PREFIX) {
+        if payload.is_empty() {
+            return Err(ParseError::EmptyPayload("sym", fn_id.to_string()));
+        }
+        return Ok(("sym".to_string(), payload.to_string()));
+    }
+    if let Some(payload) = fn_id.strip_prefix(BN_PREFIX) {
+        if payload.is_empty() {
+            return Err(ParseError::EmptyPayload("bn", fn_id.to_string()));
+        }
+        let hex_part = payload.trim_start_matches("0x").trim_start_matches("0X");
+        u64::from_str_radix(hex_part, 16).map_err(|_| ParseError::BnNotHex(fn_id.to_string()))?;
+        return Ok(("bn".to_string(), payload.to_string()));
+    }
+    if let Some(payload) = fn_id.strip_prefix(LEGACY_CFG_PREFIX) {
+        if payload.is_empty() {
+            return Err(ParseError::EmptyPayload("cfg", fn_id.to_string()));
+        }
+        return Ok(("sym".to_string(), payload.to_string()));
+    }
+    if let Some(rest) = fn_id.strip_prefix('F') {
+        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(("trace".to_string(), fn_id.to_string()));
+        }
+    }
+    Err(ParseError::Unrecognized(fn_id.to_string()))
+}
+
+pub fn make_trace_id(trace_ir_id: &str) -> String {
+    format!("{TRACE_PREFIX}{trace_ir_id}")
+}
+
+pub fn make_sym_id(name: &str) -> String {
+    format!("{SYM_PREFIX}{name}")
+}
+
+pub fn make_bn_id(addr: u64) -> String {
+    format!("{BN_PREFIX}{addr:#x}")
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionEntry {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub entry_pc: Option<u64>,
+    pub blocks: u32,
+    pub records: u64,
+    pub trace_ir_id: Option<String>,
+    pub bn_start: Option<u64>,
+    pub can_llil: bool,
+    pub can_bn_hlil: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct FunctionIndex {
+    pub entries: Vec<FunctionEntry>,
+}
+
+impl FunctionIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn by_id(&self, fn_id: &str) -> Option<&FunctionEntry> {
+        let (src, payload) = parse_id(fn_id).ok()?;
+        match src.as_str() {
+            "trace" => self.entries.iter().find(|e| {
+                e.source == "trace-ir" && e.trace_ir_id.as_deref() == Some(payload.as_str())
+            }),
+            "sym" => self
+                .entries
+                .iter()
+                .find(|e| e.source == "symbol" && e.name == payload),
+            "bn" => {
+                let addr = u64::from_str_radix(
+                    payload.trim_start_matches("0x").trim_start_matches("0X"),
+                    16,
+                )
+                .ok()?;
+                self.entries
+                    .iter()
+                    .find(|e| e.source == "bn" && e.bn_start == Some(addr))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn by_name(&self, name: &str) -> Vec<&FunctionEntry> {
+        self.entries.iter().filter(|e| e.name == name).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Build a FunctionIndex from SymbolMap + optional CFG.
+/// M2-ε: only the symbol source is populated.
+pub fn build_from_symbols(
+    symbols: &crate::symbols::SymbolMap,
+    cfg: Option<&crate::cfg::CFG>,
+) -> FunctionIndex {
+    let mut entries = Vec::new();
+    for (pc, name) in symbols.iter_functions() {
+        let blocks = cfg
+            .map(|c| {
+                c.blocks()
+                    .iter()
+                    .filter(|b| b.start_pc >= pc && b.fn_name.as_deref() == Some(name.as_str()))
+                    .count() as u32
+            })
+            .unwrap_or(0);
+        entries.push(FunctionEntry {
+            id: make_sym_id(&name),
+            name: name.clone(),
+            source: "symbol".to_string(),
+            entry_pc: Some(pc),
+            blocks,
+            records: 0,
+            trace_ir_id: None,
+            bn_start: None,
+            can_llil: false,
+            can_bn_hlil: false,
+        });
+    }
+    FunctionIndex { entries }
+}
