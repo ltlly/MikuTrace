@@ -3,4 +3,6 @@
 //! Use `use tracemiku_core::prelude::*;` rather than reaching into
 //! submodules directly.
 
-pub use crate::trace::{CallInfo, MetaError, ModuleInfo, TraceMeta};
+pub use crate::trace::{
+    CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, REC_NUM_REGS, REC_SIZE,
+};
