@@ -1139,6 +1139,31 @@ class CallChainResponse(BaseModel):
     chain: list[CallChainEntry]
 
 
+# ── /api/functions (FunctionIndex) ──────────────────────────────────────────
+
+class FunctionEntrySchema(BaseModel):
+    """Single function entry from the unified FunctionIndex.
+
+    `entry_pc` and `bn_start` are raw integers (not hex strings) to match
+    the FunctionEntry dataclass shape; the frontend handles formatting.
+    """
+    id: str
+    name: str
+    source: Literal["trace-ir", "symbol", "bn"]
+    entry_pc: Optional[int] = None
+    blocks: int = 0
+    records: int = 0
+    trace_ir_id: Optional[str] = None
+    bn_start: Optional[int] = None
+    can_llil: bool = False
+    can_bn_hlil: bool = False
+
+
+class FunctionIndexResponse(BaseModel):
+    functions: list[FunctionEntrySchema]
+    counts: dict[str, int]
+
+
 # ── Backwards-compat aliases (server.py imports these names) ────────────────
 
 # Old single-name imports map to the Union types or specific models

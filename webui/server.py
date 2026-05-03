@@ -51,6 +51,7 @@ from webui.schemas import (
     JniEventsResponse, CallTreeResponse,
     HashFinalizeDetectAny, OllvmDetectResponse,
     ForkEventsResponse,
+    FunctionIndexResponse,
 )
 
 
@@ -2641,6 +2642,23 @@ def make_app(trace_path: pathlib.Path,
             exec_count=sum(1 for pc in pcs if block_idxs.get(pc)),
         )
 
+    def _build_function_index():
+        """Construct viewer.function_index.FunctionIndex from current state.
+
+        Pulls TraceIR top-K from the cached _get_dec_ir, the BG CFG when
+        ready (else builds synchronously via _cfg_pack_ready_or_build),
+        and the SymbolMap. BN-source enumeration is left empty; HLIL is
+        per-PC for now (see Task 8 for a follow-up bn:* lookup endpoint).
+        """
+        from viewer.function_index import build as _fi_build
+        top = _get_dec_ir(hooks_paths=(), with_memshadow=False,
+                          split_top_k=10, split_min_records=50)
+        try:
+            c, _, _ = _cfg_pack_ready_or_build()
+        except Exception:
+            c = None
+        return _fi_build(trace=t, sym=sym, top_ir=top, cfg=c)
+
     def _resolve_dec_fn(top, fn_id: str):
         fn = top.fn(fn_id)
         if fn is not None:
@@ -2649,6 +2667,22 @@ def make_app(trace_path: pathlib.Path,
         if cfg_name is not None:
             return _func_ir_from_cfg_name(cfg_name)
         return None
+
+    @app.get("/api/functions", response_model=FunctionIndexResponse)
+    def functions_index():
+        fi = _build_function_index()
+        out = []
+        counts = {"trace-ir": 0, "symbol": 0, "bn": 0}
+        for e in fi:
+            counts[e.source] = counts.get(e.source, 0) + 1
+            out.append({
+                "id": e.id, "name": e.name, "source": e.source,
+                "entry_pc": e.entry_pc, "blocks": e.blocks,
+                "records": e.records, "trace_ir_id": e.trace_ir_id,
+                "bn_start": e.bn_start,
+                "can_llil": e.can_llil, "can_bn_hlil": e.can_bn_hlil,
+            })
+        return {"functions": out, "counts": counts}
 
     @app.get("/api/dec/summary")
     def dec_summary(hooks: str = "", with_memshadow: bool = False,
