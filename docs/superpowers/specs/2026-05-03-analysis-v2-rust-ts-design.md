@@ -359,3 +359,205 @@ LLM-side `viewer/decompiler/llm_*.py` (prompt builder, model adapters) gets port
 - ❌ Backwards-compatible REST API (breaking changes OK; frontend updated together)
 - ❌ Long-running trace daemon mode (each `tracemiku-server` is per-trace)
 - ❌ MCP server (CLAUDE.md prohibits)
+
+## 13. Feature parity matrix
+
+Tracks every Python-side feature against v2 status. Status legend:
+
+- 🔜 **要做** — covered by v2 spec, not yet implemented
+- ✅ **已完成** — implemented and parity-tested in v2
+- ⏸ **延后** — post-cutover (M7+), optional add-on
+- ❌ **删除** — consciously dropped, no v2 replacement
+- ⛔ **不在范围** — capture-side or external, untouched
+
+Updated as milestones land. Initial state at design freeze: nothing implemented yet.
+
+### 13.1 Capture chain (out of scope, unchanged)
+
+| Component | Status | Note |
+|---|---|---|
+| `tracer/agent_cmodule_v5.js` | ⛔ | Frida CModule + SPSC ring + on-device gzip |
+| `tracer/agent_cmodule_v3.js` | ⛔ | Legacy IPC agent, kept for regression |
+| `tracer/agent_generic.js` | ⛔ | JS callout fallback |
+| `./tracemiku trace` (subcommand) | ⛔ | Stays Python; only Frida orchestration |
+| `./tracemiku finalize` | ⛔ | Per-call dir post-processing, capture side |
+| `vendor/frida-patched/` | ⛔ | Patched frida-server |
+| `tools/hooks/*.json` | ⛔ | JSON spec format frozen |
+
+### 13.2 viewer/ core modules
+
+| Python module | v2 home | Status | Note |
+|---|---|---|---|
+| `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | 🔜 M2 | memmap2 + bytemuck zero-copy |
+| `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | 🔜 M2 | capstone-rs |
+| `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | 🔜 M2 | rayon-parallel build |
+| `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | 🔜 M2 | petgraph |
+| `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
+| `taint.py` (forward/backward, --through-mem) | `tracemiku-core::taint` | 🔜 M2 | rayon-parallel |
+| `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | ⏸ | P1-A annotation, defer until real-trace need |
+| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | 🔜 M2 | bumped to `.memshadow.v3.bin` (D10) |
+| `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🔜 M2 | |
+| `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
+| `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | 🔜 M2 | reads per-call meta.json `known_offsets` |
+| `display.py` (pwndbg-style annotations) | frontend rendering | 🔜 M4 | moves to TS frontend; backend just emits structured tokens |
+| `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | 🔜 M2 | direct port; legacy `F0` / `cfg:` parser kept |
+| `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | 🔜 M2 | |
+| `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | 🔜 M3 | window-based scan |
+| `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | 🔜 M3 | confidence-scored, no decode |
+| `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
+| `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | 🔜 M3 | clap-based dispatcher |
+| `__init__.py` (Python SDK re-exports) | n/a | ❌ | M7 deletes; PyO3 binding only if future need |
+
+### 13.3 viewer/decompiler/ modules
+
+| Python module | v2 home | Status | Note |
+|---|---|---|---|
+| `backend.py` (FieldHint, Function, Variable dataclasses) | `tracemiku-core::decompiler::backend` | 🔜 M2 | |
+| `backends/binja.py` | BN python sidecar | 🔜 M6 | reused via JSON-RPC |
+| `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
+| `backends/none.py` | `tracemiku-core::decompiler::backend` | 🔜 M2 | trivial null backend |
+| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🔜 M3 | TraceIR construction |
+| `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
+| `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
+| `type_anchor.py` (JSON-spec → typed pointer hints) | `tracemiku-core::decompiler::type_anchor` | 🔜 M3 | reads `tools/hooks/*.json` |
+| `vm_candidate.py` (OLLVM VM detection) | `tracemiku-core::decompiler::vm_candidate` | 🔜 M3 | |
+| `llil/lift.py` (capstone → LLIL) | `tracemiku-core::llil::lift` | 🔜 M5 | capstone-rs feed |
+| `llil/ssa.py` (block-local SSA + cross-block phi) | `tracemiku-core::llil::ssa` | 🔜 M5 | including AAPCS64 caller-saved kill |
+| `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | 🔜 M5 | |
+| `llil/pass_dce.py` | `tracemiku-core::llil::pass_dce` | 🔜 M5 | |
+| `llil/pass_flag_elim.py` | `tracemiku-core::llil::pass_flag_elim` | 🔜 M5 | |
+| `llil/pass_typelat.py` | `tracemiku-core::llil::pass_typelat` | 🔜 M5 | |
+| `llil/pass_struct.py` | `tracemiku-core::llil::pass_struct` | 🔜 M5 | |
+| `llil/pass_var_unify.py` | `tracemiku-core::llil::pass_var_unify` | 🔜 M5 | |
+| `llil/pass_restructure.py` | `tracemiku-core::llil::pass_restructure` | 🔜 M5 | CFG → if/while/for |
+| `llil/pass_uidf.py` | `tracemiku-core::llil::pass_uidf` | 🔜 M5 | trace-truth value injection |
+| `llil/render.py` (HLIL pseudocode output) | `tracemiku-core::llil::render` | 🔜 M5 | C-pseudo formatter |
+
+### 13.4 CLI subcommands (`python -m viewer <cmd>` → `tracemiku-cli <cmd>`)
+
+| Subcommand | Status | Note |
+|---|---|---|
+| `stats` | 🔜 M3 | trace metadata JSON |
+| `records` | 🔜 M3 | window dump |
+| `search-pc`, `idxs-for-pc` | 🔜 M3 | PC search |
+| `search-asm` | 🔜 M3 | mnemonic substring search |
+| `taint-fwd`, `taint-bwd` | 🔜 M3 | rayon-parallel |
+| `data-chase` | 🔜 M3 | follow data flow |
+| `so-stats` | 🔜 M3 | per-SO record counts |
+| `last-write-of-addr` | 🔜 M3 | |
+| `find-mem-pattern` | 🔜 M3 | |
+| `mem-writes-in-range`, `mem-flow` | 🔜 M3 | |
+| `crypto-scan` | 🔜 M3 | 22 standard primitives |
+| `reg-at-idx` | 🔜 M3 | |
+| `call-chain` | 🔜 M3 | |
+| `hash-input-search` | 🔜 M3 | |
+| `diff-traces` | 🔜 M3 | |
+| `fork-events` | 🔜 M3 | reads agent fork_events |
+| `ollvm-detect-vm` | 🔜 M3 | |
+| `hash-finalize-detect` | 🔜 M3 | |
+| `auto-phase-detect` | 🔜 M3 | |
+| `jni-calls`, `jobj-history`, `jni-strings` | 🔜 M3 | reads jni_hooks.jsonl |
+| `mem-dump` | 🔜 M3 | |
+| `reg-timeline` | 🔜 M3 | |
+| `mem-diff` | 🔜 M3 | |
+| `fn-summary` | 🔜 M3 | |
+| `field-at` | 🔜 M3 | |
+| `export` (CSV/JSON dump) | ⏸ | Power-user; defer |
+| `dec` (LLM-assisted decompile, route B) | 🔜 M5 | uses llm_client |
+| `dec-bench` (multi-model benchmark) | ⏸ | Defer until base `dec` parity holds |
+| `view` (web subcommand wrapper) | 🔜 M7 | dispatcher to `tracemiku-server` |
+| `query` (ad-hoc Python eval) | ❌ | Replaced by `tracemiku-cli` typed subcommands |
+| `info` (per-call dir summary) | 🔜 M3 | |
+| `list` (list calls in trace dir) | 🔜 M3 | |
+
+### 13.5 REST API endpoints
+
+All listed in §5 plus this exhaustive map of every endpoint currently in `webui/server.py`:
+
+| Endpoint | Status | Note |
+|---|---|---|
+| `/api/meta` | 🔜 M1 | first end-to-end milestone |
+| `/api/records?from=&to=` | 🔜 M3 | |
+| `/api/record/{idx}` | 🔜 M3 | |
+| `/api/so-stats` | 🔜 M3 | |
+| `/api/cfg?fn=` | 🔜 M3 | |
+| `/api/cfg-svg` | 🔜 M3 | graphviz-rust |
+| `/api/block?pc=` | 🔜 M3 | |
+| `/api/block-for-pc` | 🔜 M3 | |
+| `/api/loops` | 🔜 M3 | |
+| `/api/backtrace` | 🔜 M3 | |
+| `/api/idxs-for-pc` | 🔜 M3 | |
+| `/api/idxs-for-block` | 🔜 M3 | |
+| `/api/idxs-touching-addr` | 🔜 M3 | |
+| `/api/idxs-touching-range` | 🔜 M3 | |
+| `/api/search` | 🔜 M3 | |
+| `/api/forward-taint` | 🔜 M3 | |
+| `/api/backward-taint` | 🔜 M3 | |
+| `/api/strings` | 🔜 M3 | needs MemShadow ready |
+| `/api/string-provenance` | 🔜 M3 | |
+| `/api/mem-dump` | 🔜 M3 | |
+| `/api/last-write-of-reg`, `/api/last-write-of-addr` | 🔜 M3 | |
+| `/api/reg-value-at`, `/api/reg-at-idx` | 🔜 M3 | |
+| `/api/data-chase` | 🔜 M3 | |
+| `/api/find-mem-pattern` | 🔜 M3 | |
+| `/api/mem-writes-in-range`, `/api/mem-flow` | 🔜 M3 | |
+| `/api/mem-diff` | 🔜 M3 | |
+| `/api/reg-timeline` | 🔜 M3 | |
+| `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings`, `/api/jni-events` | 🔜 M3 | reads jni_hooks.jsonl |
+| `/api/field-at` | 🔜 M3 | |
+| `/api/fn-summary` | 🔜 M3 | |
+| `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
+| `/api/call-tree` | 🔜 M3 | |
+| `/api/call-chain` | 🔜 M3 | |
+| `/api/fork-events` | 🔜 M3 | |
+| `/api/crypto-scan` | 🔜 M3 | |
+| `/api/ollvm-detect-vm` | 🔜 M3 | |
+| `/api/hash-finalize-detect`, `/api/hash-input-search` | 🔜 M3 | |
+| `/api/auto-phase-detect` | 🔜 M3 | |
+| `/api/diff-traces` | 🔜 M3 | |
+| `/api/functions` | 🔜 M3 | the FunctionIndex prize |
+| `/api/dec/summary`, `/api/dec/fn/{id}` | 🔜 M3 | TraceIR markdown |
+| `/api/dec/llm-call` | 🔜 M3 | |
+| `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
+| `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |
+| `/api/hlil-for-pc`, `/api/hlil-for-fn` | 🔜 M6 | BN sidecar |
+| `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | 🔜 M6 | BN sidecar |
+| `/api/bg-status` | ❌ | Replaced by `/ws/jobs` WebSocket (D6) |
+| `/api/decomp-status` | ❌ | Folded into `/ws/jobs` |
+| `/ws/jobs` | 🔜 M3 | new WebSocket endpoint |
+| `/openapi.json` | 🔜 M3 | utoipa-generated |
+
+### 13.6 Frontend panels (current `webui/app.js` tabs)
+
+| Panel | Position | Status | Note |
+|---|---|---|---|
+| Functions | left | 🔜 M4 | consumes `/api/functions` |
+| Backtrace | left | 🔜 M4 | |
+| Call Tree | left | 🔜 M4 | also right-bottom (current dual location collapses to one) |
+| Forks | left | 🔜 M4 | |
+| Strings | left | 🔜 M4 | |
+| Taint | left | 🔜 M4 | |
+| Cross Ref (xref) | left | 🔜 M4 | |
+| SO Filter | left | ⏸ | Multi-SO trace filter; rare path |
+| Settings | left | 🔜 M4 | |
+| Graph (CFG) | right | 🔜 M4 | SVG render |
+| Registers | right | 🔜 M4 | with smart deref |
+| HLIL | right | 🔜 M6 | needs BN sidecar |
+| Decompile | right | 🔜 M4 (raw) / M5 (LLIL) | TraceIR + LLM in M4; LLIL pipeline in M5 |
+| Memory | bottom | 🔜 M4 | hex dump + diff |
+| Call Tree (bottom view) | bottom | ⏸ | Duplicate of left-panel Call Tree; consolidate to one |
+| Navigation | bottom | ⏸ | Lightweight nav widget; rebuild post-cutover |
+| Trace for PC | bottom | 🔜 M4 | PC execution history |
+
+### 13.7 Tests + sidecars
+
+| Item | Status | Note |
+|---|---|---|
+| Python `tests/test_*.py` (815 tests) | ⛔ → ❌ | Reference during M2-M6; deleted at M7 |
+| `tests/conftest.py` (synth fixtures) | ⛔ → ❌ | Fixtures rewritten as Rust `tests/common/fixtures.rs` |
+| `traces/debug_minimal/` real-trace fixture | ⛔ | Filesystem-only; reused as M0 perf baseline + cargo integration test |
+| `.memshadow.v2.npz` sidecar | ❌ | Bumped to `.memshadow.v3.bin` (Rust-native binary) |
+| `tools/hooks/*.json` JNI/suicide/type-anchor specs | ⛔ | Format frozen, parsed by both old + new |
+| `examples/<so>/known_offsets.json` | ⛔ | Format frozen |
+| `examples/llm_cookbook.py` | ❌ | Python SDK demo; deleted at M7 |
+| `viewer/__init__.py` SDK Python re-exports | ❌ | M7 deletes; future Python access via PyO3 only on demand |
