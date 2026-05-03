@@ -109,3 +109,24 @@ def test_by_id_returns_none_for_unknown():
     assert fi.by_id("sym:nope") is None
     assert fi.by_id("bn:0xdead") is None
     assert fi.by_id("garbage") is None
+    # Bare F0 parses as trace:F0 but entries are empty → None
+    assert fi.by_id("F0") is None
+    # Legacy cfg: parses as sym: but entries are empty → None
+    assert fi.by_id("cfg:nope") is None
+
+
+def test_parse_id_rejects_empty_payloads():
+    from viewer.function_index import parse_id
+    for bad in ("sym:", "trace:", "bn:", "cfg:"):
+        with pytest.raises(ValueError):
+            parse_id(bad)
+
+
+def test_parse_id_rejects_non_hex_bn_payload():
+    from viewer.function_index import parse_id
+    with pytest.raises(ValueError):
+        parse_id("bn:notahex")
+    # Hex payloads with explicit '0x' prefix work
+    assert parse_id("bn:0x100") == ("bn", "0x100")
+    # Hex payloads without '0x' prefix also work (int(_, 16) handles both)
+    assert parse_id("bn:100") == ("bn", "100")

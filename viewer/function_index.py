@@ -49,18 +49,35 @@ def parse_id(fn_id: str) -> tuple[str, str]:
     """Return (source, payload).
 
     source ∈ {'trace', 'sym', 'bn'}; payload is the post-prefix string.
-    Raises ValueError on unrecognized strings.
+    Raises ValueError on unrecognized strings, empty payloads, or non-hex
+    bn: payloads.
     """
     if not fn_id:
         raise ValueError("empty fn_id")
     if fn_id.startswith(_TRACE_PREFIX):
-        return "trace", fn_id[len(_TRACE_PREFIX):]
+        payload = fn_id[len(_TRACE_PREFIX):]
+        if not payload:
+            raise ValueError(f"empty trace payload: {fn_id!r}")
+        return "trace", payload
     if fn_id.startswith(_SYM_PREFIX):
-        return "sym", fn_id[len(_SYM_PREFIX):]
+        payload = fn_id[len(_SYM_PREFIX):]
+        if not payload:
+            raise ValueError(f"empty sym payload: {fn_id!r}")
+        return "sym", payload
     if fn_id.startswith(_BN_PREFIX):
-        return "bn", fn_id[len(_BN_PREFIX):]
+        payload = fn_id[len(_BN_PREFIX):]
+        if not payload:
+            raise ValueError(f"empty bn payload: {fn_id!r}")
+        try:
+            int(payload, 16)
+        except ValueError:
+            raise ValueError(f"bn payload is not valid hex: {fn_id!r}")
+        return "bn", payload
     if fn_id.startswith(_LEGACY_CFG_PREFIX):
-        return "sym", fn_id[len(_LEGACY_CFG_PREFIX):]
+        payload = fn_id[len(_LEGACY_CFG_PREFIX):]
+        if not payload:
+            raise ValueError(f"empty cfg payload: {fn_id!r}")
+        return "sym", payload
     if fn_id[:1] == "F" and fn_id[1:].isdigit():
         return "trace", fn_id
     raise ValueError(f"unrecognized fn_id: {fn_id!r}")
@@ -73,6 +90,9 @@ class FunctionEntry:
     source: str          # "trace-ir" | "symbol" | "bn"
     entry_pc: Optional[int] = None
     blocks: int = 0
+    # Index span between fn entry and exit in the trace, *not* an exact
+    # record count — callees interrupt the span. Used as a rough size
+    # hint for prompt-token estimation in the UI.
     records: int = 0
     trace_ir_id: Optional[str] = None
     bn_start: Optional[int] = None
@@ -85,6 +105,8 @@ class FunctionIndex:
     entries: list[FunctionEntry] = field(default_factory=list)
 
     def by_id(self, fn_id: str) -> Optional[FunctionEntry]:
+        """Lookup by stable id. Returns None for unknown or malformed ids
+        (parse errors are swallowed; use parse_id() directly to validate)."""
         try:
             src, payload = parse_id(fn_id)
         except ValueError:
@@ -111,6 +133,8 @@ class FunctionIndex:
         return None
 
     def by_name(self, name: str) -> list[FunctionEntry]:
+        """All entries with this name. May contain >1 entry when two
+        TraceIR sub-fns share a symbol (legitimate weak-symbol case)."""
         return [e for e in self.entries if e.name == name]
 
     def __iter__(self) -> Iterable[FunctionEntry]:
@@ -159,7 +183,6 @@ def build(*, trace=None, sym=None, top_ir=None, cfg=None,
 
     # 2) symbol entries (with CFG block counts when cfg is given)
     if cfg is not None and sym is not None:
-        sym._ensure_sorted()
         block_count_by_name: dict[str, int] = {}
         first_pc_by_name: dict[str, int] = {}
         for pc in cfg.blocks:
@@ -183,7 +206,6 @@ def build(*, trace=None, sym=None, top_ir=None, cfg=None,
             ))
             seen_names.add(name)
     elif sym is not None:
-        sym._ensure_sorted()
         for pc, name in getattr(sym, "functions", []):
             if not name or name == "?" or name in seen_names:
                 continue
