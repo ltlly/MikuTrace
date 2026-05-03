@@ -95,3 +95,13 @@ fn app_state_eagerly_loads_function_index() {
     let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
     let _ = state.inner.function_index.len();
 }
+
+#[test]
+fn app_state_eagerly_loads_memshadow() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
+    // synth fixture has no stores → memshadow.bytes is empty but the field
+    // exists and is queryable.
+    let _ = state.inner.memshadow.bytes.len();
+    let _ = state.inner.memshadow.byte_at(0x7000, 1 << 60);
+}
