@@ -6,6 +6,8 @@
 pub mod cache;
 pub mod classify;
 pub mod decoder;
+pub mod regs;
 
 pub use cache::decode;
 pub use decoder::{raw_decode, DecodedInsn};
+pub use regs::normalize_disasm_reg;
