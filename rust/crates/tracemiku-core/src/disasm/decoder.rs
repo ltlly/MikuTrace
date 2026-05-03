@@ -10,6 +10,7 @@ use capstone::Capstone;
 use serde::Serialize;
 
 use crate::disasm::classify::{is_branch_mnem, is_call_mnem, is_ret_mnem};
+use crate::disasm::mem_op::{self, MemOp};
 use crate::disasm::regs::normalize_disasm_reg;
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,6 +26,9 @@ pub struct DecodedInsn {
     pub regs_def: Vec<String>,
     /// Registers read by this instruction, normalized to canonical names.
     pub regs_use: Vec<String>,
+    /// Memory operands. STP/LDP/STNP/LDNP are split into 2 contiguous halves
+    /// with per-half `src_reg`; other insns leave `src_reg` empty.
+    pub mem_op: Vec<MemOp>,
 }
 
 impl DecodedInsn {
@@ -39,6 +43,7 @@ impl DecodedInsn {
             is_ret: false,
             regs_def: Vec::new(),
             regs_use: Vec::new(),
+            mem_op: Vec::new(),
         }
     }
 }
@@ -230,6 +235,7 @@ pub fn raw_decode(pc: u64, inst: u32) -> DecodedInsn {
         let op_str = ins.op_str().unwrap_or("").to_string();
 
         let (regs_use, regs_def) = build_reg_accesses(&cs, ins, &mnem);
+        let mem_op = mem_op::extract(&cs, ins, &mnem);
 
         DecodedInsn {
             pc,
@@ -241,6 +247,7 @@ pub fn raw_decode(pc: u64, inst: u32) -> DecodedInsn {
             op_str,
             regs_def,
             regs_use,
+            mem_op,
         }
     })
 }

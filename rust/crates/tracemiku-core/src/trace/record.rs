@@ -45,6 +45,71 @@ impl Record {
             }
         }
     }
+
+    /// Symbolic register lookup tolerant of `xzr`/`wzr`/`w*` aliases. Used by
+    /// `addr_of` so MemOp consumers don't have to pre-normalize. Returns
+    /// `None` for unknown names, `Some(0)` for the zero registers, and the
+    /// 32-bit-masked value for `w0..w30`. Mirrors the lenient lookup the
+    /// Python `addr_of` does via `rec.reg(...) if reg in ALL_REGS else 0`.
+    pub fn reg_by_name(&self, name: &str) -> Option<u64> {
+        if name.is_empty() {
+            return None;
+        }
+        if name == "xzr" || name == "wzr" {
+            return Some(0);
+        }
+        if name == "sp" {
+            return Some(self.sp);
+        }
+        if name == "pc" {
+            return Some(self.pc);
+        }
+        if name == "fp" {
+            return Some(self.regs[29]);
+        }
+        if name == "lr" {
+            return Some(self.regs[30]);
+        }
+        // Handle x0..x30 and w0..w30 (with 32-bit mask for w-prefix).
+        let (rest, is_w) = if let Some(r) = name.strip_prefix('x') {
+            (r, false)
+        } else if let Some(r) = name.strip_prefix('w') {
+            (r, true)
+        } else {
+            return None;
+        };
+        let idx: usize = rest.parse().ok()?;
+        if idx > 30 {
+            return None;
+        }
+        let v = if idx == 31 {
+            // x31/w31 is sp on ARM64; not stored in `regs`. Defensive.
+            self.sp
+        } else {
+            self.regs[idx]
+        };
+        Some(if is_w { v & 0xffff_ffff } else { v })
+    }
+}
+
+impl Record {
+    /// Test/fixture helper: build an all-zero record with the given PC. Used
+    /// by mem_op addr_of tests to synthesize tiny fixtures without touching
+    /// disk. Public so integration tests under `tests/` can call it.
+    pub fn zero(pc: u64) -> Self {
+        let mut r = Self::zeroed();
+        r.pc = pc;
+        r
+    }
+
+    /// Test/fixture helper: set GPR slot `idx` (0..30 inclusive). Out-of-range
+    /// is silently ignored. Index mapping: 29 → fp, 30 → lr, anything else
+    /// → x{idx}.
+    pub fn set_gpr(&mut self, idx: usize, val: u64) {
+        if idx < REC_NUM_REGS {
+            self.regs[idx] = val;
+        }
+    }
 }
 
 #[cfg(test)]
