@@ -182,9 +182,11 @@ def test_dec_summary_includes_cfg_functions(trace_with_call_dir):
     assert symbol_fns or trace_fns
     fn_id = (symbol_fns or trace_fns)[0]["id"]
     if symbol_fns:
-        assert fn_id.startswith("cfg:")
+        # Migration: "cfg:<name>" -> "sym:<name>"; accept both forms.
+        assert fn_id.startswith("sym:") or fn_id.startswith("cfg:"), fn_id
     else:
-        assert fn_id.startswith("F")
+        # Migration: bare "F0" -> "trace:F0"; accept both forms.
+        assert fn_id.startswith("trace:F") or fn_id.startswith("F"), fn_id
     r = client.get(f"/api/dec/fn/{fn_id}").json()
     assert r["fn_id"] == fn_id
     assert "markdown" in r

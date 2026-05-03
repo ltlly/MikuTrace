@@ -2532,20 +2532,15 @@ def make_app(trace_path: pathlib.Path,
         cache[key] = top
         return top
 
-    def _cfg_func_id(name: str) -> str:
-        return "cfg:" + name
-
-    def _decode_cfg_func_id(fn_id: str) -> Optional[str]:
-        return fn_id[4:] if fn_id.startswith("cfg:") else None
-
     def _all_symbol_funcs() -> list[dict]:
         """Return all functions known from trace symbols, independent of CFG BG."""
+        from viewer.function_index import make_sym_id
         sym._ensure_sorted()
         out = []
         for pc, name in sym.functions:
             if not name or name == "?":
                 continue
-            out.append({"id": _cfg_func_id(name), "name": name,
+            out.append({"id": make_sym_id(name), "name": name,
                         "blocks": 0, "source": "symbol", "pc": pc})
         return out
 
@@ -2633,8 +2628,9 @@ def make_app(trace_path: pathlib.Path,
                 samples=samples, asm="\n".join(asm_lines),
                 tier="cold" if b.executions == 0 else "hot",
             ))
+        from viewer.function_index import make_sym_id
         return FuncIR(
-            id=_cfg_func_id(name), name=name, pc_start=min(pcs),
+            id=make_sym_id(name), name=name, pc_start=min(pcs),
             pc_end=max(c.blocks[pc].end_pc or pc for pc in pcs),
             entry_idx=min(first_idxs) if first_idxs else 0,
             exit_idx=max(last_idxs) if last_idxs else 0,
@@ -2660,12 +2656,24 @@ def make_app(trace_path: pathlib.Path,
         return _fi_build(trace=t, sym=sym, top_ir=top, cfg=c)
 
     def _resolve_dec_fn(top, fn_id: str):
-        fn = top.fn(fn_id)
-        if fn is not None:
-            return fn
-        cfg_name = _decode_cfg_func_id(fn_id)
-        if cfg_name is not None:
-            return _func_ir_from_cfg_name(cfg_name)
+        """Resolve any of: trace:F0, sym:<name>, bn:<addr>, F0, cfg:<name>.
+
+        Returns the FuncIR (TraceIR fn or on-demand-built CFG fn) or None.
+        Routes by source via viewer.function_index.parse_id.
+        """
+        from viewer.function_index import parse_id
+        try:
+            src, payload = parse_id(fn_id)
+        except ValueError:
+            return None
+        if src == "trace":
+            return top.fn(payload)
+        if src == "sym":
+            try:
+                return _func_ir_from_cfg_name(payload)
+            except HTTPException:
+                return None
+        # src == "bn": dec route does not yet wire BN-sourced fns
         return None
 
     @app.get("/api/functions", response_model=FunctionIndexResponse)
@@ -2693,24 +2701,30 @@ def make_app(trace_path: pathlib.Path,
         split_top_k: 升级前 K 个 callee 为独立 fn (UI 默认 40, 比 CLI 的 10 大).
         """
         from viewer.decompiler import render_summary_md
+        from viewer.function_index import make_trace_id, make_sym_id
         hk = tuple(s.strip() for s in hooks.split(",") if s.strip())
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
         fns = [
-            {"id": f.id, "name": f.name, "blocks": len(f.blocks),
+            {"id": make_trace_id(f.id), "name": f.name, "blocks": len(f.blocks),
              "loops": len(f.loops), "calls": len(f.calls),
              "type_anchors": len(f.type_anchors),
              "entry_idx": f.entry_idx, "exit_idx": f.exit_idx,
-             "source": "trace-ir"}
+             "source": "trace-ir", "trace_ir_id": f.id}
             for f in top.fns
         ]
         existing_names = {f["name"] for f in fns}
         for f in _cfg_funcs():
             if f["name"] in existing_names:
                 continue
-            fns.append({**f, "loops": 0, "calls": 0, "type_anchors": 0,
-                        "entry_idx": None, "exit_idx": None})
+            fns.append({
+                "id": make_sym_id(f["name"]),
+                "name": f["name"], "blocks": f["blocks"],
+                "loops": 0, "calls": 0, "type_anchors": 0,
+                "entry_idx": None, "exit_idx": None,
+                "source": "symbol",
+            })
         return {
             "records": top.records,
             "module_name": top.module_name,
@@ -2874,7 +2888,13 @@ def make_app(trace_path: pathlib.Path,
         scope_excluded_blocks = 0
         scope_excluded_records = 0
         fn_blocks = list(fn.blocks)
-        if scope == "body" and fn_id == "F0" and fn.blocks:
+        from viewer.function_index import parse_id
+        try:
+            _src, _payload = parse_id(fn_id)
+        except ValueError:
+            _src, _payload = "trace", fn_id
+        is_root_traceir = (_src == "trace" and _payload == "F0")
+        if scope == "body" and is_root_traceir and fn.blocks:
             tree = _build_call_tree(t)
             child_ranges = [
                 (int(c["enter_idx"]), int(c["exit_idx"]))

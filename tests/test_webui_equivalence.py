@@ -62,11 +62,14 @@ def test_api_dec_summary_includes_trace_and_symbol_sources(trace_root_two_callee
         by_source.setdefault(f["source"], []).append(f)
     assert "trace-ir" in by_source, by_source
     for f in by_source["trace-ir"]:
-        assert f["id"].startswith("F"), f["id"]
+        # Migration: bare "F0" -> "trace:F0"; both forms must remain
+        # parseable through viewer.function_index.parse_id.
+        assert f["id"].startswith("trace:F") or f["id"].startswith("F"), f["id"]
         assert f["entry_idx"] is not None
     if "symbol" in by_source:
         for f in by_source["symbol"]:
-            assert f["id"].startswith("cfg:"), f["id"]
+            # Migration: "cfg:<name>" -> "sym:<name>".
+            assert f["id"].startswith("sym:") or f["id"].startswith("cfg:"), f["id"]
 
 
 # ── /api/dec/fn/{id} ────────────────────────────────────────────────────────
