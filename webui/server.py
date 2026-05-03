@@ -1810,6 +1810,23 @@ def make_app(trace_path: pathlib.Path,
             "current_line_idx": cur_idx,
         }
 
+    @app.get("/api/hlil-for-fn")
+    def hlil_for_fn(fn_id: str):
+        """Resolve fn_id (FunctionIndex stable id) -> entry_pc, then HLIL.
+
+        Accepts trace:F0 / sym:<name> / bn:<addr> / legacy F0 / cfg:<name>.
+        Looks up the entry_pc via the unified index and delegates to the
+        existing hlil_for_pc machinery. 404 if the id is unknown; 400 if
+        the resolved entry has no entry_pc to feed the BN backend.
+        """
+        fi = _build_function_index()
+        entry = fi.by_id(fn_id)
+        if entry is None:
+            raise HTTPException(404, f"unknown fn_id {fn_id!r}")
+        if entry.entry_pc is None:
+            raise HTTPException(400, f"{fn_id!r} has no entry_pc")
+        return hlil_for_pc(pc=hex(entry.entry_pc))
+
     @app.get("/api/bn-cfg-svg-for-pc", response_model=BnCfgSvgResponse)
     def bn_cfg_svg_for_pc(pc: str, mode: str = "asm", timeout: int = 30):
         """SVG-rendered BN CFG with trace overlay coloring.

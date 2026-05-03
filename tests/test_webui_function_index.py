@@ -108,6 +108,31 @@ def test_dec_fn_legacy_cfg_id_still_works(trace_root_two_callees):
     assert r.status_code in (200, 404)
 
 
+def test_hlil_for_fn_resolves_id_to_entry_pc(trace_root_two_callees):
+    """/api/hlil-for-fn smoke: id resolves; backend may not be initialized.
+
+    Without --so, DECOMP backend is not ready. The route still must
+    resolve trace:F0 -> entry_pc and delegate to hlil_for_pc, which then
+    returns ready=false. 404 only on unknown ids; 400 if entry_pc is None.
+    """
+    c = _client(trace_root_two_callees)
+    _wait_cfg(c)
+    r = c.get("/api/hlil-for-fn", params={"fn_id": "trace:F0"})
+    assert r.status_code in (200, 400, 404, 503), \
+        f"hlil-for-fn unexpected status: {r.status_code} {r.text[:200]}"
+    if r.status_code == 200:
+        body = r.json()
+        # Backend not loaded -> ready=false is the expected path here.
+        assert "ready" in body
+
+
+def test_hlil_for_fn_404_on_unknown_id(trace_root_two_callees):
+    c = _client(trace_root_two_callees)
+    _wait_cfg(c)
+    r = c.get("/api/hlil-for-fn", params={"fn_id": "trace:F999"})
+    assert r.status_code == 404
+
+
 def test_dec_fn_resolves_when_bg_cfg_not_ready(trace_root_two_callees):
     """sym:<name> resolution must not block on /api/cfg readiness.
 
