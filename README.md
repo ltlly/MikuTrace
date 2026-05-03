@@ -257,6 +257,38 @@ trace.bin 物理格式 (272B/rec) 三种模式相同。
 
 ---
 
+## 自研 LLIL 反编译器 (路线 LLIL, 不靠 LLM)
+
+P2-DEC 的"机器折叠 → LLM 反编译"是 IR + LLM 路线; **P2-LLIL 是直接写
+反编译器** — BN/IDA 风格 LLIL 表达式树 + block-local SSA + UIDF (trace
+真值注入) + 8 主 pass + 多 extras, 输出 C-like pseudocode 不靠 LLM.
+长远目标: 这套工具直接 100% 复刻 x-sign 算法.
+
+入口: `viewer/decompiler/llil/`. Web SPA `/api/decompile?fn=…&pass=llil`
+渲染. 测试: `tests/test_llil_*.py` (~210 tests).
+
+**Pipeline**:
+
+```
+lift_arm64 (capstone) → ssa_block → constfold → dce → flag_elim
+  → typelat → struct_lat → var_unify → restructure → render_hlil
+extras: uidf (trace 真值), memshadow LOAD-fold, string deref
+```
+
+**已落地能力** (~30 commits, 共 747 tests pass):
+
+| 类别 | 内容 |
+|---|---|
+| **Lift (ARM64)** | ~80 op — arith/load/store/cmp/cbz/tbz/b/bl/ret/madd/msub/smull/umull/sxt*/uxt*/sdiv/udiv/ubfx/sbfx/mrs/adr/adrp/ROR/ROL/`[base, idx, lsl #shift]`/w-form 归一 |
+| **SSA** | block-local cur_versions/tag, AAPCS64 LLIL_CALL kill caller-saved + nzcv |
+| **UIDF** | trace 真值收 ObservedValues (单值/范围/多值), constfold env 注入 |
+| **Render** | prologue/epilogue 折叠, local var 命名 (sp/fp+offset → var_<reg>_<offset>), block ×N 注释, call args (x0..x3) + 返回值注释, ret 显示 `return x0_vN`, OLLVM 加密 string memshadow 解密 |
+| **Restructure** | CFG → if/while/for, indirect jump 走 cfg.succs |
+
+详见 TODO.md `P2-LLIL` 段, 设计 [`docs/trace-decompiler-il-design.md`](docs/trace-decompiler-il-design.md).
+
+---
+
 ## Web SPA (主分析入口)
 
 ```bash

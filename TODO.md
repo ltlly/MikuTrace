@@ -289,6 +289,64 @@ miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypas
 - 检测 ≠ 决定; 输出 confidence + reasons, 让 LLM 决
 - ollvmdet.py 是先例正例 ("NEVER decode VM bytecode")
 
+## P2-LLIL: 自研 BN-style 反编译器 (LLIL → SsaBlock → C-pseudo)
+
+**定位**: P2-DEC 的"机器折叠 → LLM 反编译"是 IR 路线; P2-LLIL 是**直接写
+反编译器**路线 — BN/IDA 风格 LLIL 表达式树 + block-local SSA + UIDF (trace
+真值注入) + 多 pass 优化, 输出 C-like pseudocode 不靠 LLM. 长远目标:
+**直接拿这套工具 100% 复刻 x-sign 算法**.
+
+**入口**: `viewer/decompiler/llil/`, webui `/api/decompile?fn=…&pass=llil`
+渲染到 SPA. 测试: `tests/test_llil_*.py` (~210 tests).
+
+**Pipeline (8 主 pass + 多 extras)**:
+
+```
+lift_arm64 (capstone) → ssa_block → constfold → dce → flag_elim
+  → typelat → struct_lat → var_unify → restructure → render_hlil
+extras: uidf (trace 真值), memshadow LOAD-fold, string deref
+```
+
+**Stage 完成情况**:
+
+| # | Stage | 测试 | 备注 |
+|---|---|---|---|
+| L0 | LlilExpr 表达式树 (BN 风格 op/size/operands/extra) | ✅ | 50+ op |
+| L1 | lift_arm64 (capstone, ~80 op) | ✅ | madd/msub/smull/umull/sxt*/uxt*/sdiv/udiv/ubfx/sbfx/mrs/adr/adrp/ROR/ROL/indexed-addressing/w-form 归一 |
+| L2 | block-local SSA (cur_versions / tag) | ✅ | 含 AAPCS64 call kill (caller-saved + nzcv) |
+| L3 | constfold + dce | ✅ | env-driven, uidf 可注入 const |
+| L4 | flag_elim (cmp+b.cond → IF(CMP_X)) | ✅ | |
+| L5 | typelat (基础类型推 + ptr) | ✅ | |
+| L6 | struct_lat (struct field 推断) | ✅ | |
+| L6.5 | var_unify (BN x_NN/arg_N/cs_xN 命名) | ✅ | |
+| L7 | restructure (CFG → if/while/for) | ✅ | indirect jump 走 cfg.succs |
+| L8 | render_hlil (C-pseudo 输出) | ✅ | prologue/epilogue 折叠, local var 命名, ×N exec_count, call args, ret return-value, string 解密, ROR/ROL 函数式 |
+| L1.5 | UIDF (trace 真值 → ObservedValues) | ✅ | SET_REG + CALL ret_x0 |
+
+**累计**: 30+ commits, ~210 LLIL tests + 27 webui pipeline tests, **共 747 tests pass**.
+
+**最近一轮 (2026-05-03 session, 8 commits)**:
+
+| # | commit | 内容 |
+|---|---|---|
+| 1 | b15f695 | render: memshadow string deref (OLLVM 加密 string 在 trace 中实际解密后 fold) |
+| 2 | 0e9f451 | lift fix: `_first_reg_token` 归一 wN/wzr → xN/xzr (cbz/tbz SSA 正确) |
+| 3 | 66dc32c | SSA: LLIL_CALL kill caller-saved (x0..x18, lr, nzcv per AAPCS64) |
+| 4 | 9c3ce78 | render fix: cur_versions 同步 SSA call-kill, post-call read 拿 return version |
+| 5 | fe566c5 | render: ret 显示 `return x0_vN` (AAPCS64 return value) |
+| 6 | d1fd621 | LLIL: 加 ROR/ROL — crypto round op (lift + render `_ror(x,n)`/`_rol(x,n)`) |
+| 7 | 8b3b712 | lift: indexed addressing `[base, idx, lsl #shift]` |
+| 8 | c6cf114 | UIDF + render: call return-value 注释 (trace ret_x0 → `// → x0=0xff`) |
+
+**P2-LLIL 下一步候选** (按优先级):
+- movk lift (现走 intrinsic, OLLVM 大常量构造常用)
+- mov w/x reg, w/x reg 的 size-aware 语义 (zero-extend semantics)
+- 跨 block SSA / phi 节点 (loop induction variable 完整支持)
+- float / SIMD lift (NEON 寄存器目前没记, 见已知限制)
+- 真机 BN HLIL 对比扫描 — 选 top-N `sub_*` 跑 viewer + BN 输出 diff
+- LLIL-level taint propagation (复用 SSA def-use)
+- 链 P2-DEC: LLIL 输出作为 LLM prompt 的 IR 层 (vs raw skeleton)
+
 ---
 
 # ❄ 暂不做 (deferred, 不是 cancel)
