@@ -10,6 +10,7 @@ pub use crate::function_index::{
     FunctionEntry, FunctionIndex,
 };
 pub use crate::index::{Index, MemRec};
+pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
 pub use crate::symbols::{build_from_trace, ModuleResolver, SymbolMap};
 pub use crate::trace::{
     CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, REC_NUM_REGS, REC_SIZE,
