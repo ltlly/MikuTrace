@@ -95,7 +95,6 @@ pub async fn records_handler(
         .module
         .as_ref()
         .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0));
-    let module_name: Option<&str> = inner.meta.module.as_ref().map(|m| m.name.as_str());
 
     let mut rows = Vec::with_capacity(end - q.start);
     for i in q.start..end {
@@ -111,13 +110,23 @@ pub async fn records_handler(
             }
             m
         });
+
+        // Symbol resolution (M2-γ): per-record func + off + module.
+        let module = inner.modules.resolve_name(r.pc);
+        let (func_name, func_off) = inner.symbols.lookup(r.pc);
+        let (func, off) = if func_name == "?" {
+            (None, None)
+        } else {
+            (Some(func_name), Some(format!("{func_off:#x}")))
+        };
+
         rows.push(RecordRow {
             idx: i,
             pc: format!("{:#x}", r.pc),
             rel,
-            module: module_name.map(|s| s.to_string()),
-            func: None,
-            off: None,
+            module,
+            func,
+            off,
             asm: format!("{} {}", d.mnemonic, d.op_str).trim().to_string(),
             annotation: None,
             exec_count: None,

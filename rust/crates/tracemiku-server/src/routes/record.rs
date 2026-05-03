@@ -55,12 +55,20 @@ pub async fn record_handler(
         }
     }
 
+    // Symbol resolution (M2-γ).
+    let (func_name, func_off) = inner.symbols.lookup(r.pc);
+    let (func, off) = if func_name == "?" {
+        (None, None)
+    } else {
+        (Some(func_name), Some(format!("{func_off:#x}")))
+    };
+
     Ok(Json(RecordDetail {
         idx,
         pc: format!("{:#x}", r.pc),
         rel,
-        func: None,
-        off: None,
+        func,
+        off,
         asm: format!("{} {}", d.mnemonic, d.op_str).trim().to_string(),
         regs,
     }))
