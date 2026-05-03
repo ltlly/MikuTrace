@@ -196,5 +196,15 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
         }
     }
 
+    // Tarjan SCC: assign scc_id to each block. Same-SCC blocks share an id.
+    let sccs = petgraph::algo::tarjan_scc(&cfg.graph);
+    for (id, scc) in sccs.iter().enumerate() {
+        for &node in scc {
+            if let Some(b) = cfg.graph.node_weight_mut(node) {
+                b.scc_id = id as u32;
+            }
+        }
+    }
+
     cfg
 }

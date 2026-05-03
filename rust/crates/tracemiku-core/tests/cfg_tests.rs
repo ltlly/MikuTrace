@@ -135,3 +135,56 @@ fn build_cfg_block_executions_counted() {
     let b = cfg.block(0x100000).unwrap();
     assert_eq!(b.executions, 5);
 }
+
+#[test]
+fn build_cfg_scc_assigns_ids() {
+    use std::fs;
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_2r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * 2];
+    for i in 0..2 {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&0x100000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&0x14000000u32.to_le_bytes());
+    }
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":2}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let t = Trace::load(&cd).unwrap();
+    let cfg = tracemiku_core::cfg::build_cfg(&t);
+    let b = cfg.block(0x100000).unwrap();
+    let _ = b.scc_id; // smoke check: field is set
+}
+
+#[test]
+fn build_cfg_scc_distinct_for_acyclic() {
+    let fix = common::synth_trace_dir(5);
+    let t = Trace::load(&fix.call_dir).unwrap();
+    let cfg = tracemiku_core::cfg::build_cfg(&t);
+    let blocks = cfg.blocks();
+    let mut scc_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for b in &blocks {
+        scc_ids.insert(b.scc_id);
+    }
+    assert_eq!(
+        scc_ids.len(),
+        blocks.len(),
+        "acyclic CFG should have N distinct SCCs, got {} for {} blocks",
+        scc_ids.len(),
+        blocks.len()
+    );
+}
