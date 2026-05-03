@@ -400,9 +400,9 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | 🔜 M2 | bumped to `.memshadow.v3.bin` (D10) |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
-| `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | 🟡 M2-δ: bl-target heuristic done; examples/<so>/known_offsets.json overlay M2-ε | merged into AppState symbols on load; static known_offsets win on collision |
+| `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | ✅ M2-ε | bl-target heuristic + examples/<so>/known_offsets.json overlay; merged into AppState symbols with priority: static > examples > auto |
 | `display.py` (pwndbg-style annotations) | frontend rendering | 🔜 M4 | moves to TS frontend; backend just emits structured tokens |
-| `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | 🔜 M2 | direct port; legacy `F0` / `cfg:` parser kept |
+| `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | ✅ M2-ε | direct port; legacy F0 / cfg: parser kept; 8 unit tests |
 | `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | 🔜 M2 | |
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | 🔜 M3 | window-based scan |
 | `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | 🔜 M3 | confidence-scored, no decode |
@@ -498,7 +498,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/strings` | 🔜 M3 | needs MemShadow ready |
 | `/api/string-provenance` | 🔜 M3 | |
 | `/api/mem-dump` | 🔜 M3 | |
-| `/api/last-write-of-reg`, `/api/last-write-of-addr` | 🔜 M3 | |
+| `/api/last-write-of-reg` | ✅ M2-ε | linear backward scan from idx; returns {idx, pc, value} |
+| `/api/last-write-of-addr` | 🔜 M3 | needs MemShadow |
 | `/api/reg-value-at`, `/api/reg-at-idx` | 🔜 M3 | |
 | `/api/data-chase` | 🔜 M3 | |
 | `/api/find-mem-pattern` | 🔜 M3 | |
@@ -517,7 +518,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/hash-finalize-detect`, `/api/hash-input-search` | 🔜 M3 | |
 | `/api/auto-phase-detect` | 🔜 M3 | |
 | `/api/diff-traces` | 🔜 M3 | |
-| `/api/functions` | 🔜 M3 | the FunctionIndex prize |
+| `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
 | `/api/dec/summary`, `/api/dec/fn/{id}` | 🔜 M3 | TraceIR markdown |
 | `/api/dec/llm-call` | 🔜 M3 | |
 | `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
@@ -533,7 +534,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 
 | Panel | Position | Status | Note |
 |---|---|---|---|
-| Functions | left | 🔜 M4 | consumes `/api/functions` |
+| Functions | left | ✅ M2-ε | source-tagged list, filter, select-to-cursor; consumes `/api/functions` |
 | Backtrace | left | 🔜 M4 | |
 | Call Tree | left | 🔜 M4 | also right-bottom (current dual location collapses to one) |
 | Forks | left | 🔜 M4 | |

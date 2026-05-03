@@ -35,7 +35,11 @@
 - M2-δ `tracemiku-core::cfg` (build_cfg + Block + Tarjan SCC via petgraph): ✅ 2026-05-04
 - M2-δ `tracemiku-core::symbols::auto_known_offsets` (bl-target heuristic): ✅ 2026-05-04
 - M2-δ `/api/cfg` + `/api/idxs-for-block`: ✅ 2026-05-04
-- M2-ε (final M2): MemShadow + Index mem ops + taint + calltree + FunctionIndex + decompiler::backend stub + Functions/Graph panels + examples/<so>/known_offsets.json overlay
+- M2-ε `tracemiku-core::function_index` + `/api/functions`: ✅ 2026-05-04
+- M2-ε `/api/last-write-of-reg`: ✅ 2026-05-04
+- M2-ε examples/<so>/known_offsets.json overlay: ✅ 2026-05-04
+- M2-ε frontend Functions panel (source-tagged list): ✅ 2026-05-04
+- M2-ζ (final M2, future session): MemShadow + Index mem ops + mem_op extraction + taint (forward + backward + cross-fn-call) + calltree + decompiler::backend stub + Graph panel SVG + final M2 parity gate + Python viewer cutover prep
 - M3-M7: 见 spec §9 milestones
 
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
