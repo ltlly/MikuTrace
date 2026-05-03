@@ -41,6 +41,12 @@ from .symbols import (
     auto_known_offsets,
 )
 
+# ── unified function index (web/CLI/SDK shared) ──
+from .function_index import (
+    FunctionIndex, FunctionEntry,
+    make_trace_id, make_sym_id, make_bn_id, parse_id,
+)
+
 # ── basic-block CFG reconstruction from trace ──
 from .cfg import (
     build_cfg, CFG, Block,
@@ -107,6 +113,9 @@ __all__ = [
     "find_sccs", "loop_sccs", "write_dot", "textual_summary",
     # index / mem / taint
     "Index", "MemShadow", "forward_taint", "backward_taint",
+    # function index
+    "FunctionIndex", "FunctionEntry",
+    "make_trace_id", "make_sym_id", "make_bn_id", "parse_id",
     # decompiler (static bridge)
     "make_backend",
     # trace decompiler (路线 B)
