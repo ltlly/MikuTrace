@@ -86,4 +86,33 @@ impl Trace {
     pub fn raw(&self) -> &[u8] {
         self.mmap.as_deref().unwrap_or(&[])
     }
+
+    /// Read record at index `i`. Panics if `i >= len()`.
+    ///
+    /// Zero-copy: bytemuck-casts the relevant 272-byte slice directly. The
+    /// returned `Record` is a stack-allocated value; mutating it does not
+    /// affect the mmap.
+    pub fn record(&self, i: usize) -> crate::trace::record::Record {
+        let off = i.checked_mul(REC_SIZE).expect("record index overflow");
+        let end = off
+            .checked_add(REC_SIZE)
+            .expect("record offset+size overflow");
+        let slice = &self.raw()[off..end];
+        // bytemuck::from_bytes verifies size + alignment at runtime.
+        *bytemuck::from_bytes::<crate::trace::record::Record>(slice)
+    }
+
+    /// Fast PC-only path. Avoids constructing a full `Record`. Useful for
+    /// scans where only PC matters (e.g. `idxs-for-pc`).
+    pub fn pc(&self, i: usize) -> u64 {
+        let off = i * REC_SIZE;
+        u64::from_le_bytes(self.raw()[off..off + 8].try_into().unwrap())
+    }
+
+    /// Fast inst-only path. Returns the raw 4-byte ARM64 little-endian
+    /// instruction word. Capstone will decode this in M2-β.
+    pub fn inst(&self, i: usize) -> u32 {
+        let off = i * REC_SIZE + 268;
+        u32::from_le_bytes(self.raw()[off..off + 4].try_into().unwrap())
+    }
 }
