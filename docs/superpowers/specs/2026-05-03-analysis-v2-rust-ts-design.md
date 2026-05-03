@@ -366,6 +366,7 @@ Tracks every Python-side feature against v2 status. Status legend:
 
 - 🔜 **要做** — covered by v2 spec, not yet implemented
 - ✅ **已完成** — implemented and parity-tested in v2
+- 🟡 **部分完成** — partially implemented in current milestone, rest deferred
 - ⏸ **延后** — post-cutover (M7+), optional add-on
 - ❌ **删除** — consciously dropped, no v2 replacement
 - ⛔ **不在范围** — capture-side or external, untouched
@@ -388,7 +389,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 
 | Python module | v2 home | Status | Note |
 |---|---|---|---|
-| `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | 🔜 M2 | memmap2 + bytemuck zero-copy |
+| `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | 🟡 M1: TraceMeta done; full Trace mmap M2 | memmap2 + bytemuck zero-copy |
 | `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | 🔜 M2 | capstone-rs |
 | `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | 🔜 M2 | rayon-parallel build |
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | 🔜 M2 | petgraph |
@@ -477,7 +478,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 
 | Endpoint | Status | Note |
 |---|---|---|
-| `/api/meta` | 🔜 M1 | first end-to-end milestone |
+| `/api/meta` | ✅ M1 | first end-to-end milestone — landed 2026-05-03 |
 | `/api/records?from=&to=` | 🔜 M3 | |
 | `/api/record/{idx}` | 🔜 M3 | |
 | `/api/so-stats` | 🔜 M3 | |
@@ -549,6 +550,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Call Tree (bottom view) | bottom | ⏸ | Duplicate of left-panel Call Tree; consolidate to one |
 | Navigation | bottom | ⏸ | Lightweight nav widget; rebuild post-cutover |
 | Trace for PC | bottom | 🔜 M4 | PC execution history |
+
+> **Note:** M1 added a placeholder `MetaPanel` (frontend/src/panels/meta/MetaPanel.tsx) as scaffolding to validate the end-to-end Vite/Solid/TS toolchain. It is not in the panel table above; it will be replaced by the proper layout in M4.
 
 ### 13.7 Tests + sidecars
 

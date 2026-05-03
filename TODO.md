@@ -10,6 +10,21 @@
 
 # 进度概览
 
+## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
+
+- 设计 spec: `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`
+- 实施 plan (M0+M1): `docs/superpowers/plans/2026-05-03-analysis-v2-m0-m1.md`
+- M0 perf baseline: `docs/superpowers/specs/2026-05-03-m0-perf-baseline.md` ✅
+- M0 LLIL diff spec: `docs/superpowers/specs/2026-05-03-llil-diff-spec.md` ✅
+- M0 /api/meta wire contract: `docs/superpowers/specs/2026-05-03-meta-endpoint-contract.md` ✅
+- M1 Rust workspace 3 crates: ✅
+- M1 tracemiku-core::trace::TraceMeta: ✅
+- M1 tracemiku-server::routes::meta /api/meta endpoint: ✅
+- M1 tracemiku-cli stats subcommand (placeholder): ✅
+- M1 frontend Vite + Solid + TS skeleton + MetaPanel: ✅
+- M1 e2e smoke (cargo run + npm run dev + browser /api/meta): ✅
+- M2-M7: 见 spec §9 milestones, plans 待写
+
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
 
 **已落地**: `viewer.function_index` 模块, `/api/functions` 端点, `trace:F0` / `sym:<name>`
