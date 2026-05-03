@@ -1,4 +1,11 @@
-import type { MetaResponse, RecordsResponse, RecordDetail, FunctionsResponse } from "./types";
+import type {
+  MetaResponse,
+  RecordsResponse,
+  RecordDetail,
+  FunctionsResponse,
+  StringsResponse,
+  MemDumpResponse,
+} from "./types";
 
 export async function fetchMeta(): Promise<MetaResponse> {
   const r = await fetch("/api/meta");
@@ -35,4 +42,19 @@ export async function fetchFunctions(): Promise<FunctionsResponse> {
   const r = await fetch("/api/functions");
   if (!r.ok) throw new Error(`/api/functions returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as FunctionsResponse;
+}
+
+export async function fetchStrings(minLen = 4, q = ""): Promise<StringsResponse> {
+  const params = new URLSearchParams({ min_len: String(minLen) });
+  if (q) params.set("q", q);
+  const r = await fetch(`/api/strings?${params}`);
+  if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
+  return (await r.json()) as StringsResponse;
+}
+
+export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpResponse> {
+  const params = new URLSearchParams({ addr, count: String(count) });
+  const r = await fetch(`/api/mem-dump?${params}`);
+  if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
+  return (await r.json()) as MemDumpResponse;
 }

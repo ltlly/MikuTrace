@@ -72,3 +72,34 @@ export interface FunctionsResponse {
   counts: Record<string, number>;
   functions: FunctionEntry[];
 }
+
+// ── /api/strings ─────────────────────────────────────────────────────────
+
+export interface StringEntry {
+  addr: string;       // "0x7000"
+  len: number;
+  str: string;
+}
+
+export interface StringsResponse {
+  status: string;     // "ready"
+  count: number;
+  cursor: number;     // -1 if no cursor filter
+  strings: StringEntry[];
+}
+
+// ── /api/mem-dump ────────────────────────────────────────────────────────
+
+export interface MemDumpByte {
+  addr: string;
+  byte: number | null;
+  kind: string;       // "r" | "w" | "x" | "??"
+  src_idx: number | null;
+}
+
+export interface MemDumpResponse {
+  status: string;
+  addr: string;
+  count: number;
+  bytes: MemDumpByte[];
+}
