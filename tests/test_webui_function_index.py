@@ -92,20 +92,23 @@ def test_dec_fn_legacy_F0_still_works(trace_root_two_callees):
 
 
 def test_dec_fn_legacy_cfg_id_still_works(trace_root_two_callees):
-    """Legacy 'cfg:<name>' must keep working through the migration."""
+    """Legacy 'cfg:<name>' must keep working through the migration.
+
+    parse_id maps cfg:<name> -> ("sym", name) and _resolve_dec_fn routes
+    that through _func_ir_from_cfg_name, which builds a FuncIR from any
+    name visible in the CFG (sym table). The synthetic fixture's named
+    fns are all CFG-visible, so cfg:f_root must 200.
+    """
     c = _client(trace_root_two_callees)
     _wait_cfg(c)
     fns = c.get("/api/functions").json()["functions"]
-    # Build a cfg:<name> id from any fn's name. The legacy alias should
-    # resolve, regardless of whether the underlying entry is trace-ir or
-    # symbol-sourced.
     target = fns[0]
     legacy = "cfg:" + target["name"]
     r = c.get(f"/api/dec/fn/{legacy}")
-    # Either 200 (resolves to the named entry) or 404 if the resolver
-    # only honors cfg:* for symbol-sourced fns. Both are acceptable
-    # provided we DON'T 500. Pin whichever the implementation gives.
-    assert r.status_code in (200, 404)
+    assert r.status_code == 200, f"legacy cfg:* must resolve: {r.status_code} {r.text[:200]}"
+    body = r.json()
+    assert body["fn_id"] == legacy
+    assert "markdown" in body
 
 
 def test_hlil_for_fn_resolves_id_to_entry_pc(trace_root_two_callees):

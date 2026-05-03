@@ -607,21 +607,6 @@ async function loadFunctionIndex(force = false) {
   return STATE.functionIndex;
 }
 
-function fnEntryById(fnId) {
-  if (!STATE.functionIndex) return null;
-  return (STATE.functionIndex.functions || []).find(f =>
-    f.id === fnId
-    || f.trace_ir_id === fnId
-    || ("cfg:" + f.name) === fnId
-    || ("sym:" + f.name) === fnId
-  );
-}
-
-function fnEntryByName(name) {
-  if (!STATE.functionIndex) return null;
-  return (STATE.functionIndex.functions || []).find(f => f.name === name);
-}
-
 // Event-delegated row click → setCursor. 替代 querySelectorAll().forEach(addEventListener)
 // 对每个 row 一个 listener — 5000 行 taint result 时省 5000 个 listener.
 // 同 container 重复调用安全 (用 _delegatedRowClick flag 去重).
