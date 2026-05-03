@@ -10,5 +10,6 @@
 #![warn(clippy::all)]
 
 pub mod disasm;
+pub mod index;
 pub mod prelude;
 pub mod trace;
