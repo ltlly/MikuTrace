@@ -140,8 +140,27 @@ def addr_of(rec: Record, mem_op_tuple) -> int:
 
 
 def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
-    """Load a trace from either a per-PID bin file or a session directory."""
-    p = pathlib.Path(trace_dir_or_file)
+    """Load a trace from either a per-PID bin file or a session directory.
+
+    支持 glob: 入参含 `*` / `?` / `[`. 0 个匹配 → FileNotFoundError;
+    多个匹配 → ValueError (列出候选, 让调用者明确选哪个).
+    SDK 文档示例 'traces/run1/calls/call_002_*' 走这里.
+    """
+    raw = str(trace_dir_or_file)
+    if any(c in raw for c in "*?["):
+        import glob as _glob
+        matches = sorted(_glob.glob(raw))
+        if not matches:
+            raise FileNotFoundError(f"no path matches glob: {raw}")
+        if len(matches) > 1:
+            raise ValueError(
+                f"glob {raw!r} matches {len(matches)} paths; pick one explicitly:\n  "
+                + "\n  ".join(matches[:10])
+                + ("\n  ..." if len(matches) > 10 else "")
+            )
+        p = pathlib.Path(matches[0])
+    else:
+        p = pathlib.Path(trace_dir_or_file)
     meta = TraceMeta()
     if p.is_file():
         bin_path = p

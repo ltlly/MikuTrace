@@ -2699,22 +2699,24 @@ def make_app(trace_path: pathlib.Path,
             cache["dec_cfg"] = cfg
 
         # 3. lift — 跑 fn 内的 PCs (block.insns 的 union)
-        fn_block_pcs = {b.pc for b in fn.blocks}
-        # 收集每个 fn block 内所有指令 PC 的 (pc, inst)
-        from viewer.disasm import decode as _dec
+        # 大 trace + hot fn (1000+ insns) 下, 之前 pc_array/inst_arr 在内层循环
+        # 每条指令重算一次 (np.frombuffer 每次 alloc), 现 hoist 到循环外 + 用
+        # np.unique(return_index=True) 一次拿到 first-hit map.
+        pc_arr = t.pc_array()
+        u32 = np.frombuffer(t._mm, dtype=np.uint32,
+                            count=t.n * (REC_SIZE // 4))
+        inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]
+        unique_pcs, first_idxs = np.unique(pc_arr, return_index=True)
+        pc_to_first: dict[int, int] = dict(
+            zip(unique_pcs.tolist(), first_idxs.tolist()))
+
         items: list = []
         for b in fn.blocks:
             cfgblk = cfg.blocks.get(b.pc)
             if cfgblk is None: continue
             for ins_pc in cfgblk.insns:
-                # 找 inst — 用 pc_arr first hit
-                pc_arr = t.pc_array()
-                u32 = np.frombuffer(t._mm, dtype=np.uint32,
-                                    count=t.n * (REC_SIZE // 4))
-                inst_arr = u32[REC_SIZE // 4 - 1::REC_SIZE // 4]
-                mask = pc_arr == np.uint64(ins_pc)
-                if mask.any():
-                    fi = int(np.argmax(mask))
+                fi = pc_to_first.get(ins_pc)
+                if fi is not None:
                     items.append((ins_pc, int(inst_arr[fi])))
 
         ir_lift, lift_stats = lift_static(items)

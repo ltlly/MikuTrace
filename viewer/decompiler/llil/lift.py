@@ -452,30 +452,23 @@ def _lift_movk(d: Decoded) -> LlilExpr:
     return set_reg(dst, expr, pc=d.pc)
 
 
+_LSL_SHIFT_RE = __import__("re").compile(
+    r"\blsl\s*#?\s*(0x[0-9a-fA-F]+|[0-9]+)", __import__("re").IGNORECASE)
+
+
 def _parse_mem_shift(op_str: str) -> int:
-    """从 op_str '[x1, x2, lsl #3]' 抓 shift 量. 找不到返 0.
+    """从 op_str '[x1, x2, lsl #3]' / '[x1, x2, lsl #0x3]' 抓 shift 量. 找不到返 0.
 
     简化: 只识别明确的 lsl #N 形态; sxtw/uxtw 等扩展形态走 0 (回退到无 shift,
-    宽度差异 fold 时 memshadow 自然兜底).
+    宽度差异 fold 时 memshadow 自然兜底). 用 regex 兼容 dec / hex 两种 imm 写法.
     """
-    s = op_str
-    if "lsl" not in s.lower():
+    m = _LSL_SHIFT_RE.search(op_str)
+    if not m:
         return 0
     try:
-        idx = s.lower().index("lsl")
-        rest = s[idx + 3:].strip().lstrip("#").rstrip("]").rstrip()
-        # 找第一个数字 token
-        tok = ""
-        for c in rest:
-            if c.isdigit() or (c in "0x" and not tok):
-                tok += c
-            elif tok:
-                break
-        if tok:
-            return int(tok, 0)
-    except (ValueError, IndexError):
-        pass
-    return 0
+        return int(m.group(1), 0)
+    except ValueError:
+        return 0
 
 
 def _build_addr_expr(base: str, idx_reg: str, disp: int, op_str: str):

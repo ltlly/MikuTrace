@@ -584,6 +584,36 @@ def test_lift_movz_then_movk_constfold_chain():
     assert rhs.operands == [0xabcd1234]
 
 
+# ─────────── _parse_mem_shift hex 兼容 ───────────
+
+def test_parse_mem_shift_dec():
+    from viewer.decompiler.llil.lift import _parse_mem_shift
+    assert _parse_mem_shift("[x1, x2, lsl #3]") == 3
+
+
+def test_parse_mem_shift_hex_small():
+    """lsl #0x3 — 之前因字符循环把 '0' 单独 emit, 现 regex 应解出 3."""
+    from viewer.decompiler.llil.lift import _parse_mem_shift
+    assert _parse_mem_shift("[x1, x2, lsl #0x3]") == 3
+
+
+def test_parse_mem_shift_hex_large():
+    """lsl #0x10 → 16."""
+    from viewer.decompiler.llil.lift import _parse_mem_shift
+    assert _parse_mem_shift("[x1, x2, lsl #0x10]") == 16
+
+
+def test_parse_mem_shift_no_lsl():
+    from viewer.decompiler.llil.lift import _parse_mem_shift
+    assert _parse_mem_shift("[x1, x2]") == 0
+    assert _parse_mem_shift("[x1, #16]") == 0
+
+
+def test_parse_mem_shift_dec_16():
+    from viewer.decompiler.llil.lift import _parse_mem_shift
+    assert _parse_mem_shift("[x1, x2, lsl #16]") == 16
+
+
 def test_lift_movz_movk_movk_movk_full_64bit():
     """4-step OLLVM 大常量: movz + movk*3 → 折出 64-bit const."""
     from viewer.decompiler.llil import ssa_block, constfold_block, LLIL_CONST

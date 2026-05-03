@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracemiku"
-version = "0.1.0"
+version = "0.3.0"
 description = "ARM64 JNI trace pipeline (Frida agent + Viewer + Web UI + Decompiler integrations) for Android RE/security research."
 readme = "README.md"
 requires-python = ">=3.11"

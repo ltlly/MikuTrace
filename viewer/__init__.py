@@ -85,7 +85,12 @@ def write_decompile_dir(top, out_dir, tier: str = "full"):
     return _w(top, out_dir, tier=tier)
 
 
-__version__ = "0.3.0"
+# 单一来源: pyproject.toml [project] version. 防止文档/包/__version__ 三处漂移.
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("tracemiku")
+except Exception:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     # trace

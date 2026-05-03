@@ -18,7 +18,7 @@ traceMiku/
 │   ├── hide_rwx_maps.js / probe_deep_safe.js
 │   └── regen_jni_offsets.py
 ├── examples/           # llm_cookbook.py + 已知 SO 偏移样例 (libsgmainso/)
-├── tests/              # pytest 单元 + 集成测试 (30 文件 / 341 测试)
+├── tests/              # pytest 单元 + 集成测试 (`uv run pytest -q` 看实时数)
 ├── docs/               # 设计 + 排坑文档
 ├── TODO.md             # 唯一 backlog 入口
 └── traces/             # 已采集 trace 输出 (gitignored)
@@ -265,7 +265,7 @@ P2-DEC 的"机器折叠 → LLM 反编译"是 IR + LLM 路线; **P2-LLIL 是直�
 长远目标: 这套工具直接 100% 复刻 x-sign 算法.
 
 入口: `viewer/decompiler/llil/`. Web SPA `/api/decompile?fn=…&pass=llil`
-渲染. 测试: `tests/test_llil_*.py` (~210 tests).
+渲染. 测试: `tests/test_llil_*.py`.
 
 **Pipeline**:
 
@@ -275,7 +275,7 @@ lift_arm64 (capstone) → ssa_block → constfold → dce → flag_elim
 extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 ```
 
-**已落地能力** (~30 commits, 共 747 tests pass):
+**已落地能力**:
 
 | 类别 | 内容 |
 |---|---|
@@ -498,7 +498,7 @@ traceMiku/
 │   ├── decompiler/     # BN/Ghidra/IDA backend 抽象 + binja 实现
 │   └── app.py          # textual TUI (deprecated, 不维护)
 ├── webui/              # 主 UI: 单页 Web SPA
-│   ├── server.py       # FastAPI: 29 endpoints, mmap 后端, CFG 子进程
+│   ├── server.py       # FastAPI: REST endpoints, mmap 后端, CFG 子进程
 │   ├── schemas.py      # 严格 Pydantic Union schemas + OpenAPI
 │   ├── cfg_render.py   # 共享 dot/HTML render helpers
 │   ├── index.html      # 单页应用 (HTML + 样式)
@@ -506,7 +506,7 @@ traceMiku/
 ├── examples/
 │   ├── llm_cookbook.py             # 10 个 SDK 示例
 │   └── libsgmainso/known_offsets.json  # sample 已知函数偏移
-└── tests/              # 30 文件 / 341 unit + integration tests
+└── tests/              # pytest unit + integration tests
 ```
 
 ## TUI (deprecated, 不维护)

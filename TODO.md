@@ -297,7 +297,7 @@ miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypas
 **直接拿这套工具 100% 复刻 x-sign 算法**.
 
 **入口**: `viewer/decompiler/llil/`, webui `/api/decompile?fn=…&pass=llil`
-渲染到 SPA. 测试: `tests/test_llil_*.py` (~210 tests).
+渲染到 SPA. 测试: `tests/test_llil_*.py` (跑 `uv run pytest tests/test_llil_*.py -q` 看数).
 
 **Pipeline (8 主 pass + 多 extras)**:
 
@@ -323,7 +323,7 @@ extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 | L8 | render_hlil (C-pseudo 输出) | ✅ | prologue/epilogue 折叠, local var 命名, ×N exec_count, call args, ret return-value, string 解密, ROR/ROL 函数式 |
 | L1.5 | UIDF (trace 真值 → ObservedValues) | ✅ | SET_REG + CALL ret_x0 |
 
-**累计**: 30+ commits, ~210 LLIL tests + 27 webui pipeline tests, **共 747 tests pass**.
+**累计**: LLIL pipeline + webui 集成完整 — 跑 `uv run pytest -q` 看实时通过数.
 
 **最近一轮 (2026-05-03 session, 8 commits)**:
 
