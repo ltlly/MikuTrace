@@ -115,4 +115,35 @@ impl Trace {
         let off = i * REC_SIZE + 268;
         u32::from_le_bytes(self.raw()[off..off + 4].try_into().unwrap())
     }
+
+    /// Sequential iterator over records. No allocation.
+    pub fn iter(&self) -> RecordIter<'_> {
+        RecordIter {
+            trace: self,
+            idx: 0,
+        }
+    }
 }
+
+pub struct RecordIter<'t> {
+    trace: &'t Trace,
+    idx: usize,
+}
+
+impl<'t> Iterator for RecordIter<'t> {
+    type Item = crate::trace::record::Record;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.trace.len() {
+            return None;
+        }
+        let r = self.trace.record(self.idx);
+        self.idx += 1;
+        Some(r)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.trace.len() - self.idx;
+        (rem, Some(rem))
+    }
+}
+
+impl<'t> ExactSizeIterator for RecordIter<'t> {}

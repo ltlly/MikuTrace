@@ -96,3 +96,27 @@ fn inst_fast_path_matches_record_inst() {
         assert_eq!(t.inst(i), t.record(i).inst);
     }
 }
+
+#[test]
+fn iter_visits_every_record_in_order() {
+    let fix = common::synth_trace_dir(7);
+    let t = Trace::load(&fix.call_dir).unwrap();
+
+    let pcs: Vec<u64> = t.iter().map(|r| r.pc).collect();
+    let expected: Vec<u64> = (0..7).map(|i| 0x100000 + 4 * i as u64).collect();
+    assert_eq!(pcs, expected);
+}
+
+#[test]
+fn iter_count_matches_len() {
+    let fix = common::synth_trace_dir(13);
+    let t = Trace::load(&fix.call_dir).unwrap();
+    assert_eq!(t.iter().count(), t.len());
+}
+
+#[test]
+fn iter_on_empty_trace_yields_nothing() {
+    let fix = common::synth_trace_dir(0);
+    let t = Trace::load(&fix.call_dir).unwrap();
+    assert_eq!(t.iter().count(), 0);
+}
