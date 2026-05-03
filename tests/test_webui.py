@@ -34,6 +34,37 @@ def synth_trace_dir(tmp_path):
 
 
 @pytest.fixture
+def trace_with_call_dir(tmp_path):
+    """Root frame calls one child frame; LLIL body_only should exclude child PCs."""
+    from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
+    ks = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
+    run = tmp_path / "run_call"
+    run.mkdir()
+    (run / "calls").mkdir()
+    cd = run / "calls" / "call_001_tid100_5r_1ms"
+    cd.mkdir()
+    base = 0x100000
+    rows = ["nop", "bl #+8", "nop", "ret", "ret"]
+    with open(cd / "trace.bin", "wb") as bf:
+        for i, asm in enumerate(rows):
+            inst, _ = ks.asm(asm)
+            bf.write(struct.pack("<Q", base + i * 4))
+            for r_idx in range(31):
+                is_lr = r_idx == 30
+                bf.write(struct.pack("<Q", base + 8 if is_lr and i == 1 else 0))
+            bf.write(struct.pack("<Q", 0x7000))
+            bf.write(struct.pack("<I", 0))
+            bf.write(struct.pack("<I", int.from_bytes(bytes(inst), "little")))
+    json.dump({"callIdx": 1, "tid": 100, "records": len(rows), "ms": 1,
+               "retval": "0x0", "truncated": False,
+               "last_insn_is_ret": True}, open(cd / "meta.json", "w"))
+    json.dump({"pkg": "tst", "so": "libt", "method": "f", "cmd": 1,
+               "module": {"name": "libt.so", "base": hex(base), "size": 0x10000},
+               "fn_addr": hex(base)}, open(run / "meta.json", "w"))
+    return cd
+
+
+@pytest.fixture
 def client(synth_trace_dir):
     from fastapi.testclient import TestClient
     from webui.server import make_app
@@ -111,3 +142,48 @@ def test_llil_render_endpoint_smoke(client):
     assert j["stats"]["blocks"] >= 1
     assert "lift_total" in j["stats"]
     assert isinstance(j["c_code"], str)
+
+
+def test_llil_render_body_only_excludes_child_call(trace_with_call_dir):
+    from fastapi.testclient import TestClient
+    from webui.server import make_app
+    client = TestClient(make_app(trace_with_call_dir))
+    payload = {"fn_id": "F0", "split_top_k": 0, "split_min_records": 1}
+    j = client.post("/api/llil/render", json=payload).json()
+    assert j["ok"] is True, j
+    assert j["stats"]["scope"] == "body"
+    assert j["stats"]["body_only"] is True
+    assert j["stats"]["body_only_excluded_records"] == 3
+    assert j["stats"]["body_only_excluded_blocks"] >= 1
+
+
+def test_llil_render_trace_scope_keeps_child_call(trace_with_call_dir):
+    from fastapi.testclient import TestClient
+    from webui.server import make_app
+    client = TestClient(make_app(trace_with_call_dir))
+    payload = {"fn_id": "F0", "split_top_k": 0, "scope": "trace"}
+    j = client.post("/api/llil/render", json=payload).json()
+    assert j["ok"] is True, j
+    assert j["stats"]["scope"] == "trace"
+    assert j["stats"]["body_only"] is False
+    assert j["stats"]["scope_excluded_records"] == 0
+    assert j["stats"]["blocks"] >= 3
+
+
+def test_dec_summary_includes_cfg_functions(trace_with_call_dir):
+    from fastapi.testclient import TestClient
+    from webui.server import make_app
+    client = TestClient(make_app(trace_with_call_dir))
+    _wait_cfg(client)
+    j = client.get("/api/dec/summary?split_top_k=0").json()
+    cfg_fns = [f for f in j["fns"] if f.get("source") == "cfg"]
+    trace_fns = [f for f in j["fns"] if f.get("source") == "trace-ir"]
+    assert cfg_fns or trace_fns
+    fn_id = (cfg_fns or trace_fns)[0]["id"]
+    if cfg_fns:
+        assert fn_id.startswith("cfg:")
+    else:
+        assert fn_id.startswith("F")
+    r = client.get(f"/api/dec/fn/{fn_id}").json()
+    assert r["fn_id"] == fn_id
+    assert "markdown" in r

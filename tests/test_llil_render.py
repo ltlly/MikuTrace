@@ -57,6 +57,26 @@ def test_render_ifelse():
     assert "} else {" in text
 
 
+def test_render_block_phi_comment():
+    from viewer.decompiler.llil import ssa_blocks_cfg
+    blocks = {
+        0x1000: [],
+        0x2000: [set_reg("x0", const(1))],
+        0x3000: [set_reg("x0", const(2))],
+        0x4000: [set_reg("x1", reg("x0"))],
+    }
+    ssa = ssa_blocks_cfg(
+        blocks,
+        succs={0x1000: [0x2000, 0x3000], 0x2000: [0x4000], 0x3000: [0x4000], 0x4000: []},
+        preds={0x2000: [0x1000], 0x3000: [0x1000], 0x4000: [0x2000, 0x3000]},
+        entry=0x1000,
+    )
+    hlil = restructure(CfgInfo(succs={}, preds={}, entry=0x4000), ssa)
+    text = "\n".join(render_hlil(hlil))
+    assert "// phi x0_v" in text
+    assert "phi(x0_v1, x0_v2)" in text
+
+
 def test_render_loop():
     b0 = ssa_block(0x1000, [set_reg("x0", const(0), pc=0x1000)])
     b1 = ssa_block(0x1004, [goto(0x1000, pc=0x1004)])

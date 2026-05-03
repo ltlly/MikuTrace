@@ -142,8 +142,18 @@ def ssa_blocks(blocks: dict[int, list[LlilExpr]]) -> dict[int, SsaBlock]:
     return {pc: ssa_block(pc, exprs) for pc, exprs in blocks.items()}
 
 
+def _defs_in_roots(roots: list[LlilExpr]) -> set[str]:
+    defs: set[str] = set()
+    for root in roots:
+        if isinstance(root, LlilExpr) and root.op == LLIL_SET_REG:
+            defs.add(root.operands[0])
+        elif isinstance(root, LlilExpr) and root.op == LLIL_CALL:
+            defs.update(_CALLER_SAVED)
+    return defs
+
+
 def _merge_pred_versions(pred_exits: list[dict[str, int]],
-                         pending_preds: int,
+                         pending_defs: list[set[str]],
                          counters: dict[str, int]) -> tuple[dict[str, int], dict[str, tuple[int, ...]]]:
     """Merge predecessor exits into block entry versions.
 
@@ -153,7 +163,9 @@ def _merge_pred_versions(pred_exits: list[dict[str, int]],
     """
     if not pred_exits:
         return {}, {}
-    regs = sorted({r for ex in pred_exits for r in ex})
+    pending_preds = len(pending_defs)
+    regs = sorted({r for ex in pred_exits for r in ex} |
+                  {r for defs in pending_defs for r in defs})
     entry: dict[str, int] = {}
     phis: dict[str, tuple[int, ...]] = {}
     for r in regs:
@@ -169,7 +181,8 @@ def _merge_pred_versions(pred_exits: list[dict[str, int]],
         else:
             counters[r] = max(counters.get(r, 0), max(uniq)) + 1
             entry[r] = counters[r]
-            phis[r] = incoming + tuple(0 for _ in range(pending_preds))
+            pending_incoming = tuple(0 for defs in pending_defs if r in defs)
+            phis[r] = incoming + pending_incoming
     return entry, phis
 
 
@@ -199,8 +212,9 @@ def ssa_blocks_cfg(blocks: dict[int, list[LlilExpr]],
         all_pred_pcs = [p for p in preds.get(pc, []) if p in blocks]
         pred_pcs = [p for p in all_pred_pcs if p in out]
         pred_exits = [out[p].exit_versions for p in pred_pcs]
-        pending_preds = len([p for p in all_pred_pcs if p not in out])
-        entry_versions, phi_versions = _merge_pred_versions(pred_exits, pending_preds, counters)
+        pending_pcs = [p for p in all_pred_pcs if p not in out]
+        pending_defs = [_defs_in_roots(blocks.get(p, [])) for p in pending_pcs]
+        entry_versions, phi_versions = _merge_pred_versions(pred_exits, pending_defs, counters)
         blk = ssa_block(pc, blocks.get(pc, []), entry_versions, counters)
         blk.phi_versions = phi_versions
         out[pc] = blk

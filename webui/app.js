@@ -1524,7 +1524,7 @@ async function loadFuncsList() {
     const active = f.name === STATE.cfgFunc ? " active" : "";
     html += `<div class="lp-row${active}" data-fn="${escapeHtml(f.name)}">` +
             `<span>${escapeHtml(f.name)}</span>` +
-            `<span class="meta">${f.blocks} bb</span></div>`;
+            `<span class="meta">${f.blocks} bb · dec</span></div>`;
   }
   cont.innerHTML = html || '<div class="dim">no funcs</div>';
   cont.querySelectorAll(".lp-row").forEach(r => {
@@ -1532,8 +1532,23 @@ async function loadFuncsList() {
       pollCFG(r.dataset.fn);
       cont.querySelectorAll(".lp-row").forEach(o => o.classList.toggle("active", o === r));
     });
+    r.addEventListener("dblclick", () => openDecompileForCfgFn(r.dataset.fn));
   });
   $("left-panel-info").textContent = `${STATE.allFuncs.length}`;
+}
+
+function openDecompileForCfgFn(fnName) {
+  if (!fnName) return;
+  activateRightTab("dec");
+  const targetId = "cfg:" + fnName;
+  const pick = () => {
+    if (!TAB_INIT.dec || !$("dec-fn-list")) {
+      setTimeout(pick, 200);
+      return;
+    }
+    selectDecFn(targetId);
+  };
+  pick();
 }
 
 async function loadStrings() {
@@ -2439,10 +2454,30 @@ async function initDecompileTab() {
   $("dec-llil").addEventListener("click", runDecLlilRender);
   $("dec-llil-llm").addEventListener("click", runDecLlilLlm);
   $("dec-vm-mem").addEventListener("change", loadDecSummary);
+  $("dec-scope").addEventListener("change", () => {
+    updateDecScopeHint();
+    if (DEC_SELECTED_FN) selectDecFn(DEC_SELECTED_FN);
+  });
   $("dec-tier").addEventListener("change", () => {
     if (DEC_SELECTED_FN) selectDecFn(DEC_SELECTED_FN);
   });
+  updateDecScopeHint();
   loadDecSummary();
+}
+
+function currentDecScope() {
+  return ($("dec-scope") && $("dec-scope").value) || "body";
+}
+
+function updateDecScopeHint() {
+  const el = $("dec-scope-hint");
+  if (!el) return;
+  const scope = currentDecScope();
+  if (scope === "trace") {
+    el.innerHTML = "Scope: <b>Full trace</b> — 展开本次动态执行路径, 包含 callee; 适合行为总览, 输出可能非常大.";
+  } else {
+    el.innerHTML = "Scope: <b>Body only</b> — 默认函数本体视图, 排除顶层 callee; 适合阅读当前函数伪代码.";
+  }
 }
 
 function _decUrl(useMem) {
@@ -2485,13 +2520,16 @@ async function loadDecSummary() {
     // 估值: blocks * 600 chars / 4 (粗估), summary 级 100
     const estChars = f.blocks * 600 + 200;
     const estTokens = Math.round(estChars / 4);
-    return `<div class="dec-fn-item" data-fn="${f.id}" title="entry idx=${f.entry_idx}, exit=${f.exit_idx}, ~${estTokens} prompt tokens">
+    const source = f.source === "cfg" ? "CFG" : "TraceIR";
+    const idxHint = f.entry_idx == null ? "on-demand" : `idx=${f.entry_idx}..${f.exit_idx}`;
+    return `<div class="dec-fn-item" data-fn="${escapeHtml(f.id)}" title="${idxHint}, ~${estTokens} prompt tokens">
        <span class="dec-fn-id">${f.id}</span>
        <span class="dec-fn-name">${escapeHtml(f.name)}</span>
-       <span class="dec-fn-stats dim">blk=${f.blocks} loop=${f.loops} call=${f.calls}` +
-       (f.type_anchors ? ` anc=${f.type_anchors}` : "") +
-       ` ~${estTokens}tok</span>
-     </div>`;
+       <span class="dec-fn-source ${f.source === "trace-ir" ? "trace" : "cfg"}">${source}</span>
+       <span class="dec-fn-stats dim">blk=${f.blocks} loop=${f.loops || 0} call=${f.calls || 0}` +
+        (f.type_anchors ? ` anc=${f.type_anchors}` : "") +
+        ` ~${estTokens}tok</span>
+      </div>`;
   }).join("");
   list.innerHTML =
     `<div class="dim small">trace ${s.records} rec / module ${s.module_name || "?"} / ${s.fns.length} fns</div>` +
@@ -2499,7 +2537,27 @@ async function loadDecSummary() {
   list.querySelectorAll(".dec-fn-item").forEach(el => {
     el.addEventListener("click", () => selectDecFn(el.dataset.fn));
   });
-  if (s.fns && s.fns.length) selectDecFn(s.fns[0].id);
+  if (DEC_SELECTED_FN && (s.fns || []).some(f => f.id === DEC_SELECTED_FN)) {
+    selectDecFn(DEC_SELECTED_FN);
+  } else if (s.fns && s.fns.length) {
+    selectDecFn(s.fns[0].id);
+  }
+}
+
+async function ensureDecCfgReady(statusEl) {
+  for (;;) {
+    const cfg = await api("/api/cfg", {});
+    if (cfg.status === "ready") {
+      STATE.allFuncs = cfg.funcs || STATE.allFuncs || [];
+      return;
+    }
+    if (cfg.status !== "building") {
+      if (statusEl) statusEl.innerHTML = `<div class="dim">cfg ${escapeHtml(cfg.status || "unknown")}</div>`;
+      return;
+    }
+    if (statusEl) statusEl.innerHTML = `<div class="dim">cfg building… (${escapeHtml(cfg.cfg || "")})</div>`;
+    await new Promise(res => setTimeout(res, 1000));
+  }
 }
 
 async function selectDecFn(fnId) {
@@ -2511,6 +2569,7 @@ async function selectDecFn(fnId) {
   out.innerHTML = '<div class="dim">loading IR…</div>';
   const useMem = $("dec-vm-mem").checked;
   const tier = $("dec-tier").value || "hot";
+  const scope = currentDecScope();
   const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
   const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
   let qs = `?tier=${tier}` + (useMem ? "&with_memshadow=1" : "") +
@@ -2520,8 +2579,9 @@ async function selectDecFn(fnId) {
     const r = await fetch(url).then(r => r.json());
     const md = r.markdown || "";
     const estTokens = Math.round(md.length / 4);
+    const scopeText = scope === "trace" ? "Full trace" : "Body only";
     $("dec-cost-hint").textContent =
-      `当前 fn IR ≈ ${md.length.toLocaleString()} chars / ~${estTokens.toLocaleString()} tokens. ` +
+      `${scopeText} · 当前 fn IR ≈ ${md.length.toLocaleString()} chars / ~${estTokens.toLocaleString()} tokens. ` +
       `点 反编译 调 LLM (中文模式 + cache, 重点不重发)`;
     out.innerHTML = `<div class="dec-fn-md"><pre>${escapeHtml(md)}</pre></div>`;
   } catch (e) {
@@ -2588,8 +2648,9 @@ async function runDecLlilLlm() {
   const lang = $("dec-zh").checked ? "zh" : "en";
   const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
   const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
+  const scope = currentDecScope();
   const out = $("dec-output");
-  out.innerHTML = `<div class="dim">LLIL 8-pass + ${model} (skeleton/skin) — 慢, 30-90s...</div>`;
+  out.innerHTML = `<div class="dim">LLIL 8-pass + ${model} (${scope} scope) — 慢, 30-90s...</div>`;
   const t0 = Date.now();
   try {
     const r = await fetch("/api/llil/llm", {
@@ -2602,6 +2663,7 @@ async function runDecLlilLlm() {
         lang: lang,
         split_top_k: parseInt(k, 10),
         split_min_records: parseInt(m, 10),
+        scope: scope,
       }),
     }).then(r => r.json());
     const dt = Date.now() - t0;
@@ -2611,7 +2673,8 @@ async function runDecLlilLlm() {
     }
     const cacheTag = r.cache_hit ? " <b>(cache)</b>" : "";
     const s = r.stats || {};
-    const meta = `<div class="dim small">LLIL→LLM · ${r.model} · skeleton blocks=${s.blocks} `
+    const scopeText = _formatLlilScopeStats(s);
+    const meta = `<div class="dim small">LLIL→LLM · ${r.model} · ${scopeText} · skeleton blocks=${s.blocks} `
                + `lift=${s.lift_total} (${(s.lift_coverage*100).toFixed(0)}%) `
                + `UIDF=${s.uidf_const}/${s.uidf_observed} const · `
                + `${r.in_tokens}→${r.out_tokens} tok · ${dt}ms${cacheTag}</div>`;
@@ -2626,8 +2689,9 @@ async function runDecLlilRender() {
   const useMem = $("dec-vm-mem").checked;
   const k = ($("dec-split-k") && $("dec-split-k").value) || "40";
   const m = ($("dec-split-min") && $("dec-split-min").value) || "10";
+  const scope = currentDecScope();
   const out = $("dec-output");
-  out.innerHTML = `<div class="dim">running LLIL 8-pass pipeline (lift→SSA→constfold→dce→typelat→struct→restructure→render)...</div>`;
+  out.innerHTML = `<div class="dim">running LLIL 8-pass (${scope} scope): lift→SSA→constfold→dce→typelat→struct→render...</div>`;
   const t0 = Date.now();
   try {
     const r = await fetch("/api/llil/render", {
@@ -2638,6 +2702,7 @@ async function runDecLlilRender() {
         with_memshadow: useMem,
         split_top_k: parseInt(k, 10),
         split_min_records: parseInt(m, 10),
+        scope: scope,
       }),
     }).then(r => r.json());
     const dt = Date.now() - t0;
@@ -2650,14 +2715,23 @@ async function runDecLlilRender() {
     const uidf = s.uidf_observed
       ? ` · UIDF=${s.uidf_const}/${s.uidf_observed} const`
       : "";
+    const scopeText = _formatLlilScopeStats(s);
     const meta = `<div class="dim small">LLIL 8-pass · fn=${r.fn_id} ${r.name || ""} · `
-               + `blocks=${s.blocks} · lift=${s.lift_total} (${(s.lift_coverage*100).toFixed(1)}%覆盖) · `
+               + `${scopeText} · blocks=${s.blocks} · lift=${s.lift_total} (${(s.lift_coverage*100).toFixed(1)}%覆盖) · `
                + `constfold=${s.constfold_count} · dce=${s.dce_removed} · `
                + `structs=${s.struct_shapes}${uidf} · ${dt}ms${cacheTag}</div>`;
     out.innerHTML = meta + `<div class="dec-llm-out"><pre>${escapeHtml(r.c_code || "")}</pre></div>`;
   } catch (e) {
     out.innerHTML = '<div class="dec-error">request failed: ' + escapeHtml(String(e)) + '</div>';
   }
+}
+
+function _formatLlilScopeStats(s) {
+  const scope = s.scope || (s.body_only ? "body" : "trace");
+  if (scope === "trace") return "scope=Full trace";
+  const blocks = s.scope_excluded_blocks ?? s.body_only_excluded_blocks ?? 0;
+  const recs = s.scope_excluded_records ?? s.body_only_excluded_records ?? 0;
+  return `scope=Body only · excluded=${blocks} blocks/${recs} rec`;
 }
 
 // ---------------- go ----------------

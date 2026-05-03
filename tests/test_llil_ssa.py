@@ -271,3 +271,26 @@ def test_ssa_blocks_cfg_loop_header_refines_backedge_phi():
     assert header.entry_versions["x0"] > 1
     assert header.tag.get(use_in_b) == header.entry_versions["x0"]
     assert out[0x4000].tag.get(use_in_d) == header.exit_versions["x0"]
+
+
+def test_ssa_blocks_cfg_loop_header_phi_for_backedge_only_def():
+    """Backedge-only defs should still create loop-header phi metadata.
+
+    x3 is first defined in loop body C, not before header B. Header B must still
+    know x3 is a loop-carried value once C -> B exists.
+    """
+    blocks = {
+        0x1000: [],
+        0x2000: [],
+        0x3000: [set_reg("x3", const(7))],
+    }
+    out = ssa_blocks_cfg(
+        blocks,
+        succs={0x1000: [0x2000], 0x2000: [0x3000], 0x3000: [0x2000]},
+        preds={0x2000: [0x1000, 0x3000], 0x3000: [0x2000]},
+        entry=0x1000,
+    )
+    header = out[0x2000]
+    assert "x3" in header.phi_versions
+    assert header.phi_versions["x3"] == (0, out[0x3000].exit_versions["x3"])
+    assert header.entry_versions["x3"] > 0

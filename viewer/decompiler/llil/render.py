@@ -406,6 +406,15 @@ def _render_block(blk: SsaBlock, types: TypeEnv,
     if exec_counts and blk.block_pc in exec_counts:
         head += f"  ×{exec_counts[blk.block_pc]}"
     out: list[str] = [f"{pad}{head}"]
+    if blk.phi_versions:
+        for r in sorted(blk.phi_versions):
+            entry_v = blk.entry_versions.get(r, 0)
+            dst = var_names.get((r, entry_v), f"{r}_v{entry_v}") if var_names else f"{r}_v{entry_v}"
+            srcs = [
+                var_names.get((r, v), f"{r}_v{v}") if var_names else f"{r}_v{v}"
+                for v in blk.phi_versions[r]
+            ]
+            out.append(f"{pad}// phi {dst} = phi({', '.join(srcs)})")
 
     # 检测 prologue / epilogue 区段 — 连续 N 条 prologue-style root, 折叠成
     # 单行注释 (BN HLIL 类似行为).

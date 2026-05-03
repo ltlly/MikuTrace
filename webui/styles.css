@@ -651,7 +651,15 @@ body.multi-so .row-insn { padding-left: 6px; }
   padding: 2px 8px;
   font-size: 12px;
 }
-#dec-key-status, #dec-cost-hint {
+.dec-scope-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+}
+#dec-key-status, #dec-scope-hint, #dec-cost-hint {
   padding: 4px 8px;
   font-size: 11px;
   border-bottom: 1px solid var(--border);
@@ -687,6 +695,16 @@ body.multi-so .row-insn { padding-left: 6px; }
 .dec-fn-id { font-weight: bold; min-width: 28px; font-family: var(--font-mono); }
 .dec-fn-name { font-family: var(--font-mono); flex: 1; min-width: 0;
                overflow: hidden; text-overflow: ellipsis; }
+.dec-fn-source {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--dim);
+  background: var(--bg2);
+}
+.dec-fn-source.trace { color: var(--accent); }
+.dec-fn-source.cfg { color: var(--good); }
 .dec-fn-stats { font-size: 11px; }
 #dec-output {
   flex: 1 1 auto;

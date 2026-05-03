@@ -2531,6 +2531,124 @@ def make_app(trace_path: pathlib.Path,
         cache[key] = top
         return top
 
+    def _cfg_func_id(name: str) -> str:
+        return "cfg:" + name
+
+    def _decode_cfg_func_id(fn_id: str) -> Optional[str]:
+        return fn_id[4:] if fn_id.startswith("cfg:") else None
+
+    def _all_symbol_funcs() -> list[dict]:
+        """Return all functions known from trace symbols, independent of CFG BG."""
+        sym._ensure_sorted()
+        out = []
+        for pc, name in sym.functions:
+            if not name or name == "?":
+                continue
+            out.append({"id": _cfg_func_id(name), "name": name,
+                        "blocks": 0, "source": "symbol", "pc": pc})
+        return out
+
+    def _cfg_pack_ready_or_build():
+        """Return (cfg, pc_inst, block_idxs), building synchronously if BG failed.
+
+        Decompile must not depend on the UI CFG subprocess being ready. In
+        tests and some stdin-launched dev servers, forkserver cannot import the
+        main module; build the same pack in-process as a reliable fallback.
+        """
+        if (BG["cfg"]["status"] == "ready" and
+                BG["pc_inst"]["status"] == "ready" and
+                BG["block_idxs"]["status"] == "ready"):
+            return BG["cfg"]["data"], BG["pc_inst"]["data"], BG["block_idxs"]["data"]
+        key = "dec_cfg_pack_sync"
+        if key not in cache:
+            from viewer.cfg import build_cfg as _build_cfg, build_aux_indices as _aux
+            c = _build_cfg(t, only_module=True)
+            pc_inst, _pc_to_block, block_idxs = _aux(t, c)
+            cache[key] = (c, pc_inst, block_idxs)
+        return cache[key]
+
+    def _cfg_funcs() -> list[dict]:
+        """Return all functions seen by symbols, with CFG block counts if ready."""
+        funcs = _all_symbol_funcs()
+        if BG["cfg"]["status"] != "ready":
+            return funcs
+        c = BG["cfg"]["data"]
+        counts: dict[str, int] = {}
+        for pc in c.blocks:
+            name, _ = sym.lookup(pc)
+            if not name or name == "?":
+                continue
+            counts[name] = counts.get(name, 0) + 1
+        for f in funcs:
+            f["blocks"] = counts.get(f["name"], 0)
+        return sorted(funcs, key=lambda x: -x["blocks"])
+
+    def _func_ir_from_cfg_name(name: str):
+        """Build a FuncIR on demand from the CFG Functions list.
+
+        TraceIR's F1..Fn are top-K calltree views. This function covers the
+        rest of the Functions panel by grouping trace CFG blocks with the same
+        resolved symbol name.
+        """
+        from viewer.decompiler.ir import FuncIR, BlockIR, EdgeIR
+        from viewer.disasm import decode as _decode
+
+        c, pc_inst, block_idxs = _cfg_pack_ready_or_build()
+        pcs = [pc for pc in sorted(c.blocks) if sym.lookup(pc)[0] == name]
+        if not pcs:
+            raise HTTPException(404, f"no such cfg fn {name}")
+        pc_to_bid = {pc: f"B{i}" for i, pc in enumerate(pcs)}
+        blocks = []
+        first_idxs = []
+        last_idxs = []
+        for pc in pcs:
+            b = c.blocks[pc]
+            idxs = block_idxs.get(pc, [])
+            if idxs:
+                first_idxs.append(int(idxs[0]))
+                last_idxs.append(int(idxs[-1]))
+                r0 = t.record(int(idxs[0]))
+                samples = {reg: r0.reg(reg) for reg in ("x0", "x1", "x2", "x3")}
+                samples["sp"] = r0.sp
+            else:
+                samples = {}
+            asm_lines = []
+            for ins_pc in b.insns:
+                inst = pc_inst.get(ins_pc, 0)
+                d = _decode(ins_pc, inst)
+                asm_lines.append(f"  {ins_pc:#x}: {d.mnemonic} {d.op_str}".rstrip())
+            exits = []
+            for (src, dst), info in c.edges.items():
+                if src != pc:
+                    continue
+                dst_id = pc_to_bid.get(dst, f"ext:{dst:#x}")
+                exits.append(EdgeIR(dst=dst_id,
+                                    kind=str(info.get("kind", "uncond")),
+                                    taken_count=int(info.get("count", 0))))
+            blocks.append(BlockIR(
+                id=pc_to_bid[pc], pc=pc, end_pc=b.end_pc or pc,
+                insns=len(b.insns), exec_count=b.executions, exits=exits,
+                samples=samples, asm="\n".join(asm_lines),
+                tier="cold" if b.executions == 0 else "hot",
+            ))
+        return FuncIR(
+            id=_cfg_func_id(name), name=name, pc_start=min(pcs),
+            pc_end=max(c.blocks[pc].end_pc or pc for pc in pcs),
+            entry_idx=min(first_idxs) if first_idxs else 0,
+            exit_idx=max(last_idxs) if last_idxs else 0,
+            blocks=blocks, loops=[], calls=[],
+            exec_count=sum(1 for pc in pcs if block_idxs.get(pc)),
+        )
+
+    def _resolve_dec_fn(top, fn_id: str):
+        fn = top.fn(fn_id)
+        if fn is not None:
+            return fn
+        cfg_name = _decode_cfg_func_id(fn_id)
+        if cfg_name is not None:
+            return _func_ir_from_cfg_name(cfg_name)
+        return None
+
     @app.get("/api/dec/summary")
     def dec_summary(hooks: str = "", with_memshadow: bool = False,
                     split_top_k: int = 10, split_min_records: int = 50):
@@ -2544,19 +2662,27 @@ def make_app(trace_path: pathlib.Path,
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
+        fns = [
+            {"id": f.id, "name": f.name, "blocks": len(f.blocks),
+             "loops": len(f.loops), "calls": len(f.calls),
+             "type_anchors": len(f.type_anchors),
+             "entry_idx": f.entry_idx, "exit_idx": f.exit_idx,
+             "source": "trace-ir"}
+            for f in top.fns
+        ]
+        existing_names = {f["name"] for f in fns}
+        for f in _cfg_funcs():
+            if f["name"] in existing_names:
+                continue
+            fns.append({**f, "loops": 0, "calls": 0, "type_anchors": 0,
+                        "entry_idx": None, "exit_idx": None})
         return {
             "records": top.records,
             "module_name": top.module_name,
             "module_base": top.module_base,
             "module_size": top.module_size,
             "truncated": top.truncated,
-            "fns": [
-                {"id": f.id, "name": f.name, "blocks": len(f.blocks),
-                 "loops": len(f.loops), "calls": len(f.calls),
-                 "type_anchors": len(f.type_anchors),
-                 "entry_idx": f.entry_idx, "exit_idx": f.exit_idx}
-                for f in top.fns
-            ],
+            "fns": fns,
             "vm_candidates": [
                 {"dispatcher_pc": vc.dispatcher_pc, "confidence": vc.confidence,
                  "reasons": vc.reasons, "reader_pc": vc.reader_pc,
@@ -2579,7 +2705,7 @@ def make_app(trace_path: pathlib.Path,
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
-        fn = top.fn(fn_id)
+        fn = _resolve_dec_fn(top, fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
         return {"fn_id": fn_id, "name": fn.name, "tier": tier,
@@ -2625,7 +2751,8 @@ def make_app(trace_path: pathlib.Path,
         top = _get_dec_ir(hooks_paths=hk, with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
-        if top.fn(fn_id) is None:
+        fn = _resolve_dec_fn(top, fn_id)
+        if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
 
         # server-side LLM 输出 cache. key 含所有可能影响输出的参数.
@@ -2637,6 +2764,8 @@ def make_app(trace_path: pathlib.Path,
             return {**cached, "cache_hit": True}
 
         try:
+            if top.fn(fn_id) is None:
+                top.fns.append(fn)
             bundle = build_fn_decompile_prompt(top, fn_id, tier=tier, lang=lang)
             model = make_llm_model(model_name)
         except KeyError as e:
@@ -2663,9 +2792,24 @@ def make_app(trace_path: pathlib.Path,
     # 跑完整 pipeline (lift → SSA → constfold → dce → typelat → struct →
     # restructure → render) 直接出 C-like markdown. **不调 LLM**, 0 cost.
 
+    def _normalize_llil_scope(payload: dict) -> str:
+        """Return the LLIL render scope.
+
+        `scope` is the public API. `body_only` is kept as a compatibility alias
+        for older callers/tests: true -> body, false -> trace.
+        """
+        raw = payload.get("scope")
+        if raw is None and "body_only" in payload:
+            raw = "body" if bool(payload.get("body_only")) else "trace"
+        scope = str(raw or "body").strip().lower()
+        if scope not in {"body", "trace"}:
+            raise HTTPException(400, "scope must be 'body' or 'trace'")
+        return scope
+
     def _llil_pipeline_for_fn(fn_id: str, hooks_paths: tuple,
                               with_memshadow: bool,
-                              split_top_k: int, split_min_records: int) -> dict:
+                              split_top_k: int, split_min_records: int,
+                              scope: str = "body") -> dict:
         """跑全 pipeline, 返回 {fn_id, name, c_code, stats}."""
         from viewer.decompiler.llil import (
             lift_static, ssa_block, ssa_blocks_cfg,
@@ -2677,15 +2821,40 @@ def make_app(trace_path: pathlib.Path,
         from viewer.decompiler.llil.render import collect_const_strings
         from viewer.cfg import build_cfg as _build_cfg
         import numpy as np
+        from viewer.calltree import build_call_tree as _build_call_tree
         from viewer.trace import REC_SIZE
         # 1. 静态 IR (用 v1 builder 切 fn 范围)
         top = _get_dec_ir(hooks_paths=hooks_paths,
                           with_memshadow=with_memshadow,
                           split_top_k=split_top_k,
                           split_min_records=split_min_records)
-        fn = top.fn(fn_id)
+        fn = _resolve_dec_fn(top, fn_id)
         if fn is None:
             raise HTTPException(404, f"no such fn {fn_id}")
+
+        scope_excluded_blocks = 0
+        scope_excluded_records = 0
+        fn_blocks = list(fn.blocks)
+        if scope == "body" and fn_id == "F0" and fn.blocks:
+            tree = _build_call_tree(t)
+            child_ranges = [
+                (int(c["enter_idx"]), int(c["exit_idx"]))
+                for c in tree.get("children", [])
+                if "enter_idx" in c and "exit_idx" in c
+            ]
+            if child_ranges:
+                pc_arr_for_body = t.pc_array()
+                child_mask = np.zeros(len(t), dtype=bool)
+                for lo, hi in child_ranges:
+                    lo = max(lo, 0)
+                    hi = min(hi, len(t) - 1)
+                    if lo <= hi:
+                        child_mask[lo:hi + 1] = True
+                child_pcs = set(int(p) for p in np.unique(pc_arr_for_body[child_mask]))
+                before = len(fn_blocks)
+                fn_blocks = [b for b in fn_blocks if b.pc not in child_pcs]
+                scope_excluded_blocks = before - len(fn_blocks)
+                scope_excluded_records = int(child_mask.sum())
 
         # 1.5. memshadow (lazy build, cached). _get_dec_ir 已建过, 复用.
         mem = None
@@ -2711,7 +2880,7 @@ def make_app(trace_path: pathlib.Path,
             zip(unique_pcs.tolist(), first_idxs.tolist()))
 
         items: list = []
-        for b in fn.blocks:
+        for b in fn_blocks:
             cfgblk = cfg.blocks.get(b.pc)
             if cfgblk is None: continue
             for ins_pc in cfgblk.insns:
@@ -2723,7 +2892,7 @@ def make_app(trace_path: pathlib.Path,
 
         # 4. 把 lift 结果按 cfg block 重组 → {block_pc: list[LlilExpr]}
         block_to_exprs: dict[int, list] = {}
-        for b in fn.blocks:
+        for b in fn_blocks:
             cfgblk = cfg.blocks.get(b.pc)
             if cfgblk is None: continue
             exprs: list = []
@@ -2792,8 +2961,8 @@ def make_app(trace_path: pathlib.Path,
             shapes_per_block.append(struct_recover_block(blk, types_per_block[pc]))
         merged_shapes = merge_shapes(shapes_per_block)
         # 用 fn 第一 block 的 types 作 render env (粗近似)
-        if fn.blocks and fn.blocks[0].pc in types_per_block:
-            render_types = types_per_block[fn.blocks[0].pc]
+        if fn_blocks and fn_blocks[0].pc in types_per_block:
+            render_types = types_per_block[fn_blocks[0].pc]
         else:
             from viewer.decompiler.llil import TypeEnv as _TE
             render_types = _TE()
@@ -2826,6 +2995,12 @@ def make_app(trace_path: pathlib.Path,
             "c_code": c_code,
             "stats": {
                 "blocks": len(block_to_exprs),
+                "scope": scope,
+                "scope_excluded_blocks": scope_excluded_blocks,
+                "scope_excluded_records": scope_excluded_records,
+                "body_only": scope == "body",
+                "body_only_excluded_blocks": scope_excluded_blocks,
+                "body_only_excluded_records": scope_excluded_records,
                 "lift_total": lift_stats.total,
                 "lift_intrinsic": lift_stats.intrinsic,
                 "lift_coverage": round(lift_stats.coverage(), 3),
@@ -2858,18 +3033,20 @@ def make_app(trace_path: pathlib.Path,
         with_memshadow = bool(payload.get("with_memshadow") or False)
         split_top_k = int(payload.get("split_top_k") or 40)
         split_min_records = int(payload.get("split_min_records") or 10)
+        scope = _normalize_llil_scope(payload)
         if isinstance(hooks, str):
             hooks = [s.strip() for s in hooks.split(",") if s.strip()]
         hk = tuple(hooks)
         # cache (跟 LLM 输出 cache 同语义)
         cache_key = ("llil_llm", fn_id, model_name, lang, with_memshadow,
-                     hk, max_tokens, split_top_k, split_min_records)
+                     hk, max_tokens, split_top_k, split_min_records, scope)
         if cache_key in cache:
             return {**cache[cache_key], "cache_hit": True}
         # 1. LLIL pipeline → c_code (skeleton)
         try:
             pipeline_res = _llil_pipeline_for_fn(
-                fn_id, hk, with_memshadow, split_top_k, split_min_records)
+                fn_id, hk, with_memshadow, split_top_k, split_min_records,
+                scope)
         except HTTPException:
             raise
         except Exception as e:
@@ -2942,17 +3119,19 @@ def make_app(trace_path: pathlib.Path,
         with_memshadow = bool(payload.get("with_memshadow") or False)
         split_top_k = int(payload.get("split_top_k") or 40)
         split_min_records = int(payload.get("split_min_records") or 10)
+        scope = _normalize_llil_scope(payload)
         if isinstance(hooks, str):
             hooks = [s.strip() for s in hooks.split(",") if s.strip()]
         hk = tuple(hooks)
         # cache key
         cache_key = ("llil_render", fn_id, hk, with_memshadow,
-                     split_top_k, split_min_records)
+                     split_top_k, split_min_records, scope)
         if cache_key in cache:
             return {**cache[cache_key], "cache_hit": True}
         try:
             res = _llil_pipeline_for_fn(fn_id, hk, with_memshadow,
-                                        split_top_k, split_min_records)
+                                        split_top_k, split_min_records,
+                                        scope)
         except HTTPException:
             raise
         except Exception as e:

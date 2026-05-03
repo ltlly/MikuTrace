@@ -137,6 +137,13 @@
             <option value="full">full asm</option>
             <option value="summary">summary 仅</option>
           </select>
+          <label class="dec-scope-control" title="LLIL 反编译范围: Body 只看当前函数本体; Trace 展开整条动态执行路径">
+            Scope
+            <select id="dec-scope">
+              <option value="body" selected>Body only</option>
+              <option value="trace">Full trace</option>
+            </select>
+          </label>
           <label class="toggle" title="升级前 N 个 callee 为独立 fn">
             top<input type="number" id="dec-split-k" value="40" min="1" max="200" style="width:46px;margin-left:2px">
           </label>
@@ -149,6 +156,7 @@
           <button id="dec-llm-call" title="调 LLM 反编译 raw markdown (旧路径)">LLM raw</button>
         </div>
         <div id="dec-key-status" class="dim small"></div>
+        <div id="dec-scope-hint" class="dim small"></div>
         <div id="dec-cost-hint" class="dim small"></div>
         <div id="dec-body">
           <div id="dec-fn-list"></div>

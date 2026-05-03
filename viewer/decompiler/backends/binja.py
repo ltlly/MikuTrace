@@ -224,12 +224,17 @@ class Backend:
             cur = LinearViewCursor(obj)
             cur.seek_to_address(bn_fn.start)
             fn_end_bv = bn_fn.start + bn_fn.total_bytes
+            import os
             seen_lines = 0
-            MAX_LINES = 2000
-            while seen_lines < MAX_LINES:
+            max_lines = int(os.environ.get("TRACEMIKU_BN_HLIL_MAX_LINES", "20000"))
+            truncated = False
+            while max_lines <= 0 or seen_lines < max_lines:
                 batch = self._bv.get_next_linear_disassembly_lines(cur)
                 if not batch: break
                 for ln in batch:
+                    if max_lines > 0 and seen_lines >= max_lines:
+                        truncated = True
+                        break
                     addr = ln.contents.address
                     if addr >= fn_end_bv and out: break
                     text = str(ln.contents)
@@ -244,6 +249,12 @@ class Backend:
                 else:
                     continue
                 break
+            if truncated:
+                pc = self._from_bv_addr(bn_fn.start)
+                msg = (f"// BN HLIL output truncated at {max_lines} lines; "
+                       "set TRACEMIKU_BN_HLIL_MAX_LINES=0 for unlimited")
+                out.append(HlilLine(text=msg, pc_lo=pc, pc_hi=pc, indent=0,
+                                    tokens=[Token(msg, "cmt")]))
         except Exception as e:
             log.warning("LinearView for %s failed: %s", bn_fn.name, e)
         # OLLVM/未抬升函数 LinearView 会发 HexDump tokens — 去掉这些 hex 行

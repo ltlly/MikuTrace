@@ -8,6 +8,34 @@
 
 ---
 
+# P0 Next — FunctionIndex / Web Refactor
+
+> See `REFACTOR_HANDOFF.md` before starting. The refactor must preserve current
+> behavior with before/after comparison tests for every touched feature.
+
+- Introduce a unified `/api/functions` FunctionIndex shared by Functions, CFG,
+  HLIL, and Decompile.
+- Replace user-facing reliance on internal TraceIR ids (`F0`, `F1`, ...) with
+  stable function ids such as `trace:F0`, `sym:<name>`, and `bn:<addr>`.
+- Keep `F0`/existing ids working during migration, or document and test any
+  deliberate compatibility break.
+- Add equivalence tests before refactor for:
+  - `/api/cfg` function list and function filtering,
+  - left Functions panel data,
+  - `/api/dec/summary` TraceIR + symbol/on-demand entries,
+  - `/api/dec/fn/{id}` for both TraceIR and on-demand symbol functions,
+  - `/api/llil/render` `scope=body` vs `scope=trace`,
+  - `/api/hlil-for-pc` current-line mapping and truncation reporting,
+  - UI smoke for Scope selector and Functions→Decompile navigation.
+- Convert Decompile, HLIL, and CFG selection to consume FunctionIndex instead of
+  each reconstructing its own function model.
+- Replace fragile Decompile dependency on background CFG readiness with a clear
+  job/cache model or a tested synchronous fallback.
+- Keep BN HLIL truncation visible. Current cap is controlled by
+  `TRACEMIKU_BN_HLIL_MAX_LINES` (`0` = unlimited).
+
+---
+
 # 进度概览
 
 ## ✅ 已完成 (2026-05-02 single session)
@@ -345,7 +373,7 @@ extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 | 8 | c6cf114 | UIDF + render: call return-value 注释 (trace ret_x0 → `// → x0=0xff`) |
 
 **P2-LLIL 下一步候选** (按优先级):
-- 跨 block SSA full loop-phi refinement: worklist 不动点. 当前 `ssa_blocks_cfg` 已有 synthetic phi entry version + 一次性 backedge incoming metadata refinement, 但循环内 use/exit version 尚未迭代到不动点.
+- 跨 block SSA full loop-phi refinement: worklist 不动点. 当前 `ssa_blocks_cfg` 已有 synthetic phi entry version + backedge incoming metadata refinement (含 backedge-only defs), 但循环内 use/exit version 尚未迭代到不动点.
 - float / SIMD lift (NEON 寄存器目前没记, 见已知限制)
 - 真机 BN HLIL 对比扫描 — 选 top-N `sub_*` 跑 viewer + BN 输出 diff
 - LLIL-level taint propagation (复用 SSA def-use)
