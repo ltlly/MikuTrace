@@ -3,9 +3,11 @@ pub mod functions;
 pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod last_write_of_reg;
+pub mod mem_dump;
 pub mod meta;
 pub mod record;
 pub mod records;
+pub mod strings;
 
 use axum::routing::get;
 use axum::Router;
@@ -28,5 +30,7 @@ pub fn router(state: AppState) -> Router {
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),
         )
+        .route("/api/strings", get(strings::strings_handler))
+        .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
         .with_state(state)
 }
