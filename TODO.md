@@ -28,8 +28,11 @@
 - M2-β `tracemiku-core::disasm` (capstone wrapper + thread-local FIFO cache 200k): ✅ 2026-05-04
 - M2-β `/api/records` + `/api/record/{idx}` (subset wire shape; symbol-fields null): ✅ 2026-05-04
 - M2-β frontend `RecordsPanel` (paginated 50-record windows): ✅ 2026-05-04
-- M2-γ: MemShadow + taint + symbols + calltree
-- M2-δ: FunctionIndex + decompiler::backend stub + final M2 parity
+- M2-γ `tracemiku-core::disasm.regs_def/regs_use` (capstone detail + cmp fix): ✅ 2026-05-04
+- M2-γ `tracemiku-core::index::Index` (reg_defs/reg_uses sequential build): ✅ 2026-05-04
+- M2-γ `tracemiku-core::symbols::{SymbolMap, ModuleResolver, build_from_trace}`: ✅ 2026-05-04
+- M2-γ `/api/idxs-for-pc` + populated `/api/records.func/off/module`: ✅ 2026-05-04 (real-trace func/off depends on M2-δ auto_known_offsets)
+- M2-δ (next): CFG (petgraph) + MemShadow + Index mem ops + taint + calltree + FunctionIndex + decompiler::backend stub + auto_known_offsets + Functions/Graph panels
 - M3-M7: 见 spec §9 milestones
 
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
