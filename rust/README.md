@@ -8,8 +8,8 @@
 # Build release server
 cd rust && cargo build --release --bin tracemiku-server
 
-# Generate synth trace (one-time)
-uv run python /tmp/build_smoke_trace.py
+# Generate synth trace (one-time; needs `pip install keystone-engine`)
+uv run python ../scripts/build_smoke_trace.py
 
 # Run server
 ./target/release/tracemiku-server /tmp/tracemiku_smoke/run/calls/call_001_tid100_9r_2ms
