@@ -32,7 +32,10 @@
 - M2-γ `tracemiku-core::index::Index` (reg_defs/reg_uses sequential build): ✅ 2026-05-04
 - M2-γ `tracemiku-core::symbols::{SymbolMap, ModuleResolver, build_from_trace}`: ✅ 2026-05-04
 - M2-γ `/api/idxs-for-pc` + populated `/api/records.func/off/module`: ✅ 2026-05-04 (real-trace func/off depends on M2-δ auto_known_offsets)
-- M2-δ (next): CFG (petgraph) + MemShadow + Index mem ops + taint + calltree + FunctionIndex + decompiler::backend stub + auto_known_offsets + Functions/Graph panels
+- M2-δ `tracemiku-core::cfg` (build_cfg + Block + Tarjan SCC via petgraph): ✅ 2026-05-04
+- M2-δ `tracemiku-core::symbols::auto_known_offsets` (bl-target heuristic): ✅ 2026-05-04
+- M2-δ `/api/cfg` + `/api/idxs-for-block`: ✅ 2026-05-04
+- M2-ε (final M2): MemShadow + Index mem ops + taint + calltree + FunctionIndex + decompiler::backend stub + Functions/Graph panels + examples/<so>/known_offsets.json overlay
 - M3-M7: 见 spec §9 milestones
 
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)

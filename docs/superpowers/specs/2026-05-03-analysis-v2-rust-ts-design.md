@@ -392,7 +392,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | ✅ M2-α | memmap2 + bytemuck zero-copy; 15 unit/integration tests + scripts/m2_alpha_parity.py |
 | `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | ✅ M2-γ | capstone-rs 0.13 detail=true; thread-local FIFO cache (200k); regs_def/regs_use via two-pass operand walk + cmp-style fix |
 | `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | 🟡 M2-γ: reg side done; mem ops M2-δ | sequential build; reg_defs/reg_uses HashMap<String, Vec<usize>>; rayon parallel deferred to M2-δ |
-| `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | 🔜 M2 | petgraph |
+| `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | ✅ M2-δ | petgraph 0.6; tarjan_scc; 6 unit/integration tests |
 | `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
 | `taint.py` (forward/backward, --through-mem) | `tracemiku-core::taint` | 🔜 M2 | rayon-parallel |
 | `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | 🔜 M2 | ~50 LOC: O(n) walk classifying bl/ret depth + Option<u32> field on each hit. Not the same as semantic cross-fn taint (see below) |
@@ -400,7 +400,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | 🔜 M2 | bumped to `.memshadow.v3.bin` (D10) |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
-| `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | 🔜 M2-δ | per-call meta.json known_offsets dict already consumed by build_from_trace (M2-γ); auto-discovery via bl-target heuristic + examples/<so>/known_offsets.json deferred |
+| `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | 🟡 M2-δ: bl-target heuristic done; examples/<so>/known_offsets.json overlay M2-ε | merged into AppState symbols on load; static known_offsets win on collision |
 | `display.py` (pwndbg-style annotations) | frontend rendering | 🔜 M4 | moves to TS frontend; backend just emits structured tokens |
 | `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | 🔜 M2 | direct port; legacy `F0` / `cfg:` parser kept |
 | `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | 🔜 M2 | |
@@ -482,14 +482,14 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/records?start=&count=` | ✅ M2-β | symbol-dependent fields (func/off/annotation/exec_count) emitted null until M2-γ |
 | `/api/record/{idx}` | ✅ M2-β | full regs object; prev_regs + regs_annotated deferred to M2-γ |
 | `/api/so-stats` | 🔜 M3 | |
-| `/api/cfg?fn=` | 🔜 M3 | |
+| `/api/cfg?fn=` | ✅ M2-δ | blocks + edges; ?fn= filter via SymbolMap |
 | `/api/cfg-svg` | 🔜 M3 | graphviz-rust |
 | `/api/block?pc=` | 🔜 M3 | |
 | `/api/block-for-pc` | 🔜 M3 | |
 | `/api/loops` | 🔜 M3 | |
 | `/api/backtrace` | 🔜 M3 | |
 | `/api/idxs-for-pc` | ✅ M2-γ | linear pc-scan; ~50ms on 15M records; hashed pc index deferred to M2-δ if profiling demands |
-| `/api/idxs-for-block` | 🔜 M3 | |
+| `/api/idxs-for-block` | ✅ M2-δ | linear pc-scan in [start_pc, end_pc]; M2-ε precomputed map if profiling demands |
 | `/api/idxs-touching-addr` | 🔜 M3 | |
 | `/api/idxs-touching-range` | 🔜 M3 | |
 | `/api/search` | 🔜 M3 | |
