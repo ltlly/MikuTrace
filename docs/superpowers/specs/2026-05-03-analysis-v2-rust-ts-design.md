@@ -394,7 +394,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | 🔜 M2 | petgraph |
 | `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
 | `taint.py` (forward/backward, --through-mem) | `tracemiku-core::taint` | 🔜 M2 | rayon-parallel |
-| `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | ⏸ | P1-A annotation, defer until real-trace need |
+| `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | 🔜 M2 | ~50 LOC: O(n) walk classifying bl/ret depth + Option<u32> field on each hit. Not the same as semantic cross-fn taint (see below) |
+| (future) **semantic cross-fn taint propagation** (ABI arg tracking, caller-saved kill, callee→caller return flow) | `tracemiku-core::taint::cross_fn` | ⏸ | Brand-new feature; needs its own design. Python never implemented this; the Python TODO note "全量 propagation 待真机" referred to *this*, not to frame_depth annotation. Do after v2 cutover and after real-trace need is documented. |
 | `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | 🔜 M2 | bumped to `.memshadow.v3.bin` (D10) |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🔜 M2 | |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
