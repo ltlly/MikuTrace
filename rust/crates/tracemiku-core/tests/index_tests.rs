@@ -209,3 +209,41 @@ fn index_no_mem_op_does_not_add_records() {
     assert!(idx.mem_reads.is_empty(), "nop trace must have no reads");
     assert!(idx.mem_addr_to_writes.is_empty());
 }
+
+#[test]
+fn index_addr_to_writes_holds_trace_indices_not_vec_indices() {
+    // Regression: previously the impl stored mem_writes.len() (vec position)
+    // instead of `i` (trace record idx). Both consumers (taint backward,
+    // last-write-of-addr) bisect against trace-record-idx cursors, so a read
+    // record between two writes must NOT shift the second write's reported
+    // index.
+    //
+    // 3 records:
+    //   idx 0: str x0, [x1]  with x1=0x7000  → write to 0x7000
+    //   idx 1: ldr x2, [x1]  with x1=0x7000  → read of 0x7000 (NOT a write)
+    //   idx 2: str x0, [x1]  with x1=0x7000  → write to 0x7000
+    //
+    // Correct: mem_addr_to_writes[0x7000] = vec![0, 2]   (trace indices)
+    // Bug:     mem_addr_to_writes[0x7000] = vec![0, 1]   (vec indices, since
+    //                                                     mem_writes had len 1
+    //                                                     when idx=2 was pushed)
+    let (_tmp, cd) = make_call_dir(3);
+    write_synth_trace(
+        &cd,
+        &[
+            (0x100000u64, 0xf9000020u32, &[(1usize, 0x7000u64)]),
+            (0x100004u64, 0xf9400022u32, &[(1usize, 0x7000u64)]),
+            (0x100008u64, 0xf9000020u32, &[(1usize, 0x7000u64)]),
+        ],
+    );
+    let t = Trace::load(&cd).unwrap();
+    let idx = Index::build(&t);
+
+    assert_eq!(idx.mem_writes.len(), 2, "expected 2 mem_writes (idx 0 + 2)");
+    assert_eq!(idx.mem_reads.len(), 1, "expected 1 mem_read (idx 1)");
+    assert_eq!(
+        idx.mem_addr_to_writes.get(&0x7000).cloned(),
+        Some(vec![0usize, 2]),
+        "addr_to_writes must hold trace record indices, not mem_writes vec indices"
+    );
+}

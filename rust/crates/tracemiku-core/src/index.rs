@@ -71,9 +71,8 @@ impl Index {
                         value: None,
                     };
                     if op.is_write {
-                        let n = idx.mem_writes.len();
                         idx.mem_writes.push(mr);
-                        idx.mem_addr_to_writes.entry(addr).or_default().push(n);
+                        idx.mem_addr_to_writes.entry(addr).or_default().push(i);
                     } else {
                         idx.mem_reads.push(mr);
                     }
