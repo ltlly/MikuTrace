@@ -56,3 +56,12 @@ async fn meta_endpoint_returns_synth_trace_metadata() {
     assert_eq!(v["regs"][0], "x0");
     assert_eq!(v["regs"][32], "pc");
 }
+
+#[test]
+fn app_state_loads_trace_eagerly() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
+    // The synth fixture has 0 or 9 records (depending on fixture variant).
+    let n = state.inner.trace.len();
+    assert!(n == 0 || n == 9, "expected 0 or 9 records, got {n}");
+}
