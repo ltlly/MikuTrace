@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
-    build_from_trace, Index, ModuleResolver, SymbolMap, Trace, TraceMeta,
+    build_from_trace, Index, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
 };
+use tracemiku_core::symbols::auto_known_offsets_with_base;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -18,6 +20,7 @@ pub struct AppStateInner {
     pub index: Index,
     pub symbols: SymbolMap,
     pub modules: ModuleResolver,
+    pub cfg: CFG,
 }
 
 impl AppState {
@@ -38,20 +41,30 @@ impl AppState {
             .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
             .unwrap_or(0);
         let mut known_offsets = parse_known_offsets(&trace_dir).unwrap_or_default();
+        // Merge auto-discovered bl-target entries; static known_offsets WIN
+        // on collision (don't override curated names with f_<hex>).
+        let auto = auto_known_offsets_with_base(&trace, primary_base);
+        for (off, name) in auto {
+            known_offsets.entry(off).or_insert(name);
+        }
         // Mirror Python's priority: when fn_addr aligns to an offset in known_offsets
         // AND meta.method is non-empty, replace that entry's name with method.
         // (Python: `name = m.method or known_offsets.get(off, "func")` when pc==fn_addr)
         if !meta.method.is_empty() {
             if let Some(fn_addr_str) = &meta.fn_addr {
-                let fn_abs = u64::from_str_radix(fn_addr_str.trim_start_matches("0x"), 16)
-                    .unwrap_or(0);
+                let fn_abs =
+                    u64::from_str_radix(fn_addr_str.trim_start_matches("0x"), 16).unwrap_or(0);
                 let fn_off = fn_abs.wrapping_sub(primary_base);
-                if known_offsets.contains_key(&fn_off) {
-                    known_offsets.insert(fn_off, meta.method.clone());
+                if let std::collections::hash_map::Entry::Occupied(mut e) =
+                    known_offsets.entry(fn_off)
+                {
+                    e.insert(meta.method.clone());
                 }
             }
         }
         let symbols = build_from_trace(&trace, primary_base, &known_offsets);
+
+        let cfg = build_cfg(&trace);
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -61,6 +74,7 @@ impl AppState {
                 index,
                 symbols,
                 modules,
+                cfg,
             }),
         })
     }

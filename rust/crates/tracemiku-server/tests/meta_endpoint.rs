@@ -80,3 +80,11 @@ fn app_state_eagerly_loads_index_symbols_modules() {
     assert!(m.is_some(), "0x100000 should resolve to libt.so");
     assert_eq!(m.unwrap().name, "libt.so");
 }
+
+#[test]
+fn app_state_eagerly_loads_cfg() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
+    // Empty trace → 0 blocks, but the field exists.
+    let _ = state.inner.cfg.block_count();
+}
