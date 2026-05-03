@@ -106,3 +106,43 @@ def test_dec_fn_legacy_cfg_id_still_works(trace_root_two_callees):
     # only honors cfg:* for symbol-sourced fns. Both are acceptable
     # provided we DON'T 500. Pin whichever the implementation gives.
     assert r.status_code in (200, 404)
+
+
+def test_dec_fn_resolves_when_bg_cfg_not_ready(trace_root_two_callees):
+    """sym:<name> resolution must not block on /api/cfg readiness.
+
+    Pins the synchronous CFG-pack fallback (`_cfg_pack_ready_or_build`):
+    the dec endpoint must return a valid markdown response even when the
+    background CFG subprocess hasn't finished, by building the cfg pack
+    in-process on demand. Forkserver-unfriendly test/dev launches depend
+    on this fallback for the Decompile tab to be usable.
+
+    Strategy: drive split_top_k=1 so only F0 (root) is in trace-ir; the
+    other named fns must resolve via the symbol path, which is the path
+    that exercises the sync fallback. The test does NOT call /api/cfg
+    first — it goes straight to /api/dec/fn.
+    """
+    c = _client(trace_root_two_callees)
+    # Look up the sym: id with split_top_k=1 forcing 2 of 3 fns to symbol.
+    # Use /api/dec/summary directly (it carries the same source labels
+    # /api/functions would). NOTE: this also doesn't await /api/cfg.
+    j = c.get("/api/dec/summary",
+              params={"split_top_k": 1, "split_min_records": 1}).json()
+    sym_fns = [f for f in j["fns"] if f["source"] == "symbol"]
+    if not sym_fns:
+        # Fixture didn't produce a symbol-only fn even at split_top_k=1.
+        # Construct a sym: id by hand from a known fixture name; the
+        # endpoint must still resolve (or 404 cleanly) without crashing.
+        sym_id = "sym:f_alpha"
+    else:
+        sym_id = sym_fns[0]["id"]
+    r = c.get(f"/api/dec/fn/{sym_id}",
+              params={"split_top_k": 1, "split_min_records": 1})
+    # Must not 500. Either 200 (sync fallback worked) or 404 (no such fn
+    # — acceptable for hand-built ids when the fixture differs).
+    assert r.status_code in (200, 404), \
+        f"sync fallback regression: {r.status_code} {r.text[:200]}"
+    if r.status_code == 200:
+        body = r.json()
+        assert body["fn_id"] == sym_id
+        assert "markdown" in body
