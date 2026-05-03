@@ -89,3 +89,48 @@ ul {
   margin: 0;
   padding-left: 16px;
 }
+
+.records-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.records-pagination button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.records-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.records-table th,
+.records-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.records-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.records-table td code {
+  background: transparent;
+  padding: 0;
+}
