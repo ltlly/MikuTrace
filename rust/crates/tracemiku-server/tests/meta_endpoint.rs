@@ -65,3 +65,18 @@ fn app_state_loads_trace_eagerly() {
     let n = state.inner.trace.len();
     assert!(n == 0 || n == 9, "expected 0 or 9 records, got {n}");
 }
+
+#[test]
+fn app_state_eagerly_loads_index_symbols_modules() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
+    // Index built — empty regs maps for an empty trace are OK.
+    let _ = &state.inner.index.reg_defs;
+    let _ = &state.inner.index.reg_uses;
+    // SymbolMap built — empty for synth (no known_offsets in fixture).
+    assert_eq!(state.inner.symbols.len(), 0);
+    // ModuleResolver has libt.so.
+    let m = state.inner.modules.resolve(0x100000);
+    assert!(m.is_some(), "0x100000 should resolve to libt.so");
+    assert_eq!(m.unwrap().name, "libt.so");
+}
