@@ -134,3 +134,35 @@ ul {
   background: transparent;
   padding: 0;
 }
+
+.functions-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+}
+
+.functions-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.fn-source-tag {
+  display: inline-block;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 2px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.fn-name {
+  color: var(--fg);
+  font-weight: 500;
+}

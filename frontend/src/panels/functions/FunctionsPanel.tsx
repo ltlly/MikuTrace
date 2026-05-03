@@ -1,0 +1,59 @@
+import { createResource, Show, For } from "solid-js";
+import { fetchFunctions } from "~/api/client";
+
+const SOURCE_TAGS: Record<string, string> = {
+  "trace-ir": "TR",
+  "symbol": "SY",
+  "bn": "BN",
+};
+
+export default function FunctionsPanel() {
+  const [resp] = createResource(fetchFunctions);
+  return (
+    <section class="panel">
+      <h2>Functions</h2>
+      <Show when={resp.error}>
+        <p class="err">load failed: {String(resp.error)}</p>
+      </Show>
+      <Show when={resp.loading}>
+        <p class="dim">loading…</p>
+      </Show>
+      <Show when={resp()}>
+        {(r) => (
+          <>
+            <p class="dim small">
+              {r().functions.length} function{r().functions.length === 1 ? "" : "s"}:
+              {" "}
+              <For each={Object.entries(r().counts).filter(([, n]) => n > 0)}>
+                {([src, n], i) => (
+                  <span>
+                    {i() === 0 ? "" : ", "}
+                    <span class="fn-source-tag">{SOURCE_TAGS[src] ?? src}</span>:{n}
+                  </span>
+                )}
+              </For>
+            </p>
+            <ul class="functions-list">
+              <For each={r().functions}>
+                {(fn) => (
+                  <li>
+                    <span class="fn-source-tag">{SOURCE_TAGS[fn.source] ?? fn.source}</span>
+                    <span class="fn-name">{fn.name}</span>
+                    <Show when={fn.entry_pc !== null}>
+                      <span class="dim small">
+                        @ {`0x${fn.entry_pc!.toString(16)}`}
+                      </span>
+                    </Show>
+                    <Show when={fn.blocks > 0}>
+                      <span class="dim small">{fn.blocks} blocks</span>
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </>
+        )}
+      </Show>
+    </section>
+  );
+}

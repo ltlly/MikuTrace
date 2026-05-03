@@ -1,3 +1,4 @@
+import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
 
@@ -9,6 +10,7 @@ export default function App() {
         <span class="dim small">analysis v2 — Rust core + Solid frontend</span>
       </header>
       <MetaPanel />
+      <FunctionsPanel />
       <RecordsPanel />
     </main>
   );

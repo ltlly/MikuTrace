@@ -52,3 +52,23 @@ export interface RecordDetail {
   asm: string;
   regs: Record<string, string>;
 }
+
+// ── /api/functions ───────────────────────────────────────────────────────
+
+export interface FunctionEntry {
+  id: string;
+  name: string;
+  source: string;
+  entry_pc: number | null;
+  blocks: number;
+  records: number;
+  trace_ir_id: string | null;
+  bn_start: number | null;
+  can_llil: boolean;
+  can_bn_hlil: boolean;
+}
+
+export interface FunctionsResponse {
+  counts: Record<string, number>;
+  functions: FunctionEntry[];
+}

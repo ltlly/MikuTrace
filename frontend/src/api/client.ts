@@ -1,4 +1,4 @@
-import type { MetaResponse, RecordsResponse, RecordDetail } from "./types";
+import type { MetaResponse, RecordsResponse, RecordDetail, FunctionsResponse } from "./types";
 
 export async function fetchMeta(): Promise<MetaResponse> {
   const r = await fetch("/api/meta");
@@ -29,4 +29,10 @@ export async function fetchRecord(idx: number): Promise<RecordDetail> {
   const r = await fetch(`/api/record/${idx}`);
   if (!r.ok) throw new Error(`/api/record/${idx} returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as RecordDetail;
+}
+
+export async function fetchFunctions(): Promise<FunctionsResponse> {
+  const r = await fetch("/api/functions");
+  if (!r.ok) throw new Error(`/api/functions returned ${r.status}: ${await r.text()}`);
+  return (await r.json()) as FunctionsResponse;
 }
