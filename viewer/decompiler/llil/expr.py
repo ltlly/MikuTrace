@@ -357,10 +357,10 @@ def intrinsic(name: str, args: list = None, pc: int = 0,
                     extra={"mnem": name, "op_str": op_str},
                     pc=pc)
 
-def cmp_e(a, b, size=None) -> LlilExpr:
-    if size is None: size = a.size or 8
+def cmp_e(a, b) -> LlilExpr:
+    """LLIL_CMP_E(a, b) — boolean (size=1). 不接受 size 参数 (compare 结果就是 1-bit)."""
     return LlilExpr(LLIL_CMP_E, size=1, operands=[a, b])
 
-def cmp_ne(a, b, size=None) -> LlilExpr:
-    if size is None: size = a.size or 8
+def cmp_ne(a, b) -> LlilExpr:
+    """LLIL_CMP_NE(a, b) — boolean (size=1). 不接受 size 参数."""
     return LlilExpr(LLIL_CMP_NE, size=1, operands=[a, b])

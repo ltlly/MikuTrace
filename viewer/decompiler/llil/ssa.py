@@ -30,7 +30,8 @@ _CALLER_SAVED = (
     "x16", "x17", "x18",
     "lr",                                         # bl 写 lr
 )
-_CALLER_SAVED_FLAGS = ("nzcv", "n", "z", "c", "v")
+_CALLER_SAVED_FLAGS = ("nzcv", "n", "z", "c", "v",
+                       "cmp_result")  # 我们的合成 flag, 也得 kill
 
 
 @dataclass

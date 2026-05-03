@@ -18,27 +18,27 @@ def test_unify_arg_regs():
 
 
 def test_unify_callee_saved():
-    """(x19..x28, 0) / (fp, 0) / (lr, 0) → cs_xN."""
+    """(x19..x28, 0) / (fp, 0) → cs_xN. lr 不是 callee-saved (修正 ABI)."""
     blk = ssa_block(0x1000, [
         set_reg("x9", reg("x19")),
         set_reg("x10", reg("x28")),
-        set_reg("x11", reg("lr")),
     ])
     names = unify_vars({0x1000: blk})
     assert names[("x19", 0)] == "cs_x19"
     assert names[("x28", 0)] == "cs_x28"
-    assert names[("lr", 0)] == "cs_lr"
 
 
-def test_unify_sp_fp_self():
-    """sp/fp v0 保留原名."""
+def test_unify_sp_fp_lr_self():
+    """sp/fp/lr v0 保留原名 (lr v0 是 caller 的 return PC, 特殊)."""
     blk = ssa_block(0x1000, [
         set_reg("x9", reg("sp")),
         set_reg("x10", reg("fp")),
+        set_reg("x11", reg("lr")),
     ])
     names = unify_vars({0x1000: blk})
     assert names[("sp", 0)] == "sp"
     assert names[("fp", 0)] == "fp"
+    assert names[("lr", 0)] == "lr"   # 不是 cs_lr (caller-saved per AAPCS64)
 
 
 def test_unify_general_reg_v1():

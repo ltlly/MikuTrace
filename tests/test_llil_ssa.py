@@ -163,3 +163,25 @@ def test_ssa_call_kills_nzcv():
     ])
     # post-call nzcv v2 (call bump)
     assert blk.tag.get(use_n) == 2
+
+
+def test_ssa_call_kills_cmp_result_flag():
+    """call 后 'cmp_result' 合成 flag 也 kill — flag_elim 不能跨 call 错合并.
+
+    场景 (来自代码审计 fix): cmp x0, x1; bl foo; b.eq label
+      之前 bug: cmp_result version 在 call 前后都是 1 → flag_elim 可能误把
+      call 后的 IF(FLAG_COND(eq)) 跟 call 前的 SET_FLAG('cmp_result',...) 合并.
+      正确: call 后 cmp_result version 应 bump.
+    """
+    from viewer.decompiler.llil import call, const_ptr, set_reg as sr, sub
+    from viewer.decompiler.llil.expr import LlilExpr, LLIL_SET_FLAG, LLIL_FLAG
+    set_cmp = LlilExpr(LLIL_SET_FLAG, size=8,
+                       operands=["cmp_result", sub(reg("x0"), reg("x1"))])
+    use_cmp = LlilExpr(LLIL_FLAG, size=1, operands=["cmp_result"])
+    blk = ssa_block(0x1000, [
+        set_cmp,                                            # cmp_result → v1
+        call(const_ptr(0x4000), pc=0x1004),                 # bumps
+        sr("x9", use_cmp),                                  # post-call use
+    ])
+    # post-call cmp_result v2 (call bump)
+    assert blk.tag.get(use_cmp) == 2

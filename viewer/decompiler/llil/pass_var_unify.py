@@ -19,11 +19,12 @@ from .expr import LlilExpr, LLIL_REG, LLIL_SET_REG
 from .ssa import SsaBlock
 
 
-# ARM64 ABI:
+# ARM64 AAPCS64 ABI (canonical reg names, viewer/regs.py 已 normalize x29→fp / x30→lr).
+# 注意: lr 是 caller-saved (volatile), 不是 callee-saved — 之前列错了.
 _ARG_REGS = ("x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7")
 _CALLEE_SAVED = (
     "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
-    "x27", "x28", "x29", "x30", "fp", "lr",
+    "x27", "x28", "fp",
 )
 
 
@@ -70,8 +71,8 @@ def unify_vars(blocks: dict[int, SsaBlock]
 
     names: dict[tuple, str] = {}
     for (r, v) in seen:
-        if v == 0 and r in ("sp", "fp"):
-            names[(r, v)] = r              # sp/fp 本名保留 (优先于 cs)
+        if v == 0 and r in ("sp", "fp", "lr"):
+            names[(r, v)] = r              # sp/fp/lr 本名保留 (优先于 cs/arg)
         elif v == 0 and r in _ARG_REGS:
             idx = _ARG_REGS.index(r)
             names[(r, v)] = f"arg_{idx}"
