@@ -390,7 +390,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | Python module | v2 home | Status | Note |
 |---|---|---|---|
 | `trace.py` (Trace, Record, mmap parser, REC_SIZE) | `tracemiku-core::trace` | ✅ M2-α | memmap2 + bytemuck zero-copy; 15 unit/integration tests + scripts/m2_alpha_parity.py |
-| `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | 🔜 M2 | capstone-rs |
+| `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | 🟡 M2-β: decode + classify done; def/use M2-γ | capstone-rs 0.13; thread-local FIFO cache (200k); 11 unit tests + scripts/m2_beta_parity.py |
 | `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | 🔜 M2 | rayon-parallel build |
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | 🔜 M2 | petgraph |
 | `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
@@ -479,8 +479,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Endpoint | Status | Note |
 |---|---|---|
 | `/api/meta` | ✅ M1 | first end-to-end milestone — landed 2026-05-03 |
-| `/api/records?from=&to=` | 🔜 M3 | |
-| `/api/record/{idx}` | 🔜 M3 | |
+| `/api/records?start=&count=` | ✅ M2-β | symbol-dependent fields (func/off/annotation/exec_count) emitted null until M2-γ |
+| `/api/record/{idx}` | ✅ M2-β | full regs object; prev_regs + regs_annotated deferred to M2-γ |
 | `/api/so-stats` | 🔜 M3 | |
 | `/api/cfg?fn=` | 🔜 M3 | |
 | `/api/cfg-svg` | 🔜 M3 | graphviz-rust |

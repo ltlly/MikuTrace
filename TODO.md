@@ -25,7 +25,9 @@
 - M1 e2e smoke (cargo run + npm run dev + browser /api/meta): ✅
 - M2-α `tracemiku-core::trace::{Record, Trace}` + mmap parser: ✅ 2026-05-03
 - M2-α `tracemiku-cli stats` parity vs `python -m viewer stats`: ✅ (scripts/m2_alpha_parity.py)
-- M2-β (next): capstone-rs disasm + Index + CFG + /api/records + /api/cfg + RecordsPanel
+- M2-β `tracemiku-core::disasm` (capstone wrapper + thread-local FIFO cache 200k): ✅ 2026-05-04
+- M2-β `/api/records` + `/api/record/{idx}` (subset wire shape; symbol-fields null): ✅ 2026-05-04
+- M2-β frontend `RecordsPanel` (paginated 50-record windows): ✅ 2026-05-04
 - M2-γ: MemShadow + taint + symbols + calltree
 - M2-δ: FunctionIndex + decompiler::backend stub + final M2 parity
 - M3-M7: 见 spec §9 milestones
