@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-# Auto-fallback to a Python with our deps (capstone/frida/fastapi) when the
+# Auto-fallback to a Python with our deps (capstone/numpy) when the
 # `env`-resolved python3 lacks them — common on dev machines with multiple
 # venvs in PATH where the first one is for an unrelated project.
+# 注意: 顶层只 smoke capstone (大多数子命令要 disasm). frida 是 trace-only,
+# 延迟到 cmd_trace() 内 import — 让 web/list/info/dec 等离线子命令在没装
+# frida 的环境也能跑.
 import os, sys
 try:
-    import capstone, frida   # smoke check for native trace deps
+    import capstone   # smoke check for viewer/disasm deps
 except ImportError:
     for _p in ("/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"):
         if os.path.exists(_p) and _p != sys.executable:
             try: os.execv(_p, [_p, *sys.argv])
             except Exception: pass
     sys.stderr.write(
-        f"error: missing 'capstone' / 'frida' in {sys.executable}\n"
-        f"  pip install capstone frida fastapi 'pydantic>=2' uvicorn numpy\n"
+        f"error: missing 'capstone' in {sys.executable}\n"
+        f"  pip install capstone fastapi 'pydantic>=2' uvicorn numpy\n"
+        f"  (frida 仅 trace 子命令需要, 单独装: pip install frida)\n"
         f"  or invoke directly with the right interpreter: "
         f"<other-python> ./tracemiku ...\n")
     sys.exit(1)
@@ -1548,8 +1552,9 @@ def main():
     p_tr.add_argument("--duration", type=int, default=120)
     p_tr.add_argument("--out", required=True, help="输出目录")
     p_tr.add_argument("--remote", default="127.0.0.1:6699", help="frida server 地址")
-    p_tr.add_argument("--mode", choices=["js", "cmodule"], default="cmodule",
-                      help="trace 实现: js=JS callout (~30K rec/s) cmodule=CModule native (10x+, 默认)")
+    p_tr.add_argument("--mode", choices=["js", "cmodule", "cmodule-v3"], default="cmodule",
+                      help="trace 实现: js=JS callout (~30K rec/s); cmodule=CModule native (10x+, 默认); "
+                           "cmodule-v3=回归对比 baseline (CModule + send blob, 仅基准用)")
     p_tr.add_argument("--cold-launch", action="store_true",
                       help="冷启动 app 前自动 force-stop+pm clear+monkey+点'同意' (隐私协议自动化, 多 app 通用)")
     p_tr.add_argument("--home-markers", default=None,

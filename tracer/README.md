@@ -10,7 +10,7 @@ JNI native fn 完整执行轨迹, dropped=0 保完整性.
 |---|---|---|
 | **`agent_cmodule_v5.js`** | **默认 (`--mode cmodule`)** | CModule on_insn + SPSC lock-free ring + 设备落盘. 1.5M rec/s, dropped=0, 完整保 |
 | `agent_cmodule_v3.js` | `--mode cmodule-v3` | 旧 cmodule, send blob via IPC. IPC 瓶颈 (~5MB/s), 高速 callout 下 91% drop. 留作回归对比. |
-| `agent_generic.js` | `--mode js` | JS putCallout, 无 cmodule. ~17K rec/s, dropped=0 (callout 慢匹配 IPC). cmodule 编译失败时自动 fallback. |
+| `agent_generic.js` | `--mode js` | JS putCallout, 无 cmodule. ~17K rec/s, dropped=0 (callout 慢匹配 IPC). CModule 不可用时手动 `--mode js`. |
 | `README.md` | — | 本文档 |
 
 ## 架构: v5 设备落盘 (默认 cmodule 模式)
@@ -85,8 +85,8 @@ trace 结束 (onLeave):
 0x0F0  u64  fp           (= x29)
 0x0F8  u64  lr           (= x30)
 0x100  u64  sp
-0x108  u32  inst         (raw 4-byte 机器码)
-0x10C  u32  pad          (0)
+0x108  u32  nzcv         (NZCV flag bits; v3/early agent 留 0)
+0x10C  u32  inst         (raw 4-byte 机器码)
 ```
 
 viewer / webui 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.

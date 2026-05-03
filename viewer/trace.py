@@ -147,8 +147,11 @@ def load(trace_dir_or_file: str | pathlib.Path) -> Trace:
     SDK 文档示例 'traces/run1/calls/call_002_*' 走这里.
     """
     raw = str(trace_dir_or_file)
-    if any(c in raw for c in "*?["):
-        import glob as _glob
+    import glob as _glob
+    if _glob.has_magic(raw):
+        # has_magic 比 'any(c in "*?[")' 准 — 'foo[bar]' 是 magic, '[lit]' 单
+        # 字符也是 magic. 普通 dirname 含 '[' 但没匹配 ']' 时 has_magic→False
+        # 不会误报 (Android 样本目录名可能含 [).
         matches = sorted(_glob.glob(raw))
         if not matches:
             raise FileNotFoundError(f"no path matches glob: {raw}")

@@ -127,7 +127,7 @@ JNI 字符串 hook + 主动反反调试组合实现:
 ```bash
 ./tracemiku trace ... \
   --trace-deep \
-  --boundary-diff-patterns 'libart.so:NewStringUTF,libart.so:GetStringUTFChars' \
+  --boundary-diff-patterns 'NewStringUTF,GetStringUTFChars' \
   --jni-hooks tools/hooks/libart_jni.json \
   --patch-suicide \
   --hide-rwx-maps
@@ -182,7 +182,7 @@ JNI_GetCreatedJavaVMs` 直接拿 JNIEnv (Frida 17 删了 `Java` 全局, 必须�
   → host adb `gzip -1 -c | gunzip` 流式 pull. **采集 ~1.56M rec/s, dropped=0**.
   实测 TB 70102 cold-launch 14 calls / 67M records / dropped=0 / 总 wall 93s.
 - `cmodule-v3`: 旧版 send blob via IPC, 不推荐, 留作回归对比。
-- `js`: JS putCallout, ~17K rec/s 但 dropped=0. cmodule 编译失败时自动 fallback。
+- `js`: JS putCallout, ~17K rec/s 但 dropped=0. CModule 不可用时手动加 `--mode js`。
 
 trace.bin 物理格式 (272B/rec) 三种模式相同。
 
@@ -470,7 +470,7 @@ codegen 直接消费。
 | mode | 实现 | 实测最大单次 trace | 适用 |
 |---|---|---|---|
 | `cmodule` (默认 v5) | CModule on_insn + 设备落盘 + gzip pull | **67M records / 14 calls / dropped=0** | 默认 |
-| `js` | JS putCallout | 2,066,291 条 / 562 MB ✓ TB cold-path | cmodule 编译失败 fallback |
+| `js` | JS putCallout | 2,066,291 条 / 562 MB ✓ TB cold-path | CModule 不可用时手动 `--mode js` |
 | `cmodule-v3` | cmodule + send blob (IPC) | drop ~91% | 仅回归对比, 不推荐 |
 
 ---

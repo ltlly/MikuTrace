@@ -51,3 +51,16 @@ def test_version_string_is_set():
     """__version__ 不应为空, 不应 fallback 到 unknown — 包元数据齐."""
     from viewer import __version__
     assert __version__ and "unknown" not in __version__
+
+
+def test_load_dirname_contains_bracket_not_glob(tmp_path):
+    """普通目录名含 '[' (没成对 ']') → 不当 glob, 直接 load.
+    防止 batch-2 'any(c in "*?[")' 检测把合法路径误判.
+    """
+    base = tmp_path / "weird[name"
+    base.mkdir()
+    (base / "trace.bin").write_bytes(b"")
+    (base / "meta.json").write_text("{}")
+    t = load(str(base))
+    assert t.n == 0
+    t.close()
