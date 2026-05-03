@@ -176,14 +176,64 @@ def test_dec_summary_includes_cfg_functions(trace_with_call_dir):
     client = TestClient(make_app(trace_with_call_dir))
     _wait_cfg(client)
     j = client.get("/api/dec/summary?split_top_k=0").json()
-    cfg_fns = [f for f in j["fns"] if f.get("source") == "cfg"]
+    # Server emits "symbol" (not "cfg") for symbol-derived functions.
+    symbol_fns = [f for f in j["fns"] if f.get("source") == "symbol"]
     trace_fns = [f for f in j["fns"] if f.get("source") == "trace-ir"]
-    assert cfg_fns or trace_fns
-    fn_id = (cfg_fns or trace_fns)[0]["id"]
-    if cfg_fns:
+    assert symbol_fns or trace_fns
+    fn_id = (symbol_fns or trace_fns)[0]["id"]
+    if symbol_fns:
         assert fn_id.startswith("cfg:")
     else:
         assert fn_id.startswith("F")
     r = client.get(f"/api/dec/fn/{fn_id}").json()
     assert r["fn_id"] == fn_id
     assert "markdown" in r
+
+
+def test_dec_llm_call_does_not_poison_summary_cache(trace_with_call_dir, monkeypatch):
+    """Calling /api/dec/llm-call for a symbol fn must not relabel it as trace-ir
+    in subsequent /api/dec/summary calls.
+
+    Both calls use the default split_top_k (10) so they share the same cached
+    TopIR object — this is the path where the mutation would actually corrupt
+    source labels.
+    """
+    from fastapi.testclient import TestClient
+    from webui.server import make_app
+
+    class _StubResult:
+        error = None
+        model = "stub"
+        c_code = "int f(){}"
+        prompt_tokens = 1
+        output_tokens = 1
+        latency_ms = 1
+
+    class _StubModel:
+        def call(self, user, system=None, max_tokens=4096):
+            return _StubResult()
+
+    # make_llm_model is imported inside the route via
+    # `from viewer.decompiler import make_llm_model` so patch at that location.
+    import viewer.decompiler as _vd
+    monkeypatch.setattr(_vd, "make_llm_model", lambda name: _StubModel())
+
+    client = TestClient(make_app(trace_with_call_dir))
+    _wait_cfg(client)
+    # Use the default split_top_k (10) so both the summary and the llm-call
+    # share the same cached TopIR object.
+    j_before = client.get("/api/dec/summary").json()
+    symbol_fns_before = [f for f in j_before["fns"] if f["source"] == "symbol"]
+    if not symbol_fns_before:
+        pytest.skip("fixture has no symbol-derived fns")
+    fn_id = symbol_fns_before[0]["id"]
+
+    # llm-call with default split_top_k to hit the same cache entry.
+    r = client.post("/api/dec/llm-call",
+                    json={"fn_id": fn_id, "model": "stub"}).json()
+    assert r["ok"] is True
+
+    j_after = client.get("/api/dec/summary").json()
+    after_entry = next(f for f in j_after["fns"] if f["id"] == fn_id)
+    assert after_entry["source"] == "symbol", \
+        f"expected source 'symbol', got {after_entry['source']!r}"

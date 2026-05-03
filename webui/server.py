@@ -2570,9 +2570,10 @@ def make_app(trace_path: pathlib.Path,
     def _cfg_funcs() -> list[dict]:
         """Return all functions seen by symbols, with CFG block counts if ready."""
         funcs = _all_symbol_funcs()
-        if BG["cfg"]["status"] != "ready":
+        try:
+            c, _, _ = _cfg_pack_ready_or_build()
+        except Exception:
             return funcs
-        c = BG["cfg"]["data"]
         counts: dict[str, int] = {}
         for pc in c.blocks:
             name, _ = sym.lookup(pc)
@@ -2765,8 +2766,12 @@ def make_app(trace_path: pathlib.Path,
 
         try:
             if top.fn(fn_id) is None:
-                top.fns.append(fn)
-            bundle = build_fn_decompile_prompt(top, fn_id, tier=tier, lang=lang)
+                # Don't mutate the cached top — build a per-request view.
+                import dataclasses
+                top_view = dataclasses.replace(top, fns=list(top.fns) + [fn])
+            else:
+                top_view = top
+            bundle = build_fn_decompile_prompt(top_view, fn_id, tier=tier, lang=lang)
             model = make_llm_model(model_name)
         except KeyError as e:
             raise HTTPException(400, f"{e}")

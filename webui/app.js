@@ -1541,12 +1541,17 @@ function openDecompileForCfgFn(fnName) {
   if (!fnName) return;
   activateRightTab("dec");
   const targetId = "cfg:" + fnName;
+  let attempts = 0;
   const pick = () => {
-    if (!TAB_INIT.dec || !$("dec-fn-list")) {
-      setTimeout(pick, 200);
+    if (TAB_INIT.dec && $("dec-fn-list")) {
+      selectDecFn(targetId);
       return;
     }
-    selectDecFn(targetId);
+    if (attempts++ > 25) {
+      console.warn("openDecompileForCfgFn: dec tab never initialized for", fnName);
+      return;
+    }
+    setTimeout(pick, 200);
   };
   pick();
 }
@@ -2520,12 +2525,12 @@ async function loadDecSummary() {
     // 估值: blocks * 600 chars / 4 (粗估), summary 级 100
     const estChars = f.blocks * 600 + 200;
     const estTokens = Math.round(estChars / 4);
-    const source = f.source === "cfg" ? "CFG" : "TraceIR";
+    const source = f.source === "trace-ir" ? "TraceIR" : f.source === "symbol" ? "Symbol" : "BN";
     const idxHint = f.entry_idx == null ? "on-demand" : `idx=${f.entry_idx}..${f.exit_idx}`;
     return `<div class="dec-fn-item" data-fn="${escapeHtml(f.id)}" title="${idxHint}, ~${estTokens} prompt tokens">
        <span class="dec-fn-id">${f.id}</span>
        <span class="dec-fn-name">${escapeHtml(f.name)}</span>
-       <span class="dec-fn-source ${f.source === "trace-ir" ? "trace" : "cfg"}">${source}</span>
+       <span class="dec-fn-source ${f.source === "trace-ir" ? "trace" : f.source === "symbol" ? "sym" : "bn"}">${source}</span>
        <span class="dec-fn-stats dim">blk=${f.blocks} loop=${f.loops || 0} call=${f.calls || 0}` +
         (f.type_anchors ? ` anc=${f.type_anchors}` : "") +
         ` ~${estTokens}tok</span>

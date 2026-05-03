@@ -704,7 +704,8 @@ body.multi-so .row-insn { padding-left: 6px; }
   background: var(--bg2);
 }
 .dec-fn-source.trace { color: var(--accent); }
-.dec-fn-source.cfg { color: var(--good); }
+.dec-fn-source.sym { color: var(--good); }
+.dec-fn-source.bn { color: var(--dim); }
 .dec-fn-stats { font-size: 11px; }
 #dec-output {
   flex: 1 1 auto;
