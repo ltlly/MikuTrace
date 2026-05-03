@@ -141,3 +141,42 @@ async fn cfg_empty_trace_no_blocks() {
     assert!(v["blocks"].as_array().unwrap().is_empty());
     assert!(v["edges"].as_array().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn idxs_for_block_returns_record_indices() {
+    let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/idxs-for-block?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "ready");
+    let idxs = v["idxs"].as_array().expect("idxs array");
+    assert!(!idxs.is_empty(), "expected ≥1 record in block 0x100000");
+    assert_eq!(idxs[0].as_u64(), Some(0));
+}
+
+#[tokio::test]
+async fn idxs_for_block_unknown_pc_404() {
+    let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/idxs-for-block?pc=0xdeadbeef")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

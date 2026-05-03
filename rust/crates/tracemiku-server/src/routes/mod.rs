@@ -1,4 +1,5 @@
 pub mod cfg;
+pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod meta;
 pub mod record;
@@ -15,6 +16,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
+        .route(
+            "/api/idxs-for-block",
+            get(idxs_for_block::idxs_for_block_handler),
+        )
         .route("/api/cfg", get(cfg::cfg_handler))
         .with_state(state)
 }
