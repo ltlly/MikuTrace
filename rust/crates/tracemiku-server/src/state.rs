@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
-    build_from_trace, Index, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
+    build_from_trace, build_function_index, FunctionIndex, Index, ModuleResolver, SymbolMap, Trace,
+    TraceMeta, CFG,
 };
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
@@ -21,6 +22,7 @@ pub struct AppStateInner {
     pub symbols: SymbolMap,
     pub modules: ModuleResolver,
     pub cfg: CFG,
+    pub function_index: FunctionIndex,
 }
 
 impl AppState {
@@ -80,6 +82,7 @@ impl AppState {
         let symbols = build_from_trace(&trace, primary_base, &known_offsets);
 
         let cfg = build_cfg(&trace);
+        let function_index = build_function_index(&symbols, Some(&cfg));
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -90,6 +93,7 @@ impl AppState {
                 symbols,
                 modules,
                 cfg,
+                function_index,
             }),
         })
     }

@@ -88,3 +88,10 @@ fn app_state_eagerly_loads_cfg() {
     // Empty trace → 0 blocks, but the field exists.
     let _ = state.inner.cfg.block_count();
 }
+
+#[test]
+fn app_state_eagerly_loads_function_index() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
+    let _ = state.inner.function_index.len();
+}
