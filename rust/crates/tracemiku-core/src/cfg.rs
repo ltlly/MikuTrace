@@ -9,6 +9,7 @@
 //! Tarjan SCC marks loop members for the `--scc` UI affordance and feeds
 //! into M2-ε's loop detection.
 
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use petgraph::graph::{DiGraph, NodeIndex};
@@ -74,4 +75,126 @@ impl CFG {
             .filter_map(|s| self.graph.node_weight(s).map(|b| b.start_pc))
             .collect()
     }
+}
+
+/// Build a block-level CFG over the trace.
+///
+/// Algorithm:
+/// 1. First pass: identify "block start PCs" — idx 0's PC, every PC that
+///    appears immediately after a branch.
+/// 2. Second pass: walk records, partition into blocks. Each record either
+///    starts a new block (its PC is in start_pcs) or continues the current
+///    one. Branch instructions terminate the current block; the next record's
+///    PC starts a new block (already in start_pcs from pass 1).
+/// 3. Add edges: for each branch at record i, edge from current-block-start
+///    to record (i+1)'s PC.
+/// 4. Post-pass: count executions = number of records whose PC equals each
+///    block's start_pc (re-entering the block at its head).
+pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
+    let n = trace.len();
+    if n == 0 {
+        return CFG::new();
+    }
+
+    // Pass 1: collect block start PCs.
+    let mut start_pcs: BTreeSet<u64> = BTreeSet::new();
+    start_pcs.insert(trace.pc(0));
+    for i in 0..n {
+        let pc_i = trace.pc(i);
+        let inst_i = trace.inst(i);
+        let d = crate::disasm::decode(pc_i, inst_i);
+        if d.is_branch && i + 1 < n {
+            start_pcs.insert(trace.pc(i + 1));
+        }
+    }
+
+    // Pass 2: walk records, build block_meta (start_pc → end_pc).
+    // Executions are counted in a separate post-pass.
+    let mut block_meta: HashMap<u64, u64> = HashMap::new(); // start_pc → end_pc
+    let mut edges: Vec<(u64, u64)> = Vec::new();
+
+    let mut current_start: Option<u64> = None;
+    let mut current_end: u64 = 0;
+
+    for i in 0..n {
+        let pc = trace.pc(i);
+
+        if start_pcs.contains(&pc) {
+            // Finalize previous in-flight block (if any).
+            if let Some(prev) = current_start {
+                block_meta
+                    .entry(prev)
+                    .and_modify(|e| *e = (*e).max(current_end))
+                    .or_insert(current_end);
+            }
+            current_start = Some(pc);
+            current_end = pc;
+        } else {
+            current_end = pc;
+            if let Some(s) = current_start {
+                block_meta
+                    .entry(s)
+                    .and_modify(|e| *e = (*e).max(pc))
+                    .or_insert(pc);
+            }
+        }
+
+        let inst = trace.inst(i);
+        let d = crate::disasm::decode(pc, inst);
+        if d.is_branch {
+            if let Some(s) = current_start {
+                if i + 1 < n {
+                    edges.push((s, trace.pc(i + 1)));
+                }
+                // Save end_pc and reset current_start.
+                block_meta
+                    .entry(s)
+                    .and_modify(|e| *e = (*e).max(pc))
+                    .or_insert(pc);
+            }
+            current_start = None;
+        }
+    }
+    // Finalize last in-flight block.
+    if let Some(s) = current_start {
+        block_meta
+            .entry(s)
+            .and_modify(|e| *e = (*e).max(current_end))
+            .or_insert(current_end);
+    }
+
+    // Build CFG nodes.
+    let mut cfg = CFG::new();
+    for (start, end) in block_meta {
+        let block = Block {
+            start_pc: start,
+            end_pc: end,
+            executions: 0,
+            fn_name: None,
+            scc_id: 0,
+        };
+        let node = cfg.graph.add_node(block);
+        cfg.by_pc.insert(start, node);
+    }
+
+    // Add edges (skip if either endpoint isn't a known block start).
+    for (from, to) in edges {
+        if let (Some(&fn_), Some(&tn)) = (cfg.by_pc.get(&from), cfg.by_pc.get(&to)) {
+            if !cfg.graph.contains_edge(fn_, tn) {
+                cfg.graph.add_edge(fn_, tn, ());
+            }
+        }
+    }
+
+    // Post-pass: count executions per block (records whose PC == block.start_pc).
+    for i in 0..n {
+        let pc = trace.pc(i);
+        if let Some(&node) = cfg.by_pc.get(&pc) {
+            if let Some(b) = cfg.graph.node_weight_mut(node) {
+                b.executions += 1;
+            }
+        }
+    }
+
+    cfg
 }
