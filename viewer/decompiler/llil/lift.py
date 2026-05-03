@@ -9,7 +9,7 @@
   ✓ self-update load → LLIL_INTRINSIC (后 pass 可拆 LOAD+SET_REG)
 
 实施范围 (MVP, 同 v1):
-  - mov / movz
+  - mov / movz / movk (movk → AND-mask + OR for OLLVM 大常量 constfold)
   - add / sub / mul (含 ADD/ADDS/SUB/SUBS)
   - and / orr / eor (BN 命名: AND/OR/XOR)
   - lsl / lsr / asr / ror
@@ -23,7 +23,6 @@
 不实施 (走 INTRINSIC):
   - SIMD/NEON/SVE
   - SVC / system register
-  - movk (mov-keep, 复杂)
   - 自更新 load/store (extra: 'self_update')
 """
 from __future__ import annotations
@@ -162,7 +161,7 @@ def _lift(d: Decoded) -> list:
     if base in ("mov", "movz"):
         return [_lift_mov(d)]
     if base == "movk":
-        return [_intrinsic(d)]      # 复杂, 走 intrinsic
+        return [_lift_movk(d)]
 
     # ── multiply-add/sub: madd/msub/smull/umull/smaddl/umaddl/smulh/umulh ──
     if base in ("madd", "msub", "smaddl", "umaddl", "smsubl", "umsubl"):
@@ -413,6 +412,44 @@ def _lift_mov(d: Decoded) -> LlilExpr:
     if d.regs_use:
         return set_reg(dst, reg(d.regs_use[0]), pc=d.pc)
     return _intrinsic(d)
+
+
+def _lift_movk(d: Decoded) -> LlilExpr:
+    """movk xN, #imm{, lsl #shift} — keep, 把 xN 的 16-bit 字段 (位于 <<shift)
+    替换为 #imm, 其它位保留.
+
+    LLIL: SET_REG(dst, OR(AND(reg(dst_old), MASK), CONST(imm << shift)))
+    其中 MASK = ~(0xFFFF << shift) (64-bit truncated).
+
+    OLLVM 大常量构造 (movz + movk*3) 经此 lift 后 constfold 可 fold 成单 const.
+    """
+    if not d.regs_def:
+        return _intrinsic(d)
+    dst = d.regs_def[0]
+    parts = [p.strip() for p in d.op_str.split(",")]
+    # 期待: ['xN', '#imm'] 或 ['xN', '#imm', 'lsl #shift']
+    if len(parts) < 2 or not parts[1].startswith("#"):
+        return _intrinsic(d)
+    imm = _parse_imm(parts[1])
+    if imm is None:
+        return _intrinsic(d)
+    shift = 0
+    if len(parts) >= 3 and "lsl" in parts[2].lower():
+        # 'lsl #16'
+        try:
+            tail = parts[2].lower().split("lsl", 1)[1].strip().lstrip("#")
+            shift = int(tail, 0)
+        except (ValueError, IndexError):
+            shift = 0
+    mask64 = (1 << 64) - 1
+    keep_mask = (~(0xFFFF << shift)) & mask64
+    new_field = (imm & 0xFFFF) << shift
+    expr = or_(
+        and_(reg(dst), const(keep_mask), size=8),
+        const(new_field),
+        size=8,
+    )
+    return set_reg(dst, expr, pc=d.pc)
 
 
 def _parse_mem_shift(op_str: str) -> int:

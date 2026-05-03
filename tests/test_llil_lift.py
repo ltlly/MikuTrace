@@ -527,3 +527,74 @@ def test_lift_ldr_disp_only_unchanged():
     a, b = addr.operands
     assert a.operands == ["x1"]
     assert b.op == LLIL_CONST and b.operands == [16]
+
+
+# ─────────── movk (mov-keep) ───────────
+
+def test_lift_movk_no_shift():
+    """movk x0, #0xabcd — 替换 [15:0], 保留 [63:16].
+    SET_REG(x0, OR(AND(x0, ~0xFFFF), 0xabcd))."""
+    [e] = lift_arm64(0x1000, _asm("movk x0, #0xabcd"))
+    assert e.op == LLIL_SET_REG
+    assert e.operands[0] == "x0"
+    val = e.operands[1]
+    assert val.op == LLIL_OR
+    keep, new = val.operands
+    assert keep.op == LLIL_AND
+    src, mask = keep.operands
+    assert src.op == LLIL_REG and src.operands == ["x0"]
+    assert mask.op == LLIL_CONST
+    assert mask.operands == [(~0xFFFF) & ((1 << 64) - 1)]
+    assert new.op == LLIL_CONST and new.operands == [0xabcd]
+
+
+def test_lift_movk_lsl_16():
+    """movk x0, #0x1234, lsl #16 — 替换 [31:16]."""
+    [e] = lift_arm64(0x1000, _asm("movk x0, #0x1234, lsl #16"))
+    val = e.operands[1]
+    keep, new = val.operands
+    _, mask = keep.operands
+    assert mask.operands == [(~(0xFFFF << 16)) & ((1 << 64) - 1)]
+    assert new.operands == [0x1234 << 16]
+
+
+def test_lift_movk_lsl_48():
+    """movk x0, #0xff00, lsl #48 — 替换最高 16 bits."""
+    [e] = lift_arm64(0x1000, _asm("movk x0, #0xff00, lsl #48"))
+    val = e.operands[1]
+    keep, new = val.operands
+    _, mask = keep.operands
+    assert mask.operands == [(~(0xFFFF << 48)) & ((1 << 64) - 1)]
+    assert new.operands == [0xff00 << 48]
+
+
+def test_lift_movz_then_movk_constfold_chain():
+    """movz x0, #0x1234 + movk x0, #0xabcd, lsl #16
+    → 走 SSA + constfold, 最终 x0 应折成 const 0xabcd1234.
+    OLLVM 大常量构造的核心场景."""
+    from viewer.decompiler.llil import ssa_block, constfold_block, LLIL_CONST
+    e1 = lift_arm64(0x1000, _asm("movz x0, #0x1234"))[0]
+    e2 = lift_arm64(0x1004, _asm("movk x0, #0xabcd, lsl #16"))[0]
+    blk = ssa_block(0x1000, [e1, e2])
+    new = constfold_block(blk)
+    last = new.roots[-1]
+    assert last.op == LLIL_SET_REG
+    rhs = last.operands[1]
+    assert rhs.op == LLIL_CONST, f"expected fully folded const, got {rhs.op}"
+    assert rhs.operands == [0xabcd1234]
+
+
+def test_lift_movz_movk_movk_movk_full_64bit():
+    """4-step OLLVM 大常量: movz + movk*3 → 折出 64-bit const."""
+    from viewer.decompiler.llil import ssa_block, constfold_block, LLIL_CONST
+    insns = [
+        lift_arm64(0x1000, _asm("movz x0, #0xdead"))[0],
+        lift_arm64(0x1004, _asm("movk x0, #0xbeef, lsl #16"))[0],
+        lift_arm64(0x1008, _asm("movk x0, #0xcafe, lsl #32"))[0],
+        lift_arm64(0x100c, _asm("movk x0, #0xbabe, lsl #48"))[0],
+    ]
+    blk = ssa_block(0x1000, insns)
+    new = constfold_block(blk)
+    rhs = new.roots[-1].operands[1]
+    assert rhs.op == LLIL_CONST
+    assert rhs.operands == [0xbabecafebeefdead]
