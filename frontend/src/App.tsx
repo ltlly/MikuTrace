@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { fetchMeta, fetchRecord, fetchSearch, fetchSearchPc } from "./api/client";
+import { fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
@@ -257,14 +257,15 @@ export default function App() {
     hashJumpAbort = abort;
     setCmdStatus(`resolving ${pc}...`);
     try {
-      const r = await fetchSearchPc(pc, 200, abort.signal);
+      const r = await fetchIdxsForPc(pc, selectedIdx(), 80, abort.signal);
       if (seq !== hashJumpSeq || abort.signal.aborted) return;
-      if (!r.idxs.length) {
+      const candidates = [...r.before, ...r.after];
+      if (!candidates.length) {
         setCmdStatus(`${pc}: not executed in trace`);
         return;
       }
       const cursor = selectedIdx();
-      const nearest = [...r.idxs].sort((a, b) => Math.abs(a - cursor) - Math.abs(b - cursor))[0];
+      const nearest = candidates.sort((a, b) => Math.abs(a - cursor) - Math.abs(b - cursor))[0];
       jumpToIdx(nearest);
       setCmdStatus(`${pc}: jumped to #${nearest}`);
     } catch (err) {
