@@ -197,9 +197,13 @@ def compare_vm_candidates(
     py_candidates = py_summary.get("vm_candidates", []) or []
     rs_candidates = rs_summary.get("vm_candidates", []) or []
     if not py_candidates or not rs_candidates:
-        lines.append(
-            f"PASS vm_candidates=skipped py={len(py_candidates)} rust={len(rs_candidates)}"
-        )
+        ok = not py_candidates and not rs_candidates
+        status = "PASS" if ok else "FAIL"
+        lines.append(f"{status} vm_candidates py={len(py_candidates)} rust={len(rs_candidates)}")
+        if not ok:
+            failures.append(
+                f"vm_candidates presence mismatch py={len(py_candidates)} rust={len(rs_candidates)}"
+            )
         return
 
     py_top = py_candidates[0]
@@ -243,7 +247,7 @@ def main() -> int:
         wait_healthy(args.python_port, "python")
         wait_healthy(args.rust_port, "rust")
 
-        summary_path = "/api/dec/summary?split_top_k=10&split_min_records=50"
+        summary_path = "/api/dec/summary?split_top_k=10&split_min_records=50&with_memshadow=true"
         fn_id = urllib.parse.quote("trace:F0", safe="")
         fn_path = f"/api/dec/fn/{fn_id}?tier=hot"
 

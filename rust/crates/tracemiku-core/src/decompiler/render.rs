@@ -7,24 +7,25 @@
 
 use crate::decompiler::ir::{FuncIR, TopIR};
 
-/// Render a FuncIR as a markdown bundle. `tier_filter` is one of
-/// `"hot"` / `"warm"` / `"cold"` / `"all"` — only blocks matching the
-/// requested tier are rendered (matches Python webui's `tier` param).
+/// Render a FuncIR as a markdown bundle. `tier_filter` follows Python:
+/// `"hot"` renders hot blocks fully and warm/cold blocks as compact stubs;
+/// `"summary"` omits block detail; `"all"`/`"full"` renders every block fully.
 pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
     let mut out = String::new();
-    out.push_str(&format!("# {} — {}\n\n", fn_.id, fn_.name));
+    out.push_str(&format!("# {} `{}`\n\n", fn_.id, fn_.name));
     out.push_str(&format!(
-        "- **records**: idx [{}..{}]\n",
+        "- range: {:#x}..{:#x}\n",
+        fn_.pc_start, fn_.pc_end
+    ));
+    out.push_str(&format!(
+        "- trace idx: {}..{}\n",
         fn_.entry_idx, fn_.exit_idx
     ));
     out.push_str(&format!("- **exec_count**: {}\n", fn_.exec_count));
-    out.push_str(&format!("- **blocks**: {}\n", fn_.blocks.len()));
-    out.push_str(&format!("- **loops**: {}\n", fn_.loops.len()));
-    out.push_str(&format!("- **calls**: {}\n", fn_.calls.len()));
-    out.push_str(&format!("- **type_anchors**: {}\n", fn_.type_anchors.len()));
-    if fn_.truncated {
-        out.push_str("- **truncated**: yes\n");
-    }
+    out.push_str(&format!(
+        "- truncated: {}, last_insn_is_ret: {}\n",
+        fn_.truncated, fn_.last_insn_is_ret
+    ));
     out.push('\n');
 
     // Type anchors section (M3-ι2a Task 3) — JSON-spec-driven ABI ground
@@ -85,71 +86,101 @@ pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
             ));
             let shown: Vec<String> = g.hits.iter().take(5).map(|i| i.to_string()).collect();
             let suffix = if g.hits.len() > 5 { ", ..." } else { "" };
-            out.push_str(&format!(
-                "  - hit idx: [{}{}]\n",
-                shown.join(", "),
-                suffix
-            ));
+            out.push_str(&format!("  - hit idx: [{}{}]\n", shown.join(", "), suffix));
             out.push_str(&format!("  - source: `{}`\n", g.provenance));
         }
         out.push('\n');
     }
 
-    // Per-block sections.
-    let want_all = tier_filter == "all";
-    for block in &fn_.blocks {
-        if !want_all && block.tier != tier_filter {
-            continue;
-        }
+    if tier_filter == "summary" {
+        let hot_count = fn_.blocks.iter().filter(|b| b.tier == "hot").count();
+        let warm_count = fn_.blocks.iter().filter(|b| b.tier == "warm").count();
+        out.push_str(&format!("## Blocks ({} total)\n\n", fn_.blocks.len()));
+        out.push_str(&format!("- hot: {hot_count}, warm: {warm_count}\n"));
+        out.push_str("- *block detail omitted (--tier summary). Re-render with --tier hot or --tier full.*\n\n");
+        return out;
+    }
+
+    let hot_count = fn_.blocks.iter().filter(|b| b.tier == "hot").count();
+    let warm_count = fn_.blocks.iter().filter(|b| b.tier == "warm").count();
+    if tier_filter == "hot" && warm_count > 0 {
         out.push_str(&format!(
-            "## {} (pc {:#x}, exec {})\n\n",
-            block.id, block.pc, block.exec_count
+            "## Blocks ({hot_count} hot + {warm_count} warm shown as stub)\n\n"
         ));
-        out.push_str(&format!("- **tier**: {}\n", block.tier));
-        out.push_str(&format!("- **insns**: {}\n", block.insns));
-        if !block.samples.is_empty() {
-            out.push_str("- **samples**:\n");
-            // Sort keys for stable output.
-            let mut keys: Vec<&String> = block.samples.keys().collect();
-            keys.sort();
-            for k in keys {
-                let v = block.samples[k];
-                // Render as hex when value is non-trivial (>= 16) and not
-                // negative; small integers (e.g. counters) render as decimal.
-                let v_str = if v.abs() >= 16 {
-                    format!("{:#x}", v as u64)
-                } else {
-                    v.to_string()
-                };
-                out.push_str(&format!("  - {} = {}\n", k, v_str));
-            }
-        }
-        // exits: outgoing CFG edges (kind + taken_count). Stable order by dst.
-        // M3-ι Task 2 — wires BlockIR.exits into per-block markdown.
-        if !block.exits.is_empty() {
-            out.push_str("- **exits**:\n");
-            let mut exits_sorted: Vec<&crate::decompiler::ir::EdgeIR> = block.exits.iter().collect();
-            exits_sorted.sort_by(|a, b| a.dst.cmp(&b.dst));
-            for e in exits_sorted {
-                let cnt = if e.taken_count > 0 {
-                    format!(" (×{})", e.taken_count)
-                } else {
-                    String::new()
-                };
-                out.push_str(&format!("  - `{}` → **{}**{}\n", e.kind, e.dst, cnt));
-            }
-        }
-        if !block.asm.is_empty() {
-            out.push_str("\n```asm\n");
-            out.push_str(&block.asm);
-            if !block.asm.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str("```\n");
-        }
-        out.push('\n');
+    } else {
+        out.push_str(&format!("## Blocks ({})\n\n", fn_.blocks.len()));
+    }
+
+    for block in &fn_.blocks {
+        let stub = tier_filter == "hot" && block.tier != "hot";
+        render_block_md(&mut out, block, stub);
     }
     out
+}
+
+fn render_block_md(out: &mut String, block: &crate::decompiler::ir::BlockIR, stub: bool) {
+    let tier_mark = if block.tier == "hot" {
+        String::new()
+    } else {
+        format!(" ({})", block.tier)
+    };
+    out.push_str(&format!(
+        "### {} @ {:#x} (×{}){}\n",
+        block.id, block.pc, block.exec_count, tier_mark
+    ));
+
+    if stub {
+        let exits_short = if block.exits.is_empty() {
+            String::new()
+        } else {
+            let mut dsts: Vec<String> = block.exits.iter().take(3).map(|e| e.dst.clone()).collect();
+            if block.exits.len() > 3 {
+                dsts.push("+".to_string());
+            }
+            format!(" → {}", dsts.join(","))
+        };
+        out.push_str(&format!("\n- {} insns{}\n\n", block.insns, exits_short));
+        return;
+    }
+
+    out.push('\n');
+    if !block.samples.is_empty() {
+        let mut parts = Vec::new();
+        for reg in ["x0", "x1", "x2", "x3", "sp"] {
+            if let Some(v) = block.samples.get(reg) {
+                parts.push(format!("{reg}={:#x}", *v as u64));
+            }
+        }
+        if !parts.is_empty() {
+            out.push_str(&format!("- samples (first exec): {}\n", parts.join(", ")));
+        }
+    }
+    out.push_str(&format!(
+        "- insns: {}, range: {:#x}..{:#x}\n",
+        block.insns, block.pc, block.end_pc
+    ));
+    if !block.exits.is_empty() {
+        out.push_str("- exits:\n");
+        let mut exits_sorted: Vec<&crate::decompiler::ir::EdgeIR> = block.exits.iter().collect();
+        exits_sorted.sort_by(|a, b| a.dst.cmp(&b.dst));
+        for e in exits_sorted {
+            let cnt = if e.taken_count > 0 {
+                format!(" (×{})", e.taken_count)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("  - `{}` → **{}**{}\n", e.kind, e.dst, cnt));
+        }
+    }
+    if !block.asm.is_empty() {
+        out.push_str("\n```arm64\n");
+        out.push_str(&block.asm);
+        if !block.asm.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("```\n");
+    }
+    out.push('\n');
 }
 
 /// Render TopIR → summary.md text. Mirrors
@@ -280,15 +311,20 @@ mod tests {
             ..Default::default()
         };
         let md = render_func_md(&f, "hot");
-        assert!(md.contains("# F0 — doCommandNative"), "missing header in {md}");
-        assert!(md.contains("**records**: idx [0..100]"), "missing records line: {md}");
-        assert!(md.contains("**blocks**: 1"), "missing blocks count: {md}");
-        assert!(md.contains("## B0"), "missing block heading: {md}");
-        assert!(md.contains("**tier**: hot"), "missing tier line: {md}");
-        assert!(md.contains("```asm"), "missing asm code fence: {md}");
+        assert!(
+            md.contains("# F0 `doCommandNative`"),
+            "missing header in {md}"
+        );
+        assert!(
+            md.contains("- trace idx: 0..100"),
+            "missing trace idx line: {md}"
+        );
+        assert!(md.contains("## Blocks (1)"), "missing blocks count: {md}");
+        assert!(md.contains("### B0"), "missing block heading: {md}");
+        assert!(md.contains("```arm64"), "missing asm code fence: {md}");
         assert!(md.contains("0x1000: nop"), "missing asm content: {md}");
-        assert!(md.contains("x0 = 0xdead"), "missing samples x0: {md}");
-        assert!(md.contains("sp = 0x7000"), "missing samples sp: {md}");
+        assert!(md.contains("x0=0xdead"), "missing samples x0: {md}");
+        assert!(md.contains("sp=0x7000"), "missing samples sp: {md}");
     }
 
     #[test]
@@ -312,7 +348,7 @@ mod tests {
             ..Default::default()
         };
         let md = render_func_md(&f, "hot");
-        assert!(md.contains("**exits**"), "missing exits section: {md}");
+        assert!(md.contains("- exits:"), "missing exits section: {md}");
         assert!(md.contains("`b.eq`"), "missing edge kind: {md}");
         assert!(md.contains("**B1**"), "missing dst id: {md}");
         assert!(md.contains("(×5)"), "missing taken_count annotation: {md}");
@@ -340,11 +376,20 @@ mod tests {
             ..Default::default()
         };
         let md_hot = render_func_md(&f, "hot");
-        assert!(md_hot.contains("## B0"), "B0 (hot) should appear: {md_hot}");
-        assert!(!md_hot.contains("## B1"), "B1 (warm) should be filtered: {md_hot}");
+        assert!(
+            md_hot.contains("### B0"),
+            "B0 (hot) should appear: {md_hot}"
+        );
+        assert!(
+            md_hot.contains("### B1") && md_hot.contains("(warm)") && md_hot.contains("0 insns"),
+            "B1 (warm) should appear as a stub: {md_hot}"
+        );
         let md_all = render_func_md(&f, "all");
-        assert!(md_all.contains("## B0"));
-        assert!(md_all.contains("## B1"), "all should include warm: {md_all}");
+        assert!(md_all.contains("### B0"));
+        assert!(
+            md_all.contains("### B1"),
+            "all should include warm: {md_all}"
+        );
     }
 
     #[test]
@@ -452,7 +497,10 @@ mod tests {
             ..Default::default()
         });
         let md = render_summary_md(&top);
-        assert!(md.contains("length unreliable"), "missing unreliable note: {md}");
+        assert!(
+            md.contains("length unreliable"),
+            "missing unreliable note: {md}"
+        );
         assert!(md.contains("~200000 bytes"), "missing length: {md}");
     }
 
@@ -464,7 +512,10 @@ mod tests {
         };
         let md = render_summary_md(&top);
         assert!(md.contains("- records: **0**"));
-        assert!(!md.contains("- cmd:"), "cmd should be omitted when None: {md}");
+        assert!(
+            !md.contains("- cmd:"),
+            "cmd should be omitted when None: {md}"
+        );
         assert!(
             !md.contains("- method:"),
             "method should be omitted when empty: {md}"

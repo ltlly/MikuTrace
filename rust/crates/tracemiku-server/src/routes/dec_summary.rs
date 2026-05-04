@@ -7,8 +7,8 @@
 
 use std::collections::HashSet;
 
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
 use serde::Serialize;
 
 use tracemiku_core::prelude::{make_trace_id, render_summary_md};
@@ -89,6 +89,11 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
     }
 
     let summary_md = render_summary_md(top);
+    let vm_candidates = top
+        .vm_candidates
+        .iter()
+        .filter_map(|c| serde_json::to_value(c).ok())
+        .collect();
 
     Json(DecSummaryResponse {
         records: top.records,
@@ -97,7 +102,7 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
         module_size: top.module_size,
         truncated: top.truncated,
         fns,
-        vm_candidates: Vec::new(),
+        vm_candidates,
         summary_md,
     })
 }

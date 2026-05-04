@@ -182,7 +182,7 @@ async fn dec_fn_returns_markdown_for_sym_source() {
         "sym FuncIR should render with public sym id: {md}"
     );
     assert!(
-        md.contains("- **blocks**: 1"),
+        md.contains("## Blocks (1)"),
         "symbol markdown should include blocks: {md}"
     );
 }
@@ -269,7 +269,7 @@ async fn dec_fn_markdown_contains_exits_section_when_branches_present() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let md = v["markdown"].as_str().unwrap();
     assert!(
-        md.contains("**exits**"),
+        md.contains("- exits:"),
         "markdown should carry an exits section when branches are present:\n{md}"
     );
 }
