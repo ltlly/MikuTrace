@@ -45,6 +45,33 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_deep_call_dir(depth: usize) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join(format!("call_001_tid100_{depth}r_1ms"));
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * depth];
+    for i in 0..depth {
+        let off = i * 272;
+        let pc = 0x100000u64 + (i as u64) * 4;
+        let inst = 0x94000000u32; // bl
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(cd.join("meta.json"), format!(r#"{{"records":{depth}}}"#)).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 async fn get(call_dir: PathBuf, uri: &str) -> (StatusCode, serde_json::Value) {
     let app = tracemiku_server::build_router(call_dir).expect("build router");
     let resp = app
@@ -96,8 +123,24 @@ async fn backtrace_replays_calls_before_idx() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["depth"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["stack"][0]["call_site_idx"], 1);
     assert_eq!(v["stack"][0]["callee_pc"], "0x100100");
+}
+
+#[tokio::test]
+async fn backtrace_caps_returned_stack_to_limit() {
+    let (_tmp, cd) = synth_deep_call_dir(5);
+    let (status, v) = get(cd, "/api/backtrace?idx=4&limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["depth"], 5);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["stack"].as_array().unwrap().len(), 2);
+    assert_eq!(v["stack"][0]["call_site_idx"], 3);
+    assert_eq!(v["stack"][1]["call_site_idx"], 4);
 }
 
 #[tokio::test]

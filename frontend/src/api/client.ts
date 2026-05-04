@@ -334,11 +334,13 @@ export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   return out;
 }
 
-export async function fetchBacktrace(idx: number): Promise<BacktraceResponse> {
-  const params = new URLSearchParams({ idx: String(idx) });
+export async function fetchBacktrace(idx: number, limit = 256): Promise<BacktraceResponse> {
+  const params = new URLSearchParams({ idx: String(idx), limit: String(limit) });
   const r = await fx(`/api/backtrace?${params}`);
   if (!r.ok) throw new Error(`/api/backtrace ${r.status}: ${await r.text()}`);
-  return (await r.json()) as BacktraceResponse;
+  const out = (await r.json()) as BacktraceResponse;
+  out.request_limit = limit;
+  return out;
 }
 
 export async function fetchForkEvents(status = ""): Promise<ForkEventsResponse> {

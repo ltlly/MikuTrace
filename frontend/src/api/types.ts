@@ -347,6 +347,9 @@ export interface BacktraceResponse {
   idx: number;
   stack: BacktraceFrame[];
   depth: number;
+  returned?: number;
+  truncated?: boolean;
+  request_limit?: number;
 }
 
 // ── /api/fork-events ─────────────────────────────────────────────────────

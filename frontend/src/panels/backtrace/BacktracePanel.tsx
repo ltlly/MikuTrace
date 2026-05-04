@@ -30,7 +30,12 @@ export default function BacktracePanel(props: BacktracePanelProps) {
       <Show when={currentResp()}>
         {(r) => (
           <>
-            <p class="dim small">idx {r().idx} · depth {r().depth}</p>
+            <p class="dim small">
+              idx {r().idx} · depth {r().depth}
+              <Show when={r().truncated}>
+                {" "}· showing last {r().returned ?? r().stack.length}
+              </Show>
+            </p>
             <table class="bt-table">
               <thead>
                 <tr>
@@ -45,7 +50,7 @@ export default function BacktracePanel(props: BacktracePanelProps) {
                 <For each={r().stack}>
                   {(frame, i) => (
                     <tr onClick={() => props.onSelect(frame.call_site_idx)}>
-                      <td>{i()}</td>
+                      <td>{r().depth - r().stack.length + i()}</td>
                       <td>
                         <button type="button" onClick={() => props.onSelect(frame.call_site_idx)}>
                           {frame.call_site_idx}
