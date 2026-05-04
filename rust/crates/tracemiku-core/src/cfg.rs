@@ -11,10 +11,17 @@
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::thread;
 
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::Serialize;
+
+const BRANCH_FLAG: u8 = 0x01;
+const CALL_FLAG: u8 = 0x02;
+const RET_FLAG: u8 = 0x04;
+const CFG_PARALLEL_MIN_RECORDS: usize = 250_000;
+const CFG_MIN_CHUNK_RECORDS: usize = 200_000;
 
 /// A basic block in the trace-derived CFG.
 #[derive(Debug, Clone, Serialize)]
@@ -130,15 +137,13 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     if n == 0 {
         return CFG::new();
     }
+    let branch_info = scan_branch_info(trace);
 
     // Pass 1: collect block start PCs.
     let mut start_pcs: BTreeSet<u64> = BTreeSet::new();
     start_pcs.insert(trace.pc(0));
     for i in 0..n {
-        let pc_i = trace.pc(i);
-        let inst_i = trace.inst(i);
-        let d = crate::disasm::decode(pc_i, inst_i);
-        if d.is_branch && i + 1 < n {
+        if branch_info.flags[i] & BRANCH_FLAG != 0 && i + 1 < n {
             start_pcs.insert(trace.pc(i + 1));
         }
     }
@@ -196,14 +201,14 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
             }
         }
 
-        let inst = trace.inst(i);
-        let d = crate::disasm::decode(pc, inst);
-        if d.is_branch {
+        let flags = branch_info.flags[i];
+        let is_branch = flags & BRANCH_FLAG != 0;
+        if is_branch {
             if let Some(s) = current_start {
                 // Track call-stack for call-return pairing.
-                if d.is_call {
+                if flags & CALL_FLAG != 0 {
                     call_stack.push(s);
-                } else if d.is_ret {
+                } else if flags & RET_FLAG != 0 {
                     if let Some(caller) = call_stack.pop() {
                         if i + 1 < n {
                             edges.push((
@@ -223,7 +228,11 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
                         s,
                         trace.pc(i + 1),
                         EdgeMeta {
-                            kind: d.mnemonic.clone(),
+                            kind: branch_info
+                                .mnemonics
+                                .get(&i)
+                                .cloned()
+                                .unwrap_or_else(|| "b".to_string()),
                             count: 1,
                         },
                     ));
@@ -238,7 +247,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
         }
 
         prev_pc = Some(pc);
-        prev_was_branch = d.is_branch;
+        prev_was_branch = is_branch;
     }
     // Finalize last in-flight block.
     if let Some(s) = current_start {
@@ -309,6 +318,102 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     }
 
     cfg
+}
+
+struct BranchScan {
+    flags: Vec<u8>,
+    mnemonics: HashMap<usize, String>,
+}
+
+struct BranchScanChunk {
+    start: usize,
+    flags: Vec<u8>,
+    mnemonics: HashMap<usize, String>,
+}
+
+fn scan_branch_info(trace: &crate::trace::Trace) -> BranchScan {
+    let n = trace.len();
+    let workers = cfg_worker_count(n);
+    if workers <= 1 {
+        let chunk = scan_branch_range(trace, 0, n);
+        return BranchScan {
+            flags: chunk.flags,
+            mnemonics: chunk.mnemonics,
+        };
+    }
+
+    let chunk_size = n.div_ceil(workers);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let start = worker * chunk_size;
+            let end = (start + chunk_size).min(n);
+            if start >= end {
+                continue;
+            }
+            handles.push(scope.spawn(move || scan_branch_range(trace, start, end)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("cfg branch scanner panicked"))
+            .collect::<Vec<_>>()
+    });
+
+    let mut flags = vec![0u8; n];
+    let mut mnemonics = HashMap::new();
+    for partial in partials {
+        for (offset, flag) in partial.flags.into_iter().enumerate() {
+            if flag != 0 {
+                flags[partial.start + offset] = flag;
+            }
+        }
+        mnemonics.extend(partial.mnemonics);
+    }
+    BranchScan { flags, mnemonics }
+}
+
+fn scan_branch_range(trace: &crate::trace::Trace, start: usize, end: usize) -> BranchScanChunk {
+    let mut flags = vec![0u8; end.saturating_sub(start)];
+    let mut mnemonics = HashMap::new();
+    for i in start..end {
+        let pc = trace.pc(i);
+        let inst = trace.inst(i);
+        let d = crate::disasm::decode(pc, inst);
+        if !d.is_branch {
+            continue;
+        }
+        let mut flag = BRANCH_FLAG;
+        if d.is_call {
+            flag |= CALL_FLAG;
+        }
+        if d.is_ret {
+            flag |= RET_FLAG;
+        }
+        flags[i - start] = flag;
+        mnemonics.insert(i, d.mnemonic);
+    }
+    BranchScanChunk {
+        start,
+        flags,
+        mnemonics,
+    }
+}
+
+fn cfg_worker_count(n: usize) -> usize {
+    let requested = std::env::var("TRACEMIKU_CFG_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v > 0);
+    let available = requested.unwrap_or_else(|| {
+        thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+    if available <= 1 || (requested.is_none() && n < CFG_PARALLEL_MIN_RECORDS) {
+        return 1;
+    }
+    let chunk_cap = n.div_ceil(CFG_MIN_CHUNK_RECORDS).max(1);
+    available.min(chunk_cap).max(1)
 }
 
 #[cfg(test)]
