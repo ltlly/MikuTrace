@@ -404,6 +404,26 @@ pub async fn find_mem_pattern_handler(
     State(state): State<AppState>,
     Query(q): Query<FindMemPatternQuery>,
 ) -> Json<FindMemPatternResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || find_mem_pattern_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "find mem pattern worker failed: {err}");
+                FindMemPatternResponse {
+                    pattern: String::new(),
+                    since_idx: -1,
+                    count: 0,
+                    hits: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn find_mem_pattern_response(
+    inner: &crate::state::AppStateInner,
+    q: FindMemPatternQuery,
+) -> FindMemPatternResponse {
     let pattern = parse_hex_bytes(&q.bytes_hex).unwrap_or_default();
     let cursor = if q.since >= 0 {
         q.since as u64
@@ -412,14 +432,12 @@ pub async fn find_mem_pattern_handler(
     };
     let mut hits = Vec::new();
     if !pattern.is_empty() {
-        for &addr in state.inner.memshadow().bytes.keys() {
+        let mem = inner.memshadow();
+        for &addr in mem.bytes.keys() {
             let mut first_idx: Option<usize> = None;
             let mut matched = true;
             for (offset, want) in pattern.iter().enumerate() {
-                let (byte, _kind, idx) = state
-                    .inner
-                    .memshadow()
-                    .byte_at(addr + offset as u64, cursor);
+                let (byte, _kind, idx) = mem.byte_at(addr + offset as u64, cursor);
                 if byte != Some(*want) {
                     matched = false;
                     break;
@@ -450,12 +468,12 @@ pub async fn find_mem_pattern_handler(
             }
         }
     }
-    Json(FindMemPatternResponse {
+    FindMemPatternResponse {
         pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),
         since_idx: q.since,
         count: hits.len(),
         hits,
-    })
+    }
 }
 
 fn parse_int(s: &str) -> Option<u64> {

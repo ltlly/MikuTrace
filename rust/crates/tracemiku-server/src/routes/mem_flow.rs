@@ -61,6 +61,17 @@ pub async fn mem_flow_handler(
     State(state): State<AppState>,
     Query(q): Query<MemFlowQuery>,
 ) -> Result<Json<MemFlowResponse>, StatusCode> {
+    let inner = state.inner.clone();
+    tokio::task::spawn_blocking(move || mem_flow_response(&inner, q))
+        .await
+        .unwrap_or(Err(StatusCode::INTERNAL_SERVER_ERROR))
+        .map(Json)
+}
+
+fn mem_flow_response(
+    inner: &crate::state::AppStateInner,
+    q: MemFlowQuery,
+) -> Result<MemFlowResponse, StatusCode> {
     let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
     let count = q.count.max(1);
     let cap = q.events_per_byte;
@@ -71,17 +82,12 @@ pub async fn mem_flow_handler(
     } else {
         None
     };
-    let base = primary_base(&state.inner.meta);
+    let base = primary_base(&inner.meta);
+    let mem = inner.memshadow();
     let mut bytes = Vec::with_capacity(count);
     for offset in 0..count {
         let addr = start + offset as u64;
-        let raw = state
-            .inner
-            .memshadow()
-            .bytes
-            .get(&addr)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let raw = mem.bytes.get(&addr).map(Vec::as_slice).unwrap_or(&[]);
         let mut events = Vec::new();
         for ev in raw {
             if q.idx_lo.is_some_and(|lo| ev.idx < lo) {
@@ -93,9 +99,9 @@ pub async fn mem_flow_handler(
             if kind_filter.is_some_and(|(a, b)| ev.kind != a && ev.kind != b) {
                 continue;
             }
-            let record = state.inner.trace.record(ev.idx);
+            let record = inner.trace.record(ev.idx);
             let decoded = decode(record.pc, record.inst);
-            let (func_name, _) = state.inner.symbols.lookup(record.pc);
+            let (func_name, _) = inner.symbols.lookup(record.pc);
             events.push(MemFlowEvent {
                 idx: ev.idx,
                 byte: ev.byte,
@@ -118,11 +124,11 @@ pub async fn mem_flow_handler(
             total: raw.len(),
         });
     }
-    Ok(Json(MemFlowResponse {
+    Ok(MemFlowResponse {
         addr: q.addr,
         count,
         bytes,
-    }))
+    })
 }
 
 fn primary_base(meta: &TraceMeta) -> Option<u64> {

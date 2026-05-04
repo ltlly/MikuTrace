@@ -4,6 +4,8 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 
+use tracemiku_core::prelude::MemShadow;
+
 use crate::state::AppState;
 
 const CRYPTO_PATTERNS: &[(&str, &str)] = &[
@@ -53,24 +55,35 @@ pub struct CryptoScanResponse {
 }
 
 pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoScanResponse> {
-    if state.inner.memshadow().bytes.is_empty() {
-        return Json(CryptoScanResponse {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || crypto_scan_response(&inner))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "crypto scan worker failed: {err}");
+                CryptoScanResponse {
+                    scanned: 0,
+                    primitives: Vec::new(),
+                    any_hit: false,
+                }
+            }),
+    )
+}
+
+fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanResponse {
+    let mem = inner.memshadow();
+    if mem.bytes.is_empty() {
+        return CryptoScanResponse {
             scanned: 0,
             primitives: Vec::new(),
             any_hit: false,
-        });
+        };
     }
-    let addrs = state
-        .inner
-        .memshadow()
-        .bytes
-        .keys()
-        .copied()
-        .collect::<Vec<_>>();
+    let addrs = mem.bytes.keys().copied().collect::<Vec<_>>();
     let mut primitives = Vec::with_capacity(CRYPTO_PATTERNS.len());
     for (name, hex_str) in CRYPTO_PATTERNS {
         let pattern = parse_hex_bytes(hex_str).unwrap_or_default();
-        let hits = scan_pattern(&state, &addrs, &pattern);
+        let hits = scan_pattern(mem, &addrs, &pattern);
         primitives.push(CryptoPrimitive {
             name,
             pattern: hex_str,
@@ -79,14 +92,14 @@ pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoSc
         });
     }
     let any_hit = primitives.iter().any(|p| p.hit_count > 0);
-    Json(CryptoScanResponse {
+    CryptoScanResponse {
         scanned: addrs.len(),
         primitives,
         any_hit,
-    })
+    }
 }
 
-fn scan_pattern(state: &AppState, addrs: &[u64], pattern: &[u8]) -> Vec<CryptoHit> {
+fn scan_pattern(mem: &MemShadow, addrs: &[u64], pattern: &[u8]) -> Vec<CryptoHit> {
     let mut hits = Vec::new();
     if pattern.is_empty() {
         return hits;
@@ -95,7 +108,7 @@ fn scan_pattern(state: &AppState, addrs: &[u64], pattern: &[u8]) -> Vec<CryptoHi
         let mut first_idx: Option<usize> = None;
         let mut matched = true;
         for (offset, want) in pattern.iter().enumerate() {
-            let Some(events) = state.inner.memshadow().bytes.get(&(addr + offset as u64)) else {
+            let Some(events) = mem.bytes.get(&(addr + offset as u64)) else {
                 matched = false;
                 break;
             };

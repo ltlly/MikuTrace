@@ -35,12 +35,32 @@ pub async fn hash_finalize_detect_handler(
     State(state): State<AppState>,
     Query(q): Query<HashFinalizeQuery>,
 ) -> Json<HashFinalizeResponse> {
-    let candidates = hash_finalize_detect(state.inner.memshadow(), q.window, q.min_size);
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || hash_finalize_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "hash finalize worker failed: {err}");
+                HashFinalizeResponse {
+                    window: 0,
+                    min_size: 0,
+                    count: 0,
+                    candidates: Vec::new(),
+                }
+            }),
+    )
+}
 
-    Json(HashFinalizeResponse {
+fn hash_finalize_response(
+    inner: &crate::state::AppStateInner,
+    q: HashFinalizeQuery,
+) -> HashFinalizeResponse {
+    let candidates = hash_finalize_detect(inner.memshadow(), q.window, q.min_size);
+
+    HashFinalizeResponse {
         window: q.window,
         min_size: q.min_size,
         count: candidates.len(),
         candidates,
-    })
+    }
 }
