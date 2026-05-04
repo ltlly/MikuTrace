@@ -342,6 +342,14 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         search_in_mem: bool,
     },
+    /// POST /api/diff-traces.
+    DiffTraces {
+        traces: Vec<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        show_offsets: bool,
+        #[arg(long, default_value_t = false)]
+        show_per_byte: bool,
+    },
     /// GET /api/auto-phase-detect.
     AutoPhaseDetect {
         trace_dir: PathBuf,
@@ -742,6 +750,25 @@ async fn main() -> anyhow::Result<()> {
                 "search_in_mem": search_in_mem,
             });
             route_post_json(trace_dir, "/api/hash-input-search".to_string(), body).await
+        }
+        Some(Cmd::DiffTraces {
+            traces,
+            show_offsets,
+            show_per_byte,
+        }) => {
+            if traces.len() < 2 {
+                bail!("need >= 2 traces for diff");
+            }
+            let trace_dir = traces[0].clone();
+            let body = serde_json::json!({
+                "traces": traces
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>(),
+                "show_offsets": show_offsets,
+                "show_per_byte": show_per_byte,
+            });
+            route_post_json(trace_dir, "/api/diff-traces".to_string(), body).await
         }
         Some(Cmd::AutoPhaseDetect {
             trace_dir,

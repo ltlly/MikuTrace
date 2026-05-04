@@ -2,6 +2,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+
 fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let cd = tmp
@@ -54,6 +57,31 @@ fn run_json(args: &[String]) -> serde_json::Value {
         String::from_utf8_lossy(&out.stderr)
     );
     serde_json::from_slice(&out.stdout).expect("stdout is json")
+}
+
+fn make_diff_trace(root: &std::path::Path, name: &str, x_sign: &[u8]) -> PathBuf {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut buf = vec![0u8; 272];
+    buf[0..8].copy_from_slice(&0x100000u64.to_le_bytes());
+    buf[268..272].copy_from_slice(&0xd503201fu32.to_le_bytes());
+    std::fs::write(dir.join("trace.bin"), &buf).unwrap();
+    std::fs::write(dir.join("meta.json"), r#"{"records":1}"#).unwrap();
+    let encoded = STANDARD.encode(x_sign);
+    let events = [
+        serde_json::json!({"id":"NewStringUTF","trace_idx":1,"args":{"bytes":"x-sign"}}),
+        serde_json::json!({"id":"NewStringUTF","trace_idx":2,"args":{"bytes":encoded}}),
+    ];
+    std::fs::write(
+        dir.join("jni_hooks.jsonl"),
+        events
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    dir
 }
 
 #[test]
@@ -357,6 +385,22 @@ fn hash_input_search_wrapper_uses_server_wire_shape() {
     assert_eq!(v["target_prefix"], "aaf4c61d");
     assert_eq!(v["found_count"], 1);
     assert_eq!(v["found"][0]["input"], "hello");
+}
+
+#[test]
+fn diff_traces_wrapper_uses_server_wire_shape() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run1 = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let run2 = make_diff_trace(tmp.path(), "run2", &[0xaa, 0xee, 0xcc, 0xdd]);
+    let v = run_json(&[
+        "diff-traces".into(),
+        run1.display().to_string(),
+        run2.display().to_string(),
+        "--show-offsets".into(),
+    ]);
+    assert_eq!(v["n_traces"], 2);
+    assert_eq!(v["headers"]["x-sign"]["stable_count"], 3);
+    assert_eq!(v["headers"]["x-sign"]["variable_count"], 1);
 }
 
 #[test]

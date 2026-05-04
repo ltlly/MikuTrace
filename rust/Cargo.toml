@@ -37,6 +37,7 @@ sha2 = "0.10"
 md-5 = "0.10"
 hmac = "0.12"
 crc32fast = "1"
+base64 = "0.22"
 # Internal
 tracemiku-core = { path = "crates/tracemiku-core" }
 tracemiku-server = { path = "crates/tracemiku-server" }

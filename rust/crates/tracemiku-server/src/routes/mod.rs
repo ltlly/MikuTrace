@@ -9,6 +9,7 @@ pub mod dec_fn;
 pub mod dec_llm_call;
 pub mod dec_models;
 pub mod dec_summary;
+pub mod diff_traces;
 pub mod fn_summary;
 pub mod fork_events;
 pub mod forward_taint;
@@ -60,6 +61,7 @@ pub fn router(state: AppState) -> Router {
             "/api/hash-input-search",
             post(hash_input_search::hash_input_search_handler),
         )
+        .route("/api/diff-traces", post(diff_traces::diff_traces_handler))
         .route(
             "/api/auto-phase-detect",
             get(auto_phase::auto_phase_detect_handler),
