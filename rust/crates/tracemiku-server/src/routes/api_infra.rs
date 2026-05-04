@@ -3,7 +3,8 @@
 use std::thread;
 
 use axum::extract::ws::{Message, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{OriginalUri, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::{json, Value};
@@ -47,6 +48,17 @@ pub async fn bg_status_handler(State(state): State<AppState>) -> Json<Value> {
 
 pub async fn decomp_status_handler(State(state): State<AppState>) -> Json<Value> {
     Json(decomp_status_value(&state))
+}
+
+pub async fn api_not_found_handler(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "status": "error",
+            "error": "unknown api endpoint",
+            "path": uri.path(),
+        })),
+    )
 }
 
 fn ready_task_status() -> Value {

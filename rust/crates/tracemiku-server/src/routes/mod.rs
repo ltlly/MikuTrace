@@ -45,7 +45,7 @@ pub mod string_provenance;
 pub mod strings;
 pub mod timeline_diff;
 
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use axum::Router;
 
 use crate::state::AppState;
@@ -172,5 +172,6 @@ pub fn router(state: AppState) -> Router {
             "/api/find-mem-pattern",
             get(memory_query::find_mem_pattern_handler),
         )
+        .route("/api/*path", any(api_infra::api_not_found_handler))
         .with_state(state)
 }

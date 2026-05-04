@@ -78,6 +78,27 @@ async fn python_web_compat_status_endpoints_are_available() {
 }
 
 #[tokio::test]
+async fn missing_api_route_returns_json_404() {
+    let (_tmp, cd) = synth_call_dir();
+    let app = tracemiku_server::build_router(cd).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/definitely-missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["error"], "unknown api endpoint");
+    assert_eq!(v["path"], "/api/definitely-missing");
+}
+
+#[tokio::test]
 async fn ws_jobs_requires_websocket_upgrade() {
     let (_tmp, cd) = synth_call_dir();
     let app = tracemiku_server::build_router(cd).expect("build router");
