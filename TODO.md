@@ -47,7 +47,8 @@
 - M3-α auto_known_offsets naming fix (`f_<0xhex>` → `sub_<hex>`, Python parity, caught by parity gate): ✅ 2026-05-04
 - M3-β `tracemiku-core::taint` (forward/backward index-accelerated, BFS via VecDeque, frame_depth_map): ✅ 2026-05-04
 - M3-β /api/forward-taint + /api/backward-taint + TaintPanel: ✅ 2026-05-04
-- M3-β scripts/m3_beta_parity.py: ✅ 2026-05-04 (forward hard-gate green @ 0.90 jaccard; backward soft-warn @ 0.31 — see disasm follow-up #1a)
+- M3-β scripts/m3_beta_parity.py: ✅ 2026-05-04 (both endpoints HARD-gated; forward 0.90 / backward 0.81)
+- M3-disasm-followup ARM64 pre/post-indexed writeback in decoder.rs: ✅ 2026-05-04 (closed M3-γ backward parity gap)
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
@@ -61,12 +62,11 @@
 - M3-ε: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
 - M3-ζ: memshadow v3 binary sidecar (.memshadow.v3.bin)
 - M3-η: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
-- M3-disasm-followup: ARM64 pre/post-indexed writeback handling in `decoder.rs` (close backward parity); see #1a below.
 - M3-M7: 见 spec §9 milestones
 
-**M3-γ scope precise** (the gap M3-β surfaced via parity):
-1. ✅ Rust `backward_taint`: MEM-chasing + d0.regs_def initial seed shipped (commit `e031c2c`). Algorithm port faithful to `viewer/taint.py:301-356`; pinned by colocated test `backward_taint_chases_mem_writer`. **Parity gate NOT yet tightened** — a SECOND divergence at the disasm layer prevents it (see #1a below).
-1a. **Open follow-up — Rust disasm writeback handling.** ARM64 pre/post-indexed addressing modes (e.g. `ldrh w0, [x21, #0x20]!`) writeback the base register. Python `viewer/disasm.py:75` uses `ins.regs_access()` which returns the full implicit+explicit+writeback set. Rust `decoder.rs:110-221` `build_reg_accesses()` uses `detail.regs_read()/regs_write()` (implicit only) plus a manual operand walk that doesn't propagate writeback to `regs_def`. Result: `index.reg_defs[x21]` differs between ports, and on real traces backward jaccard sticks at 0.31. **Fix path:** switch `build_reg_accesses` to `cs.regs_access(insn)` (capstone-rs 0.12+ API) which returns `(regs_read, regs_write)` Vecs covering implicit+explicit+writeback — same primitive Python uses. Step 3 (cmp-style fix) still applies on top. Caveat: existing disasm unit tests may pin behavior of the manual-walk output and need adjustment. Not blocking M3-γ Tasks 2-5; backward parity stays soft until this lands.
+**M3-γ scope (history):**
+1. ✅ Rust `backward_taint`: MEM-chasing + d0.regs_def initial seed shipped (commit `e031c2c`).
+1a. ✅ **Closed** — Rust disasm writeback handling: `decoder.rs::build_reg_accesses` now adds the base reg to `regs_def` when `Arm64Detail::writeback() == true`. Capstone-rs 0.13 doesn't have a top-level `cs.regs_access()` analogue to Python's, but exposes the same info via the per-instruction `writeback()` flag + manual operand walk. Backward parity moved from 0.31 → 0.81 jaccard; gate hard-tightened.
 2. Rust `forward_taint` + `backward_taint`: add `through_mem: bool` flag (when true, byte-overlap via MemShadow; when false, exact-addr fast path).
 3. Rust `forward_taint` + `backward_taint`: add `data_only: bool` flag (filter addressing-reg propagation; DEFAULT_FRAME_REGS exclusion when data_only=True).
 4. Wire `cross_fn_call: bool` flag through endpoints; route handler annotates each row with `frame_depth: Option<u32>` from `state.frame_depths`.

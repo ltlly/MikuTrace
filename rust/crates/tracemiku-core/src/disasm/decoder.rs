@@ -137,6 +137,15 @@ fn build_reg_accesses(
     let arch_det = detail.arch_detail();
     if let Some(arm64_det) = arch_det.arm64() {
         let store = is_store_style(mnem);
+        // Pre/post-indexed addressing modes (e.g. `ldr x0, [x1, #8]!` or
+        // `ldr x0, [x1], #8`) writeback the computed address to the base
+        // reg — so the base reg is BOTH a read AND a write. Capstone-rs
+        // exposes this as an instruction-level `writeback()` flag; Python
+        // gets the same info via `ins.regs_access()` returning the base
+        // in regs_write. Mirrors viewer/disasm.py:75 parity. Caught by
+        // M3-β parity gate on a real 469k-record trace where ldrh
+        // w0,[x21,#0x20]! defs both x0 AND x21.
+        let writeback = arm64_det.writeback();
 
         let mut reg_op_index: usize = 0;
         for op in arm64_det.operands() {
@@ -166,16 +175,19 @@ fn build_reg_accesses(
                     reg_op_index += 1;
                 }
                 Arm64OperandType::Mem(mem) => {
-                    // Base register is always read
+                    // Base register is always read; under writeback it's
+                    // ALSO written.
                     let base_id = mem.base();
                     if base_id.0 != 0 {
                         if let Some(name) = cs.reg_name(base_id) {
                             let normalized = normalize_disasm_reg(&name);
-                            if !normalized.is_empty()
-                                && normalized != "xzr"
-                                && !regs_use.contains(&normalized)
-                            {
-                                regs_use.push(normalized);
+                            if !normalized.is_empty() && normalized != "xzr" {
+                                if !regs_use.contains(&normalized) {
+                                    regs_use.push(normalized.clone());
+                                }
+                                if writeback && !regs_def.contains(&normalized) {
+                                    regs_def.push(normalized);
+                                }
                             }
                         }
                     }
