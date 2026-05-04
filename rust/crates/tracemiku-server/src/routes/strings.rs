@@ -46,7 +46,7 @@ pub async fn strings_handler(
     State(state): State<AppState>,
     Query(q): Query<StringsQuery>,
 ) -> Json<StringsResponse> {
-    let mem = &state.inner.memshadow;
+    let mem = state.inner.memshadow();
     let mut results = mem.find_strings(q.min_len);
     if q.cursor >= 0 {
         let cursor = q.cursor as u64;

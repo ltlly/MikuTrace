@@ -43,7 +43,7 @@ pub struct DecSummaryResponse {
 
 pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSummaryResponse> {
     let inner = &state.inner;
-    let top = &inner.top_ir;
+    let top = inner.top_ir();
 
     let fns: Vec<DecFnEntry> = top
         .fns

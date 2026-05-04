@@ -249,11 +249,11 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
 
 fn find_in_mem(state: &AppState, prefix: &[u8], max_hits: usize) -> Vec<HashMemHit> {
     let mut hits = Vec::new();
-    for &addr in state.inner.memshadow.bytes.keys() {
+    for &addr in state.inner.memshadow().bytes.keys() {
         let mut last_idx = None;
         let mut matched = true;
         for (offset, want) in prefix.iter().enumerate() {
-            let Some(events) = state.inner.memshadow.bytes.get(&(addr + offset as u64)) else {
+            let Some(events) = state.inner.memshadow().bytes.get(&(addr + offset as u64)) else {
                 matched = false;
                 break;
             };

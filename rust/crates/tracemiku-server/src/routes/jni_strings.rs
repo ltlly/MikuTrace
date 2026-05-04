@@ -133,7 +133,7 @@ fn read_string(
     for offset in 0..max_len {
         let (byte, _, _) = state
             .inner
-            .memshadow
+            .memshadow()
             .byte_at(addr + offset as u64, cursor as u64);
         let Some(byte) = byte else {
             if seen == 0 {

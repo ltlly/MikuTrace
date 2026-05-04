@@ -58,11 +58,16 @@ pub async fn record_handler(
         None
     };
     let sp = r.reg("sp").unwrap_or(0);
+    let memshadow = inner.memshadow_if_ready();
     let regs_annotated = names
         .iter()
         .filter_map(|nm| {
-            r.reg(nm)
-                .map(|v| ((*nm).to_string(), classify_reg_value(inner, v, idx, sp)))
+            r.reg(nm).map(|v| {
+                (
+                    (*nm).to_string(),
+                    classify_reg_value(inner, memshadow, v, idx, sp),
+                )
+            })
         })
         .collect();
 
@@ -101,6 +106,7 @@ fn regs_map(record: &tracemiku_core::trace::Record, names: &[&str]) -> BTreeMap<
 
 fn classify_reg_value(
     inner: &crate::state::AppStateInner,
+    memshadow: Option<&tracemiku_core::memshadow::MemShadow>,
     value: u64,
     idx: usize,
     sp: u64,
@@ -145,21 +151,23 @@ fn classify_reg_value(
             }
             break;
         }
-        if let Some(s) = maybe_string_at(&inner.memshadow, cur, idx, 64) {
-            parts.push(format!("→ \"{s}\""));
-            break;
-        }
-        if depth < 3 {
-            if let Some(next) = deref_u64(&inner.memshadow, cur, idx) {
-                if next != 0 && next != cur {
-                    if let Some(hint) = heuristic_region(cur) {
-                        if depth == 0 {
-                            parts.push(format!("({hint})"));
+        if let Some(mem) = memshadow {
+            if let Some(s) = maybe_string_at(mem, cur, idx, 64) {
+                parts.push(format!("→ \"{s}\""));
+                break;
+            }
+            if depth < 3 {
+                if let Some(next) = deref_u64(mem, cur, idx) {
+                    if next != 0 && next != cur {
+                        if let Some(hint) = heuristic_region(cur) {
+                            if depth == 0 {
+                                parts.push(format!("({hint})"));
+                            }
                         }
+                        parts.push(format!("→ {next:#x}"));
+                        cur = next;
+                        continue;
                     }
-                    parts.push(format!("→ {next:#x}"));
-                    cur = next;
-                    continue;
                 }
             }
         }

@@ -77,7 +77,7 @@ pub async fn mem_flow_handler(
         let addr = start + offset as u64;
         let raw = state
             .inner
-            .memshadow
+            .memshadow()
             .bytes
             .get(&addr)
             .map(Vec::as_slice)

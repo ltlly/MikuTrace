@@ -95,7 +95,7 @@ fn resolve_fn_pc(state: &AppState, fn_id: &str) -> Result<u64, (StatusCode, Stri
     match src.as_str() {
         "trace" => state
             .inner
-            .top_ir
+            .top_ir()
             .fn_by_id(&payload)
             .map(|f| f.pc_start)
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such trace fn {fn_id}"))),

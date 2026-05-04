@@ -47,39 +47,31 @@ pub async fn idxs_for_pc_handler(
 ) -> Json<IdxsForPcResponse> {
     let target = u64::from_str_radix(q.pc.trim_start_matches("0x"), 16).unwrap_or(0);
 
-    let trace = &state.inner.trace;
-    let n = trace.len();
+    let n = state.inner.trace.len();
     let cursor = q.cursor.min(n);
-
-    let mut before_all: Vec<usize> = Vec::new();
-    let mut after_all: Vec<usize> = Vec::new();
-    for i in 0..n {
-        if trace.pc(i) != target {
-            continue;
-        }
-        if i < cursor {
-            before_all.push(i);
-        } else {
-            after_all.push(i);
-        }
-    }
-
-    let total_before = before_all.len();
-    let total_after = after_all.len();
+    let all = state
+        .inner
+        .index
+        .pc_to_idxs
+        .get(&target)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let cut = all.partition_point(|&idx| idx < cursor);
+    let total_before = cut;
+    let total_after = all.len().saturating_sub(cut);
     let before_capped = total_before > q.limit;
     let after_capped = total_after > q.limit;
 
     // before: closest-to-cursor first (descending), capped at limit.
-    before_all.reverse();
-    before_all.truncate(q.limit);
-    after_all.truncate(q.limit);
+    let before = all[..cut].iter().rev().take(q.limit).copied().collect();
+    let after = all[cut..].iter().take(q.limit).copied().collect();
 
     Json(IdxsForPcResponse {
         status: "ready",
         pc: q.pc,
         cursor: q.cursor,
-        before: before_all,
-        after: after_all,
+        before,
+        after,
         total_before,
         total_after,
         before_capped,

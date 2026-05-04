@@ -84,7 +84,7 @@ fn forward_taint_response(
         HashSet::new()
     };
     let mem_arg = if q.through_mem {
-        Some(&inner.memshadow)
+        Some(inner.memshadow())
     } else {
         None
     };

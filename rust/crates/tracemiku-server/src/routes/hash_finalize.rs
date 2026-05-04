@@ -35,7 +35,7 @@ pub async fn hash_finalize_detect_handler(
     State(state): State<AppState>,
     Query(q): Query<HashFinalizeQuery>,
 ) -> Json<HashFinalizeResponse> {
-    let candidates = hash_finalize_detect(&state.inner.memshadow, q.window, q.min_size);
+    let candidates = hash_finalize_detect(state.inner.memshadow(), q.window, q.min_size);
 
     Json(HashFinalizeResponse {
         window: q.window,

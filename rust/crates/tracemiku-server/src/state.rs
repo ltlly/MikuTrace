@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
@@ -12,6 +13,8 @@ use tracemiku_core::prelude::{
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
 use crate::bn_sidecar::BnSidecarManager;
+
+const EAGER_MEMSHADOW_MAX_RECORDS: usize = 1_000_000;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -27,10 +30,11 @@ pub struct AppStateInner {
     pub modules: ModuleResolver,
     pub cfg: CFG,
     pub function_index: FunctionIndex,
-    pub memshadow: MemShadow,
+    memshadow: OnceLock<MemShadow>,
     pub call_tree: CallNode,
     pub frame_depths: Vec<u32>,
-    pub top_ir: TopIR,
+    top_ir: OnceLock<TopIR>,
+    type_spec_paths: Vec<PathBuf>,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
@@ -104,7 +108,6 @@ impl AppState {
 
         let cfg = build_cfg(&trace);
         let function_index = build_function_index(&symbols, Some(&cfg));
-        let memshadow = MemShadow::load_or_build(&trace);
         let call_tree = build_call_tree(&trace, &symbols, 50);
         let frame_depths = build_frame_depth_map(&trace);
         // Auto-discover type-spec JSONs (M3-ι2a Task 3): tools/hooks/*.json
@@ -118,17 +121,10 @@ impl AppState {
         } else {
             Vec::new()
         };
-        // Defaults match Python webui (webui/server.py:2734-2735).
-        let top_ir = build_trace_ir(
-            &trace,
-            &meta,
-            &symbols,
-            &cfg,
-            10,
-            50,
-            &spec_paths,
-            Some(&memshadow),
-        );
+        let memshadow = OnceLock::new();
+        if trace.len() <= EAGER_MEMSHADOW_MAX_RECORDS {
+            let _ = memshadow.set(MemShadow::load_or_build(&trace));
+        }
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -143,12 +139,44 @@ impl AppState {
                 memshadow,
                 call_tree,
                 frame_depths,
-                top_ir,
+                top_ir: OnceLock::new(),
+                type_spec_paths: spec_paths,
                 llm_cache: Mutex::new(HashMap::new()),
                 cfg_svg_cache: Mutex::new(HashMap::new()),
                 bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
             }),
         })
+    }
+}
+
+impl AppStateInner {
+    /// Lazily build TraceIR only for decompile endpoints.
+    ///
+    /// Large traces need Records/Memory/CFG to become interactive before the
+    /// heavyweight decompile summary exists. Defaults match Python webui
+    /// (webui/server.py:2734-2735).
+    pub fn top_ir(&self) -> &TopIR {
+        self.top_ir.get_or_init(|| {
+            build_trace_ir(
+                &self.trace,
+                &self.meta,
+                &self.symbols,
+                &self.cfg,
+                10,
+                50,
+                &self.type_spec_paths,
+                Some(self.memshadow()),
+            )
+        })
+    }
+
+    pub fn memshadow(&self) -> &MemShadow {
+        self.memshadow
+            .get_or_init(|| MemShadow::load_or_build(&self.trace))
+    }
+
+    pub fn memshadow_if_ready(&self) -> Option<&MemShadow> {
+        self.memshadow.get()
     }
 }
 

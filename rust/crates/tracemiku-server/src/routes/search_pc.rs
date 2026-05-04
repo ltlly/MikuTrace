@@ -27,17 +27,19 @@ pub async fn search_pc_handler(
     Query(q): Query<SearchPcQuery>,
 ) -> Result<Json<SearchPcResponse>, StatusCode> {
     let target = parse_int(&q.pc).ok_or(StatusCode::BAD_REQUEST)?;
-    let mut idxs = Vec::new();
-    let mut count = 0usize;
-    for i in 0..state.inner.trace.len() {
-        if state.inner.trace.pc(i) != target {
-            continue;
-        }
-        count += 1;
-        if q.limit == 0 || idxs.len() < q.limit {
-            idxs.push(i);
-        }
-    }
+    let all = state
+        .inner
+        .index
+        .pc_to_idxs
+        .get(&target)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let count = all.len();
+    let idxs = if q.limit == 0 {
+        all.to_vec()
+    } else {
+        all.iter().copied().take(q.limit).collect()
+    };
     Ok(Json(SearchPcResponse {
         pc: format!("{target:#x}"),
         count,

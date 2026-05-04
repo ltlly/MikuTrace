@@ -44,9 +44,24 @@ pub async fn search_handler(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> Json<SearchResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || search_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "search worker failed: {err}");
+                SearchResponse {
+                    count: 0,
+                    pattern: String::new(),
+                    hits: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> SearchResponse {
     let max_results = q.max_results.max(1);
     let re = compile_pattern(&q.pattern);
-    let inner = &state.inner;
     let base = inner
         .meta
         .module
@@ -80,11 +95,11 @@ pub async fn search_handler(
         }
     }
 
-    Json(SearchResponse {
+    SearchResponse {
         count: hits.len(),
         pattern: q.pattern,
         hits,
-    })
+    }
 }
 
 fn compile_pattern(pattern: &str) -> Option<Regex> {

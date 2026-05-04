@@ -33,6 +33,9 @@ pub struct Index {
     pub mem_writes: Vec<MemRec>,
     /// All memory-read entries in trace order.
     pub mem_reads: Vec<MemRec>,
+    /// `pc → sorted record indices`. Used by hot UI navigation paths such as
+    /// CFG/HLIL clicks, hash deep-links, and Trace-for-PC.
+    pub pc_to_idxs: HashMap<u64, Vec<usize>>,
     /// `addr → indices of mem_writes that wrote to that addr`. Fast
     /// "who wrote here?" lookup for backward taint and the
     /// `last-write-of-addr` endpoint family.
@@ -47,6 +50,7 @@ impl Index {
         let mut idx = Index::default();
         for i in 0..trace.len() {
             let pc = trace.pc(i);
+            idx.pc_to_idxs.entry(pc).or_default().push(i);
             let inst = trace.inst(i);
             let d = decode(pc, inst);
             for r in &d.regs_def {

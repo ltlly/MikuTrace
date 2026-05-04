@@ -161,7 +161,7 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
         parse_id(fn_id).map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid fn_id: {e}")))?;
     match src.as_str() {
         "trace" => inner
-            .top_ir
+            .top_ir()
             .fn_by_id(&payload)
             .cloned()
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}"))),

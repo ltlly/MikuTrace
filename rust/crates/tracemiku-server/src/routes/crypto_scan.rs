@@ -53,7 +53,7 @@ pub struct CryptoScanResponse {
 }
 
 pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoScanResponse> {
-    if state.inner.memshadow.bytes.is_empty() {
+    if state.inner.memshadow().bytes.is_empty() {
         return Json(CryptoScanResponse {
             scanned: 0,
             primitives: Vec::new(),
@@ -62,7 +62,7 @@ pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoSc
     }
     let addrs = state
         .inner
-        .memshadow
+        .memshadow()
         .bytes
         .keys()
         .copied()
@@ -95,7 +95,7 @@ fn scan_pattern(state: &AppState, addrs: &[u64], pattern: &[u8]) -> Vec<CryptoHi
         let mut first_idx: Option<usize> = None;
         let mut matched = true;
         for (offset, want) in pattern.iter().enumerate() {
-            let Some(events) = state.inner.memshadow.bytes.get(&(addr + offset as u64)) else {
+            let Some(events) = state.inner.memshadow().bytes.get(&(addr + offset as u64)) else {
                 matched = false;
                 break;
             };

@@ -18,7 +18,7 @@
 //! None)` if no event yet.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 
 use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
@@ -148,7 +148,8 @@ impl MemShadow {
         );
         let tmp_path = path.with_file_name(tmp_name);
         let write_result = (|| {
-            let mut f = std::fs::File::create(&tmp_path)?;
+            let raw = std::fs::File::create(&tmp_path)?;
+            let mut f = BufWriter::with_capacity(1024 * 1024, raw);
             f.write_all(SIDECAR_MAGIC)?;
             write_u32(&mut f, SIDECAR_VERSION)?;
             write_u64(&mut f, trace.raw().len() as u64)?;
@@ -170,7 +171,8 @@ impl MemShadow {
                     f.write_all(&[ev.byte, kind_to_code(ev.kind)?])?;
                 }
             }
-            f.sync_all()?;
+            f.flush()?;
+            f.get_ref().sync_all()?;
             std::fs::rename(&tmp_path, &path)
         })();
         if write_result.is_err() {
@@ -181,7 +183,8 @@ impl MemShadow {
 
     fn read_sidecar(trace: &Trace) -> std::io::Result<Self> {
         let path = Self::sidecar_path(trace);
-        let mut f = std::fs::File::open(path)?;
+        let raw = std::fs::File::open(path)?;
+        let mut f = BufReader::with_capacity(1024 * 1024, raw);
         let mut magic = [0u8; 8];
         f.read_exact(&mut magic)?;
         if &magic != SIDECAR_MAGIC {

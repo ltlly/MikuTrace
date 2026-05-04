@@ -41,7 +41,7 @@ pub async fn dec_fn_handler(
     match src.as_str() {
         "trace" => {
             let fn_ = inner
-                .top_ir
+                .top_ir()
                 .fn_by_id(&payload)
                 .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))?;
             let markdown = render_func_md(fn_, &q.tier);

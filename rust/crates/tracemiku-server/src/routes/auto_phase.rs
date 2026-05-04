@@ -117,11 +117,12 @@ fn append_jni_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
 
 fn append_crypto_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
     for (label, pattern) in CRYPTO_PHASE_PATTERNS {
-        for &addr in state.inner.memshadow.bytes.keys() {
+        for &addr in state.inner.memshadow().bytes.keys() {
             let mut first_idx: Option<usize> = None;
             let mut matched = true;
             for (offset, want) in pattern.iter().enumerate() {
-                let Some(events) = state.inner.memshadow.bytes.get(&(addr + offset as u64)) else {
+                let Some(events) = state.inner.memshadow().bytes.get(&(addr + offset as u64))
+                else {
                     matched = false;
                     break;
                 };
@@ -153,7 +154,7 @@ fn append_crypto_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
 fn append_byte_stream_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
     let writes = state
         .inner
-        .memshadow
+        .memshadow()
         .writes
         .iter()
         .filter(|w| w.size == 1)

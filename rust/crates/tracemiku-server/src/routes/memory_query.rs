@@ -171,7 +171,7 @@ pub async fn mem_writes_in_range_handler(
 
     let mut matched = 0usize;
     let mut rows = Vec::new();
-    for write in &inner.memshadow.writes {
+    for write in &inner.memshadow().writes {
         if write.idx < lo || write.idx >= hi {
             continue;
         }
@@ -410,12 +410,14 @@ pub async fn find_mem_pattern_handler(
     };
     let mut hits = Vec::new();
     if !pattern.is_empty() {
-        for &addr in state.inner.memshadow.bytes.keys() {
+        for &addr in state.inner.memshadow().bytes.keys() {
             let mut first_idx: Option<usize> = None;
             let mut matched = true;
             for (offset, want) in pattern.iter().enumerate() {
-                let (byte, _kind, idx) =
-                    state.inner.memshadow.byte_at(addr + offset as u64, cursor);
+                let (byte, _kind, idx) = state
+                    .inner
+                    .memshadow()
+                    .byte_at(addr + offset as u64, cursor);
                 if byte != Some(*want) {
                     matched = false;
                     break;

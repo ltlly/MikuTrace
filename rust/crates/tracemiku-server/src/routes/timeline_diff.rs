@@ -126,8 +126,8 @@ pub async fn mem_diff_handler(
     let mut changed_count = 0usize;
     for offset in 0..q.size {
         let addr = start + offset as u64;
-        let (before, _, _) = state.inner.memshadow.byte_at(addr, before_t);
-        let (after, _, _) = state.inner.memshadow.byte_at(addr, after_t);
+        let (before, _, _) = state.inner.memshadow().byte_at(addr, before_t);
+        let (after, _, _) = state.inner.memshadow().byte_at(addr, after_t);
         let changed = before != after;
         if changed {
             changed_count += 1;

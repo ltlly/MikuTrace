@@ -49,7 +49,7 @@ pub async fn string_provenance_handler(
     let mut bytes = Vec::with_capacity(q.length);
     for offset in 0..q.length {
         let addr = start + offset as u64;
-        let (byte, kind, _) = state.inner.memshadow.byte_at(addr, u64::MAX);
+        let (byte, kind, _) = state.inner.memshadow().byte_at(addr, u64::MAX);
         let writer_idxs = covering_idxs(&state.inner.index.mem_writes, addr);
         let reader_idxs = covering_idxs(&state.inner.index.mem_reads, addr);
         bytes.push(StringProvByte {

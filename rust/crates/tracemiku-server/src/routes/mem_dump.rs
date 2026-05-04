@@ -41,7 +41,7 @@ pub async fn mem_dump_handler(
     let stripped = q.addr.trim_start_matches("0x").trim_start_matches("0X");
     let start =
         u64::from_str_radix(stripped, 16).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    let mem = &state.inner.memshadow;
+    let mem = state.inner.memshadow();
     let mut bytes = Vec::with_capacity(q.count);
     for i in 0..q.count {
         let a = start + i as u64;
