@@ -17,6 +17,7 @@ interface TaintPanelProps {
   idx: number;
   reg: string;
   onRegChange: (reg: string) => void;
+  onSelect: (idx: number) => void;
 }
 
 export default function TaintPanel(props: TaintPanelProps) {
@@ -177,7 +178,7 @@ export default function TaintPanel(props: TaintPanelProps) {
               <tbody>
                 <For each={r().rows}>
                   {(row) => (
-                    <tr>
+                    <tr onClick={() => props.onSelect(row.idx)}>
                       <td>{row.idx}</td>
                       <td class="dim small">{row.pc}</td>
                       <td>{row.func ?? "?"}</td>

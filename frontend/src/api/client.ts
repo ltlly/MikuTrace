@@ -4,6 +4,7 @@ import type {
   RecordDetail,
   FunctionsResponse,
   StringsResponse,
+  TouchingAddrResponse,
   MemDumpResponse,
   MemDiffResponse,
   IdxsForPcResponse,
@@ -84,6 +85,21 @@ export async function fetchStrings(minLen = 4, q = ""): Promise<StringsResponse>
   const r = await fetch(`/api/strings?${params}`);
   if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
   return (await r.json()) as StringsResponse;
+}
+
+export async function fetchIdxsTouchingAddr(
+  addr: string,
+  cursor = 0,
+  limit = 30,
+): Promise<TouchingAddrResponse> {
+  const params = new URLSearchParams({
+    addr,
+    cursor: String(cursor),
+    limit: String(limit),
+  });
+  const r = await fetch(`/api/idxs-touching-addr?${params}`);
+  if (!r.ok) throw new Error(`/api/idxs-touching-addr ${r.status}: ${await r.text()}`);
+  return (await r.json()) as TouchingAddrResponse;
 }
 
 export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpResponse> {

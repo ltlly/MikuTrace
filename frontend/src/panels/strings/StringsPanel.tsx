@@ -1,13 +1,44 @@
-import { createSignal, createResource, Show, For } from "solid-js";
-import { fetchStrings } from "~/api/client";
+import { createResource, createSignal, For, Show } from "solid-js";
 
-export default function StringsPanel() {
+import { fetchIdxsTouchingAddr, fetchStrings } from "~/api/client";
+import type { StringEntry, TouchingAddrEntry } from "~/api/types";
+
+interface StringsPanelProps {
+  onSelect: (idx: number) => void;
+}
+
+function firstWriter(items: TouchingAddrEntry[]): TouchingAddrEntry | undefined {
+  return items.find((item) => item.kind === "w");
+}
+
+export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
   const [query, setQuery] = createSignal("");
+  const [jumpErr, setJumpErr] = createSignal("");
   const [resp] = createResource(
     () => ({ minLen: minLen(), q: query() }),
     async ({ minLen, q }) => fetchStrings(minLen, q),
   );
+
+  async function jumpString(s: StringEntry) {
+    setJumpErr("");
+    try {
+      const hits = await fetchIdxsTouchingAddr(s.addr, 0, 80);
+      const target =
+        firstWriter(hits.after) ??
+        hits.after[0] ??
+        firstWriter(hits.before) ??
+        hits.before[0];
+      if (!target) {
+        setJumpErr(`${s.addr} 没有关联的读写 trace`);
+        return;
+      }
+      props.onSelect(target.idx);
+    } catch (err) {
+      setJumpErr(String(err));
+    }
+  }
+
   return (
     <section class="panel">
       <h2>Strings</h2>
@@ -35,6 +66,9 @@ export default function StringsPanel() {
       <Show when={resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>
       </Show>
+      <Show when={jumpErr()}>
+        <p class="err">{jumpErr()}</p>
+      </Show>
       <Show when={resp.loading}>
         <p class="dim">loading…</p>
       </Show>
@@ -50,7 +84,10 @@ export default function StringsPanel() {
             <ul class="strings-list">
               <For each={r().strings}>
                 {(s) => (
-                  <li>
+                  <li
+                    title="双击跳转到第一次写入/触碰该字符串地址的 trace"
+                    onDblClick={() => void jumpString(s)}
+                  >
                     <span class="dim small">{s.addr}</span>
                     <span class="dim small">{s.len}</span>
                     <span class="str">{s.str}</span>

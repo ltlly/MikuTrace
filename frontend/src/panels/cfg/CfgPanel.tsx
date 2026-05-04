@@ -1,21 +1,36 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchCfgSvg, fetchFunctions } from "~/api/client";
+import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
 
 function clampTimeout(raw: number): number {
   if (!Number.isFinite(raw)) return 60;
   return Math.min(300, Math.max(5, Math.trunc(raw)));
 }
 
+function clampScale(scale: number): number {
+  return Math.min(5, Math.max(0.25, scale));
+}
+
 interface CfgPanelProps {
   selectedFn: string;
+  currentIdx: number;
+  onSelect: (idx: number) => void;
 }
 
 export default function CfgPanel(props: CfgPanelProps) {
   const [fnName, setFnName] = createSignal("");
   const [timeout, setTimeout] = createSignal(60);
   const [reload, setReload] = createSignal(0);
+  const [pan, setPan] = createSignal({ x: 0, y: 0, scale: 1 });
+  const [drag, setDrag] = createSignal<null | { sx: number; sy: number; x: number; y: number }>(
+    null,
+  );
+  const [jumpErr, setJumpErr] = createSignal("");
+  let frame: HTMLDivElement | undefined;
+  let suppressNextClick = false;
+
   const [functions] = createResource(fetchFunctions);
+  const [record] = createResource(() => props.currentIdx, fetchRecord);
   const selectedFnName = createMemo(() => {
     const want = props.selectedFn;
     if (!want) return "";
@@ -30,11 +45,12 @@ export default function CfgPanel(props: CfgPanelProps) {
     }
     return [...names].sort((a, b) => a.localeCompare(b));
   });
+  const cursorFnName = createMemo(() => record()?.func ?? "");
 
   createEffect(() => {
-    const selected = selectedFnName();
-    if (selected && selected !== fnName()) {
-      setFnName(selected);
+    const preferred = selectedFnName() || cursorFnName();
+    if (preferred && preferred !== fnName()) {
+      setFnName(preferred);
       return;
     }
     if (!fnName() && fnNames().length > 0) {
@@ -49,6 +65,101 @@ export default function CfgPanel(props: CfgPanelProps) {
     },
     (opts) => fetchCfgSvg({ fnName: opts.fnName, timeout: opts.timeout }),
   );
+
+  createEffect(() => {
+    graph();
+    fnName();
+    setPan({ x: 0, y: 0, scale: 1 });
+  });
+
+  createEffect(() => {
+    const pc = record()?.pc;
+    graph();
+    queueMicrotask(() => {
+      if (!frame) return;
+      frame.querySelectorAll(".cfg-current").forEach((el) => el.classList.remove("cfg-current"));
+      if (!pc) return;
+      const hex = pc.trim().replace(/^0x/i, "").toLowerCase();
+      const target = [...frame.querySelectorAll("a")].find((anchor) => {
+        const href = anchor.getAttribute("href") ?? anchor.getAttribute("xlink:href") ?? "";
+        return href.toLowerCase() === `#insn_${hex}`;
+      });
+      target?.classList.add("cfg-current");
+    });
+  });
+
+  async function jumpToPc(hex: string) {
+    setJumpErr("");
+    const pc = `0x${hex.toLowerCase()}`;
+    try {
+      const resp = await fetchIdxsForPc(pc, props.currentIdx, 40);
+      const candidates = [...resp.before, ...resp.after];
+      if (candidates.length === 0) {
+        setJumpErr(`trace 中没有执行 ${pc}`);
+        return;
+      }
+      candidates.sort((a, b) => Math.abs(a - props.currentIdx) - Math.abs(b - props.currentIdx));
+      props.onSelect(candidates[0]);
+    } catch (err) {
+      setJumpErr(String(err));
+    }
+  }
+
+  function onSvgClick(e: MouseEvent) {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      e.preventDefault();
+      return;
+    }
+    const target = e.target as Element | null;
+    const anchor = target?.closest("a");
+    const href =
+      anchor?.getAttribute("href") ??
+      anchor?.getAttribute("xlink:href") ??
+      anchor?.getAttribute("XLink:href") ??
+      "";
+    const m = href.match(/#(?:insn_|hdr_b)([0-9a-f]+)/i);
+    if (!m) return;
+    e.preventDefault();
+    void jumpToPc(m[1]);
+  }
+
+  function onWheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const current = pan();
+    const nextScale = clampScale(current.scale * (e.deltaY < 0 ? 1.12 : 0.89));
+    setPan({ ...current, scale: nextScale });
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    frame?.setPointerCapture(e.pointerId);
+    const current = pan();
+    setDrag({ sx: e.clientX, sy: e.clientY, x: current.x, y: current.y });
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    const d = drag();
+    if (!d) return;
+    if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 4) {
+      suppressNextClick = true;
+    }
+    setPan((current) => ({
+      ...current,
+      x: d.x + e.clientX - d.sx,
+      y: d.y + e.clientY - d.sy,
+    }));
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (suppressNextClick) {
+      window.setTimeout(() => {
+        suppressNextClick = false;
+      }, 0);
+    }
+    setDrag(null);
+    frame?.releasePointerCapture(e.pointerId);
+  }
 
   return (
     <section class="panel">
@@ -72,6 +183,7 @@ export default function CfgPanel(props: CfgPanelProps) {
           />
         </label>
         <button onClick={() => setReload((n) => n + 1)}>reload</button>
+        <button onClick={() => setPan({ x: 0, y: 0, scale: 1 })}>fit</button>
       </div>
 
       <Show when={functions.error}>
@@ -86,6 +198,9 @@ export default function CfgPanel(props: CfgPanelProps) {
       <Show when={graph.loading}>
         <p class="dim">rendering graph…</p>
       </Show>
+      <Show when={jumpErr()}>
+        <p class="err">{jumpErr()}</p>
+      </Show>
 
       <Show when={graph()}>
         {(resp) => {
@@ -96,9 +211,29 @@ export default function CfgPanel(props: CfgPanelProps) {
                 <>
                   <p class="dim small">
                     {r.block_count}/{r.total_block_count} blocks · {r.fn ?? "all"} · cache{" "}
-                    {r.cached ? "hit" : "miss"}
+                    {r.cached ? "hit" : "miss"} · drag to pan · Ctrl+wheel zoom
                   </p>
-                  <div class="cfg-svg-frame" innerHTML={r.svg} />
+                  <div
+                    ref={(el) => {
+                      frame = el;
+                    }}
+                    class="cfg-svg-frame"
+                    classList={{ dragging: !!drag() }}
+                    onWheel={onWheel}
+                    onPointerDown={onPointerDown}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                    onPointerCancel={onPointerUp}
+                  >
+                    <div
+                      class="cfg-svg-canvas"
+                      style={{
+                        transform: `translate(${pan().x}px, ${pan().y}px) scale(${pan().scale})`,
+                      }}
+                      onClick={onSvgClick}
+                      innerHTML={r.svg}
+                    />
+                  </div>
                 </>
               )}
               {r.status === "empty" && (

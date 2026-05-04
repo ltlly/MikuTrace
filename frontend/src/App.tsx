@@ -30,6 +30,7 @@ type LeftTab =
 type RightTab = "cfg" | "regs" | "hlil" | "dec";
 type BottomTab = "memory" | "navigation" | "trace-for-pc";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
+type HelpState = { topic: HelpTopic; x: number; y: number };
 
 export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
@@ -38,7 +39,8 @@ export default function App() {
   const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
   const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
   const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
-  const [helpTopic, setHelpTopic] = createSignal<HelpTopic | null>(null);
+  const [helpState, setHelpState] = createSignal<HelpState | null>(null);
+  const helpTopic = createMemo(() => helpState()?.topic ?? null);
 
   const leftTitle = createMemo(() => {
     const titles: Record<LeftTab, string> = {
@@ -94,7 +96,21 @@ export default function App() {
     </button>
   );
   const helpButton = (topic: HelpTopic) => (
-    <button class="help-btn" type="button" title="帮助" onClick={() => setHelpTopic(topic)}>
+    <button
+      class="help-btn"
+      type="button"
+      title="帮助"
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const cardW = Math.min(560, window.innerWidth - 24);
+        const x = Math.max(8, Math.min(rect.left, window.innerWidth - cardW - 8));
+        const y =
+          rect.bottom + 8 > window.innerHeight - 180
+            ? Math.max(8, rect.top - 260)
+            : rect.bottom + 8;
+        setHelpState({ topic, x, y });
+      }}
+    >
       ?
     </button>
   );
@@ -109,30 +125,30 @@ export default function App() {
   const helpBody = createMemo(() => {
     const topic = helpTopic();
     if (topic === "overview") {
-      return "IDA/x64dbg-style workbench: left analysis tabs, center dynamic instruction trace, bottom memory/history, right CFG/register/decompile. The cursor is the selected trace idx; panels follow it.";
+      return "主界面按原版 Web 的调试器布局组织：左侧是函数、回溯、调用树、字符串、污点和交叉引用；中间是动态执行过的汇编 trace；下方是内存和当前 PC 的执行历史；右侧是 CFG、寄存器和反编译。全局 cursor 就是当前选中的 trace idx，所有窗口都围绕它联动。";
     }
     if (topic === "disasm") {
-      return "One row is one executed instruction snapshot. Scroll to extend the trace window. Click a row to set the cursor; the first register seen in asm becomes the active register for taint/register workflows. Function column shows func+offset when symbols are known.";
+      return "每一行是一条实际执行过的 ARM64 指令快照，不是静态反汇编列表。列含义依次是执行序号、PC、函数+偏移和汇编文本。滚动条对应整个 trace；点击行会设置 cursor，并把该指令里第一个寄存器自动作为污点/寄存器窗口的当前寄存器。";
     }
     if (topic === "right") {
-      if (rightTab() === "cfg") return "Graph renders CFG for the selected function. Full-trace CFG is intentionally not auto-rendered on large traces because Graphviz can timeout.";
-      if (rightTab() === "regs") return "Registers follow the current cursor. Changed registers are highlighted like pwndbg; notes mark zero, stack pointers, and likely pointers. Click a register to make it the active taint register.";
-      if (rightTab() === "hlil") return "HLIL follows the selected FunctionIndex entry and uses the BN sidecar when configured with --so/TRACEMIKU_BN_SO.";
-      return "Decompile shows TraceIR/LLIL/LLM outputs for the selected function. Select functions from the Functions panel.";
+      if (rightTab() === "cfg") return "CFG 显示当前函数的动态基本块图，默认跟随当前 trace 所在函数，避免直接渲染全 trace 导致 dot 超时。空白处拖动平移，按住 Ctrl 滚轮缩放；点击图中的指令或块头会跳到 trace 中离当前 cursor 最近的一次执行。";
+      if (rightTab() === "regs") return "寄存器窗口显示当前 cursor 的寄存器状态，并像 pwndbg 一样自动高亮相对上一条 trace 发生变化的寄存器；note 会标出 zero、pc、sp/stack 和疑似指针。点击寄存器会把它设为污点追踪的当前寄存器。";
+      if (rightTab() === "hlil") return "HLIL 窗口跟随 Functions 里选中的 FunctionIndex 条目；配置了 Binary Ninja sidecar 时可显示对应 BN HLIL。它用于静态结构理解，不替代中间 trace 的动态执行列表。";
+      return "Decompile 窗口显示当前函数的 TraceIR、LLIL 或 LLM 反编译结果。先在 Functions/CallTree/CFG 中定位函数，再在这里查看更高层的伪代码摘要。";
     }
     if (topic === "bottom") {
-      if (bottomTab() === "memory") return "Memory is a hex+ASCII dump at an address or quick register value. Byte colors encode source/kind; changed bytes at the current cursor are highlighted inline.";
-      if (bottomTab() === "trace-for-pc") return "Trace for PC lists other executions of the same PC around the cursor. Use it to inspect loops, repeated dispatchers, and hot instructions without searching manually.";
-      return "Navigation is reserved for cursor history/back-forward behavior.";
+      if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。";
+      if (bottomTab() === "trace-for-pc") return "Trace for PC 显示当前 PC 在 trace 中其它执行位置，分为 cursor 之前和之后。它用来分析循环、调度器、热点指令和同一静态指令在不同时间的状态差异。点击任意行会跳转到对应 idx。";
+      return "Navigation 预留给原版 Web 的 cursor 历史、前进/后退和命令式跳转。当前主要跳转入口是 Disassembly、CFG、CallTree、Strings、Cross Ref 和 Trace for PC。";
     }
-    if (leftTab() === "funcs") return "Functions lists trace/symbol/BN function entries. Select one to drive CFG, HLIL, and Decompile.";
-    if (leftTab() === "back") return "Backtrace reconstructs the dynamic call stack at the current cursor. Click a frame to jump to its call site.";
-    if (leftTab() === "calltree") return "Call Tree shows nested dynamic calls. locate current fn expands to the node containing the selected trace idx.";
-    if (leftTab() === "strings") return "Strings are recovered from MemShadow writes. Use filters to find decoded buffers and interesting constants.";
-    if (leftTab() === "taint") return "Taint starts from the current cursor and active register by default. Forward follows future uses; backward walks value provenance.";
-    if (leftTab() === "xref") return "Cross Ref shows executions of the current PC and asm regex hits. Rows jump the trace cursor.";
-    if (leftTab() === "settings") return "Settings controls density and backend/API status.";
-    return "SO Filter is reserved for multi-SO folding controls.";
+    if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG、HLIL 和 Decompile；记录数、block 数和入口地址用来判断热函数和分析范围。";
+    if (leftTab() === "back") return "Backtrace 在当前 cursor 处重建动态调用栈。点击 frame 会跳到对应 call site，用于从深层 JNI/Native 调用回到上游上下文。";
+    if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
+    if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。filter 用于查缓冲区和常量；双击字符串会跳到第一次写入或触碰该字符串地址的 trace。";
+    if (leftTab() === "taint") return "Taint 默认从当前 cursor 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源，选项控制是否穿过内存和函数调用。";
+    if (leftTab() === "xref") return "Cross Ref 包含当前 PC 的执行历史和汇编文本搜索。它不是一排无语义按钮，而是按 idx、方向和距离展示；点击行会跳转到对应 trace。";
+    if (leftTab() === "settings") return "Settings 显示后端 API、密度和调试状态。后续与原版 Web 对齐的显示开关会集中放在这里。";
+    return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
   });
 
   return (
@@ -185,10 +201,15 @@ export default function App() {
               <ForksPanel />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "strings" }}>
-              <StringsPanel />
+              <StringsPanel onSelect={setSelectedIdx} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "taint" }}>
-              <TaintPanel idx={selectedIdx()} reg={selectedReg()} onRegChange={setSelectedReg} />
+              <TaintPanel
+                idx={selectedIdx()}
+                reg={selectedReg()}
+                onRegChange={setSelectedReg}
+                onSelect={setSelectedIdx}
+              />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>
               <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
@@ -241,7 +262,7 @@ export default function App() {
           </div>
           <div id="bottom-content">
             <div class="bbody" classList={{ active: bottomTab() === "memory" }}>
-              <MemoryPanel idx={selectedIdx()} />
+              <MemoryPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "navigation" }}>
               <p class="dim">navigation history pending</p>
@@ -261,7 +282,7 @@ export default function App() {
           </div>
           <div id="right-body">
             <div class="rbody" classList={{ active: rightTab() === "cfg" }}>
-              <CfgPanel selectedFn={selectedFn()} />
+              <CfgPanel selectedFn={selectedFn()} currentIdx={selectedIdx()} onSelect={setSelectedIdx} />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
               <RegistersPanel idx={selectedIdx()} selectedReg={selectedReg()} onSelectReg={setSelectedReg} />
@@ -287,16 +308,22 @@ export default function App() {
           <input id="cmd-input" type="text" class="inp" placeholder="command bar pending" />
         </footer>
       </main>
-      <Show when={helpTopic()}>
-        <div class="help-popover" role="dialog" aria-modal="true" onClick={() => setHelpTopic(null)}>
-          <div class="help-card" onClick={(e) => e.stopPropagation()}>
-            <button class="help-close" type="button" onClick={() => setHelpTopic(null)}>
+      <Show when={helpState()}>
+        {(state) => (
+        <div class="help-popover" role="dialog" aria-modal="true" onClick={() => setHelpState(null)}>
+          <div
+            class="help-card"
+            style={{ left: `${state().x}px`, top: `${state().y}px` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button class="help-close" type="button" onClick={() => setHelpState(null)}>
               ×
             </button>
             <h3>{helpTitle()}</h3>
             <p>{helpBody()}</p>
           </div>
         </div>
+        )}
       </Show>
     </>
   );

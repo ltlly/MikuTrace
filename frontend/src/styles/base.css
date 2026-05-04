@@ -77,13 +77,12 @@ body {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.35);
+  background: transparent;
+  pointer-events: auto;
 }
 
 .help-card {
   position: absolute;
-  top: 36px;
-  right: 38px;
   width: min(560px, calc(100vw - 32px));
   max-height: min(520px, calc(100vh - 64px));
   overflow: auto;
@@ -383,6 +382,74 @@ body {
   overflow-y: auto;
 }
 
+#stream .records-virtual {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+  scrollbar-gutter: stable;
+}
+
+#stream .records-inner {
+  position: relative;
+  min-width: 100%;
+}
+
+#stream .records-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: 18px var(--col-idx) var(--col-pc) var(--col-func) minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 0 4px 0 8px;
+  cursor: pointer;
+  outline: none;
+  line-height: 18px;
+}
+
+#stream .records-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#stream .records-row .dot {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+#stream .records-row .idx { color: var(--dim); }
+#stream .records-row .pc { color: var(--accent2); }
+#stream .records-row .func { color: var(--good); }
+#stream .records-row .asm code {
+  background: transparent;
+  padding: 0;
+}
+
+#stream .records-row:hover,
+#stream .records-row:focus {
+  background: var(--bg3);
+}
+
+#stream .records-row.selected {
+  background: var(--hl);
+}
+
+#stream .records-row.is-call .asm code { color: var(--accent); }
+#stream .records-row.is-ret .asm code { color: var(--warn); }
+#stream .records-row.is-branch .asm code { color: var(--accent2); }
+
+.records-loading {
+  position: sticky;
+  top: 8px;
+  margin: 8px;
+  z-index: 1;
+}
+
 #stream .records-table,
 #stream .records-table tbody {
   display: block;
@@ -485,6 +552,7 @@ body {
   margin-right: 0.55ch;
   text-align: center;
   border-radius: 2px;
+  cursor: default;
 }
 
 .mem-byte.read { color: var(--accent); }
@@ -492,6 +560,7 @@ body {
 .mem-byte.external { color: var(--warn); background: rgba(247, 179, 43, 0.12); }
 .mem-byte.unknown { color: var(--dim); }
 .mem-byte.changed { color: white; background: rgba(248, 81, 73, 0.5); }
+.mem-byte:hover { outline: 1px solid rgba(88, 166, 255, 0.55); }
 
 .mem-ascii {
   white-space: pre;
@@ -987,14 +1056,39 @@ html[data-density="dense"] .xref-table td {
 .cfg-svg-frame {
   height: min(72vh, 720px);
   min-height: 320px;
-  overflow: auto;
+  overflow: hidden;
   background: #0e1117;
   border: 1px solid var(--border);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  position: relative;
 }
 
-.cfg-svg-frame svg {
+.cfg-svg-frame.dragging {
+  cursor: grabbing;
+}
+
+.cfg-svg-canvas {
+  transform-origin: 0 0;
+  min-width: max-content;
+  min-height: max-content;
+  will-change: transform;
+}
+
+.cfg-svg-canvas svg {
   display: block;
   max-width: none;
+}
+
+.cfg-svg-canvas a {
+  cursor: pointer;
+}
+
+.cfg-svg-canvas a.cfg-current text,
+.cfg-svg-canvas a:hover text {
+  fill: #ffffff;
+  font-weight: 700;
 }
 
 .strings-controls {
@@ -1030,17 +1124,23 @@ html[data-density="dense"] .xref-table td {
 
 .strings-list li {
   display: grid;
-  grid-template-columns: 9em 3em 1fr;
+  grid-template-columns: 9em 3em minmax(0, 1fr);
   gap: 8px;
   padding: 1px 0;
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  align-items: start;
+}
+
+.strings-list li:hover {
+  background: var(--bg3);
 }
 
 .strings-list .str {
   color: var(--fg);
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow: visible;
+  overflow-wrap: anywhere;
 }
 
 .ct-controls {
@@ -1131,6 +1231,8 @@ html[data-density="dense"] .xref-table td {
 .taint-table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; }
 .taint-table th, .taint-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .taint-table th { color: var(--dim, #888); font-weight: normal; }
+.taint-table tbody tr { cursor: pointer; }
+.taint-table tbody tr:hover { background: var(--bg3); }
 
 .dec-grid { display: grid; grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr); gap: 16px; align-items: start; }
 .dec-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; font-size: 12px; color: var(--dim); }

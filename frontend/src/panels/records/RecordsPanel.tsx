@@ -1,9 +1,20 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 
-import { fetchRecords } from "~/api/client";
+import { fetchMeta, fetchRecords } from "~/api/client";
+import type { RecordRow } from "~/api/types";
 
-const PAGE = 220;
-const MAX_WINDOW = 2200;
+const ROW_HEIGHT = 18;
+const OVERSCAN = 18;
+const SAFE_SCROLL_HEIGHT = 30_000_000;
 const REG_RE = /\b(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)\b/gi;
 
 interface RecordsPanelProps {
@@ -31,105 +42,151 @@ function fnLabel(row: { func: string | null; off: string | null; module: string 
   return row.module ?? "?";
 }
 
-export default function RecordsPanel(props: RecordsPanelProps) {
-  const [start, setStart] = createSignal(0);
-  const [count, setCount] = createSignal(PAGE);
-  const source = createMemo(() => ({ start: start(), count: count() }));
-  const [resp] = createResource(source, (s) => fetchRecords(s));
+function rowKind(row: RecordRow): string {
+  if (row.is_call) return "call";
+  if (row.is_ret) return "ret";
+  if (row.is_branch) return "br";
+  return "";
+}
 
-  createEffect(() => {
-    const r = resp();
-    if (!r) return;
-    if (props.selectedIdx < r.start || props.selectedIdx >= r.end) {
-      setStart(Math.max(0, props.selectedIdx - Math.floor(PAGE / 3)));
-      setCount(PAGE);
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+export default function RecordsPanel(props: RecordsPanelProps) {
+  const [scrollTop, setScrollTop] = createSignal(0);
+  const [viewHeight, setViewHeight] = createSignal(0);
+  const [meta] = createResource(fetchMeta);
+  let viewport: HTMLDivElement | undefined;
+
+  const totalRecords = createMemo(() => meta()?.records ?? 0);
+  const fullHeight = createMemo(() => totalRecords() * ROW_HEIGHT);
+  const innerHeight = createMemo(() => Math.min(SAFE_SCROLL_HEIGHT, Math.max(ROW_HEIGHT, fullHeight())));
+  const compressed = createMemo(() => fullHeight() > SAFE_SCROLL_HEIGHT);
+  const visibleRows = createMemo(() => Math.max(1, Math.ceil((viewHeight() || 480) / ROW_HEIGHT)));
+
+  const range = createMemo(() => {
+    const total = totalRecords();
+    if (total <= 0) return { start: 0, count: 0, end: 0 };
+
+    if (compressed()) {
+      const maxScroll = Math.max(1, innerHeight() - (viewHeight() || 1));
+      const maxStart = Math.max(0, total - visibleRows());
+      const mapped = Math.floor((scrollTop() / maxScroll) * maxStart);
+      const start = clamp(mapped - OVERSCAN, 0, maxStart);
+      const end = Math.min(total, start + visibleRows() + OVERSCAN * 2);
+      return { start, count: end - start, end };
     }
+
+    const start = clamp(Math.floor(scrollTop() / ROW_HEIGHT) - OVERSCAN, 0, total);
+    const end = Math.min(
+      total,
+      Math.ceil((scrollTop() + (viewHeight() || 480)) / ROW_HEIGHT) + OVERSCAN,
+    );
+    return { start, count: Math.max(0, end - start), end };
   });
 
-  function selectRow(row: { idx: number; asm: string }) {
+  const [resp] = createResource(range, (r) => fetchRecords({ start: r.start, count: r.count }));
+  let lastAutoScrollIdx = -1;
+
+  onMount(() => {
+    const syncHeight = () => setViewHeight(viewport?.clientHeight ?? 0);
+    syncHeight();
+    const ro = new ResizeObserver(syncHeight);
+    if (viewport) ro.observe(viewport);
+    onCleanup(() => ro.disconnect());
+  });
+
+  createEffect(() => {
+    const selected = props.selectedIdx;
+    const total = totalRecords();
+    const h = viewHeight();
+    if (!viewport || !total || !h) return;
+    if (selected === lastAutoScrollIdx) return;
+    lastAutoScrollIdx = selected;
+    const idx = clamp(selected, 0, total - 1);
+    const rowTop = compressed()
+      ? (idx / Math.max(1, total - 1)) * Math.max(1, innerHeight() - h)
+      : idx * ROW_HEIGHT;
+    const rowBottom = rowTop + ROW_HEIGHT;
+    if (rowTop >= scrollTop() && rowBottom <= scrollTop() + h) return;
+    const next = clamp(rowTop - Math.floor(h / 3), 0, Math.max(0, innerHeight() - h));
+    viewport.scrollTop = next;
+    setScrollTop(next);
+  });
+
+  function rowTop(row: RecordRow): string {
+    if (!compressed()) return `${row.idx * ROW_HEIGHT}px`;
+    return `${scrollTop() + (row.idx - range().start) * ROW_HEIGHT}px`;
+  }
+
+  function selectRow(row: RecordRow) {
     props.onSelect(row.idx);
     const reg = firstAsmReg(row.asm);
     if (reg) props.onSelectReg(reg);
   }
 
-  function onScroll(e: Event) {
-    const el = e.currentTarget as HTMLElement;
-    const r = resp();
-    if (!r) return;
-    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 80;
-    const nearTop = el.scrollTop <= 20;
-    if (nearBottom && r.count >= count() && count() < MAX_WINDOW) {
-      setCount(Math.min(MAX_WINDOW, count() + PAGE));
-    } else if (nearTop && r.start > 0) {
-      const next = Math.max(0, r.start - PAGE);
-      setStart(next);
-      setCount(Math.min(MAX_WINDOW, count() + PAGE));
-      queueMicrotask(() => {
-        el.scrollTop = 48;
-      });
-    }
-  }
-
   return (
     <section class="panel records-panel">
       <h2>Records</h2>
+      <Show when={meta.error}>
+        <p class="err">meta failed: {String(meta.error)}</p>
+      </Show>
       <Show when={resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>
       </Show>
-      <Show when={resp.loading}>
-        <p class="dim">loading…</p>
-      </Show>
-      <Show when={resp()}>
-        {(r) => (
-          <>
-            <div class="records-status">
-              <span>
-                window {r().start}–{r().end}
-              </span>
-              <span class="grow" />
-              <span>selected idx {props.selectedIdx}</span>
-              <span>reg {props.selectedReg}</span>
-            </div>
-            <div class="records-scroll" onScroll={onScroll}>
-              <table class="records-table">
-                <tbody>
-                  <For each={r().records}>
-                    {(row) => (
-                      <tr
-                        class={row.idx === props.selectedIdx ? "selected" : ""}
-                        classList={{
-                          "is-call": row.is_call,
-                          "is-ret": row.is_ret,
-                          "is-branch": row.is_branch && !row.is_call && !row.is_ret,
-                        }}
-                        tabIndex={0}
-                        onClick={() => selectRow(row)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") selectRow(row);
-                        }}
-                      >
-                        <td>{row.idx}</td>
-                        <td>
-                          <code>{row.pc}</code>
-                        </td>
-                        <td title={fnLabel(row)}>{fnLabel(row)}</td>
-                        <td title={row.asm}>
-                          <code>{row.asm}</code>
-                        </td>
-                        <td>
-                          {row.is_call ? "call" : ""}
-                          {row.is_ret ? "ret" : ""}
-                          {row.is_branch && !row.is_call && !row.is_ret ? "br" : ""}
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </Show>
+      <div class="records-status">
+        <span>
+          window {range().start}-{range().end} / {totalRecords().toLocaleString()}
+        </span>
+        <span class="grow" />
+        <span>selected idx {props.selectedIdx}</span>
+        <span>reg {props.selectedReg}</span>
+      </div>
+      <div
+        ref={(el) => {
+          viewport = el;
+        }}
+        class="records-virtual"
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      >
+        <div class="records-inner" style={{ height: `${innerHeight()}px` }}>
+          <Show when={meta.loading || resp.loading}>
+            <p class="dim records-loading">loading…</p>
+          </Show>
+          <For each={resp()?.records ?? []}>
+            {(row) => (
+              <div
+                class="records-row"
+                classList={{
+                  selected: row.idx === props.selectedIdx,
+                  "is-call": row.is_call,
+                  "is-ret": row.is_ret,
+                  "is-branch": row.is_branch && !row.is_call && !row.is_ret,
+                }}
+                style={{ top: rowTop(row), height: `${ROW_HEIGHT}px` }}
+                tabIndex={0}
+                onClick={() => selectRow(row)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") selectRow(row);
+                }}
+              >
+                <span class="dot">{rowKind(row)}</span>
+                <span class="idx">{row.idx}</span>
+                <span class="pc">
+                  <code>{row.pc}</code>
+                </span>
+                <span class="func" title={fnLabel(row)}>
+                  {fnLabel(row)}
+                </span>
+                <span class="asm" title={row.asm}>
+                  <code>{row.asm}</code>
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </div>
     </section>
   );
 }

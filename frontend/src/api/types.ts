@@ -115,6 +115,23 @@ export interface StringsResponse {
   strings: StringEntry[];
 }
 
+// ── /api/idxs-touching-addr ─────────────────────────────────────────────
+
+export interface TouchingAddrEntry {
+  idx: number;
+  kind: string;       // "r" | "w"
+}
+
+export interface TouchingAddrResponse {
+  status: string;
+  addr: string;
+  cursor?: number;
+  before: TouchingAddrEntry[];
+  after: TouchingAddrEntry[];
+  total_before: number;
+  total_after: number;
+}
+
 // ── /api/mem-dump ────────────────────────────────────────────────────────
 
 export interface MemDumpByte {

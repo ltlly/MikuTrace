@@ -5,9 +5,11 @@ import type { MemDumpByte } from "~/api/types";
 
 interface MemoryPanelProps {
   idx: number;
+  onSelect: (idx: number) => void;
 }
 
 const QUICK_REGS = ["x0", "x1", "x2", "x3", "sp"];
+const REG_ADDR_RE = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)$/i;
 
 function hexByte(byte: number | null): string {
   if (byte === null) return "??";
@@ -32,22 +34,43 @@ function byteCellClass(kind: string): string {
   return "mem-byte unknown";
 }
 
+function normalizeRegName(raw: string): string {
+  const reg = raw.trim().toLowerCase();
+  if (reg === "fp") return "x29";
+  if (reg === "lr") return "x30";
+  if (reg.startsWith("w")) return `x${reg.slice(1)}`;
+  return reg;
+}
+
 export default function MemoryPanel(props: MemoryPanelProps) {
   const [addr, setAddr] = createSignal("0x0");
   const [count, setCount] = createSignal(64);
   const [record] = createResource(() => props.idx, fetchRecord);
+  let autoAddr = "";
   createEffect(() => {
     const r = record();
-    if (r?.regs.sp) setAddr(r.regs.sp);
+    const sp = r?.regs.sp;
+    if (!sp) return;
+    const current = addr().trim();
+    if (!current || current === "0x0" || current === autoAddr) {
+      autoAddr = sp;
+      setAddr(sp);
+    }
+  });
+  const resolvedAddr = createMemo(() => {
+    const raw = addr().trim();
+    if (!raw) return "0x0";
+    if (!REG_ADDR_RE.test(raw)) return raw;
+    return record()?.regs[normalizeRegName(raw)] ?? "0x0";
   });
   const dumpSource = createMemo(() => ({
-    addr: addr().trim() || "0x0",
+    addr: resolvedAddr(),
     count: Math.max(1, Math.min(512, count())),
   }));
   const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
   const diffSource = createMemo(() => ({
     idx: props.idx,
-    addr: addr().trim() || "0x0",
+    addr: resolvedAddr(),
     size: Math.max(1, Math.min(128, count())),
   }));
   const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
@@ -104,7 +127,12 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       <Show when={dump()}>
         {(d) => (
           <>
-            <p class="dim small">{d().addr} · {d().count} bytes</p>
+            <p class="dim small">
+              {d().addr} · {d().count} bytes
+              <Show when={addr().trim() !== resolvedAddr()}>
+                {" "}· {addr().trim()}={resolvedAddr()}
+              </Show>
+            </p>
             <table class="memory-hex-table">
               <thead>
                 <tr>
@@ -128,6 +156,9 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                                 changedAddrs().has(b.addr) ? "changed" : ""
                               }`}
                               title={`${b.addr} ${b.kind} src=${b.src_idx ?? ""}`}
+                              onDblClick={() => {
+                                if (b.src_idx !== null) props.onSelect(b.src_idx);
+                              }}
                             >
                               {hexByte(b.byte)}
                             </span>
