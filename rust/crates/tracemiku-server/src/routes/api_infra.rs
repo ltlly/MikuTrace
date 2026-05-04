@@ -80,6 +80,7 @@ fn openapi_paths() -> Value {
         ("/api/dec/fn/{fn_id}", "get"),
         ("/api/dec/llm-call", "post"),
         ("/api/dec/models", "get"),
+        ("/api/llil/render", "post"),
         ("/ws/jobs", "get"),
         ("/openapi.json", "get"),
     ] {
