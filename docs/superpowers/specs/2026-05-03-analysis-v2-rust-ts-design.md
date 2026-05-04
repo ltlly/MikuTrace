@@ -450,7 +450,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `search-pc` | 🔜 M3 | legacy all-hit PC list shape; use `idxs-for-pc` meanwhile |
 | `search`, `search-asm` | ✅ M3-ξ | REST-backed wrappers for `/api/search` |
 | `taint-fwd`, `taint-bwd` | ✅ M3-μ | REST-backed wrappers for M3-γ taint endpoints |
-| `data-chase` | 🔜 M3 | follow data flow |
+| `data-chase` | ✅ M3-τ | single-path backward data chase through reg/load/store |
 | `so-stats` | ✅ M3-ξ | REST-backed wrapper for `/api/so-stats` |
 | `last-write-of-addr` | ✅ M3-π | REST-backed wrapper for `/api/last-write-of-addr` |
 | `find-mem-pattern` | ✅ M3-π | REST-backed wrapper for `/api/find-mem-pattern` |
@@ -508,7 +508,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/last-write-of-reg` | ✅ M2-ε | linear backward scan from idx; returns {idx, pc, value} |
 | `/api/last-write-of-addr` | ✅ M3-π | latest overlapping write before cursor |
 | `/api/reg-value-at`, `/api/reg-at-idx` | ✅ M3-ν | cursor register lookup with x/w/fp/lr aliases |
-| `/api/data-chase` | 🔜 M3 | |
+| `/api/data-chase` | ✅ M3-τ | single-path backward data chase |
 | `/api/find-mem-pattern` | ✅ M3-π | MemShadow byte-pattern scan with idx filters |
 | `/api/mem-writes-in-range` | ✅ M3-π | covered by `/api/idxs-touching-range` writer partition |
 | `/api/mem-flow` | 🔜 M3 | |
