@@ -338,6 +338,14 @@ fn hash_finalize_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn auto_phase_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&["auto-phase-detect".into(), cd.display().to_string()]);
+    assert_eq!(v["trace_records"], 4);
+    assert!(v["phases"].is_array());
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[

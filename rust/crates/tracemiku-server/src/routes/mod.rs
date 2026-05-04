@@ -1,3 +1,4 @@
+pub mod auto_phase;
 pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
@@ -49,6 +50,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/hash-finalize-detect",
             get(hash_finalize::hash_finalize_detect_handler),
+        )
+        .route(
+            "/api/auto-phase-detect",
+            get(auto_phase::auto_phase_detect_handler),
         )
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(

@@ -324,6 +324,12 @@ enum Cmd {
         #[arg(long, default_value_t = 16)]
         min_size: u64,
     },
+    /// GET /api/auto-phase-detect.
+    AutoPhaseDetect {
+        trace_dir: PathBuf,
+        #[arg(long, default_value_t = true)]
+        detect_byte_streams: bool,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -669,6 +675,13 @@ async fn main() -> anyhow::Result<()> {
                 ("min_size", min_size.to_string()),
             ];
             route_get_json(trace_dir, route_path("/api/hash-finalize-detect", &params)).await
+        }
+        Some(Cmd::AutoPhaseDetect {
+            trace_dir,
+            detect_byte_streams,
+        }) => {
+            let params = vec![("detect_byte_streams", detect_byte_streams.to_string())];
+            route_get_json(trace_dir, route_path("/api/auto-phase-detect", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await
