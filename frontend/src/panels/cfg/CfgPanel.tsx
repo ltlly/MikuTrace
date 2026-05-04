@@ -47,7 +47,7 @@ type CfgGraphResponse = CfgSvgResponse & {
 export default function CfgPanel(props: CfgPanelProps) {
   const [fnName, setFnName] = createSignal("");
   const [autoGraph, setAutoGraph] = createSignal(true);
-  const [timeout, setTimeout] = createSignal(60);
+  const [timeout, setDotTimeout] = createSignal(60);
   const [reload, setReload] = createSignal(0);
   const [forceGraph, setForceGraph] = createSignal(false);
   const [graph, setGraph] = createSignal<CfgGraphResponse | null>(null);
@@ -201,7 +201,12 @@ export default function CfgPanel(props: CfgPanelProps) {
     if (!g || g.status !== "ready" || !shouldRenderGraph(g)) return;
     if (g.requestFn !== fnName()) return;
     if (r.func && g.fn && r.func !== g.fn) return;
-    window.requestAnimationFrame(() => highlightAndCenterPc(r.pc, idx));
+    const raf = window.requestAnimationFrame(() => {
+      if (!props.active || !props.syncEnabled) return;
+      if (idx !== props.currentIdx || graph() !== g || fnName() !== g.requestFn) return;
+      highlightAndCenterPc(r.pc, idx);
+    });
+    onCleanup(() => window.cancelAnimationFrame(raf));
   });
 
   function shouldRenderGraph(resp: { status: string; svg?: string; block_count?: number; auto?: boolean }): boolean {
@@ -352,7 +357,7 @@ export default function CfgPanel(props: CfgPanelProps) {
             min="5"
             max="300"
             value={timeout()}
-            onInput={(e) => setTimeout(clampTimeout(Number(e.currentTarget.value)))}
+            onInput={(e) => setDotTimeout(clampTimeout(Number(e.currentTarget.value)))}
           />
         </label>
         <button onClick={reloadGraph}>reload</button>
