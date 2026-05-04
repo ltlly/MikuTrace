@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Regenerate viewer/jni_offsets.json from a JNI header via Binary Ninja.
+"""Regenerate tools/jni_offsets.json from a JNI header via Binary Ninja.
 
 Source of truth: vendor/jni/jni_bn.h (curated for BN parsing).
-Output: viewer/jni_offsets.json — { "0x20": "GetVersion", ... } (hex-string
+Output: tools/jni_offsets.json — { "0x20": "GetVersion", ... } (hex-string
 keys for stable JSON serialization).
 
 Run when jni_bn.h changes, or to validate the layout against an Android NDK
-jni.h. CLI `viewer jni-calls` loads the JSON at runtime — no hardcoded
-table in Python.
+jni.h. Rust v2 falls back to parsing vendor/jni/jni_bn.h when this JSON is
+absent, so the generated file is an optional checked asset.
 
 Usage:
     python tools/regen_jni_offsets.py
@@ -18,7 +18,7 @@ import sys, json, argparse, pathlib
 
 PROJ = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_HEADER = PROJ / "vendor" / "jni" / "jni_bn.h"
-DEFAULT_OUTPUT = PROJ / "viewer" / "jni_offsets.json"
+DEFAULT_OUTPUT = PROJ / "tools" / "jni_offsets.json"
 
 
 def extract_struct_offsets(header_path: pathlib.Path, struct_name: str) -> dict[int, str]:

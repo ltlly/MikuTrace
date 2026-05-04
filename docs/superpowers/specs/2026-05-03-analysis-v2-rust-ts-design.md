@@ -314,7 +314,7 @@ For each Rust module landed in M2-M5, write a side-by-side comparison script tha
 | **M4** | TS frontend core | records / cfg / functions / decompile panels working in browser | ✅ 2026-05-04: Solid panels cover core browser flows |
 | **M5** | LLIL pipeline (Rust) | lift → SSA → passes → render — Rust port | ✅ 2026-05-04: Rust LLIL pipeline + `/api/llil/render` + `/api/llil/llm`; real-trace parity hardening continues |
 | **M6** | BN python sidecar | JSON-RPC sidecar + Rust spawn/lifecycle + HLIL endpoints | BN HLIL panel working in TS frontend |
-| **M7** | Cutover + delete legacy | 🟡 M7-α: `tracemiku web` / `view` now route to Rust `tracemiku-server`, and server serves `frontend/dist`; M7-β still removes remaining Python `viewer.*` command dependencies before deleting old `viewer/` + `webui/` | single binary `tracemiku-server` + frontend dist |
+| **M7** | Cutover + delete legacy | ✅ M7-β: `tracemiku web` / `view` route to Rust `tracemiku-server`, server serves `frontend/dist`, remaining top-level Python `viewer.*` / `webui.*` imports removed, old `viewer/`, `webui/`, and Python pytest suite deleted | single binary `tracemiku-server` + frontend dist |
 
 LLM-side `viewer/decompiler/llm_*.py` (prompt builder, model adapters) gets ported after the M3-ι trace-only decompiler parity gate (M3-ι2d target: async `reqwest` calls + JSON serde). LLIL renderer (M5) is the only piece of `viewer/decompiler/` that's algorithmically complex.
 
@@ -408,8 +408,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | ✅ M3-hash-finalize | window-based scan |
 | `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | ✅ M3-ι2b | 1:1 port; ollvm_detect_vm + OllvmFinding. Heuristic scoring 0.4+0.3+0.2+0.1 (parity with Python). 3 unit tests. |
 | `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
-| `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | ✅ M3-μ prep | clap dispatcher now has REST-backed wrappers for shipped trace-only endpoints plus `list`/`info`; destructive legacy replacement remains M7 sign-off |
-| `__init__.py` (Python SDK re-exports) | n/a | ❌ | M7 deletes; PyO3 binding only if future need |
+| `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | ✅ M7-β | old Python viewer CLI deleted; top-level legacy `query` facade delegates to Rust CLI |
+| `__init__.py` (Python SDK re-exports) | n/a | ✅ M7-β | deleted; PyO3 binding only if future need |
 
 ### 13.3 viewer/decompiler/ modules
 
@@ -476,7 +476,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `export` (CSV/JSON dump) | ⏸ | Power-user; defer |
 | `dec` (LLM-assisted decompile, route B) | ✅ M3-ι2d / ✅ M5-η | Rust route-B LLM calls plus LLIL→LLM endpoint |
 | `dec-bench` (multi-model benchmark) | ⏸ | Defer until base `dec` parity holds |
-| `view` (web subcommand wrapper) | ✅ M7-α | top-level `tracemiku view` / `web` starts Rust `tracemiku-server`; `--so` maps to `TRACEMIKU_BN_SO` |
+| `view` (web subcommand wrapper) | ✅ M7-β | top-level `tracemiku view` / `web` starts Rust `tracemiku-server`; `--so` maps to `TRACEMIKU_BN_SO` |
 | `query` (ad-hoc Python eval) | ❌ | Replaced by `tracemiku-cli` typed subcommands |
 | `info` (per-call dir summary) | ✅ M3-μ | filesystem/Core implementation; no Python viewer import |
 | `list` (list calls in trace dir) | ✅ M3-μ | filesystem implementation; JSON is parity contract |
@@ -575,11 +575,11 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 
 | Item | Status | Note |
 |---|---|---|
-| Python `tests/test_*.py` (815 tests) | ⛔ → ❌ | Reference during M2-M6; deleted at M7 |
+| Python `tests/test_*.py` (815 tests) | ✅ M7-β | deleted after Rust/server/frontend suites covered v2 runtime |
 | `tests/conftest.py` (synth fixtures) | ⛔ → ❌ | Fixtures rewritten as Rust `tests/common/fixtures.rs` |
 | `traces/debug_minimal/` real-trace fixture | ⛔ | Filesystem-only; reused as M0 perf baseline + cargo integration test |
 | `.memshadow.v2.npz` sidecar | ✅ M3-λ | Replaced by Rust-native `trace.bin.memshadow.v3.bin`; old Python `.npz` sidecars are ignored/regenerable |
 | `tools/hooks/*.json` JNI/suicide/type-anchor specs | ⛔ | Format frozen, parsed by both old + new |
 | `examples/<so>/known_offsets.json` | ⛔ | Format frozen |
 | `examples/llm_cookbook.py` | ❌ | Python SDK demo; deleted at M7 |
-| `viewer/__init__.py` SDK Python re-exports | ❌ | M7 deletes; future Python access via PyO3 only on demand |
+| `viewer/__init__.py` SDK Python re-exports | ✅ M7-β | deleted; future Python access via PyO3 only on demand |

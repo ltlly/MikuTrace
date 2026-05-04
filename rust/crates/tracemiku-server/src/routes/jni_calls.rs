@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use axum::extract::{Query, State};
 use axum::Json;
+use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -148,12 +148,21 @@ pub(crate) fn parse_int(s: &str) -> Option<u64> {
 
 fn load_jni_vtable() -> Option<HashMap<u64, String>> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest
-        .parent()?
-        .parent()?
-        .parent()?
-        .join("viewer")
-        .join("jni_offsets.json");
+    let repo_root = manifest.parent()?.parent()?.parent()?;
+    for path in [
+        repo_root.join("tools").join("jni_offsets.json"),
+        repo_root.join("viewer").join("jni_offsets.json"),
+    ] {
+        if let Some(table) = load_jni_offsets_json(&path) {
+            return Some(table);
+        }
+    }
+
+    let header_path = repo_root.join("vendor").join("jni").join("jni_bn.h");
+    load_jni_offsets_header(&header_path)
+}
+
+fn load_jni_offsets_json(path: &std::path::Path) -> Option<HashMap<u64, String>> {
     let text = std::fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<Value>(&text).ok()?;
     let raw = value.get("offsets").unwrap_or(&value).as_object()?;
@@ -164,4 +173,50 @@ fn load_jni_vtable() -> Option<HashMap<u64, String>> {
         out.insert(offset, name);
     }
     Some(out)
+}
+
+fn load_jni_offsets_header(path: &std::path::Path) -> Option<HashMap<u64, String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut in_struct = false;
+    let mut slot = 0u64;
+    let mut out = HashMap::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("struct JNINativeInterface_ {") {
+            in_struct = true;
+            continue;
+        }
+        if !in_struct {
+            continue;
+        }
+        if trimmed.starts_with("};") {
+            break;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.starts_with("void *reserved") {
+            slot += 1;
+            continue;
+        }
+
+        if let Some(name) = parse_jni_fn_member(trimmed) {
+            out.insert(slot * 8, name);
+            slot += 1;
+        }
+    }
+
+    (!out.is_empty()).then_some(out)
+}
+
+fn parse_jni_fn_member(line: &str) -> Option<String> {
+    let marker = "(__stdcall *";
+    let (_, after_star) = line.split_once(marker)?;
+    let name = after_star.split(')').next()?.trim();
+    if name.is_empty() || name.starts_with("reserved") {
+        return None;
+    }
+    Some(name.to_string())
 }

@@ -126,7 +126,8 @@
 - M6-α: BN Python sidecar + Rust lifecycle + HLIL/BN-CFG endpoints + `/api/functions` BN merge ✅ 2026-05-04
 - M6-β: frontend HLIL panel follows selected FunctionIndex id (`/api/hlil-for-fn`) ✅ 2026-05-04
 - M7-α: `tracemiku web` / `tracemiku view` route to Rust `tracemiku-server`, which serves `frontend/dist` ✅ 2026-05-04
-- M7-β (next): remove remaining top-level Python `viewer.*` command dependencies, then delete old `viewer/` + `webui/`
+- M7-β: removed remaining top-level Python `viewer.*` / `webui.*` runtime imports; deleted old `viewer/`, `webui/`, and Python pytest suite ✅ 2026-05-04
+- Analysis v2 refactor: ✅ M0-M7 cutover complete; future work belongs in new TODO items only
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
@@ -138,13 +139,13 @@
 5. Frontend: add 3 toggle checkboxes to TaintPanel (through_mem, data_only, cross_fn_call) + frame_depth column.
 6. Re-run `scripts/m3_beta_parity.py` to confirm backward jaccard ≥ 0.6 (forward should remain ≥ 0.6 too).
 
-## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
+## ✅ 已完成 (2026-05-03 — FunctionIndex / Web Refactor)
 
 **已落地**: `viewer.function_index` 模块, `/api/functions` 端点, `trace:F0` / `sym:<name>`
 稳定 id, 老 `F0` / `cfg:<name>` 兼容, Decompile 不再卡 BG CFG (sync fallback 测试钉住),
 前端 Functions 面板改吃 `/api/functions`. **807 passed / 10 skipped / 0 failed**.
 
-**未达成**(独立审查发现, 见下面 P0-Next-FollowUp):
+**已关闭差距**(独立审查发现, 见下面 P0-Next-FollowUp):
 
 1. ✅ 2026-05-04: v2 Rust `/api/functions` 懒调 BN sidecar `functions`,
    合并 `bn:<addr>` entries; `counts.bn > 0` 用 fake sidecar test 钉住.
@@ -184,8 +185,9 @@
 
 # P0-Next-FollowUp — FunctionIndex 真正全量统一
 
-> 上一轮宣称"完成", 实际只覆盖 trace:* + sym:*. 这三项做完才算真正符合
-> 设计文档 ("/api/functions canonical source across Functions / CFG / HLIL / Decompile").
+> 2026-05-04 已关闭: `/api/functions` now acts as the canonical source across
+> Functions / CFG / HLIL / Decompile for trace:* / sym:* / bn:* where the active
+> backend can supply that function source.
 
 - **F1**: ✅ v2 Rust closed 2026-05-04. `/api/functions` 从 BN sidecar 枚举
   functions 并合并 `bn:<addr>` entries; fake sidecar test 覆盖 `counts.bn > 0`.
@@ -514,8 +516,9 @@ miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypas
 真值注入) + 多 pass 优化, 输出 C-like pseudocode 不靠 LLM. 长远目标:
 **直接拿这套工具 100% 复刻 x-sign 算法**.
 
-**入口**: `viewer/decompiler/llil/`, webui `/api/decompile?fn=…&pass=llil`
-渲染到 SPA. 测试: `tests/test_llil_*.py` (跑 `uv run pytest tests/test_llil_*.py -q` 看数).
+**入口**: Rust v2 `tracemiku-core::llil`, server `/api/llil/render` /
+`/api/llil/llm`, Solid SPA LLIL/Decompiler panels. 测试: `cargo test -p
+tracemiku-core -- --nocapture`.
 
 **Pipeline (8 主 pass + 多 extras)**:
 
@@ -541,7 +544,8 @@ extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 | L8 | render_hlil (C-pseudo 输出) | ✅ | prologue/epilogue 折叠, local var 命名, ×N exec_count, call args, ret return-value, string 解密, ROR/ROL 函数式 |
 | L1.5 | UIDF (trace 真值 → ObservedValues) | ✅ | SET_REG + CALL ret_x0 |
 
-**累计**: LLIL pipeline + webui 集成完整 — 跑 `uv run pytest -q` 看实时通过数.
+**累计**: LLIL pipeline + Rust v2 web 集成完整 — 跑 `cargo test -p
+tracemiku-core -- --nocapture` 看实时通过数.
 
 **最近一轮 (2026-05-03 session, 8 commits)**:
 
@@ -559,7 +563,7 @@ extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 **P2-LLIL 下一步候选** (按优先级):
 - 跨 block SSA full loop-phi refinement: worklist 不动点. 当前 `ssa_blocks_cfg` 已有 synthetic phi entry version + backedge incoming metadata refinement (含 backedge-only defs), 但循环内 use/exit version 尚未迭代到不动点.
 - float / SIMD lift (NEON 寄存器目前没记, 见已知限制)
-- 真机 BN HLIL 对比扫描 — 选 top-N `sub_*` 跑 viewer + BN 输出 diff
+- 真机 BN HLIL 对比扫描 — 选 top-N `sub_*` 跑 Rust v2 LLIL + BN 输出 diff
 - LLIL-level taint propagation (复用 SSA def-use)
 - 链 P2-DEC: LLIL 输出作为 LLM prompt 的 IR 层 (vs raw skeleton)
 
@@ -606,7 +610,7 @@ extras: uidf (trace 真值), memshadow LOAD-fold, string deref
 - **NEON/FP 寄存器没记** → 见 P2-A record v2 (确认要做).
 - **vfork() 在 Bionic 上 hook 不到** (P1-C M1) — 已 deprecated, 实际反调试场景不影响.
 - **字符串只能从 MemShadow 抠** — trace 没读到的字节没法识别字符串.
-- **TUI (`viewer/app.py`) 冻结** — Web 是唯一 UI.
+- **旧 TUI 已删除** — Web 是唯一 UI.
 
 ---
 

@@ -23,6 +23,62 @@ import sys, os, pathlib, argparse, json, subprocess, time
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+def _rust_cli_cmd(args):
+    bin_path = os.environ.get("TRACEMIKU_CLI_BIN")
+    if bin_path:
+        return [bin_path, *args]
+    return [
+        "cargo", "run", "--manifest-path", str(HERE / "rust" / "Cargo.toml"),
+        "-p", "tracemiku-cli", "--", *args,
+    ]
+
+
+def _run_rust_cli(args):
+    return subprocess.call(_rust_cli_cmd(args))
+
+
+def _rust_cli_json(args):
+    r = subprocess.run(_rust_cli_cmd(args), capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or r.stdout.strip() or f"tracemiku-cli exited {r.returncode}")
+    return json.loads(r.stdout)
+
+
+def _is_ret_inst(inst):
+    return (inst & 0xfffffc1f) == 0xd65f0000
+
+
+def _decode_last_inst(pc, inst):
+    try:
+        import capstone
+        cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+        insns = list(cs.disasm(inst.to_bytes(4, "little"), pc, count=1))
+        if insns:
+            insn = insns[0]
+            asm = f"{insn.mnemonic} {insn.op_str}".strip()
+            return insn.mnemonic == "ret", asm
+    except Exception:
+        pass
+    return _is_ret_inst(inst), f".inst 0x{inst:08x}"
+
+
+def _read_trace_tail(bin_path):
+    size = bin_path.stat().st_size if bin_path.exists() else 0
+    n = size // 272
+    first_pc = last_pc = last_inst = None
+    if n > 0:
+        with open(bin_path, "rb") as bf:
+            head = bf.read(272)
+            first_pc = int.from_bytes(head[:8], "little")
+            if n > 1:
+                bf.seek((n - 1) * 272)
+                tail = bf.read(272)
+            else:
+                tail = head
+            last_pc = int.from_bytes(tail[:8], "little")
+            last_inst = int.from_bytes(tail[268:272], "little")
+    return n, first_pc, last_pc, last_inst
+
 
 CONSENT_BUTTON_PATTERNS = [
     r'text="同意"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
@@ -271,23 +327,10 @@ def cmd_trace(args):
         bin_path = s["dir"]/"trace.bin"
         first_pc = last_pc = None
         last_is_ret = None
-        size = bin_path.stat().st_size if bin_path.exists() else 0
-        n = size // 272
-        if n > 0:
+        n, first_pc, last_pc, last_inst = _read_trace_tail(bin_path)
+        if last_inst is not None:
             try:
-                from viewer.disasm import decode as _decode
-                with open(bin_path, "rb") as bf:
-                    head = bf.read(272)
-                    first_pc = int.from_bytes(head[:8], "little")
-                    if n > 1:
-                        bf.seek((n-1)*272)
-                        tail = bf.read(272)
-                    else:
-                        tail = head
-                    last_pc = int.from_bytes(tail[:8], "little")
-                    last_inst = int.from_bytes(tail[268:272], "little")
-                    d = _decode(last_pc, last_inst)
-                    last_is_ret = bool(d.is_ret)
+                last_is_ret, _ = _decode_last_inst(last_pc, last_inst)
             except Exception as e:
                 wlog(f"[!] decode last insn 失败: {e}")
         md["records"] = n
@@ -746,12 +789,11 @@ def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
     serialize. No locking needed: only this thread mutates this fork_event.
     """
     import threading
-    from viewer.proc_poll import poll_child_lifecycle
     cpid = fork_event["child_pid"]
 
     def _poll():
         try:
-            r = poll_child_lifecycle(cpid, max_wait_sec=max_wait_sec)
+            r = _poll_child_lifecycle(cpid, max_wait_sec=max_wait_sec)
             fork_event["lifecycle"] = {
                 "runtime_ms": r["runtime_ms"],
                 "alive_at_max_wait": r["alive_at_max_wait"],
@@ -778,6 +820,64 @@ def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
     th = threading.Thread(target=_poll, daemon=True,
                            name=f"fork-poll-{cpid}")
     th.start()
+
+
+def _parse_proc_stat(text):
+    s = text.strip()
+    if not s: return None
+    lp = s.find("("); rp = s.rfind(")")
+    if lp == -1 or rp == -1 or rp < lp: return None
+    try:
+        pid = int(s[:lp].strip())
+        comm = s[lp + 1:rp]
+        rest = s[rp + 1:].split()
+        if len(rest) < 21: return None
+        return {"pid": pid, "comm": comm, "state": rest[0]}
+    except Exception:
+        return None
+
+
+def _poll_child_lifecycle(pid, max_wait_sec=30.0, poll_interval_sec=0.1):
+    start = time.time()
+    out = {
+        "child_pid": pid, "first_observed_at": None, "last_observed_at": None,
+        "exit_observed_at": None, "alive_at_max_wait": False, "runtime_ms": None,
+        "last_state": None, "comm": None, "polls_total": 0, "polls_alive": 0,
+    }
+    while True:
+        if time.time() - start >= max_wait_sec:
+            out["alive_at_max_wait"] = True
+            break
+        out["polls_total"] += 1
+        try:
+            r = subprocess.run(["adb", "shell", "cat", f"/proc/{pid}/stat"],
+                               capture_output=True, text=True, timeout=2)
+        except Exception:
+            r = None
+        now = time.time()
+        if r and r.returncode == 0 and r.stdout:
+            parsed = _parse_proc_stat(r.stdout)
+            if parsed:
+                if out["first_observed_at"] is None:
+                    out["first_observed_at"] = now
+                    out["comm"] = parsed["comm"]
+                out["last_observed_at"] = now
+                out["last_state"] = parsed["state"]
+                out["polls_alive"] += 1
+                if parsed["state"] == "Z":
+                    out["exit_observed_at"] = now
+                    break
+            else:
+                out["exit_observed_at"] = now
+                break
+        else:
+            if out["first_observed_at"] is not None:
+                out["exit_observed_at"] = now
+            break
+        time.sleep(poll_interval_sec)
+    if out["first_observed_at"] and out["last_observed_at"]:
+        out["runtime_ms"] = int((out["last_observed_at"] - out["first_observed_at"]) * 1000)
+    return out
 
 
 def _print_fork_summary(all_fork_events):
@@ -821,7 +921,6 @@ def cmd_finalize(args):
     用于 anti-debug 把 frida RPC 卡死, 主进程被 kill 后残留 _pending_call_NNN
     的恢复. 不需要重跑 trace.
     """
-    from viewer.disasm import decode as _decode
     base = pathlib.Path(args.path)
     if not base.exists(): print(f"[!] {base} 不存在"); return 1
     targets = []
@@ -832,20 +931,10 @@ def cmd_finalize(args):
     for d in targets:
         bin_path = d/"trace.bin"
         if not bin_path.exists(): continue
-        size = bin_path.stat().st_size
-        n = size // 272
-        first_pc = last_pc = None; last_is_ret = None
-        if n > 0:
-            with open(bin_path, "rb") as bf:
-                head = bf.read(272)
-                first_pc = int.from_bytes(head[:8], "little")
-                if n > 1:
-                    bf.seek((n-1)*272); tail = bf.read(272)
-                else: tail = head
-                last_pc = int.from_bytes(tail[:8], "little")
-                last_inst = int.from_bytes(tail[268:272], "little")
-                dd = _decode(last_pc, last_inst)
-                last_is_ret = bool(dd.is_ret)
+        n, first_pc, last_pc, last_inst = _read_trace_tail(bin_path)
+        last_is_ret = None
+        if last_inst is not None:
+            last_is_ret, _ = _decode_last_inst(last_pc, last_inst)
         # parse callIdx from dirname _pending_call_NNN
         try: call_idx = int(d.name.split("_")[-1])
         except: call_idx = 0
@@ -910,179 +999,54 @@ def cmd_view(args):
 
 
 def cmd_dec(args):
-    """Trace decompiler — 生成 LLM-friendly skeleton IR (P2-DEC1+DEC2).
-
-    路线 B (设计: docs/trace-decompiler-design.md).
-
-    模式:
-      默认                  落盘 <path>/decompile/{summary.md, fns/F<id>.md}
-      --summary             stdout summary.md
-      --fn F0               stdout F0.md
-      --prompt-only F0      stdout 反编译 prompt (system + user)
-      --call-llm claude     调 LLM (默认对每 fn 一次), 落 decompile/llm_results/
-    """
-    from viewer import load, build_trace_ir, write_decompile_dir
-    from viewer.decompiler import (
-        render_summary_md, render_func_md,
-        build_fn_decompile_prompt, build_summary_prompt,
-        make_llm_model,
-    )
+    """Rust v2 TraceIR markdown wrapper."""
     p = pathlib.Path(args.path)
     if not p.exists():
         print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
-    t = load(str(p))
-    print(f"[dec] loading trace: {p}  ({len(t)} records)", file=sys.stderr)
-    hook_paths = [pathlib.Path(h) for h in (args.hooks or [])]
-    if hook_paths:
-        print(f"[dec] loading {len(hook_paths)} type spec(s): "
-              f"{[str(h) for h in hook_paths]}", file=sys.stderr)
-    mem = None
-    if getattr(args, "vm_with_memshadow", False):
-        from viewer import MemShadow
-        print("[dec] building MemShadow (cold ~30s)...", file=sys.stderr)
-        mem = MemShadow(t)
-        mem.build()
-    top = build_trace_ir(
-        t, type_spec_paths=hook_paths or None,
-        detect_vm=not args.no_detect_vm,
-        memshadow=mem,
-    )
-    n_anchors = sum(len(f.type_anchors) for f in top.fns)
-    n_vm = len(top.vm_candidates)
-    print(f"[dec] built IR: {len(top.fns)} fn, "
-          f"{sum(len(f.blocks) for f in top.fns)} blocks, "
-          f"{n_anchors} type anchors, {n_vm} VM candidates", file=sys.stderr)
-
-    # ── 只输出 summary / fn-md ────────────────────────────────────────
-    if args.summary:
-        sys.stdout.write(render_summary_md(top))
-        t.close(); return 0
-    if args.fn and not args.call_llm and not args.prompt_only:
-        fn = top.fn(args.fn)
-        if fn is None:
-            print(f"[!] no such fn: {args.fn} (have {[f.id for f in top.fns]})",
-                  file=sys.stderr); t.close(); return 1
-        sys.stdout.write(render_func_md(fn, tier=args.tier))
-        t.close(); return 0
-
-    # ── --prompt-only: stdout 拼好的 prompt ───────────────────────────
     if args.prompt_only:
-        if args.prompt_only.lower() == "summary":
-            b = build_summary_prompt(top)
-        else:
-            try:
-                b = build_fn_decompile_prompt(top, args.prompt_only)
-            except KeyError as e:
-                print(f"[!] {e}", file=sys.stderr); t.close(); return 1
-        sys.stdout.write(f"=== SYSTEM ===\n{b.system}\n=== USER ===\n{b.user}\n")
-        sys.stderr.write(f"\n[prompt] ~{b.estimated_tokens} tokens, {b.chars()} chars\n")
-        t.close(); return 0
-
-    # ── --call-llm: 真调 LLM ────────────────────────────────────────
+        print("[!] --prompt-only was removed in Rust v2; use /api/dec/llm-call or the Decompiler panel",
+              file=sys.stderr)
+        return 2
     if args.call_llm:
-        try:
-            model = make_llm_model(args.call_llm)
-        except KeyError as e:
-            print(f"[!] {e}", file=sys.stderr); t.close(); return 1
-        out_root = pathlib.Path(args.out) if args.out else p
-        dec_dir = write_decompile_dir(top, out_root, tier=args.tier)   # also persists IR
-        results_dir = dec_dir / "llm_results"
-        results_dir.mkdir(exist_ok=True)
-        targets = [top.fn(args.fn)] if args.fn else top.fns
-        if args.fn and targets[0] is None:
-            print(f"[!] no such fn: {args.fn}", file=sys.stderr); t.close(); return 1
-        for fn in targets:
-            print(f"[llm] {model.name}/{model.model_id} → {fn.id} ...",
-                  file=sys.stderr)
-            b = build_fn_decompile_prompt(top, fn.id)
-            print(f"  prompt ~{b.estimated_tokens} tokens", file=sys.stderr)
-            r = model.call(b.user, system=b.system, max_tokens=args.max_tokens)
-            if r.error:
-                print(f"  [!] LLM error: {r.error}", file=sys.stderr)
-                continue
-            out_file = results_dir / f"{model.name}_{fn.id}.md"
-            out_file.write_text(
-                f"<!-- model: {r.model}  in: {r.prompt_tokens} tok  "
-                f"out: {r.output_tokens} tok  latency: {r.latency_ms} ms -->\n\n"
-                + r.c_code, encoding="utf-8"
-            )
-            print(f"  → {out_file}  ({r.prompt_tokens}→{r.output_tokens} tok, "
-                  f"{r.latency_ms} ms)", file=sys.stderr)
-        t.close(); return 0
+        print("[!] use the Rust v2 Decompiler panel or /api/dec/llm-call for LLM calls",
+              file=sys.stderr)
+        return 2
+    if args.summary:
+        v = _rust_cli_json(["dec-summary", str(p)])
+        sys.stdout.write(v.get("summary_md", ""))
+        return 0
+    if args.fn:
+        v = _rust_cli_json(["dec-fn", str(p), args.fn, "--tier", args.tier])
+        sys.stdout.write(v.get("markdown", ""))
+        return 0
 
-    # ── 默认: 落盘 ────────────────────────────────────────────────────
+    summary = _rust_cli_json(["dec-summary", str(p)])
     out_root = pathlib.Path(args.out) if args.out else p
-    dec_dir = write_decompile_dir(top, out_root, tier=args.tier)
+    dec_dir = out_root / "decompile"
+    fns_dir = dec_dir / "fns"
+    fns_dir.mkdir(parents=True, exist_ok=True)
+    (dec_dir / "summary.md").write_text(summary.get("summary_md", ""), encoding="utf-8")
+    for fn in summary.get("fns", []):
+        fn_id = fn.get("id")
+        if not fn_id:
+            continue
+        try:
+            one = _rust_cli_json(["dec-fn", str(p), fn_id, "--tier", args.tier])
+        except Exception as e:
+            print(f"[dec] skip {fn_id}: {e}", file=sys.stderr)
+            continue
+        safe = fn_id.replace(":", "_").replace("/", "_")
+        (fns_dir / f"{safe}.md").write_text(one.get("markdown", ""), encoding="utf-8")
     print(f"[dec] wrote: {dec_dir}", file=sys.stderr)
     print(f"  summary: {dec_dir / 'summary.md'}", file=sys.stderr)
-    print(f"  fns:     {len(top.fns)} files in {dec_dir / 'fns'}/", file=sys.stderr)
-    t.close()
+    print(f"  fns:     {len(list(fns_dir.glob('*.md')))} files in {fns_dir}/", file=sys.stderr)
     return 0
 
 
 def cmd_dec_bench(args):
-    """P2-DEC4 — 多模型 benchmark.
-
-    跑 N 个 model 同 IR, 收集 token / latency / 关键词命中, 落
-    decompile/bench/<fn>_compare.md + 各模型独立 llm_results/<model>_<fn>.md.
-    """
-    from viewer import load, build_trace_ir, write_decompile_dir
-    from viewer.decompiler import (
-        run_bench, render_compare_md,
-    )
-    p = pathlib.Path(args.path)
-    if not p.exists():
-        print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
-    t = load(str(p))
-    print(f"[bench] loading: {p} ({len(t)} records)", file=sys.stderr)
-    hook_paths = [pathlib.Path(h) for h in (args.hooks or [])]
-    mem = None
-    if args.vm_with_memshadow:
-        from viewer import MemShadow
-        print("[bench] building MemShadow...", file=sys.stderr)
-        mem = MemShadow(t); mem.build()
-    top = build_trace_ir(t, type_spec_paths=hook_paths or None,
-                         memshadow=mem)
-    if top.fn(args.fn) is None:
-        print(f"[!] no such fn {args.fn} (have {[f.id for f in top.fns]})",
-              file=sys.stderr); t.close(); return 1
-    models = [m.strip() for m in args.models.split(",") if m.strip()]
-    print(f"[bench] {len(models)} models on {args.fn}: {models}", file=sys.stderr)
-
-    out_root = pathlib.Path(args.out) if args.out else p
-    dec_dir = write_decompile_dir(top, out_root, tier="hot")
-
-    def _progress(i, total, name):
-        print(f"[bench] [{i+1}/{total}] {name} ...", file=sys.stderr)
-
-    results = run_bench(top, args.fn, models,
-                        max_tokens=args.max_tokens,
-                        progress_callback=_progress)
-
-    # 写每个 model 的输出
-    results_dir = dec_dir / "llm_results"; results_dir.mkdir(exist_ok=True)
-    for r in results:
-        if not r.ok:
-            print(f"[bench] {r.model}: FAILED ({r.error})", file=sys.stderr)
-            continue
-        out_file = results_dir / f"{r.model}_{r.fn_id}.md"
-        out_file.write_text(
-            f"<!-- model: {r.model}  in: {r.in_tokens}  out: {r.out_tokens}  "
-            f"latency: {r.latency_ms} ms  has_c_code: {r.has_c_code}  "
-            f"vm_hit: {r.vm_hit}  loop_hit: {r.loop_hit} -->\n\n"
-            + r.output_text, encoding="utf-8"
-        )
-        print(f"[bench] {r.model}: ok ({r.in_tokens}→{r.out_tokens} tok, "
-              f"{r.latency_ms} ms, anchors {sum(1 for v in r.anchor_hit.values() if v>0)}/"
-              f"{len(r.anchor_hit)})", file=sys.stderr)
-
-    # 落对比表
-    bench_dir = dec_dir / "bench"; bench_dir.mkdir(exist_ok=True)
-    cmp_path = bench_dir / f"{args.fn}_compare.md"
-    cmp_path.write_text(render_compare_md(results), encoding="utf-8")
-    print(f"[bench] compare table: {cmp_path}", file=sys.stderr)
-    t.close()
-    return 0
+    print("[!] dec-bench is deferred in Rust v2; use `/api/llil/llm` or the Decompiler panel",
+          file=sys.stderr)
+    return 2
 
 
 def cmd_web(args):
@@ -1216,65 +1180,24 @@ def _list_calls(run_dir, args):
 
 
 def cmd_info(args):
-    """3 种路径形式:
-    - run 目录 (含 calls/) → 顶层概要 + 各 call 概要
-    - call 目录 (含 trace.bin + meta.json) → 单 call 完整性
-    - 旧 run 目录 (trace_*.bin) → 兼容旧逻辑
-    """
-    p = pathlib.Path(args.path)
-    if not p.exists():
-        print(f"[!] 路径不存在: {p}"); return 1
-
-    # call 目录
-    if (p/"trace.bin").exists():
-        return _info_call(p, args)
-
-    # run 目录 (per-call)
-    if (p/"calls").exists():
-        return _info_run(p, args)
-
-    # 旧 layout fallback
-    from viewer.trace import load
-    t = load(p)
-    out = {
-        "path": str(p), "records": len(t),
-        "module": {"name": t.meta.module.name, "base": hex(t.meta.module.base),
-                   "size": t.meta.module.size} if t.meta.module else None,
-        "method": t.meta.method, "cmd": t.meta.cmd,
-        "fn_addr": hex(t.meta.fn_addr) if t.meta.fn_addr else None,
-    }
-    if args.json: print(json.dumps(out, ensure_ascii=False, indent=2))
-    else:
-        for k, v in out.items(): print(f"{k}: {v}")
-    return 0
+    cmd = ["info", args.path]
+    if args.json:
+        cmd.append("--json")
+    return _run_rust_cli(cmd)
 
 
 def _info_call(p, args):
     """单 call 目录: 重新解码 last insn 并核对 last_insn_is_ret."""
-    from viewer.disasm import decode as _decode
     meta = {}
     mp = p/"meta.json"
     if mp.exists():
         meta = json.load(open(mp))
     bin_path = p/"trace.bin"
-    n = bin_path.stat().st_size // 272
-    first_pc = last_pc = None
+    n, first_pc, last_pc, last_inst = _read_trace_tail(bin_path)
     last_is_ret = None
     last_asm = None
-    if n > 0:
-        with open(bin_path, "rb") as bf:
-            head = bf.read(272)
-            first_pc = int.from_bytes(head[:8], "little")
-            if n > 1:
-                bf.seek((n-1)*272)
-                tail = bf.read(272)
-            else:
-                tail = head
-            last_pc = int.from_bytes(tail[:8], "little")
-            last_inst = int.from_bytes(tail[268:272], "little")
-            d = _decode(last_pc, last_inst)
-            last_is_ret = bool(d.is_ret)
-            last_asm = f"{d.mnemonic} {d.op_str}".strip()
+    if last_inst is not None:
+        last_is_ret, last_asm = _decode_last_inst(last_pc, last_inst)
     truncated = bool(meta.get("truncated", False))
     complete = (not truncated) and last_is_ret
     out = {
@@ -1352,142 +1275,41 @@ def _info_run(p, args):
 
 
 def cmd_query(args):
-    """AI 友好的 JSON 查询子命令."""
-    from viewer.trace import load, REG_NAMES, ALL_REGS
-    from viewer.disasm import decode
-    from viewer.index import Index
-    from viewer.symbols import build_from_trace
-    from viewer.memshadow import MemShadow
-    t = load(args.path)
-    sym = build_from_trace(t)
-    base = t.meta.module.base if t.meta.module else 0
-    end = base + t.meta.module.size if t.meta.module else 0
-
-    out = None
+    """Legacy JSON query facade backed by Rust v2 CLI route wrappers."""
+    path = args.path
     sub = args.sub
     if sub == "records":
-        # 输出指定范围的记录
-        a, b = (0, len(t))
+        start = 0
+        count = 100
         if args.range:
-            a_, b_ = args.range.split("..")
-            a = int(a_) if a_ else 0
-            b = int(b_) if b_ else len(t)
-        regs_filter = args.regs.split(",") if args.regs else None
-        rows = []
-        for i in range(a, min(b, len(t))):
-            r = t.record(i); d = decode(r.pc, r.inst)
-            fname, foff = sym.lookup(r.pc)
-            row = {
-                "idx": i, "pc": hex(r.pc), "rel": hex(r.pc - base) if base else None,
-                "func": fname if fname != "?" else None,
-                "off": hex(foff) if fname != "?" else None,
-                "asm": f"{d.mnemonic} {d.op_str}",
-                "is_branch": d.is_branch, "is_call": d.is_call, "is_ret": d.is_ret,
-            }
-            if regs_filter:
-                row["regs"] = {nm: hex(r.reg(nm)) for nm in regs_filter if nm in ALL_REGS}
-            rows.append(row)
-        out = {"count": len(rows), "records": rows}
-    elif sub == "forward-taint":
-        from viewer.taint import forward_taint
-        idx = Index(t); idx.build()
-        results = forward_taint(t, args.from_, args.reg, max_count=args.max, index=idx)
-        rows = []
-        for i, why in results:
-            r = t.record(i); d = decode(r.pc, r.inst)
-            fname, foff = sym.lookup(r.pc)
-            rows.append({"idx": i, "pc": hex(r.pc),
-                         "func": fname if fname != "?" else None,
-                         "off": hex(foff) if fname != "?" else None,
-                         "asm": f"{d.mnemonic} {d.op_str}", "why": why})
-        out = {"count": len(rows), "from": args.from_, "reg": args.reg, "hits": rows}
-    elif sub == "backward-taint":
-        from viewer.taint import backward_taint
-        idx = Index(t); idx.build()
-        results = backward_taint(t, args.from_, args.reg, max_count=args.max, index=idx)
-        rows = []
-        for i, reg in results:
-            r = t.record(i); d = decode(r.pc, r.inst)
-            fname, foff = sym.lookup(r.pc)
-            rows.append({"idx": i, "pc": hex(r.pc),
-                         "func": fname if fname != "?" else None,
-                         "off": hex(foff) if fname != "?" else None,
-                         "asm": f"{d.mnemonic} {d.op_str}", "via": reg})
-        out = {"count": len(rows), "from": args.from_, "reg": args.reg, "chain": rows}
-    elif sub == "strings":
-        mem = MemShadow(t); mem.build()
-        results = mem.find_strings(min_len=args.min_len)
-        rows = [{"addr": hex(a), "len": len(s), "str": s} for a, s in results]
-        out = {"count": len(rows), "strings": rows}
-    elif sub == "cfg":
-        from viewer.cfg import build_cfg
-        cfg = build_cfg(t, only_module=True)
-        blocks = []
-        for pc, b in cfg.blocks.items():
-            blocks.append({
-                "start": hex(pc), "end": hex(b.end_pc), "off": hex(pc-base) if base else None,
-                "insns": len(b.insns), "executions": b.executions,
-                "exits": [{"to": hex(t), "kind": k} for t,k in b.exits],
-            })
-        edges = [{"src": hex(s), "dst": hex(d), "kind": v["kind"], "count": v["count"]}
-                 for (s,d), v in cfg.edges.items()]
-        out = {"blocks": blocks, "edges": edges,
-               "block_count": len(blocks), "edge_count": len(edges),
-               "entry": hex(cfg.entry_pc)}
-    elif sub == "search":
-        import re
-        rx = re.compile(args.pattern, re.I)
-        rows = []
-        for i in range(len(t)):
-            r = t.record(i); d = decode(r.pc, r.inst)
-            if rx.search(f"{d.mnemonic} {d.op_str}"):
-                fname, foff = sym.lookup(r.pc)
-                rows.append({"idx": i, "pc": hex(r.pc),
-                             "func": fname if fname != "?" else None,
-                             "off": hex(foff) if fname != "?" else None,
-                             "asm": f"{d.mnemonic} {d.op_str}"})
-                if len(rows) >= args.max: break
-        out = {"count": len(rows), "pattern": args.pattern, "hits": rows}
-    elif sub == "func-summary":
-        # 列出 trace 里出现的所有函数
-        funcs = {}
-        for i in range(len(t)):
-            r = t.record(i)
-            fname, foff = sym.lookup(r.pc)
-            if fname not in funcs:
-                funcs[fname] = {"count": 0, "first_idx": i, "last_idx": i}
-            funcs[fname]["count"] += 1
-            funcs[fname]["last_idx"] = i
-        rows = sorted([{"func": k, **v} for k, v in funcs.items()],
-                      key=lambda r: -r["count"])
-        out = {"functions": rows}
-
-    if out is not None:
-        if args.json:
-            print(json.dumps(out, ensure_ascii=False, indent=2))
-        else:
-            # 简单纯文本输出
-            if sub == "records":
-                for r in out["records"]:
-                    print(f"#{r['idx']:6d}  {r.get('func',''):<24s}+{r.get('off','')}  {r['asm']}")
-            elif sub in ("forward-taint", "backward-taint"):
-                key = "hits" if sub == "forward-taint" else "chain"
-                for r in out[key]:
-                    extra = r.get("why") or r.get("via", "")
-                    print(f"#{r['idx']:6d}  {r.get('func',''):<24s}+{r.get('off','')}  {r['asm']}  ; {extra}")
-            elif sub == "strings":
-                for r in out["strings"]: print(f"{r['addr']}  ({r['len']:3d})  {r['str']!r}")
-            elif sub == "cfg":
-                print(f"blocks={out['block_count']} edges={out['edge_count']} entry={out['entry']}")
-                for b in sorted(out["blocks"], key=lambda x: -x["executions"])[:30]:
-                    print(f"  {b['off']:>10s} ×{b['executions']:5d}  insns={b['insns']:3d}")
-            elif sub == "search":
-                for r in out["hits"]: print(f"#{r['idx']:6d}  {r['off']}  {r['asm']}")
-            elif sub == "func-summary":
-                for r in out["functions"][:30]:
-                    print(f"  {r['func']:<28s}  ×{r['count']:6d}  first=#{r['first_idx']} last=#{r['last_idx']}")
-    return 0
-
+            a, b = args.range.split("..")
+            start = int(a) if a else 0
+            if b:
+                count = max(0, int(b) - start)
+        cmd = ["records", path, "--start", str(start), "--count", str(count)]
+        if args.regs:
+            cmd += ["--regs", args.regs]
+        return _run_rust_cli(cmd)
+    if sub == "forward-taint":
+        return _run_rust_cli([
+            "taint-fwd", path, "--start", str(args.from_), "--reg", args.reg,
+            "--max-count", str(args.max),
+        ])
+    if sub == "backward-taint":
+        return _run_rust_cli([
+            "taint-bwd", path, "--start", str(args.from_), "--reg", args.reg,
+            "--max-count", str(args.max),
+        ])
+    if sub == "strings":
+        return _run_rust_cli(["strings", path, "--min-len", str(args.min_len)])
+    if sub == "cfg":
+        return _run_rust_cli(["cfg", path])
+    if sub == "search":
+        return _run_rust_cli(["search", path, args.pattern, "--max-results", str(args.max)])
+    if sub == "func-summary":
+        return _run_rust_cli(["functions", path])
+    print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
+    return 2
 
 def main():
     ap = argparse.ArgumentParser(prog="tracemiku", description=__doc__,
@@ -1605,9 +1427,9 @@ def main():
     p_fz = sp.add_parser("finalize", help="扫 run/calls/_pending_call_* 补 meta + 重命名 (恢复中断的 trace)")
     p_fz.add_argument("path", help="run 目录")
 
-    # dec (trace decompiler — LLM-friendly skeleton IR, P2-DEC1+DEC2)
+    # dec (Rust v2 decompiler facade)
     p_dc = sp.add_parser("dec",
-                         help="生成 LLM-friendly trace IR (markdown), 落 <run>/decompile/")
+                         help="Rust v2 反编译 markdown facade")
     p_dc.add_argument("path", help="trace 目录 (per-call 或 single-bin)")
     p_dc.add_argument("--fn", default=None,
                       help="只输出指定 fn id (e.g. F0) 到 stdout, 不落盘")
@@ -1615,16 +1437,10 @@ def main():
                       help="只输出 summary.md 到 stdout, 不落盘")
     p_dc.add_argument("--out", default=None,
                       help="输出根 (默认 = path/decompile)")
-    # P2-DEC2 — LLM 集成
     p_dc.add_argument("--prompt-only", default=None, metavar="FN_ID",
-                      help="拼装该 fn 的反编译 prompt, stdout 输出 (system + user), "
-                           "不调 LLM. 给 copy-paste 到 Claude Code 等用. "
-                           "FN_ID = summary 表示 summary 级 prompt.")
+                      help="已从顶层 CLI 移除; 请用 /api/dec/llm-call 或 Decompiler panel")
     p_dc.add_argument("--call-llm", default=None, metavar="MODEL",
-                      help="调 LLM 真做反编译. MODEL ∈ "
-                           "{claude, claude-opus-4-7, deepseek, deepseek-chat, qwen}. "
-                           "需 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY. "
-                           "搭 --fn F0 用; 不指定 --fn 默认对每个 fn 都跑 (慢).")
+                      help="已从顶层 CLI 移除; 请用 /api/dec/llm-call 或 Decompiler panel")
     p_dc.add_argument("--max-tokens", type=int, default=4096,
                       help="LLM 输出上限 token (默认 4096, Sonnet 一次出 ~3K c 代码够)")
     # P2-DEC3-A — block tier 渲染
@@ -1644,15 +1460,13 @@ def main():
                       help="VM hex dump 启用 (建 MemShadow, 冷启动慢 ~30s, "
                            "能拿真字节). 默认关只出 dispatcher 候选不出 hex.")
 
-    # dec-bench (P2-DEC4 — 多模型反编译 benchmark)
+    # dec-bench (legacy Python route removed in Rust v2)
     p_db = sp.add_parser("dec-bench",
-                         help="多模型 benchmark — 同一 IR 喂给 N 个 LLM, "
-                              "落 decompile/bench/<fn>_compare.md")
+                         help="Rust v2 暂缓; 请用 /api/llil/llm 或 Decompiler panel")
     p_db.add_argument("path", help="trace 目录")
     p_db.add_argument("--fn", default="F0", help="目标 fn id (默认 F0)")
     p_db.add_argument("--models", default="mimo",
-                      help="逗号分隔, 如 'claude,deepseek,mimo' (默认 mimo). "
-                           "可用列表见 'tracemiku dec --call-llm <invalid>' 报错")
+                      help="保留兼容参数; Rust v2 当前不执行 benchmark")
     p_db.add_argument("--hooks", action="append", default=[], metavar="JSON",
                       help="同 dec --hooks")
     p_db.add_argument("--max-tokens", type=int, default=4096)
