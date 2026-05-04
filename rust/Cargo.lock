@@ -1536,9 +1536,15 @@ name = "tracemiku-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
+ "http-body-util",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
  "tracemiku-core",
+ "tracemiku-server",
 ]
 
 [[package]]

@@ -33,6 +33,7 @@ capstone = "0.13"
 petgraph = "0.6"
 # Internal
 tracemiku-core = { path = "crates/tracemiku-core" }
+tracemiku-server = { path = "crates/tracemiku-server" }
 
 [profile.dev]
 opt-level = 1     # debug builds are still fast on mmap workloads
