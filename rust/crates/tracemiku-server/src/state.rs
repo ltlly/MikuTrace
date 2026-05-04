@@ -91,7 +91,8 @@ impl AppState {
         let memshadow = MemShadow::build_from_trace(&trace);
         let call_tree = build_call_tree(&trace, &symbols, 50);
         let frame_depths = build_frame_depth_map(&trace);
-        let top_ir = build_trace_ir(&trace, &meta, &symbols);
+        // Defaults match Python webui (webui/server.py:2734-2735).
+        let top_ir = build_trace_ir(&trace, &meta, &symbols, 10, 50);
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
