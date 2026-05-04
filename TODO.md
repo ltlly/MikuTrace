@@ -53,6 +53,7 @@
 - M3-δ /api/dec/summary + DecompilerPanel + scripts/m3_delta_parity.py: ✅ 2026-05-04 (parity soft-gated 0.01 jaccard pending M3-ε symbol fallback)
 - M3-ε split_top_k_callees in build_trace_ir (metadata only, no BlockIR yet): ✅ 2026-05-04
 - M3-ε /api/dec/summary symbol-source fallback + parity HARD-gate (0.99 jaccard on real trace): ✅ 2026-05-04
+- M3-ζ BlockIR construction skeleton (id/pc/end_pc/insns/exec_count for F0 + split FuncIRs; stable B0..Bn ids; build_trace_ir gains &CFG): ✅ 2026-05-04
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
@@ -64,10 +65,11 @@
 - M3-γ: advanced taint (MEM-chasing + through_mem + data_only + cross_fn_call) + frontend toggles ✅ 2026-05-04
 - M3-δ: decompiler skeleton — ir + backend stub + builder skeleton + /api/dec/summary + DecompilerPanel + parity (soft) ✅ 2026-05-04
 - M3-ε: split_top_k_callees + /api/dec/summary symbol-source fallback + parity hard-gate ✅ 2026-05-04
-- M3-ζ (next): BlockIR construction (asm/samples/exits/tier), /api/dec/fn/{id} per-fn markdown, render_summary_md fidelity, type_anchor.py port (json-spec driven), vm_candidate.py port
-- M3-η: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
-- M3-θ: memshadow v3 binary sidecar (.memshadow.v3.bin)
-- M3-ι: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-ζ: BlockIR construction skeleton (id/pc/end_pc/insns/exec_count) ✅ 2026-05-04
+- M3-η (next): BlockIR.exits with kind/taken_count (extends Rust CFG to track edge metadata), samples extraction (per-pc first-idx map), asm rendering, tier classification (hot/warm/cold), /api/dec/fn/{id} per-fn markdown, render_summary_md fidelity, type_anchor.py + vm_candidate.py ports
+- M3-θ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-ι: memshadow v3 binary sidecar (.memshadow.v3.bin)
+- M3-κ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
