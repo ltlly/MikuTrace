@@ -84,7 +84,54 @@ fn records_wrapper_uses_server_wire_shape() {
 fn functions_wrapper_lists_symbol_functions() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&["functions".into(), cd.display().to_string()]);
-    assert!(v["functions"].as_array().unwrap().iter().any(|f| {
-        f["source"] == "symbol" && (f["name"] == "f" || f["name"] == "f_root")
-    }));
+    assert!(v["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| { f["source"] == "symbol" && (f["name"] == "f" || f["name"] == "f_root") }));
+}
+
+#[test]
+fn inspect_wrappers_use_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+
+    let v = run_json(&[
+        "idxs-for-pc".into(),
+        cd.display().to_string(),
+        "0x100000".into(),
+        "--cursor".into(),
+        "1".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["before"], serde_json::json!([0]));
+
+    let v = run_json(&[
+        "search-asm".into(),
+        cd.display().to_string(),
+        "ret".into(),
+        "--max-results".into(),
+        "5".into(),
+    ]);
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["hits"][0]["idx"], 2);
+
+    let v = run_json(&[
+        "so-stats".into(),
+        cd.display().to_string(),
+        "--top".into(),
+        "5".into(),
+    ]);
+    assert_eq!(v["records"], 3);
+    assert_eq!(v["modules"][0]["name"], "libt.so");
+
+    let v = run_json(&[
+        "reg-at-idx".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "0".into(),
+        "--reg".into(),
+        "x0".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["value"], "0x6f6c6c6568");
 }

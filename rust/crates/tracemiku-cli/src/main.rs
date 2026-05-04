@@ -60,6 +60,53 @@ enum Cmd {
     },
     /// GET /api/record/{idx}.
     Record { trace_dir: PathBuf, idx: usize },
+    /// GET /api/idxs-for-pc.
+    IdxsForPc {
+        trace_dir: PathBuf,
+        pc: String,
+        #[arg(long, default_value_t = 0)]
+        cursor: usize,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+    /// GET /api/search.
+    Search {
+        trace_dir: PathBuf,
+        pattern: String,
+        #[arg(long, default_value_t = 2000)]
+        max_results: usize,
+    },
+    /// Alias for GET /api/search, matching the legacy command name.
+    SearchAsm {
+        trace_dir: PathBuf,
+        pattern: String,
+        #[arg(long, default_value_t = 2000)]
+        max_results: usize,
+    },
+    /// GET /api/so-stats.
+    SoStats {
+        trace_dir: PathBuf,
+        #[arg(long, default_value_t = 50)]
+        top: usize,
+        #[arg(long)]
+        all: bool,
+    },
+    /// GET /api/reg-value-at.
+    RegValueAt {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        idx: usize,
+        #[arg(long)]
+        reg: String,
+    },
+    /// Alias for GET /api/reg-value-at.
+    RegAtIdx {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        idx: usize,
+        #[arg(long)]
+        reg: String,
+    },
     /// GET /api/functions.
     Functions { trace_dir: PathBuf },
     /// GET /api/cfg.
@@ -170,6 +217,56 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::Record { trace_dir, idx }) => {
             route_get_json(trace_dir, format!("/api/record/{idx}")).await
+        }
+        Some(Cmd::IdxsForPc {
+            trace_dir,
+            pc,
+            cursor,
+            limit,
+        }) => {
+            let params = vec![
+                ("pc", pc),
+                ("cursor", cursor.to_string()),
+                ("limit", limit.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/idxs-for-pc", &params)).await
+        }
+        Some(Cmd::Search {
+            trace_dir,
+            pattern,
+            max_results,
+        })
+        | Some(Cmd::SearchAsm {
+            trace_dir,
+            pattern,
+            max_results,
+        }) => {
+            let params = vec![
+                ("pattern", pattern),
+                ("max_results", max_results.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/search", &params)).await
+        }
+        Some(Cmd::SoStats {
+            trace_dir,
+            top,
+            all,
+        }) => {
+            let params = vec![("top", top.to_string()), ("all", all.to_string())];
+            route_get_json(trace_dir, route_path("/api/so-stats", &params)).await
+        }
+        Some(Cmd::RegValueAt {
+            trace_dir,
+            idx,
+            reg,
+        })
+        | Some(Cmd::RegAtIdx {
+            trace_dir,
+            idx,
+            reg,
+        }) => {
+            let params = vec![("idx", idx.to_string()), ("reg", reg)];
+            route_get_json(trace_dir, route_path("/api/reg-value-at", &params)).await
         }
         Some(Cmd::Functions { trace_dir }) => {
             route_get_json(trace_dir, "/api/functions".to_string()).await
