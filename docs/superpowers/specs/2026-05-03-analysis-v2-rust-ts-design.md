@@ -485,7 +485,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/record/{idx}` | ✅ M2-β | full regs object; prev_regs + regs_annotated deferred to M2-γ |
 | `/api/so-stats` | 🔜 M3 | |
 | `/api/cfg?fn=` | ✅ M2-δ | blocks + edges; ?fn= filter via SymbolMap |
-| `/api/cfg-svg` | 🔜 M3 | graphviz-rust |
+| `/api/cfg-svg` | ✅ M3-κ | Graphviz dot subprocess + cached SVG + Solid Graph panel |
 | `/api/block?pc=` | 🔜 M3 | |
 | `/api/block-for-pc` | 🔜 M3 | |
 | `/api/loops` | 🔜 M3 | |
