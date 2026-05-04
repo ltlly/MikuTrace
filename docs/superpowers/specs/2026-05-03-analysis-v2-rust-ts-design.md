@@ -394,9 +394,9 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | ✅ M2-ζ | sequential build; reg + mem sides both populated in single trace-walk; mem_addr_to_writes holds trace record indices |
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | ✅ M2-δ | petgraph 0.6; tarjan_scc; 6 unit/integration tests |
 | `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
-| `taint.py` (forward/backward, basic) | `tracemiku-core::taint` | 🟡 M3-β | index-accelerated forward + backward (BFS via VecDeque). Forward parity 0.90 jaccard on real trace. Backward at 0.31 — M3-γ adds MEM-chasing to close. through_mem / data_only deferred to M3-γ. Sequential — rayon-parallel only if profiling justifies it. |
-| `taint.py` (`--through-mem`, `--data-only`) | `tracemiku-core::taint` | 🔜 M3-γ | M3-β skipped MEM-chasing in backward path; M3-γ ports byte-overlap mem flow via MemShadow + the data-only addressing-reg filter |
-| `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | 🟡 M3-β | `build_frame_depth_map` shipped + AppState pre-builds; cross_fn_call wire field exposure deferred to M3-γ |
+| `taint.py` (forward/backward, basic) | `tracemiku-core::taint` | ✅ M3-β | index-accelerated forward + backward (BFS via VecDeque, MEM-chasing). Forward parity 0.90 jaccard on real trace. Backward 0.31 — soft-gated pending an open Rust disasm follow-up (ARM64 pre/post-indexed writeback handling; see TODO §M3-γ scope precise #1a). Sequential — rayon-parallel only if profiling justifies it. |
+| `taint.py` (`--through-mem`, `--data-only`) | `tracemiku-core::taint` | ✅ M3-γ | through_mem byte-overlap via MemShadow.latest_write_idx_strict_before. data_only filters addressing-only regs; default exclude={sp,fp,lr} when caller doesn't override. 2 colocated tests pin both flags. |
+| `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | ✅ M3-γ | `build_frame_depth_map` shipped (M3-β); cross_fn_call query param now wired through both endpoints → `frame_depth: Option<u32>` row field with skip_serializing_if. 2 integration tests pin presence/absence. |
 | (future) **semantic cross-fn taint propagation** (ABI arg tracking, caller-saved kill, callee→caller return flow) | `tracemiku-core::taint::cross_fn` | ⏸ | Brand-new feature; needs its own design. Python never implemented this; the Python TODO note "全量 propagation 待真机" referred to *this*, not to frame_depth annotation. Do after v2 cutover and after real-trace need is documented. |
 | `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | ✅ M2-ζ | core port (BTreeMap byte index, build/byte_at/find_strings/hex_dump). Sidecar caching deferred (eager build only); v3 binary sidecar lands when cold-build on real 7M-record traces becomes the bottleneck |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
@@ -494,8 +494,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/idxs-touching-addr` | 🔜 M3 | |
 | `/api/idxs-touching-range` | 🔜 M3 | |
 | `/api/search` | 🔜 M3 | |
-| `/api/forward-taint` | ✅ M3-β | basic forward only (no through_mem / data_only); parity gate green at 0.90 jaccard |
-| `/api/backward-taint` | 🟡 M3-β | basic backward (BFS, no MEM-chasing); parity soft-gated at 0.31 jaccard pending M3-γ MEM-chasing port |
+| `/api/forward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; parity hard-gate green at 0.90 jaccard |
+| `/api/backward-taint` | 🟡 M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; backward MEM-chasing ported (taint side correct). Parity stays soft at 0.31 pending Rust disasm writeback fix (see TODO §M3-γ scope precise #1a) |
 | `/api/strings` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
 | `/api/string-provenance` | 🔜 M3 | |
 | `/api/mem-dump` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |

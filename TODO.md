@@ -45,17 +45,23 @@
 - M2-ζ scripts/m2_zeta_parity.py: ✅ 2026-05-04
 - M3-α `tracemiku-core::calltree` port + `/api/call-tree` + CallTreePanel + parity script: ✅ 2026-05-04
 - M3-α auto_known_offsets naming fix (`f_<0xhex>` → `sub_<hex>`, Python parity, caught by parity gate): ✅ 2026-05-04
-- M3-β `tracemiku-core::taint` (forward/backward index-accelerated, BFS via VecDeque, frame_depth_map): 🟡 2026-05-04
+- M3-β `tracemiku-core::taint` (forward/backward index-accelerated, BFS via VecDeque, frame_depth_map): ✅ 2026-05-04
 - M3-β /api/forward-taint + /api/backward-taint + TaintPanel: ✅ 2026-05-04
-- M3-β scripts/m3_beta_parity.py: ✅ 2026-05-04 (forward hard-gate green @ 0.90 jaccard; backward soft-warn @ 0.31 — M3-γ closes)
+- M3-β scripts/m3_beta_parity.py: ✅ 2026-05-04 (forward hard-gate green @ 0.90 jaccard; backward soft-warn @ 0.31 — see disasm follow-up #1a)
+- M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
+- M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
+- M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
+- M3-γ cross_fn_call wire (frame_depth row field): ✅ 2026-05-04
+- M3-γ frontend TaintPanel toggles + depth column: ✅ 2026-05-04
 
 - M3-α: calltree + /api/call-tree + CallTreePanel + parity ✅ 2026-05-04
-- M3-β: basic taint forward/backward + frame_depth + 2 endpoints + TaintPanel + parity 🟡 2026-05-04 (forward green, backward soft-gated pending MEM-chasing)
-- M3-γ (next): backward MEM-chasing (close M3-β backward parity) + through_mem flag (byte-overlap via MemShadow) + data_only flag + cross_fn_call frame_depth wire + parity gate hardening
-- M3-δ: decompiler::backend stub + TraceIR builder skeleton
+- M3-β: basic taint forward/backward + frame_depth + 2 endpoints + TaintPanel + parity ✅ 2026-05-04 (forward green; backward soft-gated)
+- M3-γ: advanced taint (MEM-chasing + through_mem + data_only + cross_fn_call) + frontend toggles ✅ 2026-05-04
+- M3-δ (next): decompiler::backend stub + TraceIR builder skeleton
 - M3-ε: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
 - M3-ζ: memshadow v3 binary sidecar (.memshadow.v3.bin)
 - M3-η: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-disasm-followup: ARM64 pre/post-indexed writeback handling in `decoder.rs` (close backward parity); see #1a below.
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope precise** (the gap M3-β surfaced via parity):
