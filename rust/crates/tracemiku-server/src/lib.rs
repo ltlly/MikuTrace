@@ -4,6 +4,7 @@
 //! integration tests can exercise the same code path.
 
 pub mod bn_sidecar;
+pub mod jni_scan;
 pub mod llm;
 pub mod routes;
 pub mod state;

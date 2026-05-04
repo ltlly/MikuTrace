@@ -4,7 +4,6 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::routes::jni_calls::{parse_int, scan_jni_calls};
 use crate::state::AppState;
 use tracemiku_core::prelude::MemShadow;
 
@@ -72,7 +71,6 @@ pub async fn jni_strings_handler(
 }
 
 fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsResponse {
-    let (calls, _) = scan_jni_calls(state, None, 0);
     let mem = match state.inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
@@ -86,8 +84,9 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
             };
         }
     };
+    let scan = state.inner.jni_calls();
     let mut hits = Vec::new();
-    for call in calls {
+    for call in &scan.calls {
         let Some((arg_name, direction)) = jni_string_op(&call.jni_fn) else {
             continue;
         };
@@ -96,8 +95,8 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
                 state.inner.trace.record(call.idx + 1).reg_by_name("x0"),
                 call.idx + 1,
             ),
-            "out_x4" => (call.args.get("x4").and_then(|v| parse_int(v)), call.idx),
-            "in" => (call.args.get(arg_name).and_then(|v| parse_int(v)), call.idx),
+            "out_x4" => (call.arg("x4"), call.idx),
+            "in" => (call.arg(arg_name), call.idx),
             _ => (None, call.idx),
         };
         let (observed_bytes, string) = if let Some(addr) = buffer_addr {
@@ -108,14 +107,14 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
         };
         hits.push(JniStringHit {
             idx: call.idx,
-            pc: call.pc,
-            rel: call.rel,
-            func: call.func,
-            jni_fn: call.jni_fn,
+            pc: format!("{:#x}", call.pc),
+            rel: call.rel.map(|rel| format!("{rel:#x}")),
+            func: call.func_display(),
+            jni_fn: call.jni_fn.clone(),
             arg_name,
             direction,
-            x1: call.args.get("x1").cloned().unwrap_or_else(|| "0x0".into()),
-            x2: call.args.get("x2").cloned().unwrap_or_else(|| "0x0".into()),
+            x1: format!("{:#x}", call.arg("x1").unwrap_or(0)),
+            x2: format!("{:#x}", call.arg("x2").unwrap_or(0)),
             buffer_addr: buffer_addr.map(|addr| format!("{addr:#x}")),
             observed_bytes,
             string,

@@ -7,8 +7,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::routes::jni_calls::{parse_int, scan_jni_calls};
-use crate::state::AppState;
+use crate::jni_scan::{parse_int, JniCallRecord};
+use crate::state::{AppState, AppStateInner};
 
 #[derive(Debug, Deserialize)]
 pub struct JobjHistoryQuery {
@@ -60,9 +60,26 @@ pub async fn jobj_history_handler(
     } else {
         state.inner.trace.len()
     };
-    let (calls, _) = scan_jni_calls(&state, None, 0);
+    let inner = state.inner.clone();
+    let response =
+        tokio::task::spawn_blocking(move || jobj_history_response(&inner, q, target, end))
+            .await
+            .map_err(|err| {
+                tracing::warn!(target: "tracemiku-server", "jobject history worker failed: {err}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    Ok(Json(response))
+}
+
+fn jobj_history_response(
+    inner: &AppStateInner,
+    q: JobjHistoryQuery,
+    target: u64,
+    end: usize,
+) -> JobjHistoryResponse {
+    let scan = inner.jni_calls();
     let mut hits = Vec::new();
-    for call in calls {
+    for call in &scan.calls {
         if call.idx < q.start {
             continue;
         }
@@ -71,33 +88,33 @@ pub async fn jobj_history_handler(
         }
         let Some(match_arg) = ["x1", "x2", "x3", "x4"]
             .into_iter()
-            .find(|arg| call.args.get(arg).and_then(|v| parse_int(v)) == Some(target))
+            .find(|arg| call.arg(arg) == Some(target))
         else {
             continue;
         };
-        hits.push(JobjHistoryHit {
-            idx: call.idx,
-            pc: call.pc,
-            rel: call.rel,
-            func: call.func,
-            jni_fn: call.jni_fn,
-            vtable_offset: call.vtable_offset,
-            match_arg,
-            args: call
-                .args
-                .into_iter()
-                .filter(|(k, _)| matches!(*k, "x1" | "x2" | "x3" | "x4"))
-                .collect(),
-        });
+        hits.push(jobj_history_hit(call, match_arg));
         if q.max > 0 && hits.len() >= q.max {
             break;
         }
     }
-    Ok(Json(JobjHistoryResponse {
+    JobjHistoryResponse {
         jobject: format!("{target:#x}"),
         start: q.start,
         end,
         count: hits.len(),
         hits,
-    }))
+    }
+}
+
+fn jobj_history_hit(call: &JniCallRecord, match_arg: &'static str) -> JobjHistoryHit {
+    JobjHistoryHit {
+        idx: call.idx,
+        pc: format!("{:#x}", call.pc),
+        rel: call.rel.map(|rel| format!("{rel:#x}")),
+        func: call.func_display(),
+        jni_fn: call.jni_fn.clone(),
+        vtable_offset: format!("{:#x}", call.vtable_offset),
+        match_arg,
+        args: call.args_map_without_x0(),
+    }
 }

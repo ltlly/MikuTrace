@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::disasm::decode;
+use tracemiku_core::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use tracemiku_core::prelude::{
     build_call_tree_indexed, build_frame_depth_map, build_from_trace, build_function_index,
     build_trace_ir, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
@@ -17,6 +18,7 @@ use tracemiku_core::prelude::{
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
 use crate::bn_sidecar::BnSidecarManager;
+use crate::jni_scan::{parse_int, scan_jni_calls, JniCallScan};
 
 const EAGER_MEMSHADOW_MAX_RECORDS: usize = 1_000_000;
 const MEMSHADOW_NOT_STARTED: u8 = 0;
@@ -42,10 +44,12 @@ pub struct AppStateInner {
     call_tree: OnceLock<CallNode>,
     frame_depths: OnceLock<Vec<u32>>,
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
+    jni_calls: OnceLock<JniCallScan>,
     top_ir: OnceLock<TopIR>,
     type_spec_paths: Vec<PathBuf>,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
+    ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
 }
 
@@ -54,6 +58,12 @@ pub struct CfgSvgCached {
     pub svg: String,
     pub block_count: usize,
     pub total_block_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct OllvmCacheKey {
+    min_entries: usize,
+    threshold_bits: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -162,10 +172,12 @@ impl AppState {
             call_tree: OnceLock::new(),
             frame_depths: OnceLock::new(),
             asm_groups: OnceLock::new(),
+            jni_calls: OnceLock::new(),
             top_ir: OnceLock::new(),
             type_spec_paths: spec_paths,
             llm_cache: Mutex::new(HashMap::new()),
             cfg_svg_cache: Mutex::new(HashMap::new()),
+            ollvm_cache: Mutex::new(HashMap::new()),
             bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
         });
 
@@ -327,6 +339,34 @@ impl AppStateInner {
             })
             .as_slice()
     }
+
+    pub fn jni_calls(&self) -> &JniCallScan {
+        self.jni_calls.get_or_init(|| {
+            scan_jni_calls(&self.trace, &self.index, &self.symbols, primary_base(self))
+        })
+    }
+
+    pub fn ollvm_findings(&self, min_entries: usize, threshold: f64) -> Vec<OllvmFinding> {
+        let key = OllvmCacheKey {
+            min_entries,
+            threshold_bits: threshold.to_bits(),
+        };
+        if let Ok(cache) = self.ollvm_cache.lock() {
+            if let Some(findings) = cache.get(&key) {
+                return findings.clone();
+            }
+        }
+
+        let findings = ollvm_detect_vm_indexed(&self.trace, &self.index, min_entries, threshold);
+        if let Ok(mut cache) = self.ollvm_cache.lock() {
+            cache.entry(key).or_insert_with(|| findings.clone());
+        }
+        findings
+    }
+}
+
+fn primary_base(inner: &AppStateInner) -> Option<u64> {
+    inner.meta.module.as_ref().and_then(|m| parse_int(&m.base))
 }
 
 fn background_memshadow_enabled() -> bool {

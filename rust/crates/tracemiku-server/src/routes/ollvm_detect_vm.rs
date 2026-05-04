@@ -4,8 +4,6 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::prelude::ollvm_detect_vm;
-
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -45,25 +43,39 @@ pub async fn ollvm_detect_vm_handler(
     State(state): State<AppState>,
     Query(q): Query<OllvmDetectVmQuery>,
 ) -> Json<OllvmDetectVmResponse> {
-    let candidates: Vec<OllvmCandidate> = ollvm_detect_vm(
-        &state.inner.trace,
-        q.min_entries.max(1),
-        q.threshold.clamp(0.0, 1.0),
-    )
-    .into_iter()
-    .map(|finding| OllvmCandidate {
-        fn_pc: format!("{:#x}", finding.fn_pc),
-        entry_count: finding.entry_count,
-        confidence: finding.confidence,
-        reason: finding.reasons.join(" + "),
-        hint: finding.hint,
-    })
-    .collect();
+    let min_entries = q.min_entries.max(1);
+    let threshold = q.threshold.clamp(0.0, 1.0);
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || {
+            let candidates: Vec<OllvmCandidate> = inner
+                .ollvm_findings(min_entries, threshold)
+                .into_iter()
+                .map(|finding| OllvmCandidate {
+                    fn_pc: format!("{:#x}", finding.fn_pc),
+                    entry_count: finding.entry_count,
+                    confidence: finding.confidence,
+                    reason: finding.reasons.join(" + "),
+                    hint: finding.hint,
+                })
+                .collect();
 
-    Json(OllvmDetectVmResponse {
-        min_entries: q.min_entries.max(1),
-        threshold: q.threshold.clamp(0.0, 1.0),
-        count: candidates.len(),
-        candidates,
-    })
+            OllvmDetectVmResponse {
+                min_entries,
+                threshold,
+                count: candidates.len(),
+                candidates,
+            }
+        })
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "ollvm detect worker failed: {err}");
+            OllvmDetectVmResponse {
+                min_entries,
+                threshold,
+                count: 0,
+                candidates: Vec::new(),
+            }
+        }),
+    )
 }
