@@ -13,10 +13,12 @@ interface StringsPanelProps {
 interface StringsSource {
   minLen: number;
   q: string;
+  limit: number;
 }
 
 export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
+  const [limit, setLimit] = createSignal(500);
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
   let singleClickTimer: number | undefined;
@@ -24,15 +26,24 @@ export default function StringsPanel(props: StringsPanelProps) {
   let jumpAbort: AbortController | undefined;
   const source = createMemo<StringsSource | undefined>((prev) => {
     if (!props.active) return undefined;
-    const next = { minLen: minLen(), q: query() };
-    return prev && prev.minLen === next.minLen && prev.q === next.q ? prev : next;
+    const next = { minLen: minLen(), q: query(), limit: Math.max(1, Math.min(5000, limit())) };
+    return prev &&
+      prev.minLen === next.minLen &&
+      prev.q === next.q &&
+      prev.limit === next.limit
+      ? prev
+      : next;
   });
-  const [resp] = createResource(source, async ({ minLen, q }) => fetchStrings(minLen, q));
+  const [resp] = createResource(source, async ({ minLen, q, limit }) => fetchStrings(minLen, q, limit));
   const currentResp = createMemo(() => {
     const r = resp();
     const s = source();
     if (!r || !s) return undefined;
-    return r.request_min_len === s.minLen && r.request_q === s.q ? r : undefined;
+    return r.request_min_len === s.minLen &&
+      r.request_q === s.q &&
+      r.request_limit === s.limit
+      ? r
+      : undefined;
   });
 
   function clearSingleClickTimer() {
@@ -121,6 +132,16 @@ export default function StringsPanel(props: StringsPanelProps) {
             value={query()}
             placeholder="substring…"
             onInput={(e) => setQuery(e.currentTarget.value)}
+          />
+        </label>
+        <label>
+          limit
+          <input
+            type="number"
+            min="1"
+            max="5000"
+            value={limit()}
+            onInput={(e) => setLimit(Number(e.currentTarget.value) || 500)}
           />
         </label>
       </div>

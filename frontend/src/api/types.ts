@@ -149,6 +149,7 @@ export interface StringsResponse {
   strings: StringEntry[];
   request_min_len?: number;
   request_q?: string;
+  request_limit?: number;
 }
 
 // ── /api/string-provenance ──────────────────────────────────────────────
