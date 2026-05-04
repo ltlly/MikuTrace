@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::llil::expr::{LlilExpr, LlilOp, LlilOperand};
 use crate::llil::ssa::{ssa_block, SsaVar};
+use crate::llil::util::parse_ssa_reg;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DceResult {
@@ -54,7 +55,10 @@ fn removable_set_reg(
     let Some((name, version)) = parse_ssa_reg(dst) else {
         return false;
     };
-    let var = SsaVar { name, version };
+    let var = SsaVar {
+        name: name.to_string(),
+        version,
+    };
     uses.get(&var)
         .map(|idxs| idxs.iter().any(|use_idx| *use_idx != idx))
         .unwrap_or(false)
@@ -70,11 +74,6 @@ fn operand_has_side_effect(op: &LlilOperand) -> bool {
 
 fn expr_has_side_effect(e: &LlilExpr) -> bool {
     e.has_side_effect() || e.operands.iter().any(operand_has_side_effect)
-}
-
-fn parse_ssa_reg(s: &str) -> Option<(String, u32)> {
-    let (name, ver) = s.rsplit_once('#')?;
-    Some((name.to_string(), ver.parse().ok()?))
 }
 
 #[cfg(test)]
