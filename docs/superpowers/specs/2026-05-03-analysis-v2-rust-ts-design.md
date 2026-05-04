@@ -469,7 +469,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `mem-dump` | ✅ M3-μ | see `strings`, `mem-dump` row above |
 | `reg-timeline` | ✅ M3-υ | REST-backed register change timeline |
 | `mem-diff` | ✅ M3-υ | REST-backed MemShadow byte diff around an idx |
-| `fn-summary` | 🔜 M3 | |
+| `fn-summary` | ✅ M3-ω | REST-backed function overview |
 | `field-at` | 🔜 M3 | |
 | `export` (CSV/JSON dump) | ⏸ | Power-user; defer |
 | `dec` (LLM-assisted decompile, route B) | 🔜 M5 | uses llm_client |
@@ -517,7 +517,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/reg-timeline` | ✅ M3-υ | distinct register value timeline |
 | `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings`, `/api/jni-events` | 🔜 M3 | reads jni_hooks.jsonl |
 | `/api/field-at` | 🔜 M3 | |
-| `/api/fn-summary` | 🔜 M3 | |
+| `/api/fn-summary` | ✅ M3-ω | function overview with hot blocks and callees |
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
 | `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
 | `/api/call-chain` | ✅ M3-σ | LR walking caller chain |

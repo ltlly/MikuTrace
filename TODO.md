@@ -95,6 +95,7 @@
 - M3-φ: `/api/mem-flow` + CLI wrapper ✅ 2026-05-04
 - M3-χ: `/api/search-pc` + CLI wrapper ✅ 2026-05-04
 - M3-ψ: `/api/ollvm-detect-vm` + CLI wrapper ✅ 2026-05-04
+- M3-ω: `/api/fn-summary` + CLI wrapper ✅ 2026-05-04
 - M4-α: shared selected-record cursor + Registers / Memory hex dump / Trace-for-PC panels ✅ 2026-05-04
 - M4 (next): TS frontend core polish / remaining panels (Backtrace, Forks, Xref, Settings, Memory diff, richer Decompile UX)
 - M3-M7: 见 spec §9 milestones
