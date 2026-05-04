@@ -1,3 +1,4 @@
+pub mod api_infra;
 pub mod asm_tokens;
 pub mod auto_phase;
 pub mod backward_taint;
@@ -48,6 +49,8 @@ use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/openapi.json", get(api_infra::openapi_handler))
+        .route("/ws/jobs", get(api_infra::jobs_ws_handler))
         .route("/api/meta", get(meta::meta_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
         .route("/api/records", get(records::records_handler))
