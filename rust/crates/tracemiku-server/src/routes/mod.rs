@@ -1,3 +1,4 @@
+pub mod call_tree;
 pub mod cfg;
 pub mod functions;
 pub mod idxs_for_block;
@@ -25,6 +26,7 @@ pub fn router(state: AppState) -> Router {
             get(idxs_for_block::idxs_for_block_handler),
         )
         .route("/api/cfg", get(cfg::cfg_handler))
+        .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
         .route(
             "/api/last-write-of-reg",
