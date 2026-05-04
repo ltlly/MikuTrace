@@ -82,8 +82,8 @@
 - M3-ι2c: /api/dec/fn/{id} sym:* / cfg:* source support + real-trace parity script m3_iota_parity.py covering type_anchor + vm_candidate + summary ✅ 2026-05-04
 - M3-ι2d: /api/dec/llm-call (LLM client port: claude / deepseek / qwen / mimo via reqwest + serde JSON) ✅ 2026-05-04. `bn:*` dec_fn remains gated on Rust BN sidecar/backend (M6).
 - M3-κ: Graph panel SVG (`/api/cfg-svg` via Graphviz dot + Solid Graph panel) ✅ 2026-05-04
-- M3-λ (next): memshadow v3 binary sidecar (.memshadow.v3.bin)
-- M3-μ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-λ: memshadow v3 binary sidecar (`trace.bin.memshadow.v3.bin`) ✅ 2026-05-04
+- M3-μ (next): Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**

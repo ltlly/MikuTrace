@@ -398,7 +398,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `taint.py` (`--through-mem`, `--data-only`) | `tracemiku-core::taint` | ✅ M3-γ | through_mem byte-overlap via MemShadow.latest_write_idx_strict_before. data_only filters addressing-only regs; default exclude={sp,fp,lr} when caller doesn't override. 2 colocated tests pin both flags. |
 | `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | ✅ M3-γ | `build_frame_depth_map` shipped (M3-β); cross_fn_call query param now wired through both endpoints → `frame_depth: Option<u32>` row field with skip_serializing_if. 2 integration tests pin presence/absence. |
 | (future) **semantic cross-fn taint propagation** (ABI arg tracking, caller-saved kill, callee→caller return flow) | `tracemiku-core::taint::cross_fn` | ⏸ | Brand-new feature; needs its own design. Python never implemented this; the Python TODO note "全量 propagation 待真机" referred to *this*, not to frame_depth annotation. Do after v2 cutover and after real-trace need is documented. |
-| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | ✅ M2-ζ | core port (BTreeMap byte index, build/byte_at/find_strings/hex_dump). Sidecar caching deferred (eager build only); v3 binary sidecar lands when cold-build on real 7M-record traces becomes the bottleneck |
+| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | ✅ M3-λ | core port (BTreeMap byte index, build/byte_at/find_strings/hex_dump) plus Rust-native `trace.bin.memshadow.v3.bin` sidecar. Stale/corrupt sidecars are ignored and regenerated; Python v2 `.npz` is not migrated. |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
 | `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | ✅ M2-ε | bl-target heuristic + examples/<so>/known_offsets.json overlay; merged into AppState symbols with priority: static > examples > auto |
@@ -564,7 +564,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Python `tests/test_*.py` (815 tests) | ⛔ → ❌ | Reference during M2-M6; deleted at M7 |
 | `tests/conftest.py` (synth fixtures) | ⛔ → ❌ | Fixtures rewritten as Rust `tests/common/fixtures.rs` |
 | `traces/debug_minimal/` real-trace fixture | ⛔ | Filesystem-only; reused as M0 perf baseline + cargo integration test |
-| `.memshadow.v2.npz` sidecar | ❌ | Bumped to `.memshadow.v3.bin` (Rust-native binary) |
+| `.memshadow.v2.npz` sidecar | ✅ M3-λ | Replaced by Rust-native `trace.bin.memshadow.v3.bin`; old Python `.npz` sidecars are ignored/regenerable |
 | `tools/hooks/*.json` JNI/suicide/type-anchor specs | ⛔ | Format frozen, parsed by both old + new |
 | `examples/<so>/known_offsets.json` | ⛔ | Format frozen |
 | `examples/llm_cookbook.py` | ❌ | Python SDK demo; deleted at M7 |
