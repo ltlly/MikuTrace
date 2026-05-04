@@ -28,6 +28,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   const [jumpErr, setJumpErr] = createSignal("");
   let frame: HTMLDivElement | undefined;
   let suppressNextClick = false;
+  let lastCenteredIdx = -1;
 
   const [functions] = createResource(fetchFunctions);
   const [record] = createResource(() => props.currentIdx, fetchRecord);
@@ -48,7 +49,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   const cursorFnName = createMemo(() => record()?.func ?? "");
 
   createEffect(() => {
-    const preferred = selectedFnName() || cursorFnName();
+    const preferred = cursorFnName() || selectedFnName();
     if (preferred && preferred !== fnName()) {
       setFnName(preferred);
       return;
@@ -73,20 +74,40 @@ export default function CfgPanel(props: CfgPanelProps) {
   });
 
   createEffect(() => {
-    const pc = record()?.pc;
+    const idx = props.currentIdx;
+    const r = record();
+    if (!r || r.idx !== idx) return;
     graph();
-    queueMicrotask(() => {
-      if (!frame) return;
-      frame.querySelectorAll(".cfg-current").forEach((el) => el.classList.remove("cfg-current"));
-      if (!pc) return;
-      const hex = pc.trim().replace(/^0x/i, "").toLowerCase();
-      const target = [...frame.querySelectorAll("a")].find((anchor) => {
-        const href = anchor.getAttribute("href") ?? anchor.getAttribute("xlink:href") ?? "";
-        return href.toLowerCase() === `#insn_${hex}`;
-      });
-      target?.classList.add("cfg-current");
-    });
+    window.requestAnimationFrame(() => highlightAndCenterPc(r.pc, idx));
   });
+
+  function findInsnAnchor(pc: string): Element | undefined {
+    if (!frame) return undefined;
+    const hex = pc.trim().replace(/^0x/i, "").toLowerCase();
+    return [...frame.querySelectorAll("a")].find((anchor) => {
+      const href = anchor.getAttribute("href") ?? anchor.getAttribute("xlink:href") ?? "";
+      return href.toLowerCase() === `#insn_${hex}`;
+    });
+  }
+
+  function highlightAndCenterPc(pc: string | undefined, idx: number) {
+    if (!frame) return;
+    frame.querySelectorAll(".cfg-current").forEach((el) => el.classList.remove("cfg-current"));
+    if (!pc) return;
+    const target = findInsnAnchor(pc);
+    target?.classList.add("cfg-current");
+    if (!target || idx === lastCenteredIdx) return;
+
+    const frameRect = frame.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    if (targetRect.width <= 0 || targetRect.height <= 0) return;
+    lastCenteredIdx = idx;
+    setPan((current) => ({
+      ...current,
+      x: current.x + frameRect.left + frameRect.width / 2 - (targetRect.left + targetRect.width / 2),
+      y: current.y + frameRect.top + frameRect.height / 2 - (targetRect.top + targetRect.height / 2),
+    }));
+  }
 
   async function jumpToPc(hex: string) {
     setJumpErr("");
@@ -162,7 +183,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   }
 
   return (
-    <section class="panel">
+    <section class="panel cfg-panel">
       <h2>Graph</h2>
       <div class="cfg-controls">
         <label>

@@ -5,6 +5,7 @@ import type {
   FunctionsResponse,
   StringsResponse,
   TouchingAddrResponse,
+  TouchingRangeResponse,
   MemDumpResponse,
   MemDiffResponse,
   IdxsForPcResponse,
@@ -100,6 +101,23 @@ export async function fetchIdxsTouchingAddr(
   const r = await fetch(`/api/idxs-touching-addr?${params}`);
   if (!r.ok) throw new Error(`/api/idxs-touching-addr ${r.status}: ${await r.text()}`);
   return (await r.json()) as TouchingAddrResponse;
+}
+
+export async function fetchIdxsTouchingRange(
+  addr: string,
+  size = 1,
+  cursor = 0,
+  limit = 30,
+): Promise<TouchingRangeResponse> {
+  const params = new URLSearchParams({
+    addr,
+    size: String(size),
+    cursor: String(cursor),
+    limit: String(limit),
+  });
+  const r = await fetch(`/api/idxs-touching-range?${params}`);
+  if (!r.ok) throw new Error(`/api/idxs-touching-range ${r.status}: ${await r.text()}`);
+  return (await r.json()) as TouchingRangeResponse;
 }
 
 export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpResponse> {

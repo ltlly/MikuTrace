@@ -36,7 +36,7 @@ export default function BacktracePanel(props: BacktracePanelProps) {
               <tbody>
                 <For each={r().stack}>
                   {(frame, i) => (
-                    <tr>
+                    <tr onClick={() => props.onSelect(frame.call_site_idx)}>
                       <td>{i()}</td>
                       <td>
                         <button type="button" onClick={() => props.onSelect(frame.call_site_idx)}>

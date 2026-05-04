@@ -567,6 +567,55 @@ body {
   color: var(--fg);
 }
 
+.memory-context-menu {
+  position: fixed;
+  z-index: 120;
+  width: 300px;
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+}
+
+.memory-context-title {
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+
+.memory-context-menu button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+  padding: 2px 6px;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.memory-context-menu button:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
+.memory-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.memory-context-grid h3 {
+  margin: 6px 0 4px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: normal;
+}
+
 .kv {
   display: grid;
   grid-template-columns: 100px 1fr;
@@ -957,13 +1006,20 @@ html[data-density="dense"] .xref-table td {
   font-size: 10px;
   font-weight: 600;
   border-radius: 2px;
-  min-width: 20px;
+  min-width: 46px;
   text-align: center;
 }
 
 .fn-name {
   color: var(--fg);
   font-weight: 500;
+}
+
+.cfg-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .cfg-controls {
@@ -1054,8 +1110,9 @@ html[data-density="dense"] .xref-table td {
 }
 
 .cfg-svg-frame {
-  height: min(72vh, 720px);
-  min-height: 320px;
+  flex: 1;
+  min-height: 0;
+  height: auto;
   overflow: hidden;
   background: #0e1117;
   border: 1px solid var(--border);
@@ -1089,6 +1146,13 @@ html[data-density="dense"] .xref-table td {
 .cfg-svg-canvas a:hover text {
   fill: #ffffff;
   font-weight: 700;
+  text-decoration: underline;
+}
+
+.cfg-svg-canvas a.cfg-current polygon,
+.cfg-svg-canvas a.cfg-current path {
+  stroke: var(--accent2);
+  stroke-width: 2px;
 }
 
 .strings-controls {
@@ -1215,6 +1279,8 @@ html[data-density="dense"] .xref-table td {
 }
 
 .bt-table button { cursor: pointer; }
+.bt-table tbody tr { cursor: pointer; }
+.bt-table tbody tr:hover { background: var(--bg3); }
 .fork-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; font-size: 12px; color: var(--dim); }
 .fork-controls label { display: flex; gap: 6px; align-items: center; }
 .fork-warn { color: var(--warn); }

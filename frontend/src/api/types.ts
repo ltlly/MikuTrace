@@ -132,6 +132,19 @@ export interface TouchingAddrResponse {
   total_after: number;
 }
 
+export interface TouchingRangeResponse {
+  status: string;
+  addr: string;
+  size: number;
+  cursor: number;
+  writers_before: number[];
+  writers_after: number[];
+  writers_total: number;
+  readers_before: number[];
+  readers_after: number[];
+  readers_total: number;
+}
+
 // ── /api/mem-dump ────────────────────────────────────────────────────────
 
 export interface MemDumpByte {

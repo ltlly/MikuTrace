@@ -1,14 +1,10 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchIdxsTouchingAddr, fetchStrings } from "~/api/client";
-import type { StringEntry, TouchingAddrEntry } from "~/api/types";
+import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
+import type { StringEntry } from "~/api/types";
 
 interface StringsPanelProps {
   onSelect: (idx: number) => void;
-}
-
-function firstWriter(items: TouchingAddrEntry[]): TouchingAddrEntry | undefined {
-  return items.find((item) => item.kind === "w");
 }
 
 export default function StringsPanel(props: StringsPanelProps) {
@@ -23,17 +19,17 @@ export default function StringsPanel(props: StringsPanelProps) {
   async function jumpString(s: StringEntry) {
     setJumpErr("");
     try {
-      const hits = await fetchIdxsTouchingAddr(s.addr, 0, 80);
+      const hits = await fetchIdxsTouchingRange(s.addr, Math.max(1, s.len), 0, 80);
       const target =
-        firstWriter(hits.after) ??
-        hits.after[0] ??
-        firstWriter(hits.before) ??
-        hits.before[0];
-      if (!target) {
+        hits.writers_after[0] ??
+        hits.readers_after[0] ??
+        hits.writers_before[0] ??
+        hits.readers_before[0];
+      if (target === undefined) {
         setJumpErr(`${s.addr} 没有关联的读写 trace`);
         return;
       }
-      props.onSelect(target.idx);
+      props.onSelect(target);
     } catch (err) {
       setJumpErr(String(err));
     }

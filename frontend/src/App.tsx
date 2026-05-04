@@ -137,7 +137,7 @@ export default function App() {
       return "Decompile 窗口显示当前函数的 TraceIR、LLIL 或 LLM 反编译结果。先在 Functions/CallTree/CFG 中定位函数，再在这里查看更高层的伪代码摘要。";
     }
     if (topic === "bottom") {
-      if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。";
+      if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。双击字节跳来源 idx，右键字节显示该地址前后的读写触碰分析。";
       if (bottomTab() === "trace-for-pc") return "Trace for PC 显示当前 PC 在 trace 中其它执行位置，分为 cursor 之前和之后。它用来分析循环、调度器、热点指令和同一静态指令在不同时间的状态差异。点击任意行会跳转到对应 idx。";
       return "Navigation 预留给原版 Web 的 cursor 历史、前进/后退和命令式跳转。当前主要跳转入口是 Disassembly、CFG、CallTree、Strings、Cross Ref 和 Trace for PC。";
     }

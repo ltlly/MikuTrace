@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchMemDiff, fetchMemDump, fetchRecord } from "~/api/client";
-import type { MemDumpByte } from "~/api/types";
+import { fetchIdxsTouchingAddr, fetchMemDiff, fetchMemDump, fetchRecord } from "~/api/client";
+import type { MemDumpByte, TouchingAddrResponse } from "~/api/types";
 
 interface MemoryPanelProps {
   idx: number;
@@ -10,6 +10,15 @@ interface MemoryPanelProps {
 
 const QUICK_REGS = ["x0", "x1", "x2", "x3", "sp"];
 const REG_ADDR_RE = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)$/i;
+
+interface MemContext {
+  x: number;
+  y: number;
+  addr: string;
+  srcIdx: number | null;
+  hits?: TouchingAddrResponse;
+  err?: string;
+}
 
 function hexByte(byte: number | null): string {
   if (byte === null) return "??";
@@ -45,6 +54,7 @@ function normalizeRegName(raw: string): string {
 export default function MemoryPanel(props: MemoryPanelProps) {
   const [addr, setAddr] = createSignal("0x0");
   const [count, setCount] = createSignal(64);
+  const [memContext, setMemContext] = createSignal<MemContext | null>(null);
   const [record] = createResource(() => props.idx, fetchRecord);
   let autoAddr = "";
   createEffect(() => {
@@ -82,8 +92,28 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     return set;
   });
 
+  async function openMemContext(e: MouseEvent, b: MemDumpByte) {
+    e.preventDefault();
+    e.stopPropagation();
+    const base: MemContext = {
+      x: Math.min(e.clientX, window.innerWidth - 320),
+      y: Math.min(e.clientY, window.innerHeight - 260),
+      addr: b.addr,
+      srcIdx: b.src_idx,
+    };
+    setMemContext(base);
+    try {
+      const hits = await fetchIdxsTouchingAddr(b.addr, props.idx, 24);
+      setMemContext((current) => (current?.addr === b.addr ? { ...current, hits } : current));
+    } catch (err) {
+      setMemContext((current) =>
+        current?.addr === b.addr ? { ...current, err: String(err) } : current,
+      );
+    }
+  }
+
   return (
-    <section class="panel">
+    <section class="panel" onClick={() => setMemContext(null)}>
       <h2>Memory</h2>
       <div class="memory-controls">
         <label>
@@ -156,6 +186,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                                 changedAddrs().has(b.addr) ? "changed" : ""
                               }`}
                               title={`${b.addr} ${b.kind} src=${b.src_idx ?? ""}`}
+                              onContextMenu={(e) => void openMemContext(e, b)}
                               onDblClick={() => {
                                 if (b.src_idx !== null) props.onSelect(b.src_idx);
                               }}
@@ -173,6 +204,61 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                 </For>
               </tbody>
             </table>
+            <Show when={memContext()}>
+              {(ctx) => (
+                <div
+                  class="memory-context-menu"
+                  style={{ left: `${ctx().x}px`, top: `${ctx().y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.preventDefault()}
+                >
+                  <div class="memory-context-title">
+                    <code>{ctx().addr}</code>
+                  </div>
+                  <Show when={ctx().srcIdx !== null}>
+                    <button type="button" onClick={() => props.onSelect(ctx().srcIdx!)}>
+                      跳到来源 idx {ctx().srcIdx}
+                    </button>
+                  </Show>
+                  <Show when={ctx().err}>
+                    <p class="err small">{ctx().err}</p>
+                  </Show>
+                  <Show when={!ctx().hits && !ctx().err}>
+                    <p class="dim small">加载读写分析...</p>
+                  </Show>
+                  <Show when={ctx().hits}>
+                    {(hits) => (
+                      <>
+                        <div class="memory-context-grid">
+                          <div>
+                            <h3>之前触碰</h3>
+                            <For each={hits().before}>
+                              {(hit) => (
+                                <button type="button" onClick={() => props.onSelect(hit.idx)}>
+                                  {hit.kind} {hit.idx}
+                                </button>
+                              )}
+                            </For>
+                            <p class="dim small">total {hits().total_before}</p>
+                          </div>
+                          <div>
+                            <h3>之后触碰</h3>
+                            <For each={hits().after}>
+                              {(hit) => (
+                                <button type="button" onClick={() => props.onSelect(hit.idx)}>
+                                  {hit.kind} {hit.idx}
+                                </button>
+                              )}
+                            </For>
+                            <p class="dim small">total {hits().total_after}</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </Show>
+                </div>
+              )}
+            </Show>
           </>
         )}
       </Show>

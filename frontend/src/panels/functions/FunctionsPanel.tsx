@@ -2,10 +2,16 @@ import { createResource, Show, For } from "solid-js";
 import { fetchFunctions } from "~/api/client";
 import type { Accessor, Setter } from "solid-js";
 
-const SOURCE_TAGS: Record<string, string> = {
-  "trace-ir": "TR",
-  "symbol": "SY",
-  "bn": "BN",
+const SOURCE_LABELS: Record<string, string> = {
+  "trace-ir": "trace",
+  "symbol": "symbol",
+  "bn": "bn",
+};
+
+const SOURCE_TITLES: Record<string, string> = {
+  "trace-ir": "dynamic trace function",
+  "symbol": "symbol map function",
+  "bn": "Binary Ninja function",
 };
 
 export interface FunctionsPanelProps {
@@ -34,7 +40,9 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                 {([src, n], i) => (
                   <span>
                     {i() === 0 ? "" : ", "}
-                    <span class="fn-source-tag">{SOURCE_TAGS[src] ?? src}</span>:{n}
+                    <span class="fn-source-tag" title={SOURCE_TITLES[src] ?? src}>
+                      {SOURCE_LABELS[src] ?? src}
+                    </span>:{n}
                   </span>
                 )}
               </For>
@@ -47,7 +55,9 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                     onClick={() => props.onSelectFn(fn.id)}
                     onDblClick={() => props.onSelectFn(fn.id)}
                   >
-                    <span class="fn-source-tag">{SOURCE_TAGS[fn.source] ?? fn.source}</span>
+                    <span class="fn-source-tag" title={SOURCE_TITLES[fn.source] ?? fn.source}>
+                      {SOURCE_LABELS[fn.source] ?? fn.source}
+                    </span>
                     <span class="fn-name">{fn.name}</span>
                     <Show when={fn.entry_pc !== null}>
                       <span class="dim small">
