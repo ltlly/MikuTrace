@@ -104,10 +104,7 @@ pub fn ollvm_detect_vm(
     }
     if indirect_total >= (min_entries as u64) * 5 {
         confidence += 0.1;
-        reasons.push(format!(
-            "high-frequency indirect ({} hits)",
-            indirect_total
-        ));
+        reasons.push(format!("high-frequency indirect ({} hits)", indirect_total));
     }
 
     if confidence < conf_threshold {

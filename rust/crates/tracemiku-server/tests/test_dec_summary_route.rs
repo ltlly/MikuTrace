@@ -93,7 +93,10 @@ async fn dec_summary_emits_root_funcir_with_trace_ir_source() {
     assert_eq!(f0["calls"], 0);
     assert!(v["vm_candidates"].as_array().unwrap().is_empty());
     assert!(
-        v["summary_md"].as_str().unwrap().contains("- records: **3**"),
+        v["summary_md"]
+            .as_str()
+            .unwrap()
+            .contains("- records: **3**"),
         "summary_md should mention record count via render_summary_md: {v}"
     );
 }
@@ -107,8 +110,7 @@ fn synth_two_callees_fixture() -> tempfile::TempDir {
         .join("call_001_tid1_9r_1ms");
     fs::create_dir_all(&cd).unwrap();
     let pcs: [u64; 9] = [
-        0x100000, 0x100004, 0x100100, 0x100104, 0x100008, 0x100200, 0x100204, 0x100208,
-        0x10000c,
+        0x100000, 0x100004, 0x100100, 0x100104, 0x100008, 0x100200, 0x100204, 0x100208, 0x10000c,
     ];
     let insts: [u32; 9] = [
         0xd503201f, 0x9400003f, 0xd503201f, 0xd65f03c0, 0x9400007e, 0xd503201f, 0xd503201f,
@@ -155,10 +157,7 @@ async fn dec_summary_includes_symbol_source_fallback() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let fns = v["fns"].as_array().unwrap();
-    let sources: Vec<&str> = fns
-        .iter()
-        .map(|f| f["source"].as_str().unwrap())
-        .collect();
+    let sources: Vec<&str> = fns.iter().map(|f| f["source"].as_str().unwrap()).collect();
     assert!(
         sources.contains(&"symbol"),
         "expected at least one symbol-source entry; got sources={sources:?}"
@@ -194,7 +193,10 @@ async fn dec_summary_no_vm_candidates_on_synth_root_only() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let cands = v["vm_candidates"].as_array().unwrap();
-    assert!(cands.is_empty(), "synth has no OLLVM pattern → no candidates");
+    assert!(
+        cands.is_empty(),
+        "synth has no OLLVM pattern → no candidates"
+    );
     let md = v["summary_md"].as_str().unwrap();
     assert!(
         !md.contains("## VM Candidates"),

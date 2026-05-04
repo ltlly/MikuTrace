@@ -314,7 +314,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trace::{REC_SIZE, Trace};
+    use crate::trace::{Trace, REC_SIZE};
 
     #[test]
     fn build_cfg_classifies_branch_kinds() {

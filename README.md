@@ -55,11 +55,12 @@ cargo run -p tracemiku-cli -- dec-fn <call_dir> trace:F0 --tier hot
 ## Development
 
 ```bash
-cd frontend && npm run build
-cd rust && cargo test -p tracemiku-core
-cd rust && cargo test -p tracemiku-server
-cd rust && cargo test -p tracemiku-cli
+make fmt
+make test-v2
 ```
+
+`make test-v2` runs the Python wrapper syntax check, Rust fmt check, Rust
+core/server/CLI tests, and the Solid frontend production build.
 
 The Rust server serves API routes under `/api/*`, `/openapi.json`, `/ws/jobs`,
 and falls back to the built SPA in `frontend/dist`.

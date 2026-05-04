@@ -1,8 +1,8 @@
 //! GET /api/dec/fn/{fn_id} — per-fn TraceIR markdown.
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -85,7 +85,11 @@ fn render_bn_hlil_fn(
         .lock()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .request("hlil_for", json!({"pc": pc}));
-    if !result.get("ready").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if !result
+        .get("ready")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         let err = result
             .get("error")
             .and_then(|v| v.as_str())

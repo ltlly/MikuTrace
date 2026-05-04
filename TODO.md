@@ -127,6 +127,7 @@
 - M6-β: frontend HLIL panel follows selected FunctionIndex id (`/api/hlil-for-fn`) ✅ 2026-05-04
 - M7-α: `tracemiku web` / `tracemiku view` route to Rust `tracemiku-server`, which serves `frontend/dist` ✅ 2026-05-04
 - M7-β: removed remaining top-level Python `viewer.*` / `webui.*` runtime imports; deleted old `viewer/`, `webui/`, and Python pytest suite ✅ 2026-05-04
+- Post-cutover cleanup: `cargo fmt` baseline, v2 Makefile test target, and top-level `dec` legacy parameter removal ✅ 2026-05-04
 - Analysis v2 refactor: ✅ M0-M7 cutover complete; future work belongs in new TODO items only
 - M3-M7: 见 spec §9 milestones
 
@@ -494,7 +495,7 @@ miku-shield 短期不可用 → fallback: P0-6 提示 + 用户自写 Frida bypas
 | DEC3-B | 类型锚点 (JSON-spec driven) | ✅ | ✓ | 92af597 |
 | DEC3-D | VM 候选区段提取 (复用 ollvmdet, 不 disasm) | ✅ | ✓ | 2d171be |
 | DEC3-C | 循环 induction var (numpy regression) | ✅ | ✓ | 345ae6a |
-| DEC4 | 多模型 benchmark (`tracemiku dec-bench`) | ✅ | ✓ | 7a10f2c |
+| DEC4 | 多模型 benchmark (historical Python CLI; v2 uses `/api/dec/llm-call` / LLIL LLM routes) | ✅ | ✓ | 7a10f2c |
 | DEC5 | README + TODO 同步 | ✅ | n/a | (本 commit) |
 
 **累计**: 16 commits / ~6000 LOC / 525 tests pass. 真机 libsgmainso e2e:

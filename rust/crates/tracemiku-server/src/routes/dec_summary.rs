@@ -7,8 +7,8 @@
 
 use std::collections::HashSet;
 
-use axum::Json;
 use axum::extract::State;
+use axum::Json;
 use serde::Serialize;
 
 use tracemiku_core::prelude::{make_trace_id, render_summary_md};

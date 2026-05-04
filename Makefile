@@ -1,31 +1,43 @@
 PYTHON ?= /usr/bin/python3
-PORT   ?= 8765
+CARGO  ?= cargo
+NPM    ?= npm
+PORT   ?= 18900
 
-.PHONY: help test test-fast test-slow webui install-test clean
+.PHONY: help fmt test test-v2 test-fast test-slow webui clean
 
 help:
-	@echo "make test       - full pytest run (skips slow if deps missing)"
-	@echo "make test-fast  - skip @slow markers (no BN/device/browser)"
-	@echo "make test-slow  - only @slow markers"
-	@echo "make webui RUN=<trace_dir> [PORT=8765]"
-	@echo "make install-test - pip install -e .[test]"
-	@echo "make clean      - rm caches"
+	@echo "make fmt       - rust cargo fmt"
+	@echo "make test      - full v2 validation"
+	@echo "make test-v2   - fmt check + Python wrapper compile + Rust tests + frontend build"
+	@echo "make test-fast - Python wrapper compile + Rust core/cli tests"
+	@echo "make webui RUN=<trace_dir> [PORT=18900]"
+	@echo "make clean     - rm local caches/build outputs"
 
-test:
-	$(PYTHON) -m pytest
+fmt:
+	cd rust && $(CARGO) fmt
+
+test: test-v2
+
+test-v2:
+	$(PYTHON) -m py_compile tracemiku
+	cd rust && $(CARGO) fmt --check
+	cd rust && $(CARGO) test -p tracemiku-core -- --nocapture
+	cd rust && $(CARGO) test -p tracemiku-server -- --nocapture
+	cd rust && $(CARGO) test -p tracemiku-cli -- --nocapture
+	cd frontend && $(NPM) run build
 
 test-fast:
-	$(PYTHON) -m pytest -m "not slow"
+	$(PYTHON) -m py_compile tracemiku
+	cd rust && $(CARGO) test -p tracemiku-core
+	cd rust && $(CARGO) test -p tracemiku-cli
 
 test-slow:
-	$(PYTHON) -m pytest -m slow
+	@echo "No separate v2 slow suite is defined. Use 'make test-v2'."
 
 webui:
 	@if [ -z "$(RUN)" ]; then echo "usage: make webui RUN=<trace_dir>"; exit 2; fi
 	./tracemiku web "$(RUN)" --port $(PORT)
 
-install-test:
-	$(PYTHON) -m pip install -e ".[test]"
-
 clean:
 	rm -rf .pytest_cache __pycache__ */__pycache__ */*/__pycache__ build dist *.egg-info
+	rm -rf frontend/dist rust/target/tmp

@@ -1003,14 +1003,6 @@ def cmd_dec(args):
     p = pathlib.Path(args.path)
     if not p.exists():
         print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
-    if args.prompt_only:
-        print("[!] --prompt-only was removed in Rust v2; use /api/dec/llm-call or the Decompiler panel",
-              file=sys.stderr)
-        return 2
-    if args.call_llm:
-        print("[!] use the Rust v2 Decompiler panel or /api/dec/llm-call for LLM calls",
-              file=sys.stderr)
-        return 2
     if args.summary:
         v = _rust_cli_json(["dec-summary", str(p)])
         sys.stdout.write(v.get("summary_md", ""))
@@ -1041,12 +1033,6 @@ def cmd_dec(args):
     print(f"  summary: {dec_dir / 'summary.md'}", file=sys.stderr)
     print(f"  fns:     {len(list(fns_dir.glob('*.md')))} files in {fns_dir}/", file=sys.stderr)
     return 0
-
-
-def cmd_dec_bench(args):
-    print("[!] dec-bench is deferred in Rust v2; use `/api/llil/llm` or the Decompiler panel",
-          file=sys.stderr)
-    return 2
 
 
 def cmd_web(args):
@@ -1437,42 +1423,10 @@ def main():
                       help="只输出 summary.md 到 stdout, 不落盘")
     p_dc.add_argument("--out", default=None,
                       help="输出根 (默认 = path/decompile)")
-    p_dc.add_argument("--prompt-only", default=None, metavar="FN_ID",
-                      help="已从顶层 CLI 移除; 请用 /api/dec/llm-call 或 Decompiler panel")
-    p_dc.add_argument("--call-llm", default=None, metavar="MODEL",
-                      help="已从顶层 CLI 移除; 请用 /api/dec/llm-call 或 Decompiler panel")
-    p_dc.add_argument("--max-tokens", type=int, default=4096,
-                      help="LLM 输出上限 token (默认 4096, Sonnet 一次出 ~3K c 代码够)")
-    # P2-DEC3-A — block tier 渲染
     p_dc.add_argument("--tier", default="hot",
                       choices=("full", "hot", "summary"),
                       help="block 渲染粒度: full=全部 asm; hot=top exec_count + 冷块 stub "
                            "(默认, 单 fn 通常 < 60KB 适合 LLM); summary=只 fn 概要")
-    # P2-DEC3-B — 类型锚点 (JSON-spec driven, 设计 §7.0 普适性)
-    p_dc.add_argument("--hooks", action="append", default=[], metavar="JSON",
-                      help="加载额外 type spec JSON (callee_pc → reg/type 映射). "
-                           "可多次指定. 用户驱动, 代码零硬编码. 没指定就没 anchor.")
-    # P2-DEC3-D — VM 候选区检测 (普适, 复用 ollvmdet, 不 disasm)
-    p_dc.add_argument("--no-detect-vm", action="store_true",
-                      help="关 VM 候选检测 (默认开). 检测靠 ollvmdet heuristic, "
-                           "不假设 VM 变种, 输出 hex dump 给 LLM, 不 disasm.")
-    p_dc.add_argument("--vm-with-memshadow", action="store_true",
-                      help="VM hex dump 启用 (建 MemShadow, 冷启动慢 ~30s, "
-                           "能拿真字节). 默认关只出 dispatcher 候选不出 hex.")
-
-    # dec-bench (legacy Python route removed in Rust v2)
-    p_db = sp.add_parser("dec-bench",
-                         help="Rust v2 暂缓; 请用 /api/llil/llm 或 Decompiler panel")
-    p_db.add_argument("path", help="trace 目录")
-    p_db.add_argument("--fn", default="F0", help="目标 fn id (默认 F0)")
-    p_db.add_argument("--models", default="mimo",
-                      help="保留兼容参数; Rust v2 当前不执行 benchmark")
-    p_db.add_argument("--hooks", action="append", default=[], metavar="JSON",
-                      help="同 dec --hooks")
-    p_db.add_argument("--max-tokens", type=int, default=4096)
-    p_db.add_argument("--vm-with-memshadow", action="store_true",
-                      help="带 memshadow VM hex (~30s 冷启动)")
-    p_db.add_argument("--out", default=None, help="输出根 (默认 = path/decompile)")
 
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="Rust v2 Solid SPA")
@@ -1495,7 +1449,6 @@ def main():
     if args.subcommand == "finalize":return cmd_finalize(args)
     if args.subcommand == "web":     return cmd_web(args)
     if args.subcommand == "dec":     return cmd_dec(args)
-    if args.subcommand == "dec-bench": return cmd_dec_bench(args)
     ap.print_help(); return 1
 
 

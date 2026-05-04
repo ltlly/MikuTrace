@@ -100,25 +100,28 @@ pub fn forward_taint(
     let mut tainted_mem: HashSet<u64> = HashSet::new();
     let mut heap: BinaryHeap<Reverse<(usize, String, usize)>> = BinaryHeap::new();
 
-    let push_reg = |heap: &mut BinaryHeap<Reverse<(usize, String, usize)>>,
-                    reg: &str,
-                    lo: usize| {
-        if exclude_regs.contains(reg) {
-            return;
-        }
-        let Some(uses) = index.reg_uses.get(reg) else {
-            return;
+    let push_reg =
+        |heap: &mut BinaryHeap<Reverse<(usize, String, usize)>>, reg: &str, lo: usize| {
+            if exclude_regs.contains(reg) {
+                return;
+            }
+            let Some(uses) = index.reg_uses.get(reg) else {
+                return;
+            };
+            let pos = uses.partition_point(|&u| u <= lo);
+            if pos < uses.len() {
+                heap.push(Reverse((uses[pos], reg.to_string(), pos)));
+            }
         };
-        let pos = uses.partition_point(|&u| u <= lo);
-        if pos < uses.len() {
-            heap.push(Reverse((uses[pos], reg.to_string(), pos)));
-        }
-    };
     push_reg(&mut heap, taint_reg, start_idx);
 
     let mut out: Vec<TaintHit> = Vec::new();
     let mut seen: HashSet<usize> = HashSet::new();
-    let cap = if max_count == 0 { usize::MAX } else { max_count };
+    let cap = if max_count == 0 {
+        usize::MAX
+    } else {
+        max_count
+    };
     let mut stopped = false;
 
     while let Some(Reverse((i, reg, pos))) = heap.pop() {
@@ -267,7 +270,11 @@ pub fn backward_taint(
     let mut pending: VecDeque<BwdItem> = VecDeque::new();
     let mut visited: HashSet<(usize, String)> = HashSet::new();
     let mut raw_out: Vec<(usize, String)> = Vec::new();
-    let cap = if max_count == 0 { usize::MAX } else { max_count };
+    let cap = if max_count == 0 {
+        usize::MAX
+    } else {
+        max_count
+    };
     let mut stopped = false;
 
     // Initial seed branch (viewer/taint.py:306-318).
@@ -310,9 +317,8 @@ pub fn backward_taint(
         }
         match item {
             BwdItem::Mem(before_idx, addr, size) => {
-                let writers = mem_writers_overlapping(
-                    index, mem, addr, size, before_idx, through_mem,
-                );
+                let writers =
+                    mem_writers_overlapping(index, mem, addr, size, before_idx, through_mem);
                 for j in writers {
                     let r = trace.record(j);
                     let d = decode(r.pc, r.inst);
@@ -321,9 +327,11 @@ pub fn backward_taint(
                     } else {
                         (String::new(), String::new())
                     };
-                    if let Some(src) = d.regs_use.iter().find(|u| {
-                        !exclude_regs.contains(*u) && **u != base_w && **u != idx_w
-                    }) {
+                    if let Some(src) = d
+                        .regs_use
+                        .iter()
+                        .find(|u| !exclude_regs.contains(*u) && **u != base_w && **u != idx_w)
+                    {
                         pending.push_back(BwdItem::Reg(j, src.clone()));
                     }
                 }
@@ -490,8 +498,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) =
-            forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
         assert!(hits.is_empty());
         assert!(!stopped);
     }
@@ -502,8 +509,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) =
-            backward_taint(&t, &idx, 8, "x0", 100, &exclude, false, None, false);
+        let (hits, stopped) = backward_taint(&t, &idx, 8, "x0", 100, &exclude, false, None, false);
         assert!(hits.is_empty());
         assert!(!stopped);
     }
@@ -514,8 +520,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) =
-            forward_taint(&t, &idx, 0, "x0", 3, &exclude, false, None, false);
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 3, &exclude, false, None, false);
         assert_eq!(hits.len(), 3, "should stop after 3 hits, got {hits:?}");
         assert!(stopped, "max_count truncation should set stopped=true");
         for h in &hits {
@@ -532,8 +537,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) =
-            backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None, false);
+        let (hits, stopped) = backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None, false);
         assert!(!hits.is_empty(), "should chase x0 def chain backwards");
         assert!(!stopped);
         // Wire-shape pin: `why` is the bare reg name, NOT "via:x0".
@@ -606,8 +610,7 @@ mod tests {
         let t = Trace::load(&cd_path).unwrap();
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, _stopped) =
-            backward_taint(&t, &idx, 3, "x1", 100, &exclude, false, None, false);
+        let (hits, _stopped) = backward_taint(&t, &idx, 3, "x1", 100, &exclude, false, None, false);
         let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
         assert!(
             idxs.contains(&0),
@@ -685,11 +688,13 @@ mod tests {
         let exclude = HashSet::new();
 
         // through_mem=true: idx 2 hits with "mem" in why (byte-overlap match).
-        let (hits_on, _stopped) = forward_taint(
-            &t, &idx, 0, "x0", 100, &exclude, true, Some(&mem), false,
-        );
+        let (hits_on, _stopped) =
+            forward_taint(&t, &idx, 0, "x0", 100, &exclude, true, Some(&mem), false);
         let idxs_on: Vec<usize> = hits_on.iter().map(|h| h.idx).collect();
-        assert!(idxs_on.contains(&1), "idx 1 (str) should emit; got {idxs_on:?}");
+        assert!(
+            idxs_on.contains(&1),
+            "idx 1 (str) should emit; got {idxs_on:?}"
+        );
         assert!(
             idxs_on.contains(&2),
             "idx 2 (ldr [x0,#4]) should emit; got {idxs_on:?}"
@@ -702,9 +707,8 @@ mod tests {
 
         // through_mem=false: idx 2 still emits (regs:x0 use), but NO "mem" —
         // only the base byte (x0_val) is tagged, load reads x0_val+4..+8.
-        let (hits_off, _stopped) = forward_taint(
-            &t, &idx, 0, "x0", 100, &exclude, false, None, false,
-        );
+        let (hits_off, _stopped) =
+            forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
         let row2_off = hits_off.iter().find(|h| h.idx == 2).unwrap();
         assert!(
             !row2_off.why.contains("mem"),
@@ -776,9 +780,7 @@ mod tests {
         let exclude = HashSet::new();
 
         // data_only=false: should hit idx 1 AND idx 2 on x1.
-        let (hits_loose, _) = forward_taint(
-            &t, &idx, 0, "x1", 100, &exclude, false, None, false,
-        );
+        let (hits_loose, _) = forward_taint(&t, &idx, 0, "x1", 100, &exclude, false, None, false);
         let idxs_loose: Vec<usize> = hits_loose.iter().map(|h| h.idx).collect();
         assert!(
             idxs_loose.contains(&1),
@@ -790,9 +792,7 @@ mod tests {
         );
 
         // data_only=true: should hit idx 2 only — idx 1 filtered as addressing.
-        let (hits_strict, _) = forward_taint(
-            &t, &idx, 0, "x1", 100, &exclude, false, None, true,
-        );
+        let (hits_strict, _) = forward_taint(&t, &idx, 0, "x1", 100, &exclude, false, None, true);
         let idxs_strict: Vec<usize> = hits_strict.iter().map(|h| h.idx).collect();
         assert!(
             !idxs_strict.contains(&1),

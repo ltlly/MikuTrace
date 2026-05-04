@@ -91,7 +91,11 @@ async fn call_tree_default_max_depth() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let tree = &v["tree"];
-    assert_eq!(tree["fn"].as_str(), Some("?"), "root fn must be ? (got {tree})");
+    assert_eq!(
+        tree["fn"].as_str(),
+        Some("?"),
+        "root fn must be ? (got {tree})"
+    );
     assert_eq!(tree["depth"].as_u64(), Some(0));
     assert_eq!(tree["enter_idx"].as_u64(), Some(0));
     assert_eq!(tree["exit_idx"].as_u64(), Some(8));
@@ -106,7 +110,9 @@ async fn call_tree_default_max_depth() {
     assert_eq!(children[1]["fn"].as_str(), Some("f_beta"));
     // Default depth means no truncation key.
     assert!(
-        tree.get("truncated_children").map(|v| v.is_null()).unwrap_or(true),
+        tree.get("truncated_children")
+            .map(|v| v.is_null())
+            .unwrap_or(true),
         "default max_depth must omit truncated_children, got: {tree}"
     );
 }
