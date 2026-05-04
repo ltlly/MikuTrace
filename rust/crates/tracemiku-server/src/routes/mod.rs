@@ -10,6 +10,7 @@ pub mod dec_llm_call;
 pub mod dec_models;
 pub mod dec_summary;
 pub mod diff_traces;
+pub mod field_at;
 pub mod fn_summary;
 pub mod fork_events;
 pub mod forward_taint;
@@ -70,6 +71,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jni-calls", get(jni_calls::jni_calls_handler))
         .route("/api/jobj-history", get(jobj_history::jobj_history_handler))
         .route("/api/jni-strings", get(jni_strings::jni_strings_handler))
+        .route("/api/field-at", get(field_at::field_at_handler))
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",

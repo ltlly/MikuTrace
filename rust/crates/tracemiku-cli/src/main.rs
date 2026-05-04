@@ -350,6 +350,20 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         show_per_byte: bool,
     },
+    /// GET /api/field-at.
+    FieldAt {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        pc: String,
+        #[arg(long)]
+        reg: String,
+        #[arg(long, default_value = "0")]
+        offset: String,
+        #[arg(long)]
+        so: Option<PathBuf>,
+        #[arg(long)]
+        backend: Option<String>,
+    },
     /// GET /api/auto-phase-detect.
     AutoPhaseDetect {
         trace_dir: PathBuf,
@@ -769,6 +783,17 @@ async fn main() -> anyhow::Result<()> {
                 "show_per_byte": show_per_byte,
             });
             route_post_json(trace_dir, "/api/diff-traces".to_string(), body).await
+        }
+        Some(Cmd::FieldAt {
+            trace_dir,
+            pc,
+            reg,
+            offset,
+            so: _,
+            backend: _,
+        }) => {
+            let params = vec![("pc", pc), ("reg", reg), ("offset", offset)];
+            route_get_json(trace_dir, route_path("/api/field-at", &params)).await
         }
         Some(Cmd::AutoPhaseDetect {
             trace_dir,

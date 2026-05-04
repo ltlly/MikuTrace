@@ -404,6 +404,23 @@ fn diff_traces_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn field_at_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "field-at".into(),
+        cd.display().to_string(),
+        "--pc".into(),
+        "0x100000".into(),
+        "--reg".into(),
+        "x8".into(),
+        "--offset".into(),
+        "0x80".into(),
+    ]);
+    assert_eq!(v["hit"], false);
+    assert_eq!(v["offset"], 128);
+}
+
+#[test]
 fn auto_phase_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&["auto-phase-detect".into(), cd.display().to_string()]);
