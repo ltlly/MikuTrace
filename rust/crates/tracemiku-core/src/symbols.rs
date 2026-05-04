@@ -199,7 +199,8 @@ pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, St
     merge_auto_known_offset_partials(partials)
 }
 
-fn symbol_worker_count(n: usize) -> usize {
+/// Planned worker count for auto symbol discovery at `n` records.
+pub fn symbol_worker_count(n: usize) -> usize {
     let requested = std::env::var("TRACEMIKU_SYMBOL_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())

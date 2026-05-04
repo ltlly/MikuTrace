@@ -462,7 +462,30 @@ export interface DecompStatusResponse {
   elapsed?: number | null;
 }
 
-export type BgStatusResponse = Record<string, BgTaskStatus | DecompStatusResponse>;
+export interface ParallelismStatus {
+  available: number;
+  records: number;
+  workers: {
+    index: number;
+    symbols: number;
+    cfg: number;
+    memshadow: number;
+    [key: string]: number;
+  };
+  env?: Record<string, string | null>;
+}
+
+export interface BgStatusResponse {
+  cfg: BgTaskStatus;
+  pc_inst: BgTaskStatus;
+  pc_to_block: BgTaskStatus;
+  block_idxs: BgTaskStatus;
+  index: BgTaskStatus;
+  mem: BgTaskStatus;
+  decomp: DecompStatusResponse;
+  parallelism?: ParallelismStatus;
+  [key: string]: BgTaskStatus | DecompStatusResponse | ParallelismStatus | undefined;
+}
 
 // ── /api/mem-writes-in-range ─────────────────────────────────────────────
 

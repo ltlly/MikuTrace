@@ -109,7 +109,8 @@ impl Index {
     }
 }
 
-fn index_worker_count(n: usize) -> usize {
+/// Planned worker count for [`Index::build`] at `n` records.
+pub fn index_worker_count(n: usize) -> usize {
     let requested = std::env::var("TRACEMIKU_INDEX_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())

@@ -1,5 +1,7 @@
 //! API discovery and job-progress infrastructure endpoints.
 
+use std::thread;
+
 use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -39,6 +41,7 @@ pub async fn bg_status_handler(State(state): State<AppState>) -> Json<Value> {
         "index": ready_task_status(),
         "mem": mem_status_value(&state),
         "decomp": decomp_status_value(&state),
+        "parallelism": parallelism_status_value(&state),
     }))
 }
 
@@ -61,6 +64,29 @@ fn mem_status_value(state: &AppState) -> Value {
         "started_at": null,
         "ready_at": null,
         "err": null,
+    })
+}
+
+fn parallelism_status_value(state: &AppState) -> Value {
+    let records = state.inner.trace.len();
+    let available = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    json!({
+        "available": available,
+        "records": records,
+        "workers": {
+            "index": tracemiku_core::index::index_worker_count(records),
+            "symbols": tracemiku_core::symbols::symbol_worker_count(records),
+            "cfg": tracemiku_core::cfg::cfg_worker_count(records),
+            "memshadow": tracemiku_core::memshadow::memshadow_worker_count(records),
+        },
+        "env": {
+            "TRACEMIKU_INDEX_THREADS": std::env::var("TRACEMIKU_INDEX_THREADS").ok(),
+            "TRACEMIKU_SYMBOL_THREADS": std::env::var("TRACEMIKU_SYMBOL_THREADS").ok(),
+            "TRACEMIKU_CFG_THREADS": std::env::var("TRACEMIKU_CFG_THREADS").ok(),
+            "TRACEMIKU_MEMSHADOW_THREADS": std::env::var("TRACEMIKU_MEMSHADOW_THREADS").ok(),
+        }
     })
 }
 

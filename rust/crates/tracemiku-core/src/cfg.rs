@@ -406,7 +406,8 @@ fn scan_branch_range(trace: &crate::trace::Trace, start: usize, end: usize) -> B
     }
 }
 
-fn cfg_worker_count(n: usize) -> usize {
+/// Planned worker count for CFG branch scanning at `n` records.
+pub fn cfg_worker_count(n: usize) -> usize {
     let requested = std::env::var("TRACEMIKU_CFG_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())

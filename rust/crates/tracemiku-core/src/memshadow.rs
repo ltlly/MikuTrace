@@ -356,7 +356,8 @@ impl MemShadow {
     }
 }
 
-fn memshadow_worker_count(n: usize) -> usize {
+/// Planned worker count for [`MemShadow::build_from_trace`] at `n` records.
+pub fn memshadow_worker_count(n: usize) -> usize {
     let requested = std::env::var("TRACEMIKU_MEMSHADOW_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())

@@ -19,6 +19,11 @@ function statusText(item: unknown): string {
   return String((item as { status?: unknown }).status ?? "?");
 }
 
+function workerSummary(workers: Record<string, number> | undefined): string {
+  if (!workers) return "?";
+  return `idx ${workers.index ?? "?"} · sym ${workers.symbols ?? "?"} · cfg ${workers.cfg ?? "?"} · mem ${workers.memshadow ?? "?"}`;
+}
+
 interface SettingsPanelProps {
   active: boolean;
   debugVisible: boolean;
@@ -141,6 +146,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               <dd>{decomp()?.status ?? statusText(bg()?.decomp)}</dd>
               <dt>bn so</dt>
               <dd>{decomp()?.so_path ?? "not configured"}</dd>
+              <Show when={bg()?.parallelism}>
+                {(p) => (
+                  <>
+                    <dt>cores</dt>
+                    <dd>{p().available}</dd>
+                    <dt>workers</dt>
+                    <dd>{workerSummary(p().workers)}</dd>
+                  </>
+                )}
+              </Show>
             </dl>
           </div>
         </Show>
