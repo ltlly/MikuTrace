@@ -99,6 +99,7 @@
 - M3-crypto: `/api/crypto-scan` + CLI wrapper ✅ 2026-05-04
 - M3-string-provenance: `/api/string-provenance` ✅ 2026-05-04
 - M3-hash-finalize: `/api/hash-finalize-detect` + CLI wrapper ✅ 2026-05-04
+- M3-hash-input-search: `/api/hash-input-search` + CLI wrapper ✅ 2026-05-04
 - M3-auto-phase: `/api/auto-phase-detect` + CLI wrapper ✅ 2026-05-04
 - M3-jni-events: `/api/jni-events` ✅ 2026-05-04
 - M3-jni-calls: `/api/jni-calls` + CLI wrapper ✅ 2026-05-04

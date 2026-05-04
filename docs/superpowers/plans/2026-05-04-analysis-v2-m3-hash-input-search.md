@@ -12,8 +12,8 @@
 
 ## Tasks
 
-- [ ] Add Rust hash/HMAC/CRC dependencies and server route.
-- [ ] Add CLI wrapper and POST helper.
-- [ ] Add server/CLI tests.
-- [ ] Run server/CLI tests and clippy.
-- [ ] Update TODO/spec status.
+- [x] Add Rust hash/HMAC/CRC dependencies and server route.
+- [x] Add CLI wrapper and POST helper.
+- [x] Add server/CLI tests.
+- [x] Run server/CLI tests and clippy.
+- [x] Update TODO/spec status.

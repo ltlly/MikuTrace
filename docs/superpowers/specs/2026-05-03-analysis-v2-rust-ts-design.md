@@ -459,7 +459,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `crypto-scan` | ✅ M3-crypto | 22 standard primitive constant scan |
 | `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
 | `call-chain` | ✅ M3-σ | REST-backed LR walking wrapper |
-| `hash-input-search` | 🔜 M3 | |
+| `hash-input-search` | ✅ M3-hash-input-search | SHA/MD5/HMAC/CRC candidate input search |
 | `diff-traces` | 🔜 M3 | |
 | `fork-events` | ✅ M3-ο | reads per-call meta.json fork_events via REST wrapper |
 | `ollvm-detect-vm` | ✅ M3-ψ | REST-backed OLLVM VM dispatcher heuristic |
@@ -530,7 +530,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/crypto-scan` | ✅ M3-crypto | 22 standard primitive constant scan |
 | `/api/ollvm-detect-vm` | ✅ M3-ψ | OLLVM VM dispatcher heuristic |
 | `/api/hash-finalize-detect` | ✅ M3-hash-finalize | MemShadow contiguous digest-output heuristic |
-| `/api/hash-input-search` | 🔜 M3 | |
+| `/api/hash-input-search` | ✅ M3-hash-input-search | SHA/MD5/HMAC/CRC candidate input search |
 | `/api/auto-phase-detect` | ✅ M3-auto-phase | heuristic phase timeline |
 | `/api/diff-traces` | 🔜 M3 | |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
