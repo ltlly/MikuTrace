@@ -132,7 +132,10 @@ async fn dec_fn_accepts_bare_f0_legacy_id() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["fn_id"], "F0"); // route handler echoes the input fn_id
     let md = v["markdown"].as_str().unwrap();
-    assert!(md.contains("# F0"), "bare F0 should resolve via parse_id legacy");
+    assert!(
+        md.contains("# F0"),
+        "bare F0 should resolve via parse_id legacy"
+    );
 }
 
 #[tokio::test]
@@ -153,20 +156,92 @@ async fn dec_fn_returns_404_for_unknown() {
 }
 
 #[tokio::test]
-async fn dec_fn_returns_404_for_unsupported_source() {
+async fn dec_fn_returns_markdown_for_sym_source() {
     let dir = synth_root_only();
     let cd = call_dir(&dir);
     let app = tracemiku_server::build_router(cd).expect("router builds");
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/api/dec/fn/sym:f_root")
+                .uri("/api/dec/fn/sym:f")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    // sym:* not yet wired — return 404 with explanatory message.
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["fn_id"], "sym:f");
+    assert_eq!(v["name"], "f");
+    let md = v["markdown"].as_str().unwrap();
+    assert!(
+        md.contains("# sym:f"),
+        "sym FuncIR should render with public sym id: {md}"
+    );
+    assert!(
+        md.contains("- **blocks**: 1"),
+        "symbol markdown should include blocks: {md}"
+    );
+}
+
+#[tokio::test]
+async fn dec_fn_accepts_legacy_cfg_symbol_id() {
+    let dir = synth_root_only();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/cfg:f")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["fn_id"], "cfg:f");
+    assert_eq!(v["name"], "f");
+    assert!(v["markdown"].as_str().unwrap().contains("# sym:f"));
+}
+
+#[tokio::test]
+async fn dec_fn_returns_404_for_unknown_symbol() {
+    let dir = synth_root_only();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/sym:missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn dec_fn_returns_404_for_bn_source_until_backend_lands() {
+    let dir = synth_root_only();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/bn:0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
