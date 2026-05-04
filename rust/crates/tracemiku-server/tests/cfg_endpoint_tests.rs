@@ -60,8 +60,15 @@ fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
 }
 
 fn synth_large_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
+    synth_cfg_call_dir(190, "f_big")
+}
+
+fn synth_huge_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
+    synth_cfg_call_dir(2_100, "f_huge")
+}
+
+fn synth_cfg_call_dir(block_count: usize, fn_name: &str) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    let block_count = 190usize;
     let cd = tmp
         .path()
         .join("run")
@@ -97,8 +104,9 @@ fn synth_large_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
     fs::write(
         cd.join("meta.json"),
         format!(
-            r#"{{"records":{},"truncated":false,"known_offsets":{{"0x0":"f_big"}}}}"#,
-            block_count * 2
+            r#"{{"records":{},"truncated":false,"known_offsets":{{"0x0":"{}"}}}}"#,
+            block_count * 2,
+            fn_name
         ),
     )
     .unwrap();
@@ -217,6 +225,33 @@ async fn cfg_svg_large_fn_returns_overview_without_dot() {
             .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100000")),
         "expected lightweight overview SVG with block anchors: {v}"
     );
+}
+
+#[tokio::test]
+async fn cfg_svg_huge_fn_skips_overview_svg() {
+    let _guard = dot_env_lock().lock().await;
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_huge_cfg_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_huge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "large");
+    assert_eq!(v["fn"], "f_huge");
+    assert!(v["block_count"].as_u64().unwrap_or(0) > 2_000);
+    assert!(v["svg"].is_null());
 }
 
 #[tokio::test]

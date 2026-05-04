@@ -427,7 +427,8 @@ export default function CfgPanel(props: CfgPanelProps) {
                 <div class="cfg-large-graph">
                   <p class="dim">
                     {r.fn ?? fnName()} CFG is large ({r.block_count} blocks, {r.edge_count} edges,{" "}
-                    ~{Math.round(r.dot_bytes / 1024).toLocaleString()} KiB dot). Lightweight overview shown without Graphviz.
+                    ~{Math.round(r.dot_bytes / 1024).toLocaleString()} KiB dot).{" "}
+                    {r.svg ? "Lightweight overview shown without Graphviz." : "Overview SVG skipped to keep the UI responsive."}
                   </p>
                   <Show when={r.svg}>
                     {(svg) => (

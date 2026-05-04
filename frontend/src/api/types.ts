@@ -121,7 +121,7 @@ export interface CfgSvgErrorResponse {
 export interface CfgSvgLargeResponse {
   status: "large";
   fn: string | null;
-  svg: null;
+  svg: string | null;
   block_count: number;
   edge_count: number;
   total_block_count: number;
