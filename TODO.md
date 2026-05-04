@@ -61,6 +61,7 @@
 - M3-ι2a type_anchor.py port + auto-discovery + render section: ✅ 2026-05-04
 - M3-ι2b ollvmdet.py + vm_candidate.py port + summary VM-candidates body fidelity: ✅ 2026-05-04
 - M3-ι2c `/api/dec/fn/{id}` sym:* / cfg:* source support + scripts/m3_iota_parity.py real-trace HARD gate: ✅ 2026-05-04 (summary fns 0.978 / summary_md 0.943 / F0 md 0.969 / VM candidate exact)
+- M3-ι2d `/api/dec/llm-call` + `/api/dec/models` Rust port: ✅ 2026-05-04 (prompt bundle + claude/deepseek/qwen/mimo reqwest adapters + success cache; mock-provider tests, no real API calls)
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
@@ -79,8 +80,8 @@
 - M3-ι2a: type_anchor.py port + tools/hooks/ auto-discovery + render type-anchors section ✅ 2026-05-04
 - M3-ι2b: ollvmdet + vm_candidate port + summary VM-candidates hex-dump body ✅ 2026-05-04
 - M3-ι2c: /api/dec/fn/{id} sym:* / cfg:* source support + real-trace parity script m3_iota_parity.py covering type_anchor + vm_candidate + summary ✅ 2026-05-04
-- M3-ι2d (next): /api/dec/llm-call (LLM client port: claude / deepseek / qwen / mimo via reqwest + serde JSON). `bn:*` dec_fn remains gated on Rust BN sidecar/backend (M6).
-- M3-κ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-ι2d: /api/dec/llm-call (LLM client port: claude / deepseek / qwen / mimo via reqwest + serde JSON) ✅ 2026-05-04. `bn:*` dec_fn remains gated on Rust BN sidecar/backend (M6).
+- M3-κ (next): Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
 - M3-λ: memshadow v3 binary sidecar (.memshadow.v3.bin)
 - M3-μ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones

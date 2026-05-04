@@ -421,8 +421,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
 | `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
 | `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ι2c | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η) + BlockIR.exits with kind/taken_count via CFG EdgeMeta (M3-ι) + render_summary_md fidelity (M3-ι) + type_anchors auto-discovery/render (M3-ι2a) + vm_candidates auto-populated with MemShadow hex dump (M3-ι2b) + on-demand symbol FuncIR for `sym:*`/`cfg:*` dec_fn (M3-ι2c). Still partial: root LoopIR/CallIR/induction-var population remains deferred. |
-| `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
-| `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
+| `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | ✅ M3-ι2d | reqwest + serde JSON adapters; env-only API keys; mock-provider tests cover OpenAI-compatible success path without real API calls |
+| `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | ✅ M3-ι2d | prompt + VM context injection + hot-block truncation logic |
 | `type_anchor.py` (TypeSpec/TypeAnchor + load + find) | `tracemiku-core::decompiler::type_anchor` + `attach_type_anchors` in builder | ✅ M3-ι2a | 1:1 port; auto-discovers tools/hooks/*.json with kind=="type_specs" plus examples/<so>/type_specs.json. Render markdown section parity with Python markdown.py:207-229. |
 | `vm_candidate.py` (OLLVM VM detection, DEC3-D) | `tracemiku-core::decompiler::vm_candidate` | ✅ M3-ι2b | 1:1 port; detect_vm_candidates emits VmCandidateIR with hex_dump from MemShadow. Helpers find_self_update_loads + bytecode_range. 3 unit tests. |
 | `llil/lift.py` (capstone → LLIL) | `tracemiku-core::llil::lift` | 🔜 M5 | capstone-rs feed |
@@ -523,8 +523,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
 | `/api/dec/summary` | ✅ M3-ι2c | trace-ir + symbol-source fallback + VM candidates wire/markdown shipped; m3_iota_parity.py HARD-gate green on real xsign trace (fns 0.978 / summary_md 0.943 / VM exact) |
 | `/api/dec/fn/{id}` | ✅ M3-ι2c | trace:* + bare F0 + sym:* + legacy cfg:* supported via render_func_md (hot blocks full + warm stubs; asm/samples/exits). `bn:*` remains gated on Rust BN sidecar/backend (M6). |
-| `/api/dec/llm-call` | 🔜 M3-ι2d | LLM client port (claude / deepseek / qwen / mimo via reqwest + serde JSON) |
-| `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
+| `/api/dec/llm-call` | ✅ M3-ι2d | trace:* / bare F0 / sym:* / cfg:* supported; calls claude/deepseek/qwen/mimo via reqwest; success-only cache; `bn:*` remains M6-gated |
+| `/api/dec/models` | ✅ M3-ι2d | lists model aliases and configured server-side env keys |
 | `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |
 | `/api/hlil-for-pc`, `/api/hlil-for-fn` | 🔜 M6 | BN sidecar |
 | `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | 🔜 M6 | BN sidecar |
