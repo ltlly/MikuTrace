@@ -263,3 +263,23 @@ fn timeline_diff_wrappers_use_server_wire_shape() {
     assert_eq!(v["size"], 1);
     assert_eq!(v["bytes"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn mem_flow_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "mem-flow".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--count".into(),
+        "1".into(),
+        "--writers-only".into(),
+        "--events-per-byte".into(),
+        "1".into(),
+    ]);
+    assert_eq!(v["addr"], "0x7000");
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["bytes"].as_array().unwrap().len(), 1);
+    assert_eq!(v["bytes"][0]["events"].as_array().unwrap().len(), 1);
+}

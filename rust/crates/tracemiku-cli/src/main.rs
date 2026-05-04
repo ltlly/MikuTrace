@@ -273,6 +273,24 @@ enum Cmd {
         #[arg(long, default_value_t = 16)]
         size: usize,
     },
+    /// GET /api/mem-flow.
+    MemFlow {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 8)]
+        count: usize,
+        #[arg(long)]
+        idx_lo: Option<usize>,
+        #[arg(long)]
+        idx_hi: Option<usize>,
+        #[arg(long, default_value_t = 10)]
+        events_per_byte: usize,
+        #[arg(long)]
+        writers_only: bool,
+        #[arg(long)]
+        readers_only: bool,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -552,6 +570,31 @@ async fn main() -> anyhow::Result<()> {
                 ("size", size.to_string()),
             ];
             route_get_json(trace_dir, route_path("/api/mem-diff", &params)).await
+        }
+        Some(Cmd::MemFlow {
+            trace_dir,
+            addr,
+            count,
+            idx_lo,
+            idx_hi,
+            events_per_byte,
+            writers_only,
+            readers_only,
+        }) => {
+            let mut params = vec![
+                ("addr", addr),
+                ("count", count.to_string()),
+                ("events_per_byte", events_per_byte.to_string()),
+                ("writers_only", writers_only.to_string()),
+                ("readers_only", readers_only.to_string()),
+            ];
+            if let Some(idx_lo) = idx_lo {
+                params.push(("idx_lo", idx_lo.to_string()));
+            }
+            if let Some(idx_hi) = idx_hi {
+                params.push(("idx_hi", idx_hi.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/mem-flow", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await

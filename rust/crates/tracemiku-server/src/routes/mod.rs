@@ -14,6 +14,7 @@ pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod last_write_of_reg;
 pub mod mem_dump;
+pub mod mem_flow;
 pub mod memory_query;
 pub mod meta;
 pub mod navigation;
@@ -79,6 +80,7 @@ pub fn router(state: AppState) -> Router {
             get(timeline_diff::reg_timeline_handler),
         )
         .route("/api/mem-diff", get(timeline_diff::mem_diff_handler))
+        .route("/api/mem-flow", get(mem_flow::mem_flow_handler))
         .route("/api/strings", get(strings::strings_handler))
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
         .route(
