@@ -121,14 +121,17 @@ def main():
              "chain", "backward-taint"),
         ]
 
-        # backward-taint is a SOFT gate in M3-β. Python's index path does
-        # MEM-chasing unconditionally (viewer/taint.py:312-356), but the
-        # Rust port skips it (M3-β scope: index-accelerated, no
-        # through_mem). On real traces with frequent ld/st, the two
-        # algorithms reach different parts of the chase graph under the
-        # max_count cap. The gap is documented in TODO.md and lands as
-        # part of M3-γ (advanced taint flags). Until then we surface the
-        # divergence as a WARN, not a fail.
+        # M3-γ Task 1 ported backward MEM-chasing into the Rust port
+        # (viewer/taint.py:301-356 → tracemiku-core::backward_taint), but
+        # the parity gate could not be tightened: a SECOND divergence
+        # surfaced. ARM64 pre-/post-indexed addressing modes (e.g.
+        # `ldrh w0, [x21, #0x20]!`) writeback the base register; Python
+        # via `regs_access()` reports `regs_def=(x0, x21)`, but the Rust
+        # decoder's `build_reg_accesses()` (regs_read+regs_write +
+        # manual operand walk) only reports `regs_def=(x0)`. As a
+        # result `index.reg_defs[x21]` differs, and the BFS lands on
+        # different `last def of x21` cursors. Filed as a follow-up
+        # under M3-γ disasm-port; backward stays soft until then.
         SOFT_LABELS = {"backward-taint"}
 
         diffs = []           # hard failures (forward-taint)
