@@ -3,7 +3,7 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tracemiku_core::hashfin::{hash_finalize_detect, HashFinalizeCandidate};
+use tracemiku_core::hashfin::HashFinalizeCandidate;
 
 use crate::state::AppState;
 
@@ -69,7 +69,7 @@ fn hash_finalize_response(
             };
         }
     };
-    let candidates = hash_finalize_detect(mem, q.window, q.min_size);
+    let candidates = inner.hash_finalize_candidates(mem, q.window, q.min_size);
 
     HashFinalizeResponse {
         status: "ready",

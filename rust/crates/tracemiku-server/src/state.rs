@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::disasm::decode;
+use tracemiku_core::hashfin::{HashFinalizeCandidate, HashFinalizeIndex};
 use tracemiku_core::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use tracemiku_core::prelude::{
     build_call_tree_indexed, build_frame_depth_map, build_from_trace, build_function_index,
@@ -45,11 +46,13 @@ pub struct AppStateInner {
     frame_depths: OnceLock<Vec<u32>>,
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
+    hash_finalize_index: OnceLock<HashFinalizeIndex>,
     top_ir: OnceLock<TopIR>,
     type_spec_paths: Vec<PathBuf>,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
     ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
+    hash_finalize_cache: Mutex<HashMap<HashFinalizeCacheKey, Vec<HashFinalizeCandidate>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
 }
 
@@ -64,6 +67,12 @@ pub struct CfgSvgCached {
 struct OllvmCacheKey {
     min_entries: usize,
     threshold_bits: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct HashFinalizeCacheKey {
+    window: usize,
+    min_size: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -173,11 +182,13 @@ impl AppState {
             frame_depths: OnceLock::new(),
             asm_groups: OnceLock::new(),
             jni_calls: OnceLock::new(),
+            hash_finalize_index: OnceLock::new(),
             top_ir: OnceLock::new(),
             type_spec_paths: spec_paths,
             llm_cache: Mutex::new(HashMap::new()),
             cfg_svg_cache: Mutex::new(HashMap::new()),
             ollvm_cache: Mutex::new(HashMap::new()),
+            hash_finalize_cache: Mutex::new(HashMap::new()),
             bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
         });
 
@@ -362,6 +373,29 @@ impl AppStateInner {
             cache.entry(key).or_insert_with(|| findings.clone());
         }
         findings
+    }
+
+    pub fn hash_finalize_candidates(
+        &self,
+        mem: &MemShadow,
+        window: usize,
+        min_size: u64,
+    ) -> Vec<HashFinalizeCandidate> {
+        let key = HashFinalizeCacheKey { window, min_size };
+        if let Ok(cache) = self.hash_finalize_cache.lock() {
+            if let Some(candidates) = cache.get(&key) {
+                return candidates.clone();
+            }
+        }
+
+        let candidates = self
+            .hash_finalize_index
+            .get_or_init(|| HashFinalizeIndex::build(mem))
+            .detect(window, min_size);
+        if let Ok(mut cache) = self.hash_finalize_cache.lock() {
+            cache.entry(key).or_insert_with(|| candidates.clone());
+        }
+        candidates
     }
 }
 
