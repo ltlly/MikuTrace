@@ -219,3 +219,11 @@ ul {
 .ct-fn { color: var(--accent, #6cf); }
 .ct-idx { font-style: normal; }
 .ct-trunc { color: var(--warn, #fc6); margin-left: 0.4em; }
+
+.taint-controls { display: flex; gap: 1em; align-items: center; margin: 0.5em 0; flex-wrap: wrap; }
+.taint-controls input[type="number"] { width: 5em; }
+.taint-controls input[type="text"] { width: 5em; }
+.taint-controls select { padding: 2px 4px; }
+.taint-table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; }
+.taint-table th, .taint-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.taint-table th { color: var(--dim, #888); font-weight: normal; }

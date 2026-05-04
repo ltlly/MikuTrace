@@ -125,3 +125,33 @@ export interface CallNode {
 export interface CallTreeResponse {
   tree: CallNode;
 }
+
+// ── /api/forward-taint, /api/backward-taint ───────────────────────────────
+
+export interface TaintRow {
+  idx: number;
+  pc: string;
+  rel: string | null;
+  func: string | null;
+  asm: string;
+  why?: string;     // forward
+  via?: string;     // backward
+}
+
+export interface ForwardTaintResponse {
+  count: number;
+  from: number;
+  reg: string;
+  hits: TaintRow[];
+  stopped_at_max: boolean;
+  max_count_used: number;
+}
+
+export interface BackwardTaintResponse {
+  count: number;
+  from: number;
+  reg: string;
+  chain: TaintRow[];
+  stopped_at_max: boolean;
+  max_count_used: number;
+}

@@ -3,6 +3,7 @@ import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
+import TaintPanel from "./panels/taint/TaintPanel";
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
       <MetaPanel />
       <FunctionsPanel />
       <CallTreePanel />
+      <TaintPanel />
       <StringsPanel />
       <RecordsPanel />
     </main>

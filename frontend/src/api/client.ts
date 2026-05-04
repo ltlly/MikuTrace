@@ -6,6 +6,8 @@ import type {
   StringsResponse,
   MemDumpResponse,
   CallTreeResponse,
+  ForwardTaintResponse,
+  BackwardTaintResponse,
 } from "./types";
 
 export async function fetchMeta(): Promise<MetaResponse> {
@@ -65,4 +67,34 @@ export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   const r = await fetch(`/api/call-tree?${params}`);
   if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
   return (await r.json()) as CallTreeResponse;
+}
+
+export async function fetchForwardTaint(
+  start: number,
+  reg: string,
+  maxCount = 200,
+): Promise<ForwardTaintResponse> {
+  const params = new URLSearchParams({
+    start: String(start),
+    reg,
+    max_count: String(maxCount),
+  });
+  const r = await fetch(`/api/forward-taint?${params}`);
+  if (!r.ok) throw new Error(`/api/forward-taint ${r.status}: ${await r.text()}`);
+  return (await r.json()) as ForwardTaintResponse;
+}
+
+export async function fetchBackwardTaint(
+  start: number,
+  reg: string,
+  maxCount = 200,
+): Promise<BackwardTaintResponse> {
+  const params = new URLSearchParams({
+    start: String(start),
+    reg,
+    max_count: String(maxCount),
+  });
+  const r = await fetch(`/api/backward-taint?${params}`);
+  if (!r.ok) throw new Error(`/api/backward-taint ${r.status}: ${await r.text()}`);
+  return (await r.json()) as BackwardTaintResponse;
 }
