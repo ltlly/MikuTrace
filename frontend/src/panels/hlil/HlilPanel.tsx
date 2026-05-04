@@ -54,6 +54,12 @@ export default function HlilPanel(props: HlilPanelProps) {
     return prev && prev.fnId === next.fnId && prev.reload === next.reload ? prev : next;
   });
   const [hlil] = createResource(source, (s) => (s ? fetchHlilForFn(s.fnId) : undefined));
+  const currentHlil = createMemo(() => {
+    const r = hlil();
+    const s = source();
+    if (!r || !s) return undefined;
+    return r.request_fn_id === s.fnId ? r : undefined;
+  });
 
   async function jumpLine(pc: string) {
     cancelJump();
@@ -99,10 +105,10 @@ export default function HlilPanel(props: HlilPanelProps) {
       <Show when={functions.error}>
         <p class="err">function list failed: {String(functions.error)}</p>
       </Show>
-      <Show when={hlil.error}>
+      <Show when={!hlil.loading && hlil.error}>
         <p class="err">hlil failed: {String(hlil.error)}</p>
       </Show>
-      <Show when={hlil()}>
+      <Show when={currentHlil()}>
         {(r) => (
           <Show
             when={r().ready && r().ok}

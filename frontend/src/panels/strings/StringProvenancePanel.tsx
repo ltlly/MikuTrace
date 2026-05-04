@@ -56,9 +56,15 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
       : next;
   });
   const [resp] = createResource(source, (s) => fetchStringProvenance(s.addr, s.len));
+  const currentResp = createMemo(() => {
+    const r = resp();
+    const s = source();
+    if (!r || !s) return undefined;
+    return r.addr === s.addr && r.length === s.len ? r : undefined;
+  });
 
   const shownBytes = createMemo(() => {
-    const bytes = resp()?.bytes ?? [];
+    const bytes = currentResp()?.bytes ?? [];
     const nul = bytes.findIndex((b) => b.byte === 0);
     return nul >= 0 ? bytes.slice(0, nul + 1) : bytes;
   });
@@ -94,13 +100,13 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
             <p class="dim small">
               string @ <code>{req().addr}</code> · len {req().len} · <code>{req().text}</code>
             </p>
-            <Show when={resp.error}>
+            <Show when={!resp.loading && resp.error}>
               <p class="err">provenance failed: {String(resp.error)}</p>
             </Show>
             <Show when={resp.loading}>
               <p class="dim">loading provenance…</p>
             </Show>
-            <Show when={resp()}>
+            <Show when={currentResp()}>
               <table class="string-prov-table">
                 <thead>
                   <tr>

@@ -40,6 +40,9 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   const [llilLlmOutput, setLlilLlmOutput] = createSignal("");
   const [llilMaxRecords, setLlilMaxRecords] = createSignal(300);
   const [llilDce, setLlilDce] = createSignal(false);
+  let llmSeq = 0;
+  let llilSeq = 0;
+  let llilLlmSeq = 0;
 
   createEffect(() => {
     if (!props.active) return;
@@ -61,10 +64,51 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
     return prev && prev.fnId === next.fnId && prev.tier === next.tier ? prev : next;
   });
   const [fnResp] = createResource(fnSource, (s) => (s ? fetchDecFn(s.fnId, s.tier) : undefined));
+  const currentFnResp = createMemo(() => {
+    const r = fnResp();
+    const s = fnSource();
+    if (!r || !s) return undefined;
+    return r.fn_id === s.fnId && r.tier === s.tier ? r : undefined;
+  });
+
+  createEffect((prev?: string) => {
+    const sig = `${props.selectedFn()}\0${tier()}\0${model()}\0${lang()}\0${maxTokens()}`;
+    if (prev !== undefined && prev !== sig) {
+      llmSeq += 1;
+      setLlmLoading(false);
+      setLlmError("");
+      setLlmOutput("");
+    }
+    return sig;
+  });
+
+  createEffect((prev?: string) => {
+    const sig = `${props.selectedFn()}\0${llilMaxRecords()}\0${llilDce()}`;
+    if (prev !== undefined && prev !== sig) {
+      llilSeq += 1;
+      setLlilLoading(false);
+      setLlilError("");
+      setLlilOutput("");
+    }
+    return sig;
+  });
+
+  createEffect((prev?: string) => {
+    const sig = `${props.selectedFn()}\0${model()}\0${lang()}\0${maxTokens()}\0${llilMaxRecords()}`;
+    if (prev !== undefined && prev !== sig) {
+      llilLlmSeq += 1;
+      setLlilLlmLoading(false);
+      setLlilLlmError("");
+      setLlilLlmOutput("");
+    }
+    return sig;
+  });
 
   async function runLlm() {
     const fnId = props.selectedFn();
     if (!fnId) return;
+    const seq = ++llmSeq;
+    const tierAtStart = tier();
     setLlmLoading(true);
     setLlmError("");
     setLlmOutput("");
@@ -74,8 +118,9 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         model: model(),
         max_tokens: Math.max(256, Math.min(32768, maxTokens())),
         lang: lang(),
-        tier: tier(),
+        tier: tierAtStart,
       });
+      if (seq !== llmSeq || props.selectedFn() !== fnId || tier() !== tierAtStart) return;
       if (r.error) setLlmError(r.error);
       setLlmOutput([
         `model: ${r.model}`,
@@ -84,27 +129,37 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         r.c_code ?? "",
       ].join("\n"));
     } catch (err) {
+      if (seq !== llmSeq) return;
       setLlmError(String(err));
     } finally {
-      setLlmLoading(false);
+      if (seq === llmSeq) setLlmLoading(false);
     }
   }
 
   async function runLlil() {
     const fnId = props.selectedFn();
     if (!fnId) return;
+    const seq = ++llilSeq;
+    const maxRecords = Math.max(1, Math.min(10000, llilMaxRecords()));
+    const dce = llilDce();
     setLlilLoading(true);
     setLlilError("");
     setLlilOutput("");
     try {
       const r = await renderLlil({
         fn_id: fnId,
-        max_records: Math.max(1, Math.min(10000, llilMaxRecords())),
+        max_records: maxRecords,
         ssa: true,
         constfold: true,
         flag_elim: true,
-        dce: llilDce(),
+        dce,
       });
+      if (
+        seq !== llilSeq ||
+        props.selectedFn() !== fnId ||
+        Math.max(1, Math.min(10000, llilMaxRecords())) !== maxRecords ||
+        llilDce() !== dce
+      ) return;
       setLlilOutput([
         `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · truncated" : ""}`,
         `lift coverage: ${(r.lift_coverage * 100).toFixed(1)}% · intrinsic ${r.lift_intrinsic}/${r.lift_total}`,
@@ -115,15 +170,18 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         r.pseudocode,
       ].filter(Boolean).join("\n"));
     } catch (err) {
+      if (seq !== llilSeq) return;
       setLlilError(String(err));
     } finally {
-      setLlilLoading(false);
+      if (seq === llilSeq) setLlilLoading(false);
     }
   }
 
   async function runLlilLlm() {
     const fnId = props.selectedFn();
     if (!fnId) return;
+    const seq = ++llilLlmSeq;
+    const maxRecords = Math.max(1, Math.min(10000, llilMaxRecords()));
     setLlilLlmLoading(true);
     setLlilLlmError("");
     setLlilLlmOutput("");
@@ -133,8 +191,13 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         model: model(),
         max_tokens: Math.max(256, Math.min(32768, maxTokens())),
         lang: lang(),
-        max_records: Math.max(1, Math.min(10000, llilMaxRecords())),
+        max_records: maxRecords,
       });
+      if (
+        seq !== llilLlmSeq ||
+        props.selectedFn() !== fnId ||
+        Math.max(1, Math.min(10000, llilMaxRecords())) !== maxRecords
+      ) return;
       if (r.error) setLlilLlmError(r.error);
       setLlilLlmOutput([
         `LLIL -> LLM · ${r.model} · ${r.in_tokens}->${r.out_tokens} tok · ${r.latency_ms}ms`,
@@ -143,9 +206,10 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         r.c_code ?? "",
       ].join("\n"));
     } catch (err) {
+      if (seq !== llilLlmSeq) return;
       setLlilLlmError(String(err));
     } finally {
-      setLlilLlmLoading(false);
+      if (seq === llilLlmSeq) setLlilLlmLoading(false);
     }
   }
 
@@ -281,13 +345,13 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                     {llilLlmLoading() ? "calling…" : "LLIL → LLM"}
                   </button>
                 </div>
-                <Show when={fnResp.error}>
+                <Show when={!fnResp.loading && fnResp.error}>
                   <p class="err">fn load failed: {String(fnResp.error)}</p>
                 </Show>
                 <Show when={fnResp.loading}>
                   <p class="dim">loading fn…</p>
                 </Show>
-                <Show when={fnResp()}>
+                <Show when={currentFnResp()}>
                   {(f) => <pre class="dec-markdown">{f().markdown}</pre>}
                 </Show>
                 <Show when={llmError()}>

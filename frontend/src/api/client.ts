@@ -155,7 +155,10 @@ export async function fetchStrings(minLen = 4, q = ""): Promise<StringsResponse>
   if (q) params.set("q", q);
   const r = await fx(`/api/strings?${params}`);
   if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
-  return (await r.json()) as StringsResponse;
+  const out = (await r.json()) as StringsResponse;
+  out.request_min_len = minLen;
+  out.request_q = q;
+  return out;
 }
 
 export async function fetchStringProvenance(
@@ -292,7 +295,9 @@ export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   const params = new URLSearchParams({ max_depth: String(maxDepth) });
   const r = await fx(`/api/call-tree?${params}`);
   if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
-  return (await r.json()) as CallTreeResponse;
+  const out = (await r.json()) as CallTreeResponse;
+  out.request_max_depth = maxDepth;
+  return out;
 }
 
 export async function fetchBacktrace(idx: number): Promise<BacktraceResponse> {
@@ -308,7 +313,9 @@ export async function fetchForkEvents(status = ""): Promise<ForkEventsResponse> 
   const qs = params.toString();
   const r = await fx(`/api/fork-events${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/fork-events ${r.status}: ${await r.text()}`);
-  return (await r.json()) as ForkEventsResponse;
+  const out = (await r.json()) as ForkEventsResponse;
+  out.request_status = status;
+  return out;
 }
 
 export interface TaintFlags {
@@ -469,5 +476,7 @@ export async function fetchHlilForFn(fnId: string): Promise<HlilForFnResponse> {
   const params = new URLSearchParams({ fn_id: fnId });
   const r = await fx(`/api/hlil-for-fn?${params}`);
   if (!r.ok) throw new Error(`/api/hlil-for-fn ${r.status}: ${await r.text()}`);
-  return (await r.json()) as HlilForFnResponse;
+  const out = (await r.json()) as HlilForFnResponse;
+  out.request_fn_id = fnId;
+  return out;
 }

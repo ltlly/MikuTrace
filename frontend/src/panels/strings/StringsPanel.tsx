@@ -28,6 +28,12 @@ export default function StringsPanel(props: StringsPanelProps) {
     return prev && prev.minLen === next.minLen && prev.q === next.q ? prev : next;
   });
   const [resp] = createResource(source, async ({ minLen, q }) => fetchStrings(minLen, q));
+  const currentResp = createMemo(() => {
+    const r = resp();
+    const s = source();
+    if (!r || !s) return undefined;
+    return r.request_min_len === s.minLen && r.request_q === s.q ? r : undefined;
+  });
 
   function clearSingleClickTimer() {
     if (singleClickTimer !== undefined) {
@@ -118,7 +124,7 @@ export default function StringsPanel(props: StringsPanelProps) {
           />
         </label>
       </div>
-      <Show when={resp.error}>
+      <Show when={!resp.loading && resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>
       </Show>
       <Show when={jumpErr()}>
@@ -127,7 +133,7 @@ export default function StringsPanel(props: StringsPanelProps) {
       <Show when={resp.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={resp()}>
+      <Show when={currentResp()}>
         {(r) => (
           <>
             <p class="dim small">

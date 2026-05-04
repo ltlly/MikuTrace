@@ -147,6 +147,8 @@ export interface StringsResponse {
   count: number;
   cursor: number;     // -1 if no cursor filter
   strings: StringEntry[];
+  request_min_len?: number;
+  request_q?: string;
 }
 
 // ── /api/string-provenance ──────────────────────────────────────────────
@@ -306,6 +308,7 @@ export interface CallNode {
 
 export interface CallTreeResponse {
   tree: CallNode;
+  request_max_depth?: number;
 }
 
 // ── /api/backtrace ───────────────────────────────────────────────────────
@@ -338,6 +341,7 @@ export interface ForkEvent {
 export interface ForkEventsResponse {
   count: number;
   events: ForkEvent[];
+  request_status?: string;
 }
 
 // ── /api/forward-taint, /api/backward-taint ───────────────────────────────
@@ -565,4 +569,5 @@ export interface HlilForFnResponse {
   lines?: HlilLine[];
   vars?: unknown[];
   error?: string;
+  request_fn_id?: string;
 }

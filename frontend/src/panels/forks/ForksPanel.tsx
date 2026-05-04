@@ -24,8 +24,13 @@ export default function ForksPanel(props: ForksPanelProps) {
     () => (props.active ? status() : undefined),
     (s) => fetchForkEvents(s),
   );
+  const currentResp = createMemo(() => {
+    const r = resp();
+    if (!r || !props.active) return undefined;
+    return r.request_status === status() ? r : undefined;
+  });
   const failedCount = createMemo(
-    () => resp()?.events.filter((e) => statusOf(e).startsWith("failed")).length ?? 0,
+    () => currentResp()?.events.filter((e) => statusOf(e).startsWith("failed")).length ?? 0,
   );
 
   return (
@@ -44,13 +49,13 @@ export default function ForksPanel(props: ForksPanelProps) {
           <span class="fork-warn">{failedCount()} failed</span>
         </Show>
       </div>
-      <Show when={resp.error}>
+      <Show when={!resp.loading && resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>
       </Show>
       <Show when={resp.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={resp()}>
+      <Show when={currentResp()}>
         {(r) => (
           <>
             <p class="dim small">{r().count} event{r().count === 1 ? "" : "s"}</p>

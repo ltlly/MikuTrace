@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchCallTree } from "~/api/client";
 import type { CallNode } from "~/api/types";
@@ -105,11 +105,16 @@ export default function CallTreePanel(props: CallTreePanelProps) {
     () => (props.active ? depth() : undefined),
     (maxDepth) => fetchCallTree(maxDepth),
   );
+  const currentResp = createMemo(() => {
+    const r = resp();
+    if (!r || !props.active) return undefined;
+    return r.request_max_depth === depth() ? r : undefined;
+  });
   const [openKeys, setOpenKeys] = createSignal<Set<string>>(new Set());
   const [locatedKey, setLocatedKey] = createSignal("");
 
   function locateCurrent() {
-    const tree = resp()?.tree;
+    const tree = currentResp()?.tree;
     if (!tree || props.currentIdx === undefined) return;
     const path = findPath(tree, props.currentIdx);
     if (!path?.length) return;
@@ -145,13 +150,13 @@ export default function CallTreePanel(props: CallTreePanelProps) {
           locate current fn
         </button>
       </div>
-      <Show when={resp.error}>
+      <Show when={!resp.loading && resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>
       </Show>
       <Show when={resp.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={resp()}>
+      <Show when={currentResp()}>
         {(r) => (
           <div class="ct-wrap">
             <CallTreeRow
