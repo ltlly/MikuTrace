@@ -61,6 +61,14 @@ pub enum CfgSvgResponse {
 const AUTO_DOT_MAX_BLOCKS: usize = 180;
 const AUTO_DOT_MAX_EDGES: usize = 900;
 
+fn estimate_dot_bytes(block_count: usize, edge_count: usize) -> usize {
+    // Large auto-skip responses should not build the full Graphviz dot just to
+    // report its size. This estimate is only used for the UI warning.
+    4096usize
+        .saturating_add(block_count.saturating_mul(1800))
+        .saturating_add(edge_count.saturating_mul(120))
+}
+
 pub async fn cfg_svg_handler(
     State(state): State<AppState>,
     Query(q): Query<CfgSvgQuery>,
@@ -96,7 +104,6 @@ pub async fn cfg_svg_handler(
 
     let included_starts: HashSet<u64> = included.iter().map(|b| b.start_pc).collect();
     let edge_count = included_edge_count(inner, &included_starts);
-    let dot = build_dot(inner, &included, &included_starts);
     if !q.force && (included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES) {
         let overview_svg = build_large_overview_svg(inner, &included, &included_starts);
         return Json(CfgSvgResponse::Large {
@@ -105,9 +112,10 @@ pub async fn cfg_svg_handler(
             block_count: included.len(),
             edge_count,
             total_block_count: inner.cfg.block_count(),
-            dot_bytes: dot.len(),
+            dot_bytes: estimate_dot_bytes(included.len(), edge_count),
         });
     }
+    let dot = build_dot(inner, &included, &included_starts);
     let timeout = q.timeout.clamp(5, 300);
     match render_dot_to_svg(dot, timeout).await {
         Ok(svg) => {
