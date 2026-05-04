@@ -3,6 +3,7 @@
 //! Use `use tracemiku_core::prelude::*;` rather than reaching into
 //! submodules directly.
 
+pub use crate::calltree::{build_call_tree, CallNode};
 pub use crate::cfg::{Block, CFG};
 pub use crate::disasm::{decode, normalize_disasm_reg, DecodedInsn};
 pub use crate::function_index::{

@@ -9,6 +9,7 @@
 #![deny(unused_must_use)]
 #![warn(clippy::all)]
 
+pub mod calltree;
 pub mod cfg;
 pub mod disasm;
 pub mod function_index;
