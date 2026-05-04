@@ -1,6 +1,7 @@
 pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
+pub mod dec_fn;
 pub mod dec_summary;
 pub mod forward_taint;
 pub mod functions;
@@ -32,6 +33,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
         .route("/api/dec/summary", get(dec_summary::dec_summary_handler))
+        .route("/api/dec/fn/:fn_id", get(dec_fn::dec_fn_handler))
         .route(
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),
