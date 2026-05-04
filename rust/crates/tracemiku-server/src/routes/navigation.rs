@@ -274,7 +274,7 @@ pub async fn call_chain_handler(
         if caller_pc == 0 {
             break;
         }
-        let Some(next_idx) = last_pc_before(&inner.trace, caller_pc, cur_idx) else {
+        let Some(next_idx) = last_pc_before(inner, caller_pc, cur_idx) else {
             break;
         };
         cur_idx = next_idx;
@@ -290,15 +290,38 @@ pub async fn backtrace_handler(
     State(state): State<AppState>,
     Query(q): Query<BacktraceQuery>,
 ) -> Result<Json<BacktraceResponse>, StatusCode> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
     if q.idx >= inner.trace.len() {
         return Err(StatusCode::NOT_FOUND);
     }
+    let response = tokio::task::spawn_blocking(move || backtrace_response(&inner, q.idx))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "backtrace worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(response))
+}
+
+fn backtrace_response(inner: &crate::state::AppStateInner, idx: usize) -> BacktraceResponse {
     let mut stack: Vec<BacktraceFrame> = Vec::new();
-    for i in 0..=q.idx {
+    let mut events = Vec::<(usize, bool)>::new();
+    for (&pc, idxs) in &inner.index.pc_to_idxs {
+        let Some(&first_idx) = idxs.first() else {
+            continue;
+        };
+        let d = decode(pc, inner.trace.inst(first_idx));
+        if !d.is_call && !d.is_ret {
+            continue;
+        }
+        let take = idxs.partition_point(|&i| i <= idx);
+        events.extend(idxs[..take].iter().copied().map(|i| (i, d.is_call)));
+    }
+    events.sort_unstable_by_key(|(i, _)| *i);
+
+    for (i, is_call) in events {
         let record = inner.trace.record(i);
-        let d = decode(record.pc, record.inst);
-        if d.is_call {
+        if is_call {
             let callee = (i + 1 < inner.trace.len()).then(|| inner.trace.pc(i + 1));
             let fn_name = callee
                 .map(|pc| inner.symbols.lookup(pc).0)
@@ -306,21 +329,21 @@ pub async fn backtrace_handler(
             stack.push(BacktraceFrame {
                 call_site_idx: i,
                 call_pc: format!("{:#x}", record.pc),
-                call_pc_fmt: Some(fmt_pc(&state, record.pc)),
+                call_pc_fmt: Some(fmt_pc_inner(inner, record.pc)),
                 callee_pc: callee.map(|pc| format!("{pc:#x}")),
-                callee_pc_fmt: callee.map(|pc| fmt_pc(&state, pc)),
+                callee_pc_fmt: callee.map(|pc| fmt_pc_inner(inner, pc)),
                 fn_name,
             });
-        } else if d.is_ret {
+        } else {
             stack.pop();
         }
     }
-    Ok(Json(BacktraceResponse {
+    BacktraceResponse {
         status: "ready",
-        idx: q.idx,
+        idx,
         depth: stack.len(),
         stack,
-    }))
+    }
 }
 
 fn find_block_for_pc(state: &AppState, pc: u64) -> Option<&tracemiku_core::cfg::Block> {
@@ -332,12 +355,18 @@ fn find_block_for_pc(state: &AppState, pc: u64) -> Option<&tracemiku_core::cfg::
         .find(|block| pc >= block.start_pc && pc <= block.end_pc)
 }
 
-fn last_pc_before(trace: &Trace, pc: u64, before_idx: usize) -> Option<usize> {
-    (0..before_idx).rev().find(|&i| trace.pc(i) == pc)
+fn last_pc_before(
+    inner: &crate::state::AppStateInner,
+    pc: u64,
+    before_idx: usize,
+) -> Option<usize> {
+    let idxs = inner.index.pc_to_idxs.get(&pc)?;
+    let pos = idxs.partition_point(|&i| i < before_idx);
+    pos.checked_sub(1).map(|i| idxs[i])
 }
 
-fn fmt_pc(state: &AppState, pc: u64) -> String {
-    let Some(module) = state.inner.meta.module.as_ref() else {
+fn fmt_pc_inner(inner: &crate::state::AppStateInner, pc: u64) -> String {
+    let Some(module) = inner.meta.module.as_ref() else {
         return format!("{pc:#x}");
     };
     let Some(base) = parse_int(&module.base) else {
@@ -346,7 +375,7 @@ fn fmt_pc(state: &AppState, pc: u64) -> String {
     if pc < base || pc >= base.saturating_add(module.size) {
         return format!("{pc:#x}");
     }
-    let (fn_name, off) = state.inner.symbols.lookup(pc);
+    let (fn_name, off) = inner.symbols.lookup(pc);
     if fn_name != "?" {
         format!("{fn_name}+{off:#x}")
     } else {
