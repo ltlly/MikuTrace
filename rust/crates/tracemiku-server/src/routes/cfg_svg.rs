@@ -288,7 +288,7 @@ fn build_dot(
         .as_ref()
         .and_then(|m| parse_hex_u64(&m.base))
         .unwrap_or(0);
-    let block_insns = collect_first_block_insns(&inner.trace, &inner.cfg, included_starts);
+    let block_insns = collect_first_block_insns(inner, included_starts);
     let loop_colors = loop_border_colors(&inner.cfg);
 
     let mut out = String::new();
@@ -480,42 +480,47 @@ fn block_rows(
 }
 
 fn collect_first_block_insns(
-    trace: &tracemiku_core::trace::Trace,
-    cfg: &tracemiku_core::cfg::CFG,
+    inner: &crate::state::AppStateInner,
     wanted_starts: &HashSet<u64>,
 ) -> HashMap<u64, Vec<(u64, u32)>> {
-    let starts: HashSet<u64> = cfg.by_pc.keys().copied().collect();
     let mut out: HashMap<u64, Vec<(u64, u32)>> = HashMap::new();
-    let mut done: HashSet<u64> = HashSet::new();
-    let mut current: Option<u64> = None;
 
-    for i in 0..trace.len() {
-        let pc = trace.pc(i);
-        if starts.contains(&pc) {
-            current = Some(pc);
-        }
-        let Some(start) = current else {
+    for &start in wanted_starts {
+        let Some(first_idx) = inner
+            .index
+            .pc_to_idxs
+            .get(&start)
+            .and_then(|idxs| idxs.first())
+            .copied()
+        else {
             continue;
         };
-        if !wanted_starts.contains(&start) {
-            current = None;
+        let Some(block) = inner.cfg.block(start) else {
             continue;
-        }
-        if done.contains(&start) {
-            current = None;
-            continue;
-        }
+        };
 
-        let inst = trace.inst(i);
-        out.entry(start).or_default().push((pc, inst));
-        let d = tracemiku_core::disasm::decode(pc, inst);
-        let end_pc = cfg.block(start).map(|b| b.end_pc).unwrap_or(pc);
-        if d.is_branch || pc == end_pc {
-            done.insert(start);
-            if done.len() >= wanted_starts.len() {
+        let mut rows = Vec::new();
+        for i in first_idx..inner.trace.len() {
+            let pc = inner.trace.pc(i);
+            if i != first_idx && inner.cfg.by_pc.contains_key(&pc) && pc != start {
                 break;
             }
-            current = None;
+            if pc < block.start_pc || pc > block.end_pc {
+                if !rows.is_empty() {
+                    break;
+                }
+                continue;
+            }
+
+            let inst = inner.trace.inst(i);
+            rows.push((pc, inst));
+            let d = tracemiku_core::disasm::decode(pc, inst);
+            if d.is_branch || pc == block.end_pc {
+                break;
+            }
+        }
+        if !rows.is_empty() {
+            out.insert(start, rows);
         }
     }
     out

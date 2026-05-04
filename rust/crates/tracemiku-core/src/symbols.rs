@@ -5,9 +5,13 @@
 //! all `add()` calls. Lookup is `&self` (no interior mutability).
 
 use std::collections::HashMap;
+use std::thread;
 
 use crate::disasm::decode;
 use crate::trace::{ModuleInfo, Trace};
+
+const PARALLEL_MIN_RECORDS: usize = 250_000;
+const MIN_CHUNK_RECORDS: usize = 200_000;
 
 /// Lookup PC → (function-name, offset-within).
 #[derive(Debug, Default, Clone)]
@@ -163,9 +167,63 @@ pub fn auto_known_offsets(trace: &Trace) -> HashMap<u64, String> {
 /// for merging into a static known_offsets dict (which uses module-relative
 /// hex keys per the per-call meta.json contract).
 pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, String> {
-    let mut out = HashMap::new();
     let n = trace.len();
-    for i in 0..n {
+    let workers = symbol_worker_count(n);
+    if workers <= 1 {
+        return auto_known_offsets_range(trace, base, 0, n);
+    }
+    tracing::info!(
+        target: "tracemiku-core",
+        records = n,
+        workers,
+        "discovering auto symbols in parallel"
+    );
+
+    let chunk_size = n.div_ceil(workers);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let start = worker * chunk_size;
+            let end = (start + chunk_size).min(n);
+            if start >= end {
+                continue;
+            }
+            handles.push(scope.spawn(move || auto_known_offsets_range(trace, base, start, end)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("auto symbol worker panicked"))
+            .collect::<Vec<_>>()
+    });
+
+    merge_auto_known_offset_partials(partials)
+}
+
+fn symbol_worker_count(n: usize) -> usize {
+    let requested = std::env::var("TRACEMIKU_SYMBOL_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v > 0);
+    let available = requested.unwrap_or_else(|| {
+        thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+    if available <= 1 || (requested.is_none() && n < PARALLEL_MIN_RECORDS) {
+        return 1;
+    }
+    let chunk_cap = n.div_ceil(MIN_CHUNK_RECORDS).max(1);
+    available.min(chunk_cap).max(1)
+}
+
+fn auto_known_offsets_range(
+    trace: &Trace,
+    base: u64,
+    start: usize,
+    end: usize,
+) -> HashMap<u64, String> {
+    let mut out = HashMap::new();
+    for i in start..end {
         let pc = trace.pc(i);
         let inst = trace.inst(i);
         let d = decode(pc, inst);
@@ -177,6 +235,16 @@ pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, St
         };
         let key = target.wrapping_sub(base);
         out.entry(key).or_insert_with(|| format!("sub_{key:x}"));
+    }
+    out
+}
+
+fn merge_auto_known_offset_partials(partials: Vec<HashMap<u64, String>>) -> HashMap<u64, String> {
+    let mut out = HashMap::new();
+    for partial in partials {
+        for (key, name) in partial {
+            out.entry(key).or_insert(name);
+        }
     }
     out
 }
