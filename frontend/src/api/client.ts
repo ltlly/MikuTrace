@@ -65,7 +65,7 @@ async function fx(input: string, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? "GET").toUpperCase();
   if (dbg) console.log(`[api #${seq}] -> ${method} ${input}`);
   try {
-    const r = await fx(input, init);
+    const r = await fetch(input, init);
     const dt = performance.now() - t0;
     if (dbg) {
       const cl = r.headers.get("content-length");
