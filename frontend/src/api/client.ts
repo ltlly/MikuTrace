@@ -5,8 +5,11 @@ import type {
   FunctionsResponse,
   StringsResponse,
   MemDumpResponse,
+  MemDiffResponse,
   IdxsForPcResponse,
   CallTreeResponse,
+  BacktraceResponse,
+  ForkEventsResponse,
   ForwardTaintResponse,
   BackwardTaintResponse,
   DecSummaryResponse,
@@ -80,6 +83,21 @@ export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpRes
   return (await r.json()) as MemDumpResponse;
 }
 
+export async function fetchMemDiff(
+  idx: number,
+  addr: string,
+  size = 16,
+): Promise<MemDiffResponse> {
+  const params = new URLSearchParams({
+    idx: String(idx),
+    addr,
+    size: String(size),
+  });
+  const r = await fetch(`/api/mem-diff?${params}`);
+  if (!r.ok) throw new Error(`/api/mem-diff ${r.status}: ${await r.text()}`);
+  return (await r.json()) as MemDiffResponse;
+}
+
 export async function fetchIdxsForPc(
   pc: string,
   cursor = 0,
@@ -100,6 +118,22 @@ export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   const r = await fetch(`/api/call-tree?${params}`);
   if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
   return (await r.json()) as CallTreeResponse;
+}
+
+export async function fetchBacktrace(idx: number): Promise<BacktraceResponse> {
+  const params = new URLSearchParams({ idx: String(idx) });
+  const r = await fetch(`/api/backtrace?${params}`);
+  if (!r.ok) throw new Error(`/api/backtrace ${r.status}: ${await r.text()}`);
+  return (await r.json()) as BacktraceResponse;
+}
+
+export async function fetchForkEvents(status = ""): Promise<ForkEventsResponse> {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const qs = params.toString();
+  const r = await fetch(`/api/fork-events${qs ? "?" + qs : ""}`);
+  if (!r.ok) throw new Error(`/api/fork-events ${r.status}: ${await r.text()}`);
+  return (await r.json()) as ForkEventsResponse;
 }
 
 export interface TaintFlags {

@@ -131,6 +131,23 @@ export interface MemDumpResponse {
   bytes: MemDumpByte[];
 }
 
+// ── /api/mem-diff ────────────────────────────────────────────────────────
+
+export interface MemDiffByte {
+  addr: string;
+  before: number | null;
+  after: number | null;
+  changed: boolean;
+}
+
+export interface MemDiffResponse {
+  idx: number;
+  addr: string;
+  size: number;
+  bytes: MemDiffByte[];
+  changed_count: number;
+}
+
 // ── /api/idxs-for-pc ─────────────────────────────────────────────────────
 
 export interface IdxsForPcResponse {
@@ -165,6 +182,38 @@ export interface CallNode {
 
 export interface CallTreeResponse {
   tree: CallNode;
+}
+
+// ── /api/backtrace ───────────────────────────────────────────────────────
+
+export interface BacktraceFrame {
+  call_site_idx: number;
+  call_pc: string;
+  call_pc_fmt: string | null;
+  callee_pc: string | null;
+  callee_pc_fmt: string | null;
+  fn: string | null;
+}
+
+export interface BacktraceResponse {
+  status: string;
+  idx: number;
+  stack: BacktraceFrame[];
+  depth: number;
+}
+
+// ── /api/fork-events ─────────────────────────────────────────────────────
+
+export interface ForkEvent {
+  child_pid?: number;
+  attach_status?: string;
+  is_fork_like?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ForkEventsResponse {
+  count: number;
+  events: ForkEvent[];
 }
 
 // ── /api/forward-taint, /api/backward-taint ───────────────────────────────

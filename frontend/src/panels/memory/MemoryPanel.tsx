@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchMemDump, fetchRecord } from "~/api/client";
+import { fetchMemDiff, fetchMemDump, fetchRecord } from "~/api/client";
 
 interface MemoryPanelProps {
   idx: number;
@@ -18,6 +18,10 @@ function asciiByte(byte: number | null): string {
   return String.fromCharCode(byte);
 }
 
+function diffTitle(idx: number): string {
+  return idx > 0 ? `diff at idx ${idx - 1} -> ${idx}` : `diff before idx ${idx}`;
+}
+
 export default function MemoryPanel(props: MemoryPanelProps) {
   const [addr, setAddr] = createSignal("0x0");
   const [count, setCount] = createSignal(64);
@@ -31,6 +35,12 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     count: Math.max(1, Math.min(512, count())),
   }));
   const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
+  const diffSource = createMemo(() => ({
+    idx: props.idx,
+    addr: addr().trim() || "0x0",
+    size: Math.max(1, Math.min(128, count())),
+  }));
+  const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
 
   return (
     <section class="panel">
@@ -71,6 +81,9 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       <Show when={dump.error}>
         <p class="err">load failed: {String(dump.error)}</p>
       </Show>
+      <Show when={diff.error}>
+        <p class="err">diff failed: {String(diff.error)}</p>
+      </Show>
       <Show when={dump.loading}>
         <p class="dim">loading…</p>
       </Show>
@@ -103,6 +116,38 @@ export default function MemoryPanel(props: MemoryPanelProps) {
               </tbody>
             </table>
           </>
+        )}
+      </Show>
+      <Show when={diff()}>
+        {(d) => (
+          <div class="memory-diff">
+            <h3>{diffTitle(d().idx)}</h3>
+            <p class="dim small">
+              {d().addr} · {d().changed_count}/{d().size} changed
+            </p>
+            <table class="memory-table">
+              <thead>
+                <tr>
+                  <th>addr</th>
+                  <th>before</th>
+                  <th>after</th>
+                  <th>changed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={d().bytes}>
+                  {(b) => (
+                    <tr class={b.changed ? "changed" : ""}>
+                      <td><code>{b.addr}</code></td>
+                      <td><code>{hexByte(b.before)}</code></td>
+                      <td><code>{hexByte(b.after)}</code></td>
+                      <td>{b.changed ? "yes" : ""}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
         )}
       </Show>
     </section>

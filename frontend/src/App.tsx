@@ -1,8 +1,10 @@
 import { createSignal } from "solid-js";
 
+import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
+import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
@@ -27,7 +29,9 @@ export default function App() {
       <RegistersPanel idx={selectedIdx()} />
       <MemoryPanel idx={selectedIdx()} />
       <TraceForPcPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
+      <BacktracePanel idx={selectedIdx()} onSelect={setSelectedIdx} />
       <CallTreePanel />
+      <ForksPanel />
       <TaintPanel />
       <DecompilerPanel />
       <StringsPanel />
