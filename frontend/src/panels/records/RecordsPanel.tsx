@@ -420,6 +420,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                           {(reg) => (
                             <span
                               class="op-reg"
+                              classList={{ selected: reg() === normalizeReg(props.selectedReg) }}
                               title={`${reg()} · double-click last write · right-click actions`}
                               onDblClick={(e) => {
                                 e.stopPropagation();
