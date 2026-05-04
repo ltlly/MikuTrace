@@ -1,7 +1,12 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Context;
+use axum::http::header::{CACHE_CONTROL, PRAGMA};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse};
+use axum::routing::get;
 use clap::Parser;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
@@ -33,9 +38,26 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let app = tracemiku_server::build_router(cli.trace_dir.clone()).context("build router")?;
     let static_dir = cli.static_dir.unwrap_or_else(default_static_dir);
-    let app = app.fallback_service(
-        ServeDir::new(&static_dir).not_found_service(ServeFile::new(static_dir.join("index.html"))),
-    );
+    let index_path = Arc::new(static_dir.join("index.html"));
+    let app = app
+        .route(
+            "/",
+            get({
+                let index_path = index_path.clone();
+                move || serve_index(index_path.clone())
+            }),
+        )
+        .route(
+            "/index.html",
+            get({
+                let index_path = index_path.clone();
+                move || serve_index(index_path.clone())
+            }),
+        )
+        .fallback_service(
+            ServeDir::new(&static_dir)
+                .not_found_service(ServeFile::new(static_dir.join("index.html"))),
+        );
     let addr: SocketAddr = format!("{}:{}", cli.host, cli.port).parse()?;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -46,6 +68,24 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn serve_index(index_path: Arc<PathBuf>) -> impl IntoResponse {
+    match tokio::fs::read_to_string(&*index_path).await {
+        Ok(html) => (
+            [
+                (CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
+                (PRAGMA, "no-cache"),
+            ],
+            Html(html),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("read frontend index failed: {err}"),
+        )
+            .into_response(),
+    }
 }
 
 fn default_static_dir() -> PathBuf {
