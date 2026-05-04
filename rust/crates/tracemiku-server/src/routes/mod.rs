@@ -12,6 +12,7 @@ pub mod fn_summary;
 pub mod fork_events;
 pub mod forward_taint;
 pub mod functions;
+pub mod hash_finalize;
 pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod last_write_of_reg;
@@ -45,6 +46,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/search", get(search::search_handler))
         .route("/api/search-pc", get(search_pc::search_pc_handler))
         .route("/api/crypto-scan", get(crypto_scan::crypto_scan_handler))
+        .route(
+            "/api/hash-finalize-detect",
+            get(hash_finalize::hash_finalize_detect_handler),
+        )
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",

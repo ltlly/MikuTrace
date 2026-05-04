@@ -322,6 +322,22 @@ fn crypto_scan_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn hash_finalize_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "hash-finalize-detect".into(),
+        cd.display().to_string(),
+        "--window".into(),
+        "500".into(),
+        "--min-size".into(),
+        "16".into(),
+    ]);
+    assert_eq!(v["window"], 500);
+    assert_eq!(v["min_size"], 16);
+    assert!(v["candidates"].is_array());
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[

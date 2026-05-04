@@ -316,6 +316,14 @@ enum Cmd {
     },
     /// GET /api/crypto-scan.
     CryptoScan { trace_dir: PathBuf },
+    /// GET /api/hash-finalize-detect.
+    HashFinalizeDetect {
+        trace_dir: PathBuf,
+        #[arg(long, default_value_t = 500)]
+        window: usize,
+        #[arg(long, default_value_t = 16)]
+        min_size: u64,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -650,6 +658,17 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::CryptoScan { trace_dir }) => {
             route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
+        }
+        Some(Cmd::HashFinalizeDetect {
+            trace_dir,
+            window,
+            min_size,
+        }) => {
+            let params = vec![
+                ("window", window.to_string()),
+                ("min_size", min_size.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/hash-finalize-detect", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await
