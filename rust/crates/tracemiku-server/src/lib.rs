@@ -3,6 +3,7 @@
 //! The bin (`main.rs`) is a thin wrapper; everything else lives here so
 //! integration tests can exercise the same code path.
 
+pub mod llm;
 pub mod routes;
 pub mod state;
 
