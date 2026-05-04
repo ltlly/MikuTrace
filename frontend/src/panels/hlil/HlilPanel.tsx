@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor, Setter } from "solid-js";
 
 import { fetchFunctions, fetchHlilForFn, fetchIdxsForPc } from "~/api/client";
@@ -24,6 +24,17 @@ interface HlilSource {
 
 export default function HlilPanel(props: HlilPanelProps) {
   const [reload, setReload] = createSignal(0);
+  let jumpSeq = 0;
+  let jumpAbort: AbortController | undefined;
+
+  function cancelJump() {
+    jumpSeq += 1;
+    jumpAbort?.abort();
+    jumpAbort = undefined;
+  }
+
+  onCleanup(() => cancelJump());
+
   const [functions] = createResource(
     () => (props.active ? "active" : undefined),
     () => fetchFunctions(),
@@ -45,11 +56,24 @@ export default function HlilPanel(props: HlilPanelProps) {
   const [hlil] = createResource(source, (s) => (s ? fetchHlilForFn(s.fnId) : undefined));
 
   async function jumpLine(pc: string) {
-    const r = await fetchIdxsForPc(pc, props.currentIdx, 40);
-    const candidates = [...r.before, ...r.after];
-    if (!candidates.length) return;
-    candidates.sort((a, b) => Math.abs(a - props.currentIdx) - Math.abs(b - props.currentIdx));
-    props.onSelect(candidates[0]);
+    cancelJump();
+    const seq = ++jumpSeq;
+    const abort = new AbortController();
+    jumpAbort = abort;
+    try {
+      const r = await fetchIdxsForPc(pc, props.currentIdx, 40, abort.signal);
+      if (seq !== jumpSeq || abort.signal.aborted) return;
+      const candidates = [...r.before, ...r.after];
+      if (!candidates.length) return;
+      candidates.sort((a, b) => Math.abs(a - props.currentIdx) - Math.abs(b - props.currentIdx));
+      props.onSelect(candidates[0]);
+    } catch (err) {
+      if (abort.signal.aborted) return;
+      if (seq !== jumpSeq) return;
+      console.warn("HLIL jump failed", err);
+    } finally {
+      if (jumpAbort === abort) jumpAbort = undefined;
+    }
   }
 
   return (

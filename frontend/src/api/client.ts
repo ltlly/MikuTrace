@@ -227,13 +227,14 @@ export async function fetchIdxsForPc(
   pc: string,
   cursor = 0,
   limit = 30,
+  signal?: AbortSignal,
 ): Promise<IdxsForPcResponse> {
   const params = new URLSearchParams({
     pc,
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fx(`/api/idxs-for-pc?${params}`);
+  const r = await fx(`/api/idxs-for-pc?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/idxs-for-pc ${r.status}: ${await r.text()}`);
   return (await r.json()) as IdxsForPcResponse;
 }
