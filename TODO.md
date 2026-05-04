@@ -45,14 +45,26 @@
 - M2-ζ scripts/m2_zeta_parity.py: ✅ 2026-05-04
 - M3-α `tracemiku-core::calltree` port + `/api/call-tree` + CallTreePanel + parity script: ✅ 2026-05-04
 - M3-α auto_known_offsets naming fix (`f_<0xhex>` → `sub_<hex>`, Python parity, caught by parity gate): ✅ 2026-05-04
+- M3-β `tracemiku-core::taint` (forward/backward index-accelerated, BFS via VecDeque, frame_depth_map): 🟡 2026-05-04
+- M3-β /api/forward-taint + /api/backward-taint + TaintPanel: ✅ 2026-05-04
+- M3-β scripts/m3_beta_parity.py: ✅ 2026-05-04 (forward hard-gate green @ 0.90 jaccard; backward soft-warn @ 0.31 — M3-γ closes)
 
-- M3-α (this): calltree + /api/call-tree + CallTreePanel + parity ✅ 2026-05-04
-- M3-β (next): taint forward/backward (rayon) + cross-fn frame_depth + /api/forward-taint + /api/backward-taint + parity
-- M3-γ: decompiler::backend stub + TraceIR builder skeleton
-- M3-δ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
-- M3-ε: memshadow v3 binary sidecar (.memshadow.v3.bin)
-- M3-ζ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-α: calltree + /api/call-tree + CallTreePanel + parity ✅ 2026-05-04
+- M3-β: basic taint forward/backward + frame_depth + 2 endpoints + TaintPanel + parity 🟡 2026-05-04 (forward green, backward soft-gated pending MEM-chasing)
+- M3-γ (next): backward MEM-chasing (close M3-β backward parity) + through_mem flag (byte-overlap via MemShadow) + data_only flag + cross_fn_call frame_depth wire + parity gate hardening
+- M3-δ: decompiler::backend stub + TraceIR builder skeleton
+- M3-ε: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-ζ: memshadow v3 binary sidecar (.memshadow.v3.bin)
+- M3-η: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
+
+**M3-γ scope precise** (the gap M3-β surfaced via parity):
+1. Rust `backward_taint`: add MEM-chasing using `index.mem_addr_to_writes` (exact-addr writers) + d0.regs_def initial-seed branch — mirror `viewer/taint.py:301-356` exactly. ~80 LOC + 1 colocated test (`backward_taint_chases_mem_writer` on a 4-record str/nop/ldr/nop fixture). Re-tighten parity gate from soft-warn back to hard-fail.
+2. Rust `forward_taint` + `backward_taint`: add `through_mem: bool` flag (when true, byte-overlap via MemShadow; when false, exact-addr fast path).
+3. Rust `forward_taint` + `backward_taint`: add `data_only: bool` flag (filter addressing-reg propagation; DEFAULT_FRAME_REGS exclusion when data_only=True).
+4. Wire `cross_fn_call: bool` flag through endpoints; route handler annotates each row with `frame_depth: Option<u32>` from `state.frame_depths`.
+5. Frontend: add 3 toggle checkboxes to TaintPanel (through_mem, data_only, cross_fn_call) + frame_depth column.
+6. Re-run `scripts/m3_beta_parity.py` to confirm backward jaccard ≥ 0.6 (forward should remain ≥ 0.6 too).
 
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
 
