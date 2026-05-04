@@ -124,7 +124,8 @@
 - M5-θ: Rust LLIL typelat / struct-shape / var-unify / UIDF summaries ✅ 2026-05-04
 - M5-ι: Rust LLIL restructure metadata ✅ 2026-05-04
 - M6-α: BN Python sidecar + Rust lifecycle + HLIL/BN-CFG endpoints + `/api/functions` BN merge ✅ 2026-05-04
-- M6-β (next): frontend HLIL panel follows selected FunctionIndex id
+- M6-β: frontend HLIL panel follows selected FunctionIndex id (`/api/hlil-for-fn`) ✅ 2026-05-04
+- M7 (next): Rust cutover wrapper + old Python viewer/webui deletion
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
@@ -147,8 +148,9 @@
 1. ✅ 2026-05-04: v2 Rust `/api/functions` 懒调 BN sidecar `functions`,
    合并 `bn:<addr>` entries; `counts.bn > 0` 用 fake sidecar test 钉住.
    `/api/dec/fn/bn:*` 走 BN HLIL markdown fallback; 无 sidecar 时返回 503.
-2. 前端 HLIL tab 仍按 cursor PC 查 `/api/hlil-for-pc`, **没消费 `/api/hlil-for-fn`**.
-   FunctionIndex 不是 HLIL 的 canonical source.
+2. ✅ 2026-05-04: v2 Solid HLIL panel consumes shared selected FunctionIndex id
+   and calls `/api/hlil-for-fn`; Functions / Decompiler / HLIL selection now follows
+   the same `selectedFn` signal.
 3. LLIL `scope=body` 只对 `trace:F0` 生效 (root trace view), UI 文案没说清楚.
    ✅ v2 Rust route resolved this by using explicit `fn_id`-scoped LLIL render
    (`/api/llil/render` / `/api/llil/llm`) for trace:* / sym:* functions instead of
@@ -190,6 +192,8 @@
 - **F2**: 前端 HLIL tab 加 "follow function selection" 模式: 当 Functions 面板/Decompile
   选中 fn 时自动调 `/api/hlil-for-fn` 而不是按 cursor PC. 至少 Functions 面板
   双击/右键给 "在 HLIL 里看" 选项.
+  ✅ v2 Rust/Solid closed 2026-05-04: shared selected FunctionIndex id drives
+  Functions / Decompile / HLIL; HLIL calls `/api/hlil-for-fn`.
 - **F3**: LLIL `scope=body` 通用化到任意 fn (用 calltree per-frame range),
   stats 加 `body_only_applied: bool` 让前端区分 "无 callee 排除" vs
   "filter 不适用此 fn". 或保持现状但 UI 文案改成 "Body only (root only)".
