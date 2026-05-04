@@ -15,6 +15,7 @@ use crate::cfg::CFG;
 use crate::decompiler::ir::{BlockIR, EdgeIR, FuncIR, TopIR, TypeAnchorIR};
 use crate::decompiler::type_anchor::{find_anchors, load_type_specs};
 use crate::disasm::decode;
+use crate::function_index::make_sym_id;
 use crate::symbols::SymbolMap;
 use crate::trace::{Trace, TraceMeta};
 
@@ -47,6 +48,31 @@ fn build_first_idx_map(trace: &Trace) -> HashMap<u64, usize> {
     for i in 0..n {
         let pc = trace.pc(i);
         map.entry(pc).or_insert(i);
+    }
+    map
+}
+
+/// Build block_start_pc → trace record indices whose PC falls inside that
+/// block's inclusive CFG range. Mirrors viewer/cfg.py::_aux block_idxs.
+fn build_block_idx_map(trace: &Trace, cfg: &CFG) -> HashMap<u64, Vec<usize>> {
+    let mut blocks: Vec<&crate::cfg::Block> = cfg.blocks();
+    blocks.sort_by_key(|b| b.start_pc);
+    let mut map: HashMap<u64, Vec<usize>> =
+        blocks.iter().map(|b| (b.start_pc, Vec::new())).collect();
+    if blocks.is_empty() || trace.is_empty() {
+        return map;
+    }
+
+    for i in 0..trace.len() {
+        let pc = trace.pc(i);
+        let idx = blocks.partition_point(|b| b.start_pc <= pc);
+        if idx == 0 {
+            continue;
+        }
+        let block = blocks[idx - 1];
+        if pc <= block.end_pc {
+            map.entry(block.start_pc).or_default().push(i);
+        }
     }
     map
 }
@@ -95,7 +121,11 @@ fn make_block_ir(
         if let Some(&idx) = first_idx.get(&pc) {
             let inst = trace.inst(idx);
             let d = decode(pc, inst);
-            asm_lines.push(format!("  {pc:#x}: {} {}", d.mnemonic, d.op_str).trim_end().to_string());
+            asm_lines.push(
+                format!("  {pc:#x}: {} {}", d.mnemonic, d.op_str)
+                    .trim_end()
+                    .to_string(),
+            );
         }
         let next = pc.saturating_add(4);
         if next == u64::MAX || next <= pc {
@@ -246,8 +276,7 @@ pub fn split_top_k_callees(
         }
 
         // Intersect with cfg block start_pcs; skip if no blocks (Python:179).
-        let mut own_block_pcs: Vec<u64> =
-            hit_pcs.intersection(&cfg_block_pcs).copied().collect();
+        let mut own_block_pcs: Vec<u64> = hit_pcs.intersection(&cfg_block_pcs).copied().collect();
         own_block_pcs.sort();
 
         let own_blocks: Vec<BlockIR> = own_block_pcs
@@ -288,6 +317,92 @@ pub fn split_top_k_callees(
         });
     }
     top.fns.extend(new_fns);
+}
+
+/// Build a FuncIR on demand for one symbol-backed CFG function.
+///
+/// TraceIR's promoted F1..Fn entries are calltree views. This helper mirrors
+/// `webui/server.py::_func_ir_from_cfg_name` by grouping CFG blocks whose
+/// start PC resolves to the requested symbol name and assigning local B0..Bn
+/// block ids for that single function.
+pub fn build_symbol_func_ir(
+    trace: &Trace,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    name: &str,
+) -> Option<FuncIR> {
+    let mut own_blocks: Vec<&crate::cfg::Block> = cfg
+        .blocks()
+        .into_iter()
+        .filter(|b| sym.lookup(b.start_pc).0 == name)
+        .collect();
+    own_blocks.sort_by_key(|b| b.start_pc);
+    if own_blocks.is_empty() {
+        return None;
+    }
+
+    let block_ids: HashMap<u64, String> = own_blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.start_pc, format!("B{i}")))
+        .collect();
+    let first_idx = build_first_idx_map(trace);
+    let block_idxs = build_block_idx_map(trace, cfg);
+
+    let mut first_idxs: Vec<usize> = Vec::new();
+    let mut last_idxs: Vec<usize> = Vec::new();
+    let blocks: Vec<BlockIR> = own_blocks
+        .iter()
+        .map(|block| {
+            if let Some(idxs) = block_idxs.get(&block.start_pc) {
+                if let Some(first) = idxs.first() {
+                    first_idxs.push(*first);
+                }
+                if let Some(last) = idxs.last() {
+                    last_idxs.push(*last);
+                }
+            }
+
+            let id = block_ids
+                .get(&block.start_pc)
+                .cloned()
+                .unwrap_or_else(|| format!("B?{:x}", block.start_pc));
+            let mut block_ir = make_block_ir(block, id, trace, &first_idx, cfg, &block_ids);
+            block_ir.tier = if block.executions == 0 {
+                "cold".to_string()
+            } else {
+                "hot".to_string()
+            };
+            block_ir
+        })
+        .collect();
+
+    let pc_start = own_blocks.iter().map(|b| b.start_pc).min().unwrap_or(0);
+    let pc_end = own_blocks
+        .iter()
+        .map(|b| b.end_pc)
+        .max()
+        .unwrap_or(pc_start);
+    let exec_count = own_blocks
+        .iter()
+        .filter(|b| {
+            block_idxs
+                .get(&b.start_pc)
+                .is_some_and(|idxs| !idxs.is_empty())
+        })
+        .count() as u64;
+
+    Some(FuncIR {
+        id: make_sym_id(name),
+        name: name.to_string(),
+        pc_start,
+        pc_end,
+        entry_idx: first_idxs.into_iter().min().unwrap_or(0),
+        exit_idx: last_idxs.into_iter().max().unwrap_or(0),
+        blocks,
+        exec_count,
+        ..Default::default()
+    })
 }
 
 /// Internal: emit just the root F0 FuncIR + metadata.
@@ -397,11 +512,7 @@ pub fn classify_blocks_by_tier(top: &mut TopIR, hot_top_k: usize) {
 /// (parent + child overlap), assigns to the narrowest (smallest idx range).
 ///
 /// Mirrors `viewer/decompiler/builder.py:465-499`.
-pub fn attach_type_anchors<P: AsRef<Path>>(
-    top: &mut TopIR,
-    trace: &Trace,
-    spec_paths: &[P],
-) {
+pub fn attach_type_anchors<P: AsRef<Path>>(top: &mut TopIR, trace: &Trace, spec_paths: &[P]) {
     let specs = load_type_specs(spec_paths);
     if specs.is_empty() {
         return;
@@ -554,7 +665,10 @@ mod tests {
         let sym = SymbolMap::new();
         let cfg = crate::cfg::build_cfg(&t);
         let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
-        assert_eq!(top.fns[0].name, "sub_0", "pc0=0x100000 base=0x100000 → offset 0");
+        assert_eq!(
+            top.fns[0].name, "sub_0",
+            "pc0=0x100000 base=0x100000 → offset 0"
+        );
     }
 
     #[test]
@@ -692,7 +806,10 @@ mod tests {
         let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         assert_eq!(top.fns.len(), 1);
         let f0 = &top.fns[0];
-        assert!(!f0.blocks.is_empty(), "F0 must carry CFG blocks; got {f0:?}");
+        assert!(
+            !f0.blocks.is_empty(),
+            "F0 must carry CFG blocks; got {f0:?}"
+        );
         for blk in &f0.blocks {
             assert!(
                 blk.id.starts_with('B'),
@@ -717,9 +834,15 @@ mod tests {
         let f0 = &top.fns[0];
         assert!(!f0.blocks.is_empty(), "F0 must have blocks");
         let any_with_asm = f0.blocks.iter().any(|b| !b.asm.is_empty());
-        assert!(any_with_asm, "at least one block should have asm; got {f0:?}");
+        assert!(
+            any_with_asm,
+            "at least one block should have asm; got {f0:?}"
+        );
         let any_with_samples = f0.blocks.iter().any(|b| !b.samples.is_empty());
-        assert!(any_with_samples, "at least one block should have samples; got {f0:?}");
+        assert!(
+            any_with_samples,
+            "at least one block should have samples; got {f0:?}"
+        );
         for blk in &f0.blocks {
             if blk.samples.is_empty() {
                 continue;
@@ -758,6 +881,32 @@ mod tests {
                 assert!(!e.dst.is_empty(), "edge dst must be non-empty: {e:?}");
             }
         }
+    }
+
+    #[test]
+    fn build_symbol_func_ir_known_symbol_returns_local_funcir() {
+        let dir = synth_two_callees();
+        let (t, _meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let func = build_symbol_func_ir(&t, &sym, &cfg, "f_alpha")
+            .expect("known symbol f_alpha should build FuncIR");
+
+        assert_eq!(func.id, crate::function_index::make_sym_id("f_alpha"));
+        assert_eq!(func.name, "f_alpha");
+        assert!(!func.blocks.is_empty(), "symbol FuncIR should carry blocks");
+        assert_eq!(func.blocks[0].id, "B0", "symbol block ids are local");
+        assert!(func.blocks.iter().any(|b| !b.asm.is_empty()));
+        assert!(func.blocks.iter().any(|b| !b.samples.is_empty()));
+        assert!(func.exec_count > 0);
+        assert!(func.entry_idx <= func.exit_idx);
+    }
+
+    #[test]
+    fn build_symbol_func_ir_unknown_symbol_returns_none() {
+        let dir = synth_two_callees();
+        let (t, _meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        assert!(build_symbol_func_ir(&t, &sym, &cfg, "missing_symbol").is_none());
     }
 
     #[test]

@@ -10,7 +10,7 @@ pub use crate::decompiler::backend::{
     HlilLine, NoneBackend, Token as DecToken, VarType,
 };
 pub use crate::decompiler::builder::{
-    attach_type_anchors, build_trace_ir, classify_blocks_by_tier,
+    attach_type_anchors, build_symbol_func_ir, build_trace_ir, classify_blocks_by_tier,
 };
 pub use crate::decompiler::ir::{
     BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
