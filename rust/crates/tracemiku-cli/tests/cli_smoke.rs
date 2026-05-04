@@ -94,6 +94,23 @@ fn functions_wrapper_lists_symbol_functions() {
 }
 
 #[test]
+fn fn_summary_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "fn-summary".into(),
+        cd.display().to_string(),
+        "--fn".into(),
+        "f".into(),
+        "--top-blocks".into(),
+        "2".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["fn"], "f");
+    assert_eq!(v["pc"], "0x100000");
+    assert!(v["hot_blocks"].is_array());
+}
+
+#[test]
 fn inspect_wrappers_use_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
 
