@@ -80,6 +80,29 @@ async fn forward_taint_basic() {
 }
 
 #[tokio::test]
+async fn forward_taint_accepts_trace_idx_alias() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?trace_idx=0&reg=x0&max_count=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["from"], 0);
+    assert_eq!(v["reg"], "x0");
+}
+
+#[tokio::test]
 async fn backward_taint_basic() {
     let dir = synth_x0_chain();
     let cd = call_dir(&dir);

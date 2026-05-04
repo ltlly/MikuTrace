@@ -318,14 +318,14 @@ export interface TaintFlags {
 }
 
 export async function fetchForwardTaint(
-  start: number,
+  traceIdx: number,
   reg: string,
   maxCount = 200,
   flags: TaintFlags = {},
   signal?: AbortSignal,
 ): Promise<ForwardTaintResponse> {
   const params = new URLSearchParams({
-    start: String(start),
+    trace_idx: String(traceIdx),
     reg,
     max_count: String(maxCount),
   });
@@ -338,14 +338,14 @@ export async function fetchForwardTaint(
 }
 
 export async function fetchBackwardTaint(
-  start: number,
+  traceIdx: number,
   reg: string,
   maxCount = 200,
   flags: TaintFlags = {},
   signal?: AbortSignal,
 ): Promise<BackwardTaintResponse> {
   const params = new URLSearchParams({
-    start: String(start),
+    trace_idx: String(traceIdx),
     reg,
     max_count: String(maxCount),
   });

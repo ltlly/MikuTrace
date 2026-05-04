@@ -16,6 +16,7 @@ const DEFAULT_MAX_COUNT: usize = 5_000;
 
 #[derive(Debug, Deserialize)]
 pub struct ForwardTaintQuery {
+    #[serde(alias = "trace_idx", alias = "traceIdx")]
     pub start: usize,
     pub reg: String,
     pub max_count: Option<usize>,
