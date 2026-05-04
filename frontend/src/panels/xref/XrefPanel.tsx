@@ -8,6 +8,11 @@ interface XrefPanelProps {
   active: boolean;
 }
 
+interface AsmSearchSource {
+  pattern: string;
+  cursor: number;
+}
+
 function refPattern(pc: string | undefined): string {
   if (!pc) return "";
   return pc.toLowerCase();
@@ -19,7 +24,7 @@ function escapeRegex(text: string | undefined): string {
 
 export default function XrefPanel(props: XrefPanelProps) {
   const [pattern, setPattern] = createSignal("");
-  const [submittedPattern, setSubmittedPattern] = createSignal("");
+  const [submittedSearch, setSubmittedSearch] = createSignal<AsmSearchSource | undefined>();
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
@@ -40,8 +45,15 @@ export default function XrefPanel(props: XrefPanelProps) {
     if (!props.active || !currentRecord()?.asm) return "";
     return `^${escapeRegex(currentRecord()?.asm)}$`;
   });
-  const asmPattern = createMemo(() => (props.active ? submittedPattern() : ""));
-  const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
+  const asmSource = createMemo<AsmSearchSource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    const next = submittedSearch();
+    if (!next?.pattern) return undefined;
+    return prev && prev.pattern === next.pattern && prev.cursor === next.cursor ? prev : next;
+  });
+  const [asmRefs] = createResource(asmSource, (s) =>
+    s ? fetchSearch(s.pattern, 120, undefined, s.cursor) : undefined,
+  );
   const currentPcRefs = createMemo(() => {
     const s = pcSource();
     const r = pcRefs();
@@ -53,20 +65,24 @@ export default function XrefPanel(props: XrefPanelProps) {
       : undefined;
   });
   const currentAsmRefs = createMemo(() => {
-    const p = asmPattern();
+    const s = asmSource();
     const r = asmRefs();
-    if (!p || !r) return undefined;
-    return r.request_pattern === p && r.request_max_results === 120 ? r : undefined;
+    if (!s || !r) return undefined;
+    return r.request_pattern === s.pattern &&
+      r.request_max_results === 120 &&
+      r.request_cursor === s.cursor
+      ? r
+      : undefined;
   });
 
   function submitSearch() {
     const p = pattern().trim();
-    if (p) setSubmittedPattern(p);
+    if (p) setSubmittedSearch({ pattern: p, cursor: props.idx });
   }
 
   function searchCurrentInstruction() {
     const p = defaultAsmPattern();
-    if (p) setSubmittedPattern(p);
+    if (p) setSubmittedSearch({ pattern: p, cursor: props.idx });
   }
 
   return (
@@ -92,7 +108,7 @@ export default function XrefPanel(props: XrefPanelProps) {
           <button type="button" onClick={searchCurrentInstruction} disabled={!defaultAsmPattern()}>
             current insn
           </button>
-          <button type="button" onClick={() => setSubmittedPattern("")} disabled={!submittedPattern()}>
+          <button type="button" onClick={() => setSubmittedSearch(undefined)} disabled={!submittedSearch()}>
             clear
           </button>
         </div>
@@ -166,14 +182,14 @@ export default function XrefPanel(props: XrefPanelProps) {
           <Show when={asmRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
-          <Show when={!submittedPattern()}>
+          <Show when={!submittedSearch()}>
             <p class="dim small">enter a regex, or search exact current instruction.</p>
           </Show>
           <Show when={currentAsmRefs()}>
             {(r) => (
               <>
                 <p class="dim small">
-                  regex {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
+                  regex {r().pattern} · around #{r().request_cursor ?? r().cursor ?? 0} · {r().count} hit{r().count === 1 ? "" : "s"}
                 </p>
                 <table class="xref-table">
                   <thead>
