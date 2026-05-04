@@ -11,8 +11,9 @@
 use crate::cfg::CFG;
 use crate::decompiler::ir::VmCandidateIR;
 use crate::disasm::decode;
+use crate::index::Index;
 use crate::memshadow::MemShadow;
-use crate::ollvmdet::ollvm_detect_vm;
+use crate::ollvmdet::{ollvm_detect_vm, ollvm_detect_vm_indexed, OllvmFinding};
 use crate::trace::Trace;
 
 /// Find self-update loads in [lo, hi]: returns (pc, hits, mnem_op_str, base_reg).
@@ -78,6 +79,56 @@ fn find_self_update_loads(
     hits_seen
 }
 
+fn find_self_update_loads_indexed(
+    trace: &Trace,
+    index: &Index,
+    lo: usize,
+    hi: usize,
+    min_hits: u64,
+    max_step: i64,
+) -> Vec<(u64, u64, String, String)> {
+    if hi < lo || trace.is_empty() {
+        return Vec::new();
+    }
+    let cap = hi.min(trace.len() - 1);
+    let mut sorted: Vec<(u64, u64, usize)> = Vec::new();
+    for (&pc, idxs) in &index.pc_to_idxs {
+        let start = idxs.partition_point(|&idx| idx < lo);
+        let end = idxs.partition_point(|&idx| idx <= cap);
+        if start >= end {
+            continue;
+        }
+        sorted.push((pc, (end - start) as u64, idxs[start]));
+    }
+    sorted.sort_by_key(|(_, c, _)| std::cmp::Reverse(*c));
+    sorted.truncate(200);
+
+    let mut hits_seen: Vec<(u64, u64, String, String)> = Vec::new();
+    for (pc, cnt, idx) in sorted {
+        if cnt < min_hits {
+            continue;
+        }
+        let d = decode(pc, trace.inst(idx));
+        let m = d.mnemonic.as_str();
+        if m != "ldrh" && m != "ldrb" && m != "ldr" {
+            continue;
+        }
+        if !d.op_str.contains('!') {
+            continue;
+        }
+        let Some(mem_op) = d.mem_op.first() else {
+            continue;
+        };
+        if mem_op.disp.unsigned_abs() as i64 > max_step {
+            continue;
+        }
+        let mnem_op = format!("{} {}", d.mnemonic, d.op_str);
+        hits_seen.push((pc, cnt, mnem_op, mem_op.base.clone()));
+    }
+    hits_seen.sort_by_key(|(_, c, _, _)| std::cmp::Reverse(*c));
+    hits_seen
+}
+
 /// Walk all hits of `reader_pc` in [lo, hi]; pull `base_reg` value at each hit;
 /// return (min, max). Returns (0, 0) on parse failure / no hits / unknown reg.
 /// Mirrors Python `_bytecode_range`.
@@ -118,6 +169,48 @@ fn bytecode_range(
     (mn, mx)
 }
 
+fn bytecode_range_indexed(
+    trace: &Trace,
+    index: &Index,
+    reader_pc: u64,
+    base_reg: &str,
+    lo: usize,
+    hi: usize,
+) -> (u64, u64) {
+    if base_reg.is_empty() {
+        return (0, 0);
+    }
+    let n = trace.len();
+    if n == 0 || hi < lo {
+        return (0, 0);
+    }
+    let Some(idxs) = index.pc_to_idxs.get(&reader_pc) else {
+        return (0, 0);
+    };
+    let cap = hi.min(n - 1);
+    let start = idxs.partition_point(|&idx| idx < lo);
+    let end = idxs.partition_point(|&idx| idx <= cap);
+    let mut vals: Vec<u64> = Vec::new();
+    for &i in &idxs[start..end] {
+        let rec = trace.record(i);
+        let Some(v) = rec.reg(base_reg) else {
+            continue;
+        };
+        if v != 0 {
+            vals.push(v);
+        }
+        if vals.len() >= 5000 {
+            break;
+        }
+    }
+    if vals.is_empty() {
+        return (0, 0);
+    }
+    let mn = *vals.iter().min().unwrap();
+    let mx = *vals.iter().max().unwrap();
+    (mn, mx)
+}
+
 /// Main entry: detect VM dispatcher candidates and grab bytecode hex.
 ///
 /// `mem`: optional MemShadow (built). When `None`, emits candidates without
@@ -125,11 +218,56 @@ fn bytecode_range(
 /// `confidence_threshold`: passed to ollvm_detect_vm.
 pub fn detect_vm_candidates(
     trace: &Trace,
-    _cfg: &CFG,
+    cfg: &CFG,
     mem: Option<&MemShadow>,
     confidence_threshold: f64,
 ) -> Vec<VmCandidateIR> {
-    let findings = ollvm_detect_vm(trace, 10, confidence_threshold);
+    detect_vm_candidates_inner(
+        trace,
+        cfg,
+        mem,
+        confidence_threshold,
+        ollvm_detect_vm(trace, 10, confidence_threshold),
+        find_self_update_loads,
+        bytecode_range,
+    )
+}
+
+pub fn detect_vm_candidates_indexed(
+    trace: &Trace,
+    cfg: &CFG,
+    index: &Index,
+    mem: Option<&MemShadow>,
+    confidence_threshold: f64,
+) -> Vec<VmCandidateIR> {
+    detect_vm_candidates_inner(
+        trace,
+        cfg,
+        mem,
+        confidence_threshold,
+        ollvm_detect_vm_indexed(trace, index, 10, confidence_threshold),
+        |trace, lo, hi, min_hits, max_step| {
+            find_self_update_loads_indexed(trace, index, lo, hi, min_hits, max_step)
+        },
+        |trace, reader_pc, base_reg, lo, hi| {
+            bytecode_range_indexed(trace, index, reader_pc, base_reg, lo, hi)
+        },
+    )
+}
+
+fn detect_vm_candidates_inner<F, G>(
+    trace: &Trace,
+    _cfg: &CFG,
+    mem: Option<&MemShadow>,
+    _confidence_threshold: f64,
+    findings: Vec<OllvmFinding>,
+    find_readers: F,
+    find_range: G,
+) -> Vec<VmCandidateIR>
+where
+    F: Fn(&Trace, usize, usize, u64, i64) -> Vec<(u64, u64, String, String)>,
+    G: Fn(&Trace, u64, &str, usize, usize) -> (u64, u64),
+{
     if findings.is_empty() {
         return Vec::new();
     }
@@ -145,13 +283,13 @@ pub fn detect_vm_candidates(
             reasons: f.reasons,
             ..Default::default()
         };
-        let readers = find_self_update_loads(trace, 0, n - 1, 8, 16);
+        let readers = find_readers(trace, 0, n - 1, 8, 16);
         if let Some((pc, hits, ms, base)) = readers.into_iter().next() {
             cand.reader_pc = pc;
             cand.reader_inst = ms;
             cand.reader_hits = hits;
             cand.reader_base_reg = base.clone();
-            let (lo, hi) = bytecode_range(trace, pc, &base, 0, n - 1);
+            let (lo, hi) = find_range(trace, pc, &base, 0, n - 1);
             if lo > 0 && hi > lo {
                 cand.bytecode_addr = lo;
                 cand.bytecode_len = hi - lo + 1;
@@ -174,6 +312,7 @@ pub fn detect_vm_candidates(
 mod tests {
     use super::*;
     use crate::cfg::build_cfg;
+    use crate::index::Index;
     use crate::trace::REC_SIZE;
 
     fn synth_no_vm() -> tempfile::TempDir {
@@ -217,6 +356,16 @@ mod tests {
         let t = load_trace(&dir);
         let cfg = build_cfg(&t);
         let cands = detect_vm_candidates(&t, &cfg, None, 0.4);
+        assert!(cands.is_empty(), "no ollvm signal → no candidates");
+    }
+
+    #[test]
+    fn detect_vm_candidates_indexed_empty_when_no_ollvm_signal() {
+        let dir = synth_no_vm();
+        let t = load_trace(&dir);
+        let cfg = build_cfg(&t);
+        let index = Index::build(&t);
+        let cands = detect_vm_candidates_indexed(&t, &cfg, &index, None, 0.4);
         assert!(cands.is_empty(), "no ollvm signal → no candidates");
     }
 

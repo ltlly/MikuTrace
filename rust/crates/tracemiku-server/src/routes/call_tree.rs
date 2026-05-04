@@ -4,7 +4,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::prelude::{build_call_tree, CallNode};
+use tracemiku_core::prelude::{build_call_tree_indexed, CallNode};
 
 use crate::state::AppState;
 
@@ -30,13 +30,18 @@ pub async fn call_tree_handler(
         if depth == DEFAULT_MAX_DEPTH {
             inner.call_tree().clone()
         } else {
-            build_call_tree(&inner.trace, &inner.symbols, depth)
+            build_call_tree_indexed(&inner.trace, &inner.symbols, &inner.index, depth)
         }
     })
     .await
     .unwrap_or_else(|err| {
         tracing::warn!(target: "tracemiku-server", "call tree worker failed: {err}");
-        build_call_tree(&state.inner.trace, &state.inner.symbols, 0)
+        build_call_tree_indexed(
+            &state.inner.trace,
+            &state.inner.symbols,
+            &state.inner.index,
+            0,
+        )
     });
     Json(CallTreeResponse { tree })
 }

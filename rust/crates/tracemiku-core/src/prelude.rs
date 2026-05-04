@@ -3,7 +3,7 @@
 //! Use `use tracemiku_core::prelude::*;` rather than reaching into
 //! submodules directly.
 
-pub use crate::calltree::{build_call_tree, CallNode};
+pub use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 pub use crate::cfg::{Block, CFG};
 pub use crate::decompiler::backend::{
     Backend, CfgBlock as DecCfgBlock, CfgEdge as DecCfgEdge, FieldHint, Function as DecFunction,

@@ -42,7 +42,27 @@ pub struct DecSummaryResponse {
 }
 
 pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSummaryResponse> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || dec_summary_response(&inner))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "dec summary worker failed: {err}");
+                DecSummaryResponse {
+                    records: 0,
+                    module_name: String::new(),
+                    module_base: 0,
+                    module_size: 0,
+                    truncated: false,
+                    fns: Vec::new(),
+                    vm_candidates: Vec::new(),
+                    summary_md: String::new(),
+                }
+            }),
+    )
+}
+
+fn dec_summary_response(inner: &crate::state::AppStateInner) -> DecSummaryResponse {
     let top = inner.top_ir();
 
     let fns: Vec<DecFnEntry> = top
@@ -95,7 +115,7 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
         .filter_map(|c| serde_json::to_value(c).ok())
         .collect();
 
-    Json(DecSummaryResponse {
+    DecSummaryResponse {
         records: top.records,
         module_name: top.module_name.clone(),
         module_base: top.module_base,
@@ -104,5 +124,5 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
         fns,
         vm_candidates,
         summary_md,
-    })
+    }
 }

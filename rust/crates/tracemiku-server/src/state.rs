@@ -6,9 +6,9 @@ use std::sync::OnceLock;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
-    build_call_tree, build_frame_depth_map, build_from_trace, build_function_index, build_trace_ir,
-    CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR, Trace, TraceMeta,
-    CFG,
+    build_call_tree_indexed, build_frame_depth_map, build_from_trace, build_function_index,
+    build_trace_ir, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
+    Trace, TraceMeta, CFG,
 };
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
@@ -160,6 +160,7 @@ impl AppStateInner {
                 &self.meta,
                 &self.symbols,
                 &self.cfg,
+                Some(&self.index),
                 10,
                 50,
                 &self.type_spec_paths,
@@ -179,7 +180,7 @@ impl AppStateInner {
 
     pub fn call_tree(&self) -> &CallNode {
         self.call_tree
-            .get_or_init(|| build_call_tree(&self.trace, &self.symbols, 50))
+            .get_or_init(|| build_call_tree_indexed(&self.trace, &self.symbols, &self.index, 50))
     }
 
     pub fn frame_depths(&self) -> &[u32] {

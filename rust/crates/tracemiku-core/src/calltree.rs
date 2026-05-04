@@ -7,6 +7,7 @@
 use serde::Serialize;
 
 use crate::disasm::decode;
+use crate::index::Index;
 use crate::symbols::SymbolMap;
 use crate::trace::Trace;
 
@@ -27,6 +28,12 @@ pub struct CallNode {
     /// sets the key when truncation occurred.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated_children: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallEventKind {
+    Call,
+    Ret,
 }
 
 /// Build nested call tree.
@@ -52,6 +59,53 @@ pub struct CallNode {
 /// records "skip the next N rets" — produces the same observable tree.
 pub fn build_call_tree(trace: &Trace, sym: &SymbolMap, max_depth: usize) -> CallNode {
     let n = trace.len();
+    let events = (0..n).filter_map(|i| {
+        let r = trace.record(i);
+        let d = decode(r.pc, r.inst);
+        match d.mnemonic.as_str() {
+            "bl" | "blr" => Some((i, CallEventKind::Call)),
+            "ret" => Some((i, CallEventKind::Ret)),
+            _ => None,
+        }
+    });
+    build_call_tree_from_events(trace, sym, max_depth, events)
+}
+
+/// Same call-tree semantics as [`build_call_tree`], using the startup PC
+/// index to decode each unique PC once and walk only call/ret record indices.
+pub fn build_call_tree_indexed(
+    trace: &Trace,
+    sym: &SymbolMap,
+    index: &Index,
+    max_depth: usize,
+) -> CallNode {
+    let mut events: Vec<(usize, CallEventKind)> = Vec::new();
+    for (&pc, idxs) in &index.pc_to_idxs {
+        let Some(&first_idx) = idxs.first() else {
+            continue;
+        };
+        let d = decode(pc, trace.inst(first_idx));
+        let kind = match d.mnemonic.as_str() {
+            "bl" | "blr" => CallEventKind::Call,
+            "ret" => CallEventKind::Ret,
+            _ => continue,
+        };
+        events.extend(idxs.iter().copied().map(|idx| (idx, kind)));
+    }
+    events.sort_unstable_by_key(|(idx, _)| *idx);
+    build_call_tree_from_events(trace, sym, max_depth, events)
+}
+
+fn build_call_tree_from_events<I>(
+    trace: &Trace,
+    sym: &SymbolMap,
+    max_depth: usize,
+    events: I,
+) -> CallNode
+where
+    I: IntoIterator<Item = (usize, CallEventKind)>,
+{
+    let n = trace.len();
     let last_idx = n.saturating_sub(1);
 
     let root = CallNode {
@@ -69,14 +123,8 @@ pub fn build_call_tree(trace: &Trace, sym: &SymbolMap, max_depth: usize) -> Call
     // matching number of rets).
     let mut cap_balance: u32 = 0;
 
-    for i in 0..n {
-        let r = trace.record(i);
-        let d = decode(r.pc, r.inst);
-        let m = d.mnemonic.as_str();
-        let is_call = m == "bl" || m == "blr";
-        let is_ret = m == "ret";
-
-        if is_call {
+    for (i, kind) in events {
+        if kind == CallEventKind::Call {
             // Resolve callee name from PC of the *next* trace record (the
             // first instruction the call lands on).
             let target_pc = if i + 1 < n { trace.pc(i + 1) } else { 0 };
@@ -105,7 +153,7 @@ pub fn build_call_tree(trace: &Trace, sym: &SymbolMap, max_depth: usize) -> Call
                 truncated_children: None,
             };
             stack.push(child);
-        } else if is_ret {
+        } else {
             if cap_balance > 0 {
                 cap_balance -= 1;
                 continue;
@@ -134,6 +182,7 @@ pub fn build_call_tree(trace: &Trace, sym: &SymbolMap, max_depth: usize) -> Call
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::Index;
     use crate::trace::REC_SIZE;
 
     /// Build a synthetic call_dir with a 9-record trace:
@@ -262,6 +311,18 @@ mod tests {
         assert_eq!(beta.fn_name.as_deref(), Some("f_beta"));
         assert_eq!(beta.enter_idx, 4);
         assert_eq!(beta.exit_idx, 7);
+    }
+
+    #[test]
+    fn indexed_calltree_matches_sequential() {
+        let dir = synth_trace_dir();
+        let (trace, sym) = load_trace_and_sym(&dir);
+        let index = Index::build(&trace);
+
+        let sequential = build_call_tree(&trace, &sym, 50);
+        let indexed = build_call_tree_indexed(&trace, &sym, &index, 50);
+
+        assert_eq!(indexed, sequential);
     }
 
     #[test]

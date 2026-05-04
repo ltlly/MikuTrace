@@ -10,12 +10,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::calltree::{build_call_tree, CallNode};
+use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 use crate::cfg::CFG;
 use crate::decompiler::ir::{BlockIR, EdgeIR, FuncIR, TopIR, TypeAnchorIR};
 use crate::decompiler::type_anchor::{find_anchors, load_type_specs};
 use crate::disasm::decode;
 use crate::function_index::make_sym_id;
+use crate::index::Index;
 use crate::symbols::SymbolMap;
 use crate::trace::{Trace, TraceMeta};
 
@@ -48,6 +49,16 @@ fn build_first_idx_map(trace: &Trace) -> HashMap<u64, usize> {
     for i in 0..n {
         let pc = trace.pc(i);
         map.entry(pc).or_insert(i);
+    }
+    map
+}
+
+fn build_first_idx_map_from_index(index: &Index) -> HashMap<u64, usize> {
+    let mut map: HashMap<u64, usize> = HashMap::with_capacity(index.pc_to_idxs.len());
+    for (&pc, idxs) in &index.pc_to_idxs {
+        if let Some(&first) = idxs.first() {
+            map.insert(pc, first);
+        }
     }
     map
 }
@@ -186,6 +197,16 @@ fn flatten_calltree(root: &CallNode) -> Vec<Frame> {
     out
 }
 
+fn idxs_hit_any_range(idxs: &[usize], ranges: &[(usize, usize)]) -> bool {
+    for &(lo, hi) in ranges {
+        let pos = idxs.partition_point(|&idx| idx < lo);
+        if pos < idxs.len() && idxs[pos] <= hi {
+            return true;
+        }
+    }
+    false
+}
+
 /// In-place: promote top-K bl-targets (ranked by total records hit)
 /// to standalone FuncIR entries `F1..Fn`. Skips entries with fewer
 /// than `min_records` records.
@@ -198,6 +219,8 @@ pub fn split_top_k_callees(
     trace: &Trace,
     sym: &SymbolMap,
     cfg: &CFG,
+    first_idx: &HashMap<u64, usize>,
+    index: Option<&Index>,
     top_k: usize,
     min_records: usize,
 ) {
@@ -212,12 +235,15 @@ pub fn split_top_k_callees(
     }
 
     let block_ids = build_block_ids(cfg);
-    let first_idx = build_first_idx_map(trace);
     let cfg_block_pcs: HashSet<u64> = cfg.blocks().iter().map(|b| b.start_pc).collect();
     let cfg_block_lookup: HashMap<u64, &crate::cfg::Block> =
         cfg.blocks().iter().map(|b| (b.start_pc, *b)).collect();
 
-    let tree = build_call_tree(trace, sym, 50);
+    let tree = if let Some(index) = index {
+        build_call_tree_indexed(trace, sym, index, 50)
+    } else {
+        build_call_tree(trace, sym, 50)
+    };
     let frames_all = flatten_calltree(&tree);
     if frames_all.is_empty() {
         return;
@@ -265,18 +291,39 @@ pub fn split_top_k_callees(
             continue;
         }
 
-        // Collect unique PCs in any instance range.
-        let mut hit_pcs: HashSet<u64> = HashSet::new();
-        for inst in &instances {
-            let lo = inst.enter_idx;
-            let hi = std::cmp::min(inst.exit_idx, trace.len().saturating_sub(1));
-            for i in lo..=hi {
-                hit_pcs.insert(trace.pc(i));
-            }
-        }
-
         // Intersect with cfg block start_pcs; skip if no blocks (Python:179).
-        let mut own_block_pcs: Vec<u64> = hit_pcs.intersection(&cfg_block_pcs).copied().collect();
+        let mut own_block_pcs: Vec<u64> = if let Some(index) = index {
+            let mut ranges: Vec<(usize, usize)> = instances
+                .iter()
+                .map(|inst| {
+                    (
+                        inst.enter_idx,
+                        std::cmp::min(inst.exit_idx, trace.len().saturating_sub(1)),
+                    )
+                })
+                .collect();
+            ranges.sort_unstable();
+            cfg_block_pcs
+                .iter()
+                .filter(|pc| {
+                    index
+                        .pc_to_idxs
+                        .get(pc)
+                        .is_some_and(|idxs| idxs_hit_any_range(idxs, &ranges))
+                })
+                .copied()
+                .collect()
+        } else {
+            let mut hit_pcs: HashSet<u64> = HashSet::new();
+            for inst in &instances {
+                let lo = inst.enter_idx;
+                let hi = std::cmp::min(inst.exit_idx, trace.len().saturating_sub(1));
+                for i in lo..=hi {
+                    hit_pcs.insert(trace.pc(i));
+                }
+            }
+            hit_pcs.intersection(&cfg_block_pcs).copied().collect()
+        };
         own_block_pcs.sort();
 
         let own_blocks: Vec<BlockIR> = own_block_pcs
@@ -287,7 +334,7 @@ pub fn split_top_k_callees(
                     .get(&pc)
                     .cloned()
                     .unwrap_or_else(|| format!("B?{pc:x}"));
-                Some(make_block_ir(block, id, trace, &first_idx, cfg, &block_ids))
+                Some(make_block_ir(block, id, trace, first_idx, cfg, &block_ids))
             })
             .collect();
 
@@ -409,7 +456,13 @@ pub fn build_symbol_func_ir(
 ///
 /// Extracted from the M3-δ skeleton body to make split_top_k_callees
 /// orthogonal. Public callers go through `build_trace_ir`.
-fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) -> TopIR {
+fn build_root_only(
+    trace: &Trace,
+    meta: &TraceMeta,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    first_idx: &HashMap<u64, usize>,
+) -> TopIR {
     let n = trace.len();
     let module_base = meta
         .module
@@ -448,7 +501,6 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) 
 
     // Populate F0 blocks: every cfg.blocks() entry, sorted by start_pc.
     let block_ids = build_block_ids(cfg);
-    let first_idx = build_first_idx_map(trace);
     let mut sorted_blocks: Vec<&crate::cfg::Block> = cfg.blocks();
     sorted_blocks.sort_by_key(|b| b.start_pc);
     let f0_blocks: Vec<BlockIR> = sorted_blocks
@@ -564,21 +616,41 @@ pub fn build_trace_ir<P: AsRef<Path>>(
     meta: &TraceMeta,
     sym: &SymbolMap,
     cfg: &CFG,
+    index: Option<&Index>,
     top_k: usize,
     min_records: usize,
     spec_paths: &[P],
     memshadow: Option<&crate::memshadow::MemShadow>,
 ) -> TopIR {
-    let mut top = build_root_only(trace, meta, sym, cfg);
+    let first_idx = if let Some(index) = index {
+        build_first_idx_map_from_index(index)
+    } else {
+        build_first_idx_map(trace)
+    };
+    let mut top = build_root_only(trace, meta, sym, cfg, &first_idx);
     if top_k > 0 {
-        split_top_k_callees(&mut top, trace, sym, cfg, top_k, min_records);
+        split_top_k_callees(
+            &mut top,
+            trace,
+            sym,
+            cfg,
+            &first_idx,
+            index,
+            top_k,
+            min_records,
+        );
     }
     if !spec_paths.is_empty() {
         attach_type_anchors(&mut top, trace, spec_paths);
     }
     if !trace.is_empty() {
-        top.vm_candidates =
-            crate::decompiler::vm_candidate::detect_vm_candidates(trace, cfg, memshadow, 0.4);
+        top.vm_candidates = if let Some(index) = index {
+            crate::decompiler::vm_candidate::detect_vm_candidates_indexed(
+                trace, cfg, index, memshadow, 0.4,
+            )
+        } else {
+            crate::decompiler::vm_candidate::detect_vm_candidates(trace, cfg, memshadow, 0.4)
+        };
     }
     classify_blocks_by_tier(&mut top, 150);
     top
@@ -587,6 +659,7 @@ pub fn build_trace_ir<P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::Index;
     use crate::trace::REC_SIZE;
 
     fn synth_root_only() -> tempfile::TempDir {
@@ -637,7 +710,7 @@ mod tests {
         sym.add(0x100000, "f_root".to_string());
         sym.freeze();
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, None, 0, 0, &[], None);
 
         assert_eq!(top.records, 3);
         assert_eq!(top.module_name, "libt.so");
@@ -664,7 +737,7 @@ mod tests {
         let (t, m) = load(&dir);
         let sym = SymbolMap::new();
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, None, 0, 0, &[], None);
         assert_eq!(
             top.fns[0].name, "sub_0",
             "pc0=0x100000 base=0x100000 → offset 0"
@@ -701,7 +774,7 @@ mod tests {
         let m = TraceMeta::load(&cd_path).unwrap();
         let sym = SymbolMap::new();
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, None, 0, 0, &[], None);
         assert_eq!(top.records, 0);
         assert!(top.fns.is_empty(), "empty trace → no fns");
     }
@@ -775,7 +848,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 10, 3, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 10, 3, &[], None);
         // Post M3-ζ: callee promotion now requires the fn_pc range to
         // intersect cfg.blocks() (Python:179). f_alpha/f_beta may or may
         // not promote depending on whether their blocks are observed in
@@ -789,11 +863,47 @@ mod tests {
     }
 
     #[test]
+    fn build_trace_ir_indexed_matches_sequential_callee_splits() {
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let index = Index::build(&t);
+
+        let sequential =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 10, 3, &[], None);
+        let indexed = build_trace_ir::<std::path::PathBuf>(
+            &t,
+            &meta,
+            &sym,
+            &cfg,
+            Some(&index),
+            10,
+            3,
+            &[],
+            None,
+        );
+
+        assert_eq!(indexed.fns.len(), sequential.fns.len());
+        for (a, b) in indexed.fns.iter().zip(sequential.fns.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.entry_idx, b.entry_idx);
+            assert_eq!(a.exit_idx, b.exit_idx);
+            let a_blocks: Vec<(u64, u64)> =
+                a.blocks.iter().map(|blk| (blk.pc, blk.end_pc)).collect();
+            let b_blocks: Vec<(u64, u64)> =
+                b.blocks.iter().map(|blk| (blk.pc, blk.end_pc)).collect();
+            assert_eq!(a_blocks, b_blocks);
+        }
+    }
+
+    #[test]
     fn build_trace_ir_top_k_zero_skips_callee_splits() {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 3, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 3, &[], None);
         assert_eq!(top.fns.len(), 1, "top_k=0 → root only; got {top:?}");
         assert_eq!(top.fns[0].id, "F0");
     }
@@ -803,7 +913,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
         assert_eq!(top.fns.len(), 1);
         let f0 = &top.fns[0];
         assert!(
@@ -819,7 +930,8 @@ mod tests {
             assert!(blk.insns >= 1, "block insns count >= 1; got {blk:?}");
         }
         // IDs are stable across builds.
-        let top2 = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let top2 =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
         let ids1: Vec<String> = f0.blocks.iter().map(|b| b.id.clone()).collect();
         let ids2: Vec<String> = top2.fns[0].blocks.iter().map(|b| b.id.clone()).collect();
         assert_eq!(ids1, ids2, "block ids must be stable across builds");
@@ -830,7 +942,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
         let f0 = &top.fns[0];
         assert!(!f0.blocks.is_empty(), "F0 must have blocks");
         let any_with_asm = f0.blocks.iter().any(|b| !b.asm.is_empty());
@@ -863,7 +976,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
         let f0 = &top.fns[0];
         assert!(!f0.blocks.is_empty(), "F0 must have blocks");
         let any_with_exits = f0.blocks.iter().any(|b| !b.exits.is_empty());
@@ -914,7 +1028,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
         for blk in &top.fns[0].blocks {
             assert!(
                 ["hot", "warm", "cold"].contains(&blk.tier.as_str()),
@@ -935,7 +1050,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let mut top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let mut top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
 
         let mut tf = tempfile::NamedTempFile::new().unwrap();
         let json = r#"{"specs":[{"name":"f_alpha","callee_pc":"0x100100","params":[],"ret":["x0","void"]}]}"#;
@@ -959,7 +1075,8 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
         assert!(top.fns.iter().all(|f| f.type_anchors.is_empty()));
     }
 }

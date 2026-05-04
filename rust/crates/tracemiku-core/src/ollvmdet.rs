@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::disasm::decode;
+use crate::index::Index;
 use crate::trace::Trace;
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +82,92 @@ pub fn ollvm_detect_vm(
         }
     }
 
+    score_ollvm_finding(
+        min_entries,
+        conf_threshold,
+        indirect_total,
+        table_load_total,
+        self_update_total,
+        &indirect_pc_first,
+    )
+}
+
+/// Same heuristic as [`ollvm_detect_vm`], but uses the startup PC index to
+/// decode unique PCs first and only walks records that are actually indirect
+/// branch hits. This preserves the observable scoring while avoiding a full
+/// trace decode pass on multi-million-record traces.
+pub fn ollvm_detect_vm_indexed(
+    trace: &Trace,
+    index: &Index,
+    min_entries: usize,
+    conf_threshold: f64,
+) -> Vec<OllvmFinding> {
+    let n = trace.len();
+    if n < min_entries {
+        return Vec::new();
+    }
+
+    let mut indirect_total: u64 = 0;
+    let mut table_load_total: u64 = 0;
+    let mut self_update_total: u64 = 0;
+    let mut indirect_pc_first: HashMap<u64, usize> = HashMap::new();
+    let mut indirect_groups: Vec<&[usize]> = Vec::new();
+
+    for (&pc, idxs) in &index.pc_to_idxs {
+        let Some(&first_idx) = idxs.first() else {
+            continue;
+        };
+        let d = decode(pc, trace.inst(first_idx));
+        let m = d.mnemonic.as_str();
+        if m == "br" || m == "blr" {
+            indirect_total += idxs.len() as u64;
+            indirect_pc_first.insert(pc, first_idx);
+            indirect_groups.push(idxs);
+        }
+    }
+
+    if indirect_total < min_entries as u64 {
+        return Vec::new();
+    }
+
+    for idxs in indirect_groups {
+        for &i in idxs {
+            let lo = i.saturating_sub(4);
+            for j in lo..i {
+                let pc_j = trace.pc(j);
+                let inst_j = trace.inst(j);
+                let dj = decode(pc_j, inst_j);
+                let op_str = dj.op_str.to_lowercase();
+                if dj.mnemonic == "ldr" && op_str.contains("lsl #3") {
+                    table_load_total += 1;
+                }
+                if op_str.contains('!')
+                    && (dj.mnemonic == "ldrh" || dj.mnemonic == "ldrb" || dj.mnemonic == "ldr")
+                {
+                    self_update_total += 1;
+                }
+            }
+        }
+    }
+
+    score_ollvm_finding(
+        min_entries,
+        conf_threshold,
+        indirect_total,
+        table_load_total,
+        self_update_total,
+        &indirect_pc_first,
+    )
+}
+
+fn score_ollvm_finding(
+    min_entries: usize,
+    conf_threshold: f64,
+    indirect_total: u64,
+    table_load_total: u64,
+    self_update_total: u64,
+    indirect_pc_first: &HashMap<u64, usize>,
+) -> Vec<OllvmFinding> {
     if indirect_total < min_entries as u64 {
         return Vec::new();
     }
@@ -111,13 +198,11 @@ pub fn ollvm_detect_vm(
         return Vec::new();
     }
 
-    // Anchor PC = the indirect-br PC seen earliest.
     let anchor_pc = indirect_pc_first
         .iter()
         .min_by_key(|(_, &idx)| idx)
         .map(|(&pc, _)| pc)
         .unwrap_or(0);
-
     let confidence = (confidence * 100.0).round() / 100.0;
 
     vec![OllvmFinding {
@@ -132,6 +217,7 @@ pub fn ollvm_detect_vm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::Index;
     use crate::trace::REC_SIZE;
 
     fn synth_trace(pcs: &[u64], insts: &[u32]) -> tempfile::TempDir {
@@ -205,5 +291,23 @@ mod tests {
         assert_eq!(f.entry_count, 20);
         assert!(f.reasons.iter().any(|r| r.contains("indirect")));
         assert_eq!(f.fn_pc, 0x1000);
+    }
+
+    #[test]
+    fn ollvm_detect_vm_indexed_matches_sequential() {
+        let pcs: Vec<u64> = (0..20u64).map(|i| 0x1000 + i * 4).collect();
+        let insts = vec![0xd61f0000u32; 20]; // br x0
+        let dir = synth_trace(&pcs, &insts);
+        let trace = load(&dir);
+        let index = Index::build(&trace);
+
+        let sequential = ollvm_detect_vm(&trace, 10, 0.3);
+        let indexed = ollvm_detect_vm_indexed(&trace, &index, 10, 0.3);
+
+        assert_eq!(indexed.len(), sequential.len());
+        assert_eq!(indexed[0].fn_pc, sequential[0].fn_pc);
+        assert_eq!(indexed[0].entry_count, sequential[0].entry_count);
+        assert_eq!(indexed[0].confidence, sequential[0].confidence);
+        assert_eq!(indexed[0].reasons, sequential[0].reasons);
     }
 }
