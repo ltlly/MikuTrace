@@ -504,7 +504,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/forward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; parity hard-gate green at 0.90 jaccard |
 | `/api/backward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; backward MEM-chasing + ARM64 writeback handling shipped; parity hard-gate green at 0.81 jaccard |
 | `/api/strings` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
-| `/api/string-provenance` | 🔜 M3 | |
+| `/api/string-provenance` | ✅ M3-string-provenance | per-byte writer/reader provenance |
 | `/api/mem-dump` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
 | `/api/last-write-of-reg` | ✅ M2-ε | linear backward scan from idx; returns {idx, pc, value} |
 | `/api/last-write-of-addr` | ✅ M3-π | latest overlapping write before cursor |
