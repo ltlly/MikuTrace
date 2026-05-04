@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { callDecLlm, fetchDecFn, fetchDecModels, fetchDecSummary } from "~/api/client";
+import { callDecLlm, fetchDecFn, fetchDecModels, fetchDecSummary, renderLlil } from "~/api/client";
 
 export default function DecompilerPanel() {
   const [summary] = createResource(fetchDecSummary);
@@ -13,6 +13,11 @@ export default function DecompilerPanel() {
   const [llmLoading, setLlmLoading] = createSignal(false);
   const [llmError, setLlmError] = createSignal("");
   const [llmOutput, setLlmOutput] = createSignal("");
+  const [llilLoading, setLlilLoading] = createSignal(false);
+  const [llilError, setLlilError] = createSignal("");
+  const [llilOutput, setLlilOutput] = createSignal("");
+  const [llilMaxRecords, setLlilMaxRecords] = createSignal(300);
+  const [llilDce, setLlilDce] = createSignal(false);
 
   createEffect(() => {
     const first = summary()?.fns[0]?.id;
@@ -56,6 +61,34 @@ export default function DecompilerPanel() {
       setLlmError(String(err));
     } finally {
       setLlmLoading(false);
+    }
+  }
+
+  async function runLlil() {
+    const fnId = selectedFn();
+    if (!fnId) return;
+    setLlilLoading(true);
+    setLlilError("");
+    setLlilOutput("");
+    try {
+      const r = await renderLlil({
+        fn_id: fnId,
+        max_records: Math.max(1, Math.min(10000, llilMaxRecords())),
+        ssa: true,
+        constfold: true,
+        dce: llilDce(),
+      });
+      setLlilOutput([
+        `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · truncated" : ""}`,
+        `lift coverage: ${(r.lift_coverage * 100).toFixed(1)}% · intrinsic ${r.lift_intrinsic}/${r.lift_total}`,
+        r.removed_pcs.length ? `dce removed: ${r.removed_pcs.join(", ")}` : "",
+        "",
+        r.pseudocode,
+      ].filter(Boolean).join("\n"));
+    } catch (err) {
+      setLlilError(String(err));
+    } finally {
+      setLlilLoading(false);
     }
   }
 
@@ -161,6 +194,30 @@ export default function DecompilerPanel() {
                     {llmLoading() ? "calling…" : "call LLM"}
                   </button>
                 </div>
+                <div class="dec-controls">
+                  <label>
+                    llil max records
+                    <input
+                      type="number"
+                      min="1"
+                      max="10000"
+                      step="50"
+                      value={llilMaxRecords()}
+                      onInput={(e) => setLlilMaxRecords(Number(e.currentTarget.value) || 300)}
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={llilDce()}
+                      onChange={(e) => setLlilDce(e.currentTarget.checked)}
+                    />
+                    dce
+                  </label>
+                  <button type="button" disabled={llilLoading()} onClick={runLlil}>
+                    {llilLoading() ? "rendering…" : "render LLIL"}
+                  </button>
+                </div>
                 <Show when={fnResp.error}>
                   <p class="err">fn load failed: {String(fnResp.error)}</p>
                 </Show>
@@ -175,6 +232,12 @@ export default function DecompilerPanel() {
                 </Show>
                 <Show when={llmOutput()}>
                   <pre class="dec-llm">{llmOutput()}</pre>
+                </Show>
+                <Show when={llilError()}>
+                  <p class="err">llil failed: {llilError()}</p>
+                </Show>
+                <Show when={llilOutput()}>
+                  <pre class="dec-llil">{llilOutput()}</pre>
                 </Show>
               </div>
             </div>

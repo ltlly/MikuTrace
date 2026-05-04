@@ -337,3 +337,23 @@ export interface DecLlmCallResponse {
   estimated_prompt_tokens: number;
   cache_hit: boolean;
 }
+
+export interface LlilRenderPayload {
+  fn_id: string;
+  max_records: number;
+  ssa: boolean;
+  constfold: boolean;
+  dce: boolean;
+}
+
+export interface LlilRenderResponse {
+  fn_id: string;
+  name: string;
+  records: number;
+  truncated: boolean;
+  lift_total: number;
+  lift_intrinsic: number;
+  lift_coverage: number;
+  removed_pcs: string[];
+  pseudocode: string;
+}

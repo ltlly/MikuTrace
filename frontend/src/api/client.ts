@@ -20,6 +20,8 @@ import type {
   DecLlmCallResponse,
   DecModelsResponse,
   DecSummaryResponse,
+  LlilRenderPayload,
+  LlilRenderResponse,
   CfgSvgResponse,
 } from "./types";
 
@@ -240,4 +242,14 @@ export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCall
   });
   if (!r.ok) throw new Error(`/api/dec/llm-call ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecLlmCallResponse;
+}
+
+export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRenderResponse> {
+  const r = await fetch("/api/llil/render", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`/api/llil/render ${r.status}: ${await r.text()}`);
+  return (await r.json()) as LlilRenderResponse;
 }

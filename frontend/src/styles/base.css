@@ -608,7 +608,8 @@ html[data-density="dense"] .xref-table td {
 .dec-table tbody tr:hover { background: rgba(98, 160, 234, 0.08); }
 .dec-table tbody tr.selected { background: rgba(98, 160, 234, 0.16); }
 .dec-markdown,
-.dec-llm {
+.dec-llm,
+.dec-llil {
   max-height: 520px;
   overflow: auto;
   margin: 0 0 10px;
@@ -623,6 +624,7 @@ html[data-density="dense"] .xref-table td {
   overflow-wrap: anywhere;
 }
 .dec-llm { border-color: rgba(87, 199, 133, 0.35); }
+.dec-llil { border-color: rgba(98, 160, 234, 0.35); }
 @media (max-width: 960px) {
   .dec-grid { grid-template-columns: 1fr; }
 }
