@@ -429,7 +429,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `llil/ssa.py` (block-local SSA + cross-block phi) | `tracemiku-core::llil::ssa` | 🟡 M5-β | block-local SSA + AAPCS64 caller-saved kill shipped; cross-block phi remains |
 | `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | ✅ M5-γ | recursive integer const folding for arithmetic/bitwise/compare ops |
 | `llil/pass_dce.py` | `tracemiku-core::llil::pass_dce` | ✅ M5-γ | iterative SSA-driven dead `SET_REG` removal |
-| `llil/pass_flag_elim.py` | `tracemiku-core::llil::pass_flag_elim` | 🔜 M5 | |
+| `llil/pass_flag_elim.py` | `tracemiku-core::llil::pass_flag_elim` | ✅ M5-ζ | folds cmp_result flag producers into following LLIL_IF branches |
 | `llil/pass_typelat.py` | `tracemiku-core::llil::pass_typelat` | 🔜 M5 | |
 | `llil/pass_struct.py` | `tracemiku-core::llil::pass_struct` | 🔜 M5 | |
 | `llil/pass_var_unify.py` | `tracemiku-core::llil::pass_var_unify` | 🔜 M5 | |
