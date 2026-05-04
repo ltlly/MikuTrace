@@ -6,6 +6,8 @@
 
 pub mod expr;
 pub mod lift;
+pub mod ssa;
 
 pub use expr::{LlilExpr, LlilOp, LlilOperand};
 pub use lift::{lift_arm64, LiftStats};
+pub use ssa::{ssa_block, SsaBlock, SsaVar};
