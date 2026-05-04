@@ -447,6 +447,7 @@ pub fn attach_type_anchors<P: AsRef<Path>>(
 ///
 /// Defaults match Python webui: top_k=10, min_records=50
 /// (`webui/server.py:2734-2735`).
+#[allow(clippy::too_many_arguments)]
 pub fn build_trace_ir<P: AsRef<Path>>(
     trace: &Trace,
     meta: &TraceMeta,
@@ -455,6 +456,7 @@ pub fn build_trace_ir<P: AsRef<Path>>(
     top_k: usize,
     min_records: usize,
     spec_paths: &[P],
+    memshadow: Option<&crate::memshadow::MemShadow>,
 ) -> TopIR {
     let mut top = build_root_only(trace, meta, sym, cfg);
     if top_k > 0 {
@@ -462,6 +464,10 @@ pub fn build_trace_ir<P: AsRef<Path>>(
     }
     if !spec_paths.is_empty() {
         attach_type_anchors(&mut top, trace, spec_paths);
+    }
+    if !trace.is_empty() {
+        top.vm_candidates =
+            crate::decompiler::vm_candidate::detect_vm_candidates(trace, cfg, memshadow, 0.4);
     }
     classify_blocks_by_tier(&mut top, 150);
     top
@@ -520,7 +526,7 @@ mod tests {
         sym.add(0x100000, "f_root".to_string());
         sym.freeze();
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
 
         assert_eq!(top.records, 3);
         assert_eq!(top.module_name, "libt.so");
@@ -547,7 +553,7 @@ mod tests {
         let (t, m) = load(&dir);
         let sym = SymbolMap::new();
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
         assert_eq!(top.fns[0].name, "sub_0", "pc0=0x100000 base=0x100000 → offset 0");
     }
 
@@ -581,7 +587,7 @@ mod tests {
         let m = TraceMeta::load(&cd_path).unwrap();
         let sym = SymbolMap::new();
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &m, &sym, &cfg, 0, 0, &[], None);
         assert_eq!(top.records, 0);
         assert!(top.fns.is_empty(), "empty trace → no fns");
     }
@@ -655,7 +661,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 10, 3, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 10, 3, &[], None);
         // Post M3-ζ: callee promotion now requires the fn_pc range to
         // intersect cfg.blocks() (Python:179). f_alpha/f_beta may or may
         // not promote depending on whether their blocks are observed in
@@ -673,7 +679,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 3, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 3, &[], None);
         assert_eq!(top.fns.len(), 1, "top_k=0 → root only; got {top:?}");
         assert_eq!(top.fns[0].id, "F0");
     }
@@ -683,7 +689,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         assert_eq!(top.fns.len(), 1);
         let f0 = &top.fns[0];
         assert!(!f0.blocks.is_empty(), "F0 must carry CFG blocks; got {f0:?}");
@@ -696,7 +702,7 @@ mod tests {
             assert!(blk.insns >= 1, "block insns count >= 1; got {blk:?}");
         }
         // IDs are stable across builds.
-        let top2 = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let top2 = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         let ids1: Vec<String> = f0.blocks.iter().map(|b| b.id.clone()).collect();
         let ids2: Vec<String> = top2.fns[0].blocks.iter().map(|b| b.id.clone()).collect();
         assert_eq!(ids1, ids2, "block ids must be stable across builds");
@@ -707,7 +713,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         let f0 = &top.fns[0];
         assert!(!f0.blocks.is_empty(), "F0 must have blocks");
         let any_with_asm = f0.blocks.iter().any(|b| !b.asm.is_empty());
@@ -734,7 +740,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         let f0 = &top.fns[0];
         assert!(!f0.blocks.is_empty(), "F0 must have blocks");
         let any_with_exits = f0.blocks.iter().any(|b| !b.exits.is_empty());
@@ -759,7 +765,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         for blk in &top.fns[0].blocks {
             assert!(
                 ["hot", "warm", "cold"].contains(&blk.tier.as_str()),
@@ -780,7 +786,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let mut top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let mut top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
 
         let mut tf = tempfile::NamedTempFile::new().unwrap();
         let json = r#"{"specs":[{"name":"f_alpha","callee_pc":"0x100100","params":[],"ret":["x0","void"]}]}"#;
@@ -804,7 +810,7 @@ mod tests {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
         let cfg = crate::cfg::build_cfg(&t);
-        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[]);
+        let top = build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, 0, 0, &[], None);
         assert!(top.fns.iter().all(|f| f.type_anchors.is_empty()));
     }
 }

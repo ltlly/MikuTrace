@@ -175,6 +175,34 @@ async fn dec_summary_includes_symbol_source_fallback() {
 }
 
 #[tokio::test]
+async fn dec_summary_no_vm_candidates_on_synth_root_only() {
+    let dir = synth_root_only();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/summary")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let cands = v["vm_candidates"].as_array().unwrap();
+    assert!(cands.is_empty(), "synth has no OLLVM pattern → no candidates");
+    let md = v["summary_md"].as_str().unwrap();
+    assert!(
+        !md.contains("## VM Candidates"),
+        "should omit VM section when empty: {md}"
+    );
+}
+
+#[tokio::test]
 async fn dec_summary_summary_md_uses_render_summary_md() {
     let dir = synth_root_only();
     let cd = call_dir(&dir);

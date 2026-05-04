@@ -106,7 +106,16 @@ impl AppState {
             Vec::new()
         };
         // Defaults match Python webui (webui/server.py:2734-2735).
-        let top_ir = build_trace_ir(&trace, &meta, &symbols, &cfg, 10, 50, &spec_paths);
+        let top_ir = build_trace_ir(
+            &trace,
+            &meta,
+            &symbols,
+            &cfg,
+            10,
+            50,
+            &spec_paths,
+            Some(&memshadow),
+        );
 
         Ok(Self {
             inner: Arc::new(AppStateInner {

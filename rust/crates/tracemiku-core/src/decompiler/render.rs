@@ -187,7 +187,7 @@ pub fn render_summary_md(top: &TopIR) -> String {
             "## VM Candidates ({})\n\n",
             top.vm_candidates.len()
         ));
-        out.push_str("> evidence only — bytecode not decoded.\n\n");
+        out.push_str("> 来自 ollvmdet + bytecode reader 检测 (DEC3-D). **evidence only — 不解码**, LLM 看 hex dump 自己推编码.\n\n");
         for (i, vc) in top.vm_candidates.iter().enumerate() {
             out.push_str(&format!("### Candidate #{i}\n\n"));
             out.push_str(&format!("- dispatcher_pc: `{:#x}`\n", vc.dispatcher_pc));
@@ -197,6 +197,35 @@ pub fn render_summary_md(top: &TopIR) -> String {
                 for r in &vc.reasons {
                     out.push_str(&format!("  - {r}\n"));
                 }
+            }
+            if vc.reader_pc != 0 {
+                out.push_str(&format!(
+                    "- bytecode reader: `{}` @ `{:#x}` (×{} hits, base reg = `{}`)\n",
+                    vc.reader_inst, vc.reader_pc, vc.reader_hits, vc.reader_base_reg
+                ));
+            }
+            if vc.bytecode_addr != 0 {
+                if vc.bytecode_len > 65536 {
+                    out.push_str(&format!(
+                        "- bytecode start: `{:#x}` (length unreliable: base reg spans ~{} bytes — likely multiple mmap regions, hex dump shows first 256B)\n",
+                        vc.bytecode_addr, vc.bytecode_len
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "- bytecode range: `{:#x}` + `{}` bytes\n",
+                        vc.bytecode_addr, vc.bytecode_len
+                    ));
+                }
+            }
+            if !vc.hex_dump.is_empty() {
+                out.push_str("\n**bytecode hex dump** (memshadow snapshot at trace end):\n\n```\n");
+                for ln in vc.hex_dump.iter().take(16) {
+                    out.push_str(ln);
+                    if !ln.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+                out.push_str("```\n");
             }
             out.push('\n');
         }
@@ -378,6 +407,53 @@ mod tests {
         assert!(md.contains("→ `x0:jclass`"));
         assert!(md.contains("hit idx: [5]"));
         assert!(md.contains("source: `libart_jni.json#FindClass`"));
+    }
+
+    #[test]
+    fn render_summary_md_emits_vm_candidates_section_when_present() {
+        use crate::decompiler::ir::VmCandidateIR;
+        let mut top = TopIR::default();
+        top.vm_candidates.push(VmCandidateIR {
+            dispatcher_pc: 0x4000,
+            confidence: 0.7,
+            reasons: vec!["indirect br/blr".into(), "self-update ldrh".into()],
+            reader_pc: 0x4100,
+            reader_inst: "ldrh w8, [x9, #2]!".into(),
+            reader_hits: 200,
+            reader_base_reg: "x9".into(),
+            bytecode_addr: 0x70000,
+            bytecode_len: 1024,
+            hex_dump: vec![
+                "00 01 02 03  04 05 06 07  08 09 0a 0b  0c 0d 0e 0f".into(),
+                "10 11 12 13  14 15 16 17  18 19 1a 1b  1c 1d 1e 1f".into(),
+            ],
+        });
+        let md = render_summary_md(&top);
+        assert!(md.contains("## VM Candidates (1)"));
+        assert!(md.contains("### Candidate #0"));
+        assert!(md.contains("dispatcher_pc: `0x4000`"));
+        assert!(md.contains("confidence: **0.70**"));
+        assert!(md.contains("- indirect br/blr"));
+        assert!(md.contains("`ldrh w8, [x9, #2]!`"));
+        assert!(md.contains("base reg = `x9`"));
+        assert!(md.contains("bytecode range: `0x70000` + `1024` bytes"));
+        assert!(md.contains("```\n00 01 02 03"));
+    }
+
+    #[test]
+    fn render_summary_md_marks_bytecode_unreliable_when_oversized() {
+        use crate::decompiler::ir::VmCandidateIR;
+        let mut top = TopIR::default();
+        top.vm_candidates.push(VmCandidateIR {
+            dispatcher_pc: 0x4000,
+            confidence: 0.5,
+            bytecode_addr: 0x70000,
+            bytecode_len: 200_000,
+            ..Default::default()
+        });
+        let md = render_summary_md(&top);
+        assert!(md.contains("length unreliable"), "missing unreliable note: {md}");
+        assert!(md.contains("~200000 bytes"), "missing length: {md}");
     }
 
     #[test]
