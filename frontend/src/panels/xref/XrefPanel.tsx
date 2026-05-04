@@ -1,6 +1,6 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchRecord, fetchSearch, fetchSearchPc } from "~/api/client";
+import { fetchIdxsForPc, fetchRecord, fetchSearch } from "~/api/client";
 
 interface XrefPanelProps {
   idx: number;
@@ -19,6 +19,7 @@ function escapeRegex(text: string | undefined): string {
 
 export default function XrefPanel(props: XrefPanelProps) {
   const [pattern, setPattern] = createSignal("");
+  const [submittedPattern, setSubmittedPattern] = createSignal("");
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
@@ -27,41 +28,74 @@ export default function XrefPanel(props: XrefPanelProps) {
     const r = record();
     return r && r.idx === props.idx ? r : undefined;
   });
-  const pcPattern = createMemo(() => (props.active ? refPattern(currentRecord()?.pc) : ""));
-  const [pcRefs] = createResource(pcPattern, (pc) => (pc ? fetchSearchPc(pc, 60) : undefined));
+  const pcSource = createMemo((prev?: { pc: string; idx: number }) => {
+    if (!props.active) return undefined;
+    const pc = refPattern(currentRecord()?.pc);
+    if (!pc) return undefined;
+    const next = { pc, idx: props.idx };
+    return prev && prev.pc === next.pc && prev.idx === next.idx ? prev : next;
+  });
+  const [pcRefs] = createResource(pcSource, (s) => (s ? fetchIdxsForPc(s.pc, s.idx, 60) : undefined));
   const defaultAsmPattern = createMemo(() => {
     if (!props.active || !currentRecord()?.asm) return "";
     return `^${escapeRegex(currentRecord()?.asm)}$`;
   });
-  const usingDefaultAsm = createMemo(() => !pattern().trim());
-  const asmPattern = createMemo(() => (props.active ? pattern().trim() || defaultAsmPattern() : ""));
+  const asmPattern = createMemo(() => (props.active ? submittedPattern() : ""));
   const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
   const currentPcRefs = createMemo(() => {
-    const p = pcPattern();
+    const s = pcSource();
     const r = pcRefs();
-    if (!currentRecord() || !p || !r) return undefined;
-    return r.request_pc === p && r.request_limit === 60 ? r : undefined;
+    if (!s || !r) return undefined;
+    return r.request_pc === s.pc &&
+      r.request_cursor === s.idx &&
+      r.request_limit === 60
+      ? r
+      : undefined;
   });
   const currentAsmRefs = createMemo(() => {
     const p = asmPattern();
     const r = asmRefs();
-    if (!(currentRecord() || pattern().trim()) || !p || !r) return undefined;
+    if (!p || !r) return undefined;
     return r.request_pattern === p && r.request_max_results === 120 ? r : undefined;
   });
+
+  function submitSearch() {
+    const p = pattern().trim();
+    if (p) setSubmittedPattern(p);
+  }
+
+  function searchCurrentInstruction() {
+    const p = defaultAsmPattern();
+    if (p) setSubmittedPattern(p);
+  }
 
   return (
     <section class="panel">
       <h2>Cross Ref</h2>
       <div class="xref-controls">
         <label>
-          decoded ASM regex
+          instruction text regex
           <input
             type="text"
             value={pattern()}
-            placeholder={currentRecord()?.asm ? `exact: ${currentRecord()?.asm}` : "mnemonic/op_str regex…"}
+            placeholder={currentRecord()?.asm ? `current: ${currentRecord()?.asm}` : "mnemonic/op_str regex…"}
             onInput={(e) => setPattern(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitSearch();
+            }}
           />
         </label>
+        <div class="xref-buttons">
+          <button type="button" onClick={submitSearch} disabled={!pattern().trim()}>
+            search
+          </button>
+          <button type="button" onClick={searchCurrentInstruction} disabled={!defaultAsmPattern()}>
+            current insn
+          </button>
+          <button type="button" onClick={() => setSubmittedPattern("")} disabled={!submittedPattern()}>
+            clear
+          </button>
+        </div>
         <Show when={currentRecord()}>
           {(r) => <span class="dim small">selected idx {r().idx} · pc {r().pc}</span>}
         </Show>
@@ -82,8 +116,8 @@ export default function XrefPanel(props: XrefPanelProps) {
             {(r) => (
               <>
                 <p class="dim small">
-                  {r().pc} · {r().count} hit{r().count === 1 ? "" : "s"}
-                  {r().truncated ? " · truncated" : ""}
+                  {r().pc} · before {r().total_before} · after {r().total_after}
+                  {r().before_capped || r().after_capped ? " · capped" : ""}
                 </p>
                 <table class="xref-table xref-exec-table">
                   <thead>
@@ -94,7 +128,19 @@ export default function XrefPanel(props: XrefPanelProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    <For each={r().idxs}>
+                    <For each={r().before}>
+                      {(idx) => (
+                        <tr
+                          class={idx === props.idx ? "selected" : ""}
+                          onClick={() => props.onSelect(idx)}
+                        >
+                          <td>{idx}</td>
+                          <td>{idx < props.idx ? "before" : idx > props.idx ? "after" : "current"}</td>
+                          <td>{idx === props.idx ? 0 : Math.abs(idx - props.idx)}</td>
+                        </tr>
+                      )}
+                    </For>
+                    <For each={r().after}>
                       {(idx) => (
                         <tr
                           class={idx === props.idx ? "selected" : ""}
@@ -108,20 +154,26 @@ export default function XrefPanel(props: XrefPanelProps) {
                     </For>
                   </tbody>
                 </table>
+                <Show when={r().before.length === 0 && r().after.length === 0}>
+                  <p class="dim small">no executions around current cursor</p>
+                </Show>
               </>
             )}
           </Show>
         </div>
         <div>
-          <h3>{usingDefaultAsm() ? "same decoded ASM" : "decoded ASM regex results"}</h3>
+          <h3>instruction text search</h3>
           <Show when={asmRefs.loading}>
             <p class="dim">loading…</p>
+          </Show>
+          <Show when={!submittedPattern()}>
+            <p class="dim small">enter a regex, or search exact current instruction.</p>
           </Show>
           <Show when={currentAsmRefs()}>
             {(r) => (
               <>
                 <p class="dim small">
-                  {usingDefaultAsm() ? "exact current instruction" : "regex"} {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
+                  regex {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
                 </p>
                 <table class="xref-table">
                   <thead>
@@ -145,6 +197,9 @@ export default function XrefPanel(props: XrefPanelProps) {
                     </For>
                   </tbody>
                 </table>
+                <Show when={r().count === 0}>
+                  <p class="dim small">no decoded instruction text matches</p>
+                </Show>
               </>
             )}
           </Show>
