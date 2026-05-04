@@ -11,6 +11,7 @@
 
 pub mod calltree;
 pub mod cfg;
+pub mod decompiler;
 pub mod disasm;
 pub mod function_index;
 pub mod index;
