@@ -11,3 +11,4 @@ pub mod backend;
 pub mod builder;
 pub mod ir;
 pub mod render;
+pub mod type_anchor;
