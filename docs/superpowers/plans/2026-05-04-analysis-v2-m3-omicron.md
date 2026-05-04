@@ -16,8 +16,8 @@
 
 ## Tasks
 
-- [ ] Extend Rust meta parsing.
-- [ ] Add server route and tests.
-- [ ] Add CLI wrapper and smoke test.
-- [ ] Run relevant core/server/CLI tests and clippy.
-- [ ] Update TODO/spec status.
+- [x] Extend Rust meta parsing.
+- [x] Add server route and tests.
+- [x] Add CLI wrapper and smoke test.
+- [x] Run relevant core/server/CLI tests and clippy.
+- [x] Update TODO/spec status.

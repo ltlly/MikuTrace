@@ -460,7 +460,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `call-chain` | 🔜 M3 | |
 | `hash-input-search` | 🔜 M3 | |
 | `diff-traces` | 🔜 M3 | |
-| `fork-events` | 🔜 M3 | reads agent fork_events |
+| `fork-events` | ✅ M3-ο | reads per-call meta.json fork_events via REST wrapper |
 | `ollvm-detect-vm` | 🔜 M3 | |
 | `hash-finalize-detect` | 🔜 M3 | |
 | `auto-phase-detect` | 🔜 M3 | |
@@ -518,7 +518,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
 | `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
 | `/api/call-chain` | 🔜 M3 | |
-| `/api/fork-events` | 🔜 M3 | |
+| `/api/fork-events` | ✅ M3-ο | per-call fork lifecycle events with status filter |
 | `/api/crypto-scan` | 🔜 M3 | |
 | `/api/ollvm-detect-vm` | 🔜 M3 | |
 | `/api/hash-finalize-detect`, `/api/hash-input-search` | 🔜 M3 | |
