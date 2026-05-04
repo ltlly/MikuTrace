@@ -51,14 +51,34 @@ pub async fn data_chase_handler(
     State(state): State<AppState>,
     Query(q): Query<DataChaseQuery>,
 ) -> Json<DataChaseResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || data_chase_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "data chase worker failed: {err}");
+                DataChaseResponse {
+                    from_idx: 0,
+                    reg: String::new(),
+                    count: 0,
+                    steps: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn data_chase_response(
+    inner: &crate::state::AppStateInner,
+    q: DataChaseQuery,
+) -> DataChaseResponse {
     let exclude = parse_exclude_regs(&q.exclude_regs);
-    let base = primary_base(&state.inner.meta);
-    let raw_steps = data_chase_core(&state, q.start, &q.reg, q.max_steps, &exclude);
+    let base = primary_base(&inner.meta);
+    let raw_steps = data_chase_core(inner, q.start, &q.reg, q.max_steps, &exclude);
     let steps: Vec<DataChaseStep> = raw_steps
         .into_iter()
         .map(|raw| {
-            let rec = state.inner.trace.record(raw.idx);
-            let (func_name, _) = state.inner.symbols.lookup(rec.pc);
+            let rec = inner.trace.record(raw.idx);
+            let (func_name, _) = inner.symbols.lookup(rec.pc);
             DataChaseStep {
                 idx: raw.idx,
                 pc: format!("{:#x}", rec.pc),
@@ -70,12 +90,12 @@ pub async fn data_chase_handler(
             }
         })
         .collect();
-    Json(DataChaseResponse {
+    DataChaseResponse {
         from_idx: q.start,
         reg: q.reg,
         count: steps.len(),
         steps,
-    })
+    }
 }
 
 struct RawStep {
@@ -86,13 +106,12 @@ struct RawStep {
 }
 
 fn data_chase_core(
-    state: &AppState,
+    inner: &crate::state::AppStateInner,
     start_idx: usize,
     taint_reg: &str,
     max_steps: usize,
     exclude_regs: &std::collections::HashSet<String>,
 ) -> Vec<RawStep> {
-    let inner = &state.inner;
     let mut cur_idx = start_idx.min(inner.trace.len());
     let mut cur_reg = taint_reg.to_string();
     let mut seen = std::collections::HashSet::new();
@@ -169,16 +188,15 @@ fn data_chase_core(
 }
 
 fn latest_write_to_addr(index: &Index, addr: u64, before_idx: usize) -> Option<usize> {
-    let mut best = None;
-    for write in &index.mem_writes {
-        if write.idx >= before_idx {
-            break;
-        }
+    let pos = index
+        .mem_writes
+        .partition_point(|write| write.idx < before_idx);
+    for write in index.mem_writes[..pos].iter().rev() {
         if addr >= write.addr && addr < write.addr.saturating_add(write.size as u64) {
-            best = Some(write.idx);
+            return Some(write.idx);
         }
     }
-    best
+    None
 }
 
 fn source_reg_for_store(
