@@ -150,7 +150,8 @@ impl ModuleResolver {
 }
 
 /// Walk the trace looking for `bl <target>` instructions; each unique target
-/// becomes a synthetic function entry. Names follow `f_<hex>` convention.
+/// becomes a synthetic function entry. Names follow IDA/Hex-Rays
+/// `sub_<hex>` convention (parity with `viewer/symbols.py:241`).
 ///
 /// Returns map keyed by ABSOLUTE PC. Use [`auto_known_offsets_with_base`]
 /// to get module-relative keys.
@@ -175,7 +176,7 @@ pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, St
             continue;
         };
         let key = target.wrapping_sub(base);
-        out.entry(key).or_insert_with(|| format!("f_{key:#x}"));
+        out.entry(key).or_insert_with(|| format!("sub_{key:x}"));
     }
     out
 }
