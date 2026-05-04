@@ -125,7 +125,7 @@ fn backward_taint_response(
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 via: h.why, // Task 1's backward_taint puts the bare reg name in `why`
                 frame_depth: if q.cross_fn_call {
-                    inner.frame_depths.get(h.idx).copied()
+                    inner.frame_depths().get(h.idx).copied()
                 } else {
                     None
                 },

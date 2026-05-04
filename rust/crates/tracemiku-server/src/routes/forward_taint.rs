@@ -125,7 +125,7 @@ fn forward_taint_response(
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 why: h.why,
                 frame_depth: if q.cross_fn_call {
-                    inner.frame_depths.get(h.idx).copied()
+                    inner.frame_depths().get(h.idx).copied()
                 } else {
                     None
                 },

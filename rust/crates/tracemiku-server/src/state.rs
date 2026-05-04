@@ -31,8 +31,8 @@ pub struct AppStateInner {
     pub cfg: CFG,
     pub function_index: FunctionIndex,
     memshadow: OnceLock<MemShadow>,
-    pub call_tree: CallNode,
-    pub frame_depths: Vec<u32>,
+    call_tree: OnceLock<CallNode>,
+    frame_depths: OnceLock<Vec<u32>>,
     top_ir: OnceLock<TopIR>,
     type_spec_paths: Vec<PathBuf>,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
@@ -108,8 +108,6 @@ impl AppState {
 
         let cfg = build_cfg(&trace);
         let function_index = build_function_index(&symbols, Some(&cfg));
-        let call_tree = build_call_tree(&trace, &symbols, 50);
-        let frame_depths = build_frame_depth_map(&trace);
         // Auto-discover type-spec JSONs (M3-ι2a Task 3): tools/hooks/*.json
         // with `kind == "type_specs"` plus examples/<so>/type_specs.json.
         let spec_paths: Vec<std::path::PathBuf> = if let Some(root) = repo_root.as_ref() {
@@ -137,8 +135,8 @@ impl AppState {
                 cfg,
                 function_index,
                 memshadow,
-                call_tree,
-                frame_depths,
+                call_tree: OnceLock::new(),
+                frame_depths: OnceLock::new(),
                 top_ir: OnceLock::new(),
                 type_spec_paths: spec_paths,
                 llm_cache: Mutex::new(HashMap::new()),
@@ -177,6 +175,16 @@ impl AppStateInner {
 
     pub fn memshadow_if_ready(&self) -> Option<&MemShadow> {
         self.memshadow.get()
+    }
+
+    pub fn call_tree(&self) -> &CallNode {
+        self.call_tree
+            .get_or_init(|| build_call_tree(&self.trace, &self.symbols, 50))
+    }
+
+    pub fn frame_depths(&self) -> &[u32] {
+        self.frame_depths
+            .get_or_init(|| build_frame_depth_map(&self.trace))
     }
 }
 
