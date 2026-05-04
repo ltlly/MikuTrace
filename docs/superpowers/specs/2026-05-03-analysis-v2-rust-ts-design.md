@@ -462,7 +462,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `hash-input-search` | 🔜 M3 | |
 | `diff-traces` | 🔜 M3 | |
 | `fork-events` | ✅ M3-ο | reads per-call meta.json fork_events via REST wrapper |
-| `ollvm-detect-vm` | 🔜 M3 | |
+| `ollvm-detect-vm` | ✅ M3-ψ | REST-backed OLLVM VM dispatcher heuristic |
 | `hash-finalize-detect` | 🔜 M3 | |
 | `auto-phase-detect` | 🔜 M3 | |
 | `jni-calls`, `jobj-history`, `jni-strings` | 🔜 M3 | reads jni_hooks.jsonl |
@@ -523,7 +523,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/call-chain` | ✅ M3-σ | LR walking caller chain |
 | `/api/fork-events` | ✅ M3-ο | per-call fork lifecycle events with status filter |
 | `/api/crypto-scan` | 🔜 M3 | |
-| `/api/ollvm-detect-vm` | 🔜 M3 | |
+| `/api/ollvm-detect-vm` | ✅ M3-ψ | OLLVM VM dispatcher heuristic |
 | `/api/hash-finalize-detect`, `/api/hash-input-search` | 🔜 M3 | |
 | `/api/auto-phase-detect` | 🔜 M3 | |
 | `/api/diff-traces` | 🔜 M3 | |
