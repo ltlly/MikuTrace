@@ -111,3 +111,66 @@ async fn backward_taint_basic() {
         );
     }
 }
+
+#[tokio::test]
+async fn forward_taint_cross_fn_call_emits_frame_depth() {
+    // Use the existing 5-rec `add x0, x0, #1` chain (no bl/ret, so all
+    // frame_depths are 0 — verifies the field shows up but doesn't pin
+    // a non-trivial value).
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+
+    // With cross_fn_call=true: each row has frame_depth (likely 0).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=10&cross_fn_call=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let hits = v["hits"].as_array().unwrap();
+    assert!(!hits.is_empty(), "expected at least 1 hit on x0 chain");
+    for h in hits {
+        assert!(
+            h.get("frame_depth").is_some(),
+            "frame_depth must be present when cross_fn_call=true: {h}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn forward_taint_no_cross_fn_call_omits_frame_depth() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let hits = v["hits"].as_array().unwrap();
+    for h in hits {
+        assert!(
+            h.get("frame_depth").is_none(),
+            "frame_depth must be omitted (skip_serializing_if) when cross_fn_call absent: {h}"
+        );
+    }
+}

@@ -23,6 +23,8 @@ pub struct BackwardTaintQuery {
     pub through_mem: bool,
     #[serde(default)]
     pub data_only: bool,
+    #[serde(default)]
+    pub cross_fn_call: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,6 +35,8 @@ pub struct TaintChainRow {
     pub func: Option<String>,
     pub asm: String,
     pub via: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_depth: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,6 +102,11 @@ pub async fn backward_taint_handler(
                 func: if fname == "?" { None } else { Some(fname) },
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 via: h.why, // Task 1's backward_taint puts the bare reg name in `why`
+                frame_depth: if q.cross_fn_call {
+                    inner.frame_depths.get(h.idx).copied()
+                } else {
+                    None
+                },
             }
         })
         .collect();
