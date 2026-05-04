@@ -7,9 +7,12 @@
 //!
 //! Mirrors viewer/decompiler/builder.py:34-287.
 
+use std::collections::HashMap;
+
 use crate::calltree::{build_call_tree, CallNode};
 use crate::cfg::CFG;
 use crate::decompiler::ir::{BlockIR, FuncIR, TopIR};
+use crate::disasm::decode;
 use crate::symbols::SymbolMap;
 use crate::trace::{Trace, TraceMeta};
 
@@ -25,8 +28,7 @@ struct Frame {
 
 /// Build a stable PC → block-id map ("B0", "B1", ...) ordered by ascending
 /// start_pc. The map is shared across all FuncIRs so B-ids stay consistent.
-fn build_block_ids(cfg: &CFG) -> std::collections::HashMap<u64, String> {
-    use std::collections::HashMap;
+fn build_block_ids(cfg: &CFG) -> HashMap<u64, String> {
     let mut blocks: Vec<&crate::cfg::Block> = cfg.blocks();
     blocks.sort_by_key(|b| b.start_pc);
     let mut map: HashMap<u64, String> = HashMap::new();
@@ -36,20 +38,74 @@ fn build_block_ids(cfg: &CFG) -> std::collections::HashMap<u64, String> {
     map
 }
 
-/// Build one BlockIR with id/pc/end_pc/insns/exec_count.
-/// M3-ζ scope: exits / samples / asm / tier use Default values
-/// (empty Vec / HashMap / String / "hot"). M3-η fills them.
-fn make_block_ir(block: &crate::cfg::Block, id: String) -> BlockIR {
-    // ARM64 fixed-width 4-byte instructions. insns = (end_pc - start_pc) / 4 + 1
-    // (inclusive end_pc).
+/// Build a PC → first-occurrence-record-idx map. One trace pass.
+fn build_first_idx_map(trace: &Trace) -> HashMap<u64, usize> {
+    let n = trace.len();
+    let mut map: HashMap<u64, usize> = HashMap::with_capacity(n.min(1 << 20));
+    for i in 0..n {
+        let pc = trace.pc(i);
+        map.entry(pc).or_insert(i);
+    }
+    map
+}
+
+/// Build one BlockIR with id/pc/end_pc/insns/exec_count, plus
+/// asm + samples (M3-η Task 1).
+///
+/// `samples`: x0..x3 + sp at the first record where `block.start_pc` fires.
+/// `asm`: per-PC decoded `"  {pc:#x}: {mnem} {op_str}"` lines for each
+/// in-block PC found in `first_idx`.
+///
+/// `exits` and `tier` still use defaults — populated by later M3-η/θ tasks.
+fn make_block_ir(
+    block: &crate::cfg::Block,
+    id: String,
+    trace: &Trace,
+    first_idx: &HashMap<u64, usize>,
+) -> BlockIR {
     let span = block.end_pc.saturating_sub(block.start_pc);
-    let insns = (span / 4 + 1) as u32;
+    let insns_count = (span / 4 + 1) as u32;
+
+    // samples: x0..x3 + sp at the first record where this block's start_pc fires.
+    // Mirrors viewer/decompiler/builder.py:309-315.
+    let mut samples: HashMap<String, i64> = HashMap::new();
+    if let Some(&idx) = first_idx.get(&block.start_pc) {
+        let rec = trace.record(idx);
+        for reg in &["x0", "x1", "x2", "x3"] {
+            if let Some(v) = rec.reg(reg) {
+                samples.insert((*reg).to_string(), v as i64);
+            }
+        }
+        samples.insert("sp".to_string(), rec.sp as i64);
+    }
+
+    // asm: walk block_pc..=end_pc by 4 (ARM64 fixed-width). For each insn-pc,
+    // look up first_idx → fetch record's inst word → decode → format.
+    // Mirrors viewer/decompiler/builder.py:317-324.
+    let mut asm_lines: Vec<String> = Vec::new();
+    let mut pc = block.start_pc;
+    while pc <= block.end_pc {
+        if let Some(&idx) = first_idx.get(&pc) {
+            let inst = trace.inst(idx);
+            let d = decode(pc, inst);
+            asm_lines.push(format!("  {pc:#x}: {} {}", d.mnemonic, d.op_str).trim_end().to_string());
+        }
+        let next = pc.saturating_add(4);
+        if next == u64::MAX || next <= pc {
+            break;
+        }
+        pc = next;
+    }
+    let asm = asm_lines.join("\n");
+
     BlockIR {
         id,
         pc: block.start_pc,
         end_pc: block.end_pc,
-        insns,
+        insns: insns_count,
         exec_count: block.executions,
+        samples,
+        asm,
         ..Default::default()
     }
 }
@@ -88,7 +144,7 @@ pub fn split_top_k_callees(
     top_k: usize,
     min_records: usize,
 ) {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     if top.fns.is_empty() {
         return;
@@ -99,6 +155,7 @@ pub fn split_top_k_callees(
     }
 
     let block_ids = build_block_ids(cfg);
+    let first_idx = build_first_idx_map(trace);
     let cfg_block_pcs: HashSet<u64> = cfg.blocks().iter().map(|b| b.start_pc).collect();
     let cfg_block_lookup: HashMap<u64, &crate::cfg::Block> =
         cfg.blocks().iter().map(|b| (b.start_pc, *b)).collect();
@@ -174,7 +231,7 @@ pub fn split_top_k_callees(
                     .get(&pc)
                     .cloned()
                     .unwrap_or_else(|| format!("B?{pc:x}"));
-                Some(make_block_ir(block, id))
+                Some(make_block_ir(block, id, trace, &first_idx))
             })
             .collect();
 
@@ -249,6 +306,7 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) 
 
     // Populate F0 blocks: every cfg.blocks() entry, sorted by start_pc.
     let block_ids = build_block_ids(cfg);
+    let first_idx = build_first_idx_map(trace);
     let mut sorted_blocks: Vec<&crate::cfg::Block> = cfg.blocks();
     sorted_blocks.sort_by_key(|b| b.start_pc);
     let f0_blocks: Vec<BlockIR> = sorted_blocks
@@ -258,7 +316,7 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) 
                 .get(&b.start_pc)
                 .cloned()
                 .unwrap_or_else(|| format!("B?{:x}", b.start_pc));
-            make_block_ir(b, id)
+            make_block_ir(b, id, trace, &first_idx)
         })
         .collect();
 
@@ -535,5 +593,30 @@ mod tests {
         let ids1: Vec<String> = f0.blocks.iter().map(|b| b.id.clone()).collect();
         let ids2: Vec<String> = top2.fns[0].blocks.iter().map(|b| b.id.clone()).collect();
         assert_eq!(ids1, ids2, "block ids must be stable across builds");
+    }
+
+    #[test]
+    fn build_trace_ir_block_ir_carries_asm_and_samples() {
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &meta, &sym, &cfg, 0, 0);
+        let f0 = &top.fns[0];
+        assert!(!f0.blocks.is_empty(), "F0 must have blocks");
+        let any_with_asm = f0.blocks.iter().any(|b| !b.asm.is_empty());
+        assert!(any_with_asm, "at least one block should have asm; got {f0:?}");
+        let any_with_samples = f0.blocks.iter().any(|b| !b.samples.is_empty());
+        assert!(any_with_samples, "at least one block should have samples; got {f0:?}");
+        for blk in &f0.blocks {
+            if blk.samples.is_empty() {
+                continue;
+            }
+            assert!(
+                blk.samples.contains_key("sp"),
+                "block {} samples missing sp: {:?}",
+                blk.id,
+                blk.samples
+            );
+        }
     }
 }
