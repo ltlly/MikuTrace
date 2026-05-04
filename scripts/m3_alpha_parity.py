@@ -128,6 +128,8 @@ def main():
                 f"  bl-target name jaccard={jaccard:.2f} <0.6 — "
                 f"py={len(py_names)}, rs={len(rs_names)}, common={len(common)}"
             )
+            diffs.append(f"  py-only sample: {sorted(py_names - rs_names)[:5]}")
+            diffs.append(f"  rs-only sample: {sorted(rs_names - py_names)[:5]}")
 
         # 3. Node-count tolerance ±10%.
         py_n = count_nodes(py_tree)
