@@ -336,6 +336,35 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) 
     top
 }
 
+/// In-place tier classification.
+///
+/// Sorts ALL blocks across ALL FuncIRs by exec_count desc; top-K marked
+/// `"hot"`, others with exec_count > 0 marked `"warm"`, exec_count == 0
+/// marked `"cold"`.
+///
+/// Mirrors viewer/decompiler/builder.py:206-242.
+pub fn classify_blocks_by_tier(top: &mut TopIR, hot_top_k: usize) {
+    // Collect (exec_count, fn_idx, block_idx) triples.
+    let mut triples: Vec<(u64, usize, usize)> = Vec::new();
+    for (fi, f) in top.fns.iter().enumerate() {
+        for (bi, b) in f.blocks.iter().enumerate() {
+            triples.push((b.exec_count, fi, bi));
+        }
+    }
+    triples.sort_by_key(|t| std::cmp::Reverse(t.0));
+
+    for (rank, (exec_count, fi, bi)) in triples.iter().enumerate() {
+        let tier = if *exec_count == 0 {
+            "cold"
+        } else if rank < hot_top_k {
+            "hot"
+        } else {
+            "warm"
+        };
+        top.fns[*fi].blocks[*bi].tier = tier.to_string();
+    }
+}
+
 /// Build a TopIR from a loaded Trace.
 ///
 /// `top_k`: max number of bl-target callees to promote to standalone
@@ -357,6 +386,7 @@ pub fn build_trace_ir(
     if top_k > 0 {
         split_top_k_callees(&mut top, trace, sym, cfg, top_k, min_records);
     }
+    classify_blocks_by_tier(&mut top, 150);
     top
 }
 
@@ -618,5 +648,25 @@ mod tests {
                 blk.samples
             );
         }
+    }
+
+    #[test]
+    fn build_trace_ir_classifies_block_tiers() {
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &meta, &sym, &cfg, 0, 0);
+        for blk in &top.fns[0].blocks {
+            assert!(
+                ["hot", "warm", "cold"].contains(&blk.tier.as_str()),
+                "block {} tier {:?} not in {{hot,warm,cold}}",
+                blk.id,
+                blk.tier
+            );
+        }
+        // For a 9-record trace with few blocks, all blocks fit in top-150
+        // so they're all "hot".
+        let all_hot = top.fns[0].blocks.iter().all(|b| b.tier == "hot");
+        assert!(all_hot, "small trace blocks all under top-150 → all hot");
     }
 }
