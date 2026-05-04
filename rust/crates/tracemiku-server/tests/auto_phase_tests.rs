@@ -60,3 +60,29 @@ async fn auto_phase_reports_jni_and_crypto_phases() {
         .iter()
         .any(|p| p["phase"] == "sha1_init" && p["info"] == "IV pattern at 0x7000"));
 }
+
+#[tokio::test]
+async fn auto_phase_caps_returned_phases() {
+    let (_tmp, cd) = synth_call_dir();
+    let mut lines = String::new();
+    for n in 0..6 {
+        let idx = n * 100;
+        lines.push_str(&format!(
+            r#"{{"trace_idx":{idx},"id":"NewStringUTF","args":{{"bytes":"s{n}"}}}}"#
+        ));
+        lines.push('\n');
+    }
+    fs::write(cd.join("jni_hooks.jsonl"), lines).unwrap();
+
+    let (status, v) = get(
+        cd,
+        "/api/auto-phase-detect?detect_byte_streams=false&max_phases=3",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["returned"], 3);
+    assert_eq!(v["truncated"], true);
+    assert!(v["total"].as_u64().unwrap() >= 6);
+    assert_eq!(v["phases"].as_array().unwrap().len(), 3);
+}

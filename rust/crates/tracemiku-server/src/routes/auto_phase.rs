@@ -12,10 +12,16 @@ use crate::state::AppState;
 pub struct AutoPhaseQuery {
     #[serde(default = "default_detect_byte_streams")]
     pub detect_byte_streams: bool,
+    #[serde(default = "default_max_phases", alias = "limit")]
+    pub max_phases: usize,
 }
 
 fn default_detect_byte_streams() -> bool {
     true
+}
+
+fn default_max_phases() -> usize {
+    2000
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -29,6 +35,9 @@ pub struct PhaseEntry {
 pub struct AutoPhaseResponse {
     pub status: &'static str,
     pub trace_records: usize,
+    pub total: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub phases: Vec<PhaseEntry>,
 }
 
@@ -51,6 +60,9 @@ pub async fn auto_phase_detect_handler(
                 AutoPhaseResponse {
                     status: "error",
                     trace_records: 0,
+                    total: 0,
+                    returned: 0,
+                    truncated: false,
                     phases: Vec::new(),
                 }
             }),
@@ -67,6 +79,9 @@ fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse
             return AutoPhaseResponse {
                 status,
                 trace_records: state.inner.trace.len(),
+                total: phases.len(),
+                returned: phases.len(),
+                truncated: false,
                 phases,
             };
         }
@@ -86,9 +101,18 @@ fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse
         }
         dedup.push(phase);
     }
+    let total = dedup.len();
+    let max_phases = q.max_phases;
+    let truncated = max_phases > 0 && total > max_phases;
+    if truncated {
+        dedup.truncate(max_phases);
+    }
     AutoPhaseResponse {
         status: "ready",
         trace_records: state.inner.trace.len(),
+        total,
+        returned: dedup.len(),
+        truncated,
         phases: dedup,
     }
 }

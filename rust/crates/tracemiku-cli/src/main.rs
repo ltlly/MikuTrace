@@ -369,6 +369,8 @@ enum Cmd {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = true)]
         detect_byte_streams: bool,
+        #[arg(long, default_value_t = 2000)]
+        max_phases: usize,
     },
     /// GET /api/jni-calls.
     JniCalls {
@@ -798,8 +800,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Cmd::AutoPhaseDetect {
             trace_dir,
             detect_byte_streams,
+            max_phases,
         }) => {
-            let params = vec![("detect_byte_streams", detect_byte_streams.to_string())];
+            let params = vec![
+                ("detect_byte_streams", detect_byte_streams.to_string()),
+                ("max_phases", max_phases.to_string()),
+            ];
             route_get_json(trace_dir, route_path("/api/auto-phase-detect", &params)).await
         }
         Some(Cmd::JniCalls {

@@ -8,6 +8,7 @@ use std::thread;
 use std::time::Instant;
 
 use tracemiku_core::cfg::build_cfg;
+use tracemiku_core::disasm::decode;
 use tracemiku_core::prelude::{
     build_call_tree_indexed, build_frame_depth_map, build_from_trace, build_function_index,
     build_trace_ir, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
@@ -40,6 +41,7 @@ pub struct AppStateInner {
     memshadow_status: AtomicU8,
     call_tree: OnceLock<CallNode>,
     frame_depths: OnceLock<Vec<u32>>,
+    asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     top_ir: OnceLock<TopIR>,
     type_spec_paths: Vec<PathBuf>,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
@@ -52,6 +54,12 @@ pub struct CfgSvgCached {
     pub svg: String,
     pub block_count: usize,
     pub total_block_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct AsmSearchGroup {
+    pub pc: u64,
+    pub asm: String,
 }
 
 impl AppState {
@@ -153,6 +161,7 @@ impl AppState {
             memshadow_status,
             call_tree: OnceLock::new(),
             frame_depths: OnceLock::new(),
+            asm_groups: OnceLock::new(),
             top_ir: OnceLock::new(),
             type_spec_paths: spec_paths,
             llm_cache: Mutex::new(HashMap::new()),
@@ -295,6 +304,28 @@ impl AppStateInner {
     pub fn frame_depths(&self) -> &[u32] {
         self.frame_depths
             .get_or_init(|| build_frame_depth_map(&self.trace))
+    }
+
+    pub fn asm_groups(&self) -> &[AsmSearchGroup] {
+        self.asm_groups
+            .get_or_init(|| {
+                let mut groups = Vec::with_capacity(self.index.pc_to_idxs.len());
+                for (&pc, idxs) in &self.index.pc_to_idxs {
+                    let Some(&first_idx) = idxs.first() else {
+                        continue;
+                    };
+                    let record = self.trace.record(first_idx);
+                    let decoded = decode(record.pc, record.inst);
+                    groups.push(AsmSearchGroup {
+                        pc,
+                        asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
+                            .trim()
+                            .to_string(),
+                    });
+                }
+                groups
+            })
+            .as_slice()
     }
 }
 

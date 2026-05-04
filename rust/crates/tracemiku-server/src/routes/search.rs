@@ -11,8 +11,6 @@ use std::collections::BinaryHeap;
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::prelude::*;
-
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -77,17 +75,17 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
         .and_then(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).ok());
     let mut groups = Vec::new();
 
-    for idxs in inner.index.pc_to_idxs.values() {
-        let Some(&first_idx) = idxs.first() else {
-            continue;
-        };
-        let r = inner.trace.record(first_idx);
-        let d = decode(r.pc, r.inst);
-        let asm = format!("{} {}", d.mnemonic, d.op_str).trim().to_string();
-        if !matches_pattern(&re, &q.pattern, &asm) {
+    for asm_group in inner.asm_groups() {
+        if !matches_pattern(&re, &q.pattern, &asm_group.asm) {
             continue;
         }
-        groups.push(MatchedGroup { asm, idxs });
+        let Some(idxs) = inner.index.pc_to_idxs.get(&asm_group.pc) else {
+            continue;
+        };
+        groups.push(MatchedGroup {
+            asm: asm_group.asm.as_str(),
+            idxs,
+        });
     }
 
     let hit_idxs = if let Some(cursor) = q.cursor {
@@ -228,12 +226,12 @@ fn make_hit(
         rel: base.map(|b| format!("{:#x}", r.pc.wrapping_sub(b))),
         func,
         off,
-        asm: group.asm.clone(),
+        asm: group.asm.to_string(),
     }
 }
 
 struct MatchedGroup<'a> {
-    asm: String,
+    asm: &'a str,
     idxs: &'a [usize],
 }
 
