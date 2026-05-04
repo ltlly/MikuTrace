@@ -1,4 +1,4 @@
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchBacktrace } from "~/api/client";
 
@@ -9,8 +9,30 @@ interface BacktracePanelProps {
 }
 
 export default function BacktracePanel(props: BacktracePanelProps) {
+  const [queryIdx, setQueryIdx] = createSignal<number | undefined>();
+  let queryTimer: number | undefined;
+
+  createEffect(() => {
+    if (queryTimer !== undefined) {
+      window.clearTimeout(queryTimer);
+      queryTimer = undefined;
+    }
+    if (!props.active) {
+      setQueryIdx(undefined);
+      return;
+    }
+    const idx = props.idx;
+    queryTimer = window.setTimeout(() => {
+      queryTimer = undefined;
+      setQueryIdx(idx);
+    }, 80);
+  });
+  onCleanup(() => {
+    if (queryTimer !== undefined) window.clearTimeout(queryTimer);
+  });
+
   const [resp] = createResource(
-    () => (props.active ? props.idx : undefined),
+    queryIdx,
     (idx) => fetchBacktrace(idx),
   );
   const currentResp = createMemo(() => {
