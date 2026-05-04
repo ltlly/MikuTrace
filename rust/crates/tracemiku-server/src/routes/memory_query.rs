@@ -171,17 +171,21 @@ pub async fn mem_writes_in_range_handler(
 
     let mut matched = 0usize;
     let mut rows = Vec::new();
-    for write in &inner.memshadow().writes {
+    for write in &inner.index.mem_writes {
         if write.idx < lo || write.idx >= hi {
             continue;
         }
-        if addr_lo.is_some_and(|a| write.addr < a) {
+        if !matches_addr_filter(write.addr, write.size, addr_lo, addr_hi) {
             continue;
         }
-        if addr_hi.is_some_and(|a| write.addr >= a) {
-            continue;
-        }
-        if src_byte.is_some_and(|b| (write.value & 0xff) as u8 != b) {
+        let record = inner.trace.record(write.idx);
+        let decoded = decode(record.pc, record.inst);
+        let src_reg = source_reg_for_write_at(&decoded, &record, write.addr);
+        let src_value = src_reg
+            .as_deref()
+            .and_then(|reg| record.reg_by_name(reg))
+            .unwrap_or(0);
+        if src_byte.is_some_and(|b| (src_value & 0xff) as u8 != b) {
             continue;
         }
         matched += 1;
@@ -189,8 +193,6 @@ pub async fn mem_writes_in_range_handler(
             continue;
         }
 
-        let record = inner.trace.record(write.idx);
-        let decoded = decode(record.pc, record.inst);
         let (func_name, _) = inner.symbols.lookup(record.pc);
         rows.push(MemWriteRow {
             idx: write.idx,
@@ -202,9 +204,9 @@ pub async fn mem_writes_in_range_handler(
                 .to_string(),
             dst_addr: format!("{:#x}", write.addr),
             size: write.size,
-            src_reg: source_reg_for_write_at(&decoded, &record, write.addr),
-            src_value: format!("{:#x}", write.value),
-            byte0: (write.value & 0xff) as u8,
+            src_reg,
+            src_value: format!("{src_value:#x}"),
+            byte0: (src_value & 0xff) as u8,
         });
     }
 
@@ -500,6 +502,15 @@ fn overlaps(start: u64, size: u32, range_start: u64, range_size: u64) -> bool {
     let end = start.saturating_add(size as u64);
     let range_end = range_start.saturating_add(range_size);
     start < range_end && end > range_start
+}
+
+fn matches_addr_filter(addr: u64, size: u32, addr_lo: Option<u64>, addr_hi: Option<u64>) -> bool {
+    match (addr_lo, addr_hi) {
+        (Some(lo), Some(hi)) => hi > lo && overlaps(addr, size, lo, hi.saturating_sub(lo)),
+        (Some(lo), None) => addr >= lo,
+        (None, Some(hi)) => addr < hi,
+        (None, None) => true,
+    }
 }
 
 fn touching_range_idxs<I>(iter: I, start: u64, size: u64) -> Vec<usize>
