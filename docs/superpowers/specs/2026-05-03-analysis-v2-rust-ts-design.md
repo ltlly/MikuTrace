@@ -455,7 +455,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `last-write-of-addr` | ✅ M3-π | REST-backed wrapper for `/api/last-write-of-addr` |
 | `find-mem-pattern` | ✅ M3-π | REST-backed wrapper for `/api/find-mem-pattern` |
 | `mem-writes-in-range` | ✅ M3-π | covered by `idxs-touching-range` writer partition |
-| `mem-flow` | 🔜 M3 | per-byte event timeline |
+| `mem-flow` | ✅ M3-φ | REST-backed per-byte event timeline |
 | `crypto-scan` | 🔜 M3 | 22 standard primitives |
 | `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
 | `call-chain` | ✅ M3-σ | REST-backed LR walking wrapper |
@@ -511,7 +511,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/data-chase` | ✅ M3-τ | single-path backward data chase |
 | `/api/find-mem-pattern` | ✅ M3-π | MemShadow byte-pattern scan with idx filters |
 | `/api/mem-writes-in-range` | ✅ M3-π | covered by `/api/idxs-touching-range` writer partition |
-| `/api/mem-flow` | 🔜 M3 | |
+| `/api/mem-flow` | ✅ M3-φ | per-byte read/write event timeline |
 | `/api/mem-diff` | ✅ M3-υ | MemShadow byte diff between idx-1 and idx |
 | `/api/reg-timeline` | ✅ M3-υ | distinct register value timeline |
 | `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings`, `/api/jni-events` | 🔜 M3 | reads jni_hooks.jsonl |
