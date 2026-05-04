@@ -16,7 +16,12 @@ interface MemoryPanelProps {
   active: boolean;
 }
 
-const QUICK_REGS = ["x0", "x1", "x2", "x3", "sp"];
+const REG_ORDER = [
+  "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+  "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+  "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+  "x24", "x25", "x26", "x27", "x28", "fp", "lr", "sp", "pc",
+];
 const REG_ADDR_RE = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)$/i;
 
 interface MemContext {
@@ -27,6 +32,7 @@ interface MemContext {
   srcIdx: number | null;
   hits?: TouchingRangeResponse;
   writes?: MemWritesInRangeResponse;
+  writeErr?: string;
   err?: string;
 }
 
@@ -70,6 +76,18 @@ function normalizeRegName(raw: string): string {
   if (reg === "lr") return "x30";
   if (reg.startsWith("w")) return `x${reg.slice(1)}`;
   return reg;
+}
+
+function sortedRegNames(regs: Record<string, string>): string[] {
+  const rank = new Map(REG_ORDER.map((reg, i) => [reg, i]));
+  return Object.keys(regs)
+    .filter((reg) => reg !== "nzcv")
+    .sort((a, b) => {
+      const ar = rank.get(a) ?? Number.MAX_SAFE_INTEGER;
+      const br = rank.get(b) ?? Number.MAX_SAFE_INTEGER;
+      if (ar !== br) return ar - br;
+      return a.localeCompare(b);
+    });
 }
 
 export default function MemoryPanel(props: MemoryPanelProps) {
@@ -171,6 +189,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     return `0x${n.toString(16)}`;
   }
 
+  function addToAddr(addr: string, delta: number): string {
+    return fmtAddr(addrBig(addr) + BigInt(delta));
+  }
+
   function selectedBounds(fallback: string): { lo: string; hi: string; size: number; selected: boolean } {
     const sel = selection();
     if (!sel) return { lo: fallback, hi: fallback, size: 1, selected: false };
@@ -213,19 +235,23 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     };
     setMemContext(base);
     try {
-      const [hits, writes] = await Promise.all([
-        fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, 30),
-        fetchMemWritesInRange({
+      const hits = await fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, 30);
+      let writes: MemWritesInRangeResponse | undefined;
+      let writeErr: string | undefined;
+      try {
+        writes = await fetchMemWritesInRange({
           idxLo: 0,
           idxHi: props.idx,
           addrLo: bounds.lo,
-          addrHi: bounds.hi,
+          addrHi: addToAddr(bounds.hi, 1),
           max: 30,
-        }),
-      ]);
+        });
+      } catch (err) {
+        writeErr = String(err);
+      }
       setMemContext((current) =>
         current?.addr === bounds.lo && current.size === bounds.size
-          ? { ...current, hits, writes }
+          ? { ...current, hits, writes, writeErr }
           : current,
       );
     } catch (err) {
@@ -261,15 +287,22 @@ export default function MemoryPanel(props: MemoryPanelProps) {
         </label>
         <Show when={record()}>
           {(r) => (
-            <div class="memory-quick">
-              <For each={QUICK_REGS.filter((reg) => r().regs[reg])}>
-                {(reg) => (
-                  <button type="button" onClick={() => setAddr(r().regs[reg])}>
-                    {reg}
-                  </button>
-                )}
-              </For>
-            </div>
+            <label>
+              reg
+              <select
+                value=""
+                onChange={(e) => {
+                  const reg = e.currentTarget.value;
+                  if (reg) setAddr(r().regs[reg]);
+                  e.currentTarget.value = "";
+                }}
+              >
+                <option value="">select register…</option>
+                <For each={sortedRegNames(r().regs)}>
+                  {(reg) => <option value={reg}>{reg} = {r().regs[reg]}</option>}
+                </For>
+              </select>
+            </label>
           )}
         </Show>
       </div>
@@ -346,6 +379,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                   <div class="memory-context-title">
                     <code>{ctx().addr}</code> <span class="dim">size {ctx().size}</span>
                   </div>
+                  <p class="dim small">拖选多个字节后右键，会按整段范围查询读写。</p>
                   <Show when={ctx().srcIdx !== null}>
                     <button type="button" onClick={() => props.onSelect(ctx().srcIdx!)}>
                       跳到来源 idx {ctx().srcIdx}
@@ -395,6 +429,9 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                               )}
                             </For>
                           </div>
+                        </Show>
+                        <Show when={ctx().writeErr}>
+                          <p class="err small">write details unavailable: {ctx().writeErr}</p>
                         </Show>
                       </>
                     )}

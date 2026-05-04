@@ -11,9 +11,6 @@ interface RegistersPanelProps {
 }
 
 const REG_ORDER = [
-  "pc",
-  "sp",
-  "lr",
   "x0",
   "x1",
   "x2",
@@ -43,8 +40,11 @@ const REG_ORDER = [
   "x26",
   "x27",
   "x28",
-  "x29",
-  "x30",
+  "fp",
+  "lr",
+  "sp",
+  "pc",
+  "nzcv",
 ];
 
 const REG_COLS_KEY = "tracemiku-reg-cols-v1";
@@ -94,7 +94,25 @@ function sortedRegs(regs: Record<string, string>): [string, string][] {
 
 function prevValue(reg: string, prevRegs: Record<string, string> | undefined): string | undefined {
   if (!prevRegs) return undefined;
-  return prevRegs[reg];
+  return prevRegs[reg] ?? prevRegs[aliasReg(reg)];
+}
+
+function aliasReg(reg: string): string {
+  if (reg === "fp") return "x29";
+  if (reg === "lr") return "x30";
+  if (reg === "x29") return "fp";
+  if (reg === "x30") return "lr";
+  return reg;
+}
+
+function regListHas(regs: string[] | undefined, reg: string): boolean {
+  if (!regs) return false;
+  const alias = aliasReg(reg);
+  return regs.includes(reg) || regs.includes(alias);
+}
+
+function sameSelected(a: string, b: string): boolean {
+  return a === b || aliasReg(a) === b || aliasReg(b) === a;
 }
 
 function parseHex(value: string | undefined): bigint | null {
@@ -246,9 +264,9 @@ export default function RegistersPanel(props: RegistersPanelProps) {
                       <tr
                         classList={{
                           changed: changed(),
-                          selected: reg === props.selectedReg,
-                          def: r().regs_def?.includes(reg) ?? false,
-                          use: r().regs_use?.includes(reg) ?? false,
+                          selected: sameSelected(reg, props.selectedReg),
+                          def: regListHas(r().regs_def, reg),
+                          use: regListHas(r().regs_use, reg),
                         }}
                         onClick={() => props.onSelectReg(reg)}
                         onDblClick={() => void jumpLastWrite(reg)}

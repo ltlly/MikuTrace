@@ -21,6 +21,10 @@ function statusText(item: unknown): string {
 
 interface SettingsPanelProps {
   active: boolean;
+  debugVisible: boolean;
+  apiDebug: boolean;
+  onDebugVisibleChange: (next: boolean) => void;
+  onApiDebugChange: (next: boolean) => void;
 }
 
 export default function SettingsPanel(props: SettingsPanelProps) {
@@ -48,6 +52,22 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             onChange={(e) => setDense(e.currentTarget.checked)}
           />
           dense tables
+        </label>
+        <label class="settings-toggle">
+          <input
+            type="checkbox"
+            checked={props.debugVisible}
+            onChange={(e) => props.onDebugVisibleChange(e.currentTarget.checked)}
+          />
+          debug overlay
+        </label>
+        <label class="settings-toggle">
+          <input
+            type="checkbox"
+            checked={props.apiDebug}
+            onChange={(e) => props.onApiDebugChange(e.currentTarget.checked)}
+          />
+          API debug log
         </label>
         <Show when={meta()}>
           {(m) => (

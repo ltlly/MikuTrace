@@ -2,9 +2,11 @@ import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
+import type { StringProvenanceRequest } from "./StringProvenancePanel";
 
 interface StringsPanelProps {
   onSelect: (idx: number) => void;
+  onShowProvenance: (req: Omit<StringProvenanceRequest, "token">) => void;
   active: boolean;
 }
 
@@ -41,6 +43,15 @@ export default function StringsPanel(props: StringsPanelProps) {
     } catch (err) {
       setJumpErr(String(err));
     }
+  }
+
+  function showProvenance(s: StringEntry) {
+    setJumpErr("");
+    props.onShowProvenance({
+      addr: s.addr,
+      len: Math.max(1, Math.min(512, s.len + 1)),
+      text: s.str,
+    });
   }
 
   return (
@@ -89,8 +100,9 @@ export default function StringsPanel(props: StringsPanelProps) {
               <For each={r().strings}>
                 {(s) => (
                   <li
-                    title="双击跳转到第一次写入/触碰该字符串地址的 trace"
-                    onDblClick={() => void jumpString(s)}
+                    title="单击跳到第一次写入/触碰；双击查看逐字符 provenance"
+                    onClick={() => void jumpString(s)}
+                    onDblClick={() => showProvenance(s)}
                   >
                     <span class="dim small">{s.addr}</span>
                     <span class="dim small">{s.len}</span>

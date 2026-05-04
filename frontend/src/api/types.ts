@@ -118,10 +118,21 @@ export interface CfgSvgErrorResponse {
   err: string;
 }
 
+export interface CfgSvgLargeResponse {
+  status: "large";
+  fn: string | null;
+  svg: null;
+  block_count: number;
+  edge_count: number;
+  total_block_count: number;
+  dot_bytes: number;
+}
+
 export type CfgSvgResponse =
   | CfgSvgReadyResponse
   | CfgSvgEmptyResponse
-  | CfgSvgErrorResponse;
+  | CfgSvgErrorResponse
+  | CfgSvgLargeResponse;
 
 // ── /api/strings ─────────────────────────────────────────────────────────
 
@@ -136,6 +147,25 @@ export interface StringsResponse {
   count: number;
   cursor: number;     // -1 if no cursor filter
   strings: StringEntry[];
+}
+
+// ── /api/string-provenance ──────────────────────────────────────────────
+
+export interface StringProvByte {
+  addr: string;
+  byte: number | null;
+  kind: string;
+  writers: number[];
+  readers: number[];
+  writers_total: number;
+  readers_total: number;
+}
+
+export interface StringProvenanceResponse {
+  status: string;
+  addr: string;
+  length: number;
+  bytes: StringProvByte[];
 }
 
 // ── /api/idxs-touching-addr ─────────────────────────────────────────────

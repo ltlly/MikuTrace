@@ -15,6 +15,7 @@ import RegistersPanel from "./panels/registers/RegistersPanel";
 import SettingsPanel from "./panels/settings/SettingsPanel";
 import SoFilterPanel from "./panels/sofilter/SoFilterPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
+import StringProvenancePanel, { type StringProvenanceRequest } from "./panels/strings/StringProvenancePanel";
 import TaintPanel from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
@@ -31,7 +32,7 @@ type LeftTab =
   | "sofilter"
   | "settings";
 type RightTab = "cfg" | "regs" | "hlil" | "dec";
-type BottomTab = "memory" | "navigation" | "trace-for-pc";
+type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 type HelpState = { topic: HelpTopic; x: number; y: number };
 type CmdMode = "" | "/" | ":";
@@ -167,6 +168,7 @@ export default function App() {
   const [searchPattern, setSearchPattern] = createSignal("");
   const [memoryRequest, setMemoryRequest] = createSignal<MemoryRequest | undefined>();
   const [taintRequest, setTaintRequest] = createSignal<TaintRunRequest | undefined>();
+  const [stringProvenanceRequest, setStringProvenanceRequest] = createSignal<StringProvenanceRequest | undefined>();
   const [leftW, setLeftW] = createSignal(initial.leftW);
   const [rightW, setRightW] = createSignal(initial.rightW);
   const [bottomH, setBottomH] = createSignal(initial.bottomH);
@@ -361,6 +363,11 @@ export default function App() {
     setTaintRequest({ token: Date.now(), idx, reg, direction });
   }
 
+  function showStringProvenance(req: Omit<StringProvenanceRequest, "token">) {
+    setStringProvenanceRequest({ ...req, token: Date.now() });
+    setBottomTab("string-provenance");
+  }
+
   function openCmd(mode: CmdMode) {
     setCmdMode(mode);
     setCmdValue("");
@@ -509,6 +516,7 @@ export default function App() {
   const vtab = (tab: LeftTab, label: string, title: string) => (
     <button
       class="vtab"
+      data-vtab={tab}
       classList={{ active: leftTab() === tab }}
       title={title}
       onClick={() => setLeftTab(tab)}
@@ -519,6 +527,7 @@ export default function App() {
   const rtab = (tab: RightTab, label: string, title: string) => (
     <button
       class="vtab"
+      data-rtab={tab}
       classList={{ active: rightTab() === tab }}
       title={title}
       onClick={() => setRightTab(tab)}
@@ -529,6 +538,7 @@ export default function App() {
   const btab = (tab: BottomTab, label: string) => (
     <button
       class="btab"
+      data-btab={tab}
       classList={{ active: bottomTab() === tab }}
       onClick={() => setBottomTab(tab)}
     >
@@ -559,7 +569,12 @@ export default function App() {
     if (topic === "overview") return "traceMiku Web";
     if (topic === "disasm") return "Disassembly";
     if (topic === "right") return rightTitle();
-    if (topic === "bottom") return bottomTab() === "memory" ? "Memory" : bottomTab() === "trace-for-pc" ? "Trace for PC" : "Navigation";
+    if (topic === "bottom") {
+      if (bottomTab() === "memory") return "Memory";
+      if (bottomTab() === "trace-for-pc") return "Trace for PC";
+      if (bottomTab() === "string-provenance") return "String Provenance";
+      return "Navigation";
+    }
     return leftTitle();
   });
   const helpBody = createMemo(() => {
@@ -579,14 +594,15 @@ export default function App() {
     if (topic === "bottom") {
       if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。双击字节跳来源 idx，右键字节显示该地址前后的读写触碰分析。";
       if (bottomTab() === "trace-for-pc") return "Trace for PC 显示当前 PC 在 trace 中其它执行位置，分为 cursor 之前和之后。它用来分析循环、调度器、热点指令和同一静态指令在不同时间的状态差异。点击任意行会跳转到对应 idx。";
+      if (bottomTab() === "string-provenance") return "Provenance 显示 Strings 双击后选中字符串的逐字节来源：每个字符当前值、写入 idx 列表和读取 idx 列表。点击 w#/r# 会跳到对应 trace。";
       return "Navigation 预留给原版 Web 的 cursor 历史、前进/后退和命令式跳转。当前主要跳转入口是 Disassembly、CFG、CallTree、Strings、Cross Ref 和 Trace for PC。";
     }
     if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG、HLIL 和 Decompile；记录数、block 数和入口地址用来判断热函数和分析范围。";
     if (leftTab() === "back") return "Backtrace 在当前 cursor 处重建动态调用栈。点击 frame 会跳到对应 call site，用于从深层 JNI/Native 调用回到上游上下文。";
     if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
-    if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。filter 用于查缓冲区和常量；双击字符串会跳到第一次写入或触碰该字符串地址的 trace。";
-    if (leftTab() === "taint") return "Taint 默认从当前 cursor 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源，选项控制是否穿过内存和函数调用。";
-    if (leftTab() === "xref") return "Cross Ref 包含当前 PC 的执行历史和汇编文本搜索。它不是一排无语义按钮，而是按 idx、方向和距离展示；点击行会跳转到对应 trace。";
+    if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。单击跳到第一次写入/触碰该字符串地址的 trace；双击会在底部 Provenance 展示每个字符是谁写入、谁读取。";
+    if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源，选项控制是否穿过内存和是否标注函数调用深度。";
+    if (leftTab() === "xref") return "Cross Ref 上半部分是当前 PC 在 trace 中的执行历史；下半部分是 ASM 文本搜索。搜索框为空时用当前指令文本做精确正则搜索，手动输入时按 mnemonic/op_str 正则搜索。";
     if (leftTab() === "settings") return "Settings 显示后端 API、密度和调试状态。后续与原版 Web 对齐的显示开关会集中放在这里。";
     return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
   });
@@ -663,7 +679,11 @@ export default function App() {
               <ForksPanel active={leftTab() === "forks"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "strings" }}>
-              <StringsPanel onSelect={setSelectedIdx} active={leftTab() === "strings"} />
+              <StringsPanel
+                onSelect={setSelectedIdx}
+                onShowProvenance={showStringProvenance}
+                active={leftTab() === "strings"}
+              />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "taint" }}>
               <TaintPanel
@@ -682,7 +702,13 @@ export default function App() {
               <SoFilterPanel hiddenSos={hiddenSos()} onHiddenSosChange={setHiddenSos} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "settings" }}>
-              <SettingsPanel active={leftTab() === "settings"} />
+              <SettingsPanel
+                active={leftTab() === "settings"}
+                debugVisible={debugVisible()}
+                apiDebug={apiDebug()}
+                onDebugVisibleChange={setDebugVisible}
+                onApiDebugChange={setApiDebug}
+              />
             </div>
           </div>
         </section>
@@ -741,6 +767,7 @@ export default function App() {
             {btab("memory", "Memory")}
             {btab("navigation", "Navigation")}
             {btab("trace-for-pc", "Trace for PC")}
+            {btab("string-provenance", "Provenance")}
             <span class="grow" />
             {helpButton("bottom")}
           </div>
@@ -761,6 +788,13 @@ export default function App() {
                 idx={selectedIdx()}
                 onSelect={setSelectedIdx}
                 active={bottomTab() === "trace-for-pc"}
+              />
+            </div>
+            <div class="bbody" classList={{ active: bottomTab() === "string-provenance" }}>
+              <StringProvenancePanel
+                request={stringProvenanceRequest()}
+                onSelect={setSelectedIdx}
+                active={bottomTab() === "string-provenance"}
               />
             </div>
           </div>

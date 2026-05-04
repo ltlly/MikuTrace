@@ -49,6 +49,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   const [autoGraph, setAutoGraph] = createSignal(true);
   const [timeout, setTimeout] = createSignal(60);
   const [reload, setReload] = createSignal(0);
+  const [forceGraph, setForceGraph] = createSignal(false);
   const [graph, setGraph] = createSignal<CfgGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = createSignal(false);
   const [graphError, setGraphError] = createSignal<unknown>(null);
@@ -120,6 +121,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     const requestFn = fnName();
     const requestTimeout = timeout();
     const requestAuto = autoGraph();
+    const requestForce = forceGraph();
     reload();
 
     const seq = ++graphSeq;
@@ -131,7 +133,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     setGraph(null);
     setGraphLoading(true);
     setGraphError(null);
-    void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, signal: abort.signal })
+    void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, force: requestForce, signal: abort.signal })
       .then((resp) => {
         if (seq !== graphSeq || abort.signal.aborted) return;
         setGraph({ ...resp, requestFn, auto: requestAuto });
@@ -169,6 +171,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     const r = currentRecord();
     if (!r || r.idx !== idx || !r.func || r.func === fnName()) return;
     setAutoGraph(true);
+    setForceGraph(false);
     setFnName(r.func);
   });
 
@@ -202,11 +205,13 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   function selectFunction(name: string) {
     setAutoGraph(false);
+    setForceGraph(false);
     setFnName(name);
   }
 
   function reloadGraph() {
     setAutoGraph(false);
+    setForceGraph(true);
     setReload((n) => n + 1);
   }
 
@@ -398,6 +403,15 @@ export default function CfgPanel(props: CfgPanelProps) {
                     injection to keep disassembly responsive.
                   </p>
                   <button type="button" onClick={reloadGraph}>render graph</button>
+                </div>
+              )}
+              {r.status === "large" && (
+                <div class="cfg-large-graph">
+                  <p class="dim">
+                    {r.fn ?? fnName()} CFG is large ({r.block_count} blocks, {r.edge_count} edges,{" "}
+                    {Math.round(r.dot_bytes / 1024).toLocaleString()} KiB dot). Auto render skipped to keep UI responsive.
+                  </p>
+                  <button type="button" onClick={reloadGraph}>force dot render</button>
                 </div>
               )}
               {r.status === "empty" && (

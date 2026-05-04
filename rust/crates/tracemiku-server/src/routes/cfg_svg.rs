@@ -10,7 +10,7 @@ use std::time::Duration;
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::state::{AppState, CfgSvgCached};
 
@@ -20,6 +20,8 @@ pub struct CfgSvgQuery {
     pub fn_name: String,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    #[serde(default)]
+    pub force: bool,
 }
 
 fn default_timeout() -> u64 {
@@ -42,10 +44,22 @@ pub enum CfgSvgResponse {
         fn_name: Option<String>,
         svg: Option<String>,
     },
+    Large {
+        #[serde(rename = "fn")]
+        fn_name: Option<String>,
+        svg: Option<String>,
+        block_count: usize,
+        edge_count: usize,
+        total_block_count: usize,
+        dot_bytes: usize,
+    },
     Error {
         err: String,
     },
 }
+
+const AUTO_DOT_MAX_BLOCKS: usize = 180;
+const AUTO_DOT_MAX_EDGES: usize = 900;
 
 pub async fn cfg_svg_handler(
     State(state): State<AppState>,
@@ -80,7 +94,19 @@ pub async fn cfg_svg_handler(
         });
     }
 
-    let dot = build_dot(inner, &included);
+    let included_starts: HashSet<u64> = included.iter().map(|b| b.start_pc).collect();
+    let edge_count = included_edge_count(inner, &included_starts);
+    let dot = build_dot(inner, &included, &included_starts);
+    if !q.force && (included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES) {
+        return Json(CfgSvgResponse::Large {
+            fn_name: filter_fn,
+            svg: None,
+            block_count: included.len(),
+            edge_count,
+            total_block_count: inner.cfg.block_count(),
+            dot_bytes: dot.len(),
+        });
+    }
     let timeout = q.timeout.clamp(5, 300);
     match render_dot_to_svg(dot, timeout).await {
         Ok(svg) => {
@@ -139,6 +165,7 @@ fn included_blocks<'a>(
 fn build_dot(
     inner: &crate::state::AppStateInner,
     included: &[&tracemiku_core::cfg::Block],
+    included_starts: &HashSet<u64>,
 ) -> String {
     let base = inner
         .meta
@@ -146,8 +173,7 @@ fn build_dot(
         .as_ref()
         .and_then(|m| parse_hex_u64(&m.base))
         .unwrap_or(0);
-    let included_starts: HashSet<u64> = included.iter().map(|b| b.start_pc).collect();
-    let block_insns = collect_first_block_insns(&inner.trace, &inner.cfg);
+    let block_insns = collect_first_block_insns(&inner.trace, &inner.cfg, included_starts);
     let loop_colors = loop_border_colors(&inner.cfg);
 
     let mut out = String::new();
@@ -252,6 +278,29 @@ fn build_dot(
     out
 }
 
+fn included_edge_count(
+    inner: &crate::state::AppStateInner,
+    included_starts: &HashSet<u64>,
+) -> usize {
+    inner
+        .cfg
+        .graph
+        .edge_indices()
+        .filter(|edge| {
+            let Some((src_node, dst_node)) = inner.cfg.graph.edge_endpoints(*edge) else {
+                return false;
+            };
+            let Some(src) = inner.cfg.graph.node_weight(src_node) else {
+                return false;
+            };
+            let Some(dst) = inner.cfg.graph.node_weight(dst_node) else {
+                return false;
+            };
+            included_starts.contains(&src.start_pc) || included_starts.contains(&dst.start_pc)
+        })
+        .count()
+}
+
 fn write_ext_in_edge(
     out: &mut String,
     src_pc: u64,
@@ -318,6 +367,7 @@ fn block_rows(
 fn collect_first_block_insns(
     trace: &tracemiku_core::trace::Trace,
     cfg: &tracemiku_core::cfg::CFG,
+    wanted_starts: &HashSet<u64>,
 ) -> HashMap<u64, Vec<(u64, u32)>> {
     let starts: HashSet<u64> = cfg.by_pc.keys().copied().collect();
     let mut out: HashMap<u64, Vec<(u64, u32)>> = HashMap::new();
@@ -332,6 +382,10 @@ fn collect_first_block_insns(
         let Some(start) = current else {
             continue;
         };
+        if !wanted_starts.contains(&start) {
+            current = None;
+            continue;
+        }
         if done.contains(&start) {
             current = None;
             continue;
@@ -343,6 +397,9 @@ fn collect_first_block_insns(
         let end_pc = cfg.block(start).map(|b| b.end_pc).unwrap_or(pc);
         if d.is_branch || pc == end_pc {
             done.insert(start);
+            if done.len() >= wanted_starts.len() {
+                break;
+            }
             current = None;
         }
     }
@@ -534,19 +591,48 @@ async fn render_dot_to_svg(dot_text: String, timeout_secs: u64) -> Result<String
             .map_err(|e| format!("write graphviz stdin failed: {e}"))?;
     }
 
-    let output = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
-        .await
-        .map_err(|_| format!("dot timeout after {timeout_secs}s"))?
-        .map_err(|e| format!("wait graphviz `{dot_bin}` failed: {e}"))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "graphviz stdout missing".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "graphviz stderr missing".to_string())?;
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await.map(|_| buf)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await.map(|_| buf)
+    });
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let status = match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
+        Ok(waited) => waited.map_err(|e| format!("wait graphviz `{dot_bin}` failed: {e}"))?,
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(format!("dot timeout after {timeout_secs}s"));
+        }
+    };
+    let stdout = stdout_task
+        .await
+        .map_err(|e| format!("join graphviz stdout failed: {e}"))?
+        .map_err(|e| format!("read graphviz stdout failed: {e}"))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("join graphviz stderr failed: {e}"))?
+        .map_err(|e| format!("read graphviz stderr failed: {e}"))?;
+
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr);
         let msg: String = stderr.chars().take(500).collect();
         return Err(if msg.is_empty() {
-            format!("dot exited with {}", output.status)
+            format!("dot exited with {status}")
         } else {
             msg
         });
     }
-    String::from_utf8(output.stdout).map_err(|e| format!("dot produced non-utf8 SVG: {e}"))
+    String::from_utf8(stdout).map_err(|e| format!("dot produced non-utf8 SVG: {e}"))
 }

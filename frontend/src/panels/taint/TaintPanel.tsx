@@ -4,6 +4,7 @@ import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
+type ViewMode = "flow" | "table";
 
 interface RunRequest {
   token: number;
@@ -33,6 +34,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [start, setStart] = createSignal(0);
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
+  const [viewMode, setViewMode] = createSignal<ViewMode>("flow");
   const [maxCount, setMaxCount] = createSignal(200);
   const [throughMem, setThroughMem] = createSignal(false);
   const [dataOnly, setDataOnly] = createSignal(false);
@@ -97,12 +99,15 @@ export default function TaintPanel(props: TaintPanelProps) {
   const labelFor = (row: TaintRow): string =>
     row.why ?? row.via ?? "";
 
+  const rowIndent = (row: TaintRow): string =>
+    `${Math.min(10, Math.max(0, row.frame_depth ?? 0)) * 14}px`;
+
   return (
     <section class="panel">
       <h2>Taint</h2>
       <div class="taint-controls">
         <label>
-          start
+          traceIdx
           <input
             type="number"
             min="0"
@@ -134,7 +139,7 @@ export default function TaintPanel(props: TaintPanelProps) {
           </select>
         </label>
         <label>
-          max
+          max rows
           <input
             type="number"
             min="1"
@@ -151,7 +156,7 @@ export default function TaintPanel(props: TaintPanelProps) {
             checked={throughMem()}
             onChange={(e) => setThroughMem(e.currentTarget.checked)}
           />
-          {" "}through_mem
+          {" "}follow memory bytes
         </label>
         <label>
           <input
@@ -159,7 +164,7 @@ export default function TaintPanel(props: TaintPanelProps) {
             checked={dataOnly()}
             onChange={(e) => setDataOnly(e.currentTarget.checked)}
           />
-          {" "}data_only
+          {" "}data only
         </label>
         <label>
           <input
@@ -167,7 +172,14 @@ export default function TaintPanel(props: TaintPanelProps) {
             checked={crossFnCall()}
             onChange={(e) => setCrossFnCall(e.currentTarget.checked)}
           />
-          {" "}cross_fn_call
+          {" "}show call depth
+        </label>
+        <label>
+          view
+          <select value={viewMode()} onChange={(e) => setViewMode(e.currentTarget.value as ViewMode)}>
+            <option value="flow">flow</option>
+            <option value="table">table</option>
+          </select>
         </label>
         <button type="button" disabled={running()} onClick={() => void run()}>
           {running() ? "running…" : "Run"}
@@ -180,37 +192,57 @@ export default function TaintPanel(props: TaintPanelProps) {
         {(r) => (
           <>
             <p class="dim small">
-              {r().direction} · {r().count} row{r().count === 1 ? "" : "s"}
+              {r().direction} from traceIdx {start()} reg {reg()} · {r().count} row{r().count === 1 ? "" : "s"}
               <Show when={r().stopped}>
                 {" "}· stopped at max
               </Show>
             </p>
-            <table class="taint-table">
-              <thead>
-                <tr>
-                  <th>idx</th>
-                  <th>pc</th>
-                  <th>func</th>
-                  <th>asm</th>
-                  <th>{r().direction === "forward" ? "why" : "via"}</th>
-                  {r().showDepth ? <th>depth</th> : null}
-                </tr>
-              </thead>
-              <tbody>
+            <Show when={viewMode() === "flow"} fallback={
+              <table class="taint-table">
+                <thead>
+                  <tr>
+                    <th>idx</th>
+                    <th>pc</th>
+                    <th>func</th>
+                    <th>asm</th>
+                    <th>{r().direction === "forward" ? "why" : "via"}</th>
+                    {r().showDepth ? <th>depth</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={r().rows}>
+                    {(row) => (
+                      <tr onClick={() => props.onSelect(row.idx)}>
+                        <td>{row.idx}</td>
+                        <td class="dim small">{row.pc}</td>
+                        <td>{row.func ?? "?"}</td>
+                        <td>{row.asm}</td>
+                        <td>{labelFor(row)}</td>
+                        {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            }>
+              <div class="taint-flow">
                 <For each={r().rows}>
                   {(row) => (
-                    <tr onClick={() => props.onSelect(row.idx)}>
-                      <td>{row.idx}</td>
-                      <td class="dim small">{row.pc}</td>
-                      <td>{row.func ?? "?"}</td>
-                      <td>{row.asm}</td>
-                      <td>{labelFor(row)}</td>
-                      {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}
-                    </tr>
+                    <button
+                      type="button"
+                      class="taint-flow-row"
+                      style={{ "padding-left": rowIndent(row) }}
+                      onClick={() => props.onSelect(row.idx)}
+                    >
+                      <span class="idx">#{row.idx}</span>
+                      <span class="dim small">{row.func ?? "?"}</span>
+                      <code>{row.asm}</code>
+                      <span class="dim small">{labelFor(row)}</span>
+                    </button>
                   )}
                 </For>
-              </tbody>
-            </table>
+              </div>
+            </Show>
           </>
         )}
       </Show>

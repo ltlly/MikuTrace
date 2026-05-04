@@ -66,6 +66,14 @@ body {
   height: 100vh;
 }
 
+button,
+input,
+select,
+textarea,
+table {
+  font-family: var(--font-mono);
+}
+
 #topbar {
   display: flex;
   align-items: center;
@@ -650,13 +658,24 @@ body.is-resizing {
 }
 
 .reg-diff-table {
+  display: block;
+  width: 100%;
   table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.reg-diff-table thead,
+.reg-diff-table tbody {
+  display: block;
 }
 
 .reg-diff-table tr {
   display: grid;
   grid-template-columns: var(--reg-col-name, 52px) var(--reg-col-value, 150px) var(--reg-col-delta, 76px) minmax(var(--reg-col-note, 220px), 1fr);
   align-items: center;
+  width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .reg-diff-table th,
@@ -666,6 +685,8 @@ body.is-resizing {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 2px 8px;
+  border-bottom: 0;
 }
 
 .reg-diff-table thead .col-resize {
@@ -688,12 +709,13 @@ body.is-resizing {
 }
 
 .reg-diff-table tbody tr.selected {
-  outline: 1px solid rgba(88, 166, 255, 0.45);
+  box-shadow: inset 2px 0 0 var(--accent);
   background: rgba(88, 166, 255, 0.1);
 }
 
 .reg-diff-table tbody tr.changed {
-  background: rgba(247, 129, 102, 0.12);
+  background: rgba(247, 129, 102, 0.16);
+  box-shadow: inset 2px 0 0 var(--warn);
 }
 
 .reg-diff-table tbody tr.changed th,
@@ -1008,14 +1030,14 @@ ul {
   font-size: 12px;
 }
 
-.memory-controls label,
-.memory-quick {
+.memory-controls label {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .memory-controls input,
+.memory-controls select,
 .memory-controls button {
   background: var(--bg);
   color: var(--fg);
@@ -1027,6 +1049,7 @@ ul {
 
 .memory-controls input[type="text"] { width: 12em; }
 .memory-controls input[type="number"] { width: 5em; }
+.memory-controls select { max-width: 24em; }
 
 .memory-controls button {
   cursor: pointer;
@@ -1511,6 +1534,45 @@ html[data-density="dense"] .xref-table td {
   background: var(--bg3);
 }
 
+.string-prov-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.string-prov-table th,
+.string-prov-table td {
+  padding: 2px 6px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  vertical-align: top;
+}
+
+.string-prov-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.string-prov-table .idx-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.string-prov-table button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  cursor: pointer;
+}
+
+.string-prov-table button:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
 .strings-list .str {
   color: var(--fg);
   white-space: pre-wrap;
@@ -1536,7 +1598,7 @@ html[data-density="dense"] .xref-table td {
   cursor: pointer;
 }
 .ct-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
-.ct-wrap { font-family: monospace; font-size: 12px; line-height: 1.5; }
+.ct-wrap { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
 .ct-row { white-space: nowrap; }
 .ct-line { display: flex; gap: 0.6em; cursor: pointer; padding: 1px 0; }
 .ct-line:hover { background: rgba(255, 255, 255, 0.04); }
@@ -1560,7 +1622,7 @@ html[data-density="dense"] .xref-table td {
 .fork-table {
   width: 100%;
   border-collapse: collapse;
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1605,11 +1667,41 @@ html[data-density="dense"] .xref-table td {
 .taint-controls input[type="number"] { width: 5em; }
 .taint-controls input[type="text"] { width: 5em; }
 .taint-controls select { padding: 2px 4px; }
-.taint-table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; }
+.taint-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
 .taint-table th, .taint-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .taint-table th { color: var(--dim, #888); font-weight: normal; }
 .taint-table tbody tr { cursor: pointer; }
 .taint-table tbody tr:hover { background: var(--bg3); }
+.taint-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+}
+.taint-flow-row {
+  display: grid;
+  grid-template-columns: 72px minmax(90px, 160px) minmax(0, 1fr) minmax(80px, 180px);
+  gap: 8px;
+  width: 100%;
+  min-height: 22px;
+  align-items: center;
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  border-left: 2px solid var(--border);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  text-align: left;
+  cursor: pointer;
+}
+.taint-flow-row:hover {
+  background: var(--bg3);
+  border-left-color: var(--accent);
+}
+.taint-flow-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .dec-grid { display: grid; grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr); gap: 16px; align-items: start; }
 .dec-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; font-size: 12px; color: var(--dim); }
@@ -1628,7 +1720,7 @@ html[data-density="dense"] .xref-table td {
 .dec-controls input[type="number"] { width: 7em; }
 .dec-controls button { cursor: pointer; }
 .dec-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-.dec-table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; }
+.dec-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
 .dec-table th, .dec-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .dec-table th { color: var(--dim, #888); font-weight: normal; }
 .dec-table tbody tr { cursor: pointer; }

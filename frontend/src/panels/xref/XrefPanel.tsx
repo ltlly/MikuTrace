@@ -13,6 +13,10 @@ function refPattern(pc: string | undefined): string {
   return pc.toLowerCase();
 }
 
+function escapeRegex(text: string | undefined): string {
+  return (text ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export default function XrefPanel(props: XrefPanelProps) {
   const [pattern, setPattern] = createSignal("");
   const [record] = createResource(
@@ -21,7 +25,8 @@ export default function XrefPanel(props: XrefPanelProps) {
   );
   const pcPattern = createMemo(() => (props.active ? refPattern(record()?.pc) : ""));
   const [pcRefs] = createResource(pcPattern, (pc) => (pc ? fetchSearchPc(pc, 60) : undefined));
-  const asmPattern = createMemo(() => (props.active ? pattern().trim() || pcPattern() : ""));
+  const defaultAsmPattern = createMemo(() => (props.active ? escapeRegex(record()?.asm) : ""));
+  const asmPattern = createMemo(() => (props.active ? pattern().trim() || defaultAsmPattern() : ""));
   const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
 
   return (
@@ -29,11 +34,11 @@ export default function XrefPanel(props: XrefPanelProps) {
       <h2>Cross Ref</h2>
       <div class="xref-controls">
         <label>
-          asm pattern
+          ASM regex
           <input
             type="text"
             value={pattern()}
-            placeholder={pcPattern() || "0x..."}
+            placeholder={record()?.asm || "mnemonic/op_str regex…"}
             onInput={(e) => setPattern(e.currentTarget.value)}
           />
         </label>
@@ -88,7 +93,7 @@ export default function XrefPanel(props: XrefPanelProps) {
           </Show>
         </div>
         <div>
-          <h3>asm refs</h3>
+          <h3>same ASM text / regex search</h3>
           <Show when={asmRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
@@ -96,7 +101,7 @@ export default function XrefPanel(props: XrefPanelProps) {
             {(r) => (
               <>
                 <p class="dim small">
-                  pattern {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
+                  {pattern().trim() ? "regex" : "current instruction"} {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
                 </p>
                 <table class="xref-table">
                   <thead>

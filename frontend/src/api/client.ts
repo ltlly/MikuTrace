@@ -5,6 +5,7 @@ import type {
   RecordDetail,
   FunctionsResponse,
   StringsResponse,
+  StringProvenanceResponse,
   TouchingAddrResponse,
   TouchingRangeResponse,
   MemDumpResponse,
@@ -134,6 +135,7 @@ export async function fetchFunctions(): Promise<FunctionsResponse> {
 export interface FetchCfgSvgOpts {
   fnName?: string;
   timeout?: number;
+  force?: boolean;
   signal?: AbortSignal;
 }
 
@@ -141,6 +143,7 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
   const params = new URLSearchParams();
   if (opts.fnName) params.set("fn", opts.fnName);
   if (opts.timeout !== undefined) params.set("timeout", String(opts.timeout));
+  if (opts.force) params.set("force", "true");
   const qs = params.toString();
   const r = await fx(`/api/cfg-svg${qs ? "?" + qs : ""}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/cfg-svg returned ${r.status}: ${await r.text()}`);
@@ -153,6 +156,16 @@ export async function fetchStrings(minLen = 4, q = ""): Promise<StringsResponse>
   const r = await fx(`/api/strings?${params}`);
   if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
   return (await r.json()) as StringsResponse;
+}
+
+export async function fetchStringProvenance(
+  addr: string,
+  length = 64,
+): Promise<StringProvenanceResponse> {
+  const params = new URLSearchParams({ addr, length: String(length) });
+  const r = await fx(`/api/string-provenance?${params}`);
+  if (!r.ok) throw new Error(`/api/string-provenance ${r.status}: ${await r.text()}`);
+  return (await r.json()) as StringProvenanceResponse;
 }
 
 export async function fetchIdxsTouchingAddr(

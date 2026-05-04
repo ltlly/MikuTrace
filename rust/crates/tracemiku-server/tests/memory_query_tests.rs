@@ -100,6 +100,22 @@ async fn touching_range_counts_overlapping_reads_and_writes() {
 }
 
 #[tokio::test]
+async fn mem_writes_in_range_reports_write_details() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = get_json(
+        cd,
+        "/api/mem-writes-in-range?idx_lo=0&idx_hi=3&addr_lo=0x7000&addr_hi=0x7008&max=5",
+    )
+    .await;
+    assert_eq!(v["idx_range"], serde_json::json!([0, 3]));
+    assert_eq!(v["matched"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["writes"][0]["idx"], 0);
+    assert_eq!(v["writes"][0]["dst_addr"], "0x7000");
+    assert_eq!(v["writes"][0]["src_reg"], "x0");
+}
+
+#[tokio::test]
 async fn find_mem_pattern_finds_latest_bytes() {
     let (_tmp, cd) = synth_call_dir();
     let v = get_json(cd, "/api/find-mem-pattern?bytes_hex=68656c6c6f&max=5").await;
