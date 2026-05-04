@@ -193,11 +193,26 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       : next;
   });
   const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
-  const currentDump = createMemo(() => (dumpSource() ? dump() : undefined));
+  const currentDump = createMemo(() => {
+    const s = dumpSource();
+    const r = dump();
+    if (!s || !r) return undefined;
+    return r.request_addr === s.addr && r.request_count === s.count ? r : undefined;
+  });
+  const currentDiff = createMemo(() => {
+    const s = diffSource();
+    const r = diff();
+    if (!s || !r) return undefined;
+    return r.request_idx === s.idx &&
+      r.request_addr === s.addr &&
+      r.request_size === s.size
+      ? r
+      : undefined;
+  });
   const changedAddrs = createMemo(() => {
     const set = new Set<string>();
     if (!diffSource()) return set;
-    for (const b of diff()?.bytes ?? []) {
+    for (const b of currentDiff()?.bytes ?? []) {
       if (b.changed) set.add(b.addr);
     }
     return set;
@@ -342,7 +357,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
           )}
         </Show>
       </div>
-      <Show when={dump.error}>
+      <Show when={!dump.loading && dump.error}>
         <p class="err">load failed: {String(dump.error)}</p>
       </Show>
       <Show when={dump.loading}>

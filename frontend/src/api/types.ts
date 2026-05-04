@@ -198,6 +198,10 @@ export interface TouchingRangeResponse {
   readers_before: number[];
   readers_after: number[];
   readers_total: number;
+  request_addr?: string;
+  request_size?: number;
+  request_cursor?: number;
+  request_limit?: number;
 }
 
 // ── /api/mem-dump ────────────────────────────────────────────────────────
@@ -214,6 +218,8 @@ export interface MemDumpResponse {
   addr: string;
   count: number;
   bytes: MemDumpByte[];
+  request_addr?: string;
+  request_count?: number;
 }
 
 // ── /api/mem-diff ────────────────────────────────────────────────────────
@@ -231,6 +237,9 @@ export interface MemDiffResponse {
   size: number;
   bytes: MemDiffByte[];
   changed_count: number;
+  request_idx?: number;
+  request_addr?: string;
+  request_size?: number;
 }
 
 // ── /api/idxs-for-pc ─────────────────────────────────────────────────────
@@ -245,6 +254,9 @@ export interface IdxsForPcResponse {
   total_after: number;
   before_capped: boolean;
   after_capped: boolean;
+  request_pc?: string;
+  request_cursor?: number;
+  request_limit?: number;
 }
 
 // ── /api/search, /api/search-pc ──────────────────────────────────────────
@@ -262,6 +274,8 @@ export interface SearchResponse {
   count: number;
   pattern: string;
   hits: SearchHit[];
+  request_pattern?: string;
+  request_max_results?: number;
 }
 
 export interface SearchPcResponse {
@@ -269,6 +283,8 @@ export interface SearchPcResponse {
   count: number;
   idxs: number[];
   truncated: boolean;
+  request_pc?: string;
+  request_limit?: number;
 }
 
 // ── /api/reg-value-at, /api/last-write-of-reg ────────────────────────────

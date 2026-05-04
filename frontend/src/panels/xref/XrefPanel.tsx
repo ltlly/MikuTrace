@@ -36,8 +36,18 @@ export default function XrefPanel(props: XrefPanelProps) {
   const usingDefaultAsm = createMemo(() => !pattern().trim());
   const asmPattern = createMemo(() => (props.active ? pattern().trim() || defaultAsmPattern() : ""));
   const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
-  const currentPcRefs = createMemo(() => (currentRecord() ? pcRefs() : undefined));
-  const currentAsmRefs = createMemo(() => (currentRecord() || pattern().trim() ? asmRefs() : undefined));
+  const currentPcRefs = createMemo(() => {
+    const p = pcPattern();
+    const r = pcRefs();
+    if (!currentRecord() || !p || !r) return undefined;
+    return r.request_pc === p && r.request_limit === 60 ? r : undefined;
+  });
+  const currentAsmRefs = createMemo(() => {
+    const p = asmPattern();
+    const r = asmRefs();
+    if (!(currentRecord() || pattern().trim()) || !p || !r) return undefined;
+    return r.request_pattern === p && r.request_max_results === 120 ? r : undefined;
+  });
 
   return (
     <section class="panel">
@@ -56,10 +66,10 @@ export default function XrefPanel(props: XrefPanelProps) {
           {(r) => <span class="dim small">selected idx {r().idx} · pc {r().pc}</span>}
         </Show>
       </div>
-      <Show when={pcRefs.error}>
+      <Show when={!pcRefs.loading && pcRefs.error}>
         <p class="err">pc refs failed: {String(pcRefs.error)}</p>
       </Show>
-      <Show when={asmRefs.error}>
+      <Show when={!asmRefs.loading && asmRefs.error}>
         <p class="err">asm refs failed: {String(asmRefs.error)}</p>
       </Show>
       <div class="xref-grid">

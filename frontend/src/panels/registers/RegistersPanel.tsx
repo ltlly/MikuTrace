@@ -208,7 +208,7 @@ export default function RegistersPanel(props: RegistersPanelProps) {
   return (
     <section class="panel">
       <h2>Registers</h2>
-      <Show when={record.error}>
+      <Show when={!record.loading && record.error}>
         <p class="err">load failed: {String(record.error)}</p>
       </Show>
       <Show when={record.loading}>

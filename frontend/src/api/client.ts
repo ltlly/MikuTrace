@@ -201,14 +201,22 @@ export async function fetchIdxsTouchingRange(
   });
   const r = await fx(`/api/idxs-touching-range?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/idxs-touching-range ${r.status}: ${await r.text()}`);
-  return (await r.json()) as TouchingRangeResponse;
+  const out = (await r.json()) as TouchingRangeResponse;
+  out.request_addr = addr;
+  out.request_size = size;
+  out.request_cursor = cursor;
+  out.request_limit = limit;
+  return out;
 }
 
 export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpResponse> {
   const params = new URLSearchParams({ addr, count: String(count) });
   const r = await fx(`/api/mem-dump?${params}`);
   if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
-  return (await r.json()) as MemDumpResponse;
+  const out = (await r.json()) as MemDumpResponse;
+  out.request_addr = addr;
+  out.request_count = count;
+  return out;
 }
 
 export async function fetchMemDiff(
@@ -223,7 +231,11 @@ export async function fetchMemDiff(
   });
   const r = await fx(`/api/mem-diff?${params}`);
   if (!r.ok) throw new Error(`/api/mem-diff ${r.status}: ${await r.text()}`);
-  return (await r.json()) as MemDiffResponse;
+  const out = (await r.json()) as MemDiffResponse;
+  out.request_idx = idx;
+  out.request_addr = addr;
+  out.request_size = size;
+  return out;
 }
 
 export async function fetchIdxsForPc(
@@ -239,7 +251,11 @@ export async function fetchIdxsForPc(
   });
   const r = await fx(`/api/idxs-for-pc?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/idxs-for-pc ${r.status}: ${await r.text()}`);
-  return (await r.json()) as IdxsForPcResponse;
+  const out = (await r.json()) as IdxsForPcResponse;
+  out.request_pc = pc;
+  out.request_cursor = cursor;
+  out.request_limit = limit;
+  return out;
 }
 
 export async function fetchSearch(
@@ -253,7 +269,10 @@ export async function fetchSearch(
   });
   const r = await fx(`/api/search?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/search ${r.status}: ${await r.text()}`);
-  return (await r.json()) as SearchResponse;
+  const out = (await r.json()) as SearchResponse;
+  out.request_pattern = pattern;
+  out.request_max_results = maxResults;
+  return out;
 }
 
 export async function fetchSearchPc(
@@ -267,7 +286,10 @@ export async function fetchSearchPc(
   });
   const r = await fx(`/api/search-pc?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/search-pc ${r.status}: ${await r.text()}`);
-  return (await r.json()) as SearchPcResponse;
+  const out = (await r.json()) as SearchPcResponse;
+  out.request_pc = pc;
+  out.request_limit = limit;
+  return out;
 }
 
 export async function fetchRegValueAt(

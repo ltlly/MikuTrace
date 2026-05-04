@@ -37,15 +37,24 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
       return fetchIdxsForPc(source.pc, source.idx, 20);
     },
   );
-  const currentHistory = createMemo(() => (source() ? idxs() : undefined));
+  const currentHistory = createMemo(() => {
+    const s = source();
+    const r = idxs();
+    if (!s || !r) return undefined;
+    return r.request_pc === s.pc &&
+      r.request_cursor === s.idx &&
+      r.request_limit === 20
+      ? r
+      : undefined;
+  });
 
   return (
     <section class="panel">
       <h2>Trace for PC</h2>
-      <Show when={record.error}>
+      <Show when={!record.loading && record.error}>
         <p class="err">record load failed: {String(record.error)}</p>
       </Show>
-      <Show when={idxs.error}>
+      <Show when={!idxs.loading && idxs.error}>
         <p class="err">pc history failed: {String(idxs.error)}</p>
       </Show>
       <Show when={record.loading || idxs.loading}>

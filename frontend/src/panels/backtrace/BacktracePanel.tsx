@@ -21,7 +21,7 @@ export default function BacktracePanel(props: BacktracePanelProps) {
   return (
     <section class="panel">
       <h2>Backtrace</h2>
-      <Show when={resp.error}>
+      <Show when={!resp.loading && resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>
       </Show>
       <Show when={resp.loading}>
