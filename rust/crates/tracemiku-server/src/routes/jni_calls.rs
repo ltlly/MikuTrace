@@ -81,53 +81,60 @@ pub(crate) fn scan_jni_calls(
 
     let base = primary_base(state);
     let mut hits = Vec::new();
-    let mut prev = None;
-    for i in 0..state.inner.trace.len() {
-        let record = state.inner.trace.record(i);
-        let decoded = decode(record.pc, record.inst);
-        let (func_name, _) = state.inner.symbols.lookup(record.pc);
-        if in_fn.is_some_and(|want| func_name.as_str() != want) {
-            prev = Some(decoded);
+    for (&pc, idxs) in &state.inner.index.pc_to_idxs {
+        let Some(&first_idx) = idxs.first() else {
+            continue;
+        };
+        let decoded = decode(pc, state.inner.trace.inst(first_idx));
+        if decoded.mnemonic != "blr" {
             continue;
         }
+        let Some(target_reg) = branch_reg(&decoded.op_str) else {
+            continue;
+        };
 
-        if decoded.mnemonic == "blr" {
-            if let (Some(target_reg), Some(prev_decoded)) =
-                (branch_reg(&decoded.op_str), prev.as_ref())
-            {
-                if prev_decoded.mnemonic == "ldr"
-                    && prev_decoded.regs_def.iter().any(|r| r == &target_reg)
-                    && prev_decoded.mem_op.first().is_some_and(|op| !op.is_write)
-                {
-                    let op = &prev_decoded.mem_op[0];
-                    if let Ok(offset) = u64::try_from(op.disp) {
-                        if let Some(jni_fn) = jni_vtable.get(&offset) {
-                            hits.push(JniCallHit {
-                                idx: i,
-                                pc: format!("{:#x}", record.pc),
-                                rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
-                                func: (func_name != "?").then_some(func_name),
-                                jni_fn: jni_fn.clone(),
-                                vtable_offset: format!("{offset:#x}"),
-                                args: ["x0", "x1", "x2", "x3", "x4"]
-                                    .into_iter()
-                                    .map(|reg| {
-                                        (
-                                            reg,
-                                            format!("{:#x}", record.reg_by_name(reg).unwrap_or(0)),
-                                        )
-                                    })
-                                    .collect(),
-                            });
-                            if max > 0 && hits.len() >= max {
-                                break;
-                            }
-                        }
-                    }
-                }
+        for &i in idxs {
+            if i == 0 {
+                continue;
             }
+            let record = state.inner.trace.record(i);
+            let (func_name, _) = state.inner.symbols.lookup(record.pc);
+            if in_fn.is_some_and(|want| func_name.as_str() != want) {
+                continue;
+            }
+
+            let prev_record = state.inner.trace.record(i - 1);
+            let prev_decoded = decode(prev_record.pc, prev_record.inst);
+            if prev_decoded.mnemonic != "ldr"
+                || !prev_decoded.regs_def.iter().any(|r| r == &target_reg)
+                || !prev_decoded.mem_op.first().is_some_and(|op| !op.is_write)
+            {
+                continue;
+            }
+            let op = &prev_decoded.mem_op[0];
+            let Ok(offset) = u64::try_from(op.disp) else {
+                continue;
+            };
+            let Some(jni_fn) = jni_vtable.get(&offset) else {
+                continue;
+            };
+            hits.push(JniCallHit {
+                idx: i,
+                pc: format!("{:#x}", record.pc),
+                rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+                func: (func_name != "?").then_some(func_name),
+                jni_fn: jni_fn.clone(),
+                vtable_offset: format!("{offset:#x}"),
+                args: ["x0", "x1", "x2", "x3", "x4"]
+                    .into_iter()
+                    .map(|reg| (reg, format!("{:#x}", record.reg_by_name(reg).unwrap_or(0))))
+                    .collect(),
+            });
         }
-        prev = Some(decoded);
+    }
+    hits.sort_by_key(|hit| hit.idx);
+    if max > 0 && hits.len() > max {
+        hits.truncate(max);
     }
     (hits, jni_vtable.len())
 }
