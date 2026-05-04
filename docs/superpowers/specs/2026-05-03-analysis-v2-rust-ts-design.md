@@ -465,7 +465,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `ollvm-detect-vm` | ✅ M3-ψ | REST-backed OLLVM VM dispatcher heuristic |
 | `hash-finalize-detect` | ✅ M3-hash-finalize | MemShadow contiguous digest-output heuristic |
 | `auto-phase-detect` | ✅ M3-auto-phase | heuristic phase timeline |
-| `jni-calls`, `jobj-history`, `jni-strings` | 🔜 M3 | reads jni_hooks.jsonl |
+| `jni-calls` | ✅ M3-jni-calls | JNI vtable call detection |
+| `jobj-history`, `jni-strings` | 🔜 M3 | JNI vtable call post-processing |
 | `mem-dump` | ✅ M3-μ | see `strings`, `mem-dump` row above |
 | `reg-timeline` | ✅ M3-υ | REST-backed register change timeline |
 | `mem-diff` | ✅ M3-υ | REST-backed MemShadow byte diff around an idx |
@@ -516,7 +517,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/mem-diff` | ✅ M3-υ | MemShadow byte diff between idx-1 and idx |
 | `/api/reg-timeline` | ✅ M3-υ | distinct register value timeline |
 | `/api/jni-events` | ✅ M3-jni-events | reads jni_hooks.jsonl with id/idx filters |
-| `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings` | 🔜 M3 | reads jni_hooks.jsonl / vtable reconstruction |
+| `/api/jni-calls` | ✅ M3-jni-calls | JNI vtable call detection |
+| `/api/jobj-history`, `/api/jni-strings` | 🔜 M3 | JNI vtable call post-processing |
 | `/api/field-at` | 🔜 M3 | |
 | `/api/fn-summary` | ✅ M3-ω | function overview with hot blocks and callees |
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
