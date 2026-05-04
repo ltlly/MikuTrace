@@ -420,7 +420,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
 | `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
 | `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
-| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ζ | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR construction skeleton (M3-ζ — id/pc/end_pc/insns/exec_count). BlockIR.exits with kind/taken_count, samples, asm, tier classification, render_summary_md fidelity, render_func_md still defer to M3-η |
+| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-η | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η). BlockIR.exits with kind/taken_count, render_summary_md fidelity, render_func_md still defer to M3-θ |
 | `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
 | `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
 | `type_anchor.py` (JSON-spec → typed pointer hints) | `tracemiku-core::decompiler::type_anchor` | 🔜 M3 | reads `tools/hooks/*.json` |

@@ -68,10 +68,11 @@
 - M3-δ: decompiler skeleton — ir + backend stub + builder skeleton + /api/dec/summary + DecompilerPanel + parity (soft) ✅ 2026-05-04
 - M3-ε: split_top_k_callees + /api/dec/summary symbol-source fallback + parity hard-gate ✅ 2026-05-04
 - M3-ζ: BlockIR construction skeleton (id/pc/end_pc/insns/exec_count) ✅ 2026-05-04
-- M3-η (next): BlockIR.exits with kind/taken_count (extends Rust CFG to track edge metadata), samples extraction (per-pc first-idx map), asm rendering, tier classification (hot/warm/cold), /api/dec/fn/{id} per-fn markdown, render_summary_md fidelity, type_anchor.py + vm_candidate.py ports
-- M3-θ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
-- M3-ι: memshadow v3 binary sidecar (.memshadow.v3.bin)
-- M3-κ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-η: BlockIR asm + samples + tier ✅ 2026-05-04
+- M3-θ (next): BlockIR.exits with kind/taken_count (extends Rust CFG to track edge metadata), /api/dec/fn/{id} per-fn markdown, render_summary_md fidelity, type_anchor.py port (json-spec driven), vm_candidate.py port
+- M3-ι: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-κ: memshadow v3 binary sidecar (.memshadow.v3.bin)
+- M3-λ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
