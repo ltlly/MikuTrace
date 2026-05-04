@@ -103,3 +103,19 @@ export interface MemDumpResponse {
   count: number;
   bytes: MemDumpByte[];
 }
+
+// ── /api/call-tree ────────────────────────────────────────────────────────
+
+export interface CallNode {
+  fn?: string;          // omitted from wire when null/unknown
+  fn_pc: number;
+  enter_idx: number;
+  exit_idx: number;
+  depth: number;
+  children: CallNode[];
+  truncated_children?: number;
+}
+
+export interface CallTreeResponse {
+  tree: CallNode;
+}

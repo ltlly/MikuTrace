@@ -5,6 +5,7 @@ import type {
   FunctionsResponse,
   StringsResponse,
   MemDumpResponse,
+  CallTreeResponse,
 } from "./types";
 
 export async function fetchMeta(): Promise<MetaResponse> {
@@ -57,4 +58,11 @@ export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpRes
   const r = await fetch(`/api/mem-dump?${params}`);
   if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
   return (await r.json()) as MemDumpResponse;
+}
+
+export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
+  const params = new URLSearchParams({ max_depth: String(maxDepth) });
+  const r = await fetch(`/api/call-tree?${params}`);
+  if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
+  return (await r.json()) as CallTreeResponse;
 }

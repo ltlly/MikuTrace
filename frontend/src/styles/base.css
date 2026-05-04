@@ -208,3 +208,14 @@ ul {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.ct-controls { display: flex; gap: 1em; align-items: center; margin: 0.5em 0; }
+.ct-controls input[type="range"] { width: 12em; vertical-align: middle; }
+.ct-wrap { font-family: monospace; font-size: 12px; line-height: 1.5; }
+.ct-row { white-space: nowrap; }
+.ct-line { display: flex; gap: 0.6em; cursor: pointer; padding: 1px 0; }
+.ct-line:hover { background: rgba(255, 255, 255, 0.04); }
+.ct-toggle { width: 1em; color: var(--dim, #888); user-select: none; }
+.ct-fn { color: var(--accent, #6cf); }
+.ct-idx { font-style: normal; }
+.ct-trunc { color: var(--warn, #fc6); margin-left: 0.4em; }

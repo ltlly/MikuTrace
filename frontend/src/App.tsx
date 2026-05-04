@@ -1,3 +1,4 @@
+import CallTreePanel from "./panels/calltree/CallTreePanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
@@ -12,6 +13,7 @@ export default function App() {
       </header>
       <MetaPanel />
       <FunctionsPanel />
+      <CallTreePanel />
       <StringsPanel />
       <RecordsPanel />
     </main>
