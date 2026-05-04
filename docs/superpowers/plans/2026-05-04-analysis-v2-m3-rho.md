@@ -17,6 +17,6 @@
 
 ## Tasks
 
-- [ ] Add server route module and tests.
-- [ ] Run server tests and clippy.
-- [ ] Update TODO/spec status for covered endpoint rows.
+- [x] Add server route module and tests.
+- [x] Run server tests and clippy.
+- [x] Update TODO/spec status for covered endpoint rows.

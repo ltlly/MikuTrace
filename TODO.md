@@ -88,6 +88,7 @@
 - M3-ξ: CLI wrappers for `idxs-for-pc`, `search`/`search-asm`, `so-stats`, `reg-value-at`/`reg-at-idx` ✅ 2026-05-04
 - M3-ο: Rust `TraceMeta.fork_events` + `/api/fork-events` + CLI wrapper ✅ 2026-05-04
 - M3-π: MemShadow/Index memory query endpoints + CLI wrappers (`last-write-of-addr`, `idxs-touching-*`, `find-mem-pattern`) ✅ 2026-05-04
+- M3-ρ: navigation endpoints `/api/block-for-pc`, `/api/block`, `/api/loops`, `/api/backtrace` ✅ 2026-05-04
 - M4-α: shared selected-record cursor + Registers / Memory hex dump / Trace-for-PC panels ✅ 2026-05-04
 - M4 (next): TS frontend core polish / remaining panels (Backtrace, Forks, Xref, Settings, Memory diff, richer Decompile UX)
 - M3-M7: 见 spec §9 milestones

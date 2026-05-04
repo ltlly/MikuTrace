@@ -491,10 +491,10 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/so-stats` | ✅ M3-ν | per-module record counts + unknown PCs |
 | `/api/cfg?fn=` | ✅ M2-δ | blocks + edges; ?fn= filter via SymbolMap |
 | `/api/cfg-svg` | ✅ M3-κ | Graphviz dot subprocess + cached SVG + Solid Graph panel |
-| `/api/block?pc=` | 🔜 M3 | |
-| `/api/block-for-pc` | 🔜 M3 | |
-| `/api/loops` | 🔜 M3 | |
-| `/api/backtrace` | 🔜 M3 | |
+| `/api/block?pc=` | ✅ M3-ρ | block detail with insns and exits |
+| `/api/block-for-pc` | ✅ M3-ρ | containing trace-CFG block lookup |
+| `/api/loops` | ✅ M3-ρ | SCC loop list from trace CFG |
+| `/api/backtrace` | ✅ M3-ρ | dynamic call-stack replay at idx |
 | `/api/idxs-for-pc` | ✅ M2-γ | linear pc-scan; ~50ms on 15M records; hashed pc index deferred to M2-δ if profiling demands |
 | `/api/idxs-for-block` | ✅ M2-δ | linear pc-scan in [start_pc, end_pc]; M2-ε precomputed map if profiling demands |
 | `/api/idxs-touching-addr` | ✅ M3-π | split read/write touches around cursor |
