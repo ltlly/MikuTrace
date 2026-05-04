@@ -18,6 +18,7 @@ pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod jni_calls;
 pub mod jni_events;
+pub mod jni_strings;
 pub mod jobj_history;
 pub mod last_write_of_reg;
 pub mod mem_dump;
@@ -61,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jni-events", get(jni_events::jni_events_handler))
         .route("/api/jni-calls", get(jni_calls::jni_calls_handler))
         .route("/api/jobj-history", get(jobj_history::jobj_history_handler))
+        .route("/api/jni-strings", get(jni_strings::jni_strings_handler))
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",

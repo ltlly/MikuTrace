@@ -374,6 +374,21 @@ fn jobj_history_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn jni_strings_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "jni-strings".into(),
+        cd.display().to_string(),
+        "--max".into(),
+        "5".into(),
+        "--max-len".into(),
+        "32".into(),
+    ]);
+    assert!(v["note"].as_str().unwrap().contains("GetStringUTFChars"));
+    assert!(v["hits"].is_array());
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[

@@ -350,6 +350,14 @@ enum Cmd {
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
+    /// GET /api/jni-strings.
+    JniStrings {
+        trace_dir: PathBuf,
+        #[arg(long, default_value_t = 200)]
+        max: usize,
+        #[arg(long, default_value_t = 128)]
+        max_len: usize,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -728,6 +736,14 @@ async fn main() -> anyhow::Result<()> {
                 ("max", max.to_string()),
             ];
             route_get_json(trace_dir, route_path("/api/jobj-history", &params)).await
+        }
+        Some(Cmd::JniStrings {
+            trace_dir,
+            max,
+            max_len,
+        }) => {
+            let params = vec![("max", max.to_string()), ("max_len", max_len.to_string())];
+            route_get_json(trace_dir, route_path("/api/jni-strings", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await
