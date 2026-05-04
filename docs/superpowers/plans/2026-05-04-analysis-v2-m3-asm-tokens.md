@@ -8,7 +8,7 @@
 
 ## Tasks
 
-- [ ] Add server route returning not-ready token map.
-- [ ] Add server test.
-- [ ] Run server tests and clippy.
-- [ ] Update TODO/spec status.
+- [x] Add server route returning not-ready token map.
+- [x] Add server test.
+- [x] Run server tests and clippy.
+- [x] Update TODO/spec status.

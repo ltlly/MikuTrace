@@ -523,7 +523,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/jni-strings` | ✅ M3-jni-strings | JNI string op list + observable buffer recovery |
 | `/api/field-at` | ✅ M3-field-at | BN-gated fallback shape; real inference remains M6 |
 | `/api/fn-summary` | ✅ M3-ω | function overview with hot blocks and callees |
-| `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
+| `/api/asm-tokens-for-pcs` | ✅ M3-asm-tokens | BN-gated fallback; real tokens remain M6 |
 | `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
 | `/api/call-chain` | ✅ M3-σ | LR walking caller chain |
 | `/api/fork-events` | ✅ M3-ο | per-call fork lifecycle events with status filter |
