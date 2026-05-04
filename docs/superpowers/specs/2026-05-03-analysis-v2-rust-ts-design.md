@@ -543,8 +543,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | 🔜 M6 | BN sidecar |
 | `/api/bg-status` | ❌ | Replaced by `/ws/jobs` WebSocket (D6) |
 | `/api/decomp-status` | ❌ | Folded into `/ws/jobs` |
-| `/ws/jobs` | 🔜 M3 | new WebSocket endpoint |
-| `/openapi.json` | 🔜 M3 | utoipa-generated |
+| `/ws/jobs` | ✅ M3-api-infra | WebSocket job snapshot endpoint |
+| `/openapi.json` | ✅ M3-api-infra | path inventory OpenAPI JSON; utoipa schema expansion deferred |
 
 ### 13.6 Frontend panels (current `webui/app.js` tabs)
 

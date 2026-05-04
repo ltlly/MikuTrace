@@ -108,6 +108,7 @@
 - M3-jni-strings: `/api/jni-strings` + CLI wrapper ✅ 2026-05-04
 - M3-field-at: `/api/field-at` + CLI fallback wrapper ✅ 2026-05-04
 - M3-asm-tokens: `/api/asm-tokens-for-pcs` BN-gated fallback ✅ 2026-05-04
+- M3-api-infra: `/ws/jobs` + `/openapi.json` ✅ 2026-05-04
 - M4-α: shared selected-record cursor + Registers / Memory hex dump / Trace-for-PC panels ✅ 2026-05-04
 - M4 (next): TS frontend core polish / remaining panels (Backtrace, Forks, Xref, Settings, Memory diff, richer Decompile UX)
 - M3-M7: 见 spec §9 milestones

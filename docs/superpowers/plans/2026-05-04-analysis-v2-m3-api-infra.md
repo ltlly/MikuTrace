@@ -11,8 +11,8 @@
 
 ## Tasks
 
-- [ ] Add WebSocket jobs snapshot endpoint.
-- [ ] Add OpenAPI JSON route with current path inventory.
-- [ ] Add server tests.
-- [ ] Run server tests and clippy.
-- [ ] Update TODO/spec status.
+- [x] Add WebSocket jobs snapshot endpoint.
+- [x] Add OpenAPI JSON route with current path inventory.
+- [x] Add server tests.
+- [x] Run server tests and clippy.
+- [x] Update TODO/spec status.
