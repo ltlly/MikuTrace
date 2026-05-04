@@ -10,6 +10,7 @@ interface RunResult {
   count: number;
   stopped: boolean;
   direction: Direction;
+  showDepth: boolean;
 }
 
 export default function TaintPanel() {
@@ -17,6 +18,9 @@ export default function TaintPanel() {
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
   const [maxCount, setMaxCount] = createSignal(200);
+  const [throughMem, setThroughMem] = createSignal(false);
+  const [dataOnly, setDataOnly] = createSignal(false);
+  const [crossFnCall, setCrossFnCall] = createSignal(false);
   const [running, setRunning] = createSignal(false);
   const [result, setResult] = createSignal<RunResult | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -26,21 +30,28 @@ export default function TaintPanel() {
     setError(null);
     try {
       const dir = direction();
+      const flags = {
+        through_mem: throughMem(),
+        data_only: dataOnly(),
+        cross_fn_call: crossFnCall(),
+      };
       if (dir === "forward") {
-        const resp = await fetchForwardTaint(start(), reg(), maxCount());
+        const resp = await fetchForwardTaint(start(), reg(), maxCount(), flags);
         setResult({
           rows: resp.hits,
           count: resp.count,
           stopped: resp.stopped_at_max,
           direction: "forward",
+          showDepth: flags.cross_fn_call,
         });
       } else {
-        const resp = await fetchBackwardTaint(start(), reg(), maxCount());
+        const resp = await fetchBackwardTaint(start(), reg(), maxCount(), flags);
         setResult({
           rows: resp.chain,
           count: resp.count,
           stopped: resp.stopped_at_max,
           direction: "backward",
+          showDepth: flags.cross_fn_call,
         });
       }
     } catch (e: unknown) {
@@ -98,6 +109,30 @@ export default function TaintPanel() {
             }
           />
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={throughMem()}
+            onChange={(e) => setThroughMem(e.currentTarget.checked)}
+          />
+          {" "}through_mem
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={dataOnly()}
+            onChange={(e) => setDataOnly(e.currentTarget.checked)}
+          />
+          {" "}data_only
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={crossFnCall()}
+            onChange={(e) => setCrossFnCall(e.currentTarget.checked)}
+          />
+          {" "}cross_fn_call
+        </label>
         <button type="button" disabled={running()} onClick={run}>
           {running() ? "running…" : "Run"}
         </button>
@@ -122,6 +157,7 @@ export default function TaintPanel() {
                   <th>func</th>
                   <th>asm</th>
                   <th>{r().direction === "forward" ? "why" : "via"}</th>
+                  {r().showDepth ? <th>depth</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -133,6 +169,7 @@ export default function TaintPanel() {
                       <td>{row.func ?? "?"}</td>
                       <td>{row.asm}</td>
                       <td>{labelFor(row)}</td>
+                      {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}
                     </tr>
                   )}
                 </For>

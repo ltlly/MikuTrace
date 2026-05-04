@@ -69,16 +69,26 @@ export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   return (await r.json()) as CallTreeResponse;
 }
 
+export interface TaintFlags {
+  through_mem?: boolean;
+  data_only?: boolean;
+  cross_fn_call?: boolean;
+}
+
 export async function fetchForwardTaint(
   start: number,
   reg: string,
   maxCount = 200,
+  flags: TaintFlags = {},
 ): Promise<ForwardTaintResponse> {
   const params = new URLSearchParams({
     start: String(start),
     reg,
     max_count: String(maxCount),
   });
+  if (flags.through_mem) params.set("through_mem", "true");
+  if (flags.data_only) params.set("data_only", "true");
+  if (flags.cross_fn_call) params.set("cross_fn_call", "true");
   const r = await fetch(`/api/forward-taint?${params}`);
   if (!r.ok) throw new Error(`/api/forward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as ForwardTaintResponse;
@@ -88,12 +98,16 @@ export async function fetchBackwardTaint(
   start: number,
   reg: string,
   maxCount = 200,
+  flags: TaintFlags = {},
 ): Promise<BackwardTaintResponse> {
   const params = new URLSearchParams({
     start: String(start),
     reg,
     max_count: String(maxCount),
   });
+  if (flags.through_mem) params.set("through_mem", "true");
+  if (flags.data_only) params.set("data_only", "true");
+  if (flags.cross_fn_call) params.set("cross_fn_call", "true");
   const r = await fetch(`/api/backward-taint?${params}`);
   if (!r.ok) throw new Error(`/api/backward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as BackwardTaintResponse;

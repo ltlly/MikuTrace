@@ -136,6 +136,7 @@ export interface TaintRow {
   asm: string;
   why?: string;     // forward
   via?: string;     // backward
+  frame_depth?: number;   // present iff cross_fn_call=true was passed
 }
 
 export interface ForwardTaintResponse {
