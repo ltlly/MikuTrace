@@ -1,9 +1,8 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
 import type { CfgSvgResponse } from "~/api/types";
 
-const AUTO_FOLLOW_DELAY_MS = 160;
 const AUTO_RENDER_MAX_BLOCKS = 140;
 const AUTO_RENDER_MAX_SVG_BYTES = 1_500_000;
 
@@ -54,7 +53,6 @@ export default function CfgPanel(props: CfgPanelProps) {
   let suppressNextClick = false;
   let lastCenteredIdx = -1;
   let lastPanFn = "";
-  let followTimer: number | undefined;
   let graphSeq = 0;
 
   const [functions] = createResource(
@@ -62,12 +60,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     () => fetchFunctions(),
   );
   const [record] = createResource(
-    () =>
-      props.active &&
-      props.syncEnabled &&
-      props.currentHint?.idx !== props.currentIdx
-        ? props.currentIdx
-        : undefined,
+    () => (props.active && props.syncEnabled ? props.currentIdx : undefined),
     (idx) => fetchRecord(idx),
   );
   const currentRecord = createMemo<CursorRecordHint | undefined>(() => {
@@ -141,16 +134,9 @@ export default function CfgPanel(props: CfgPanelProps) {
     const idx = props.currentIdx;
     const r = currentRecord();
     if (!r || r.idx !== idx || !r.func || r.func === fnName()) return;
-
-    window.clearTimeout(followTimer);
-    followTimer = window.setTimeout(() => {
-      if (!props.active || !props.syncEnabled) return;
-      setAutoGraph(true);
-      setFnName(r.func ?? "");
-    }, AUTO_FOLLOW_DELAY_MS);
+    setAutoGraph(true);
+    setFnName(r.func);
   });
-
-  onCleanup(() => window.clearTimeout(followTimer));
 
   createEffect(() => {
     const name = fnName();
