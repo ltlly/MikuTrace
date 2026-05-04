@@ -29,6 +29,7 @@ interface RecordsPanelProps {
   selectedIdx: number;
   selectedReg: string;
   onSelect: (idx: number) => void;
+  onSelectRow?: (row: RecordRow) => void;
   onSelectReg: (reg: string) => void;
   hiddenSos: Set<string>;
   onOpenMemory: (addr: string) => void;
@@ -183,6 +184,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   function selectRow(row: RecordRow) {
     setOptimisticIdx(row.idx);
     props.onSelect(row.idx);
+    props.onSelectRow?.(row);
     const reg = firstAsmReg(row.asm);
     if (reg) props.onSelectReg(reg);
   }

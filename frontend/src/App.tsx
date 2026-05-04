@@ -4,7 +4,7 @@ import type { JSX } from "solid-js";
 import { fetchMeta, fetchSearch, fetchSearchPc } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
-import CfgPanel from "./panels/cfg/CfgPanel";
+import CfgPanel, { type CursorRecordHint } from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
@@ -18,6 +18,7 @@ import StringsPanel from "./panels/strings/StringsPanel";
 import TaintPanel from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
+import type { RecordRow } from "./api/types";
 
 type LeftTab =
   | "funcs"
@@ -110,6 +111,7 @@ export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
   const [selectedReg, setSelectedReg] = createSignal("x0");
   const [selectedFn, setSelectedFn] = createSignal("");
+  const [cursorHint, setCursorHint] = createSignal<CursorRecordHint | undefined>();
   const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
   const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
   const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
@@ -149,6 +151,10 @@ export default function App() {
 
   function jumpToIdx(idx: number) {
     setSelectedIdx(clampIdx(idx));
+  }
+
+  function selectTraceRow(row: RecordRow) {
+    setCursorHint({ idx: row.idx, pc: row.pc, func: row.func });
   }
 
   function pcFromHash(hash = window.location.hash): string | null {
@@ -641,6 +647,7 @@ export default function App() {
               selectedIdx={selectedIdx()}
               selectedReg={selectedReg()}
               onSelect={setSelectedIdx}
+              onSelectRow={selectTraceRow}
               onSelectReg={setSelectedReg}
               hiddenSos={hiddenSos()}
               onOpenMemory={openMemoryAt}
@@ -695,6 +702,7 @@ export default function App() {
               <CfgPanel
                 selectedFn={selectedFn()}
                 currentIdx={selectedIdx()}
+                currentHint={cursorHint()}
                 onSelect={setSelectedIdx}
                 active={rightTab() === "cfg"}
                 syncEnabled={syncCfg()}

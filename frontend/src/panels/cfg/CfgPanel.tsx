@@ -19,10 +19,17 @@ function clampScale(scale: number): number {
 interface CfgPanelProps {
   selectedFn: string;
   currentIdx: number;
+  currentHint?: CursorRecordHint;
   onSelect: (idx: number) => void;
   active: boolean;
   syncEnabled: boolean;
   onDisplayFnChange: (fn: string) => void;
+}
+
+export interface CursorRecordHint {
+  idx: number;
+  pc: string;
+  func: string | null;
 }
 
 type CfgGraphResponse = CfgSvgResponse & {
@@ -46,7 +53,6 @@ export default function CfgPanel(props: CfgPanelProps) {
   let frame: HTMLDivElement | undefined;
   let suppressNextClick = false;
   let lastCenteredIdx = -1;
-  let lastSelectedFn = "";
   let lastPanFn = "";
   let followTimer: number | undefined;
   let graphSeq = 0;
@@ -56,9 +62,20 @@ export default function CfgPanel(props: CfgPanelProps) {
     () => fetchFunctions(),
   );
   const [record] = createResource(
-    () => (props.active && props.syncEnabled ? props.currentIdx : undefined),
+    () =>
+      props.active &&
+      props.syncEnabled &&
+      props.currentHint?.idx !== props.currentIdx
+        ? props.currentIdx
+        : undefined,
     (idx) => fetchRecord(idx),
   );
+  const currentRecord = createMemo<CursorRecordHint | undefined>(() => {
+    const hint = props.currentHint;
+    if (hint?.idx === props.currentIdx) return hint;
+    const r = record();
+    return r && r.idx === props.currentIdx ? { idx: r.idx, pc: r.pc, func: r.func } : undefined;
+  });
   const selectedFnName = createMemo(() => {
     const want = props.selectedFn;
     if (!want) return "";
@@ -74,10 +91,9 @@ export default function CfgPanel(props: CfgPanelProps) {
     return [...names].sort((a, b) => a.localeCompare(b));
   });
   createEffect(() => {
-    if (!props.active) return;
+    if (!props.active || props.syncEnabled) return;
     const selected = selectedFnName();
-    if (selected && selected !== lastSelectedFn) {
-      lastSelectedFn = selected;
+    if (selected && selected !== fnName()) {
       setAutoGraph(false);
       setFnName(selected);
     }
@@ -123,7 +139,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   createEffect(() => {
     if (!props.active || !props.syncEnabled) return;
     const idx = props.currentIdx;
-    const r = record();
+    const r = currentRecord();
     if (!r || r.idx !== idx || !r.func || r.func === fnName()) return;
 
     window.clearTimeout(followTimer);
@@ -147,7 +163,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   createEffect(() => {
     if (!props.active || !props.syncEnabled) return;
     const idx = props.currentIdx;
-    const r = record();
+    const r = currentRecord();
     if (!r || r.idx !== idx) return;
     const g = graph();
     if (!g || g.status !== "ready" || !shouldRenderGraph(g)) return;
