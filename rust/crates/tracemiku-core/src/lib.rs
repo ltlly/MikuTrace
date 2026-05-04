@@ -14,6 +14,7 @@ pub mod cfg;
 pub mod decompiler;
 pub mod disasm;
 pub mod function_index;
+pub mod hashfin;
 pub mod index;
 pub mod memshadow;
 pub mod ollvmdet;

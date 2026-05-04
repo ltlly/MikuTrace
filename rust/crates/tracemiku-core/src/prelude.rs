@@ -27,6 +27,7 @@ pub use crate::function_index::{
     build_from_symbols as build_function_index, make_bn_id, make_sym_id, make_trace_id, parse_id,
     FunctionEntry, FunctionIndex,
 };
+pub use crate::hashfin::{hash_finalize_detect, HashFinalizeCandidate};
 pub use crate::index::{Index, MemRec};
 pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
 pub use crate::ollvmdet::{ollvm_detect_vm, OllvmFinding};
