@@ -26,6 +26,8 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
         let off = i * 272;
         buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        let lr = if i == 2 { 0x100008u64 } else { 0 };
+        buf[off + 248..off + 256].copy_from_slice(&lr.to_le_bytes());
         buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
         buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
     }
@@ -96,4 +98,17 @@ async fn backtrace_replays_calls_before_idx() {
     assert_eq!(v["depth"], 1);
     assert_eq!(v["stack"][0]["call_site_idx"], 1);
     assert_eq!(v["stack"][0]["callee_pc"], "0x100100");
+}
+
+#[tokio::test]
+async fn call_chain_walks_lr_to_call_site() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/call-chain?idx=2&depth=3").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["start_idx"], 2);
+    assert_eq!(v["depth"], 2);
+    assert_eq!(v["chain"][0]["idx"], 2);
+    assert_eq!(v["chain"][0]["lr"], "0x100008");
+    assert_eq!(v["chain"][0]["caller_pc"], "0x100004");
+    assert_eq!(v["chain"][1]["idx"], 1);
 }

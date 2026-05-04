@@ -194,6 +194,91 @@ pub struct BacktraceResponse {
     pub depth: usize,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CallChainQuery {
+    pub idx: usize,
+    #[serde(default = "default_call_chain_depth")]
+    pub depth: usize,
+}
+
+fn default_call_chain_depth() -> usize {
+    5
+}
+
+#[derive(Debug, Serialize)]
+pub struct CallChainEntry {
+    pub depth: usize,
+    pub idx: usize,
+    pub pc: String,
+    pub rel: Option<String>,
+    pub func: Option<String>,
+    pub off: Option<String>,
+    pub lr: String,
+    pub caller_pc: String,
+    pub caller_func: Option<String>,
+    pub caller_off: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CallChainResponse {
+    pub start_idx: usize,
+    pub depth: usize,
+    pub chain: Vec<CallChainEntry>,
+}
+
+pub async fn call_chain_handler(
+    State(state): State<AppState>,
+    Query(q): Query<CallChainQuery>,
+) -> Result<Json<CallChainResponse>, StatusCode> {
+    let inner = &state.inner;
+    if q.idx >= inner.trace.len() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let base = primary_base(&inner.meta);
+    let mut chain = Vec::new();
+    let mut cur_idx = q.idx;
+    for depth in 0..q.depth {
+        let record = inner.trace.record(cur_idx);
+        let pc = record.pc;
+        let (func_name, off_u64) = inner.symbols.lookup(pc);
+        let func = (func_name != "?").then_some(func_name);
+        let off = func.as_ref().map(|_| format!("{off_u64:#x}"));
+        let lr = record.reg_by_name("lr").unwrap_or(0);
+        let caller_pc = lr.saturating_sub(4);
+        let (caller_name, caller_off_u64) = if caller_pc != 0 {
+            inner.symbols.lookup(caller_pc)
+        } else {
+            ("?".to_string(), 0)
+        };
+        let caller_func = (caller_name != "?").then_some(caller_name);
+        let caller_off = caller_func.as_ref().map(|_| format!("{caller_off_u64:#x}"));
+        chain.push(CallChainEntry {
+            depth,
+            idx: cur_idx,
+            pc: format!("{pc:#x}"),
+            rel: base.map(|b| format!("{:#x}", pc.wrapping_sub(b))),
+            func,
+            off,
+            lr: format!("{lr:#x}"),
+            caller_pc: format!("{caller_pc:#x}"),
+            caller_func,
+            caller_off,
+        });
+        if caller_pc == 0 {
+            break;
+        }
+        let Some(next_idx) = last_pc_before(&inner.trace, caller_pc, cur_idx) else {
+            break;
+        };
+        cur_idx = next_idx;
+    }
+    Ok(Json(CallChainResponse {
+        start_idx: q.idx,
+        depth: chain.len(),
+        chain,
+    }))
+}
+
 pub async fn backtrace_handler(
     State(state): State<AppState>,
     Query(q): Query<BacktraceQuery>,
@@ -247,6 +332,10 @@ fn first_inst_for_pc(trace: &Trace, pc: u64) -> Option<u32> {
         }
     }
     None
+}
+
+fn last_pc_before(trace: &Trace, pc: u64, before_idx: usize) -> Option<usize> {
+    (0..before_idx).rev().find(|&i| trace.pc(i) == pc)
 }
 
 fn fmt_pc(state: &AppState, pc: u64) -> String {

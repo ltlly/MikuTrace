@@ -135,6 +135,14 @@ enum Cmd {
         #[arg(long)]
         max_depth: Option<usize>,
     },
+    /// GET /api/call-chain.
+    CallChain {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        idx: usize,
+        #[arg(long, default_value_t = 5)]
+        depth: usize,
+    },
     /// GET /api/strings.
     Strings {
         trace_dir: PathBuf,
@@ -355,6 +363,14 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("max_depth", depth.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/call-tree", &params)).await
+        }
+        Some(Cmd::CallChain {
+            trace_dir,
+            idx,
+            depth,
+        }) => {
+            let params = vec![("idx", idx.to_string()), ("depth", depth.to_string())];
+            route_get_json(trace_dir, route_path("/api/call-chain", &params)).await
         }
         Some(Cmd::Strings {
             trace_dir,

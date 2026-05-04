@@ -45,6 +45,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/block", get(navigation::block_handler))
         .route("/api/loops", get(navigation::loops_handler))
         .route("/api/backtrace", get(navigation::backtrace_handler))
+        .route("/api/call-chain", get(navigation::call_chain_handler))
         .route("/api/cfg-svg", get(cfg_svg::cfg_svg_handler))
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
