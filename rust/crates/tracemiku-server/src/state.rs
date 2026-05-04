@@ -11,6 +11,8 @@ use tracemiku_core::prelude::{
 };
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
+use crate::bn_sidecar::BnSidecarManager;
+
 #[derive(Clone)]
 pub struct AppState {
     pub inner: Arc<AppStateInner>,
@@ -31,6 +33,7 @@ pub struct AppStateInner {
     pub top_ir: TopIR,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
+    pub bn_sidecar: Mutex<BnSidecarManager>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +146,7 @@ impl AppState {
                 top_ir,
                 llm_cache: Mutex::new(HashMap::new()),
                 cfg_svg_cache: Mutex::new(HashMap::new()),
+                bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
             }),
         })
     }

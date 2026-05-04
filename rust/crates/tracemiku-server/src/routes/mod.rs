@@ -2,6 +2,7 @@ pub mod api_infra;
 pub mod asm_tokens;
 pub mod auto_phase;
 pub mod backward_taint;
+pub mod bn_hlil;
 pub mod call_tree;
 pub mod cfg;
 pub mod cfg_svg;
@@ -97,6 +98,17 @@ pub fn router(state: AppState) -> Router {
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/fn-summary", get(fn_summary::fn_summary_handler))
         .route("/api/functions", get(functions::functions_handler))
+        .route(
+            "/api/bn-sidecar/status",
+            get(bn_hlil::bn_sidecar_status_handler),
+        )
+        .route("/api/hlil-for-pc", get(bn_hlil::hlil_for_pc_handler))
+        .route("/api/hlil-for-fn", get(bn_hlil::hlil_for_fn_handler))
+        .route("/api/bn-cfg-for-pc", get(bn_hlil::bn_cfg_for_pc_handler))
+        .route(
+            "/api/bn-cfg-svg-for-pc",
+            get(bn_hlil::bn_cfg_svg_for_pc_handler),
+        )
         .route("/api/fork-events", get(fork_events::fork_events_handler))
         .route(
             "/api/ollvm-detect-vm",
