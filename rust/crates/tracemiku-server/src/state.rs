@@ -101,7 +101,7 @@ impl AppState {
 
         let cfg = build_cfg(&trace);
         let function_index = build_function_index(&symbols, Some(&cfg));
-        let memshadow = MemShadow::build_from_trace(&trace);
+        let memshadow = MemShadow::load_or_build(&trace);
         let call_tree = build_call_tree(&trace, &symbols, 50);
         let frame_depths = build_frame_depth_map(&trace);
         // Auto-discover type-spec JSONs (M3-ι2a Task 3): tools/hooks/*.json

@@ -1,7 +1,7 @@
 //! Sparse byte-level memory shadow built from a trace.
 //!
-//! Direct port of `viewer/memshadow.py:58-339`. Sidecar serialization is
-//! intentionally **deferred** — eager build only.
+//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v3 binary
+//! sidecar for fast reloads on large traces.
 //!
 //! Each instruction has full register state captured BEFORE its execution.
 //! Memory state is reconstructed by walking through stores (the source register
@@ -18,6 +18,8 @@
 //! None)` if no event yet.
 
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
 use crate::trace::Trace;
@@ -46,11 +48,16 @@ pub struct MemRec {
     pub value: u64,
 }
 
+const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV3\0\0";
+const SIDECAR_VERSION: u32 = 3;
+pub const SIDECAR_SUFFIX: &str = ".memshadow.v3.bin";
+
 /// Sparse byte-level memory shadow over a trace.
 ///
 /// Built once from a [`Trace`]; immutable thereafter. Lookup APIs are
 /// `byte_at` (point query), `hex_dump` (rectangular region), and
 /// `find_strings` (printable-ASCII run scan).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemShadow {
     pub writes: Vec<MemRec>,
     pub reads: Vec<MemRec>,
@@ -58,6 +65,22 @@ pub struct MemShadow {
 }
 
 impl MemShadow {
+    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v3.bin`.
+    pub fn sidecar_path(trace: &Trace) -> PathBuf {
+        trace.call_dir().join(format!("trace.bin{SIDECAR_SUFFIX}"))
+    }
+
+    /// Load from a valid v3 sidecar when possible; otherwise cold-build and
+    /// best-effort save. Corrupt/stale sidecars are ignored.
+    pub fn load_or_build(trace: &Trace) -> Self {
+        if let Some(mem) = Self::try_load_sidecar(trace) {
+            return mem;
+        }
+        let mem = Self::build_from_trace(trace);
+        let _ = mem.save_sidecar(trace);
+        mem
+    }
+
     /// Walk every record once; for each store, record the source-reg pre-state
     /// bytes; for each load, record the dest-reg post-state (next record's
     /// value) bytes. Mirrors `viewer/memshadow.py:74-110` minus the sidecar
@@ -101,6 +124,113 @@ impl MemShadow {
             reads,
             bytes,
         }
+    }
+
+    /// Try to load `<call_dir>/trace.bin.memshadow.v3.bin`.
+    ///
+    /// Returns `None` for miss, stale trace size, schema mismatch, or corrupt
+    /// content. Callers that want a ready MemShadow should use
+    /// [`MemShadow::load_or_build`].
+    pub fn try_load_sidecar(trace: &Trace) -> Option<Self> {
+        Self::read_sidecar(trace).ok()
+    }
+
+    /// Save this shadow as v3 binary sidecar. Writes to a temp file in the
+    /// call directory and then atomically renames it over the final path.
+    pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
+        let path = Self::sidecar_path(trace);
+        let tmp_name = format!(
+            "{}.tmp.{}",
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("trace.bin.memshadow.v3.bin"),
+            std::process::id()
+        );
+        let tmp_path = path.with_file_name(tmp_name);
+        let write_result = (|| {
+            let mut f = std::fs::File::create(&tmp_path)?;
+            f.write_all(SIDECAR_MAGIC)?;
+            write_u32(&mut f, SIDECAR_VERSION)?;
+            write_u64(&mut f, trace.raw().len() as u64)?;
+            write_u64(&mut f, self.writes.len() as u64)?;
+            write_u64(&mut f, self.reads.len() as u64)?;
+            write_u64(&mut f, self.bytes.len() as u64)?;
+
+            for rec in &self.writes {
+                write_memrec(&mut f, rec)?;
+            }
+            for rec in &self.reads {
+                write_memrec(&mut f, rec)?;
+            }
+            for (addr, evs) in &self.bytes {
+                write_u64(&mut f, *addr)?;
+                write_u64(&mut f, evs.len() as u64)?;
+                for ev in evs {
+                    write_u64(&mut f, ev.idx as u64)?;
+                    f.write_all(&[ev.byte, kind_to_code(ev.kind)?])?;
+                }
+            }
+            f.sync_all()?;
+            std::fs::rename(&tmp_path, &path)
+        })();
+        if write_result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        write_result
+    }
+
+    fn read_sidecar(trace: &Trace) -> std::io::Result<Self> {
+        let path = Self::sidecar_path(trace);
+        let mut f = std::fs::File::open(path)?;
+        let mut magic = [0u8; 8];
+        f.read_exact(&mut magic)?;
+        if &magic != SIDECAR_MAGIC {
+            return Err(invalid_data("bad memshadow sidecar magic"));
+        }
+        let version = read_u32(&mut f)?;
+        if version != SIDECAR_VERSION {
+            return Err(invalid_data("bad memshadow sidecar version"));
+        }
+        let trace_size = read_u64(&mut f)?;
+        if trace_size != trace.raw().len() as u64 {
+            return Err(invalid_data("stale memshadow sidecar trace size"));
+        }
+        let writes_len = read_len(&mut f)?;
+        let reads_len = read_len(&mut f)?;
+        let addr_len = read_len(&mut f)?;
+
+        let mut writes = Vec::with_capacity(writes_len);
+        for _ in 0..writes_len {
+            writes.push(read_memrec(&mut f)?);
+        }
+        let mut reads = Vec::with_capacity(reads_len);
+        for _ in 0..reads_len {
+            reads.push(read_memrec(&mut f)?);
+        }
+        let mut bytes = BTreeMap::new();
+        for _ in 0..addr_len {
+            let addr = read_u64(&mut f)?;
+            let event_len = read_len(&mut f)?;
+            let mut evs = Vec::with_capacity(event_len);
+            for _ in 0..event_len {
+                let idx = read_usize_u64(&mut f)?;
+                let mut bb = [0u8; 2];
+                f.read_exact(&mut bb)?;
+                let kind = code_to_kind(bb[1])?;
+                evs.push(ByteEvent {
+                    idx,
+                    byte: bb[0],
+                    kind,
+                });
+            }
+            evs.sort_by_key(|ev| ev.idx);
+            bytes.insert(addr, evs);
+        }
+        Ok(Self {
+            writes,
+            reads,
+            bytes,
+        })
     }
 
     /// Return `(byte_value, kind, source_idx)` for the latest event at `addr`
@@ -295,4 +425,71 @@ fn value_of_read(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) -> 
         decoded.regs_def.first().cloned()?
     };
     trace.record(i + 1).reg_by_name(&dest)
+}
+
+fn write_memrec(w: &mut impl Write, rec: &MemRec) -> std::io::Result<()> {
+    write_u64(w, rec.idx as u64)?;
+    write_u64(w, rec.addr)?;
+    write_u32(w, rec.size)?;
+    write_u64(w, rec.value)
+}
+
+fn read_memrec(r: &mut impl Read) -> std::io::Result<MemRec> {
+    Ok(MemRec {
+        idx: read_usize_u64(r)?,
+        addr: read_u64(r)?,
+        size: read_u32(r)?,
+        value: read_u64(r)?,
+    })
+}
+
+fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
+    w.write_all(&v.to_le_bytes())
+}
+
+fn write_u64(w: &mut impl Write, v: u64) -> std::io::Result<()> {
+    w.write_all(&v.to_le_bytes())
+}
+
+fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b)?;
+    Ok(u32::from_le_bytes(b))
+}
+
+fn read_u64(r: &mut impl Read) -> std::io::Result<u64> {
+    let mut b = [0u8; 8];
+    r.read_exact(&mut b)?;
+    Ok(u64::from_le_bytes(b))
+}
+
+fn read_len(r: &mut impl Read) -> std::io::Result<usize> {
+    read_usize_u64(r)
+}
+
+fn read_usize_u64(r: &mut impl Read) -> std::io::Result<usize> {
+    let v = read_u64(r)?;
+    usize::try_from(v).map_err(|_| invalid_data("memshadow sidecar usize overflow"))
+}
+
+fn kind_to_code(kind: &str) -> std::io::Result<u8> {
+    match kind {
+        "r" => Ok(0),
+        "w" => Ok(1),
+        "x" => Ok(2),
+        _ => Err(invalid_data("bad memshadow event kind")),
+    }
+}
+
+fn code_to_kind(code: u8) -> std::io::Result<&'static str> {
+    match code {
+        0 => Ok("r"),
+        1 => Ok("w"),
+        2 => Ok("x"),
+        _ => Err(invalid_data("bad memshadow event kind code")),
+    }
+}
+
+fn invalid_data(msg: &'static str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
 }

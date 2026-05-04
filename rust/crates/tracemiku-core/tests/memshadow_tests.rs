@@ -44,6 +44,20 @@ fn synth_string_trace_dir() -> (tempfile::TempDir, std::path::PathBuf) {
     (tmp, path)
 }
 
+fn append_store_record(cd: &std::path::Path, pc: u64, addr: u64, value: u64) {
+    let mut rec = vec![0u8; 272];
+    rec[0..8].copy_from_slice(&pc.to_le_bytes());
+    rec[8..16].copy_from_slice(&value.to_le_bytes()); // x0
+    rec[16..24].copy_from_slice(&addr.to_le_bytes()); // x1
+    rec[256..264].copy_from_slice(&0u64.to_le_bytes()); // sp
+    rec[268..272].copy_from_slice(&0xf9000020u32.to_le_bytes()); // str x0,[x1]
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(cd.join("trace.bin"))
+        .unwrap();
+    f.write_all(&rec).unwrap();
+}
+
 #[test]
 fn memshadow_byte_at_returns_written_byte() {
     use tracemiku_core::memshadow::MemShadow;
@@ -111,4 +125,57 @@ fn memshadow_byte_at_t_zero_returns_event_at_idx_zero() {
     let (b, _, src) = mem.byte_at(0x7000, 0);
     assert_eq!(b, Some(b'h'));
     assert_eq!(src, Some(0));
+}
+
+#[test]
+fn memshadow_v3_sidecar_roundtrip_preserves_shadow() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+    let (_tmp, cd) = synth_string_trace_dir();
+    let trace = Trace::load(&cd).unwrap();
+    let mem1 = MemShadow::load_or_build(&trace);
+    let sidecar = MemShadow::sidecar_path(&trace);
+    assert!(sidecar.exists(), "sidecar should be written at {sidecar:?}");
+
+    let mem2 = MemShadow::try_load_sidecar(&trace).expect("sidecar loads");
+    assert_eq!(mem1.writes, mem2.writes);
+    assert_eq!(mem1.reads, mem2.reads);
+    assert_eq!(mem1.bytes, mem2.bytes);
+}
+
+#[test]
+fn memshadow_v3_sidecar_stale_trace_size_rebuilds() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+    let (_tmp, cd) = synth_string_trace_dir();
+    let trace = Trace::load(&cd).unwrap();
+    let _ = MemShadow::load_or_build(&trace);
+    assert!(MemShadow::sidecar_path(&trace).exists());
+
+    let value = u64::from_le_bytes([b'b', b'y', b'e', 0, 0, 0, 0, 0]);
+    append_store_record(&cd, 0x10000c, 0x8000, value);
+    let trace2 = Trace::load(&cd).unwrap();
+    assert_eq!(trace2.len(), 4);
+    let mem2 = MemShadow::load_or_build(&trace2);
+    let (b, kind, src) = mem2.byte_at(0x8000, 1 << 60);
+    assert_eq!(b, Some(b'b'));
+    assert_eq!(kind, "w");
+    assert_eq!(src, Some(3));
+}
+
+#[test]
+fn memshadow_v3_corrupt_sidecar_is_ignored() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+    let (_tmp, cd) = synth_string_trace_dir();
+    let trace = Trace::load(&cd).unwrap();
+    let sidecar = MemShadow::sidecar_path(&trace);
+    std::fs::write(&sidecar, b"not a valid sidecar").unwrap();
+
+    let mem = MemShadow::load_or_build(&trace);
+    let (b, kind, src) = mem.byte_at(0x7000, 1 << 60);
+    assert_eq!(b, Some(b'h'));
+    assert_eq!(kind, "w");
+    assert_eq!(src, Some(0));
+    assert!(sidecar.metadata().unwrap().len() > 32);
 }
