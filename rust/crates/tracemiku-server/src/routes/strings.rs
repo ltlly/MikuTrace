@@ -46,7 +46,24 @@ pub async fn strings_handler(
     State(state): State<AppState>,
     Query(q): Query<StringsQuery>,
 ) -> Json<StringsResponse> {
-    let mem = state.inner.memshadow();
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || strings_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "strings worker failed: {err}");
+                StringsResponse {
+                    status: "error",
+                    count: 0,
+                    cursor: -1,
+                    strings: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn strings_response(inner: &crate::state::AppStateInner, q: StringsQuery) -> StringsResponse {
+    let mem = inner.memshadow();
     let mut results = mem.find_strings(q.min_len);
     if q.cursor >= 0 {
         let cursor = q.cursor as u64;
@@ -72,10 +89,10 @@ pub async fn strings_handler(
             str: s,
         })
         .collect::<Vec<_>>();
-    Json(StringsResponse {
+    StringsResponse {
         status: "ready",
         count: strings.len(),
         cursor: q.cursor,
         strings,
-    })
+    }
 }

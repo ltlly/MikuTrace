@@ -46,13 +46,22 @@ pub async fn string_provenance_handler(
     State(state): State<AppState>,
     Query(q): Query<StringProvenanceQuery>,
 ) -> Result<Json<StringProvenanceResponse>, StatusCode> {
+    let inner = state.inner.clone();
+    tokio::task::spawn_blocking(move || string_provenance_response(&inner, q))
+        .await
+        .unwrap_or(Err(StatusCode::INTERNAL_SERVER_ERROR))
+        .map(Json)
+}
+
+fn string_provenance_response(
+    inner: &crate::state::AppStateInner,
+    q: StringProvenanceQuery,
+) -> Result<StringProvenanceResponse, StatusCode> {
     let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
     let length = q.length.clamp(1, MAX_LENGTH);
-    let memshadow = state.inner.memshadow();
-    let (writers, writers_total) =
-        covering_idxs_by_byte(&state.inner.index.mem_writes, start, length);
-    let (readers, readers_total) =
-        covering_idxs_by_byte(&state.inner.index.mem_reads, start, length);
+    let memshadow = inner.memshadow();
+    let (writers, writers_total) = covering_idxs_by_byte(&inner.index.mem_writes, start, length);
+    let (readers, readers_total) = covering_idxs_by_byte(&inner.index.mem_reads, start, length);
     let mut bytes = Vec::with_capacity(length);
     for offset in 0..length {
         let addr = start + offset as u64;
@@ -67,12 +76,12 @@ pub async fn string_provenance_handler(
             readers_total: readers_total[offset],
         });
     }
-    Ok(Json(StringProvenanceResponse {
+    Ok(StringProvenanceResponse {
         status: "ready",
         addr: q.addr,
         length,
         bytes,
-    }))
+    })
 }
 
 fn covering_idxs_by_byte(
