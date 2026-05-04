@@ -311,7 +311,7 @@ For each Rust module landed in M2-M5, write a side-by-side comparison script tha
 | **M1** | Skeleton + first endpoint | Rust workspace (4 crates); Vite skeleton; `/api/meta` round-trip; CI cargo build green | runnable `tracemiku-server` serving `/api/meta` |
 | **M2** | tracemiku-core | Trace parser, module/sym, CFG, Index, MemShadow, taint, FunctionIndex, calltree | `cargo test -p tracemiku-core` green; parity scripts vs Python pass |
 | **M3** | tracemiku-server endpoints | All ~25 trace-only endpoints (no BN), WebSocket job system | `tracemiku-server` serves all current /api/* (sans BN); per-route smoke tests via `axum-test` or `tower::ServiceExt` green |
-| **M4** | TS frontend core | records / cfg / functions / decompile panels working in browser | `pnpm dev` → click through the 4 main flows |
+| **M4** | TS frontend core | records / cfg / functions / decompile panels working in browser | ✅ 2026-05-04: Solid panels cover core browser flows |
 | **M5** | LLIL pipeline (Rust) | lift → SSA → passes → render — Rust port | parity vs Python LLIL output (token-level) |
 | **M6** | BN python sidecar | JSON-RPC sidecar + Rust spawn/lifecycle + HLIL endpoints | BN HLIL panel working in TS frontend |
 | **M7** | Cutover + delete legacy | `tracemiku web` defaults to v2; delete `viewer/` (analysis side), `webui/` entirely; rewrite `./tracemiku` dispatcher | single binary `tracemiku-server` + frontend dist |
@@ -402,7 +402,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
 | `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | ✅ M2-ε | bl-target heuristic + examples/<so>/known_offsets.json overlay; merged into AppState symbols with priority: static > examples > auto |
-| `display.py` (pwndbg-style annotations) | frontend rendering | 🔜 M4 | moves to TS frontend; backend just emits structured tokens |
+| `display.py` (pwndbg-style annotations) | frontend rendering | ✅ M4 | TS records / decompile / token-facing panels render structured backend output; no Python display path in v2 |
 | `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | ✅ M2-ε | direct port; legacy F0 / cfg: parser kept; 8 unit tests |
 | `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | ✅ M3-α | direct port; cap-balance counter for max_depth; 3 unit tests + parity gate |
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | ✅ M3-hash-finalize | window-based scan |
@@ -556,9 +556,9 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Forks | left | ✅ M4-β | status-filtered fork events via `/api/fork-events` |
 | Strings | left | ✅ M2-ζ | Solid panel shipped |
 | Taint | left | ✅ M3-γ | Solid toggles for through_mem / data_only / cross_fn_call |
-| Cross Ref (xref) | left | 🔜 M4 | |
+| Cross Ref (xref) | left | ✅ M4-δ | selected-PC executions + asm-ref search via `/api/search-pc` and `/api/search` |
 | SO Filter | left | ⏸ | Multi-SO trace filter; rare path |
-| Settings | left | 🔜 M4 | |
+| Settings | left | ✅ M4-δ | dense-mode client preference + API/model/trace status |
 | Graph (CFG) | right | ✅ M3-κ | SVG render via `/api/cfg-svg` |
 | Registers | right | ✅ M4-α | selected-record register table |
 | HLIL | right | 🔜 M6 | needs BN sidecar |

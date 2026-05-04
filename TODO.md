@@ -112,7 +112,8 @@
 - M4-α: shared selected-record cursor + Registers / Memory hex dump / Trace-for-PC panels ✅ 2026-05-04
 - M4-β: Backtrace / Forks / Memory diff frontend panels ✅ 2026-05-04
 - M4-γ: richer Decompile UX for function markdown + LLM-call controls ✅ 2026-05-04
-- M4 (next): TS frontend core polish / remaining panels (Xref, Settings)
+- M4-δ: Xref / Settings frontend panels ✅ 2026-05-04
+- M4: TS frontend core polish / panels complete ✅ 2026-05-04
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
