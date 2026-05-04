@@ -405,7 +405,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `display.py` (pwndbg-style annotations) | frontend rendering | 🔜 M4 | moves to TS frontend; backend just emits structured tokens |
 | `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | ✅ M2-ε | direct port; legacy F0 / cfg: parser kept; 8 unit tests |
 | `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | ✅ M3-α | direct port; cap-balance counter for max_depth; 3 unit tests + parity gate |
-| `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | 🔜 M3 | window-based scan |
+| `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | ✅ M3-hash-finalize | window-based scan |
 | `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | ✅ M3-ι2b | 1:1 port; ollvm_detect_vm + OllvmFinding. Heuristic scoring 0.4+0.3+0.2+0.1 (parity with Python). 3 unit tests. |
 | `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
 | `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | ✅ M3-μ prep | clap dispatcher now has REST-backed wrappers for shipped trace-only endpoints plus `list`/`info`; destructive legacy replacement remains M7 sign-off |
