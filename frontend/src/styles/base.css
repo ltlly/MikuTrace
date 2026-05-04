@@ -1655,3 +1655,97 @@ html[data-density="dense"] .xref-table td {
 @media (max-width: 960px) {
   .dec-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Debug overlay (toggle: topbar `dbg` button or localStorage tracemiku-debug=1)
+ * Useful for diagnosing CFG/cursor sync issues. The overlay state itself
+ * persists in localStorage so refresh keeps it visible.
+ * --------------------------------------------------------------------------- */
+.dbg-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 6px;
+}
+.dbg-toggle:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.dbg-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.debug-overlay {
+  position: fixed;
+  bottom: 36px;
+  right: 12px;
+  z-index: 10000;
+  background: rgba(14, 17, 23, 0.96);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 12px 8px 12px;
+  min-width: 280px;
+  max-width: 360px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+.debug-overlay .debug-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px dotted rgba(255, 255, 255, 0.05);
+}
+.debug-overlay .debug-row:last-of-type {
+  border-bottom: none;
+}
+.debug-overlay .debug-row > span {
+  color: var(--dim);
+  white-space: nowrap;
+}
+.debug-overlay .debug-row > code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  text-align: right;
+  word-break: break-all;
+  max-width: 220px;
+}
+.debug-overlay .debug-toggle {
+  margin-top: 6px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: none;
+}
+.debug-overlay .debug-toggle input {
+  margin-right: 6px;
+}
+.debug-overlay .debug-toggle > span {
+  color: var(--fg);
+  white-space: normal;
+}
+.debug-overlay .debug-close {
+  margin-top: 6px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.debug-overlay .debug-close:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}

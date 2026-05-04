@@ -1,10 +1,10 @@
-import { createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { fetchMeta, fetchSearch, fetchSearchPc } from "./api/client";
+import { fetchMeta, fetchRecord, fetchSearch, fetchSearchPc } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
-import CfgPanel, { type CursorRecordHint } from "./panels/cfg/CfgPanel";
+import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
@@ -112,6 +112,48 @@ export default function App() {
   const [selectedReg, setSelectedReg] = createSignal("x0");
   const [selectedFn, setSelectedFn] = createSignal("");
   const [cursorHint, setCursorHint] = createSignal<CursorRecordHint | undefined>();
+  // Row hint cache: every visible RecordsPanel row publishes its (idx, pc, func)
+  // here. selectedIdx changes that hit the cache update cursorHint
+  // synchronously (zero round-trip — fixes keyboard j/k lag and CallTree /
+  // hash / Backtrace / etc. paths that previously only set selectedIdx and
+  // forced CfgPanel to wait for /api/record). Cache miss falls through to
+  // the cursorRecord resource below.
+  const rowHintCache = new Map<number, CursorRecordHint>();
+  const [rowHintCacheSize, setRowHintCacheSize] = createSignal(0);
+  function rememberRows(rows: RecordRow[]) {
+    for (const row of rows) {
+      rowHintCache.set(row.idx, { idx: row.idx, pc: row.pc, func: row.func });
+    }
+    while (rowHintCache.size > 5000) {
+      const k = rowHintCache.keys().next().value as number | undefined;
+      if (k === undefined) break;
+      rowHintCache.delete(k);
+    }
+    setRowHintCacheSize(rowHintCache.size);
+  }
+  const cursorRecordSource = createMemo(() => {
+    const idx = selectedIdx();
+    return rowHintCache.has(idx) ? undefined : idx;
+  });
+  const [cursorRecord] = createResource(cursorRecordSource, fetchRecord);
+  createEffect(() => {
+    const idx = selectedIdx();
+    const cached = rowHintCache.get(idx);
+    if (cached) {
+      const cur = cursorHint();
+      if (cur?.idx !== cached.idx || cur?.pc !== cached.pc || cur?.func !== cached.func) {
+        setCursorHint(cached);
+      }
+      return;
+    }
+    const r = cursorRecord();
+    if (r && r.idx === idx) {
+      const hint: CursorRecordHint = { idx: r.idx, pc: r.pc, func: r.func };
+      rowHintCache.set(idx, hint);
+      setRowHintCacheSize(rowHintCache.size);
+      setCursorHint(hint);
+    }
+  });
   const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
   const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
   const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
@@ -135,6 +177,27 @@ export default function App() {
   const [colAsm, setColAsm] = createSignal(initial.colAsm);
   const [syncCfg, setSyncCfgSignal] = createSignal(initial.syncCfg);
   const [cfgDisplayFn, setCfgDisplayFn] = createSignal("");
+  const [debugVisible, setDebugVisibleSignal] = createSignal(false);
+  const [apiDebug, setApiDebugSignal] = createSignal(false);
+  const [cfgDebugState, setCfgDebugState] = createSignal<CfgDebugState | null>(null);
+  function setApiDebug(next: boolean) {
+    setApiDebugSignal(next);
+    try {
+      if (next) localStorage.setItem("tracemiku-api-debug", "1");
+      else localStorage.removeItem("tracemiku-api-debug");
+    } catch {
+      /* ignore */
+    }
+  }
+  function setDebugVisible(next: boolean) {
+    setDebugVisibleSignal(next);
+    try {
+      if (next) localStorage.setItem("tracemiku-debug", "1");
+      else localStorage.removeItem("tracemiku-debug");
+    } catch {
+      /* ignore */
+    }
+  }
   const [meta] = createResource(fetchMeta);
   const helpTopic = createMemo(() => helpState()?.topic ?? null);
   let cmdInput: HTMLInputElement | undefined;
@@ -366,6 +429,12 @@ export default function App() {
   }
 
   onMount(() => {
+    try {
+      if (localStorage.getItem("tracemiku-api-debug") === "1") setApiDebugSignal(true);
+      if (localStorage.getItem("tracemiku-debug") === "1") setDebugVisibleSignal(true);
+    } catch {
+      /* ignore */
+    }
     void jumpToHashPc();
     const onHashChange = () => {
       void jumpToHashPc();
@@ -538,6 +607,14 @@ export default function App() {
           />
           <span>同步 CFG</span>
         </label>
+        <button
+          class="dbg-toggle"
+          classList={{ active: debugVisible() }}
+          title="切换调试浮层 (selectedIdx / cursorHint / fnName / 缓存大小 / API 日志开关)"
+          onClick={() => setDebugVisible(!debugVisible())}
+        >
+          dbg
+        </button>
         <span class="hint">↑/↓ 单步 · PgUp/PgDn 翻页 · Home/End 头尾 · / 搜索 · :N 跳转</span>
         {helpButton("overview")}
       </header>
@@ -652,6 +729,7 @@ export default function App() {
               hiddenSos={hiddenSos()}
               onOpenMemory={openMemoryAt}
               onRunTaint={runTaintFrom}
+              onRowsLoaded={rememberRows}
             />
           </div>
           <div
@@ -707,6 +785,7 @@ export default function App() {
                 active={rightTab() === "cfg"}
                 syncEnabled={syncCfg()}
                 onDisplayFnChange={setCfgDisplayFn}
+                onDebugChange={setCfgDebugState}
               />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
@@ -777,6 +856,78 @@ export default function App() {
           </div>
         </div>
         )}
+      </Show>
+      <Show when={debugVisible()}>
+        <div class="debug-overlay">
+          <div class="debug-row">
+            <span>selectedIdx</span>
+            <code>{selectedIdx()}</code>
+          </div>
+          <div class="debug-row">
+            <span>cursorHint.idx</span>
+            <code>{cursorHint()?.idx ?? "—"}</code>
+          </div>
+          <div class="debug-row">
+            <span>cursorHint.pc</span>
+            <code>{cursorHint()?.pc ?? "—"}</code>
+          </div>
+          <div class="debug-row">
+            <span>cursorHint.func</span>
+            <code>{cursorHint()?.func ?? "—"}</code>
+          </div>
+          <div class="debug-row">
+            <span>selectedFn</span>
+            <code>{selectedFn() || "—"}</code>
+          </div>
+          <div class="debug-row">
+            <span>selectedReg</span>
+            <code>{selectedReg()}</code>
+          </div>
+          <div class="debug-row">
+            <span>tabs</span>
+            <code>L:{leftTab()} R:{rightTab()} B:{bottomTab()}</code>
+          </div>
+          <div class="debug-row">
+            <span>syncCfg</span>
+            <code>{syncCfg() ? "on" : "off"}</code>
+          </div>
+          <div class="debug-row">
+            <span>cfg.fnName</span>
+            <code>{cfgDebugState()?.fnName || cfgDisplayFn() || "—"}</code>
+          </div>
+          <div class="debug-row">
+            <span>cfg.lastGraphFn</span>
+            <code>{cfgDebugState()?.lastGraphFn || "—"}</code>
+          </div>
+          <div class="debug-row">
+            <span>cfg.loading</span>
+            <code>{cfgDebugState()?.loading ? "yes" : "no"}</code>
+          </div>
+          <div class="debug-row">
+            <span>cfg.graphSeq</span>
+            <code>{cfgDebugState()?.graphSeq ?? 0}</code>
+          </div>
+          <div class="debug-row">
+            <span>rowHintCache</span>
+            <code>{rowHintCacheSize()} entries</code>
+          </div>
+          <label class="debug-row debug-toggle">
+            <input
+              type="checkbox"
+              checked={apiDebug()}
+              onChange={(e) => setApiDebug(e.currentTarget.checked)}
+            />
+            <span>log API calls (console)</span>
+          </label>
+          <button
+            type="button"
+            class="debug-close"
+            onClick={() => setDebugVisible(false)}
+            title="hide overlay (state persists; toggle with topbar dbg button)"
+          >
+            close
+          </button>
+        </div>
       </Show>
     </>
   );

@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
-import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
+import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
 import type { CfgSvgResponse } from "~/api/types";
 
 const AUTO_RENDER_MAX_BLOCKS = 140;
@@ -23,12 +23,20 @@ interface CfgPanelProps {
   active: boolean;
   syncEnabled: boolean;
   onDisplayFnChange: (fn: string) => void;
+  onDebugChange?: (state: CfgDebugState) => void;
 }
 
 export interface CursorRecordHint {
   idx: number;
   pc: string;
   func: string | null;
+}
+
+export interface CfgDebugState {
+  fnName: string;
+  lastGraphFn: string;
+  loading: boolean;
+  graphSeq: number;
 }
 
 type CfgGraphResponse = CfgSvgResponse & {
@@ -44,6 +52,8 @@ export default function CfgPanel(props: CfgPanelProps) {
   const [graph, setGraph] = createSignal<CfgGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = createSignal(false);
   const [graphError, setGraphError] = createSignal<unknown>(null);
+  const [lastGraphFn, setLastGraphFn] = createSignal("");
+  const [debugSeq, setDebugSeq] = createSignal(0);
   const [pan, setPan] = createSignal({ x: 0, y: 0, scale: 1 });
   const [drag, setDrag] = createSignal<null | { sx: number; sy: number; x: number; y: number }>(
     null,
@@ -60,15 +70,12 @@ export default function CfgPanel(props: CfgPanelProps) {
     () => (props.active ? "active" : undefined),
     () => fetchFunctions(),
   );
-  const [record] = createResource(
-    () => (props.active && props.syncEnabled ? props.currentIdx : undefined),
-    (idx) => fetchRecord(idx),
-  );
+  // Note: cursorHint is now centrally maintained by App.tsx (which also owns
+  // a row-data cache and falls back to /api/record on cache miss). CfgPanel
+  // just trusts the hint when its idx matches the current cursor.
   const currentRecord = createMemo<CursorRecordHint | undefined>(() => {
     const hint = props.currentHint;
-    if (hint?.idx === props.currentIdx) return hint;
-    const r = record();
-    return r && r.idx === props.currentIdx ? { idx: r.idx, pc: r.pc, func: r.func } : undefined;
+    return hint && hint.idx === props.currentIdx ? hint : undefined;
   });
   const selectedFnName = createMemo(() => {
     const want = props.selectedFn;
@@ -116,6 +123,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     reload();
 
     const seq = ++graphSeq;
+    setDebugSeq(seq);
     graphAbort?.abort();
     const abort = new AbortController();
     graphAbort = abort;
@@ -127,6 +135,7 @@ export default function CfgPanel(props: CfgPanelProps) {
       .then((resp) => {
         if (seq !== graphSeq || abort.signal.aborted) return;
         setGraph({ ...resp, requestFn, auto: requestAuto });
+        if (resp.status === "ready") setLastGraphFn(requestFn);
       })
       .catch((err) => {
         if (seq !== graphSeq || abort.signal.aborted) return;
@@ -138,6 +147,15 @@ export default function CfgPanel(props: CfgPanelProps) {
           setGraphLoading(false);
         }
       });
+  });
+
+  createEffect(() => {
+    props.onDebugChange?.({
+      fnName: fnName(),
+      lastGraphFn: lastGraphFn(),
+      loading: graphLoading(),
+      graphSeq: debugSeq(),
+    });
   });
 
   onCleanup(() => {

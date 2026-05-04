@@ -38,8 +38,57 @@ import type {
   CfgSvgResponse,
 } from "./types";
 
+// ---------------------------------------------------------------------------
+// API debug logger
+//
+// Toggle: localStorage.setItem("tracemiku-api-debug", "1") (or use the dev
+// overlay's "log API calls" checkbox). When on, every API request is logged
+// to the console with method, URL, sequence number, status, duration, and
+// (where available) byte size or abort/error reason. Off by default — zero
+// runtime cost beyond a localStorage read per request.
+// ---------------------------------------------------------------------------
+
+let __apiSeq = 0;
+
+function apiDebugEnabled(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem("tracemiku-api-debug") === "1";
+  } catch {
+    return false;
+  }
+}
+
+async function fx(input: string, init?: RequestInit): Promise<Response> {
+  const dbg = apiDebugEnabled();
+  const seq = ++__apiSeq;
+  const t0 = performance.now();
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (dbg) console.log(`[api #${seq}] -> ${method} ${input}`);
+  try {
+    const r = await fx(input, init);
+    const dt = performance.now() - t0;
+    if (dbg) {
+      const cl = r.headers.get("content-length");
+      console.log(
+        `[api #${seq}] <- ${r.status} ${method} ${input} ${dt.toFixed(0)}ms${cl ? " " + cl + "B" : ""}`,
+      );
+    }
+    return r;
+  } catch (err) {
+    const dt = performance.now() - t0;
+    const aborted = (err as { name?: string } | null)?.name === "AbortError";
+    if (dbg) {
+      const fn = aborted ? console.warn : console.error;
+      fn(
+        `[api #${seq}] x ${method} ${input} ${dt.toFixed(0)}ms ${aborted ? "aborted" : String(err)}`,
+      );
+    }
+    throw err;
+  }
+}
+
 export async function fetchMeta(): Promise<MetaResponse> {
-  const r = await fetch("/api/meta");
+  const r = await fx("/api/meta");
   if (!r.ok) {
     throw new Error(`/api/meta returned ${r.status}: ${await r.text()}`);
   }
@@ -48,7 +97,7 @@ export async function fetchMeta(): Promise<MetaResponse> {
 
 export async function fetchSoStats(top = 200, all = false): Promise<SoStatsResponse> {
   const params = new URLSearchParams({ top: String(top), all: String(all) });
-  const r = await fetch(`/api/so-stats?${params}`);
+  const r = await fx(`/api/so-stats?${params}`);
   if (!r.ok) throw new Error(`/api/so-stats returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as SoStatsResponse;
 }
@@ -65,19 +114,19 @@ export async function fetchRecords(opts: FetchRecordsOpts = {}): Promise<Records
   if (opts.count !== undefined) params.set("count", String(opts.count));
   if (opts.regs) params.set("regs", opts.regs);
   const qs = params.toString();
-  const r = await fetch(`/api/records${qs ? "?" + qs : ""}`);
+  const r = await fx(`/api/records${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/records returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as RecordsResponse;
 }
 
 export async function fetchRecord(idx: number): Promise<RecordDetail> {
-  const r = await fetch(`/api/record/${idx}`);
+  const r = await fx(`/api/record/${idx}`);
   if (!r.ok) throw new Error(`/api/record/${idx} returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as RecordDetail;
 }
 
 export async function fetchFunctions(): Promise<FunctionsResponse> {
-  const r = await fetch("/api/functions");
+  const r = await fx("/api/functions");
   if (!r.ok) throw new Error(`/api/functions returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as FunctionsResponse;
 }
@@ -93,7 +142,7 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
   if (opts.fnName) params.set("fn", opts.fnName);
   if (opts.timeout !== undefined) params.set("timeout", String(opts.timeout));
   const qs = params.toString();
-  const r = await fetch(`/api/cfg-svg${qs ? "?" + qs : ""}`, { signal: opts.signal });
+  const r = await fx(`/api/cfg-svg${qs ? "?" + qs : ""}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/cfg-svg returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as CfgSvgResponse;
 }
@@ -101,7 +150,7 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
 export async function fetchStrings(minLen = 4, q = ""): Promise<StringsResponse> {
   const params = new URLSearchParams({ min_len: String(minLen) });
   if (q) params.set("q", q);
-  const r = await fetch(`/api/strings?${params}`);
+  const r = await fx(`/api/strings?${params}`);
   if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
   return (await r.json()) as StringsResponse;
 }
@@ -116,7 +165,7 @@ export async function fetchIdxsTouchingAddr(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fetch(`/api/idxs-touching-addr?${params}`);
+  const r = await fx(`/api/idxs-touching-addr?${params}`);
   if (!r.ok) throw new Error(`/api/idxs-touching-addr ${r.status}: ${await r.text()}`);
   return (await r.json()) as TouchingAddrResponse;
 }
@@ -133,14 +182,14 @@ export async function fetchIdxsTouchingRange(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fetch(`/api/idxs-touching-range?${params}`);
+  const r = await fx(`/api/idxs-touching-range?${params}`);
   if (!r.ok) throw new Error(`/api/idxs-touching-range ${r.status}: ${await r.text()}`);
   return (await r.json()) as TouchingRangeResponse;
 }
 
 export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpResponse> {
   const params = new URLSearchParams({ addr, count: String(count) });
-  const r = await fetch(`/api/mem-dump?${params}`);
+  const r = await fx(`/api/mem-dump?${params}`);
   if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
   return (await r.json()) as MemDumpResponse;
 }
@@ -155,7 +204,7 @@ export async function fetchMemDiff(
     addr,
     size: String(size),
   });
-  const r = await fetch(`/api/mem-diff?${params}`);
+  const r = await fx(`/api/mem-diff?${params}`);
   if (!r.ok) throw new Error(`/api/mem-diff ${r.status}: ${await r.text()}`);
   return (await r.json()) as MemDiffResponse;
 }
@@ -170,7 +219,7 @@ export async function fetchIdxsForPc(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fetch(`/api/idxs-for-pc?${params}`);
+  const r = await fx(`/api/idxs-for-pc?${params}`);
   if (!r.ok) throw new Error(`/api/idxs-for-pc ${r.status}: ${await r.text()}`);
   return (await r.json()) as IdxsForPcResponse;
 }
@@ -180,7 +229,7 @@ export async function fetchSearch(pattern: string, maxResults = 200): Promise<Se
     pattern,
     max_results: String(maxResults),
   });
-  const r = await fetch(`/api/search?${params}`);
+  const r = await fx(`/api/search?${params}`);
   if (!r.ok) throw new Error(`/api/search ${r.status}: ${await r.text()}`);
   return (await r.json()) as SearchResponse;
 }
@@ -190,14 +239,14 @@ export async function fetchSearchPc(pc: string, limit = 50): Promise<SearchPcRes
     pc,
     limit: String(limit),
   });
-  const r = await fetch(`/api/search-pc?${params}`);
+  const r = await fx(`/api/search-pc?${params}`);
   if (!r.ok) throw new Error(`/api/search-pc ${r.status}: ${await r.text()}`);
   return (await r.json()) as SearchPcResponse;
 }
 
 export async function fetchRegValueAt(idx: number, reg: string): Promise<RegValueAtResponse> {
   const params = new URLSearchParams({ idx: String(idx), reg });
-  const r = await fetch(`/api/reg-value-at?${params}`);
+  const r = await fx(`/api/reg-value-at?${params}`);
   if (!r.ok) throw new Error(`/api/reg-value-at ${r.status}: ${await r.text()}`);
   return (await r.json()) as RegValueAtResponse;
 }
@@ -207,21 +256,21 @@ export async function fetchLastWriteOfReg(
   reg: string,
 ): Promise<LastWriteOfRegResponse> {
   const params = new URLSearchParams({ before: String(before), reg });
-  const r = await fetch(`/api/last-write-of-reg?${params}`);
+  const r = await fx(`/api/last-write-of-reg?${params}`);
   if (!r.ok) throw new Error(`/api/last-write-of-reg ${r.status}: ${await r.text()}`);
   return (await r.json()) as LastWriteOfRegResponse;
 }
 
 export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   const params = new URLSearchParams({ max_depth: String(maxDepth) });
-  const r = await fetch(`/api/call-tree?${params}`);
+  const r = await fx(`/api/call-tree?${params}`);
   if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
   return (await r.json()) as CallTreeResponse;
 }
 
 export async function fetchBacktrace(idx: number): Promise<BacktraceResponse> {
   const params = new URLSearchParams({ idx: String(idx) });
-  const r = await fetch(`/api/backtrace?${params}`);
+  const r = await fx(`/api/backtrace?${params}`);
   if (!r.ok) throw new Error(`/api/backtrace ${r.status}: ${await r.text()}`);
   return (await r.json()) as BacktraceResponse;
 }
@@ -230,7 +279,7 @@ export async function fetchForkEvents(status = ""): Promise<ForkEventsResponse> 
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   const qs = params.toString();
-  const r = await fetch(`/api/fork-events${qs ? "?" + qs : ""}`);
+  const r = await fx(`/api/fork-events${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/fork-events ${r.status}: ${await r.text()}`);
   return (await r.json()) as ForkEventsResponse;
 }
@@ -255,7 +304,7 @@ export async function fetchForwardTaint(
   if (flags.through_mem) params.set("through_mem", "true");
   if (flags.data_only) params.set("data_only", "true");
   if (flags.cross_fn_call) params.set("cross_fn_call", "true");
-  const r = await fetch(`/api/forward-taint?${params}`);
+  const r = await fx(`/api/forward-taint?${params}`);
   if (!r.ok) throw new Error(`/api/forward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as ForwardTaintResponse;
 }
@@ -274,44 +323,44 @@ export async function fetchBackwardTaint(
   if (flags.through_mem) params.set("through_mem", "true");
   if (flags.data_only) params.set("data_only", "true");
   if (flags.cross_fn_call) params.set("cross_fn_call", "true");
-  const r = await fetch(`/api/backward-taint?${params}`);
+  const r = await fx(`/api/backward-taint?${params}`);
   if (!r.ok) throw new Error(`/api/backward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as BackwardTaintResponse;
 }
 
 export async function fetchDecSummary(): Promise<DecSummaryResponse> {
-  const r = await fetch("/api/dec/summary");
+  const r = await fx("/api/dec/summary");
   if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecSummaryResponse;
 }
 
 export async function fetchDecFn(fnId: string, tier = "hot"): Promise<DecFnResponse> {
   const params = new URLSearchParams({ tier });
-  const r = await fetch(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`);
+  const r = await fx(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`);
   if (!r.ok) throw new Error(`/api/dec/fn/${fnId} ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecFnResponse;
 }
 
 export async function fetchDecModels(): Promise<DecModelsResponse> {
-  const r = await fetch("/api/dec/models");
+  const r = await fx("/api/dec/models");
   if (!r.ok) throw new Error(`/api/dec/models ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecModelsResponse;
 }
 
 export async function fetchOpenApi(): Promise<OpenApiResponse> {
-  const r = await fetch("/openapi.json");
+  const r = await fx("/openapi.json");
   if (!r.ok) throw new Error(`/openapi.json ${r.status}: ${await r.text()}`);
   return (await r.json()) as OpenApiResponse;
 }
 
 export async function fetchBgStatus(): Promise<BgStatusResponse> {
-  const r = await fetch("/api/bg-status");
+  const r = await fx("/api/bg-status");
   if (!r.ok) throw new Error(`/api/bg-status ${r.status}: ${await r.text()}`);
   return (await r.json()) as BgStatusResponse;
 }
 
 export async function fetchDecompStatus(): Promise<DecompStatusResponse> {
-  const r = await fetch("/api/decomp-status");
+  const r = await fx("/api/decomp-status");
   if (!r.ok) throw new Error(`/api/decomp-status ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecompStatusResponse;
 }
@@ -334,14 +383,14 @@ export async function fetchMemWritesInRange(
   if (opts.addrLo) params.set("addr_lo", opts.addrLo);
   if (opts.addrHi) params.set("addr_hi", opts.addrHi);
   if (opts.max !== undefined) params.set("max", String(opts.max));
-  const r = await fetch(`/api/mem-writes-in-range?${params}`);
+  const r = await fx(`/api/mem-writes-in-range?${params}`);
   if (!r.ok) throw new Error(`/api/mem-writes-in-range ${r.status}: ${await r.text()}`);
   return (await r.json()) as MemWritesInRangeResponse;
 }
 
 export async function fetchBlockForPc(pc: string): Promise<BlockForPcResponse> {
   const params = new URLSearchParams({ pc });
-  const r = await fetch(`/api/block-for-pc?${params}`);
+  const r = await fx(`/api/block-for-pc?${params}`);
   if (!r.ok) throw new Error(`/api/block-for-pc ${r.status}: ${await r.text()}`);
   return (await r.json()) as BlockForPcResponse;
 }
@@ -351,13 +400,13 @@ export async function fetchIdxsForBlock(
   maxCount = 1,
 ): Promise<IdxsForBlockResponse> {
   const params = new URLSearchParams({ pc, max_count: String(maxCount) });
-  const r = await fetch(`/api/idxs-for-block?${params}`);
+  const r = await fx(`/api/idxs-for-block?${params}`);
   if (!r.ok) throw new Error(`/api/idxs-for-block ${r.status}: ${await r.text()}`);
   return (await r.json()) as IdxsForBlockResponse;
 }
 
 export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCallResponse> {
-  const r = await fetch("/api/dec/llm-call", {
+  const r = await fx("/api/dec/llm-call", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -367,7 +416,7 @@ export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCall
 }
 
 export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRenderResponse> {
-  const r = await fetch("/api/llil/render", {
+  const r = await fx("/api/llil/render", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -377,7 +426,7 @@ export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRender
 }
 
 export async function callLlilLlm(payload: LlilLlmPayload): Promise<LlilLlmResponse> {
-  const r = await fetch("/api/llil/llm", {
+  const r = await fx("/api/llil/llm", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -388,7 +437,7 @@ export async function callLlilLlm(payload: LlilLlmPayload): Promise<LlilLlmRespo
 
 export async function fetchHlilForFn(fnId: string): Promise<HlilForFnResponse> {
   const params = new URLSearchParams({ fn_id: fnId });
-  const r = await fetch(`/api/hlil-for-fn?${params}`);
+  const r = await fx(`/api/hlil-for-fn?${params}`);
   if (!r.ok) throw new Error(`/api/hlil-for-fn ${r.status}: ${await r.text()}`);
   return (await r.json()) as HlilForFnResponse;
 }

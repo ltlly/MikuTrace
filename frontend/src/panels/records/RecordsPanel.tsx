@@ -34,6 +34,11 @@ interface RecordsPanelProps {
   hiddenSos: Set<string>;
   onOpenMemory: (addr: string) => void;
   onRunTaint: (idx: number, reg: string, direction: "forward" | "backward") => void;
+  // Called whenever a new window of rows is fetched. Lets App.tsx populate
+  // its (idx -> {pc, func}) cache so non-row-click selections (keyboard,
+  // CallTree, hash deep-link, ...) can update cursorHint without paying a
+  // /api/record round-trip — the visible rows already carry the data.
+  onRowsLoaded?: (rows: RecordRow[]) => void;
 }
 
 interface RegContext {
@@ -130,6 +135,11 @@ export default function RecordsPanel(props: RecordsPanelProps) {
 
   createEffect(() => {
     setOptimisticIdx(props.selectedIdx);
+  });
+
+  createEffect(() => {
+    const r = resp();
+    if (r?.records?.length) props.onRowsLoaded?.(r.records);
   });
 
   onMount(() => {
