@@ -2,6 +2,8 @@ pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
 pub mod dec_fn;
+pub mod dec_llm_call;
+pub mod dec_models;
 pub mod dec_summary;
 pub mod forward_taint;
 pub mod functions;
@@ -14,7 +16,7 @@ pub mod record;
 pub mod records;
 pub mod strings;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::state::AppState;
@@ -34,6 +36,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/functions", get(functions::functions_handler))
         .route("/api/dec/summary", get(dec_summary::dec_summary_handler))
         .route("/api/dec/fn/:fn_id", get(dec_fn::dec_fn_handler))
+        .route(
+            "/api/dec/llm-call",
+            post(dec_llm_call::dec_llm_call_handler),
+        )
+        .route("/api/dec/models", get(dec_models::dec_models_handler))
         .route(
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),

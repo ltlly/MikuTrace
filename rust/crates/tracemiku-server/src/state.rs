@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
@@ -28,6 +29,7 @@ pub struct AppStateInner {
     pub call_tree: CallNode,
     pub frame_depths: Vec<u32>,
     pub top_ir: TopIR,
+    pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
 }
 
 impl AppState {
@@ -131,6 +133,7 @@ impl AppState {
                 call_tree,
                 frame_depths,
                 top_ir,
+                llm_cache: Mutex::new(HashMap::new()),
             }),
         })
     }
