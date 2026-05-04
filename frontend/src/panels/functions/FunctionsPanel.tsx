@@ -1,5 +1,6 @@
 import { createResource, Show, For } from "solid-js";
 import { fetchFunctions } from "~/api/client";
+import type { Accessor, Setter } from "solid-js";
 
 const SOURCE_TAGS: Record<string, string> = {
   "trace-ir": "TR",
@@ -7,7 +8,12 @@ const SOURCE_TAGS: Record<string, string> = {
   "bn": "BN",
 };
 
-export default function FunctionsPanel() {
+export interface FunctionsPanelProps {
+  selectedFn: Accessor<string>;
+  onSelectFn: Setter<string>;
+}
+
+export default function FunctionsPanel(props: FunctionsPanelProps) {
   const [resp] = createResource(fetchFunctions);
   return (
     <section class="panel">
@@ -36,7 +42,11 @@ export default function FunctionsPanel() {
             <ul class="functions-list">
               <For each={r().functions}>
                 {(fn) => (
-                  <li>
+                  <li
+                    class={props.selectedFn() === fn.id ? "selected" : ""}
+                    onClick={() => props.onSelectFn(fn.id)}
+                    onDblClick={() => props.onSelectFn(fn.id)}
+                  >
                     <span class="fn-source-tag">{SOURCE_TAGS[fn.source] ?? fn.source}</span>
                     <span class="fn-name">{fn.name}</span>
                     <Show when={fn.entry_pc !== null}>

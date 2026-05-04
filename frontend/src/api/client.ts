@@ -22,6 +22,7 @@ import type {
   DecSummaryResponse,
   LlilRenderPayload,
   LlilRenderResponse,
+  HlilForFnResponse,
   CfgSvgResponse,
 } from "./types";
 
@@ -252,4 +253,11 @@ export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRender
   });
   if (!r.ok) throw new Error(`/api/llil/render ${r.status}: ${await r.text()}`);
   return (await r.json()) as LlilRenderResponse;
+}
+
+export async function fetchHlilForFn(fnId: string): Promise<HlilForFnResponse> {
+  const params = new URLSearchParams({ fn_id: fnId });
+  const r = await fetch(`/api/hlil-for-fn?${params}`);
+  if (!r.ok) throw new Error(`/api/hlil-for-fn ${r.status}: ${await r.text()}`);
+  return (await r.json()) as HlilForFnResponse;
 }

@@ -6,6 +6,7 @@ import CfgPanel from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
+import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
@@ -18,6 +19,7 @@ import XrefPanel from "./panels/xref/XrefPanel";
 
 export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
+  const [selectedFn, setSelectedFn] = createSignal("");
 
   return (
     <main class="layout">
@@ -26,10 +28,11 @@ export default function App() {
         <span class="dim small">analysis v2 — Rust core + Solid frontend</span>
       </header>
       <MetaPanel />
-      <FunctionsPanel />
+      <FunctionsPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />
       <SettingsPanel />
       <CfgPanel />
       <RegistersPanel idx={selectedIdx()} />
+      <HlilPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />
       <MemoryPanel idx={selectedIdx()} />
       <TraceForPcPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
       <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
@@ -37,7 +40,7 @@ export default function App() {
       <CallTreePanel />
       <ForksPanel />
       <TaintPanel />
-      <DecompilerPanel />
+      <DecompilerPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />
       <StringsPanel />
       <RecordsPanel selectedIdx={selectedIdx()} onSelect={setSelectedIdx} />
     </main>

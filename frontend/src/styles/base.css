@@ -414,7 +414,11 @@ html[data-density="dense"] .xref-table td {
   gap: 8px;
   padding: 1px 0;
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
 }
+
+.functions-list li:hover { background: rgba(98, 160, 234, 0.08); }
+.functions-list li.selected { background: rgba(98, 160, 234, 0.16); }
 
 .fn-source-tag {
   display: inline-block;
@@ -465,6 +469,59 @@ html[data-density="dense"] .xref-table td {
 
 .cfg-controls button {
   cursor: pointer;
+}
+
+.hlil-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.hlil-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hlil-controls select,
+.hlil-controls button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.hlil-controls select { max-width: 360px; }
+.hlil-controls button { cursor: pointer; }
+.hlil-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.hlil-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.hlil-table td {
+  padding: 2px 6px;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.hlil-table td:first-child {
+  width: 8em;
+  white-space: nowrap;
+}
+
+.hlil-table code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .cfg-svg-frame {

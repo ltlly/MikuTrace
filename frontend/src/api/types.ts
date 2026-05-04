@@ -364,3 +364,26 @@ export interface LlilRenderResponse {
   removed_pcs: string[];
   pseudocode: string;
 }
+
+// ── /api/hlil-for-fn ─────────────────────────────────────────────────────
+
+export interface HlilFunctionInfo {
+  name: string;
+  start: number;
+  end: number;
+}
+
+export interface HlilLine {
+  pc: string;
+  text: string;
+  tokens: unknown[];
+}
+
+export interface HlilForFnResponse {
+  ok: boolean;
+  ready: boolean;
+  fn?: HlilFunctionInfo;
+  lines?: HlilLine[];
+  vars?: unknown[];
+  error?: string;
+}

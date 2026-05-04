@@ -1,11 +1,16 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { callDecLlm, fetchDecFn, fetchDecModels, fetchDecSummary, renderLlil } from "~/api/client";
+import type { Accessor, Setter } from "solid-js";
 
-export default function DecompilerPanel() {
+export interface DecompilerPanelProps {
+  selectedFn: Accessor<string>;
+  onSelectFn: Setter<string>;
+}
+
+export default function DecompilerPanel(props: DecompilerPanelProps) {
   const [summary] = createResource(fetchDecSummary);
   const [models] = createResource(fetchDecModels);
-  const [selectedFn, setSelectedFn] = createSignal("");
   const [tier, setTier] = createSignal("hot");
   const [model, setModel] = createSignal("mimo");
   const [lang, setLang] = createSignal("en");
@@ -21,7 +26,7 @@ export default function DecompilerPanel() {
 
   createEffect(() => {
     const first = summary()?.fns[0]?.id;
-    if (!selectedFn() && first) setSelectedFn(first);
+    if (!props.selectedFn() && first) props.onSelectFn(first);
   });
 
   createEffect(() => {
@@ -30,14 +35,14 @@ export default function DecompilerPanel() {
   });
 
   const fnSource = createMemo(() => {
-    const fnId = selectedFn();
+    const fnId = props.selectedFn();
     if (!fnId) return null;
     return { fnId, tier: tier() };
   });
   const [fnResp] = createResource(fnSource, (s) => (s ? fetchDecFn(s.fnId, s.tier) : undefined));
 
   async function runLlm() {
-    const fnId = selectedFn();
+    const fnId = props.selectedFn();
     if (!fnId) return;
     setLlmLoading(true);
     setLlmError("");
@@ -65,7 +70,7 @@ export default function DecompilerPanel() {
   }
 
   async function runLlil() {
-    const fnId = selectedFn();
+    const fnId = props.selectedFn();
     if (!fnId) return;
     setLlilLoading(true);
     setLlilError("");
@@ -115,7 +120,10 @@ export default function DecompilerPanel() {
                 <div class="dec-controls">
                   <label>
                     function
-                    <select value={selectedFn()} onChange={(e) => setSelectedFn(e.currentTarget.value)}>
+                    <select value={props.selectedFn()} onChange={(e) => props.onSelectFn(e.currentTarget.value)}>
+                      <Show when={props.selectedFn() && !r().fns.some((f) => f.id === props.selectedFn())}>
+                        <option value={props.selectedFn()}>{props.selectedFn()}</option>
+                      </Show>
                       <For each={r().fns}>
                         {(f) => <option value={f.id}>{f.id} · {f.name}</option>}
                       </For>
@@ -144,8 +152,8 @@ export default function DecompilerPanel() {
                     <For each={r().fns}>
                       {(f) => (
                         <tr
-                          class={selectedFn() === f.id ? "selected" : ""}
-                          onClick={() => setSelectedFn(f.id)}
+                          class={props.selectedFn() === f.id ? "selected" : ""}
+                          onClick={() => props.onSelectFn(f.id)}
                         >
                           <td class="dim small">{f.id}</td>
                           <td>{f.name}</td>
