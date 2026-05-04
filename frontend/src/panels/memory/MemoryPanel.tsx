@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import {
   fetchIdxsTouchingRange,
@@ -63,7 +63,7 @@ function normalizeRegName(raw: string): string {
 
 export default function MemoryPanel(props: MemoryPanelProps) {
   const [addr, setAddr] = createSignal("0x0");
-  const [count, setCount] = createSignal(64);
+  const [count, setCount] = createSignal(128);
   const [memContext, setMemContext] = createSignal<MemContext | null>(null);
   const [selection, setSelection] = createSignal<{ anchor: string; head: string } | null>(null);
   const [dragAnchor, setDragAnchor] = createSignal<string | null>(null);
@@ -73,6 +73,26 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   );
   let autoAddr = "";
   let lastAddrRequest = -1;
+  createEffect(() => {
+    if (!memContext()) return;
+    const closeOnPointer = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest(".memory-context-menu") || target?.closest(".mem-byte")) return;
+      setMemContext(null);
+    };
+    const closeOnKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMemContext(null);
+        setSelection(null);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnPointer);
+    document.addEventListener("keydown", closeOnKey);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOnPointer);
+      document.removeEventListener("keydown", closeOnKey);
+    });
+  });
   createEffect(() => {
     const req = props.addrRequest;
     if (!req || req.token === lastAddrRequest) return;

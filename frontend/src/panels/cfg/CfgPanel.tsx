@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
 
@@ -17,6 +17,7 @@ interface CfgPanelProps {
   onSelect: (idx: number) => void;
   active: boolean;
   syncEnabled: boolean;
+  onDisplayFnChange: (fn: string) => void;
 }
 
 export default function CfgPanel(props: CfgPanelProps) {
@@ -56,8 +57,6 @@ export default function CfgPanel(props: CfgPanelProps) {
     }
     return [...names].sort((a, b) => a.localeCompare(b));
   });
-  const cursorFnName = createMemo(() => record()?.func ?? "");
-
   createEffect(() => {
     if (!props.active) return;
     const selected = selectedFnName();
@@ -69,14 +68,7 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   createEffect(() => {
     if (!props.active) return;
-    const cursorFn = cursorFnName();
-    if (!props.syncEnabled || !cursorFn || cursorFn === fnName()) return;
-    const timer = window.setTimeout(() => {
-      if (props.active && props.syncEnabled && cursorFn === cursorFnName()) {
-        setFnName(cursorFn);
-      }
-    }, 220);
-    onCleanup(() => window.clearTimeout(timer));
+    props.onDisplayFnChange(fnName());
   });
 
   createEffect(() => {
@@ -236,7 +228,7 @@ export default function CfgPanel(props: CfgPanelProps) {
         </label>
         <button onClick={() => setReload((n) => n + 1)}>reload</button>
         <button onClick={() => setPan({ x: 0, y: 0, scale: 1 })}>fit</button>
-        <span class="dim small">{props.syncEnabled ? "sync on" : "sync paused"}</span>
+        <span class="dim small">{props.syncEnabled ? "highlight sync" : "sync paused"}</span>
       </div>
 
       <Show when={functions.error}>

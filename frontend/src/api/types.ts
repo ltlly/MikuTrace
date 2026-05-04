@@ -70,6 +70,10 @@ export interface RecordDetail {
   off: string | null;
   asm: string;
   regs: Record<string, string>;
+  prev_regs?: Record<string, string> | null;
+  regs_annotated?: Record<string, string>;
+  regs_def?: string[];
+  regs_use?: string[];
 }
 
 // ── /api/functions ───────────────────────────────────────────────────────

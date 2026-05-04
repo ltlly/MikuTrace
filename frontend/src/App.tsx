@@ -45,9 +45,11 @@ interface LayoutState {
   leftW: number;
   rightW: number;
   bottomH: number;
+  colDot: number;
   colIdx: number;
   colPc: number;
   colFunc: number;
+  colAsm: number;
   syncCfg: boolean;
 }
 
@@ -55,9 +57,11 @@ const DEFAULT_LAYOUT: LayoutState = {
   leftW: 340,
   rightW: 520,
   bottomH: 240,
+  colDot: 18,
   colIdx: 60,
   colPc: 112,
   colFunc: 96,
+  colAsm: 360,
   syncCfg: false,
 };
 
@@ -73,9 +77,11 @@ function initialLayout(): LayoutState {
       leftW: clampNumber(Number(parsed.leftW) || DEFAULT_LAYOUT.leftW, 180, 680),
       rightW: clampNumber(Number(parsed.rightW) || DEFAULT_LAYOUT.rightW, 320, 960),
       bottomH: clampNumber(Number(parsed.bottomH) || DEFAULT_LAYOUT.bottomH, 120, 560),
+      colDot: clampNumber(Number(parsed.colDot) || DEFAULT_LAYOUT.colDot, 12, 48),
       colIdx: clampNumber(Number(parsed.colIdx) || DEFAULT_LAYOUT.colIdx, 44, 140),
       colPc: clampNumber(Number(parsed.colPc) || DEFAULT_LAYOUT.colPc, 80, 260),
       colFunc: clampNumber(Number(parsed.colFunc) || DEFAULT_LAYOUT.colFunc, 80, 420),
+      colAsm: clampNumber(Number(parsed.colAsm) || DEFAULT_LAYOUT.colAsm, 180, 900),
       syncCfg: typeof parsed.syncCfg === "boolean" ? parsed.syncCfg : DEFAULT_LAYOUT.syncCfg,
     };
   } catch {
@@ -120,10 +126,13 @@ export default function App() {
   const [leftW, setLeftW] = createSignal(initial.leftW);
   const [rightW, setRightW] = createSignal(initial.rightW);
   const [bottomH, setBottomH] = createSignal(initial.bottomH);
+  const [colDot, setColDot] = createSignal(initial.colDot);
   const [colIdx, setColIdx] = createSignal(initial.colIdx);
   const [colPc, setColPc] = createSignal(initial.colPc);
   const [colFunc, setColFunc] = createSignal(initial.colFunc);
+  const [colAsm, setColAsm] = createSignal(initial.colAsm);
   const [syncCfg, setSyncCfgSignal] = createSignal(initial.syncCfg);
+  const [cfgDisplayFn, setCfgDisplayFn] = createSignal("");
   const [meta] = createResource(fetchMeta);
   const helpTopic = createMemo(() => helpState()?.topic ?? null);
   let cmdInput: HTMLInputElement | undefined;
@@ -152,9 +161,11 @@ export default function App() {
       leftW: leftW(),
       rightW: rightW(),
       bottomH: bottomH(),
+      colDot: colDot(),
       colIdx: colIdx(),
       colPc: colPc(),
       colFunc: colFunc(),
+      colAsm: colAsm(),
       syncCfg: syncCfg(),
       ...overrides,
     };
@@ -199,22 +210,26 @@ export default function App() {
     document.addEventListener("pointerup", onUp);
   }
 
-  function startAsmColResize(kind: "idx" | "pc" | "func", e: PointerEvent) {
+  function startAsmColResize(kind: "dot" | "idx" | "pc" | "func" | "asm", e: PointerEvent) {
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX;
     const starts = {
+      dot: colDot(),
       idx: colIdx(),
       pc: colPc(),
       func: colFunc(),
+      asm: colAsm(),
     };
     document.body.classList.add("is-resizing");
     document.body.style.cursor = "col-resize";
     const onMove = (ev: PointerEvent) => {
       const delta = ev.clientX - startX;
-      if (kind === "idx") setColIdx(clampNumber(starts.idx + delta, 44, 140));
+      if (kind === "dot") setColDot(clampNumber(starts.dot + delta, 12, 48));
+      else if (kind === "idx") setColIdx(clampNumber(starts.idx + delta, 44, 140));
       else if (kind === "pc") setColPc(clampNumber(starts.pc + delta, 80, 260));
-      else setColFunc(clampNumber(starts.func + delta, 80, 420));
+      else if (kind === "func") setColFunc(clampNumber(starts.func + delta, 80, 420));
+      else setColAsm(clampNumber(starts.asm + delta, 180, 900));
     };
     const onUp = () => {
       document.removeEventListener("pointermove", onMove);
@@ -234,9 +249,11 @@ export default function App() {
   }));
 
   const asmStyle = createMemo<JSX.CSSProperties>(() => ({
+    "--col-dot": `${colDot()}px`,
     "--col-idx": `${colIdx()}px`,
     "--col-pc": `${colPc()}px`,
     "--col-func": `${colFunc()}px`,
+    "--col-asm": `${colAsm()}px`,
   }));
 
   function openMemoryAt(addr: string) {
@@ -325,12 +342,25 @@ export default function App() {
         return;
       }
       if (isEditableTarget(e.target)) return;
-      if (e.key === "j" || e.key === "ArrowDown") jumpToIdx(selectedIdx() + 1);
-      else if (e.key === "k" || e.key === "ArrowUp") jumpToIdx(selectedIdx() - 1);
-      else if (e.key === "PageDown") jumpToIdx(selectedIdx() + 20);
-      else if (e.key === "PageUp") jumpToIdx(selectedIdx() - 20);
-      else if (e.key === "g") jumpToIdx(0);
-      else if (e.key === "G") jumpToIdx(Math.max(0, totalRecords() - 1));
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        jumpToIdx(selectedIdx() + 1);
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        jumpToIdx(selectedIdx() - 1);
+      } else if (e.key === "PageDown") {
+        e.preventDefault();
+        jumpToIdx(selectedIdx() + 20);
+      } else if (e.key === "PageUp") {
+        e.preventDefault();
+        jumpToIdx(selectedIdx() - 20);
+      } else if (e.key === "Home" || e.key === "g") {
+        e.preventDefault();
+        jumpToIdx(0);
+      } else if (e.key === "End" || e.key === "G") {
+        e.preventDefault();
+        jumpToIdx(Math.max(0, totalRecords() - 1));
+      }
       else if (e.key === "/") {
         e.preventDefault();
         openCmd("/");
@@ -469,7 +499,7 @@ export default function App() {
           />
           <span>同步 CFG</span>
         </label>
-        <span class="hint">j/k 单步 · g/G 头尾 · / 搜索 · :N 跳转</span>
+        <span class="hint">↑/↓ 单步 · PgUp/PgDn 翻页 · Home/End 头尾 · / 搜索 · :N 跳转</span>
         {helpButton("overview")}
       </header>
 
@@ -493,8 +523,8 @@ export default function App() {
           {vtab("taint", "Taint", "寄存器/内存污点追踪")}
           {vtab("xref", "Cross Ref", "当前 PC 执行历史和汇编搜索")}
           {vtab("sofilter", "SO Filter", "multi-SO 过滤状态")}
-            {vtab("settings", "Settings", "显示和 API 状态")}
-          </aside>
+          {vtab("settings", "Settings", "显示和 API 状态")}
+        </aside>
 
         <section id="left-panel">
           <div class="panelhead">
@@ -553,7 +583,9 @@ export default function App() {
             {helpButton("disasm")}
           </div>
           <div id="stream-header">
-            <span class="hd ec-spacer" />
+            <span class="hd ec-spacer">
+              <span class="col-resize" title="调整标记列宽" onPointerDown={(e) => startAsmColResize("dot", e)} />
+            </span>
             <span class="hd hd-idx">
               idx
               <span class="col-resize" title="调整 idx 列宽" onPointerDown={(e) => startAsmColResize("idx", e)} />
@@ -566,7 +598,10 @@ export default function App() {
               rel
               <span class="col-resize" title="调整 rel 列宽" onPointerDown={(e) => startAsmColResize("func", e)} />
             </span>
-            <span class="hd hd-asm">asm</span>
+            <span class="hd hd-asm">
+              asm
+              <span class="col-resize" title="调整 asm 列宽" onPointerDown={(e) => startAsmColResize("asm", e)} />
+            </span>
           </div>
           <div id="stream">
             <RecordsPanel
@@ -617,7 +652,9 @@ export default function App() {
           <div class="panelhead">
             <span>{rightTitle()}</span>
             <span class="grow" />
-            <span class="dim">{selectedFn() || "no fn selected"}</span>
+            <span class="dim">
+              {rightTab() === "cfg" ? cfgDisplayFn() || "select function" : selectedFn() || "no fn selected"}
+            </span>
             {helpButton("right")}
           </div>
           <div id="right-body">
@@ -628,6 +665,7 @@ export default function App() {
                 onSelect={setSelectedIdx}
                 active={rightTab() === "cfg"}
                 syncEnabled={syncCfg()}
+                onDisplayFnChange={setCfgDisplayFn}
               />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>

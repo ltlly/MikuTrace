@@ -134,6 +134,24 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   });
 
   createEffect(() => {
+    if (!regContext()) return;
+    const closeOnPointer = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest(".reg-context-menu") || target?.closest(".op-reg")) return;
+      setRegContext(null);
+    };
+    const closeOnKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setRegContext(null);
+    };
+    document.addEventListener("pointerdown", closeOnPointer);
+    document.addEventListener("keydown", closeOnKey);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOnPointer);
+      document.removeEventListener("keydown", closeOnKey);
+    });
+  });
+
+  createEffect(() => {
     const selected = props.selectedIdx;
     const total = totalRecords();
     const h = viewHeight();
@@ -208,6 +226,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   async function openRegContext(e: MouseEvent, row: RecordRow, reg: string) {
     e.preventDefault();
     e.stopPropagation();
+    props.onSelect(row.idx);
     props.onSelectReg(reg);
     const base: RegContext = {
       x: Math.min(e.clientX, window.innerWidth - 300),
@@ -252,6 +271,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
           viewport = el;
         }}
         class="records-virtual"
+        tabIndex={0}
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       >
         <div class="records-inner" style={{ height: `${innerHeight()}px` }}>
@@ -296,7 +316,6 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                             <span
                               class="op-reg"
                               title={`${reg()} · double-click last write · right-click actions`}
-                              onClick={(e) => e.stopPropagation()}
                               onDblClick={(e) => {
                                 e.stopPropagation();
                                 void jumpLastWrite(row.idx, reg());
