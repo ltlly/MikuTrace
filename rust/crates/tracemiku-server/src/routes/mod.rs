@@ -2,6 +2,7 @@ pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
 pub mod cfg_svg;
+pub mod data_chase;
 pub mod dec_fn;
 pub mod dec_llm_call;
 pub mod dec_models;
@@ -71,6 +72,7 @@ pub fn router(state: AppState) -> Router {
             "/api/backward-taint",
             get(backward_taint::backward_taint_handler),
         )
+        .route("/api/data-chase", get(data_chase::data_chase_handler))
         .route("/api/strings", get(strings::strings_handler))
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
         .route(

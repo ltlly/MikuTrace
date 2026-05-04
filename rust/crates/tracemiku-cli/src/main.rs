@@ -239,6 +239,18 @@ enum Cmd {
         #[arg(long)]
         cross_fn_call: bool,
     },
+    /// GET /api/data-chase.
+    DataChase {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        start: usize,
+        #[arg(long)]
+        reg: String,
+        #[arg(long, default_value_t = 50)]
+        max_steps: usize,
+        #[arg(long, default_value = "sp,fp,lr")]
+        exclude_regs: String,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -475,6 +487,21 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let params = taint_params(start, reg, max_count, through_mem, data_only, cross_fn_call);
             route_get_json(trace_dir, route_path("/api/backward-taint", &params)).await
+        }
+        Some(Cmd::DataChase {
+            trace_dir,
+            start,
+            reg,
+            max_steps,
+            exclude_regs,
+        }) => {
+            let params = vec![
+                ("start", start.to_string()),
+                ("reg", reg),
+                ("max_steps", max_steps.to_string()),
+                ("exclude_regs", exclude_regs),
+            ];
+            route_get_json(trace_dir, route_path("/api/data-chase", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await

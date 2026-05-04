@@ -217,3 +217,21 @@ fn call_chain_wrapper_uses_server_wire_shape() {
     assert_eq!(v["chain"][0]["lr"], "0x100008");
     assert_eq!(v["chain"][0]["caller_pc"], "0x100004");
 }
+
+#[test]
+fn data_chase_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "data-chase".into(),
+        cd.display().to_string(),
+        "--start".into(),
+        "2".into(),
+        "--reg".into(),
+        "x2".into(),
+        "--max-steps".into(),
+        "5".into(),
+    ]);
+    assert_eq!(v["from"], 2);
+    assert_eq!(v["reg"], "x2");
+    assert_eq!(v["steps"][0]["via"], "mem-load");
+}
