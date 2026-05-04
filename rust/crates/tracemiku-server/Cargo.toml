@@ -27,6 +27,7 @@ tower-http.workspace = true
 reqwest.workspace = true
 clap.workspace = true
 regex.workspace = true
+petgraph.workspace = true
 tracemiku-core.workspace = true
 
 [dev-dependencies]

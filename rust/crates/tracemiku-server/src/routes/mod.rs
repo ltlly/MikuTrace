@@ -15,6 +15,7 @@ pub mod last_write_of_reg;
 pub mod mem_dump;
 pub mod memory_query;
 pub mod meta;
+pub mod navigation;
 pub mod record;
 pub mod records;
 pub mod reg_value_at;
@@ -40,6 +41,10 @@ pub fn router(state: AppState) -> Router {
             get(idxs_for_block::idxs_for_block_handler),
         )
         .route("/api/cfg", get(cfg::cfg_handler))
+        .route("/api/block-for-pc", get(navigation::block_for_pc_handler))
+        .route("/api/block", get(navigation::block_handler))
+        .route("/api/loops", get(navigation::loops_handler))
+        .route("/api/backtrace", get(navigation::backtrace_handler))
         .route("/api/cfg-svg", get(cfg_svg::cfg_svg_handler))
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
