@@ -719,6 +719,7 @@ export default function App() {
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "strings" }}>
               <StringsPanel
+                idx={selectedIdx()}
                 onSelect={setSelectedIdx}
                 onShowProvenance={showStringProvenance}
                 active={leftTab() === "strings"}

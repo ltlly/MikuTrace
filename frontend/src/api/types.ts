@@ -150,6 +150,7 @@ export interface StringsResponse {
   request_min_len?: number;
   request_q?: string;
   request_limit?: number;
+  request_cursor?: number;
 }
 
 // ── /api/string-provenance ──────────────────────────────────────────────

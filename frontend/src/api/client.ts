@@ -150,16 +150,23 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
   return (await r.json()) as CfgSvgResponse;
 }
 
-export async function fetchStrings(minLen = 4, q = "", limit = 500): Promise<StringsResponse> {
+export async function fetchStrings(
+  minLen = 4,
+  q = "",
+  limit = 500,
+  cursor = -1,
+): Promise<StringsResponse> {
   const params = new URLSearchParams({ min_len: String(minLen) });
   if (q) params.set("q", q);
   if (limit > 0) params.set("limit", String(limit));
+  if (cursor >= 0) params.set("cursor", String(cursor));
   const r = await fx(`/api/strings?${params}`);
   if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as StringsResponse;
   out.request_min_len = minLen;
   out.request_q = q;
   out.request_limit = limit;
+  out.request_cursor = cursor;
   return out;
 }
 

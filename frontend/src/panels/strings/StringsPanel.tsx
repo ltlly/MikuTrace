@@ -5,6 +5,7 @@ import type { StringEntry } from "~/api/types";
 import type { StringProvenanceRequest } from "./StringProvenancePanel";
 
 interface StringsPanelProps {
+  idx: number;
   onSelect: (idx: number) => void;
   onShowProvenance: (req: Omit<StringProvenanceRequest, "token">) => void;
   active: boolean;
@@ -14,11 +15,13 @@ interface StringsSource {
   minLen: number;
   q: string;
   limit: number;
+  cursor: number;
 }
 
 export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
   const [limit, setLimit] = createSignal(500);
+  const [atCursor, setAtCursor] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
   let singleClickTimer: number | undefined;
@@ -26,22 +29,31 @@ export default function StringsPanel(props: StringsPanelProps) {
   let jumpAbort: AbortController | undefined;
   const source = createMemo<StringsSource | undefined>((prev) => {
     if (!props.active) return undefined;
-    const next = { minLen: minLen(), q: query(), limit: Math.max(1, Math.min(5000, limit())) };
+    const next = {
+      minLen: minLen(),
+      q: query(),
+      limit: Math.max(1, Math.min(5000, limit())),
+      cursor: atCursor() ? props.idx : -1,
+    };
     return prev &&
       prev.minLen === next.minLen &&
       prev.q === next.q &&
-      prev.limit === next.limit
+      prev.limit === next.limit &&
+      prev.cursor === next.cursor
       ? prev
       : next;
   });
-  const [resp] = createResource(source, async ({ minLen, q, limit }) => fetchStrings(minLen, q, limit));
+  const [resp] = createResource(source, async ({ minLen, q, limit, cursor }) =>
+    fetchStrings(minLen, q, limit, cursor),
+  );
   const currentResp = createMemo(() => {
     const r = resp();
     const s = source();
     if (!r || !s) return undefined;
     return r.request_min_len === s.minLen &&
       r.request_q === s.q &&
-      r.request_limit === s.limit
+      r.request_limit === s.limit &&
+      r.request_cursor === s.cursor
       ? r
       : undefined;
   });
@@ -143,6 +155,14 @@ export default function StringsPanel(props: StringsPanelProps) {
             value={limit()}
             onInput={(e) => setLimit(Number(e.currentTarget.value) || 500)}
           />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={atCursor()}
+            onChange={(e) => setAtCursor(e.currentTarget.checked)}
+          />
+          {" "}at cursor
         </label>
       </div>
       <Show when={!resp.loading && resp.error}>
