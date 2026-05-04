@@ -360,6 +360,7 @@ export interface LlilRenderResponse {
   struct_shapes: unknown;
   var_names: Record<string, string>;
   uidf: unknown;
+  structured: unknown;
   removed_pcs: string[];
   pseudocode: string;
 }

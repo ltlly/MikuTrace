@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
     build_symbol_func_ir, collect_uidf, constfold_block, dce_block, decode, flag_elim_block,
-    lift_arm64, render_llil_block, ssa_block, struct_recover_block, typelat_block, unify_vars,
-    FuncIR, LiftStats,
+    lift_arm64, render_llil_block, restructure_block, ssa_block, struct_recover_block,
+    typelat_block, unify_vars, FuncIR, LiftStats,
 };
 
 use crate::state::AppState;
@@ -56,6 +56,7 @@ pub struct LlilRenderResponse {
     pub struct_shapes: serde_json::Value,
     pub var_names: std::collections::BTreeMap<String, String>,
     pub uidf: serde_json::Value,
+    pub structured: serde_json::Value,
     pub removed_pcs: Vec<String>,
     pub pseudocode: String,
 }
@@ -121,6 +122,8 @@ pub fn render_llil_response(
     let var_names = unify_vars(&exprs);
     let uidf = serde_json::to_value(collect_uidf(&inner.trace, &exprs, 64))
         .unwrap_or_else(|_| serde_json::json!({}));
+    let structured =
+        serde_json::to_value(restructure_block(&exprs)).unwrap_or_else(|_| serde_json::json!([]));
     let removed_pcs = if payload.dce {
         let dce = dce_block(&exprs);
         exprs = dce.exprs;
@@ -146,6 +149,7 @@ pub fn render_llil_response(
         struct_shapes,
         var_names,
         uidf,
+        structured,
         removed_pcs,
         pseudocode,
     })

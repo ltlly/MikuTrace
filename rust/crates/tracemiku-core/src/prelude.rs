@@ -31,9 +31,10 @@ pub use crate::hashfin::{hash_finalize_detect, HashFinalizeCandidate};
 pub use crate::index::{Index, MemRec};
 pub use crate::llil::{
     collect_uidf, constfold_block, constfold_expr, dce_block, flag_elim_block, join_type,
-    lift_arm64, render_expr, render_llil_block, render_stmt, ssa_block, struct_recover_block,
-    typelat_block, unify_vars, DceResult, FieldAccess, FlagElimResult, LiftStats, LlilExpr, LlilOp,
-    LlilOperand, ObservedValues, SsaBlock, SsaVar, StructShape, TypeEnv, TypeKind, VarNameMap,
+    lift_arm64, render_expr, render_llil_block, render_stmt, restructure_block, ssa_block,
+    struct_recover_block, typelat_block, unify_vars, DceResult, FieldAccess, FlagElimResult,
+    LiftStats, LlilExpr, LlilOp, LlilOperand, ObservedValues, SsaBlock, SsaVar, StructNode,
+    StructShape, TypeEnv, TypeKind, VarNameMap,
 };
 pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
 pub use crate::ollvmdet::{ollvm_detect_vm, OllvmFinding};
