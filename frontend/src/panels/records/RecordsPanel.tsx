@@ -143,7 +143,19 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   });
 
   onMount(() => {
-    const syncHeight = () => setViewHeight(viewport?.clientHeight ?? 0);
+    // Hysteresis: ignore <4px wobble. Without it, sub-pixel browser layout
+    // can flip viewport.clientHeight between two adjacent ints; that re-runs
+    // `range`, triggers a new /api/records fetch with count differing by 1,
+    // and the <For> rebuilds every row DOM node. The rebuild lands between
+    // mouseDown and mouseUp on a clicked row, so the browser drops the
+    // click event entirely (target ancestor changes). 4px is well under one
+    // ROW_HEIGHT (18px) so it doesn't mask real resizes.
+    const syncHeight = () => {
+      const next = viewport?.clientHeight ?? 0;
+      const cur = viewHeight();
+      if (cur !== 0 && Math.abs(next - cur) < 4) return;
+      setViewHeight(next);
+    };
     syncHeight();
     const ro = new ResizeObserver(syncHeight);
     if (viewport) ro.observe(viewport);
