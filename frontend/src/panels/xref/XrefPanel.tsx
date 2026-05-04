@@ -25,7 +25,11 @@ export default function XrefPanel(props: XrefPanelProps) {
   );
   const pcPattern = createMemo(() => (props.active ? refPattern(record()?.pc) : ""));
   const [pcRefs] = createResource(pcPattern, (pc) => (pc ? fetchSearchPc(pc, 60) : undefined));
-  const defaultAsmPattern = createMemo(() => (props.active ? escapeRegex(record()?.asm) : ""));
+  const defaultAsmPattern = createMemo(() => {
+    if (!props.active || !record()?.asm) return "";
+    return `^${escapeRegex(record()?.asm)}$`;
+  });
+  const usingDefaultAsm = createMemo(() => !pattern().trim());
   const asmPattern = createMemo(() => (props.active ? pattern().trim() || defaultAsmPattern() : ""));
   const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
 
@@ -34,11 +38,11 @@ export default function XrefPanel(props: XrefPanelProps) {
       <h2>Cross Ref</h2>
       <div class="xref-controls">
         <label>
-          ASM regex
+          decoded ASM regex
           <input
             type="text"
             value={pattern()}
-            placeholder={record()?.asm || "mnemonic/op_str regex…"}
+            placeholder={record()?.asm ? `exact: ${record()?.asm}` : "mnemonic/op_str regex…"}
             onInput={(e) => setPattern(e.currentTarget.value)}
           />
         </label>
@@ -93,7 +97,7 @@ export default function XrefPanel(props: XrefPanelProps) {
           </Show>
         </div>
         <div>
-          <h3>same ASM text / regex search</h3>
+          <h3>{usingDefaultAsm() ? "same decoded ASM" : "decoded ASM regex results"}</h3>
           <Show when={asmRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
@@ -101,7 +105,7 @@ export default function XrefPanel(props: XrefPanelProps) {
             {(r) => (
               <>
                 <p class="dim small">
-                  {pattern().trim() ? "regex" : "current instruction"} {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
+                  {usingDefaultAsm() ? "exact current instruction" : "regex"} {r().pattern} · {r().count} hit{r().count === 1 ? "" : "s"}
                 </p>
                 <table class="xref-table">
                   <thead>
