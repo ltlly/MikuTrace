@@ -85,7 +85,11 @@ async fn dec_summary_emits_root_funcir_with_trace_ir_source() {
     assert_eq!(f0["trace_ir_id"], "F0");
     assert_eq!(f0["entry_idx"], 0);
     assert_eq!(f0["exit_idx"], 2);
-    assert_eq!(f0["blocks"], 0);
+    let blocks_count = f0["blocks"].as_u64().unwrap();
+    assert!(
+        blocks_count >= 1,
+        "F0 should have at least 1 block now (M3-ζ); got {blocks_count}"
+    );
     assert_eq!(f0["calls"], 0);
     assert!(v["vm_candidates"].as_array().unwrap().is_empty());
     assert!(

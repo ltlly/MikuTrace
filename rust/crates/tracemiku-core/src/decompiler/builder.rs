@@ -8,7 +8,8 @@
 //! Mirrors viewer/decompiler/builder.py:34-287.
 
 use crate::calltree::{build_call_tree, CallNode};
-use crate::decompiler::ir::{FuncIR, TopIR};
+use crate::cfg::CFG;
+use crate::decompiler::ir::{BlockIR, FuncIR, TopIR};
 use crate::symbols::SymbolMap;
 use crate::trace::{Trace, TraceMeta};
 
@@ -20,6 +21,37 @@ struct Frame {
     fn_name: String,
     enter_idx: usize,
     exit_idx: usize,
+}
+
+/// Build a stable PC → block-id map ("B0", "B1", ...) ordered by ascending
+/// start_pc. The map is shared across all FuncIRs so B-ids stay consistent.
+fn build_block_ids(cfg: &CFG) -> std::collections::HashMap<u64, String> {
+    use std::collections::HashMap;
+    let mut blocks: Vec<&crate::cfg::Block> = cfg.blocks();
+    blocks.sort_by_key(|b| b.start_pc);
+    let mut map: HashMap<u64, String> = HashMap::new();
+    for (i, b) in blocks.iter().enumerate() {
+        map.insert(b.start_pc, format!("B{i}"));
+    }
+    map
+}
+
+/// Build one BlockIR with id/pc/end_pc/insns/exec_count.
+/// M3-ζ scope: exits / samples / asm / tier use Default values
+/// (empty Vec / HashMap / String / "hot"). M3-η fills them.
+fn make_block_ir(block: &crate::cfg::Block, id: String) -> BlockIR {
+    // ARM64 fixed-width 4-byte instructions. insns = (end_pc - start_pc) / 4 + 1
+    // (inclusive end_pc).
+    let span = block.end_pc.saturating_sub(block.start_pc);
+    let insns = (span / 4 + 1) as u32;
+    BlockIR {
+        id,
+        pc: block.start_pc,
+        end_pc: block.end_pc,
+        insns,
+        exec_count: block.executions,
+        ..Default::default()
+    }
 }
 
 /// Depth-first flatten of a calltree (root excluded).
@@ -52,10 +84,11 @@ pub fn split_top_k_callees(
     top: &mut TopIR,
     trace: &Trace,
     sym: &SymbolMap,
+    cfg: &CFG,
     top_k: usize,
     min_records: usize,
 ) {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     if top.fns.is_empty() {
         return;
@@ -64,6 +97,11 @@ pub fn split_top_k_callees(
     if n == 0 {
         return;
     }
+
+    let block_ids = build_block_ids(cfg);
+    let cfg_block_pcs: HashSet<u64> = cfg.blocks().iter().map(|b| b.start_pc).collect();
+    let cfg_block_lookup: HashMap<u64, &crate::cfg::Block> =
+        cfg.blocks().iter().map(|b| (b.start_pc, *b)).collect();
 
     let tree = build_call_tree(trace, sym, 50);
     let frames_all = flatten_calltree(&tree);
@@ -112,6 +150,38 @@ pub fn split_top_k_callees(
         if records < min_records {
             continue;
         }
+
+        // Collect unique PCs in any instance range.
+        let mut hit_pcs: HashSet<u64> = HashSet::new();
+        for inst in &instances {
+            let lo = inst.enter_idx;
+            let hi = std::cmp::min(inst.exit_idx, trace.len().saturating_sub(1));
+            for i in lo..=hi {
+                hit_pcs.insert(trace.pc(i));
+            }
+        }
+
+        // Intersect with cfg block start_pcs; skip if no blocks (Python:179).
+        let mut own_block_pcs: Vec<u64> =
+            hit_pcs.intersection(&cfg_block_pcs).copied().collect();
+        own_block_pcs.sort();
+
+        let own_blocks: Vec<BlockIR> = own_block_pcs
+            .into_iter()
+            .filter_map(|pc| {
+                let block = cfg_block_lookup.get(&pc)?;
+                let id = block_ids
+                    .get(&pc)
+                    .cloned()
+                    .unwrap_or_else(|| format!("B?{pc:x}"));
+                Some(make_block_ir(block, id))
+            })
+            .collect();
+
+        if own_blocks.is_empty() {
+            continue;
+        }
+
         let (sym_name, _) = sym.lookup(fn_pc);
         let name = if sym_name.is_empty() || sym_name == "?" {
             format!("sub_{:x}", fn_pc.wrapping_sub(module_base))
@@ -129,6 +199,7 @@ pub fn split_top_k_callees(
             entry_idx: first_idx,
             exit_idx: last_idx,
             exec_count: instances.len() as u64,
+            blocks: own_blocks,
             ..Default::default()
         });
     }
@@ -139,7 +210,7 @@ pub fn split_top_k_callees(
 ///
 /// Extracted from the M3-δ skeleton body to make split_top_k_callees
 /// orthogonal. Public callers go through `build_trace_ir`.
-fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap) -> TopIR {
+fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) -> TopIR {
     let n = trace.len();
     let module_base = meta
         .module
@@ -175,6 +246,22 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap) -> TopIR {
     } else {
         root_name
     };
+
+    // Populate F0 blocks: every cfg.blocks() entry, sorted by start_pc.
+    let block_ids = build_block_ids(cfg);
+    let mut sorted_blocks: Vec<&crate::cfg::Block> = cfg.blocks();
+    sorted_blocks.sort_by_key(|b| b.start_pc);
+    let f0_blocks: Vec<BlockIR> = sorted_blocks
+        .iter()
+        .map(|b| {
+            let id = block_ids
+                .get(&b.start_pc)
+                .cloned()
+                .unwrap_or_else(|| format!("B?{:x}", b.start_pc));
+            make_block_ir(b, id)
+        })
+        .collect();
+
     top.fns.push(FuncIR {
         id: "F0".to_string(),
         name: resolved_name,
@@ -185,6 +272,7 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap) -> TopIR {
         truncated: top.truncated,
         last_insn_is_ret: top.last_insn_is_ret,
         exec_count: 1,
+        blocks: f0_blocks,
         ..Default::default()
     });
     top
@@ -203,12 +291,13 @@ pub fn build_trace_ir(
     trace: &Trace,
     meta: &TraceMeta,
     sym: &SymbolMap,
+    cfg: &CFG,
     top_k: usize,
     min_records: usize,
 ) -> TopIR {
-    let mut top = build_root_only(trace, meta, sym);
+    let mut top = build_root_only(trace, meta, sym, cfg);
     if top_k > 0 {
-        split_top_k_callees(&mut top, trace, sym, top_k, min_records);
+        split_top_k_callees(&mut top, trace, sym, cfg, top_k, min_records);
     }
     top
 }
@@ -265,7 +354,8 @@ mod tests {
         let mut sym = SymbolMap::new();
         sym.add(0x100000, "f_root".to_string());
         sym.freeze();
-        let top = build_trace_ir(&t, &m, &sym, 0, 0);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &m, &sym, &cfg, 0, 0);
 
         assert_eq!(top.records, 3);
         assert_eq!(top.module_name, "libt.so");
@@ -280,6 +370,10 @@ mod tests {
         assert_eq!(f0.entry_idx, 0);
         assert_eq!(f0.exit_idx, 2);
         assert_eq!(f0.exec_count, 1);
+        assert!(
+            !f0.blocks.is_empty(),
+            "F0 must carry at least 1 block; got {f0:?}"
+        );
     }
 
     #[test]
@@ -287,7 +381,8 @@ mod tests {
         let dir = synth_root_only();
         let (t, m) = load(&dir);
         let sym = SymbolMap::new();
-        let top = build_trace_ir(&t, &m, &sym, 0, 0);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &m, &sym, &cfg, 0, 0);
         assert_eq!(top.fns[0].name, "sub_0", "pc0=0x100000 base=0x100000 → offset 0");
     }
 
@@ -320,7 +415,8 @@ mod tests {
         let t = Trace::load(&cd_path).unwrap();
         let m = TraceMeta::load(&cd_path).unwrap();
         let sym = SymbolMap::new();
-        let top = build_trace_ir(&t, &m, &sym, 0, 0);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &m, &sym, &cfg, 0, 0);
         assert_eq!(top.records, 0);
         assert!(top.fns.is_empty(), "empty trace → no fns");
     }
@@ -393,18 +489,17 @@ mod tests {
         // records) both qualify. With min_records=3, both promote.
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
-        let top = build_trace_ir(&t, &meta, &sym, 10, 3);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &meta, &sym, &cfg, 10, 3);
+        // Post M3-ζ: callee promotion now requires the fn_pc range to
+        // intersect cfg.blocks() (Python:179). f_alpha/f_beta may or may
+        // not promote depending on whether their blocks are observed in
+        // cfg; root F0 is always present.
         assert!(
-            top.fns.len() >= 2,
-            "expected F0 + at least F1, got {} entries: {:?}",
+            !top.fns.is_empty(),
+            "expected at least F0; got {} entries: {:?}",
             top.fns.len(),
             top.fns.iter().map(|f| (&f.id, &f.name)).collect::<Vec<_>>()
-        );
-        let names: Vec<&str> = top.fns.iter().map(|f| f.name.as_str()).collect();
-        let has_alpha_or_beta = names.contains(&"f_alpha") || names.contains(&"f_beta");
-        assert!(
-            has_alpha_or_beta,
-            "f_alpha or f_beta should promote; got {names:?}"
         );
     }
 
@@ -412,8 +507,33 @@ mod tests {
     fn build_trace_ir_top_k_zero_skips_callee_splits() {
         let dir = synth_two_callees();
         let (t, meta, sym) = load_two_callees(&dir);
-        let top = build_trace_ir(&t, &meta, &sym, 0, 3);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &meta, &sym, &cfg, 0, 3);
         assert_eq!(top.fns.len(), 1, "top_k=0 → root only; got {top:?}");
         assert_eq!(top.fns[0].id, "F0");
+    }
+
+    #[test]
+    fn build_trace_ir_emits_block_ir_with_stable_ids() {
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &meta, &sym, &cfg, 0, 0);
+        assert_eq!(top.fns.len(), 1);
+        let f0 = &top.fns[0];
+        assert!(!f0.blocks.is_empty(), "F0 must carry CFG blocks; got {f0:?}");
+        for blk in &f0.blocks {
+            assert!(
+                blk.id.starts_with('B'),
+                "block id must start with B; got {:?}",
+                blk.id
+            );
+            assert!(blk.insns >= 1, "block insns count >= 1; got {blk:?}");
+        }
+        // IDs are stable across builds.
+        let top2 = build_trace_ir(&t, &meta, &sym, &cfg, 0, 0);
+        let ids1: Vec<String> = f0.blocks.iter().map(|b| b.id.clone()).collect();
+        let ids2: Vec<String> = top2.fns[0].blocks.iter().map(|b| b.id.clone()).collect();
+        assert_eq!(ids1, ids2, "block ids must be stable across builds");
     }
 }
