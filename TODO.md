@@ -123,7 +123,8 @@
 - M5-η: `/api/llil/llm` endpoint ✅ 2026-05-04
 - M5-θ: Rust LLIL typelat / struct-shape / var-unify / UIDF summaries ✅ 2026-05-04
 - M5-ι: Rust LLIL restructure metadata ✅ 2026-05-04
-- M5 (next): LLIL parity hardening on real traces
+- M6-α: BN Python sidecar + Rust lifecycle + HLIL/BN-CFG endpoints + `/api/functions` BN merge ✅ 2026-05-04
+- M6-β (next): frontend HLIL panel follows selected FunctionIndex id
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
@@ -143,8 +144,9 @@
 
 **未达成**(独立审查发现, 见下面 P0-Next-FollowUp):
 
-1. `bn:<addr>` 仅模型层支持, **`/api/functions` 不枚举 BN 函数**
-   (`_build_function_index` 不传 `bn_funcs`, `counts.bn` 永远 0).
+1. ✅ 2026-05-04: v2 Rust `/api/functions` 懒调 BN sidecar `functions`,
+   合并 `bn:<addr>` entries; `counts.bn > 0` 用 fake sidecar test 钉住.
+   `/api/dec/fn/bn:*` 走 BN HLIL markdown fallback; 无 sidecar 时返回 503.
 2. 前端 HLIL tab 仍按 cursor PC 查 `/api/hlil-for-pc`, **没消费 `/api/hlil-for-fn`**.
    FunctionIndex 不是 HLIL 的 canonical source.
 3. LLIL `scope=body` 只对 `trace:F0` 生效 (root trace view), UI 文案没说清楚.
@@ -182,10 +184,9 @@
 > 上一轮宣称"完成", 实际只覆盖 trace:* + sym:*. 这三项做完才算真正符合
 > 设计文档 ("/api/functions canonical source across Functions / CFG / HLIL / Decompile").
 
-- **F1**: `_build_function_index` 在 `DECOMP["status"] == "ready"` 时从 BN backend
-  枚举 functions 传入 `bn_funcs`. `_resolve_dec_fn` 加 `src == "bn"` 分支
-  (resolve 到 BN-backed FuncIR 或 fallback 到 HLIL). 加 `test_api_functions_includes_bn`
-  (BN-gated). 接入后 `counts.bn > 0` for `--so` 启动的 trace.
+- **F1**: ✅ v2 Rust closed 2026-05-04. `/api/functions` 从 BN sidecar 枚举
+  functions 并合并 `bn:<addr>` entries; fake sidecar test 覆盖 `counts.bn > 0`.
+  `/api/dec/fn/bn:*` 已 fallback 到 BN HLIL markdown; BN 缺席时明确 503.
 - **F2**: 前端 HLIL tab 加 "follow function selection" 模式: 当 Functions 面板/Decompile
   选中 fn 时自动调 `/api/hlil-for-fn` 而不是按 cursor PC. 至少 Functions 面板
   双击/右键给 "在 HLIL 里看" 选项.

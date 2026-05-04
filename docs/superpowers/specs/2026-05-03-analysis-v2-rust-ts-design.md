@@ -416,7 +416,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | Python module | v2 home | Status | Note |
 |---|---|---|---|
 | `backend.py` (FieldHint, Function, Variable dataclasses + Backend Protocol) | `tracemiku-core::decompiler::backend` | 🟡 M3-δ | dataclasses + Backend trait + NoneBackend stub shipped; real BinjaBackend defers to M5+ (PyO3 / sidecar) |
-| `backends/binja.py` | BN python sidecar | 🔜 M6 | reused via JSON-RPC |
+| `backends/binja.py` | BN python sidecar | 🟡 M6-α | JSON-lines sidecar skeleton (`tracemiku-bn-sidecar`) with open_so/functions/hlil_for/cfg_for; real BN exercised only when `TRACEMIKU_BN_SO` + Binary Ninja install are present |
 | `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
 | `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
 | `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
@@ -533,15 +533,15 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/hash-input-search` | ✅ M3-hash-input-search | SHA/MD5/HMAC/CRC candidate input search |
 | `/api/auto-phase-detect` | ✅ M3-auto-phase | heuristic phase timeline |
 | `/api/diff-traces` | ✅ M3-diff-traces | JNI output byte-level stable/variable diff |
-| `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
+| `/api/functions` | ✅ M2-ε / ✅ M6-α | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries; BN sidecar functions merge into `bn:<addr>` entries when ready |
 | `/api/dec/summary` | ✅ M3-ι2c | trace-ir + symbol-source fallback + VM candidates wire/markdown shipped; m3_iota_parity.py HARD-gate green on real xsign trace (fns 0.978 / summary_md 0.943 / VM exact) |
-| `/api/dec/fn/{id}` | ✅ M3-ι2c | trace:* + bare F0 + sym:* + legacy cfg:* supported via render_func_md (hot blocks full + warm stubs; asm/samples/exits). `bn:*` remains gated on Rust BN sidecar/backend (M6). |
+| `/api/dec/fn/{id}` | ✅ M3-ι2c / ✅ M6-α | trace:* + bare F0 + sym:* + legacy cfg:* supported via render_func_md (hot blocks full + warm stubs; asm/samples/exits). `bn:*` returns BN HLIL markdown via sidecar when ready, 503 when sidecar is absent. |
 | `/api/dec/llm-call` | ✅ M3-ι2d | trace:* / bare F0 / sym:* / cfg:* supported; calls claude/deepseek/qwen/mimo via reqwest; success-only cache; `bn:*` remains M6-gated |
 | `/api/dec/models` | ✅ M3-ι2d | lists model aliases and configured server-side env keys |
 | `/api/llil/render` | ✅ M5-δ | POST fn_id/max_records/pass toggles → LLIL pseudocode |
 | `/api/llil/llm` | ✅ M5-η | POST fn_id/model/max_records → LLIL prompt → configured LLM adapter |
-| `/api/hlil-for-pc`, `/api/hlil-for-fn` | 🔜 M6 | BN sidecar |
-| `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | 🔜 M6 | BN sidecar |
+| `/api/hlil-for-pc`, `/api/hlil-for-fn` | ✅ M6-α | BN sidecar endpoints with stable not-ready fallback; `/api/hlil-for-fn` resolves trace/sym/bn FunctionIndex ids to a PC |
+| `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | ✅ M6-α | BN sidecar endpoints with stable not-ready fallback; SVG output is sidecar-provided |
 | `/api/bg-status` | ❌ | Replaced by `/ws/jobs` WebSocket (D6) |
 | `/api/decomp-status` | ❌ | Folded into `/ws/jobs` |
 | `/ws/jobs` | ✅ M3-api-infra | WebSocket job snapshot endpoint |
@@ -562,7 +562,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Settings | left | ✅ M4-δ | dense-mode client preference + API/model/trace status |
 | Graph (CFG) | right | ✅ M3-κ | SVG render via `/api/cfg-svg` |
 | Registers | right | ✅ M4-α | selected-record register table |
-| HLIL | right | 🔜 M6 | needs BN sidecar |
+| HLIL | right | 🔜 M6-β | backend endpoints landed in M6-α; panel still needs FunctionIndex-following UI |
 | Decompile | right | ✅ M3-ι2d (raw) / ✅ M4-γ / ✅ M5-ε (LLIL render) | TraceIR summary + function markdown viewer + model/lang/tier LLM-call controls + LLIL pseudocode render |
 | Memory | bottom | ✅ M4-α / ✅ M4-β | MemShadow hex dump + selected-record register shortcuts + `/api/mem-diff` view |
 | Call Tree (bottom view) | bottom | ⏸ | Duplicate of left-panel Call Tree; consolidate to one |
