@@ -156,3 +156,29 @@ export interface BackwardTaintResponse {
   stopped_at_max: boolean;
   max_count_used: number;
 }
+
+// ── /api/dec/summary ──────────────────────────────────────────────────────
+
+export interface DecFnEntry {
+  id: string;
+  name: string;
+  blocks: number;
+  loops: number;
+  calls: number;
+  type_anchors: number;
+  entry_idx: number | null;
+  exit_idx: number | null;
+  source: string;          // "trace-ir" | "symbol" (M3-ε) | "bn" (M5+)
+  trace_ir_id: string | null;
+}
+
+export interface DecSummaryResponse {
+  records: number;
+  module_name: string;
+  module_base: number;
+  module_size: number;
+  truncated: boolean;
+  fns: DecFnEntry[];
+  vm_candidates: unknown[];
+  summary_md: string;
+}

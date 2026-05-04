@@ -8,6 +8,7 @@ import type {
   CallTreeResponse,
   ForwardTaintResponse,
   BackwardTaintResponse,
+  DecSummaryResponse,
 } from "./types";
 
 export async function fetchMeta(): Promise<MetaResponse> {
@@ -111,4 +112,10 @@ export async function fetchBackwardTaint(
   const r = await fetch(`/api/backward-taint?${params}`);
   if (!r.ok) throw new Error(`/api/backward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as BackwardTaintResponse;
+}
+
+export async function fetchDecSummary(): Promise<DecSummaryResponse> {
+  const r = await fetch("/api/dec/summary");
+  if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
+  return (await r.json()) as DecSummaryResponse;
 }
