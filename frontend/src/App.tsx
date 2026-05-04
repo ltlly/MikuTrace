@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 
 import { fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/client";
@@ -110,6 +110,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export default function App() {
   const initial = initialLayout();
   const [selectedIdx, setSelectedIdx] = createSignal(0);
+  const [navHistory, setNavHistory] = createSignal<number[]>([0]);
+  const [navPos, setNavPos] = createSignal(0);
   const [selectedReg, setSelectedReg] = createSignal("x0");
   const [selectedFn, setSelectedFn] = createSignal("");
   const [cursorHint, setCursorHint] = createSignal<CursorRecordHint | undefined>();
@@ -207,6 +209,7 @@ export default function App() {
   let hashJumpAbort: AbortController | undefined;
   let searchSeq = 0;
   let searchAbort: AbortController | undefined;
+  let applyingNavHistory = false;
 
   function cancelHashJump() {
     hashJumpSeq += 1;
@@ -237,6 +240,43 @@ export default function App() {
 
   function jumpToIdx(idx: number) {
     setSelectedIdx(clampIdx(idx));
+  }
+
+  createEffect(() => {
+    const idx = selectedIdx();
+    if (applyingNavHistory) {
+      applyingNavHistory = false;
+      return;
+    }
+    setNavHistory((history) => {
+      const pos = untrack(navPos);
+      if (history[pos] === idx) return history;
+      const next = [...history.slice(0, pos + 1), idx].slice(-200);
+      setNavPos(next.length - 1);
+      return next;
+    });
+  });
+
+  function jumpNavHistory(delta: 1 | -1) {
+    const history = navHistory();
+    const nextPos = clampNumber(navPos() + delta, 0, Math.max(0, history.length - 1));
+    if (nextPos === navPos()) return;
+    applyingNavHistory = true;
+    setNavPos(nextPos);
+    setSelectedIdx(history[nextPos]);
+  }
+
+  function clearNavHistory() {
+    setNavHistory([selectedIdx()]);
+    setNavPos(0);
+  }
+
+  function selectNavHistory(pos: number) {
+    const history = navHistory();
+    if (pos < 0 || pos >= history.length) return;
+    applyingNavHistory = true;
+    setNavPos(pos);
+    setSelectedIdx(history[pos]);
   }
 
   function selectTraceRow(row: RecordRow) {
@@ -823,7 +863,40 @@ export default function App() {
               />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "navigation" }}>
-              <p class="dim">navigation history pending</p>
+              <div class="nav-panel">
+                <div class="nav-controls">
+                  <button type="button" onClick={() => jumpNavHistory(-1)} disabled={navPos() <= 0}>
+                    back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => jumpNavHistory(1)}
+                    disabled={navPos() >= navHistory().length - 1}
+                  >
+                    forward
+                  </button>
+                  <button type="button" onClick={clearNavHistory} disabled={navHistory().length <= 1}>
+                    clear
+                  </button>
+                  <span class="dim small">
+                    {navPos() + 1}/{navHistory().length} · cursor #{selectedIdx()}
+                  </span>
+                </div>
+                <div class="nav-history-list">
+                  <For each={navHistory().map((idx, pos) => ({ idx, pos })).slice().reverse()}>
+                    {(entry) => (
+                      <button
+                        type="button"
+                        classList={{ active: entry.pos === navPos() }}
+                        onClick={() => selectNavHistory(entry.pos)}
+                      >
+                        <span>#{entry.idx}</span>
+                        <span class="dim small">{entry.pos === navPos() ? "current" : entry.pos + 1}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "trace-for-pc" }}>
               <TraceForPcPanel

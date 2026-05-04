@@ -1783,6 +1783,63 @@ html[data-density="dense"] .xref-table td {
   .dec-grid { grid-template-columns: 1fr; }
 }
 
+.nav-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.nav-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nav-controls button,
+.nav-history-list button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.nav-controls button:disabled {
+  color: var(--dim);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.nav-controls button:not(:disabled):hover,
+.nav-history-list button:hover {
+  border-color: var(--accent);
+}
+
+.nav-history-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 4px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.nav-history-list button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nav-history-list button.active {
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, 0.12);
+}
+
 /* ---------------------------------------------------------------------------
  * Debug overlay (toggle: topbar `dbg` button or localStorage tracemiku-debug=1)
  * Useful for diagnosing CFG/cursor sync issues. The overlay state itself
