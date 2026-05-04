@@ -13,6 +13,7 @@ pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod last_write_of_reg;
 pub mod mem_dump;
+pub mod memory_query;
 pub mod meta;
 pub mod record;
 pub mod records;
@@ -66,5 +67,21 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/strings", get(strings::strings_handler))
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
+        .route(
+            "/api/last-write-of-addr",
+            get(memory_query::last_write_of_addr_handler),
+        )
+        .route(
+            "/api/idxs-touching-range",
+            get(memory_query::idxs_touching_range_handler),
+        )
+        .route(
+            "/api/idxs-touching-addr",
+            get(memory_query::idxs_touching_addr_handler),
+        )
+        .route(
+            "/api/find-mem-pattern",
+            get(memory_query::find_mem_pattern_handler),
+        )
         .with_state(state)
 }

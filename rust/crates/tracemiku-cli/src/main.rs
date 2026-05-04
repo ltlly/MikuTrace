@@ -155,6 +155,50 @@ enum Cmd {
         #[arg(long, default_value_t = 256)]
         count: usize,
     },
+    /// GET /api/last-write-of-addr.
+    LastWriteOfAddr {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = -1)]
+        before_idx: isize,
+    },
+    /// GET /api/idxs-touching-addr.
+    IdxsTouchingAddr {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 0)]
+        cursor: usize,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+    /// GET /api/idxs-touching-range.
+    IdxsTouchingRange {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 1)]
+        size: u64,
+        #[arg(long, default_value_t = 0)]
+        cursor: usize,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// GET /api/find-mem-pattern.
+    FindMemPattern {
+        trace_dir: PathBuf,
+        #[arg(long = "bytes-hex")]
+        bytes_hex: String,
+        #[arg(long, default_value_t = -1)]
+        since: isize,
+        #[arg(long, default_value_t = 100)]
+        max: usize,
+        #[arg(long)]
+        idx_lo: Option<usize>,
+        #[arg(long)]
+        idx_hi: Option<usize>,
+    },
     /// GET /api/forward-taint.
     TaintFwd {
         trace_dir: PathBuf,
@@ -334,6 +378,63 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let params = vec![("addr", addr), ("count", count.to_string())];
             route_get_json(trace_dir, route_path("/api/mem-dump", &params)).await
+        }
+        Some(Cmd::LastWriteOfAddr {
+            trace_dir,
+            addr,
+            before_idx,
+        }) => {
+            let params = vec![("addr", addr), ("before_idx", before_idx.to_string())];
+            route_get_json(trace_dir, route_path("/api/last-write-of-addr", &params)).await
+        }
+        Some(Cmd::IdxsTouchingAddr {
+            trace_dir,
+            addr,
+            cursor,
+            limit,
+        }) => {
+            let params = vec![
+                ("addr", addr),
+                ("cursor", cursor.to_string()),
+                ("limit", limit.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/idxs-touching-addr", &params)).await
+        }
+        Some(Cmd::IdxsTouchingRange {
+            trace_dir,
+            addr,
+            size,
+            cursor,
+            limit,
+        }) => {
+            let params = vec![
+                ("addr", addr),
+                ("size", size.to_string()),
+                ("cursor", cursor.to_string()),
+                ("limit", limit.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/idxs-touching-range", &params)).await
+        }
+        Some(Cmd::FindMemPattern {
+            trace_dir,
+            bytes_hex,
+            since,
+            max,
+            idx_lo,
+            idx_hi,
+        }) => {
+            let mut params = vec![
+                ("bytes_hex", bytes_hex),
+                ("since", since.to_string()),
+                ("max", max.to_string()),
+            ];
+            if let Some(idx_lo) = idx_lo {
+                params.push(("idx_lo", idx_lo.to_string()));
+            }
+            if let Some(idx_hi) = idx_hi {
+                params.push(("idx_hi", idx_hi.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/find-mem-pattern", &params)).await
         }
         Some(Cmd::TaintFwd {
             trace_dir,
