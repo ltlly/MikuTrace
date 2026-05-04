@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef;
 use serde::Serialize;
 
 /// A basic block in the trace-derived CFG.
@@ -33,10 +34,26 @@ pub struct Block {
     pub scc_id: u32,
 }
 
+/// CFG edge metadata. Mirrors Python `viewer/cfg.py::CFG.edges` value
+/// dict: `{kind: str, count: int}`.
+///
+/// `kind` strings (parity with Python):
+/// - `"fall"` — sequential fall-through into a block start.
+/// - `"call-return"` — bl/blr → ret pair (caller block → post-call PC).
+/// - `"b"`, `"bl"`, `"blr"`, `"br"`, `"ret"` — direct branch mnemonic.
+/// - `"b.cond"` (or `"b.eq"`, `"b.ne"`, ...) — conditional branch
+///   (Python uses the full `d.mnemonic` here, e.g. `"b.eq"`).
+/// - `"cbz"`, `"cbnz"`, `"tbz"`, `"tbnz"` — compare-and-branch.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct EdgeMeta {
+    pub kind: String,
+    pub count: u64,
+}
+
 /// Block-level CFG. Indexes by start_pc.
 #[derive(Debug, Default, Clone)]
 pub struct CFG {
-    pub graph: DiGraph<Block, ()>,
+    pub graph: DiGraph<Block, EdgeMeta>,
     /// start_pc → NodeIndex for fast lookup.
     pub by_pc: HashMap<u64, NodeIndex>,
 }
@@ -75,6 +92,24 @@ impl CFG {
             .filter_map(|s| self.graph.node_weight(s).map(|b| b.start_pc))
             .collect()
     }
+
+    /// Iterate outgoing edges of `start_pc`. Returns `(dst_start_pc, EdgeMeta)`,
+    /// sorted by dst pc ascending for stable downstream rendering.
+    pub fn edges_from(&self, start_pc: u64) -> Vec<(u64, EdgeMeta)> {
+        let Some(&n) = self.by_pc.get(&start_pc) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(u64, EdgeMeta)> = self
+            .graph
+            .edges_directed(n, petgraph::Direction::Outgoing)
+            .filter_map(|e| {
+                let dst_pc = self.graph.node_weight(e.target())?.start_pc;
+                Some((dst_pc, e.weight().clone()))
+            })
+            .collect();
+        out.sort_by_key(|(pc, _)| *pc);
+        out
+    }
 }
 
 /// Build a block-level CFG over the trace.
@@ -111,15 +146,37 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     // Pass 2: walk records, build block_meta (start_pc → end_pc).
     // Executions are counted in a separate post-pass.
     let mut block_meta: HashMap<u64, u64> = HashMap::new(); // start_pc → end_pc
-    let mut edges: Vec<(u64, u64)> = Vec::new();
+    let mut edges: Vec<(u64, u64, EdgeMeta)> = Vec::new();
 
     let mut current_start: Option<u64> = None;
     let mut current_end: u64 = 0;
+    let mut prev_pc: Option<u64> = None;
+    let mut prev_was_branch: bool = false;
+
+    // NOTE: M3-ι skeleton — module-boundary re-entry not handled yet
+    // (parity with viewer/cfg.py:_add_call_return). Pure in-trace bl/ret
+    // pairing: caller block-start pushed on `bl`/`blr`, popped on `ret`.
+    let mut call_stack: Vec<u64> = Vec::new();
 
     for i in 0..n {
         let pc = trace.pc(i);
 
         if start_pcs.contains(&pc) {
+            // Detect fall-through: previous insn was NOT a branch and its PC
+            // is exactly 4 bytes before this block-start PC. Push a "fall"
+            // edge from the previous block-start to this PC.
+            if let (Some(prev), Some(s)) = (prev_pc, current_start) {
+                if !prev_was_branch && prev + 4 == pc {
+                    edges.push((
+                        s,
+                        pc,
+                        EdgeMeta {
+                            kind: "fall".to_string(),
+                            count: 1,
+                        },
+                    ));
+                }
+            }
             // Finalize previous in-flight block (if any).
             if let Some(prev) = current_start {
                 block_meta
@@ -143,8 +200,33 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
         let d = crate::disasm::decode(pc, inst);
         if d.is_branch {
             if let Some(s) = current_start {
+                // Track call-stack for call-return pairing.
+                if d.is_call {
+                    call_stack.push(s);
+                } else if d.is_ret {
+                    if let Some(caller) = call_stack.pop() {
+                        if i + 1 < n {
+                            edges.push((
+                                caller,
+                                trace.pc(i + 1),
+                                EdgeMeta {
+                                    kind: "call-return".to_string(),
+                                    count: 1,
+                                },
+                            ));
+                        }
+                    }
+                }
+
                 if i + 1 < n {
-                    edges.push((s, trace.pc(i + 1)));
+                    edges.push((
+                        s,
+                        trace.pc(i + 1),
+                        EdgeMeta {
+                            kind: d.mnemonic.clone(),
+                            count: 1,
+                        },
+                    ));
                 }
                 // Save end_pc and reset current_start.
                 block_meta
@@ -154,6 +236,9 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
             }
             current_start = None;
         }
+
+        prev_pc = Some(pc);
+        prev_was_branch = d.is_branch;
     }
     // Finalize last in-flight block.
     if let Some(s) = current_start {
@@ -178,11 +263,28 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     }
 
     // Add edges (skip if either endpoint isn't a known block start).
-    for (from, to) in edges {
-        if let (Some(&fn_), Some(&tn)) = (cfg.by_pc.get(&from), cfg.by_pc.get(&to)) {
-            if !cfg.graph.contains_edge(fn_, tn) {
-                cfg.graph.add_edge(fn_, tn, ());
+    // Dedup by (src, dst): increment count on every observation; kind is
+    // first-write-wins (matching Python's
+    // `setdefault({"kind":k,"count":0})["count"] += 1`).
+    let mut edge_index: HashMap<(u64, u64), petgraph::graph::EdgeIndex> = HashMap::new();
+    for (from, to, meta) in edges {
+        let (Some(&fn_), Some(&tn)) = (cfg.by_pc.get(&from), cfg.by_pc.get(&to)) else {
+            continue;
+        };
+        if let Some(&eidx) = edge_index.get(&(from, to)) {
+            if let Some(existing) = cfg.graph.edge_weight_mut(eidx) {
+                existing.count += 1;
             }
+        } else {
+            let eidx = cfg.graph.add_edge(
+                fn_,
+                tn,
+                EdgeMeta {
+                    kind: meta.kind,
+                    count: meta.count,
+                },
+            );
+            edge_index.insert((from, to), eidx);
         }
     }
 
@@ -207,4 +309,42 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     }
 
     cfg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trace::{REC_SIZE, Trace};
+
+    #[test]
+    fn build_cfg_classifies_branch_kinds() {
+        // Trace: 3 records, ARM64 nop sequence with one bl.
+        // 0xd503201f = nop, 0x94000400 = bl +0x1000.
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir.path().join("run").join("calls").join("c");
+        std::fs::create_dir_all(&cd).unwrap();
+        let pcs = [0x1000u64, 0x1004, 0x2000];
+        let insts = [0xd503201fu32, 0x94000400, 0xd503201f];
+        let mut buf = vec![0u8; REC_SIZE * 3];
+        for (i, (&pc, &inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":3}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x1000","size":65536}}"#,
+        )
+        .unwrap();
+        let trace = Trace::load(&cd).unwrap();
+        let cfg = build_cfg(&trace);
+        // At least one edge must have a non-empty kind (the bl edge).
+        assert!(
+            cfg.graph.edge_weights().any(|m| !m.kind.is_empty()),
+            "at least one edge should have a non-empty kind; edges = {:?}",
+            cfg.graph.edge_weights().collect::<Vec<_>>()
+        );
+    }
 }
