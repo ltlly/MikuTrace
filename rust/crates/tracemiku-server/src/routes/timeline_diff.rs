@@ -119,15 +119,34 @@ pub async fn mem_diff_handler(
     State(state): State<AppState>,
     Query(q): Query<MemDiffQuery>,
 ) -> Json<MemDiffResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || mem_diff_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "mem diff worker failed: {err}");
+                MemDiffResponse {
+                    idx: 0,
+                    addr: String::new(),
+                    size: 0,
+                    bytes: Vec::new(),
+                    changed_count: 0,
+                }
+            }),
+    )
+}
+
+fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> MemDiffResponse {
     let start = parse_int(&q.addr).unwrap_or(0);
     let before_t = q.idx.saturating_sub(1) as u64;
     let after_t = q.idx as u64;
     let mut bytes = Vec::with_capacity(q.size);
     let mut changed_count = 0usize;
+    let mem = inner.memshadow();
     for offset in 0..q.size {
         let addr = start + offset as u64;
-        let (before, _, _) = state.inner.memshadow().byte_at(addr, before_t);
-        let (after, _, _) = state.inner.memshadow().byte_at(addr, after_t);
+        let (before, _, _) = mem.byte_at(addr, before_t);
+        let (after, _, _) = mem.byte_at(addr, after_t);
         let changed = before != after;
         if changed {
             changed_count += 1;
@@ -139,13 +158,13 @@ pub async fn mem_diff_handler(
             changed,
         });
     }
-    Json(MemDiffResponse {
+    MemDiffResponse {
         idx: q.idx,
         addr: q.addr,
         size: q.size,
         bytes,
         changed_count,
-    })
+    }
 }
 
 fn parse_int(s: &str) -> Option<u64> {

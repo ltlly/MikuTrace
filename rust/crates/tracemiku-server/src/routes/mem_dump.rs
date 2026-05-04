@@ -38,10 +38,21 @@ pub async fn mem_dump_handler(
     State(state): State<AppState>,
     Query(q): Query<MemDumpQuery>,
 ) -> Result<Json<MemDumpResponse>, axum::http::StatusCode> {
+    let inner = state.inner.clone();
+    tokio::task::spawn_blocking(move || mem_dump_response(&inner, q))
+        .await
+        .unwrap_or(Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR))
+        .map(Json)
+}
+
+fn mem_dump_response(
+    inner: &crate::state::AppStateInner,
+    q: MemDumpQuery,
+) -> Result<MemDumpResponse, axum::http::StatusCode> {
     let stripped = q.addr.trim_start_matches("0x").trim_start_matches("0X");
     let start =
         u64::from_str_radix(stripped, 16).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    let mem = state.inner.memshadow();
+    let mem = inner.memshadow();
     let mut bytes = Vec::with_capacity(q.count);
     for i in 0..q.count {
         let a = start + i as u64;
@@ -53,10 +64,10 @@ pub async fn mem_dump_handler(
             src_idx: src,
         });
     }
-    Ok(Json(MemDumpResponse {
+    Ok(MemDumpResponse {
         status: "ready",
         addr: q.addr,
         count: q.count,
         bytes,
-    }))
+    })
 }
