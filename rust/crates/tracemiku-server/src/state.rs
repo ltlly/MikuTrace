@@ -186,33 +186,6 @@ impl AppState {
                 );
             }
         }
-        if inner.trace.len() > EAGER_MEMSHADOW_MAX_RECORDS && background_frame_depth_enabled() {
-            let warm_inner = inner.clone();
-            if let Err(err) = thread::Builder::new()
-                .name("tracemiku-frame-depth-warm".to_string())
-                .spawn(move || {
-                    tracing::info!(
-                        target: "tracemiku-server",
-                        records = warm_inner.trace.len(),
-                        "warming frame depth map in background"
-                    );
-                    let start = Instant::now();
-                    let _ = warm_inner.frame_depths();
-                    tracing::info!(
-                        target: "tracemiku-server",
-                        records = warm_inner.trace.len(),
-                        elapsed_ms = start.elapsed().as_millis(),
-                        "background frame depth map ready"
-                    );
-                })
-            {
-                tracing::warn!(
-                    target: "tracemiku-server",
-                    "failed to spawn frame depth warmer: {err}"
-                );
-            }
-        }
-
         Ok(Self { inner })
     }
 }
@@ -300,10 +273,6 @@ impl AppStateInner {
         self.frame_depths
             .get_or_init(|| build_frame_depth_map(&self.trace))
     }
-
-    pub fn frame_depths_if_ready(&self) -> Option<&[u32]> {
-        self.frame_depths.get().map(Vec::as_slice)
-    }
 }
 
 fn background_memshadow_enabled() -> bool {
@@ -311,15 +280,6 @@ fn background_memshadow_enabled() -> bool {
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             !(v == "0" || v == "false" || v == "off" || v == "no")
-        })
-        .unwrap_or(true)
-}
-
-fn background_frame_depth_enabled() -> bool {
-    std::env::var("TRACEMIKU_FRAME_DEPTH_BACKGROUND")
-        .map(|v| {
-            let v = v.trim().to_ascii_lowercase();
-            !matches!(v.as_str(), "0" | "false" | "off" | "no")
         })
         .unwrap_or(true)
 }

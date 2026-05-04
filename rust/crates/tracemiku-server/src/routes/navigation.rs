@@ -317,62 +317,6 @@ fn backtrace_response(
     limit: usize,
 ) -> BacktraceResponse {
     let limit = limit.clamp(1, 2048);
-    let Some(depths) = inner.frame_depths_if_ready() else {
-        return replay_backtrace_response(inner, idx, limit);
-    };
-    let depth = depth_after_idx(inner, depths, idx);
-    let want = depth.min(limit);
-    let mut stack_rev: Vec<BacktraceFrame> = Vec::with_capacity(want);
-    let mut returned_calls = 0usize;
-
-    for i in (0..=idx).rev() {
-        let record = inner.trace.record(i);
-        let d = decode(record.pc, record.inst);
-        if d.is_ret {
-            returned_calls = returned_calls.saturating_add(1);
-            continue;
-        }
-        if !d.is_call {
-            continue;
-        }
-        if returned_calls > 0 {
-            returned_calls -= 1;
-            continue;
-        }
-        let callee = (i + 1 < inner.trace.len()).then(|| inner.trace.pc(i + 1));
-        let fn_name = callee
-            .map(|pc| inner.symbols.lookup(pc).0)
-            .filter(|name| name != "?");
-        stack_rev.push(BacktraceFrame {
-            call_site_idx: i,
-            call_pc: format!("{:#x}", record.pc),
-            call_pc_fmt: Some(fmt_pc_inner(inner, record.pc)),
-            callee_pc: callee.map(|pc| format!("{pc:#x}")),
-            callee_pc_fmt: callee.map(|pc| fmt_pc_inner(inner, pc)),
-            fn_name,
-        });
-        if stack_rev.len() >= want {
-            break;
-        }
-    }
-    stack_rev.reverse();
-    let stack = stack_rev;
-    let truncated = depth > stack.len();
-    BacktraceResponse {
-        status: "ready",
-        idx,
-        depth,
-        returned: stack.len(),
-        truncated,
-        stack,
-    }
-}
-
-fn replay_backtrace_response(
-    inner: &crate::state::AppStateInner,
-    idx: usize,
-    limit: usize,
-) -> BacktraceResponse {
     let mut stack: Vec<BacktraceFrame> = Vec::new();
     let mut events = Vec::<(usize, bool)>::new();
     for (&pc, idxs) in &inner.index.pc_to_idxs {
@@ -428,19 +372,6 @@ fn backtrace_frame(
         callee_pc: callee.map(|pc| format!("{pc:#x}")),
         callee_pc_fmt: callee.map(|pc| fmt_pc_inner(inner, pc)),
         fn_name,
-    }
-}
-
-fn depth_after_idx(inner: &crate::state::AppStateInner, depths: &[u32], idx: usize) -> usize {
-    let before = depths.get(idx).copied().unwrap_or(0) as usize;
-    let record = inner.trace.record(idx);
-    let d = decode(record.pc, record.inst);
-    if d.is_call {
-        before.saturating_add(1)
-    } else if d.is_ret {
-        before.saturating_sub(1)
-    } else {
-        before
     }
 }
 
