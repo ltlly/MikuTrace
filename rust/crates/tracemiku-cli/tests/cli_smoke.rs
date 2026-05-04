@@ -294,3 +294,20 @@ fn mem_flow_wrapper_uses_server_wire_shape() {
     assert_eq!(v["bytes"].as_array().unwrap().len(), 1);
     assert_eq!(v["bytes"][0]["events"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "ollvm-detect-vm".into(),
+        cd.display().to_string(),
+        "--min-entries".into(),
+        "1".into(),
+        "--threshold".into(),
+        "0.3".into(),
+    ]);
+    assert_eq!(v["min_entries"], 1);
+    assert_eq!(v["threshold"], 0.3);
+    assert!(v["count"].as_u64().unwrap() <= 1);
+    assert!(v["candidates"].is_array());
+}

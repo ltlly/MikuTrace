@@ -18,6 +18,7 @@ pub mod mem_flow;
 pub mod memory_query;
 pub mod meta;
 pub mod navigation;
+pub mod ollvm_detect_vm;
 pub mod record;
 pub mod records;
 pub mod reg_value_at;
@@ -55,6 +56,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
         .route("/api/fork-events", get(fork_events::fork_events_handler))
+        .route(
+            "/api/ollvm-detect-vm",
+            get(ollvm_detect_vm::ollvm_detect_vm_handler),
+        )
         .route("/api/dec/summary", get(dec_summary::dec_summary_handler))
         .route("/api/dec/fn/:fn_id", get(dec_fn::dec_fn_handler))
         .route(

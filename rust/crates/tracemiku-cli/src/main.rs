@@ -298,6 +298,14 @@ enum Cmd {
         #[arg(long)]
         readers_only: bool,
     },
+    /// GET /api/ollvm-detect-vm.
+    OllvmDetectVm {
+        trace_dir: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        min_entries: usize,
+        #[arg(long, default_value_t = 0.5)]
+        threshold: f64,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -610,6 +618,17 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("idx_hi", idx_hi.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/mem-flow", &params)).await
+        }
+        Some(Cmd::OllvmDetectVm {
+            trace_dir,
+            min_entries,
+            threshold,
+        }) => {
+            let params = vec![
+                ("min_entries", min_entries.to_string()),
+                ("threshold", threshold.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/ollvm-detect-vm", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await
