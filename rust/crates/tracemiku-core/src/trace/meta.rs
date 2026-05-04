@@ -68,6 +68,10 @@ impl ModuleInfo {
 #[derive(Debug, Clone, Deserialize)]
 struct PerCallMetaRaw {
     pub records: u64,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub last_insn_is_ret: bool,
 }
 
 /// Run-level meta.json fields we consume.
@@ -127,6 +131,8 @@ pub struct TraceMeta {
     pub cmd: Option<i64>,
     pub fn_addr: Option<String>,
     pub regs: &'static [&'static str],
+    pub truncated: bool,
+    pub last_insn_is_ret: bool,
 }
 
 impl TraceMeta {
@@ -186,6 +192,8 @@ impl TraceMeta {
             cmd: run.cmd,
             fn_addr: run.fn_addr,
             regs: REG_NAMES,
+            truncated: per_call.truncated,
+            last_insn_is_ret: per_call.last_insn_is_ret,
         })
     }
 }

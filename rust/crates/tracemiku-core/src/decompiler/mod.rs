@@ -8,4 +8,5 @@
 //! §13.3 for the migration table.
 
 pub mod backend;
+pub mod builder;
 pub mod ir;
