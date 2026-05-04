@@ -4,10 +4,14 @@
 //! `through_mem`, `data_only`, and `cross_fn_call` flags (those land in
 //! M3-γ). MVP scope: index-accelerated forward + backward with optional
 //! exclude-reg set.
+//!
+//! Algorithm (backward): BFS via VecDeque<(cur_idx, want_reg)>,
+//! mirroring Python `pending.pop(0)` (head) / `pending.append(...)` (tail).
+//! Walk order matters under max_count truncation.
 
 use serde::Serialize;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashSet, VecDeque};
 
 use crate::disasm::decode;
 use crate::index::Index;
@@ -123,11 +127,12 @@ pub fn backward_taint(
 ) -> (Vec<TaintHit>, bool) {
     // Direct port of viewer/taint.py:300-370 (`_backward_taint_indexed`).
     //
-    // pending: max-heap of (cur_idx, want_reg). cur_idx is "where we are";
-    // want_reg is the register we want to find the latest def for.
-    let mut pending: BinaryHeap<(usize, String)> = BinaryHeap::new();
+    // Backward: BFS via VecDeque<(cur_idx, want_reg)> — matches Python
+    // `pending.pop(0)` / `pending.append(...)` semantics. Walk order matters
+    // under max_count truncation: priority-by-idx would diverge.
+    let mut pending: VecDeque<(usize, String)> = VecDeque::new();
     if !exclude_regs.contains(taint_reg) {
-        pending.push((idx, taint_reg.to_string()));
+        pending.push_back((idx, taint_reg.to_string()));
     }
 
     // visited: per-(cur_idx, want_reg) set so we don't re-walk the same query.
@@ -139,7 +144,7 @@ pub fn backward_taint(
     let cap = if max_count == 0 { usize::MAX } else { max_count };
     let mut stopped = false;
 
-    while let Some((cur_idx, want_reg)) = pending.pop() {
+    while let Some((cur_idx, want_reg)) = pending.pop_front() {
         if raw_out.len() >= cap {
             stopped = true;
             break;
@@ -170,7 +175,7 @@ pub fn backward_taint(
             if exclude_regs.contains(u) {
                 continue;
             }
-            pending.push((j, u.clone()));
+            pending.push_back((j, u.clone()));
         }
     }
 
