@@ -157,7 +157,23 @@ pub async fn mem_writes_in_range_handler(
     State(state): State<AppState>,
     Query(q): Query<MemWritesInRangeQuery>,
 ) -> Result<Json<MemWritesInRangeResponse>, (StatusCode, String)> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    tokio::task::spawn_blocking(move || mem_writes_in_range_response(&inner, q))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "mem writes in range worker failed: {err}");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "mem writes worker failed".to_string(),
+            ))
+        })
+        .map(Json)
+}
+
+fn mem_writes_in_range_response(
+    inner: &crate::state::AppStateInner,
+    q: MemWritesInRangeQuery,
+) -> Result<MemWritesInRangeResponse, (StatusCode, String)> {
     let lo = q.idx_lo.min(inner.trace.len());
     let hi = if q.idx_hi >= 0 {
         (q.idx_hi as usize).min(inner.trace.len())
@@ -210,12 +226,12 @@ pub async fn mem_writes_in_range_handler(
         });
     }
 
-    Ok(Json(MemWritesInRangeResponse {
+    Ok(MemWritesInRangeResponse {
         idx_range: vec![lo, hi],
         matched,
         returned: rows.len(),
         writes: rows,
-    }))
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,9 +271,34 @@ pub async fn idxs_touching_range_handler(
     State(state): State<AppState>,
     Query(q): Query<TouchingRangeQuery>,
 ) -> Json<TouchingRangeResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || idxs_touching_range_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "idxs touching range worker failed: {err}");
+                TouchingRangeResponse {
+                    status: "error",
+                    addr: String::new(),
+                    size: 0,
+                    cursor: 0,
+                    writers_before: Vec::new(),
+                    writers_after: Vec::new(),
+                    writers_total: 0,
+                    readers_before: Vec::new(),
+                    readers_after: Vec::new(),
+                    readers_total: 0,
+                }
+            }),
+    )
+}
+
+fn idxs_touching_range_response(
+    inner: &crate::state::AppStateInner,
+    q: TouchingRangeQuery,
+) -> TouchingRangeResponse {
     let start = parse_int(&q.addr).unwrap_or(0);
     let size = q.size.max(1);
-    let inner = &state.inner;
     let writers = touching_range_idxs(
         inner
             .index
@@ -278,7 +319,7 @@ pub async fn idxs_touching_range_handler(
     );
     let (writers_before, writers_after) = split_around_cursor(&writers, q.cursor, q.limit);
     let (readers_before, readers_after) = split_around_cursor(&readers, q.cursor, q.limit);
-    Json(TouchingRangeResponse {
+    TouchingRangeResponse {
         status: "ready",
         addr: q.addr,
         size,
@@ -289,7 +330,7 @@ pub async fn idxs_touching_range_handler(
         readers_before,
         readers_after,
         readers_total: readers.len(),
-    })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,8 +368,30 @@ pub async fn idxs_touching_addr_handler(
     State(state): State<AppState>,
     Query(q): Query<TouchingAddrQuery>,
 ) -> Json<TouchingAddrResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || idxs_touching_addr_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "idxs touching addr worker failed: {err}");
+                TouchingAddrResponse {
+                    status: "error",
+                    addr: String::new(),
+                    cursor: None,
+                    before: Vec::new(),
+                    after: Vec::new(),
+                    total_before: 0,
+                    total_after: 0,
+                }
+            }),
+    )
+}
+
+fn idxs_touching_addr_response(
+    inner: &crate::state::AppStateInner,
+    q: TouchingAddrQuery,
+) -> TouchingAddrResponse {
     let addr = parse_int(&q.addr).unwrap_or(0);
-    let inner = &state.inner;
     let mut entries: Vec<TouchingAddrEntry> = inner
         .index
         .mem_writes
@@ -356,7 +419,7 @@ pub async fn idxs_touching_addr_handler(
     let mut before = entries[before_start..cut].to_vec();
     before.reverse();
     let after = entries[cut..entries.len().min(cut + q.limit)].to_vec();
-    Json(TouchingAddrResponse {
+    TouchingAddrResponse {
         status: "ready",
         addr: q.addr,
         cursor: Some(q.cursor),
@@ -364,7 +427,7 @@ pub async fn idxs_touching_addr_handler(
         after,
         total_before: cut,
         total_after: entries.len().saturating_sub(cut),
-    })
+    }
 }
 
 #[derive(Debug, Deserialize)]
