@@ -203,6 +203,27 @@ export default function App() {
   const [meta] = createResource(fetchMeta);
   const helpTopic = createMemo(() => helpState()?.topic ?? null);
   let cmdInput: HTMLInputElement | undefined;
+  let hashJumpSeq = 0;
+  let hashJumpAbort: AbortController | undefined;
+  let searchSeq = 0;
+  let searchAbort: AbortController | undefined;
+
+  function cancelHashJump() {
+    hashJumpSeq += 1;
+    hashJumpAbort?.abort();
+    hashJumpAbort = undefined;
+  }
+
+  function cancelSearch() {
+    searchSeq += 1;
+    searchAbort?.abort();
+    searchAbort = undefined;
+  }
+
+  onCleanup(() => {
+    cancelHashJump();
+    cancelSearch();
+  });
 
   function totalRecords(): number {
     return meta()?.records ?? 0;
@@ -230,9 +251,14 @@ export default function App() {
   async function jumpToHashPc(hash = window.location.hash) {
     const pc = pcFromHash(hash);
     if (!pc) return;
+    cancelHashJump();
+    const seq = ++hashJumpSeq;
+    const abort = new AbortController();
+    hashJumpAbort = abort;
     setCmdStatus(`resolving ${pc}...`);
     try {
-      const r = await fetchSearchPc(pc, 200);
+      const r = await fetchSearchPc(pc, 200, abort.signal);
+      if (seq !== hashJumpSeq || abort.signal.aborted) return;
       if (!r.idxs.length) {
         setCmdStatus(`${pc}: not executed in trace`);
         return;
@@ -242,7 +268,11 @@ export default function App() {
       jumpToIdx(nearest);
       setCmdStatus(`${pc}: jumped to #${nearest}`);
     } catch (err) {
+      if (abort.signal.aborted) return;
+      if (seq !== hashJumpSeq) return;
       setCmdStatus(`hash jump ${pc} failed: ${String(err)}`);
+    } finally {
+      if (hashJumpAbort === abort) hashJumpAbort = undefined;
     }
   }
 
@@ -383,9 +413,14 @@ export default function App() {
   async function runSearch(pattern: string) {
     const q = pattern.trim();
     if (!q) return;
+    cancelSearch();
+    const seq = ++searchSeq;
+    const abort = new AbortController();
+    searchAbort = abort;
     setCmdStatus(`searching ${q}...`);
     try {
-      const r = await fetchSearch(q, 2000);
+      const r = await fetchSearch(q, 2000, abort.signal);
+      if (seq !== searchSeq || abort.signal.aborted) return;
       const hits = r.hits.map((hit) => hit.idx).sort((a, b) => a - b);
       setSearchPattern(q);
       setSearchHits(hits);
@@ -400,7 +435,11 @@ export default function App() {
       jumpToIdx(hits[pos]);
       setCmdStatus(`${q}: ${pos + 1}/${hits.length} hits`);
     } catch (err) {
+      if (abort.signal.aborted) return;
+      if (seq !== searchSeq) return;
       setCmdStatus(`search failed: ${String(err)}`);
+    } finally {
+      if (searchAbort === abort) searchAbort = undefined;
     }
   }
 

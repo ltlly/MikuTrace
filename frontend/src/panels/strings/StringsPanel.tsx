@@ -20,6 +20,8 @@ export default function StringsPanel(props: StringsPanelProps) {
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
   let singleClickTimer: number | undefined;
+  let jumpSeq = 0;
+  let jumpAbort: AbortController | undefined;
   const source = createMemo<StringsSource | undefined>((prev) => {
     if (!props.active) return undefined;
     const next = { minLen: minLen(), q: query() };
@@ -34,12 +36,26 @@ export default function StringsPanel(props: StringsPanelProps) {
     }
   }
 
-  onCleanup(() => clearSingleClickTimer());
+  function cancelJump() {
+    jumpSeq += 1;
+    jumpAbort?.abort();
+    jumpAbort = undefined;
+  }
+
+  onCleanup(() => {
+    clearSingleClickTimer();
+    cancelJump();
+  });
 
   async function jumpString(s: StringEntry) {
+    cancelJump();
+    const seq = ++jumpSeq;
+    const abort = new AbortController();
+    jumpAbort = abort;
     setJumpErr("");
     try {
-      const hits = await fetchIdxsTouchingRange(s.addr, Math.max(1, s.len), 0, 80);
+      const hits = await fetchIdxsTouchingRange(s.addr, Math.max(1, s.len), 0, 80, abort.signal);
+      if (seq !== jumpSeq || abort.signal.aborted) return;
       const target =
         hits.writers_after[0] ??
         hits.readers_after[0] ??
@@ -51,7 +67,11 @@ export default function StringsPanel(props: StringsPanelProps) {
       }
       props.onSelect(target);
     } catch (err) {
+      if (abort.signal.aborted) return;
+      if (seq !== jumpSeq) return;
       setJumpErr(String(err));
+    } finally {
+      if (jumpAbort === abort) jumpAbort = undefined;
     }
   }
 
@@ -65,6 +85,7 @@ export default function StringsPanel(props: StringsPanelProps) {
 
   function showProvenance(s: StringEntry) {
     clearSingleClickTimer();
+    cancelJump();
     setJumpErr("");
     props.onShowProvenance({
       addr: s.addr,

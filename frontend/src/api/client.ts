@@ -238,29 +238,41 @@ export async function fetchIdxsForPc(
   return (await r.json()) as IdxsForPcResponse;
 }
 
-export async function fetchSearch(pattern: string, maxResults = 200): Promise<SearchResponse> {
+export async function fetchSearch(
+  pattern: string,
+  maxResults = 200,
+  signal?: AbortSignal,
+): Promise<SearchResponse> {
   const params = new URLSearchParams({
     pattern,
     max_results: String(maxResults),
   });
-  const r = await fx(`/api/search?${params}`);
+  const r = await fx(`/api/search?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/search ${r.status}: ${await r.text()}`);
   return (await r.json()) as SearchResponse;
 }
 
-export async function fetchSearchPc(pc: string, limit = 50): Promise<SearchPcResponse> {
+export async function fetchSearchPc(
+  pc: string,
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<SearchPcResponse> {
   const params = new URLSearchParams({
     pc,
     limit: String(limit),
   });
-  const r = await fx(`/api/search-pc?${params}`);
+  const r = await fx(`/api/search-pc?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/search-pc ${r.status}: ${await r.text()}`);
   return (await r.json()) as SearchPcResponse;
 }
 
-export async function fetchRegValueAt(idx: number, reg: string): Promise<RegValueAtResponse> {
+export async function fetchRegValueAt(
+  idx: number,
+  reg: string,
+  signal?: AbortSignal,
+): Promise<RegValueAtResponse> {
   const params = new URLSearchParams({ idx: String(idx), reg });
-  const r = await fx(`/api/reg-value-at?${params}`);
+  const r = await fx(`/api/reg-value-at?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/reg-value-at ${r.status}: ${await r.text()}`);
   return (await r.json()) as RegValueAtResponse;
 }

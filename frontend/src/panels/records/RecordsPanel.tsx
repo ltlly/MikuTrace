@@ -42,6 +42,7 @@ interface RecordsPanelProps {
 }
 
 interface RegContext {
+  token: number;
   x: number;
   y: number;
   idx: number;
@@ -119,6 +120,19 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const regValueTitleCache = new Map<string, string>();
   const rowObjectCache = new Map<number, RecordRow>();
   let viewport: HTMLDivElement | undefined;
+  let regContextSeq = 0;
+  let regContextAbort: AbortController | undefined;
+
+  function cancelRegContext() {
+    regContextSeq += 1;
+    regContextAbort?.abort();
+    regContextAbort = undefined;
+  }
+
+  function closeRegContext() {
+    cancelRegContext();
+    setRegContext(null);
+  }
 
   const totalRecords = createMemo(() => meta()?.records ?? 0);
   const fullHeight = createMemo(() => totalRecords() * ROW_HEIGHT);
@@ -215,10 +229,10 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     const closeOnPointer = (e: PointerEvent) => {
       const target = e.target as Element | null;
       if (target?.closest(".reg-context-menu") || target?.closest(".op-reg")) return;
-      setRegContext(null);
+      closeRegContext();
     };
     const closeOnKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setRegContext(null);
+      if (e.key === "Escape") closeRegContext();
     };
     document.addEventListener("pointerdown", closeOnPointer);
     document.addEventListener("keydown", closeOnKey);
@@ -227,6 +241,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       document.removeEventListener("keydown", closeOnKey);
     });
   });
+  onCleanup(() => cancelRegContext());
 
   createEffect(() => {
     const selected = props.selectedIdx;
@@ -305,9 +320,14 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   async function openRegContext(e: MouseEvent, row: RecordRow, reg: string) {
     e.preventDefault();
     e.stopPropagation();
+    cancelRegContext();
+    const token = ++regContextSeq;
+    const abort = new AbortController();
+    regContextAbort = abort;
     props.onSelect(row.idx);
     props.onSelectReg(reg);
     const base: RegContext = {
+      token,
       x: Math.min(e.clientX, window.innerWidth - 300),
       y: Math.min(e.clientY, window.innerHeight - 180),
       idx: row.idx,
@@ -315,21 +335,24 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     };
     setRegContext(base);
     try {
-      const r = await fetchRegValueAt(row.idx, reg);
+      const r = await fetchRegValueAt(row.idx, reg, abort.signal);
       setRegContext((current) =>
-        current?.idx === row.idx && current.reg === reg
+        current?.token === token
           ? { ...current, value: r.value, err: r.error }
           : current,
       );
     } catch (err) {
+      if (abort.signal.aborted) return;
       setRegContext((current) =>
-        current?.idx === row.idx && current.reg === reg ? { ...current, err: String(err) } : current,
+        current?.token === token ? { ...current, err: String(err) } : current,
       );
+    } finally {
+      if (regContextAbort === abort) regContextAbort = undefined;
     }
   }
 
   return (
-    <section class="panel records-panel" onClick={() => setRegContext(null)}>
+    <section class="panel records-panel" onClick={() => closeRegContext()}>
       <h2>Records</h2>
       <Show when={meta.error}>
         <p class="err">meta failed: {String(meta.error)}</p>
@@ -452,7 +475,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   type="button"
                   onClick={() => {
                     props.onSelectReg(ctx().reg);
-                    setRegContext(null);
+                    closeRegContext();
                   }}
                 >
                   use for taint
