@@ -22,6 +22,7 @@ pub mod record;
 pub mod records;
 pub mod reg_value_at;
 pub mod search;
+pub mod search_pc;
 pub mod so_stats;
 pub mod strings;
 pub mod timeline_diff;
@@ -38,6 +39,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/search", get(search::search_handler))
+        .route("/api/search-pc", get(search_pc::search_pc_handler))
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",

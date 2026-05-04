@@ -69,6 +69,13 @@ enum Cmd {
         #[arg(long, default_value_t = 30)]
         limit: usize,
     },
+    /// GET /api/search-pc.
+    SearchPc {
+        trace_dir: PathBuf,
+        pc: String,
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// GET /api/search.
     Search {
         trace_dir: PathBuf,
@@ -340,6 +347,14 @@ async fn main() -> anyhow::Result<()> {
                 ("limit", limit.to_string()),
             ];
             route_get_json(trace_dir, route_path("/api/idxs-for-pc", &params)).await
+        }
+        Some(Cmd::SearchPc {
+            trace_dir,
+            pc,
+            limit,
+        }) => {
+            let params = vec![("pc", pc), ("limit", limit.to_string())];
+            route_get_json(trace_dir, route_path("/api/search-pc", &params)).await
         }
         Some(Cmd::Search {
             trace_dir,

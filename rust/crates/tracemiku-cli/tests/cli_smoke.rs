@@ -98,6 +98,17 @@ fn inspect_wrappers_use_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
 
     let v = run_json(&[
+        "search-pc".into(),
+        cd.display().to_string(),
+        "0x100000".into(),
+        "--limit".into(),
+        "1".into(),
+    ]);
+    assert_eq!(v["pc"], "0x100000");
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["idxs"], serde_json::json!([0]));
+
+    let v = run_json(&[
         "idxs-for-pc".into(),
         cd.display().to_string(),
         "0x100000".into(),
