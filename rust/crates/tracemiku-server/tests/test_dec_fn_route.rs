@@ -34,6 +34,45 @@ fn synth_root_only() -> tempfile::TempDir {
     dir
 }
 
+/// 3-record fixture with an in-trace branch:
+///   idx 0 @ 0x100000  nop          (0xd503201f)
+///   idx 1 @ 0x100004  bl  0x100200 (0x9400007f → +0x1FC)
+///   idx 2 @ 0x100200  nop          (0xd503201f)
+///
+/// CFG should split into 2 blocks (B0=0x100000, B1=0x100200) with at
+/// least one edge from B0 → B1, so BlockIR.exits is non-empty and the
+/// rendered markdown contains a `**exits**` section.
+fn synth_with_branch() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid1_3r_1ms");
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * 3];
+    let pcs: [u64; 3] = [0x100000, 0x100004, 0x100200];
+    let insts: [u32; 3] = [0xd503201f, 0x9400007f, 0xd503201f];
+    for i in 0..3usize {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pcs[i].to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&insts[i].to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        r#"{"records":3,"known_offsets":{"0x0":"f_root"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":4096},"method":"f","cmd":42,"fn_addr":"0x100000"}"#,
+    )
+    .unwrap();
+    dir
+}
+
 fn call_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path()
         .join("run")
@@ -129,4 +168,33 @@ async fn dec_fn_returns_404_for_unsupported_source() {
         .unwrap();
     // sym:* not yet wired — return 404 with explanatory message.
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn dec_fn_markdown_contains_exits_section_when_branches_present() {
+    // M3-ι Task 2 — verify per-block `**exits**` section is wired into
+    // the markdown rendered by /api/dec/fn/{id}. Use ?tier=all so the
+    // tier filter doesn't drop a block before exits can render.
+    let dir = synth_with_branch();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/trace:F0?tier=all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let md = v["markdown"].as_str().unwrap();
+    assert!(
+        md.contains("**exits**"),
+        "markdown should carry an exits section when branches are present:\n{md}"
+    );
 }

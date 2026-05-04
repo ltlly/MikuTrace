@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::calltree::{build_call_tree, CallNode};
 use crate::cfg::CFG;
-use crate::decompiler::ir::{BlockIR, FuncIR, TopIR};
+use crate::decompiler::ir::{BlockIR, EdgeIR, FuncIR, TopIR};
 use crate::disasm::decode;
 use crate::symbols::SymbolMap;
 use crate::trace::{Trace, TraceMeta};
@@ -50,18 +50,23 @@ fn build_first_idx_map(trace: &Trace) -> HashMap<u64, usize> {
 }
 
 /// Build one BlockIR with id/pc/end_pc/insns/exec_count, plus
-/// asm + samples (M3-η Task 1).
+/// asm + samples (M3-η Task 1) and exits (M3-ι Task 2).
 ///
 /// `samples`: x0..x3 + sp at the first record where `block.start_pc` fires.
 /// `asm`: per-PC decoded `"  {pc:#x}: {mnem} {op_str}"` lines for each
 /// in-block PC found in `first_idx`.
+/// `exits`: outgoing CFG edges from this block, mapped through `block_ids`
+/// so referenced dst blocks use the same B-id namespace; unknown dsts
+/// fall back to `ext:{pc:#x}`. Sorted by dst pc ascending.
 ///
-/// `exits` and `tier` still use defaults — populated by later M3-η/θ tasks.
+/// `tier` still uses defaults — populated by `classify_blocks_by_tier`.
 fn make_block_ir(
     block: &crate::cfg::Block,
     id: String,
     trace: &Trace,
     first_idx: &HashMap<u64, usize>,
+    cfg: &CFG,
+    block_ids: &HashMap<u64, String>,
 ) -> BlockIR {
     let span = block.end_pc.saturating_sub(block.start_pc);
     let insns_count = (span / 4 + 1) as u32;
@@ -98,12 +103,32 @@ fn make_block_ir(
     }
     let asm = asm_lines.join("\n");
 
+    // exits: outgoing CFG edges of this block, keyed by stable block-id.
+    // M3-ι Task 2 — wires kind+count from cfg::EdgeMeta into BlockIR.exits.
+    let exits: Vec<EdgeIR> = cfg
+        .edges_from(block.start_pc)
+        .into_iter()
+        .map(|(dst_pc, meta)| {
+            let dst_id = block_ids
+                .get(&dst_pc)
+                .cloned()
+                .unwrap_or_else(|| format!("ext:{dst_pc:#x}"));
+            EdgeIR {
+                dst: dst_id,
+                kind: meta.kind,
+                taken_count: meta.count,
+                not_taken_count: 0,
+            }
+        })
+        .collect();
+
     BlockIR {
         id,
         pc: block.start_pc,
         end_pc: block.end_pc,
         insns: insns_count,
         exec_count: block.executions,
+        exits,
         samples,
         asm,
         ..Default::default()
@@ -231,7 +256,7 @@ pub fn split_top_k_callees(
                     .get(&pc)
                     .cloned()
                     .unwrap_or_else(|| format!("B?{pc:x}"));
-                Some(make_block_ir(block, id, trace, &first_idx))
+                Some(make_block_ir(block, id, trace, &first_idx, cfg, &block_ids))
             })
             .collect();
 
@@ -316,7 +341,7 @@ fn build_root_only(trace: &Trace, meta: &TraceMeta, sym: &SymbolMap, cfg: &CFG) 
                 .get(&b.start_pc)
                 .cloned()
                 .unwrap_or_else(|| format!("B?{:x}", b.start_pc));
-            make_block_ir(b, id, trace, &first_idx)
+            make_block_ir(b, id, trace, &first_idx, cfg, &block_ids)
         })
         .collect();
 
@@ -647,6 +672,33 @@ mod tests {
                 blk.id,
                 blk.samples
             );
+        }
+    }
+
+    #[test]
+    fn build_trace_ir_block_ir_carries_exits_when_branches_present() {
+        // synth_two_callees has bl/ret instructions → cfg edges → BlockIR.exits
+        // should be populated for at least one block.
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top = build_trace_ir(&t, &meta, &sym, &cfg, 0, 0);
+        let f0 = &top.fns[0];
+        assert!(!f0.blocks.is_empty(), "F0 must have blocks");
+        let any_with_exits = f0.blocks.iter().any(|b| !b.exits.is_empty());
+        assert!(
+            any_with_exits,
+            "at least one block should carry exits when branches are present; got {:?}",
+            f0.blocks
+                .iter()
+                .map(|b| (&b.id, b.exits.len()))
+                .collect::<Vec<_>>()
+        );
+        for blk in &f0.blocks {
+            for e in &blk.exits {
+                assert!(!e.kind.is_empty(), "edge kind must be non-empty: {e:?}");
+                assert!(!e.dst.is_empty(), "edge dst must be non-empty: {e:?}");
+            }
         }
     }
 

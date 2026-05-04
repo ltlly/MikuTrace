@@ -56,6 +56,21 @@ pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
                 out.push_str(&format!("  - {} = {}\n", k, v_str));
             }
         }
+        // exits: outgoing CFG edges (kind + taken_count). Stable order by dst.
+        // M3-ι Task 2 — wires BlockIR.exits into per-block markdown.
+        if !block.exits.is_empty() {
+            out.push_str("- **exits**:\n");
+            let mut exits_sorted: Vec<&crate::decompiler::ir::EdgeIR> = block.exits.iter().collect();
+            exits_sorted.sort_by(|a, b| a.dst.cmp(&b.dst));
+            for e in exits_sorted {
+                let cnt = if e.taken_count > 0 {
+                    format!(" (×{})", e.taken_count)
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!("  - `{}` → **{}**{}\n", e.kind, e.dst, cnt));
+            }
+        }
         if !block.asm.is_empty() {
             out.push_str("\n```asm\n");
             out.push_str(&block.asm);
@@ -109,6 +124,33 @@ mod tests {
         assert!(md.contains("0x1000: nop"), "missing asm content: {md}");
         assert!(md.contains("x0 = 0xdead"), "missing samples x0: {md}");
         assert!(md.contains("sp = 0x7000"), "missing samples sp: {md}");
+    }
+
+    #[test]
+    fn render_func_md_emits_exits_section_when_present() {
+        use crate::decompiler::ir::EdgeIR;
+        let f = FuncIR {
+            id: "F0".to_string(),
+            name: "f".to_string(),
+            blocks: vec![BlockIR {
+                id: "B0".to_string(),
+                pc: 0x1000,
+                tier: "hot".to_string(),
+                exits: vec![EdgeIR {
+                    dst: "B1".to_string(),
+                    kind: "b.eq".to_string(),
+                    taken_count: 5,
+                    not_taken_count: 0,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let md = render_func_md(&f, "hot");
+        assert!(md.contains("**exits**"), "missing exits section: {md}");
+        assert!(md.contains("`b.eq`"), "missing edge kind: {md}");
+        assert!(md.contains("**B1**"), "missing dst id: {md}");
+        assert!(md.contains("(×5)"), "missing taken_count annotation: {md}");
     }
 
     #[test]
