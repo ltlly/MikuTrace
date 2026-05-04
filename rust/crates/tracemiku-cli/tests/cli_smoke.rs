@@ -338,6 +338,28 @@ fn hash_finalize_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn hash_input_search_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "hash-input-search".into(),
+        cd.display().to_string(),
+        "--target-bytes".into(),
+        "aaf4c61d".into(),
+        "--inputs".into(),
+        "hello,world".into(),
+        "--algos".into(),
+        "sha1".into(),
+        "--combos".into(),
+        "plain".into(),
+        "--prefix-bytes".into(),
+        "4".into(),
+    ]);
+    assert_eq!(v["target_prefix"], "aaf4c61d");
+    assert_eq!(v["found_count"], 1);
+    assert_eq!(v["found"][0]["input"], "hello");
+}
+
+#[test]
 fn auto_phase_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&["auto-phase-detect".into(), cd.display().to_string()]);

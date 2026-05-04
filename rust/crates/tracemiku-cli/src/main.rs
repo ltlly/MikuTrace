@@ -324,6 +324,24 @@ enum Cmd {
         #[arg(long, default_value_t = 16)]
         min_size: u64,
     },
+    /// POST /api/hash-input-search.
+    HashInputSearch {
+        trace_dir: PathBuf,
+        #[arg(long = "target-bytes")]
+        target_bytes: String,
+        #[arg(long)]
+        inputs: String,
+        #[arg(long, default_value = "")]
+        keys: String,
+        #[arg(long, default_value = "sha1,md5,sha256,hmac-sha1,hmac-md5,hmac-sha256")]
+        algos: String,
+        #[arg(long, default_value = "plain,prefix_key,suffix_key,key_prefix_input")]
+        combos: String,
+        #[arg(long, default_value_t = 8)]
+        prefix_bytes: usize,
+        #[arg(long, default_value_t = false)]
+        search_in_mem: bool,
+    },
     /// GET /api/auto-phase-detect.
     AutoPhaseDetect {
         trace_dir: PathBuf,
@@ -704,6 +722,27 @@ async fn main() -> anyhow::Result<()> {
             ];
             route_get_json(trace_dir, route_path("/api/hash-finalize-detect", &params)).await
         }
+        Some(Cmd::HashInputSearch {
+            trace_dir,
+            target_bytes,
+            inputs,
+            keys,
+            algos,
+            combos,
+            prefix_bytes,
+            search_in_mem,
+        }) => {
+            let body = serde_json::json!({
+                "target_bytes": target_bytes,
+                "inputs": split_csv(&inputs),
+                "keys": split_csv_allow_empty(&keys),
+                "algos": split_csv(&algos),
+                "combos": split_csv(&combos),
+                "prefix_bytes": prefix_bytes,
+                "search_in_mem": search_in_mem,
+            });
+            route_post_json(trace_dir, "/api/hash-input-search".to_string(), body).await
+        }
         Some(Cmd::AutoPhaseDetect {
             trace_dir,
             detect_byte_streams,
@@ -839,6 +878,50 @@ async fn route_get_json(trace_dir: PathBuf, path: String) -> anyhow::Result<()> 
     }
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     print_pretty(&value)
+}
+
+async fn route_post_json(
+    trace_dir: PathBuf,
+    path: String,
+    body: serde_json::Value,
+) -> anyhow::Result<()> {
+    let app = tracemiku_server::build_router(trace_dir)?;
+    let resp = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(&path)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body)?))?,
+        )
+        .await?;
+    let status = resp.status();
+    let body = resp.into_body().collect().await?.to_bytes();
+    if !status.is_success() {
+        bail!(
+            "{} returned {}: {}",
+            path,
+            status,
+            String::from_utf8_lossy(&body)
+        );
+    }
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    print_pretty(&value)
+}
+
+fn split_csv(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn split_csv_allow_empty(s: &str) -> Vec<String> {
+    if s.is_empty() {
+        return vec![String::new()];
+    }
+    split_csv(s)
 }
 
 fn cmd_list(path: Option<PathBuf>, dir: PathBuf, json: bool) -> anyhow::Result<()> {

@@ -28,6 +28,11 @@ reqwest.workspace = true
 clap.workspace = true
 regex.workspace = true
 petgraph.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+md-5.workspace = true
+hmac.workspace = true
+crc32fast.workspace = true
 tracemiku-core.workspace = true
 
 [dev-dependencies]

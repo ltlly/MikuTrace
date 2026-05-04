@@ -14,6 +14,7 @@ pub mod fork_events;
 pub mod forward_taint;
 pub mod functions;
 pub mod hash_finalize;
+pub mod hash_input_search;
 pub mod idxs_for_block;
 pub mod idxs_for_pc;
 pub mod jni_calls;
@@ -54,6 +55,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/hash-finalize-detect",
             get(hash_finalize::hash_finalize_detect_handler),
+        )
+        .route(
+            "/api/hash-input-search",
+            post(hash_input_search::hash_input_search_handler),
         )
         .route(
             "/api/auto-phase-detect",
