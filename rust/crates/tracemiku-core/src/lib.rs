@@ -16,6 +16,7 @@ pub mod disasm;
 pub mod function_index;
 pub mod index;
 pub mod memshadow;
+pub mod ollvmdet;
 pub mod prelude;
 pub mod symbols;
 pub mod taint;
