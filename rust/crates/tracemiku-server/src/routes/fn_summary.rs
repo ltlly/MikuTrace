@@ -63,7 +63,24 @@ pub async fn fn_summary_handler(
     State(state): State<AppState>,
     Query(q): Query<FnSummaryQuery>,
 ) -> Json<FnSummaryResponse> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || fn_summary_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "fn summary worker failed: {err}");
+                FnSummaryResponse::NotFound {
+                    status: "worker-failed",
+                    fn_name: String::new(),
+                }
+            }),
+    )
+}
+
+fn fn_summary_response(
+    inner: &crate::state::AppStateInner,
+    q: FnSummaryQuery,
+) -> FnSummaryResponse {
     let base = primary_base(&inner.meta);
     let mut blocks = inner
         .cfg
@@ -78,26 +95,20 @@ pub async fn fn_summary_handler(
         })
         .collect::<Vec<_>>();
     if blocks.is_empty() {
-        return Json(FnSummaryResponse::NotFound {
+        return FnSummaryResponse::NotFound {
             status: "not-found",
             fn_name: q.fn_name,
-        });
+        };
     }
 
     blocks.sort_by_key(|block| block.start_pc);
     let entry_pc = blocks[0].start_pc;
     let total_executions = blocks.iter().map(|block| block.executions).sum();
-    let mut entry_idxs = Vec::new();
-    let mut entry_idxs_total = 0usize;
-    for i in 0..inner.trace.len() {
-        if inner.trace.pc(i) != entry_pc {
-            continue;
-        }
-        entry_idxs_total += 1;
-        if entry_idxs.len() < 50 {
-            entry_idxs.push(i);
-        }
-    }
+    let entry_idx_src = inner.index.pc_to_idxs.get(&entry_pc).map(Vec::as_slice);
+    let entry_idxs_total = entry_idx_src.map_or(0, <[usize]>::len);
+    let entry_idxs = entry_idx_src
+        .map(|idxs| idxs.iter().take(50).copied().collect())
+        .unwrap_or_default();
 
     let mut hot = blocks.clone();
     hot.sort_by(|a, b| {
@@ -157,7 +168,7 @@ pub async fn fn_summary_handler(
         })
         .collect();
 
-    Json(FnSummaryResponse::Ready {
+    FnSummaryResponse::Ready {
         status: "ready",
         fn_name: q.fn_name,
         pc: format!("{entry_pc:#x}"),
@@ -168,7 +179,7 @@ pub async fn fn_summary_handler(
         entry_idxs_total,
         hot_blocks,
         callees,
-    })
+    }
 }
 
 fn primary_base(meta: &TraceMeta) -> Option<u64> {

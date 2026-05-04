@@ -41,7 +41,24 @@ pub async fn so_stats_handler(
     State(state): State<AppState>,
     Query(q): Query<SoStatsQuery>,
 ) -> Json<SoStatsResponse> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || so_stats_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "so stats worker failed: {err}");
+                SoStatsResponse {
+                    records: 0,
+                    modules_total: 0,
+                    unknown_records: 0,
+                    unknown_percent: 0.0,
+                    modules: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn so_stats_response(inner: &crate::state::AppStateInner, q: SoStatsQuery) -> SoStatsResponse {
     let total = inner.trace.len();
     let mut counts = vec![0usize; inner.meta.modules.len()];
     let mut unknown_records = 0usize;
@@ -58,16 +75,16 @@ pub async fn so_stats_handler(
         })
         .collect();
 
-    for i in 0..total {
-        let pc = inner.trace.record(i).pc;
+    for (&pc, idxs) in &inner.index.pc_to_idxs {
+        let records = idxs.len();
         if let Some((idx, _)) = ranges
             .iter()
             .enumerate()
             .find(|(_, (base, end))| pc >= *base && pc < *end)
         {
-            counts[idx] += 1;
+            counts[idx] += records;
         } else {
-            unknown_records += 1;
+            unknown_records += records;
         }
     }
 
@@ -92,13 +109,13 @@ pub async fn so_stats_handler(
         modules.truncate(q.top);
     }
 
-    Json(SoStatsResponse {
+    SoStatsResponse {
         records: total,
         modules_total: inner.meta.modules.len(),
         unknown_records,
         unknown_percent: percent(unknown_records, total),
         modules,
-    })
+    }
 }
 
 fn percent(part: usize, total: usize) -> f64 {
