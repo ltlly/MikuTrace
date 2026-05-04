@@ -435,7 +435,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `llil/pass_var_unify.py` | `tracemiku-core::llil::pass_var_unify` | 🔜 M5 | |
 | `llil/pass_restructure.py` | `tracemiku-core::llil::pass_restructure` | 🔜 M5 | CFG → if/while/for |
 | `llil/pass_uidf.py` | `tracemiku-core::llil::pass_uidf` | 🔜 M5 | trace-truth value injection |
-| `llil/render.py` (HLIL pseudocode output) | `tracemiku-core::llil::render` | 🔜 M5 | C-pseudo formatter |
+| `llil/render.py` (HLIL pseudocode output) | `tracemiku-core::llil::render` | ✅ M5-δ | C-like formatter for LLIL statements/expressions |
 
 ### 13.4 CLI subcommands (`python -m viewer <cmd>` → `tracemiku-cli <cmd>`)
 
@@ -538,7 +538,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/dec/fn/{id}` | ✅ M3-ι2c | trace:* + bare F0 + sym:* + legacy cfg:* supported via render_func_md (hot blocks full + warm stubs; asm/samples/exits). `bn:*` remains gated on Rust BN sidecar/backend (M6). |
 | `/api/dec/llm-call` | ✅ M3-ι2d | trace:* / bare F0 / sym:* / cfg:* supported; calls claude/deepseek/qwen/mimo via reqwest; success-only cache; `bn:*` remains M6-gated |
 | `/api/dec/models` | ✅ M3-ι2d | lists model aliases and configured server-side env keys |
-| `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |
+| `/api/llil/render` | ✅ M5-δ | POST fn_id/max_records/pass toggles → LLIL pseudocode |
+| `/api/llil/llm` | 🔜 M5 | LLIL pipeline prompt |
 | `/api/hlil-for-pc`, `/api/hlil-for-fn` | 🔜 M6 | BN sidecar |
 | `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | 🔜 M6 | BN sidecar |
 | `/api/bg-status` | ❌ | Replaced by `/ws/jobs` WebSocket (D6) |
