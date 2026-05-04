@@ -1,3 +1,4 @@
+pub mod asm_tokens;
 pub mod auto_phase;
 pub mod backward_taint;
 pub mod call_tree;
@@ -72,6 +73,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobj-history", get(jobj_history::jobj_history_handler))
         .route("/api/jni-strings", get(jni_strings::jni_strings_handler))
         .route("/api/field-at", get(field_at::field_at_handler))
+        .route(
+            "/api/asm-tokens-for-pcs",
+            get(asm_tokens::asm_tokens_handler),
+        )
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",
