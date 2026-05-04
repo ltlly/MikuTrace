@@ -539,7 +539,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/dec/llm-call` | ✅ M3-ι2d | trace:* / bare F0 / sym:* / cfg:* supported; calls claude/deepseek/qwen/mimo via reqwest; success-only cache; `bn:*` remains M6-gated |
 | `/api/dec/models` | ✅ M3-ι2d | lists model aliases and configured server-side env keys |
 | `/api/llil/render` | ✅ M5-δ | POST fn_id/max_records/pass toggles → LLIL pseudocode |
-| `/api/llil/llm` | 🔜 M5 | LLIL pipeline prompt |
+| `/api/llil/llm` | ✅ M5-η | POST fn_id/model/max_records → LLIL prompt → configured LLM adapter |
 | `/api/hlil-for-pc`, `/api/hlil-for-fn` | 🔜 M6 | BN sidecar |
 | `/api/bn-cfg-svg-for-pc`, `/api/bn-cfg-for-pc` | 🔜 M6 | BN sidecar |
 | `/api/bg-status` | ❌ | Replaced by `/ws/jobs` WebSocket (D6) |
