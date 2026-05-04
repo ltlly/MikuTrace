@@ -486,7 +486,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/meta` | ✅ M1 | first end-to-end milestone — landed 2026-05-03 |
 | `/api/records?start=&count=` | ✅ M2-β | symbol-dependent fields (func/off/annotation/exec_count) emitted null until M2-γ |
 | `/api/record/{idx}` | ✅ M2-β | full regs object; prev_regs + regs_annotated deferred to M2-γ |
-| `/api/so-stats` | 🔜 M3 | |
+| `/api/so-stats` | ✅ M3-ν | per-module record counts + unknown PCs |
 | `/api/cfg?fn=` | ✅ M2-δ | blocks + edges; ?fn= filter via SymbolMap |
 | `/api/cfg-svg` | ✅ M3-κ | Graphviz dot subprocess + cached SVG + Solid Graph panel |
 | `/api/block?pc=` | 🔜 M3 | |
@@ -497,7 +497,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/idxs-for-block` | ✅ M2-δ | linear pc-scan in [start_pc, end_pc]; M2-ε precomputed map if profiling demands |
 | `/api/idxs-touching-addr` | 🔜 M3 | |
 | `/api/idxs-touching-range` | 🔜 M3 | |
-| `/api/search` | 🔜 M3 | |
+| `/api/search` | ✅ M3-ν | case-insensitive regex over decoded asm |
 | `/api/forward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; parity hard-gate green at 0.90 jaccard |
 | `/api/backward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; backward MEM-chasing + ARM64 writeback handling shipped; parity hard-gate green at 0.81 jaccard |
 | `/api/strings` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
@@ -505,7 +505,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/mem-dump` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
 | `/api/last-write-of-reg` | ✅ M2-ε | linear backward scan from idx; returns {idx, pc, value} |
 | `/api/last-write-of-addr` | 🔜 M3 | needs MemShadow |
-| `/api/reg-value-at`, `/api/reg-at-idx` | 🔜 M3 | |
+| `/api/reg-value-at`, `/api/reg-at-idx` | ✅ M3-ν | cursor register lookup with x/w/fp/lr aliases |
 | `/api/data-chase` | 🔜 M3 | |
 | `/api/find-mem-pattern` | 🔜 M3 | |
 | `/api/mem-writes-in-range`, `/api/mem-flow` | 🔜 M3 | |

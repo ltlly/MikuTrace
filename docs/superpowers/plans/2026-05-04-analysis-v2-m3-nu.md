@@ -19,10 +19,10 @@
 
 ## Tasks
 
-- [ ] Add route modules and wire them into `routes::router`.
-- [ ] Add focused server tests with synthetic traces.
-- [ ] Run server build/tests/clippy.
-- [ ] Mark spec rows complete while leaving unrelated rows untouched.
+- [x] Add route modules and wire them into `routes::router`.
+- [x] Add focused server tests with synthetic traces.
+- [x] Run server build/tests/clippy.
+- [x] Mark spec rows complete while leaving unrelated rows untouched.
 
 **Verify:**
 
