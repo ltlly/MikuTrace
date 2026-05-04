@@ -563,7 +563,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Graph (CFG) | right | ✅ M3-κ | SVG render via `/api/cfg-svg` |
 | Registers | right | ✅ M4-α | selected-record register table |
 | HLIL | right | 🔜 M6 | needs BN sidecar |
-| Decompile | right | ✅ M3-ι2d (raw) / ✅ M4-γ / M5 (LLIL) | TraceIR summary + function markdown viewer + model/lang/tier LLM-call controls |
+| Decompile | right | ✅ M3-ι2d (raw) / ✅ M4-γ / ✅ M5-ε (LLIL render) | TraceIR summary + function markdown viewer + model/lang/tier LLM-call controls + LLIL pseudocode render |
 | Memory | bottom | ✅ M4-α / ✅ M4-β | MemShadow hex dump + selected-record register shortcuts + `/api/mem-diff` view |
 | Call Tree (bottom view) | bottom | ⏸ | Duplicate of left-panel Call Tree; consolidate to one |
 | Navigation | bottom | ⏸ | Lightweight nav widget; rebuild post-cutover |

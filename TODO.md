@@ -118,7 +118,8 @@
 - M5-β: Rust LLIL block-local SSA + AAPCS64 call kill ✅ 2026-05-04
 - M5-γ: Rust LLIL constfold + iterative DCE passes ✅ 2026-05-04
 - M5-δ: Rust LLIL C-like renderer + `/api/llil/render` ✅ 2026-05-04
-- M5 (next): LLIL flag-elim / `/api/llil/llm` / frontend LLIL view
+- M5-ε: frontend LLIL render controls in Decompile panel ✅ 2026-05-04
+- M5 (next): LLIL flag-elim / `/api/llil/llm`
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
