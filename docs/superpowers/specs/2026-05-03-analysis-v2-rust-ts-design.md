@@ -408,7 +408,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | 🔜 M3 | window-based scan |
 | `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | ✅ M3-ι2b | 1:1 port; ollvm_detect_vm + OllvmFinding. Heuristic scoring 0.4+0.3+0.2+0.1 (parity with Python). 3 unit tests. |
 | `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
-| `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | 🔜 M3 | clap-based dispatcher |
+| `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | ✅ M3-μ prep | clap dispatcher now has REST-backed wrappers for shipped trace-only endpoints plus `list`/`info`; destructive legacy replacement remains M7 sign-off |
 | `__init__.py` (Python SDK re-exports) | n/a | ❌ | M7 deletes; PyO3 binding only if future need |
 
 ### 13.3 viewer/decompiler/ modules
@@ -441,11 +441,14 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 
 | Subcommand | Status | Note |
 |---|---|---|
-| `stats` | 🔜 M3 | trace metadata JSON |
-| `records` | 🔜 M3 | window dump |
+| `stats` | ✅ M2-α | trace metadata JSON |
+| `records`, `record` | ✅ M3-μ | REST-backed wrappers for `/api/records` and `/api/record/{idx}` |
+| `functions`, `cfg`, `cfg-svg`, `call-tree` | ✅ M3-μ | REST-backed wrappers for shipped server endpoints |
+| `strings`, `mem-dump` | ✅ M3-μ | REST-backed wrappers; MemShadow v3 sidecar load-or-build |
+| `dec-summary`, `dec-fn` | ✅ M3-μ | REST-backed wrappers for TraceIR markdown routes |
 | `search-pc`, `idxs-for-pc` | 🔜 M3 | PC search |
 | `search-asm` | 🔜 M3 | mnemonic substring search |
-| `taint-fwd`, `taint-bwd` | 🔜 M3 | rayon-parallel |
+| `taint-fwd`, `taint-bwd` | ✅ M3-μ | REST-backed wrappers for M3-γ taint endpoints |
 | `data-chase` | 🔜 M3 | follow data flow |
 | `so-stats` | 🔜 M3 | per-SO record counts |
 | `last-write-of-addr` | 🔜 M3 | |
@@ -461,7 +464,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `hash-finalize-detect` | 🔜 M3 | |
 | `auto-phase-detect` | 🔜 M3 | |
 | `jni-calls`, `jobj-history`, `jni-strings` | 🔜 M3 | reads jni_hooks.jsonl |
-| `mem-dump` | 🔜 M3 | |
+| `mem-dump` | ✅ M3-μ | see `strings`, `mem-dump` row above |
 | `reg-timeline` | 🔜 M3 | |
 | `mem-diff` | 🔜 M3 | |
 | `fn-summary` | 🔜 M3 | |
@@ -471,8 +474,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `dec-bench` (multi-model benchmark) | ⏸ | Defer until base `dec` parity holds |
 | `view` (web subcommand wrapper) | 🔜 M7 | dispatcher to `tracemiku-server` |
 | `query` (ad-hoc Python eval) | ❌ | Replaced by `tracemiku-cli` typed subcommands |
-| `info` (per-call dir summary) | 🔜 M3 | |
-| `list` (list calls in trace dir) | 🔜 M3 | |
+| `info` (per-call dir summary) | ✅ M3-μ | filesystem/Core implementation; no Python viewer import |
+| `list` (list calls in trace dir) | ✅ M3-μ | filesystem implementation; JSON is parity contract |
 
 ### 13.5 REST API endpoints
 
@@ -539,17 +542,17 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 |---|---|---|---|
 | Functions | left | ✅ M2-ε | source-tagged list, filter, select-to-cursor; consumes `/api/functions` |
 | Backtrace | left | 🔜 M4 | |
-| Call Tree | left | 🔜 M4 | also right-bottom (current dual location collapses to one) |
+| Call Tree | left | ✅ M3-α | Solid panel shipped; also right-bottom duplicate remains deferred |
 | Forks | left | 🔜 M4 | |
-| Strings | left | 🔜 M4 | |
-| Taint | left | 🔜 M4 | |
+| Strings | left | ✅ M2-ζ | Solid panel shipped |
+| Taint | left | ✅ M3-γ | Solid toggles for through_mem / data_only / cross_fn_call |
 | Cross Ref (xref) | left | 🔜 M4 | |
 | SO Filter | left | ⏸ | Multi-SO trace filter; rare path |
 | Settings | left | 🔜 M4 | |
-| Graph (CFG) | right | 🔜 M4 | SVG render |
+| Graph (CFG) | right | ✅ M3-κ | SVG render via `/api/cfg-svg` |
 | Registers | right | 🔜 M4 | with smart deref |
 | HLIL | right | 🔜 M6 | needs BN sidecar |
-| Decompile | right | 🔜 M4 (raw) / M5 (LLIL) | TraceIR + LLM in M4; LLIL pipeline in M5 |
+| Decompile | right | ✅ M3-ι2d (raw) / M5 (LLIL) | TraceIR summary + fn markdown + LLM-call API; richer frontend UX remains M4 |
 | Memory | bottom | 🔜 M4 | hex dump + diff |
 | Call Tree (bottom view) | bottom | ⏸ | Duplicate of left-panel Call Tree; consolidate to one |
 | Navigation | bottom | ⏸ | Lightweight nav widget; rebuild post-cutover |
