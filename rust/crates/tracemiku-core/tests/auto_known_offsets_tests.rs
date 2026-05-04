@@ -171,5 +171,13 @@ fn auto_naming_convention() {
     for name in auto.values() {
         assert!(!name.is_empty());
         assert!(!name.contains(' '), "name has space: {name:?}");
+        // M3-α parity pin: must match Python's IDA/Hex-Rays sub_<hex>
+        // convention (viewer/symbols.py:241,243). Caught at M3-α via
+        // scripts/m3_alpha_parity.py jaccard=0.00 — drift would be
+        // invisible to existing unit tests without this assertion.
+        assert!(
+            name.starts_with("sub_"),
+            "auto-discovered name must use sub_<hex> convention, got {name:?}"
+        );
     }
 }

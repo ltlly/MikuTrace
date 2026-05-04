@@ -108,6 +108,12 @@ export interface MemDumpResponse {
 
 export interface CallNode {
   fn?: string;          // omitted from wire when null/unknown
+  /**
+   * Static entry PC of callee (0 for root). Wire type is JSON number;
+   * safe for ARM64 user-space PCs (under 2^48). If kernel-space PCs or
+   * unusual ASLR slides ever push this past 2^53, switch both the Rust
+   * serializer and this field to hex string (RecordRow.pc already does).
+   */
   fn_pc: number;
   enter_idx: number;
   exit_idx: number;
