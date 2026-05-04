@@ -12,7 +12,7 @@
 
 ## Tasks
 
-- [ ] Add `/api/search-pc` route and tests.
-- [ ] Add CLI wrapper and smoke test.
-- [ ] Run server/CLI tests and clippy.
-- [ ] Update TODO/spec status.
+- [x] Add `/api/search-pc` route and tests.
+- [x] Add CLI wrapper and smoke test.
+- [x] Run server/CLI tests and clippy.
+- [x] Update TODO/spec status.

@@ -447,7 +447,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `strings`, `mem-dump` | ✅ M3-μ | REST-backed wrappers; MemShadow v3 sidecar load-or-build |
 | `dec-summary`, `dec-fn` | ✅ M3-μ | REST-backed wrappers for TraceIR markdown routes |
 | `idxs-for-pc` | ✅ M3-ξ | REST-backed wrapper for `/api/idxs-for-pc` |
-| `search-pc` | 🔜 M3 | legacy all-hit PC list shape; use `idxs-for-pc` meanwhile |
+| `search-pc` | ✅ M3-χ | legacy all-hit PC list shape |
 | `search`, `search-asm` | ✅ M3-ξ | REST-backed wrappers for `/api/search` |
 | `taint-fwd`, `taint-bwd` | ✅ M3-μ | REST-backed wrappers for M3-γ taint endpoints |
 | `data-chase` | ✅ M3-τ | single-path backward data chase through reg/load/store |
@@ -500,6 +500,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/idxs-touching-addr` | ✅ M3-π | split read/write touches around cursor |
 | `/api/idxs-touching-range` | ✅ M3-π | overlapping read/write ranges around cursor |
 | `/api/search` | ✅ M3-ν | case-insensitive regex over decoded asm |
+| `/api/search-pc` | ✅ M3-χ | legacy all-hit PC list shape |
 | `/api/forward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; parity hard-gate green at 0.90 jaccard |
 | `/api/backward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; backward MEM-chasing + ARM64 writeback handling shipped; parity hard-gate green at 0.81 jaccard |
 | `/api/strings` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
