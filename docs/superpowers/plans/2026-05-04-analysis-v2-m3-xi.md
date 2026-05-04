@@ -16,7 +16,7 @@
 
 ## Tasks
 
-- [ ] Add CLI subcommands.
-- [ ] Add smoke tests.
-- [ ] Run `cargo test -p tracemiku-cli` and `cargo clippy -p tracemiku-cli --tests`.
-- [ ] Mark CLI rows complete in TODO/spec where covered.
+- [x] Add CLI subcommands.
+- [x] Add smoke tests.
+- [x] Run `cargo test -p tracemiku-cli` and `cargo clippy -p tracemiku-cli --tests`.
+- [x] Mark CLI rows complete in TODO/spec where covered.

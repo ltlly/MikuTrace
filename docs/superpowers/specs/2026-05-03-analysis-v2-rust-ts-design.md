@@ -446,16 +446,17 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `functions`, `cfg`, `cfg-svg`, `call-tree` | ✅ M3-μ | REST-backed wrappers for shipped server endpoints |
 | `strings`, `mem-dump` | ✅ M3-μ | REST-backed wrappers; MemShadow v3 sidecar load-or-build |
 | `dec-summary`, `dec-fn` | ✅ M3-μ | REST-backed wrappers for TraceIR markdown routes |
-| `search-pc`, `idxs-for-pc` | 🔜 M3 | PC search |
-| `search-asm` | 🔜 M3 | mnemonic substring search |
+| `idxs-for-pc` | ✅ M3-ξ | REST-backed wrapper for `/api/idxs-for-pc` |
+| `search-pc` | 🔜 M3 | legacy all-hit PC list shape; use `idxs-for-pc` meanwhile |
+| `search`, `search-asm` | ✅ M3-ξ | REST-backed wrappers for `/api/search` |
 | `taint-fwd`, `taint-bwd` | ✅ M3-μ | REST-backed wrappers for M3-γ taint endpoints |
 | `data-chase` | 🔜 M3 | follow data flow |
-| `so-stats` | 🔜 M3 | per-SO record counts |
+| `so-stats` | ✅ M3-ξ | REST-backed wrapper for `/api/so-stats` |
 | `last-write-of-addr` | 🔜 M3 | |
 | `find-mem-pattern` | 🔜 M3 | |
 | `mem-writes-in-range`, `mem-flow` | 🔜 M3 | |
 | `crypto-scan` | 🔜 M3 | 22 standard primitives |
-| `reg-at-idx` | 🔜 M3 | |
+| `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
 | `call-chain` | 🔜 M3 | |
 | `hash-input-search` | 🔜 M3 | |
 | `diff-traces` | 🔜 M3 | |
