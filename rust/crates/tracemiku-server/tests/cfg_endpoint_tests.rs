@@ -1,11 +1,12 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 static DOT_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -60,7 +61,7 @@ fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
 
 #[tokio::test]
 async fn cfg_svg_returns_ready_and_cache_when_dot_available() {
-    let _guard = dot_env_lock().lock().unwrap();
+    let _guard = dot_env_lock().lock().await;
     std::env::remove_var("TRACEMIKU_DOT");
     let dot_available = std::process::Command::new("dot").arg("-V").output().is_ok();
 
@@ -137,7 +138,7 @@ async fn cfg_svg_unknown_fn_is_empty() {
 
 #[tokio::test]
 async fn cfg_svg_dot_failure_returns_error_json() {
-    let _guard = dot_env_lock().lock().unwrap();
+    let _guard = dot_env_lock().lock().await;
     std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
 
     let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
