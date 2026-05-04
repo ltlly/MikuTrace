@@ -130,20 +130,34 @@ pub fn ollvm_detect_vm_indexed(
         return Vec::new();
     }
 
+    let mut lookback_cache: HashMap<(u64, u32), (bool, bool)> = HashMap::new();
     for idxs in indirect_groups {
         for &i in idxs {
             let lo = i.saturating_sub(4);
             for j in lo..i {
                 let pc_j = trace.pc(j);
                 let inst_j = trace.inst(j);
-                let dj = decode(pc_j, inst_j);
-                let op_str = dj.op_str.to_lowercase();
-                if dj.mnemonic == "ldr" && op_str.contains("lsl #3") {
+                let key = (pc_j, inst_j);
+                let (is_table_load, is_self_update) =
+                    if let Some(flags) = lookback_cache.get(&key).copied() {
+                        flags
+                    } else {
+                        let dj = decode(pc_j, inst_j);
+                        let op_str = dj.op_str.to_lowercase();
+                        let flags = (
+                            dj.mnemonic == "ldr" && op_str.contains("lsl #3"),
+                            op_str.contains('!')
+                                && (dj.mnemonic == "ldrh"
+                                    || dj.mnemonic == "ldrb"
+                                    || dj.mnemonic == "ldr"),
+                        );
+                        lookback_cache.insert(key, flags);
+                        flags
+                    };
+                if is_table_load {
                     table_load_total += 1;
                 }
-                if op_str.contains('!')
-                    && (dj.mnemonic == "ldrh" || dj.mnemonic == "ldrb" || dj.mnemonic == "ldr")
-                {
+                if is_self_update {
                     self_update_total += 1;
                 }
             }

@@ -10,8 +10,8 @@ pub use crate::decompiler::backend::{
     HlilLine, NoneBackend, Token as DecToken, VarType,
 };
 pub use crate::decompiler::builder::{
-    attach_type_anchors, build_symbol_func_ir, build_symbol_func_ir_indexed, build_trace_ir,
-    classify_blocks_by_tier,
+    attach_type_anchors, attach_type_anchors_indexed, build_symbol_func_ir,
+    build_symbol_func_ir_indexed, build_trace_ir, classify_blocks_by_tier,
 };
 pub use crate::decompiler::ir::{
     BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
@@ -21,7 +21,9 @@ pub use crate::decompiler::prompt::{
     SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_DECOMPILE_ZH, SYSTEM_PROMPT_SUMMARY,
 };
 pub use crate::decompiler::render::{render_func_md, render_summary_md};
-pub use crate::decompiler::type_anchor::{find_anchors, load_type_specs, TypeAnchor, TypeSpec};
+pub use crate::decompiler::type_anchor::{
+    find_anchors, find_anchors_indexed, load_type_specs, TypeAnchor, TypeSpec,
+};
 pub use crate::decompiler::vm_candidate::detect_vm_candidates;
 pub use crate::disasm::{decode, normalize_disasm_reg, DecodedInsn};
 pub use crate::function_index::{

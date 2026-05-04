@@ -11,6 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::disasm::decode;
+use crate::index::Index;
 use crate::trace::Trace;
 
 /// One spec entry. Mirrors Python `TypeSpec` dataclass.
@@ -233,6 +234,47 @@ pub fn find_anchors(trace: &Trace, specs: &[TypeSpec]) -> Vec<TypeAnchor> {
     out
 }
 
+/// Indexed variant of [`find_anchors`].
+///
+/// Type anchors are keyed by the callee PC, while the sequential matcher
+/// validates a callsite `i` by checking whether `pc(i + 1)` is a spec callee.
+/// With `Index::pc_to_idxs`, we can start from records whose PC is a candidate
+/// callee and only decode their direct predecessor instead of walking the whole
+/// trace.
+pub fn find_anchors_indexed(trace: &Trace, index: &Index, specs: &[TypeSpec]) -> Vec<TypeAnchor> {
+    if specs.is_empty() || trace.is_empty() {
+        return Vec::new();
+    }
+
+    use std::collections::HashMap;
+    let pc_to_spec: HashMap<u64, &TypeSpec> = specs.iter().map(|s| (s.callee_pc, s)).collect();
+    let mut out = Vec::new();
+    for (&target, &spec) in &pc_to_spec {
+        let Some(callee_idxs) = index.pc_to_idxs.get(&target) else {
+            continue;
+        };
+        for &callee_idx in callee_idxs {
+            if callee_idx == 0 || trace.pc(callee_idx) != target {
+                continue;
+            }
+            let callsite_idx = callee_idx - 1;
+            let pc = trace.pc(callsite_idx);
+            let inst = trace.inst(callsite_idx);
+            let d = decode(pc, inst);
+            if d.mnemonic != "bl" && d.mnemonic != "blr" {
+                continue;
+            }
+            out.push(TypeAnchor {
+                idx: callsite_idx,
+                callee_pc: target,
+                spec: spec.clone(),
+            });
+        }
+    }
+    out.sort_by_key(|a| a.idx);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +368,13 @@ mod tests {
         assert_eq!(anchors[0].idx, 1);
         assert_eq!(anchors[0].callee_pc, 0x2000);
         assert_eq!(anchors[0].spec.name, "Target");
+
+        let index = crate::index::Index::build(&trace);
+        let indexed = find_anchors_indexed(&trace, &index, &specs);
+        assert_eq!(indexed.len(), anchors.len());
+        assert_eq!(indexed[0].idx, anchors[0].idx);
+        assert_eq!(indexed[0].callee_pc, anchors[0].callee_pc);
+        assert_eq!(indexed[0].spec.name, anchors[0].spec.name);
     }
 
     #[test]

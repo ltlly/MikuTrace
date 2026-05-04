@@ -9,11 +9,12 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 
 use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 use crate::cfg::CFG;
 use crate::decompiler::ir::{BlockIR, EdgeIR, FuncIR, TopIR, TypeAnchorIR};
-use crate::decompiler::type_anchor::{find_anchors, load_type_specs};
+use crate::decompiler::type_anchor::{find_anchors, find_anchors_indexed, load_type_specs};
 use crate::disasm::decode;
 use crate::function_index::make_sym_id;
 use crate::index::Index;
@@ -618,6 +619,27 @@ pub fn attach_type_anchors<P: AsRef<Path>>(top: &mut TopIR, trace: &Trace, spec_
         return;
     }
     let anchors = find_anchors(trace, &specs);
+    attach_type_anchors_from_matches(top, anchors);
+}
+
+pub fn attach_type_anchors_indexed<P: AsRef<Path>>(
+    top: &mut TopIR,
+    trace: &Trace,
+    index: &Index,
+    spec_paths: &[P],
+) {
+    let specs = load_type_specs(spec_paths);
+    if specs.is_empty() {
+        return;
+    }
+    let anchors = find_anchors_indexed(trace, index, &specs);
+    attach_type_anchors_from_matches(top, anchors);
+}
+
+fn attach_type_anchors_from_matches(
+    top: &mut TopIR,
+    anchors: Vec<crate::decompiler::type_anchor::TypeAnchor>,
+) {
     if anchors.is_empty() {
         return;
     }
@@ -670,13 +692,25 @@ pub fn build_trace_ir<P: AsRef<Path>>(
     spec_paths: &[P],
     memshadow: Option<&crate::memshadow::MemShadow>,
 ) -> TopIR {
+    let total_start = Instant::now();
     let first_idx = if let Some(index) = index {
         build_first_idx_map_from_index(index)
     } else {
         build_first_idx_map(trace)
     };
+    let first_idx_ms = total_start.elapsed().as_millis();
+
+    let phase_start = Instant::now();
     let mut top = build_root_only(trace, meta, sym, cfg, &first_idx);
+    tracing::debug!(
+        target: "tracemiku-core",
+        records = trace.len(),
+        blocks = cfg.block_count(),
+        elapsed_ms = phase_start.elapsed().as_millis(),
+        "built root TraceIR"
+    );
     if top_k > 0 {
+        let phase_start = Instant::now();
         split_top_k_callees(
             &mut top,
             trace,
@@ -687,11 +721,29 @@ pub fn build_trace_ir<P: AsRef<Path>>(
             top_k,
             min_records,
         );
+        tracing::debug!(
+            target: "tracemiku-core",
+            fns = top.fns.len(),
+            elapsed_ms = phase_start.elapsed().as_millis(),
+            "split top-k TraceIR callees"
+        );
     }
     if !spec_paths.is_empty() {
-        attach_type_anchors(&mut top, trace, spec_paths);
+        let phase_start = Instant::now();
+        if let Some(index) = index {
+            attach_type_anchors_indexed(&mut top, trace, index, spec_paths);
+        } else {
+            attach_type_anchors(&mut top, trace, spec_paths);
+        }
+        tracing::debug!(
+            target: "tracemiku-core",
+            spec_paths = spec_paths.len(),
+            elapsed_ms = phase_start.elapsed().as_millis(),
+            "attached TraceIR type anchors"
+        );
     }
     if !trace.is_empty() {
+        let phase_start = Instant::now();
         top.vm_candidates = if let Some(index) = index {
             crate::decompiler::vm_candidate::detect_vm_candidates_indexed(
                 trace, cfg, index, memshadow, 0.4,
@@ -699,8 +751,23 @@ pub fn build_trace_ir<P: AsRef<Path>>(
         } else {
             crate::decompiler::vm_candidate::detect_vm_candidates(trace, cfg, memshadow, 0.4)
         };
+        tracing::debug!(
+            target: "tracemiku-core",
+            vm_candidates = top.vm_candidates.len(),
+            elapsed_ms = phase_start.elapsed().as_millis(),
+            "detected TraceIR VM candidates"
+        );
     }
+    let phase_start = Instant::now();
     classify_blocks_by_tier(&mut top, 150);
+    tracing::debug!(
+        target: "tracemiku-core",
+        fns = top.fns.len(),
+        elapsed_ms = phase_start.elapsed().as_millis(),
+        first_idx_ms,
+        total_ms = total_start.elapsed().as_millis(),
+        "built TraceIR"
+    );
     top
 }
 
@@ -1129,12 +1196,15 @@ mod tests {
         let cfg = crate::cfg::build_cfg(&t);
         let mut top =
             build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
+        let mut indexed_top = top.clone();
 
         let mut tf = tempfile::NamedTempFile::new().unwrap();
         let json = r#"{"specs":[{"name":"f_alpha","callee_pc":"0x100100","params":[],"ret":["x0","void"]}]}"#;
         tf.write_all(json.as_bytes()).unwrap();
         tf.flush().unwrap();
         attach_type_anchors(&mut top, &t, &[tf.path().to_path_buf()]);
+        let index = Index::build(&t);
+        attach_type_anchors_indexed(&mut indexed_top, &t, &index, &[tf.path().to_path_buf()]);
         assert_eq!(
             top.fns[0].type_anchors.len(),
             1,
@@ -1145,6 +1215,13 @@ mod tests {
         assert_eq!(a.callee_pc, 0x100100);
         assert_eq!(a.callee_name, "f_alpha");
         assert_eq!(a.ret_type, "void");
+        assert_eq!(indexed_top.fns[0].type_anchors.len(), 1);
+        assert_eq!(indexed_top.fns[0].type_anchors[0].idx, a.idx);
+        assert_eq!(indexed_top.fns[0].type_anchors[0].callee_pc, a.callee_pc);
+        assert_eq!(
+            indexed_top.fns[0].type_anchors[0].callee_name,
+            a.callee_name
+        );
     }
 
     #[test]
