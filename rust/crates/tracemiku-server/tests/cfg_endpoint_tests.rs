@@ -8,6 +8,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
+use tracemiku_server::state::CfgSvgCached;
 
 static DOT_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -225,6 +226,53 @@ async fn cfg_svg_large_fn_returns_overview_without_dot() {
             .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100000")),
         "expected lightweight overview SVG with block anchors: {v}"
     );
+}
+
+#[tokio::test]
+async fn cfg_svg_auto_request_skips_large_cached_svg() {
+    let _guard = dot_env_lock().lock().await;
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_large_cfg_call_dir();
+    let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
+    state.inner.cfg_svg_cache.lock().unwrap().insert(
+        "f_big".to_string(),
+        CfgSvgCached {
+            svg: "<svg id=\"cached\"></svg>".to_string(),
+            block_count: 190,
+            total_block_count: 190,
+        },
+    );
+    let app = tracemiku_server::routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_big")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "large");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_big&force=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["cached"], true);
 }
 
 #[tokio::test]

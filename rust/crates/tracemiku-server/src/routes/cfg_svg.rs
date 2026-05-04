@@ -60,6 +60,7 @@ pub enum CfgSvgResponse {
 
 const AUTO_DOT_MAX_BLOCKS: usize = 180;
 const AUTO_DOT_MAX_EDGES: usize = 900;
+const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
 const LARGE_OVERVIEW_MAX_BLOCKS: usize = 2_000;
 const LARGE_OVERVIEW_MAX_EDGES: usize = 6_000;
 
@@ -86,13 +87,18 @@ pub async fn cfg_svg_handler(
         .get(&cache_key)
         .cloned()
     {
-        return Json(CfgSvgResponse::Ready {
-            svg: cached.svg,
-            fn_name: filter_fn,
-            block_count: cached.block_count,
-            total_block_count: cached.total_block_count,
-            cached: true,
-        });
+        if q.force
+            || (cached.block_count <= AUTO_DOT_MAX_BLOCKS
+                && cached.svg.len() <= AUTO_CACHED_MAX_SVG_BYTES)
+        {
+            return Json(CfgSvgResponse::Ready {
+                svg: cached.svg,
+                fn_name: filter_fn,
+                block_count: cached.block_count,
+                total_block_count: cached.total_block_count,
+                cached: true,
+            });
+        }
     }
 
     let inner = &state.inner;
