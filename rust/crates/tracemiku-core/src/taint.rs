@@ -17,6 +17,7 @@ use std::collections::{BinaryHeap, HashSet, VecDeque};
 
 use crate::disasm::{addr_of, decode, MemOp};
 use crate::index::Index;
+use crate::memshadow::MemShadow;
 use crate::trace::Trace;
 
 /// Set of registers used purely as base/index of memory ops in this insn.
@@ -72,6 +73,7 @@ pub fn build_frame_depth_map(trace: &Trace) -> Vec<u32> {
     out
 }
 
+#[allow(clippy::too_many_arguments)] // M3-γ Tasks 3+4 will add data_only + cross_fn_call.
 pub fn forward_taint(
     trace: &Trace,
     index: &Index,
@@ -79,9 +81,14 @@ pub fn forward_taint(
     taint_reg: &str,
     max_count: usize,
     exclude_regs: &HashSet<String>,
+    through_mem: bool,
+    _mem: Option<&MemShadow>,
 ) -> (Vec<TaintHit>, bool) {
+    // _mem is unused on the forward side because tagging is index-only —
+    // Python also doesn't use MemShadow on the forward path (only on backward).
     let mut tainted_regs: HashSet<String> = HashSet::new();
     tainted_regs.insert(taint_reg.to_string());
+    let mut tainted_mem: HashSet<u64> = HashSet::new();
     let mut heap: BinaryHeap<Reverse<(usize, String, usize)>> = BinaryHeap::new();
 
     let push_reg = |heap: &mut BinaryHeap<Reverse<(usize, String, usize)>>,
@@ -120,21 +127,49 @@ pub fn forward_taint(
         }
         let r = trace.record(i);
         let d = decode(r.pc, r.inst);
-        // Collect the tainted regs that this insn READS, sorted, no clones.
+        // Tainted regs that this insn READS.
         let mut used: Vec<String> = Vec::new();
         for u in &d.regs_use {
             if tainted_regs.contains(u) {
                 used.push(u.clone());
             }
         }
-        if used.is_empty() {
+
+        // Check loads against tainted_mem (Python:158-187).
+        let mut load_tainted = false;
+        for op in &d.mem_op {
+            if op.is_write {
+                continue;
+            }
+            let base = addr_of(&r, op);
+            for o in 0..op.size as u64 {
+                if tainted_mem.contains(&(base + o)) {
+                    load_tainted = true;
+                    break;
+                }
+            }
+            if load_tainted {
+                break;
+            }
+        }
+
+        if used.is_empty() && !load_tainted {
             continue;
         }
         used.sort();
         used.dedup();
-        let why = format!("regs:{}", used.join(","));
+        let mut why_parts: Vec<String> = Vec::new();
+        if !used.is_empty() {
+            why_parts.push(format!("regs:{}", used.join(",")));
+        }
+        if load_tainted {
+            why_parts.push("mem".to_string());
+        }
+        let why = why_parts.join(" ");
         out.push(TaintHit { idx: i, why });
         seen.insert(i);
+
+        // Propagate: regs_def → push next-use.
         for nr in &d.regs_def {
             if exclude_regs.contains(nr) {
                 continue;
@@ -144,11 +179,61 @@ pub fn forward_taint(
                 push_reg(&mut heap, nr, i);
             }
         }
+        // Propagate: stores tag bytes (through_mem: full range; else: base only).
+        for op in &d.mem_op {
+            if !op.is_write {
+                continue;
+            }
+            let base = addr_of(&r, op);
+            if through_mem {
+                for o in 0..op.size as u64 {
+                    tainted_mem.insert(base + o);
+                }
+            } else {
+                tainted_mem.insert(base);
+            }
+        }
     }
 
     (out, stopped)
 }
 
+/// Return writer record indices that overlap `[addr, addr+size)` strictly
+/// before `before_idx`. Mirrors viewer/taint.py:274-299.
+fn mem_writers_overlapping(
+    index: &Index,
+    mem: Option<&MemShadow>,
+    addr: u64,
+    size: u32,
+    before_idx: usize,
+    through_mem: bool,
+) -> Vec<usize> {
+    if !through_mem || mem.is_none() {
+        // Exact-addr mode: ONLY the latest writer < before_idx.
+        let Some(writers) = index.mem_addr_to_writes.get(&addr) else {
+            return Vec::new();
+        };
+        let pos = writers.partition_point(|&w| w < before_idx);
+        if pos == 0 {
+            return Vec::new();
+        }
+        return vec![writers[pos - 1]];
+    }
+    // Byte-overlap mode: scan bytes, collect unique writers, descending.
+    let mem = mem.unwrap();
+    let mut seen: HashSet<usize> = HashSet::new();
+    for o in 0..size as u64 {
+        if let Some(j) = mem.latest_write_idx_strict_before(addr + o, before_idx) {
+            seen.insert(j);
+        }
+    }
+    let mut out: Vec<usize> = seen.into_iter().collect();
+    out.sort_unstable();
+    out.reverse();
+    out
+}
+
+#[allow(clippy::too_many_arguments)] // M3-γ Tasks 3+4 will add data_only + cross_fn_call.
 pub fn backward_taint(
     trace: &Trace,
     index: &Index,
@@ -156,6 +241,8 @@ pub fn backward_taint(
     taint_reg: &str,
     max_count: usize,
     exclude_regs: &HashSet<String>,
+    through_mem: bool,
+    mem: Option<&MemShadow>,
 ) -> (Vec<TaintHit>, bool) {
     let mut pending: VecDeque<BwdItem> = VecDeque::new();
     let mut visited: HashSet<(usize, String)> = HashSet::new();
@@ -194,29 +281,23 @@ pub fn backward_taint(
             break;
         }
         match item {
-            BwdItem::Mem(before_idx, addr, _size) => {
-                // Exact-addr mode (M3-γ Task 2 adds byte-overlap):
-                // ONLY return the LATEST writer strictly before before_idx.
-                // Python: `return [writes[pos]]` after `bisect_left - 1`.
-                let Some(writer_idxs) = index.mem_addr_to_writes.get(&addr) else {
-                    continue;
-                };
-                let pos = writer_idxs.partition_point(|&w| w < before_idx);
-                if pos == 0 {
-                    continue;
-                }
-                let j = writer_idxs[pos - 1];
-                let r = trace.record(j);
-                let d = decode(r.pc, r.inst);
-                let (base_w, idx_w) = if let Some(op) = d.mem_op.first() {
-                    (op.base.clone(), op.idx.clone())
-                } else {
-                    (String::new(), String::new())
-                };
-                if let Some(src) = d.regs_use.iter().find(|u| {
-                    !exclude_regs.contains(*u) && **u != base_w && **u != idx_w
-                }) {
-                    pending.push_back(BwdItem::Reg(j, src.clone()));
+            BwdItem::Mem(before_idx, addr, size) => {
+                let writers = mem_writers_overlapping(
+                    index, mem, addr, size, before_idx, through_mem,
+                );
+                for j in writers {
+                    let r = trace.record(j);
+                    let d = decode(r.pc, r.inst);
+                    let (base_w, idx_w) = if let Some(op) = d.mem_op.first() {
+                        (op.base.clone(), op.idx.clone())
+                    } else {
+                        (String::new(), String::new())
+                    };
+                    if let Some(src) = d.regs_use.iter().find(|u| {
+                        !exclude_regs.contains(*u) && **u != base_w && **u != idx_w
+                    }) {
+                        pending.push_back(BwdItem::Reg(j, src.clone()));
+                    }
                 }
             }
             BwdItem::Reg(cur_idx, want_reg) => {
@@ -373,7 +454,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude);
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None);
         assert!(hits.is_empty());
         assert!(!stopped);
     }
@@ -384,7 +465,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = backward_taint(&t, &idx, 8, "x0", 100, &exclude);
+        let (hits, stopped) = backward_taint(&t, &idx, 8, "x0", 100, &exclude, false, None);
         assert!(hits.is_empty());
         assert!(!stopped);
     }
@@ -395,7 +476,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 3, &exclude);
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 3, &exclude, false, None);
         assert_eq!(hits.len(), 3, "should stop after 3 hits, got {hits:?}");
         assert!(stopped, "max_count truncation should set stopped=true");
         for h in &hits {
@@ -412,7 +493,7 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = backward_taint(&t, &idx, 4, "x0", 100, &exclude);
+        let (hits, stopped) = backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None);
         assert!(!hits.is_empty(), "should chase x0 def chain backwards");
         assert!(!stopped);
         // Wire-shape pin: `why` is the bare reg name, NOT "via:x0".
@@ -485,7 +566,7 @@ mod tests {
         let t = Trace::load(&cd_path).unwrap();
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, _stopped) = backward_taint(&t, &idx, 3, "x1", 100, &exclude);
+        let (hits, _stopped) = backward_taint(&t, &idx, 3, "x1", 100, &exclude, false, None);
         let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
         assert!(
             idxs.contains(&0),
@@ -494,6 +575,99 @@ mod tests {
         assert!(
             idxs.contains(&3),
             "should pre-emit (idx=3, want_reg=x1) when start defines x1; got {idxs:?}"
+        );
+    }
+
+    #[test]
+    fn forward_taint_through_mem_byte_overlap_extends_taint() {
+        // 4-record trace exploring byte-overlap behavior:
+        //   idx 0: mov x0, #0xab     (defines x0)
+        //   idx 1: str x0, [x0]      (8-byte write, taints bytes [x0_val, x0_val+8))
+        //   idx 2: ldr w1, [x0, #4]  (4-byte load at x0_val+4..x0_val+8 —
+        //                             ONLY overlaps when through_mem tags full range)
+        //   idx 3: nop
+        //
+        // Both insns have x0 in regs_use, so the heap-driven loop visits
+        // them via push_reg(x0). The differentiator is whether load_tainted
+        // fires at idx 2:
+        //   through_mem=true:  bytes x0+4..x0+8 ARE tagged → "mem" in why
+        //   through_mem=false: only base byte (x0) tagged → no overlap → no "mem"
+        //
+        // x0 register value in fixture = 0xab (so store taints 0xab..0xb3,
+        // load reads 0xaf..0xb3 — fully inside the tainted range).
+        //
+        // Opcodes (ARM64 LE):
+        //   mov x0, #0xab     = 0xd2801560
+        //   str x0, [x0]      = 0xf9000000
+        //   ldr w1, [x0, #4]  = 0xb9400401
+        //   nop               = 0xd503201f
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir
+            .path()
+            .join("run")
+            .join("calls")
+            .join("call_001_tid1_4r_1ms");
+        std::fs::create_dir_all(&cd).unwrap();
+        let pcs: [u64; 4] = [0x100000, 0x100004, 0x100008, 0x10000c];
+        let insts: [u32; 4] = [0xd2801560, 0xf9000000, 0xb9400401, 0xd503201f];
+        let mut buf = vec![0u8; REC_SIZE * 4];
+        for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            // x0 = 0xab (offset 8..16)
+            buf[off + 8..off + 16].copy_from_slice(&0xabu64.to_le_bytes());
+            // sp (offset 256..264)
+            buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+            // inst (offset 268..272)
+            buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x100000","size":4096}}"#,
+        )
+        .unwrap();
+        let cd_path = dir
+            .path()
+            .join("run")
+            .join("calls")
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let t = Trace::load(&cd_path).unwrap();
+        let idx = Index::build(&t);
+        let mem = MemShadow::build_from_trace(&t);
+        let exclude = HashSet::new();
+
+        // through_mem=true: idx 2 hits with "mem" in why (byte-overlap match).
+        let (hits_on, _stopped) = forward_taint(
+            &t, &idx, 0, "x0", 100, &exclude, true, Some(&mem),
+        );
+        let idxs_on: Vec<usize> = hits_on.iter().map(|h| h.idx).collect();
+        assert!(idxs_on.contains(&1), "idx 1 (str) should emit; got {idxs_on:?}");
+        assert!(
+            idxs_on.contains(&2),
+            "idx 2 (ldr [x0,#4]) should emit; got {idxs_on:?}"
+        );
+        let row2_on = hits_on.iter().find(|h| h.idx == 2).unwrap();
+        assert!(
+            row2_on.why.contains("mem"),
+            "through_mem=true: idx 2 why should contain 'mem'; got {row2_on:?}"
+        );
+
+        // through_mem=false: idx 2 still emits (regs:x0 use), but NO "mem" —
+        // only the base byte (x0_val) is tagged, load reads x0_val+4..+8.
+        let (hits_off, _stopped) = forward_taint(
+            &t, &idx, 0, "x0", 100, &exclude, false, None,
+        );
+        let row2_off = hits_off.iter().find(|h| h.idx == 2).unwrap();
+        assert!(
+            !row2_off.why.contains("mem"),
+            "through_mem=false: idx 2 why must NOT contain 'mem' (base-only tag); got {row2_off:?}"
         );
     }
 }

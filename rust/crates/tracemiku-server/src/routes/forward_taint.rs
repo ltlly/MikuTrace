@@ -19,6 +19,8 @@ pub struct ForwardTaintQuery {
     pub start: usize,
     pub reg: String,
     pub max_count: Option<usize>,
+    #[serde(default)]
+    pub through_mem: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,8 +51,21 @@ pub async fn forward_taint_handler(
     let raw = q.max_count.unwrap_or(DEFAULT_MAX_COUNT);
     let eff = raw.min(MAX_COUNT_CEILING);
     let exclude: HashSet<String> = HashSet::new();
-    let (hits, stopped) =
-        forward_taint(&inner.trace, &inner.index, q.start, &q.reg, eff, &exclude);
+    let mem_arg = if q.through_mem {
+        Some(&inner.memshadow)
+    } else {
+        None
+    };
+    let (hits, stopped) = forward_taint(
+        &inner.trace,
+        &inner.index,
+        q.start,
+        &q.reg,
+        eff,
+        &exclude,
+        q.through_mem,
+        mem_arg,
+    );
 
     let base = inner
         .meta

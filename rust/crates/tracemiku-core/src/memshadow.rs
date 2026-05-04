@@ -131,6 +131,32 @@ impl MemShadow {
         (Some(ev.byte), ev.kind, Some(ev.idx))
     }
 
+    /// Return the idx of the latest WRITE event at `byte_addr` strictly
+    /// before `before_idx`. Returns None if no such write exists.
+    ///
+    /// Mirrors the inner loop of viewer/taint.py:282-299 for one byte:
+    /// fetch `bytes.get(addr+o)`, find the partition point where ev.idx
+    /// crosses `before_idx`, then walk back to the first write.
+    ///
+    /// "kind" semantics: "w" = store, "x" = external/JNI write.
+    /// "r" events are skipped — only writes count for taint.
+    pub fn latest_write_idx_strict_before(
+        &self,
+        byte_addr: u64,
+        before_idx: usize,
+    ) -> Option<usize> {
+        let evs = self.bytes.get(&byte_addr)?;
+        // partition_point: first index where ev.idx >= before_idx
+        let pos = evs.partition_point(|ev| ev.idx < before_idx);
+        for j in (0..pos).rev() {
+            let ev = &evs[j];
+            if ev.kind == "w" || ev.kind == "x" {
+                return Some(ev.idx);
+            }
+        }
+        None
+    }
+
     /// Scan known bytes (latest event at each addr) for printable-ASCII runs
     /// of length ≥ `min_len`. Gap-aware: a non-contiguous addr cuts the run.
     /// Returns `(start_addr, ascii_string)` pairs.
