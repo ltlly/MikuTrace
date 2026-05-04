@@ -415,11 +415,12 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 
 | Python module | v2 home | Status | Note |
 |---|---|---|---|
-| `backend.py` (FieldHint, Function, Variable dataclasses) | `tracemiku-core::decompiler::backend` | 🔜 M2 | |
+| `backend.py` (FieldHint, Function, Variable dataclasses + Backend Protocol) | `tracemiku-core::decompiler::backend` | 🟡 M3-δ | dataclasses + Backend trait + NoneBackend stub shipped; real BinjaBackend defers to M5+ (PyO3 / sidecar) |
 | `backends/binja.py` | BN python sidecar | 🔜 M6 | reused via JSON-RPC |
 | `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
-| `backends/none.py` | `tracemiku-core::decompiler::backend` | 🔜 M2 | trivial null backend |
-| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🔜 M3 | TraceIR construction |
+| `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
+| `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
+| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-δ | skeleton: top-level metadata + root F0 only. BlockIR construction, top-K callee splits, type anchors, VM detection, render_summary_md fidelity all defer to M3-ε |
 | `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
 | `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
 | `type_anchor.py` (JSON-spec → typed pointer hints) | `tracemiku-core::decompiler::type_anchor` | 🔜 M3 | reads `tools/hooks/*.json` |
@@ -520,7 +521,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/auto-phase-detect` | 🔜 M3 | |
 | `/api/diff-traces` | 🔜 M3 | |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
-| `/api/dec/summary`, `/api/dec/fn/{id}` | 🔜 M3 | TraceIR markdown |
+| `/api/dec/summary` | 🟡 M3-δ | trace-ir source only (root F0); symbol/bn fallback + render_summary_md fidelity defer to M3-ε. Parity soft-gated |
+| `/api/dec/fn/{id}` | 🔜 M3-ε | per-fn markdown bundle |
 | `/api/dec/llm-call` | 🔜 M3 | |
 | `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
 | `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |
