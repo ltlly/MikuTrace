@@ -121,58 +121,70 @@ pub fn backward_taint(
     max_count: usize,
     exclude_regs: &HashSet<String>,
 ) -> (Vec<TaintHit>, bool) {
+    // Direct port of viewer/taint.py:300-370 (`_backward_taint_indexed`).
+    //
+    // pending: max-heap of (cur_idx, want_reg). cur_idx is "where we are";
+    // want_reg is the register we want to find the latest def for.
     let mut pending: BinaryHeap<(usize, String)> = BinaryHeap::new();
-    let mut tainted_regs: HashSet<String> = HashSet::new();
-    tainted_regs.insert(taint_reg.to_string());
+    if !exclude_regs.contains(taint_reg) {
+        pending.push((idx, taint_reg.to_string()));
+    }
 
-    let push_def = |heap: &mut BinaryHeap<(usize, String)>, reg: &str, hi: usize| {
-        if exclude_regs.contains(reg) {
-            return;
-        }
-        let Some(defs) = index.reg_defs.get(reg) else {
-            return;
-        };
-        let pos = defs.partition_point(|&d| d < hi);
-        if pos > 0 {
-            heap.push((defs[pos - 1], reg.to_string()));
-        }
-    };
-    push_def(&mut pending, taint_reg, idx);
+    // visited: per-(cur_idx, want_reg) set so we don't re-walk the same query.
+    let mut visited: HashSet<(usize, String)> = HashSet::new();
 
-    let mut out: Vec<TaintHit> = Vec::new();
-    let mut seen: HashSet<usize> = HashSet::new();
+    // raw out: list of (def_idx, want_reg). May contain duplicates by idx;
+    // dedup by sorted-idx happens after the loop (matches Python lines 358-361).
+    let mut raw_out: Vec<(usize, String)> = Vec::new();
     let cap = if max_count == 0 { usize::MAX } else { max_count };
     let mut stopped = false;
 
-    while let Some((i, _reg)) = pending.pop() {
-        if out.len() >= cap {
+    while let Some((cur_idx, want_reg)) = pending.pop() {
+        if raw_out.len() >= cap {
             stopped = true;
             break;
         }
-        if seen.contains(&i) {
+        if exclude_regs.contains(&want_reg) {
             continue;
         }
-        seen.insert(i);
-        let r = trace.record(i);
-        let d = decode(r.pc, r.inst);
-        let mut producers: Vec<String> = d.regs_use.clone();
-        producers.sort();
-        producers.dedup();
-        let via = if producers.is_empty() {
-            "via:?".to_string()
-        } else {
-            format!("via:{}", producers.join(","))
+        if visited.contains(&(cur_idx, want_reg.clone())) {
+            continue;
+        }
+        visited.insert((cur_idx, want_reg.clone()));
+
+        let Some(defs) = index.reg_defs.get(&want_reg) else {
+            continue;
         };
-        out.push(TaintHit { idx: i, why: via });
-        for ur in &d.regs_use {
-            if exclude_regs.contains(ur) {
+        // partition_point(|&d| d < cur_idx) - 1  ↔  bisect_left - 1
+        let pos = defs.partition_point(|&d| d < cur_idx);
+        if pos == 0 {
+            continue;
+        }
+        let j = defs[pos - 1];
+        raw_out.push((j, want_reg.clone()));
+
+        // Push regs_use of j as new pending queries (chasing further back).
+        let r = trace.record(j);
+        let d = decode(r.pc, r.inst);
+        for u in &d.regs_use {
+            if exclude_regs.contains(u) {
                 continue;
             }
-            if !tainted_regs.contains(ur) {
-                tainted_regs.insert(ur.clone());
-                push_def(&mut pending, ur, i);
-            }
+            pending.push((j, u.clone()));
         }
+    }
+
+    // Dedup by idx, preserving the first reg seen at that idx (Python:
+    // `for ix, reg in sorted(out): if ix in seen_idx: continue`).
+    raw_out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let mut seen_idx: HashSet<usize> = HashSet::new();
+    let mut out: Vec<TaintHit> = Vec::new();
+    for (i, reg) in raw_out {
+        if seen_idx.contains(&i) {
+            continue;
+        }
+        seen_idx.insert(i);
+        out.push(TaintHit { idx: i, why: reg });
     }
 
     (out, stopped)
@@ -307,6 +319,29 @@ mod tests {
         assert!(stopped, "max_count truncation should set stopped=true");
         for h in &hits {
             assert!(h.why.contains("x0"), "hit row references x0: {h:?}");
+        }
+    }
+
+    #[test]
+    fn backward_taint_emits_bare_reg_name() {
+        // 5-record `add x0, x0, #1` chain. Backward from idx=4, taint=x0.
+        // Each `add x0, x0, #1` defines x0 AND uses x0, so chasing x0 backward
+        // should yield idxs 3, 2, 1, 0 (latest def < cursor each step).
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (hits, stopped) = backward_taint(&t, &idx, 4, "x0", 100, &exclude);
+        assert!(!hits.is_empty(), "should chase x0 def chain backwards");
+        assert!(!stopped);
+        // Wire-shape pin: `why` is the bare reg name, NOT "via:x0".
+        for h in &hits {
+            assert_eq!(h.why, "x0", "expected bare reg name, got {:?}", h.why);
+        }
+        // Order: dedup'd by sorted idx, so smallest idx first.
+        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
+        for w in idxs.windows(2) {
+            assert!(w[0] < w[1], "hits sorted by ascending idx: {idxs:?}");
         }
     }
 }
