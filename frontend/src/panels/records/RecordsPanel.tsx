@@ -109,26 +109,49 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const visibleRows = createMemo(() => Math.max(1, Math.ceil((viewHeight() || 480) / ROW_HEIGHT)));
   const activeIdx = createMemo(() => optimisticIdx());
 
-  const range = createMemo(() => {
-    const total = totalRecords();
-    if (total <= 0) return { start: 0, count: 0, end: 0 };
+  const range = createMemo<{ start: number; count: number; end: number }>(
+    (prev) => {
+      const total = totalRecords();
+      if (total <= 0) return { start: 0, count: 0, end: 0 };
 
-    if (compressed()) {
-      const maxScroll = Math.max(1, innerHeight() - (viewHeight() || 1));
-      const maxStart = Math.max(0, total - visibleRows());
-      const mapped = Math.floor((scrollTop() / maxScroll) * maxStart);
-      const start = clamp(mapped - OVERSCAN, 0, maxStart);
-      const end = Math.min(total, start + visibleRows() + OVERSCAN * 2);
-      return { start, count: end - start, end };
-    }
+      let next: { start: number; count: number; end: number };
 
-    const start = clamp(Math.floor(scrollTop() / ROW_HEIGHT) - OVERSCAN, 0, total);
-    const end = Math.min(
-      total,
-      Math.ceil((scrollTop() + (viewHeight() || 480)) / ROW_HEIGHT) + OVERSCAN,
-    );
-    return { start, count: Math.max(0, end - start), end };
-  });
+      if (compressed()) {
+        const maxScroll = Math.max(1, innerHeight() - (viewHeight() || 1));
+        const maxStart = Math.max(0, total - visibleRows());
+        const mapped = Math.floor((scrollTop() / maxScroll) * maxStart);
+        const start = clamp(mapped - OVERSCAN, 0, maxStart);
+        const end = Math.min(total, start + visibleRows() + OVERSCAN * 2);
+        next = { start, count: end - start, end };
+      } else {
+        // Snap scrollTop and viewHeight to ROW_HEIGHT (18px) multiples
+        // before computing the window. Without this, sub-pixel browser
+        // jitter (subpixel layout, fractional scrollTop on hi-DPI,
+        // scrollbar gutter rounding) flips viewHeight or scrollTop by
+        // 1px across an 18-multiple boundary, which changes count by 1,
+        // refetches /api/records, and the <For> rebuilds every row DOM
+        // node. The rebuild can land between mouseDown and mouseUp on a
+        // clicked row -> browser drops the click event entirely.
+        const sTopRow = Math.floor(scrollTop() / ROW_HEIGHT);
+        const vRows = Math.ceil((viewHeight() || 480) / ROW_HEIGHT);
+        const start = clamp(sTopRow - OVERSCAN, 0, total);
+        const end = Math.min(total, sTopRow + vRows + OVERSCAN);
+        next = { start, count: Math.max(0, end - start), end };
+      }
+
+      // Stable reference when nothing actually changed -> createResource
+      // does not see a new source value -> no spurious refetch.
+      if (
+        prev &&
+        prev.start === next.start &&
+        prev.count === next.count &&
+        prev.end === next.end
+      ) {
+        return prev;
+      }
+      return next;
+    },
+  );
 
   const [resp] = createResource(range, (r) => fetchRecords({ start: r.start, count: r.count }));
   let lastAutoScrollIdx = -1;
@@ -143,19 +166,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   });
 
   onMount(() => {
-    // Hysteresis: ignore <4px wobble. Without it, sub-pixel browser layout
-    // can flip viewport.clientHeight between two adjacent ints; that re-runs
-    // `range`, triggers a new /api/records fetch with count differing by 1,
-    // and the <For> rebuilds every row DOM node. The rebuild lands between
-    // mouseDown and mouseUp on a clicked row, so the browser drops the
-    // click event entirely (target ancestor changes). 4px is well under one
-    // ROW_HEIGHT (18px) so it doesn't mask real resizes.
-    const syncHeight = () => {
-      const next = viewport?.clientHeight ?? 0;
-      const cur = viewHeight();
-      if (cur !== 0 && Math.abs(next - cur) < 4) return;
-      setViewHeight(next);
-    };
+    const syncHeight = () => setViewHeight(viewport?.clientHeight ?? 0);
     syncHeight();
     const ro = new ResizeObserver(syncHeight);
     if (viewport) ro.observe(viewport);
