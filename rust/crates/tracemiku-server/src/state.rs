@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
-    build_call_tree, build_from_trace, build_function_index, CallNode, FunctionIndex, Index,
-    MemShadow, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
+    build_call_tree, build_frame_depth_map, build_from_trace, build_function_index, CallNode,
+    FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
 };
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
@@ -25,6 +25,7 @@ pub struct AppStateInner {
     pub function_index: FunctionIndex,
     pub memshadow: MemShadow,
     pub call_tree: CallNode,
+    pub frame_depths: Vec<u32>,
 }
 
 impl AppState {
@@ -87,6 +88,7 @@ impl AppState {
         let function_index = build_function_index(&symbols, Some(&cfg));
         let memshadow = MemShadow::build_from_trace(&trace);
         let call_tree = build_call_tree(&trace, &symbols, 50);
+        let frame_depths = build_frame_depth_map(&trace);
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -100,6 +102,7 @@ impl AppState {
                 function_index,
                 memshadow,
                 call_tree,
+                frame_depths,
             }),
         })
     }

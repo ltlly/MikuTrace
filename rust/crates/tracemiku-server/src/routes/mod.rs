@@ -1,5 +1,7 @@
+pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
+pub mod forward_taint;
 pub mod functions;
 pub mod idxs_for_block;
 pub mod idxs_for_pc;
@@ -31,6 +33,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),
+        )
+        .route(
+            "/api/forward-taint",
+            get(forward_taint::forward_taint_handler),
+        )
+        .route(
+            "/api/backward-taint",
+            get(backward_taint::backward_taint_handler),
         )
         .route("/api/strings", get(strings::strings_handler))
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
