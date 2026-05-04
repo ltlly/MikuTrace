@@ -54,6 +54,8 @@
 - M3-ε split_top_k_callees in build_trace_ir (metadata only, no BlockIR yet): ✅ 2026-05-04
 - M3-ε /api/dec/summary symbol-source fallback + parity HARD-gate (0.99 jaccard on real trace): ✅ 2026-05-04
 - M3-ζ BlockIR construction skeleton (id/pc/end_pc/insns/exec_count for F0 + split FuncIRs; stable B0..Bn ids; build_trace_ir gains &CFG): ✅ 2026-05-04
+- M3-η BlockIR.asm rendering + samples extraction (per-PC first-idx map; x0..x3 + sp at first occurrence): ✅ 2026-05-04
+- M3-η BlockIR.tier classification (hot top-150 by exec_count, warm, cold): ✅ 2026-05-04
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
