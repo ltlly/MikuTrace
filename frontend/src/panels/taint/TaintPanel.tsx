@@ -5,6 +5,7 @@ import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
 type ViewMode = "tree" | "table";
+const TAINT_RETRY_MS = 500;
 
 interface RunRequest {
   token: number;
@@ -46,9 +47,14 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [error, setError] = createSignal<string | null>(null);
   let runSeq = 0;
   let runAbort: AbortController | undefined;
+  let retryTimer: number | undefined;
 
   function cancelRun() {
     runSeq += 1;
+    if (retryTimer !== undefined) {
+      window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+    }
     runAbort?.abort();
     runAbort = undefined;
   }
@@ -72,6 +78,15 @@ export default function TaintPanel(props: TaintPanelProps) {
     queueMicrotask(() => void run(req.direction, req.idx, req.reg));
   });
 
+  function scheduleMemoryRetry(seq: number, dir: Direction, startArg: number, regArg: string) {
+    setError("memory index loading…");
+    retryTimer = window.setTimeout(() => {
+      retryTimer = undefined;
+      if (seq !== runSeq) return;
+      void run(dir, startArg, regArg);
+    }, TAINT_RETRY_MS);
+  }
+
   async function run(dirArg = direction(), startArg = start(), regArg = reg()) {
     cancelRun();
     const seq = ++runSeq;
@@ -90,6 +105,10 @@ export default function TaintPanel(props: TaintPanelProps) {
       if (dir === "forward") {
         const resp = await fetchForwardTaint(startArg, regArg, maxCount(), flags, abort.signal);
         if (seq !== runSeq || abort.signal.aborted) return;
+        if (resp.status === "loading") {
+          scheduleMemoryRetry(seq, dir, startArg, regArg);
+          return;
+        }
         setResult({
           rows: resp.hits,
           count: resp.count,
@@ -102,6 +121,10 @@ export default function TaintPanel(props: TaintPanelProps) {
       } else {
         const resp = await fetchBackwardTaint(startArg, regArg, maxCount(), flags, abort.signal);
         if (seq !== runSeq || abort.signal.aborted) return;
+        if (resp.status === "loading") {
+          scheduleMemoryRetry(seq, dir, startArg, regArg);
+          return;
+        }
         setResult({
           rows: resp.chain,
           count: resp.count,

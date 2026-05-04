@@ -25,6 +25,7 @@ fn default_min_size() -> u64 {
 
 #[derive(Debug, Serialize)]
 pub struct HashFinalizeResponse {
+    pub status: &'static str,
     pub window: usize,
     pub min_size: u64,
     pub count: usize,
@@ -42,6 +43,7 @@ pub async fn hash_finalize_detect_handler(
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "hash finalize worker failed: {err}");
                 HashFinalizeResponse {
+                    status: "error",
                     window: 0,
                     min_size: 0,
                     count: 0,
@@ -55,9 +57,22 @@ fn hash_finalize_response(
     inner: &crate::state::AppStateInner,
     q: HashFinalizeQuery,
 ) -> HashFinalizeResponse {
-    let candidates = hash_finalize_detect(inner.memshadow(), q.window, q.min_size);
+    let mem = match inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
+            return HashFinalizeResponse {
+                status,
+                window: q.window,
+                min_size: q.min_size,
+                count: 0,
+                candidates: Vec::new(),
+            };
+        }
+    };
+    let candidates = hash_finalize_detect(mem, q.window, q.min_size);
 
     HashFinalizeResponse {
+        status: "ready",
         window: q.window,
         min_size: q.min_size,
         count: candidates.len(),

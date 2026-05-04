@@ -74,6 +74,7 @@ pub struct HashFound {
 
 #[derive(Debug, Serialize)]
 pub struct HashInputSearchResponse {
+    pub status: &'static str,
     pub target_prefix: String,
     pub tried_combos: usize,
     pub found: Vec<HashFound>,
@@ -120,7 +121,22 @@ fn hash_input_search_response(
     } else {
         req.keys.clone()
     };
-    let mem = req.search_in_mem.then(|| state.inner.memshadow());
+    let mem = if req.search_in_mem {
+        match state.inner.memshadow_ready_or_block_if_idle() {
+            Ok(mem) => Some(mem),
+            Err(status) => {
+                return Ok(HashInputSearchResponse {
+                    status,
+                    target_prefix: hex_encode(target_prefix),
+                    tried_combos: 0,
+                    found: Vec::new(),
+                    found_count: 0,
+                });
+            }
+        }
+    } else {
+        None
+    };
 
     let mut found = Vec::new();
     let mut pending_mem = Vec::new();
@@ -200,6 +216,7 @@ fn hash_input_search_response(
         }
     }
     Ok(HashInputSearchResponse {
+        status: "ready",
         target_prefix: hex_encode(target_prefix),
         tried_combos: tried,
         found_count: found.len(),

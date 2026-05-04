@@ -51,6 +51,7 @@ pub struct CryptoPrimitive {
 
 #[derive(Debug, Serialize)]
 pub struct CryptoScanResponse {
+    pub status: &'static str,
     pub scanned: usize,
     pub primitives: Vec<CryptoPrimitive>,
     pub any_hit: bool,
@@ -64,6 +65,7 @@ pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoSc
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "crypto scan worker failed: {err}");
                 CryptoScanResponse {
+                    status: "error",
                     scanned: 0,
                     primitives: Vec::new(),
                     any_hit: false,
@@ -73,9 +75,20 @@ pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoSc
 }
 
 fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanResponse {
-    let mem = inner.memshadow();
+    let mem = match inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
+            return CryptoScanResponse {
+                status,
+                scanned: 0,
+                primitives: Vec::new(),
+                any_hit: false,
+            };
+        }
+    };
     if mem.bytes.is_empty() {
         return CryptoScanResponse {
+            status: "ready",
             scanned: 0,
             primitives: Vec::new(),
             any_hit: false,
@@ -101,6 +114,7 @@ fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanRespon
         .collect::<Vec<_>>();
     let any_hit = primitives.iter().any(|p| p.hit_count > 0);
     CryptoScanResponse {
+        status: "ready",
         scanned: mem.bytes.len(),
         primitives,
         any_hit,

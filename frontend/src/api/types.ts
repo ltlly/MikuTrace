@@ -382,6 +382,7 @@ export interface TaintRow {
 }
 
 export interface ForwardTaintResponse {
+  status: string;
   count: number;
   from: number;
   reg: string;
@@ -391,6 +392,7 @@ export interface ForwardTaintResponse {
 }
 
 export interface BackwardTaintResponse {
+  status: string;
   count: number;
   from: number;
   reg: string;

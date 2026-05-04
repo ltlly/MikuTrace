@@ -27,6 +27,7 @@ pub struct PhaseEntry {
 
 #[derive(Debug, Serialize)]
 pub struct AutoPhaseResponse {
+    pub status: &'static str,
     pub trace_records: usize,
     pub phases: Vec<PhaseEntry>,
 }
@@ -48,6 +49,7 @@ pub async fn auto_phase_detect_handler(
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "auto phase worker failed: {err}");
                 AutoPhaseResponse {
+                    status: "error",
                     trace_records: 0,
                     phases: Vec::new(),
                 }
@@ -58,7 +60,17 @@ pub async fn auto_phase_detect_handler(
 fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse {
     let mut phases = Vec::new();
     append_jni_phases(state, &mut phases);
-    let mem = state.inner.memshadow();
+    let mem = match state.inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
+            phases.sort_by_key(|p| p.idx);
+            return AutoPhaseResponse {
+                status,
+                trace_records: state.inner.trace.len(),
+                phases,
+            };
+        }
+    };
     append_crypto_phases(mem, &mut phases);
     if q.detect_byte_streams {
         append_byte_stream_phases(mem, &mut phases);
@@ -75,6 +87,7 @@ fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse
         dedup.push(phase);
     }
     AutoPhaseResponse {
+        status: "ready",
         trace_records: state.inner.trace.len(),
         phases: dedup,
     }

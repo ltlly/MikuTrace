@@ -457,6 +457,7 @@ pub struct MemPatternHit {
 
 #[derive(Debug, Serialize)]
 pub struct FindMemPatternResponse {
+    pub status: &'static str,
     pub pattern: String,
     pub since_idx: isize,
     pub count: usize,
@@ -474,6 +475,7 @@ pub async fn find_mem_pattern_handler(
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "find mem pattern worker failed: {err}");
                 FindMemPatternResponse {
+                    status: "error",
                     pattern: String::new(),
                     since_idx: -1,
                     count: 0,
@@ -495,7 +497,18 @@ fn find_mem_pattern_response(
     };
     let mut hits = Vec::new();
     if !pattern.is_empty() {
-        let mem = inner.memshadow();
+        let mem = match inner.memshadow_ready_or_block_if_idle() {
+            Ok(mem) => mem,
+            Err(status) => {
+                return FindMemPatternResponse {
+                    status,
+                    pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),
+                    since_idx: q.since,
+                    count: 0,
+                    hits,
+                };
+            }
+        };
         for &addr in mem.bytes.keys() {
             let mut first_idx: Option<usize> = None;
             let mut matched = true;
@@ -532,6 +545,7 @@ fn find_mem_pattern_response(
         }
     }
     FindMemPatternResponse {
+        status: "ready",
         pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),
         since_idx: q.since,
         count: hits.len(),

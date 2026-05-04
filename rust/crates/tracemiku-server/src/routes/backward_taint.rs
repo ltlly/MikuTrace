@@ -42,6 +42,7 @@ pub struct TaintChainRow {
 
 #[derive(Debug, Serialize)]
 pub struct BackwardTaintResponse {
+    pub status: &'static str,
     pub count: usize,
     pub from: usize,
     pub reg: String,
@@ -62,6 +63,7 @@ pub async fn backward_taint_handler(
         .unwrap_or_else(|err| {
             tracing::warn!(target: "tracemiku-server", "backward taint worker failed: {err}");
             BackwardTaintResponse {
+                status: "error",
                 count: 0,
                 from: start,
                 reg,
@@ -85,7 +87,20 @@ fn backward_taint_response(
         HashSet::new()
     };
     let mem_arg = if q.through_mem {
-        Some(inner.memshadow())
+        match inner.memshadow_ready_or_block_if_idle() {
+            Ok(mem) => Some(mem),
+            Err(status) => {
+                return BackwardTaintResponse {
+                    status,
+                    count: 0,
+                    from: q.start,
+                    reg: q.reg,
+                    chain: Vec::new(),
+                    stopped_at_max: false,
+                    max_count_used: eff,
+                };
+            }
+        }
     } else {
         None
     };
@@ -135,6 +150,7 @@ fn backward_taint_response(
         .collect();
 
     BackwardTaintResponse {
+        status: "ready",
         count: rows.len(),
         from: q.start,
         reg: q.reg,

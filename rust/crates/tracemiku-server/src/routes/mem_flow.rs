@@ -52,6 +52,7 @@ pub struct MemFlowByte {
 
 #[derive(Debug, Serialize)]
 pub struct MemFlowResponse {
+    pub status: &'static str,
     pub addr: String,
     pub count: usize,
     pub bytes: Vec<MemFlowByte>,
@@ -83,7 +84,17 @@ fn mem_flow_response(
         None
     };
     let base = primary_base(&inner.meta);
-    let mem = inner.memshadow();
+    let mem = match inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
+            return Ok(MemFlowResponse {
+                status,
+                addr: q.addr,
+                count,
+                bytes: Vec::new(),
+            });
+        }
+    };
     let mut bytes = Vec::with_capacity(count);
     for offset in 0..count {
         let addr = start + offset as u64;
@@ -125,6 +136,7 @@ fn mem_flow_response(
         });
     }
     Ok(MemFlowResponse {
+        status: "ready",
         addr: q.addr,
         count,
         bytes,

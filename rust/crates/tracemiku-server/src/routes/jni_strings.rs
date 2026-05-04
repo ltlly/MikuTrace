@@ -42,6 +42,7 @@ pub struct JniStringHit {
 
 #[derive(Debug, Serialize)]
 pub struct JniStringsResponse {
+    pub status: &'static str,
     pub count: usize,
     pub with_observed_string: usize,
     pub without_observed_string: usize,
@@ -59,6 +60,7 @@ pub async fn jni_strings_handler(
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "jni strings worker failed: {err}");
                 JniStringsResponse {
+                    status: "error",
                     count: 0,
                     with_observed_string: 0,
                     without_observed_string: 0,
@@ -71,7 +73,19 @@ pub async fn jni_strings_handler(
 
 fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsResponse {
     let (calls, _) = scan_jni_calls(state, None, 0);
-    let mem = state.inner.memshadow();
+    let mem = match state.inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
+            return JniStringsResponse {
+                status,
+                count: 0,
+                with_observed_string: 0,
+                without_observed_string: 0,
+                note: "memory index is still loading",
+                hits: Vec::new(),
+            };
+        }
+    };
     let mut hits = Vec::new();
     for call in calls {
         let Some((arg_name, direction)) = jni_string_op(&call.jni_fn) else {
@@ -112,6 +126,7 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
     }
     let with_observed_string = hits.iter().filter(|hit| hit.string.is_some()).count();
     JniStringsResponse {
+        status: "ready",
         count: hits.len(),
         with_observed_string,
         without_observed_string: hits.len() - with_observed_string,

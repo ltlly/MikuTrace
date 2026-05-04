@@ -42,6 +42,7 @@ pub struct TaintRow {
 
 #[derive(Debug, Serialize)]
 pub struct ForwardTaintResponse {
+    pub status: &'static str,
     pub count: usize,
     pub from: usize,
     pub reg: String,
@@ -62,6 +63,7 @@ pub async fn forward_taint_handler(
         .unwrap_or_else(|err| {
             tracing::warn!(target: "tracemiku-server", "forward taint worker failed: {err}");
             ForwardTaintResponse {
+                status: "error",
                 count: 0,
                 from: start,
                 reg,
@@ -85,7 +87,20 @@ fn forward_taint_response(
         HashSet::new()
     };
     let mem_arg = if q.through_mem {
-        Some(inner.memshadow())
+        match inner.memshadow_ready_or_block_if_idle() {
+            Ok(mem) => Some(mem),
+            Err(status) => {
+                return ForwardTaintResponse {
+                    status,
+                    count: 0,
+                    from: q.start,
+                    reg: q.reg,
+                    hits: Vec::new(),
+                    stopped_at_max: false,
+                    max_count_used: eff,
+                };
+            }
+        }
     } else {
         None
     };
@@ -135,6 +150,7 @@ fn forward_taint_response(
         .collect();
 
     ForwardTaintResponse {
+        status: "ready",
         count: rows.len(),
         from: q.start,
         reg: q.reg,
