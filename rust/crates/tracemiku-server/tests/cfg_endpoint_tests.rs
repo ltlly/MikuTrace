@@ -59,6 +59,57 @@ fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_large_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let block_count = 190usize;
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join(format!("call_001_tid100_{}r_2ms", block_count * 2));
+    fs::create_dir_all(&cd).unwrap();
+    let base = 0x100000u64;
+    let mut buf = vec![0u8; 272 * block_count * 2];
+    for i in 0..block_count {
+        let block_pc = base + (i as u64) * 8;
+        let rows: [(u64, u32); 2] = [
+            (block_pc, 0xd503201f), // nop
+            (
+                block_pc + 4,
+                if i + 1 == block_count {
+                    0xd65f03c0 // ret
+                } else {
+                    0x14000001 // b +4, observed target is next block head
+                },
+            ),
+        ];
+        for (j, (pc, inst)) in rows.iter().enumerate() {
+            let off = (i * 2 + j) * 272;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&(*inst).to_le_bytes());
+        }
+    }
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        format!(
+            r#"{{"records":{},"truncated":false,"known_offsets":{{"0x0":"f_big"}}}}"#,
+            block_count * 2
+        ),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"pkg":"tst","method":"","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 #[tokio::test]
 async fn cfg_svg_returns_ready_and_cache_when_dot_available() {
     let _guard = dot_env_lock().lock().await;
@@ -134,6 +185,38 @@ async fn cfg_svg_unknown_fn_is_empty() {
     assert_eq!(v["status"], "empty");
     assert_eq!(v["fn"], "does_not_exist");
     assert!(v["svg"].is_null());
+}
+
+#[tokio::test]
+async fn cfg_svg_large_fn_returns_overview_without_dot() {
+    let _guard = dot_env_lock().lock().await;
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_large_cfg_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_big")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "large");
+    assert_eq!(v["fn"], "f_big");
+    assert!(v["block_count"].as_u64().unwrap_or(0) > 180);
+    assert!(
+        v["svg"]
+            .as_str()
+            .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100000")),
+        "expected lightweight overview SVG with block anchors: {v}"
+    );
 }
 
 #[tokio::test]

@@ -98,9 +98,10 @@ pub async fn cfg_svg_handler(
     let edge_count = included_edge_count(inner, &included_starts);
     let dot = build_dot(inner, &included, &included_starts);
     if !q.force && (included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES) {
+        let overview_svg = build_large_overview_svg(inner, &included, &included_starts);
         return Json(CfgSvgResponse::Large {
             fn_name: filter_fn,
-            svg: None,
+            svg: Some(overview_svg),
             block_count: included.len(),
             edge_count,
             total_block_count: inner.cfg.block_count(),
@@ -131,6 +132,120 @@ pub async fn cfg_svg_handler(
         }
         Err(err) => Json(CfgSvgResponse::Error { err }),
     }
+}
+
+fn build_large_overview_svg(
+    inner: &crate::state::AppStateInner,
+    included: &[&tracemiku_core::cfg::Block],
+    included_starts: &HashSet<u64>,
+) -> String {
+    let base = inner
+        .meta
+        .module
+        .as_ref()
+        .and_then(|m| parse_hex_u64(&m.base))
+        .unwrap_or(0);
+    let n = included.len().max(1);
+    let cols = ((n as f64).sqrt().ceil() as usize).clamp(1, 24);
+    let rows = n.div_ceil(cols);
+    let margin = 24.0f64;
+    let node_w = 150.0f64;
+    let node_h = 42.0f64;
+    let gap_x = 34.0f64;
+    let gap_y = 28.0f64;
+    let width = margin * 2.0 + cols as f64 * node_w + cols.saturating_sub(1) as f64 * gap_x;
+    let height = margin * 2.0 + rows as f64 * node_h + rows.saturating_sub(1) as f64 * gap_y;
+
+    let mut positions: HashMap<u64, (f64, f64)> = HashMap::new();
+    for (i, block) in included.iter().enumerate() {
+        let col = i % cols;
+        let row = i / cols;
+        let x = margin + col as f64 * (node_w + gap_x);
+        let y = margin + row as f64 * (node_h + gap_y);
+        positions.insert(block.start_pc, (x, y));
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\" \
+         viewBox=\"0 0 {width:.0} {height:.0}\">"
+    ));
+    out.push_str(
+        "<style>\
+         .tm-bg{fill:#0e1117}.tm-edge{stroke:#58a6ff;stroke-opacity:.22;stroke-width:1.1}\
+         .tm-node rect{fill:#161b22;stroke:#30363d;stroke-width:1.2;rx:3}\
+         .tm-node:hover rect{stroke:#58a6ff;stroke-width:2}.tm-hot rect{stroke:#f7b32b}\
+         .tm-title{fill:#d0d7de;font:11px JetBrainsMono,monospace}.tm-sub{fill:#8b949e;font:9px JetBrainsMono,monospace}\
+         </style>",
+    );
+    out.push_str(&format!(
+        "<rect class=\"tm-bg\" x=\"0\" y=\"0\" width=\"{width:.0}\" height=\"{height:.0}\"/>"
+    ));
+    out.push_str("<g class=\"tm-edges\">");
+    for edge in inner.cfg.graph.edge_indices() {
+        let Some((src_node, dst_node)) = inner.cfg.graph.edge_endpoints(edge) else {
+            continue;
+        };
+        let Some(src) = inner.cfg.graph.node_weight(src_node) else {
+            continue;
+        };
+        let Some(dst) = inner.cfg.graph.node_weight(dst_node) else {
+            continue;
+        };
+        if !included_starts.contains(&src.start_pc) || !included_starts.contains(&dst.start_pc) {
+            continue;
+        }
+        let Some((sx, sy)) = positions.get(&src.start_pc) else {
+            continue;
+        };
+        let Some((dx, dy)) = positions.get(&dst.start_pc) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "<line class=\"tm-edge\" x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\"/>",
+            sx + node_w / 2.0,
+            sy + node_h / 2.0,
+            dx + node_w / 2.0,
+            dy + node_h / 2.0
+        ));
+    }
+    out.push_str("</g><g class=\"tm-nodes\">");
+    for block in included {
+        let Some((x, y)) = positions.get(&block.start_pc) else {
+            continue;
+        };
+        let class = if block.executions > 10 {
+            "tm-node tm-hot"
+        } else {
+            "tm-node"
+        };
+        let rel = html_esc(&rel_pc(block.start_pc, base));
+        let title = html_esc(&format!(
+            "block {:#x}..{:#x}, {} executions",
+            block.start_pc, block.end_pc, block.executions
+        ));
+        out.push_str(&format!(
+            "<a href=\"#hdr_b{:x}\"><g class=\"{}\"><title>{}</title>\
+             <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{node_w:.1}\" height=\"{node_h:.1}\"/>\
+             <text class=\"tm-title\" x=\"{:.1}\" y=\"{:.1}\">{}</text>\
+             <text class=\"tm-sub\" x=\"{:.1}\" y=\"{:.1}\">x{} · end {}</text>\
+             </g></a>",
+            block.start_pc,
+            class,
+            title,
+            x,
+            y,
+            x + 9.0,
+            y + 17.0,
+            rel,
+            x + 9.0,
+            y + 32.0,
+            block.executions,
+            html_esc(&rel_pc(block.end_pc, base))
+        ));
+    }
+    out.push_str("</g></svg>");
+    out
 }
 
 fn normalize_fn_filter(raw: &str) -> Option<String> {

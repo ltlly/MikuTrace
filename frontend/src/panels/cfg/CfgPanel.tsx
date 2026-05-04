@@ -427,8 +427,33 @@ export default function CfgPanel(props: CfgPanelProps) {
                 <div class="cfg-large-graph">
                   <p class="dim">
                     {r.fn ?? fnName()} CFG is large ({r.block_count} blocks, {r.edge_count} edges,{" "}
-                    {Math.round(r.dot_bytes / 1024).toLocaleString()} KiB dot). Auto render skipped to keep UI responsive.
+                    {Math.round(r.dot_bytes / 1024).toLocaleString()} KiB dot). Lightweight overview shown without Graphviz.
                   </p>
+                  <Show when={r.svg}>
+                    {(svg) => (
+                      <div
+                        ref={(el) => {
+                          frame = el;
+                        }}
+                        class="cfg-svg-frame cfg-overview-frame"
+                        classList={{ dragging: !!drag() }}
+                        onWheel={onWheel}
+                        onPointerDown={onPointerDown}
+                        onPointerMove={onPointerMove}
+                        onPointerUp={onPointerUp}
+                        onPointerCancel={onPointerUp}
+                      >
+                        <div
+                          class="cfg-svg-canvas"
+                          style={{
+                            transform: `translate(${pan().x}px, ${pan().y}px) scale(${pan().scale})`,
+                          }}
+                          onClick={onSvgClick}
+                          innerHTML={svg()}
+                        />
+                      </div>
+                    )}
+                  </Show>
                   <button type="button" onClick={reloadGraph}>force dot render</button>
                 </div>
               )}
