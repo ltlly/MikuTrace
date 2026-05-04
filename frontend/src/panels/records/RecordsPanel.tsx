@@ -91,6 +91,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewHeight, setViewHeight] = createSignal(0);
   const [regContext, setRegContext] = createSignal<RegContext | null>(null);
+  const [optimisticIdx, setOptimisticIdx] = createSignal(props.selectedIdx);
   const [meta] = createResource(fetchMeta);
   const regValueTitleCache = new Map<string, string>();
   let viewport: HTMLDivElement | undefined;
@@ -100,6 +101,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const innerHeight = createMemo(() => Math.min(SAFE_SCROLL_HEIGHT, Math.max(ROW_HEIGHT, fullHeight())));
   const compressed = createMemo(() => fullHeight() > SAFE_SCROLL_HEIGHT);
   const visibleRows = createMemo(() => Math.max(1, Math.ceil((viewHeight() || 480) / ROW_HEIGHT)));
+  const activeIdx = createMemo(() => optimisticIdx());
 
   const range = createMemo(() => {
     const total = totalRecords();
@@ -124,6 +126,10 @@ export default function RecordsPanel(props: RecordsPanelProps) {
 
   const [resp] = createResource(range, (r) => fetchRecords({ start: r.start, count: r.count }));
   let lastAutoScrollIdx = -1;
+
+  createEffect(() => {
+    setOptimisticIdx(props.selectedIdx);
+  });
 
   onMount(() => {
     const syncHeight = () => setViewHeight(viewport?.clientHeight ?? 0);
@@ -175,6 +181,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   }
 
   function selectRow(row: RecordRow) {
+    setOptimisticIdx(row.idx);
     props.onSelect(row.idx);
     const reg = firstAsmReg(row.asm);
     if (reg) props.onSelectReg(reg);
@@ -283,7 +290,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
               <div
                 class="records-row"
                 classList={{
-                  selected: row.idx === props.selectedIdx,
+                  selected: row.idx === activeIdx(),
                   "is-call": row.is_call,
                   "is-ret": row.is_ret,
                   "is-branch": row.is_branch && !row.is_call && !row.is_ret,
@@ -291,6 +298,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                 }}
                 style={{ top: rowTop(row), height: `${ROW_HEIGHT}px` }}
                 tabIndex={0}
+                onPointerDown={(e) => {
+                  if (e.button === 0) setOptimisticIdx(row.idx);
+                }}
                 onClick={() => selectRow(row)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") selectRow(row);

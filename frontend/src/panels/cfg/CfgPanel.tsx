@@ -1,6 +1,11 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
+import type { CfgSvgResponse } from "~/api/types";
+
+const AUTO_FOLLOW_DELAY_MS = 160;
+const AUTO_RENDER_MAX_BLOCKS = 140;
+const AUTO_RENDER_MAX_SVG_BYTES = 1_500_000;
 
 function clampTimeout(raw: number): number {
   if (!Number.isFinite(raw)) return 60;
@@ -20,10 +25,19 @@ interface CfgPanelProps {
   onDisplayFnChange: (fn: string) => void;
 }
 
+type CfgGraphResponse = CfgSvgResponse & {
+  requestFn: string;
+  auto: boolean;
+};
+
 export default function CfgPanel(props: CfgPanelProps) {
   const [fnName, setFnName] = createSignal("");
+  const [autoGraph, setAutoGraph] = createSignal(true);
   const [timeout, setTimeout] = createSignal(60);
   const [reload, setReload] = createSignal(0);
+  const [graph, setGraph] = createSignal<CfgGraphResponse | null>(null);
+  const [graphLoading, setGraphLoading] = createSignal(false);
+  const [graphError, setGraphError] = createSignal<unknown>(null);
   const [pan, setPan] = createSignal({ x: 0, y: 0, scale: 1 });
   const [drag, setDrag] = createSignal<null | { sx: number; sy: number; x: number; y: number }>(
     null,
@@ -34,6 +48,8 @@ export default function CfgPanel(props: CfgPanelProps) {
   let lastCenteredIdx = -1;
   let lastSelectedFn = "";
   let lastPanFn = "";
+  let followTimer: number | undefined;
+  let graphSeq = 0;
 
   const [functions] = createResource(
     () => (props.active ? "active" : undefined),
@@ -62,6 +78,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     const selected = selectedFnName();
     if (selected && selected !== lastSelectedFn) {
       lastSelectedFn = selected;
+      setAutoGraph(false);
       setFnName(selected);
     }
   });
@@ -72,20 +89,52 @@ export default function CfgPanel(props: CfgPanelProps) {
   });
 
   createEffect(() => {
-    if (!props.active) return;
-    if (!fnName() && fnNames().length > 0) {
-      setFnName(fnNames()[0]);
+    if (!props.active || !fnName()) {
+      graphSeq += 1;
+      setGraph(null);
+      setGraphLoading(false);
+      setGraphError(null);
+      return;
     }
+
+    const requestFn = fnName();
+    const requestTimeout = timeout();
+    const requestAuto = autoGraph();
+    reload();
+
+    const seq = ++graphSeq;
+    setGraph(null);
+    setGraphLoading(true);
+    setGraphError(null);
+    void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout })
+      .then((resp) => {
+        if (seq !== graphSeq) return;
+        setGraph({ ...resp, requestFn, auto: requestAuto });
+      })
+      .catch((err) => {
+        if (seq !== graphSeq) return;
+        setGraphError(err);
+      })
+      .finally(() => {
+        if (seq === graphSeq) setGraphLoading(false);
+      });
   });
 
-  const [graph] = createResource(
-    () => {
-      if (!props.active) return undefined;
-      const name = fnName();
-      return name ? { fnName: name, timeout: timeout(), reload: reload() } : undefined;
-    },
-    (opts) => fetchCfgSvg({ fnName: opts.fnName, timeout: opts.timeout }),
-  );
+  createEffect(() => {
+    if (!props.active || !props.syncEnabled) return;
+    const idx = props.currentIdx;
+    const r = record();
+    if (!r || r.idx !== idx || !r.func || r.func === fnName()) return;
+
+    window.clearTimeout(followTimer);
+    followTimer = window.setTimeout(() => {
+      if (!props.active || !props.syncEnabled) return;
+      setAutoGraph(true);
+      setFnName(r.func ?? "");
+    }, AUTO_FOLLOW_DELAY_MS);
+  });
+
+  onCleanup(() => window.clearTimeout(followTimer));
 
   createEffect(() => {
     const name = fnName();
@@ -100,9 +149,30 @@ export default function CfgPanel(props: CfgPanelProps) {
     const idx = props.currentIdx;
     const r = record();
     if (!r || r.idx !== idx) return;
-    graph();
+    const g = graph();
+    if (!g || g.status !== "ready" || !shouldRenderGraph(g)) return;
+    if (g.requestFn !== fnName()) return;
+    if (r.func && g.fn && r.func !== g.fn) return;
     window.requestAnimationFrame(() => highlightAndCenterPc(r.pc, idx));
   });
+
+  function shouldRenderGraph(resp: { status: string; svg?: string; block_count?: number; auto?: boolean }): boolean {
+    if (resp.status !== "ready") return false;
+    if (!resp.auto) return true;
+    const svgBytes = resp.svg?.length ?? 0;
+    const blocks = resp.block_count ?? 0;
+    return blocks <= AUTO_RENDER_MAX_BLOCKS && svgBytes <= AUTO_RENDER_MAX_SVG_BYTES;
+  }
+
+  function selectFunction(name: string) {
+    setAutoGraph(false);
+    setFnName(name);
+  }
+
+  function reloadGraph() {
+    setAutoGraph(false);
+    setReload((n) => n + 1);
+  }
 
   function findInsnAnchor(pc: string): Element | undefined {
     if (!frame) return undefined;
@@ -211,7 +281,7 @@ export default function CfgPanel(props: CfgPanelProps) {
       <div class="cfg-controls">
         <label>
           function
-          <select value={fnName()} onInput={(e) => setFnName(e.currentTarget.value)}>
+          <select value={fnName()} onInput={(e) => selectFunction(e.currentTarget.value)}>
             <option value="" disabled>select function</option>
             <For each={fnNames()}>{(name) => <option value={name}>{name}</option>}</For>
           </select>
@@ -226,7 +296,7 @@ export default function CfgPanel(props: CfgPanelProps) {
             onInput={(e) => setTimeout(clampTimeout(Number(e.currentTarget.value)))}
           />
         </label>
-        <button onClick={() => setReload((n) => n + 1)}>reload</button>
+        <button onClick={reloadGraph}>reload</button>
         <button onClick={() => setPan({ x: 0, y: 0, scale: 1 })}>fit</button>
         <span class="dim small">{props.syncEnabled ? "highlight sync" : "sync paused"}</span>
       </div>
@@ -237,10 +307,10 @@ export default function CfgPanel(props: CfgPanelProps) {
       <Show when={!fnName() && !functions.loading}>
         <p class="dim">select a function to render CFG. Full-trace CFG is not rendered by default.</p>
       </Show>
-      <Show when={graph.error}>
-        <p class="err">graph load failed: {String(graph.error)}</p>
+      <Show when={graphError()}>
+        {(err) => <p class="err">graph load failed: {String(err())}</p>}
       </Show>
-      <Show when={graph.loading}>
+      <Show when={graphLoading()}>
         <p class="dim">rendering graph…</p>
       </Show>
       <Show when={jumpErr()}>
@@ -252,7 +322,7 @@ export default function CfgPanel(props: CfgPanelProps) {
           const r = resp();
           return (
             <>
-              {r.status === "ready" && (
+              {r.status === "ready" && shouldRenderGraph(r) && (
                 <>
                   <p class="dim small">
                     {r.block_count}/{r.total_block_count} blocks · {r.fn ?? "all"} · cache{" "}
@@ -280,6 +350,16 @@ export default function CfgPanel(props: CfgPanelProps) {
                     />
                   </div>
                 </>
+              )}
+              {r.status === "ready" && !shouldRenderGraph(r) && (
+                <div class="cfg-large-graph">
+                  <p class="dim">
+                    {r.fn ?? fnName()} CFG is large ({r.block_count}/{r.total_block_count} blocks,{" "}
+                    {Math.round((r.svg?.length ?? 0) / 1024).toLocaleString()} KiB). Auto follow skipped SVG
+                    injection to keep disassembly responsive.
+                  </p>
+                  <button type="button" onClick={reloadGraph}>render graph</button>
+                </div>
               )}
               {r.status === "empty" && (
                 <p class="dim">no traced CFG blocks for {r.fn ?? "selected function"}</p>
