@@ -472,7 +472,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `reg-timeline` | ✅ M3-υ | REST-backed register change timeline |
 | `mem-diff` | ✅ M3-υ | REST-backed MemShadow byte diff around an idx |
 | `fn-summary` | ✅ M3-ω | REST-backed function overview |
-| `field-at` | 🔜 M3 | |
+| `field-at` | ✅ M3-field-at | BN-gated fallback shape; real inference remains M6 |
 | `export` (CSV/JSON dump) | ⏸ | Power-user; defer |
 | `dec` (LLM-assisted decompile, route B) | 🔜 M5 | uses llm_client |
 | `dec-bench` (multi-model benchmark) | ⏸ | Defer until base `dec` parity holds |
@@ -521,7 +521,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/jni-calls` | ✅ M3-jni-calls | JNI vtable call detection |
 | `/api/jobj-history` | ✅ M3-jobj-history | JNI vtable jobject argument history |
 | `/api/jni-strings` | ✅ M3-jni-strings | JNI string op list + observable buffer recovery |
-| `/api/field-at` | 🔜 M3 | |
+| `/api/field-at` | ✅ M3-field-at | BN-gated fallback shape; real inference remains M6 |
 | `/api/fn-summary` | ✅ M3-ω | function overview with hot blocks and callees |
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
 | `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
