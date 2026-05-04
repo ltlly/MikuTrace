@@ -59,7 +59,14 @@ pub async fn llil_render_handler(
     State(state): State<AppState>,
     Json(payload): Json<LlilRenderPayload>,
 ) -> Result<Json<LlilRenderResponse>, (StatusCode, String)> {
-    let fn_ = resolve_fn(&state, &payload.fn_id)?;
+    render_llil_response(&state, payload).map(Json)
+}
+
+pub fn render_llil_response(
+    state: &AppState,
+    payload: LlilRenderPayload,
+) -> Result<LlilRenderResponse, (StatusCode, String)> {
+    let fn_ = resolve_fn(state, &payload.fn_id)?;
     let inner = &state.inner;
     let max_records = payload.max_records.clamp(1, 10_000);
     let start = fn_.entry_idx.min(inner.trace.len());
@@ -111,7 +118,7 @@ pub async fn llil_render_handler(
     };
     let pseudocode = render_llil_block(&exprs);
 
-    Ok(Json(LlilRenderResponse {
+    Ok(LlilRenderResponse {
         fn_id: payload.fn_id,
         name: fn_.name,
         records: record_count,
@@ -122,7 +129,7 @@ pub async fn llil_render_handler(
         flag_elim_pairs,
         removed_pcs,
         pseudocode,
-    }))
+    })
 }
 
 fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, String)> {

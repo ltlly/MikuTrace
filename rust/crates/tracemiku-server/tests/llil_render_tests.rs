@@ -65,3 +65,41 @@ async fn llil_render_route_returns_pseudocode() {
     assert!(code.contains("x0_1 = x1_0;"), "{code}");
     assert!(code.contains("return;"), "{code}");
 }
+
+#[tokio::test]
+async fn llil_llm_route_returns_model_error_without_key() {
+    let dir = synth_trace();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/llil/llm")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"fn_id":"trace:F0","model":"mimo","max_records":3,"max_tokens":256}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["fn_id"], "trace:F0");
+    assert_eq!(v["llil_records"], 3);
+    assert!(v.get("ok").is_some());
+    assert!(v.get("estimated_prompt_tokens").is_some());
+}
