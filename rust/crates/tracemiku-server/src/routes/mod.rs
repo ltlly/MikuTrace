@@ -15,6 +15,9 @@ pub mod mem_dump;
 pub mod meta;
 pub mod record;
 pub mod records;
+pub mod reg_value_at;
+pub mod search;
+pub mod so_stats;
 pub mod strings;
 
 use axum::routing::{get, post};
@@ -25,8 +28,10 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/meta", get(meta::meta_handler))
+        .route("/api/so-stats", get(so_stats::so_stats_handler))
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
+        .route("/api/search", get(search::search_handler))
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",
@@ -47,6 +52,8 @@ pub fn router(state: AppState) -> Router {
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),
         )
+        .route("/api/reg-value-at", get(reg_value_at::reg_value_at_handler))
+        .route("/api/reg-at-idx", get(reg_value_at::reg_value_at_handler))
         .route(
             "/api/forward-taint",
             get(forward_taint::forward_taint_handler),
