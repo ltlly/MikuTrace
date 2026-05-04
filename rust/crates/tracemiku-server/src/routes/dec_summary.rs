@@ -11,7 +11,7 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 
-use tracemiku_core::prelude::make_trace_id;
+use tracemiku_core::prelude::{make_trace_id, render_summary_md};
 
 use crate::state::AppState;
 
@@ -88,22 +88,7 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
         });
     }
 
-    let mut summary_md = format!(
-        "trace: {} records, module={}\n",
-        top.records, top.module_name
-    );
-    for f in &top.fns {
-        summary_md.push_str(&format!(
-            "  {} {:24} blocks={:<4} loops={:<3} calls={:<3} idx=[{},{}]\n",
-            f.id,
-            f.name,
-            f.blocks.len(),
-            f.loops.len(),
-            f.calls.len(),
-            f.entry_idx,
-            f.exit_idx
-        ));
-    }
+    let summary_md = render_summary_md(top);
 
     Json(DecSummaryResponse {
         records: top.records,

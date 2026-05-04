@@ -5,7 +5,7 @@
 //! summary tokens, type-anchor inlining, sub-fn cross-refs, induction
 //! var summaries) defers to later milestones.
 
-use crate::decompiler::ir::FuncIR;
+use crate::decompiler::ir::{FuncIR, TopIR};
 
 /// Render a FuncIR as a markdown bundle. `tier_filter` is one of
 /// `"hot"` / `"warm"` / `"cold"` / `"all"` — only blocks matching the
@@ -84,10 +84,78 @@ pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
     out
 }
 
+/// Render TopIR → summary.md text. Mirrors
+/// `viewer/decompiler/render/markdown.py::render_summary_md`.
+///
+/// Skeleton: header, metadata bullet list, optional VM-candidates
+/// section (header only — full hex-dump rendering defers until
+/// vm_candidate.py is ported), Functions table.
+pub fn render_summary_md(top: &TopIR) -> String {
+    let mut out = String::new();
+    out.push_str("# Trace Summary\n\n");
+    out.push_str(&format!("- records: **{}**\n", top.records));
+    out.push_str(&format!(
+        "- module: `{}` @ {:#x} (size {:#x})\n",
+        top.module_name, top.module_base, top.module_size
+    ));
+    if let Some(cmd) = top.cmd {
+        out.push_str(&format!("- cmd: **{cmd}**\n"));
+    }
+    if !top.method.is_empty() {
+        out.push_str(&format!("- method: `{}`\n", top.method));
+    }
+    out.push_str(&format!("- truncated: {}\n", top.truncated));
+    out.push_str(&format!("- last_insn_is_ret: {}\n", top.last_insn_is_ret));
+    if !top.tracemiku_version.is_empty() {
+        out.push_str(&format!(
+            "- generated: {} (tracemiku {})\n",
+            top.generated_at, top.tracemiku_version
+        ));
+    }
+    out.push('\n');
+
+    if !top.vm_candidates.is_empty() {
+        out.push_str(&format!(
+            "## VM Candidates ({})\n\n",
+            top.vm_candidates.len()
+        ));
+        out.push_str("> evidence only — bytecode not decoded.\n\n");
+        for (i, vc) in top.vm_candidates.iter().enumerate() {
+            out.push_str(&format!("### Candidate #{i}\n\n"));
+            out.push_str(&format!("- dispatcher_pc: `{:#x}`\n", vc.dispatcher_pc));
+            out.push_str(&format!("- confidence: **{:.2}**\n", vc.confidence));
+            if !vc.reasons.is_empty() {
+                out.push_str("- reasons:\n");
+                for r in &vc.reasons {
+                    out.push_str(&format!("  - {r}\n"));
+                }
+            }
+            out.push('\n');
+        }
+    }
+
+    out.push_str(&format!("## Functions ({})\n\n", top.fns.len()));
+    out.push_str("| id | name | blocks | loops | calls | idx range |\n");
+    out.push_str("|---|---|---|---|---|---|\n");
+    for f in &top.fns {
+        out.push_str(&format!(
+            "| [{0}](fns/{0}.md) | `{1}` | {2} | {3} | {4} | {5}..{6} |\n",
+            f.id,
+            f.name,
+            f.blocks.len(),
+            f.loops.len(),
+            f.calls.len(),
+            f.entry_idx,
+            f.exit_idx
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decompiler::ir::{BlockIR, FuncIR};
+    use crate::decompiler::ir::{BlockIR, FuncIR, TopIR};
     use std::collections::HashMap;
 
     #[test]
@@ -180,5 +248,54 @@ mod tests {
         let md_all = render_func_md(&f, "all");
         assert!(md_all.contains("## B0"));
         assert!(md_all.contains("## B1"), "all should include warm: {md_all}");
+    }
+
+    #[test]
+    fn render_summary_md_emits_header_and_functions_table() {
+        let top = TopIR {
+            records: 100,
+            module_name: "libt.so".to_string(),
+            module_base: 0x1000,
+            module_size: 0x10000,
+            method: "f".to_string(),
+            cmd: Some(42),
+            fns: vec![FuncIR {
+                id: "F0".to_string(),
+                name: "doCommandNative".to_string(),
+                entry_idx: 0,
+                exit_idx: 99,
+                blocks: vec![BlockIR::default(), BlockIR::default()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let md = render_summary_md(&top);
+        assert!(md.starts_with("# Trace Summary"), "header missing: {md}");
+        assert!(md.contains("- records: **100**"));
+        assert!(md.contains("`libt.so`"));
+        assert!(md.contains("- cmd: **42**"));
+        assert!(md.contains("- method: `f`"));
+        assert!(md.contains("## Functions (1)"));
+        assert!(md.contains("| [F0](fns/F0.md) |"));
+        assert!(md.contains("| `doCommandNative` |"));
+        assert!(md.contains(" 2 |"), "blocks count missing: {md}");
+        assert!(md.contains(" 0..99 |"));
+    }
+
+    #[test]
+    fn render_summary_md_omits_optional_fields_when_absent() {
+        let top = TopIR {
+            records: 0,
+            ..Default::default()
+        };
+        let md = render_summary_md(&top);
+        assert!(md.contains("- records: **0**"));
+        assert!(!md.contains("- cmd:"), "cmd should be omitted when None: {md}");
+        assert!(
+            !md.contains("- method:"),
+            "method should be omitted when empty: {md}"
+        );
+        assert!(!md.contains("## VM Candidates"));
+        assert!(md.contains("## Functions (0)"));
     }
 }

@@ -93,8 +93,8 @@ async fn dec_summary_emits_root_funcir_with_trace_ir_source() {
     assert_eq!(f0["calls"], 0);
     assert!(v["vm_candidates"].as_array().unwrap().is_empty());
     assert!(
-        v["summary_md"].as_str().unwrap().contains("trace: 3 records"),
-        "summary_md should mention record count: {v}"
+        v["summary_md"].as_str().unwrap().contains("- records: **3**"),
+        "summary_md should mention record count via render_summary_md: {v}"
     );
 }
 
@@ -171,5 +171,39 @@ async fn dec_summary_includes_symbol_source_fallback() {
     assert!(
         sym_names.iter().any(|n| *n == "f_alpha" || *n == "f_beta"),
         "expected f_alpha or f_beta in sym-source fns; got {sym_names:?}"
+    );
+}
+
+#[tokio::test]
+async fn dec_summary_summary_md_uses_render_summary_md() {
+    let dir = synth_root_only();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/summary")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let md = v["summary_md"].as_str().unwrap();
+    assert!(
+        md.starts_with("# Trace Summary"),
+        "summary_md should start with markdown header: {md}"
+    );
+    assert!(
+        md.contains("## Functions"),
+        "Functions section missing: {md}"
+    );
+    assert!(
+        md.contains("| id | name |"),
+        "Functions table header missing: {md}"
     );
 }

@@ -13,7 +13,7 @@ pub use crate::decompiler::builder::{build_trace_ir, classify_blocks_by_tier};
 pub use crate::decompiler::ir::{
     BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
 };
-pub use crate::decompiler::render::render_func_md;
+pub use crate::decompiler::render::{render_func_md, render_summary_md};
 pub use crate::disasm::{decode, normalize_disasm_reg, DecodedInsn};
 pub use crate::function_index::{
     build_from_symbols as build_function_index, make_bn_id, make_sym_id, make_trace_id, parse_id,
