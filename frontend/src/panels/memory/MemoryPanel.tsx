@@ -163,7 +163,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     const raw = addr().trim();
     if (!raw) return "0x0";
     if (!REG_ADDR_RE.test(raw)) return raw;
-    return currentRecord()?.regs[normalizeRegName(raw)];
+    const regs = currentRecord()?.regs;
+    if (!regs) return undefined;
+    const normalized = normalizeRegName(raw);
+    return regs[normalized] ?? regs[raw.toLowerCase()];
   });
   const dumpSource = createMemo<DumpSource | undefined>((prev) => {
     if (!props.active) return undefined;
