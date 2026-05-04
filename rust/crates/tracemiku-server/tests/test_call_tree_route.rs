@@ -36,13 +36,17 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     // ARM64 little-endian:
     //   nop                        = 0xd503201f
     //   ret                        = 0xd65f03c0
-    //   bl 0x100100 from 0x100000  = 0x94000040  (rel +256)
-    //   bl 0x100200 from 0x100008  = 0x9400007e  (rel +504)
+    //   bl 0x100100 from 0x100004  = 0x9400003f  (rel +0xfc)
+    //   bl 0x100200 from 0x100008  = 0x9400007e  (rel +0x1f8)
+    // build_call_tree resolves callees from trace.pc(i+1), not from the
+    // bl immediate, but we still emit faithful opcodes so the synth
+    // matches the static-disasm story and stays aligned with the core
+    // fixture in tracemiku-core/src/calltree.rs.
     let pcs: [u64; 9] = [
         0x100000, 0x100004, 0x100100, 0x100104, 0x100008, 0x100200, 0x100204, 0x100208, 0x10000c,
     ];
     let insts: [u32; 9] = [
-        0xd503201f, 0x94000040, 0xd503201f, 0xd65f03c0, 0x9400007e, 0xd503201f, 0xd503201f,
+        0xd503201f, 0x9400003f, 0xd503201f, 0xd65f03c0, 0x9400007e, 0xd503201f, 0xd503201f,
         0xd65f03c0, 0xd65f03c0,
     ];
     let mut buf = vec![0u8; 272 * 9];
