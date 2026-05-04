@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import {
   fetchBgStatus,
@@ -33,12 +33,25 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const [meta] = createResource(activeSource, () => fetchMeta());
   const [models] = createResource(activeSource, () => fetchDecModels());
   const [openapi] = createResource(activeSource, () => fetchOpenApi());
-  const [bg] = createResource(activeSource, () => fetchBgStatus());
-  const [decomp] = createResource(activeSource, () => fetchDecompStatus());
+  const [statusTick, setStatusTick] = createSignal(0);
+  const [bg] = createResource(
+    () => (props.active ? statusTick() : undefined),
+    () => fetchBgStatus(),
+  );
+  const [decomp] = createResource(
+    () => (props.active ? statusTick() : undefined),
+    () => fetchDecompStatus(),
+  );
 
   createEffect(() => {
     localStorage.setItem(DENSE_KEY, dense() ? "1" : "0");
     document.documentElement.dataset.density = dense() ? "dense" : "normal";
+  });
+
+  createEffect(() => {
+    if (!props.active) return;
+    const timer = window.setInterval(() => setStatusTick((n) => n + 1), 1500);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   return (
