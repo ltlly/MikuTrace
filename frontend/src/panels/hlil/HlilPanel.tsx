@@ -17,6 +17,11 @@ export interface HlilPanelProps {
   active: boolean;
 }
 
+interface HlilSource {
+  fnId: string;
+  reload: number;
+}
+
 export default function HlilPanel(props: HlilPanelProps) {
   const [reload, setReload] = createSignal(0);
   const [functions] = createResource(
@@ -30,11 +35,12 @@ export default function HlilPanel(props: HlilPanelProps) {
     if (!props.selectedFn() && first) props.onSelectFn(first);
   });
 
-  const source = createMemo(() => {
+  const source = createMemo<HlilSource | undefined>((prev) => {
     if (!props.active) return undefined;
     const fnId = props.selectedFn();
     if (!fnId) return undefined;
-    return { fnId, reload: reload() };
+    const next = { fnId, reload: reload() };
+    return prev && prev.fnId === next.fnId && prev.reload === next.reload ? prev : next;
   });
   const [hlil] = createResource(source, (s) => (s ? fetchHlilForFn(s.fnId) : undefined));
 

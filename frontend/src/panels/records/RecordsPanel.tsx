@@ -93,6 +93,23 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
+function sameRecordRow(a: RecordRow, b: RecordRow): boolean {
+  return (
+    a.idx === b.idx &&
+    a.pc === b.pc &&
+    a.rel === b.rel &&
+    a.module === b.module &&
+    a.func === b.func &&
+    a.off === b.off &&
+    a.asm === b.asm &&
+    a.annotation === b.annotation &&
+    a.exec_count === b.exec_count &&
+    a.is_branch === b.is_branch &&
+    a.is_call === b.is_call &&
+    a.is_ret === b.is_ret
+  );
+}
+
 export default function RecordsPanel(props: RecordsPanelProps) {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewHeight, setViewHeight] = createSignal(0);
@@ -100,6 +117,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [optimisticIdx, setOptimisticIdx] = createSignal(props.selectedIdx);
   const [meta] = createResource(fetchMeta);
   const regValueTitleCache = new Map<string, string>();
+  const rowObjectCache = new Map<number, RecordRow>();
   let viewport: HTMLDivElement | undefined;
 
   const totalRecords = createMemo(() => meta()?.records ?? 0);
@@ -154,6 +172,25 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   );
 
   const [resp] = createResource(range, (r) => fetchRecords({ start: r.start, count: r.count }));
+  const displayRows = createMemo(() => {
+    const rows = resp()?.records ?? [];
+    if (!rows.length) return rows;
+    const visible = new Set<number>();
+    const stable = rows.map((row) => {
+      visible.add(row.idx);
+      const cached = rowObjectCache.get(row.idx);
+      if (cached && sameRecordRow(cached, row)) return cached;
+      rowObjectCache.set(row.idx, row);
+      return row;
+    });
+    if (rowObjectCache.size > 5000) {
+      for (const k of rowObjectCache.keys()) {
+        if (rowObjectCache.size <= 5000) break;
+        if (!visible.has(k)) rowObjectCache.delete(k);
+      }
+    }
+    return stable;
+  });
   let lastAutoScrollIdx = -1;
 
   createEffect(() => {
@@ -161,8 +198,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   });
 
   createEffect(() => {
-    const r = resp();
-    if (r?.records?.length) props.onRowsLoaded?.(r.records);
+    const rows = displayRows();
+    if (rows.length) props.onRowsLoaded?.(rows);
   });
 
   onMount(() => {
@@ -320,7 +357,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
           <Show when={meta.loading || resp.loading}>
             <p class="dim records-loading">loading…</p>
           </Show>
-          <For each={resp()?.records ?? []}>
+          <For each={displayRows()}>
             {(row) => (
               <div
                 class="records-row"

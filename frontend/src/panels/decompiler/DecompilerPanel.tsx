@@ -16,6 +16,11 @@ export interface DecompilerPanelProps {
   active: boolean;
 }
 
+interface FnSource {
+  fnId: string;
+  tier: string;
+}
+
 export default function DecompilerPanel(props: DecompilerPanelProps) {
   const activeSource = () => (props.active ? "active" : undefined);
   const [summary] = createResource(activeSource, () => fetchDecSummary());
@@ -48,11 +53,12 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
     if (first && !models()?.models.includes(model())) setModel(first);
   });
 
-  const fnSource = createMemo(() => {
+  const fnSource = createMemo<FnSource | null | undefined>((prev) => {
     if (!props.active) return undefined;
     const fnId = props.selectedFn();
     if (!fnId) return null;
-    return { fnId, tier: tier() };
+    const next = { fnId, tier: tier() };
+    return prev && prev.fnId === next.fnId && prev.tier === next.tier ? prev : next;
   });
   const [fnResp] = createResource(fnSource, (s) => (s ? fetchDecFn(s.fnId, s.tier) : undefined));
 

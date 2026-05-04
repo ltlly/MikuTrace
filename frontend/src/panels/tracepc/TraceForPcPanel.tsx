@@ -1,4 +1,4 @@
-import { createResource, For, Show } from "solid-js";
+import { createMemo, createResource, For, Show } from "solid-js";
 
 import { fetchIdxsForPc, fetchRecord } from "~/api/client";
 import type { IdxsForPcResponse } from "~/api/types";
@@ -19,12 +19,15 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
   );
+  const source = createMemo<IpcSource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    const r = record();
+    if (!r) return undefined;
+    const next = { pc: r.pc, idx: props.idx };
+    return prev && prev.pc === next.pc && prev.idx === next.idx ? prev : next;
+  });
   const [idxs] = createResource<IdxsForPcResponse, IpcSource | undefined>(
-    () => {
-      if (!props.active) return undefined;
-      const r = record();
-      return r ? { pc: r.pc, idx: props.idx } : undefined;
-    },
+    source,
     (source) => {
       if (!source) throw new Error("missing selected record");
       return fetchIdxsForPc(source.pc, source.idx, 20);

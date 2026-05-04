@@ -30,6 +30,17 @@ interface MemContext {
   err?: string;
 }
 
+interface DumpSource {
+  addr: string;
+  count: number;
+}
+
+interface DiffSource {
+  idx: number;
+  addr: string;
+  size: number;
+}
+
 function hexByte(byte: number | null): string {
   if (byte === null) return "??";
   return byte.toString(16).padStart(2, "0");
@@ -116,24 +127,29 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     if (!REG_ADDR_RE.test(raw)) return raw;
     return record()?.regs[normalizeRegName(raw)] ?? "0x0";
   });
-  const dumpSource = createMemo(() =>
-    props.active
-      ? {
-          addr: resolvedAddr(),
-          count: Math.max(1, Math.min(512, count())),
-        }
-      : undefined,
-  );
+  const dumpSource = createMemo<DumpSource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    const next = {
+      addr: resolvedAddr(),
+      count: Math.max(1, Math.min(512, count())),
+    };
+    return prev && prev.addr === next.addr && prev.count === next.count ? prev : next;
+  });
   const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
-  const diffSource = createMemo(() =>
-    props.active
-      ? {
-          idx: props.idx,
-          addr: resolvedAddr(),
-          size: Math.max(1, Math.min(128, count())),
-        }
-      : undefined,
-  );
+  const diffSource = createMemo<DiffSource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    const next = {
+      idx: props.idx,
+      addr: resolvedAddr(),
+      size: Math.max(1, Math.min(128, count())),
+    };
+    return prev &&
+      prev.idx === next.idx &&
+      prev.addr === next.addr &&
+      prev.size === next.size
+      ? prev
+      : next;
+  });
   const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
   const changedAddrs = createMemo(() => {
     const set = new Set<string>();

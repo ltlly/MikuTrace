@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
@@ -8,14 +8,21 @@ interface StringsPanelProps {
   active: boolean;
 }
 
+interface StringsSource {
+  minLen: number;
+  q: string;
+}
+
 export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
-  const [resp] = createResource(
-    () => (props.active ? { minLen: minLen(), q: query() } : undefined),
-    async ({ minLen, q }) => fetchStrings(minLen, q),
-  );
+  const source = createMemo<StringsSource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    const next = { minLen: minLen(), q: query() };
+    return prev && prev.minLen === next.minLen && prev.q === next.q ? prev : next;
+  });
+  const [resp] = createResource(source, async ({ minLen, q }) => fetchStrings(minLen, q));
 
   async function jumpString(s: StringEntry) {
     setJumpErr("");
