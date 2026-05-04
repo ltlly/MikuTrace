@@ -64,7 +64,7 @@ body {
 
 #layout {
   display: grid;
-  grid-template-columns: 28px 260px minmax(460px, 1fr) minmax(420px, 1fr) 28px;
+  grid-template-columns: 28px 340px minmax(520px, 1.15fr) minmax(440px, 0.95fr) 28px;
   grid-template-rows: 1fr 22px;
   grid-template-areas:
     "lt lp asm right rt"
@@ -249,7 +249,7 @@ body {
 .btab.active { color: var(--fg); background: var(--bg3); }
 
 #bottom-content {
-  flex: 0 0 220px;
+  flex: 0 0 240px;
   min-height: 0;
   overflow: hidden;
   background: var(--bg2);
@@ -289,6 +289,9 @@ body {
 }
 
 #stream > .panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   padding: 0;
 }
 
@@ -298,6 +301,25 @@ body {
   padding: 3px 8px;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
+}
+
+#stream .records-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 26px;
+  margin: 0;
+  padding: 3px 8px;
+  color: var(--dim);
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+#stream .records-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 #stream .records-table,
@@ -312,7 +334,7 @@ body {
 
 #stream .records-table tr {
   display: grid;
-  grid-template-columns: var(--col-idx) var(--col-pc) var(--col-func) minmax(0, 1fr) 36px;
+  grid-template-columns: var(--col-idx) var(--col-pc) 180px minmax(0, 1fr) 42px;
   gap: 6px;
   align-items: center;
   min-height: 18px;
@@ -333,6 +355,9 @@ body {
 #stream .records-table td:nth-child(2) { color: var(--accent2); }
 #stream .records-table td:nth-child(3) { color: var(--good); }
 #stream .records-table td:nth-child(5) { color: var(--dim); }
+#stream .records-table tr.is-call td:nth-child(4) code { color: var(--accent); }
+#stream .records-table tr.is-ret td:nth-child(4) code { color: var(--warn); }
+#stream .records-table tr.is-branch td:nth-child(4) code { color: var(--accent2); }
 
 #stream .records-table tbody tr:hover,
 #stream .records-table tbody tr:focus {
@@ -341,6 +366,71 @@ body {
 
 #stream .records-table tbody tr.selected {
   background: var(--hl);
+}
+
+.reg-diff-table tbody tr {
+  cursor: pointer;
+}
+
+.reg-diff-table tbody tr:hover {
+  background: var(--bg3);
+}
+
+.reg-diff-table tbody tr.selected {
+  outline: 1px solid rgba(88, 166, 255, 0.45);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.reg-diff-table tbody tr.changed {
+  background: rgba(247, 129, 102, 0.12);
+}
+
+.reg-diff-table tbody tr.changed th,
+.reg-diff-table tbody tr.changed td:first-of-type {
+  color: var(--warn);
+}
+
+.memory-hex-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.memory-hex-table th,
+.memory-hex-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.memory-hex-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.mem-hex-cells {
+  white-space: pre;
+  font-variant-ligatures: none;
+}
+
+.mem-byte {
+  display: inline-block;
+  width: 2.4ch;
+  margin-right: 0.55ch;
+  text-align: center;
+  border-radius: 2px;
+}
+
+.mem-byte.read { color: var(--accent); }
+.mem-byte.write { color: var(--good); background: rgba(63, 185, 80, 0.1); }
+.mem-byte.external { color: var(--warn); background: rgba(247, 179, 43, 0.12); }
+.mem-byte.unknown { color: var(--dim); }
+.mem-byte.changed { color: white; background: rgba(248, 81, 73, 0.5); }
+
+.mem-ascii {
+  white-space: pre;
+  color: var(--fg);
 }
 
 .kv {
@@ -481,8 +571,7 @@ ul {
 }
 
 .memory-controls input,
-.memory-controls button,
-.tracepc-list button {
+.memory-controls button {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
@@ -494,8 +583,7 @@ ul {
 .memory-controls input[type="text"] { width: 12em; }
 .memory-controls input[type="number"] { width: 5em; }
 
-.memory-controls button,
-.tracepc-list button {
+.memory-controls button {
   cursor: pointer;
 }
 
@@ -532,6 +620,26 @@ ul {
   flex-wrap: wrap;
   gap: 4px;
   min-height: 26px;
+}
+
+.tracepc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.tracepc-table td {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tracepc-table tr {
+  cursor: pointer;
+}
+
+.tracepc-table tr:hover {
+  background: var(--bg3);
 }
 
 .xref-controls {
@@ -613,6 +721,15 @@ ul {
 
 .xref-table tbody tr:hover {
   background: rgba(98, 160, 234, 0.08);
+}
+
+.xref-table tbody tr.selected {
+  background: var(--hl);
+}
+
+.xref-exec-table td:nth-child(2),
+.xref-exec-table td:nth-child(3) {
+  color: var(--dim);
 }
 
 .xref-table code {
@@ -842,6 +959,10 @@ html[data-density="dense"] .xref-table td {
   overflow-y: auto;
 }
 
+.lp-tab .strings-list {
+  max-height: none;
+}
+
 .strings-list li {
   display: grid;
   grid-template-columns: 9em 3em 1fr;
@@ -857,13 +978,40 @@ html[data-density="dense"] .xref-table td {
   text-overflow: ellipsis;
 }
 
-.ct-controls { display: flex; gap: 1em; align-items: center; margin: 0.5em 0; }
+.ct-controls {
+  display: flex;
+  gap: 1em;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.5em 0;
+}
 .ct-controls input[type="range"] { width: 12em; vertical-align: middle; }
+.ct-controls button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.ct-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 .ct-wrap { font-family: monospace; font-size: 12px; line-height: 1.5; }
 .ct-row { white-space: nowrap; }
 .ct-line { display: flex; gap: 0.6em; cursor: pointer; padding: 1px 0; }
 .ct-line:hover { background: rgba(255, 255, 255, 0.04); }
-.ct-toggle { width: 1em; color: var(--dim, #888); user-select: none; }
+.ct-line.contains { background: rgba(88, 166, 255, 0.08); }
+.ct-line.located { background: var(--hl); }
+.ct-toggle {
+  width: 1.4em;
+  color: var(--dim, #888);
+  user-select: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
 .ct-fn { color: var(--accent, #6cf); }
 .ct-idx { font-style: normal; }
 .ct-trunc { color: var(--warn, #fc6); margin-left: 0.4em; }

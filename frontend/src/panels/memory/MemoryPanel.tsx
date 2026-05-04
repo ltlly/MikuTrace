@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchMemDiff, fetchMemDump, fetchRecord } from "~/api/client";
+import type { MemDiffByte, MemDumpByte } from "~/api/types";
 
 interface MemoryPanelProps {
   idx: number;
@@ -20,6 +21,19 @@ function asciiByte(byte: number | null): string {
 
 function diffTitle(idx: number): string {
   return idx > 0 ? `diff at idx ${idx - 1} -> ${idx}` : `diff before idx ${idx}`;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+function byteCellClass(kind: string): string {
+  if (kind === "w") return "mem-byte write";
+  if (kind === "r") return "mem-byte read";
+  if (kind === "x") return "mem-byte external";
+  return "mem-byte unknown";
 }
 
 export default function MemoryPanel(props: MemoryPanelProps) {
@@ -91,25 +105,36 @@ export default function MemoryPanel(props: MemoryPanelProps) {
         {(d) => (
           <>
             <p class="dim small">{d().addr} · {d().count} bytes</p>
-            <table class="memory-table">
+            <table class="memory-hex-table">
               <thead>
                 <tr>
                   <th>addr</th>
-                  <th>hex</th>
+                  <th>00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f</th>
                   <th>ascii</th>
-                  <th>kind</th>
-                  <th>src</th>
                 </tr>
               </thead>
               <tbody>
-                <For each={d().bytes}>
-                  {(b) => (
+                <For each={chunk<MemDumpByte>(d().bytes, 16)}>
+                  {(line) => (
                     <tr>
-                      <td><code>{b.addr}</code></td>
-                      <td><code>{hexByte(b.byte)}</code></td>
-                      <td>{asciiByte(b.byte)}</td>
-                      <td>{b.kind}</td>
-                      <td>{b.src_idx ?? ""}</td>
+                      <td>
+                        <code>{line[0]?.addr}</code>
+                      </td>
+                      <td class="mem-hex-cells">
+                        <For each={line}>
+                          {(b) => (
+                            <span
+                              class={byteCellClass(b.kind)}
+                              title={`${b.addr} ${b.kind} src=${b.src_idx ?? ""}`}
+                            >
+                              {hexByte(b.byte)}
+                            </span>
+                          )}
+                        </For>
+                      </td>
+                      <td class="mem-ascii">
+                        <For each={line}>{(b) => <span>{asciiByte(b.byte)}</span>}</For>
+                      </td>
                     </tr>
                   )}
                 </For>
@@ -125,23 +150,43 @@ export default function MemoryPanel(props: MemoryPanelProps) {
             <p class="dim small">
               {d().addr} · {d().changed_count}/{d().size} changed
             </p>
-            <table class="memory-table">
+            <table class="memory-hex-table">
               <thead>
                 <tr>
                   <th>addr</th>
                   <th>before</th>
                   <th>after</th>
-                  <th>changed</th>
+                  <th>ascii</th>
                 </tr>
               </thead>
               <tbody>
-                <For each={d().bytes}>
-                  {(b) => (
-                    <tr class={b.changed ? "changed" : ""}>
-                      <td><code>{b.addr}</code></td>
-                      <td><code>{hexByte(b.before)}</code></td>
-                      <td><code>{hexByte(b.after)}</code></td>
-                      <td>{b.changed ? "yes" : ""}</td>
+                <For each={chunk<MemDiffByte>(d().bytes, 16)}>
+                  {(line) => (
+                    <tr class={line.some((b) => b.changed) ? "changed" : ""}>
+                      <td>
+                        <code>{line[0]?.addr}</code>
+                      </td>
+                      <td class="mem-hex-cells">
+                        <For each={line}>
+                          {(b) => (
+                            <span class={b.changed ? "mem-byte changed" : "mem-byte"}>
+                              {hexByte(b.before)}
+                            </span>
+                          )}
+                        </For>
+                      </td>
+                      <td class="mem-hex-cells">
+                        <For each={line}>
+                          {(b) => (
+                            <span class={b.changed ? "mem-byte changed" : "mem-byte"}>
+                              {hexByte(b.after)}
+                            </span>
+                          )}
+                        </For>
+                      </td>
+                      <td class="mem-ascii">
+                        <For each={line}>{(b) => <span>{asciiByte(b.after)}</span>}</For>
+                      </td>
                     </tr>
                   )}
                 </For>

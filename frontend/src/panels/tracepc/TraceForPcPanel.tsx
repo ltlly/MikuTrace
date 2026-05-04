@@ -47,15 +47,18 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
             <div class="tracepc-grid">
               <div>
                 <h3>before</h3>
-                <div class="tracepc-list">
-                  <For each={history().before}>
-                    {(idx) => (
-                      <button type="button" onClick={() => props.onSelect(idx)}>
-                        {idx}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                <table class="tracepc-table">
+                  <tbody>
+                    <For each={history().before}>
+                      {(idx) => (
+                        <tr onClick={() => props.onSelect(idx)}>
+                          <td>{idx}</td>
+                          <td>-{props.idx - idx}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
                 <p class="dim small">
                   total {history().total_before}
                   {history().before_capped ? " · capped" : ""}
@@ -63,15 +66,18 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
               </div>
               <div>
                 <h3>after</h3>
-                <div class="tracepc-list">
-                  <For each={history().after}>
-                    {(idx) => (
-                      <button type="button" onClick={() => props.onSelect(idx)}>
-                        {idx}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                <table class="tracepc-table">
+                  <tbody>
+                    <For each={history().after}>
+                      {(idx) => (
+                        <tr onClick={() => props.onSelect(idx)}>
+                          <td>{idx}</td>
+                          <td>+{idx - props.idx}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
                 <p class="dim small">
                   total {history().total_after}
                   {history().after_capped ? " · capped" : ""}

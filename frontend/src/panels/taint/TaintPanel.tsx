@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 
 import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
@@ -13,7 +13,13 @@ interface RunResult {
   showDepth: boolean;
 }
 
-export default function TaintPanel() {
+interface TaintPanelProps {
+  idx: number;
+  reg: string;
+  onRegChange: (reg: string) => void;
+}
+
+export default function TaintPanel(props: TaintPanelProps) {
   const [start, setStart] = createSignal(0);
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
@@ -24,6 +30,11 @@ export default function TaintPanel() {
   const [running, setRunning] = createSignal(false);
   const [result, setResult] = createSignal<RunResult | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    setStart(props.idx);
+    if (props.reg) setReg(props.reg);
+  });
 
   async function run() {
     setRunning(true);
@@ -82,7 +93,10 @@ export default function TaintPanel() {
           <input
             type="text"
             value={reg()}
-            onInput={(e) => setReg(e.currentTarget.value)}
+            onInput={(e) => {
+              setReg(e.currentTarget.value);
+              props.onRegChange(e.currentTarget.value);
+            }}
           />
         </label>
         <label>

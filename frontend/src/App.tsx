@@ -28,10 +28,11 @@ type LeftTab =
   | "sofilter"
   | "settings";
 type RightTab = "cfg" | "regs" | "hlil" | "dec";
-type BottomTab = "memory" | "calltree" | "navigation" | "trace-for-pc";
+type BottomTab = "memory" | "navigation" | "trace-for-pc";
 
 export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
+  const [selectedReg, setSelectedReg] = createSignal("x0");
   const [selectedFn, setSelectedFn] = createSignal("");
   const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
   const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
@@ -133,7 +134,7 @@ export default function App() {
               <BacktracePanel idx={selectedIdx()} onSelect={setSelectedIdx} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "calltree" }}>
-              <CallTreePanel />
+              <CallTreePanel currentIdx={selectedIdx()} onSelect={setSelectedIdx} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "forks" }}>
               <ForksPanel />
@@ -142,7 +143,7 @@ export default function App() {
               <StringsPanel />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "taint" }}>
-              <TaintPanel />
+              <TaintPanel idx={selectedIdx()} reg={selectedReg()} onRegChange={setSelectedReg} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>
               <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
@@ -166,7 +167,9 @@ export default function App() {
               Disassembly <span class="dim">trace stream</span>
             </span>
             <span class="grow" />
-            <span class="dim">cursor {selectedIdx()}</span>
+            <span class="dim">
+              cursor {selectedIdx()} · reg {selectedReg()}
+            </span>
           </div>
           <div id="stream-header">
             <span class="hd ec-spacer" />
@@ -176,11 +179,15 @@ export default function App() {
             <span class="hd hd-asm">asm</span>
           </div>
           <div id="stream">
-            <RecordsPanel selectedIdx={selectedIdx()} onSelect={setSelectedIdx} />
+            <RecordsPanel
+              selectedIdx={selectedIdx()}
+              selectedReg={selectedReg()}
+              onSelect={setSelectedIdx}
+              onSelectReg={setSelectedReg}
+            />
           </div>
           <div id="bottom-tabs">
             {btab("memory", "Memory")}
-            {btab("calltree", "Call Tree")}
             {btab("navigation", "Navigation")}
             {btab("trace-for-pc", "Trace for PC")}
             <span class="grow" />
@@ -188,9 +195,6 @@ export default function App() {
           <div id="bottom-content">
             <div class="bbody" classList={{ active: bottomTab() === "memory" }}>
               <MemoryPanel idx={selectedIdx()} />
-            </div>
-            <div class="bbody" classList={{ active: bottomTab() === "calltree" }}>
-              <CallTreePanel />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "navigation" }}>
               <p class="dim">navigation history pending</p>
@@ -212,7 +216,7 @@ export default function App() {
               <CfgPanel />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
-              <RegistersPanel idx={selectedIdx()} />
+              <RegistersPanel idx={selectedIdx()} selectedReg={selectedReg()} onSelectReg={setSelectedReg} />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "hlil" }}>
               <HlilPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />

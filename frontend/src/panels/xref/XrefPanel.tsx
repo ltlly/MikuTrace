@@ -45,7 +45,7 @@ export default function XrefPanel(props: XrefPanelProps) {
       </Show>
       <div class="xref-grid">
         <div>
-          <h3>executions at pc</h3>
+          <h3>executions at current PC</h3>
           <Show when={pcRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
@@ -56,15 +56,29 @@ export default function XrefPanel(props: XrefPanelProps) {
                   {r().pc} · {r().count} hit{r().count === 1 ? "" : "s"}
                   {r().truncated ? " · truncated" : ""}
                 </p>
-                <div class="xref-buttons">
-                  <For each={r().idxs}>
-                    {(idx) => (
-                      <button type="button" onClick={() => props.onSelect(idx)}>
-                        {idx}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                <table class="xref-table xref-exec-table">
+                  <thead>
+                    <tr>
+                      <th>idx</th>
+                      <th>where</th>
+                      <th>distance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={r().idxs}>
+                      {(idx) => (
+                        <tr
+                          class={idx === props.idx ? "selected" : ""}
+                          onClick={() => props.onSelect(idx)}
+                        >
+                          <td>{idx}</td>
+                          <td>{idx < props.idx ? "before" : idx > props.idx ? "after" : "current"}</td>
+                          <td>{idx === props.idx ? 0 : Math.abs(idx - props.idx)}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
               </>
             )}
           </Show>
@@ -93,7 +107,7 @@ export default function XrefPanel(props: XrefPanelProps) {
                     <For each={r().hits}>
                       {(hit) => (
                         <tr onClick={() => props.onSelect(hit.idx)}>
-                          <td><button type="button">{hit.idx}</button></td>
+                          <td>{hit.idx}</td>
                           <td><code>{hit.pc}</code></td>
                           <td>{hit.func ?? ""}</td>
                           <td><code>{hit.asm}</code></td>

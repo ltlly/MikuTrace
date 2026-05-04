@@ -1,9 +1,11 @@
-import { createResource, For, Show } from "solid-js";
+import { createMemo, createResource, For, Show } from "solid-js";
 
 import { fetchRecord } from "~/api/client";
 
 interface RegistersPanelProps {
   idx: number;
+  selectedReg: string;
+  onSelectReg: (reg: string) => void;
 }
 
 const REG_ORDER = [
@@ -53,8 +55,15 @@ function sortedRegs(regs: Record<string, string>): [string, string][] {
   });
 }
 
+function prevValue(reg: string, prevRegs: Record<string, string> | undefined): string | undefined {
+  if (!prevRegs) return undefined;
+  return prevRegs[reg];
+}
+
 export default function RegistersPanel(props: RegistersPanelProps) {
   const [record] = createResource(() => props.idx, fetchRecord);
+  const prevIdx = createMemo(() => (props.idx > 0 ? props.idx - 1 : 0));
+  const [prevRecord] = createResource(prevIdx, fetchRecord);
 
   return (
     <section class="panel">
@@ -72,19 +81,47 @@ export default function RegistersPanel(props: RegistersPanelProps) {
               <dt>idx</dt>
               <dd>{r().idx}</dd>
               <dt>pc</dt>
-              <dd><code>{r().pc}</code></dd>
+              <dd>
+                <code>{r().pc}</code>
+              </dd>
               <dt>asm</dt>
-              <dd><code>{r().asm}</code></dd>
+              <dd>
+                <code>{r().asm}</code>
+              </dd>
             </dl>
-            <table class="reg-table">
+            <table class="reg-table reg-diff-table">
+              <thead>
+                <tr>
+                  <th>reg</th>
+                  <th>value</th>
+                  <th>prev</th>
+                </tr>
+              </thead>
               <tbody>
                 <For each={sortedRegs(r().regs)}>
-                  {([reg, value]) => (
-                    <tr>
-                      <th>{reg}</th>
-                      <td><code>{value}</code></td>
-                    </tr>
-                  )}
+                  {([reg, value]) => {
+                    const before = () => prevValue(reg, prevRecord()?.regs);
+                    const changed = () => before() !== undefined && before() !== value;
+                    return (
+                      <tr
+                        classList={{
+                          changed: changed(),
+                          selected: reg === props.selectedReg,
+                        }}
+                        onClick={() => props.onSelectReg(reg)}
+                      >
+                        <th>{reg}</th>
+                        <td>
+                          <code>{value}</code>
+                        </td>
+                        <td>
+                          <Show when={changed()} fallback={<span class="dim">same</span>}>
+                            <code>{before()}</code>
+                          </Show>
+                        </td>
+                      </tr>
+                    );
+                  }}
                 </For>
               </tbody>
             </table>
