@@ -164,7 +164,11 @@ impl AppStateInner {
                 10,
                 50,
                 &self.type_spec_paths,
-                Some(self.memshadow()),
+                // Keep the decompiler first paint independent from cold
+                // MemShadow sidecar loading on multi-GB traces. VM candidates
+                // still include hex dumps when another panel has already
+                // loaded MemShadow.
+                self.memshadow_if_ready(),
             )
         })
     }
