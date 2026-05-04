@@ -403,7 +403,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | ✅ M2-ε | bl-target heuristic + examples/<so>/known_offsets.json overlay; merged into AppState symbols with priority: static > examples > auto |
 | `display.py` (pwndbg-style annotations) | frontend rendering | 🔜 M4 | moves to TS frontend; backend just emits structured tokens |
 | `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | ✅ M2-ε | direct port; legacy F0 / cfg: parser kept; 8 unit tests |
-| `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | 🔜 M2 | |
+| `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | ✅ M3-α | direct port; cap-balance counter for max_depth; 3 unit tests + parity gate |
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | 🔜 M3 | window-based scan |
 | `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | 🔜 M3 | confidence-scored, no decode |
 | `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
@@ -510,7 +510,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/field-at` | 🔜 M3 | |
 | `/api/fn-summary` | 🔜 M3 | |
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
-| `/api/call-tree` | 🔜 M3 | |
+| `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
 | `/api/call-chain` | 🔜 M3 | |
 | `/api/fork-events` | 🔜 M3 | |
 | `/api/crypto-scan` | 🔜 M3 | |

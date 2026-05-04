@@ -43,8 +43,15 @@
 - M2-ζ tracemiku-core::memshadow port: ✅ 2026-05-04 (eager build; sidecar deferred)
 - M2-ζ /api/strings + /api/mem-dump + StringsPanel: ✅ 2026-05-04
 - M2-ζ scripts/m2_zeta_parity.py: ✅ 2026-05-04
+- M3-α `tracemiku-core::calltree` port + `/api/call-tree` + CallTreePanel + parity script: ✅ 2026-05-04
+- M3-α auto_known_offsets naming fix (`f_<0xhex>` → `sub_<hex>`, Python parity, caught by parity gate): ✅ 2026-05-04
 
-- M3 (next): calltree + taint forward/backward (rayon) + taint cross-fn-call frame_depth + decompiler::backend stub + Graph panel SVG + Python viewer cutover prep + memshadow v3 binary sidecar
+- M3-α (this): calltree + /api/call-tree + CallTreePanel + parity ✅ 2026-05-04
+- M3-β (next): taint forward/backward (rayon) + cross-fn frame_depth + /api/forward-taint + /api/backward-taint + parity
+- M3-γ: decompiler::backend stub + TraceIR builder skeleton
+- M3-δ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-ε: memshadow v3 binary sidecar (.memshadow.v3.bin)
+- M3-ζ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
 
 ## ⚠ 部分完成 (2026-05-03 — FunctionIndex / Web Refactor)
