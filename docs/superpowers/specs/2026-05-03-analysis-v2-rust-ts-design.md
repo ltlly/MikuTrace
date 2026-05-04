@@ -467,8 +467,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `auto-phase-detect` | 🔜 M3 | |
 | `jni-calls`, `jobj-history`, `jni-strings` | 🔜 M3 | reads jni_hooks.jsonl |
 | `mem-dump` | ✅ M3-μ | see `strings`, `mem-dump` row above |
-| `reg-timeline` | 🔜 M3 | |
-| `mem-diff` | 🔜 M3 | |
+| `reg-timeline` | ✅ M3-υ | REST-backed register change timeline |
+| `mem-diff` | ✅ M3-υ | REST-backed MemShadow byte diff around an idx |
 | `fn-summary` | 🔜 M3 | |
 | `field-at` | 🔜 M3 | |
 | `export` (CSV/JSON dump) | ⏸ | Power-user; defer |
@@ -512,8 +512,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/find-mem-pattern` | ✅ M3-π | MemShadow byte-pattern scan with idx filters |
 | `/api/mem-writes-in-range` | ✅ M3-π | covered by `/api/idxs-touching-range` writer partition |
 | `/api/mem-flow` | 🔜 M3 | |
-| `/api/mem-diff` | 🔜 M3 | |
-| `/api/reg-timeline` | 🔜 M3 | |
+| `/api/mem-diff` | ✅ M3-υ | MemShadow byte diff between idx-1 and idx |
+| `/api/reg-timeline` | ✅ M3-υ | distinct register value timeline |
 | `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings`, `/api/jni-events` | 🔜 M3 | reads jni_hooks.jsonl |
 | `/api/field-at` | 🔜 M3 | |
 | `/api/fn-summary` | 🔜 M3 | |
