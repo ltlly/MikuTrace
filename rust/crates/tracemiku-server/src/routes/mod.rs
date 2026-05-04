@@ -27,6 +27,7 @@ pub mod reg_value_at;
 pub mod search;
 pub mod search_pc;
 pub mod so_stats;
+pub mod string_provenance;
 pub mod strings;
 pub mod timeline_diff;
 
@@ -93,6 +94,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/mem-diff", get(timeline_diff::mem_diff_handler))
         .route("/api/mem-flow", get(mem_flow::mem_flow_handler))
         .route("/api/strings", get(strings::strings_handler))
+        .route(
+            "/api/string-provenance",
+            get(string_provenance::string_provenance_handler),
+        )
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
         .route(
             "/api/last-write-of-addr",
