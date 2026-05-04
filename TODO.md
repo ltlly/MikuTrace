@@ -125,7 +125,8 @@
 - M5-ι: Rust LLIL restructure metadata ✅ 2026-05-04
 - M6-α: BN Python sidecar + Rust lifecycle + HLIL/BN-CFG endpoints + `/api/functions` BN merge ✅ 2026-05-04
 - M6-β: frontend HLIL panel follows selected FunctionIndex id (`/api/hlil-for-fn`) ✅ 2026-05-04
-- M7 (next): Rust cutover wrapper + old Python viewer/webui deletion
+- M7-α: `tracemiku web` / `tracemiku view` route to Rust `tracemiku-server`, which serves `frontend/dist` ✅ 2026-05-04
+- M7-β (next): remove remaining top-level Python `viewer.*` command dependencies, then delete old `viewer/` + `webui/`
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
