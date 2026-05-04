@@ -406,7 +406,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `function_index.py` (FunctionIndex, FunctionEntry, parse_id) | `tracemiku-core::function_index` | ✅ M2-ε | direct port; legacy F0 / cfg: parser kept; 8 unit tests |
 | `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | ✅ M3-α | direct port; cap-balance counter for max_depth; 3 unit tests + parity gate |
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | 🔜 M3 | window-based scan |
-| `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | 🔜 M3 | confidence-scored, no decode |
+| `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | ✅ M3-ι2b | 1:1 port; ollvm_detect_vm + OllvmFinding. Heuristic scoring 0.4+0.3+0.2+0.1 (parity with Python). 3 unit tests. |
 | `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
 | `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | 🔜 M3 | clap-based dispatcher |
 | `__init__.py` (Python SDK re-exports) | n/a | ❌ | M7 deletes; PyO3 binding only if future need |
@@ -420,11 +420,11 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
 | `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
 | `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
-| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ι | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η) + BlockIR.exits with kind/taken_count via CFG EdgeMeta (M3-ι) + render_summary_md fidelity (M3-ι). type_anchor + vm_candidate ports defer to next milestone. + type_anchors auto-discovery (M3-ι2a) |
+| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ι2b | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η) + BlockIR.exits with kind/taken_count via CFG EdgeMeta (M3-ι) + render_summary_md fidelity (M3-ι). type_anchor + vm_candidate ports defer to next milestone. + type_anchors auto-discovery (M3-ι2a) + vm_candidates auto-populated when memshadow provided (M3-ι2b) + VM-candidates body fidelity (M3-ι2b) |
 | `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
 | `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
 | `type_anchor.py` (TypeSpec/TypeAnchor + load + find) | `tracemiku-core::decompiler::type_anchor` + `attach_type_anchors` in builder | ✅ M3-ι2a | 1:1 port; auto-discovers tools/hooks/*.json with kind=="type_specs" plus examples/<so>/type_specs.json. Render markdown section parity with Python markdown.py:207-229. |
-| `vm_candidate.py` (OLLVM VM detection) | `tracemiku-core::decompiler::vm_candidate` | 🔜 M3 | |
+| `vm_candidate.py` (OLLVM VM detection, DEC3-D) | `tracemiku-core::decompiler::vm_candidate` | ✅ M3-ι2b | 1:1 port; detect_vm_candidates emits VmCandidateIR with hex_dump from MemShadow. Helpers find_self_update_loads + bytecode_range. 3 unit tests. |
 | `llil/lift.py` (capstone → LLIL) | `tracemiku-core::llil::lift` | 🔜 M5 | capstone-rs feed |
 | `llil/ssa.py` (block-local SSA + cross-block phi) | `tracemiku-core::llil::ssa` | 🔜 M5 | including AAPCS64 caller-saved kill |
 | `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | 🔜 M5 | |

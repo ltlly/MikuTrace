@@ -59,6 +59,7 @@
 - M3-θ /api/dec/fn/{id} + render_func_md skeleton (header + metadata + per-block asm/samples; trace:* + bare F0): ✅ 2026-05-04
 - M3-ι BlockIR.exits + cfg EdgeMeta (kind/count) + render_summary_md fidelity: ✅ 2026-05-04
 - M3-ι2a type_anchor.py port + auto-discovery + render section: ✅ 2026-05-04
+- M3-ι2b ollvmdet.py + vm_candidate.py port + summary VM-candidates body fidelity: ✅ 2026-05-04
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
@@ -75,7 +76,8 @@
 - M3-θ: /api/dec/fn/{id} + render_func_md skeleton ✅ 2026-05-04
 - M3-ι: BlockIR.exits + render_summary_md ✅ 2026-05-04
 - M3-ι2a: type_anchor.py port + tools/hooks/ auto-discovery + render type-anchors section ✅ 2026-05-04
-- M3-ι2b (next): vm_candidate.py port (depends on ollvmdet.py port), summary VM-candidates hex-dump body, /api/dec/fn/{id} sym:* / bn:* source support (gated on Rust BN backend), /api/dec/llm-call
+- M3-ι2b: ollvmdet + vm_candidate port + summary VM-candidates hex-dump body ✅ 2026-05-04
+- M3-ι2c (next, BN-gated): /api/dec/fn/{id} sym:* / bn:* source support (depends on Rust BN backend port — separate milestone), /api/dec/llm-call (LLM client port), real-trace parity script m3_iota_parity.py covering type_anchor + vm_candidate + summary
 - M3-κ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
 - M3-λ: memshadow v3 binary sidecar (.memshadow.v3.bin)
 - M3-μ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
