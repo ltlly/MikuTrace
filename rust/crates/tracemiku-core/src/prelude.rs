@@ -15,6 +15,10 @@ pub use crate::decompiler::builder::{
 pub use crate::decompiler::ir::{
     BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
 };
+pub use crate::decompiler::prompt::{
+    build_fn_decompile_prompt, build_summary_prompt, Bundle as PromptBundle,
+    SYSTEM_PROMPT_DECOMPILE, SYSTEM_PROMPT_DECOMPILE_ZH, SYSTEM_PROMPT_SUMMARY,
+};
 pub use crate::decompiler::render::{render_func_md, render_summary_md};
 pub use crate::decompiler::type_anchor::{find_anchors, load_type_specs, TypeAnchor, TypeSpec};
 pub use crate::decompiler::vm_candidate::detect_vm_candidates;
