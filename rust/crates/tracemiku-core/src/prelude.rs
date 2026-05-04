@@ -5,6 +5,13 @@
 
 pub use crate::calltree::{build_call_tree, CallNode};
 pub use crate::cfg::{Block, CFG};
+pub use crate::decompiler::backend::{
+    Backend, CfgBlock as DecCfgBlock, CfgEdge as DecCfgEdge, FieldHint, Function as DecFunction,
+    HlilLine, NoneBackend, Token as DecToken, VarType,
+};
+pub use crate::decompiler::ir::{
+    BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
+};
 pub use crate::disasm::{decode, normalize_disasm_reg, DecodedInsn};
 pub use crate::function_index::{
     build_from_symbols as build_function_index, make_bn_id, make_sym_id, make_trace_id, parse_id,

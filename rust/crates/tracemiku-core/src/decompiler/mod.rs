@@ -7,4 +7,5 @@
 //! See `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`
 //! §13.3 for the migration table.
 
+pub mod backend;
 pub mod ir;
