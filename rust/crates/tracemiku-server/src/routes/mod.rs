@@ -2,6 +2,7 @@ pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
 pub mod cfg_svg;
+pub mod crypto_scan;
 pub mod data_chase;
 pub mod dec_fn;
 pub mod dec_llm_call;
@@ -42,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/search", get(search::search_handler))
         .route("/api/search-pc", get(search_pc::search_pc_handler))
+        .route("/api/crypto-scan", get(crypto_scan::crypto_scan_handler))
         .route("/api/idxs-for-pc", get(idxs_for_pc::idxs_for_pc_handler))
         .route(
             "/api/idxs-for-block",

@@ -313,6 +313,15 @@ fn mem_flow_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn crypto_scan_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&["crypto-scan".into(), cd.display().to_string()]);
+    assert!(v["scanned"].as_u64().unwrap() > 0);
+    assert_eq!(v["primitives"].as_array().unwrap().len(), 22);
+    assert!(v["any_hit"].is_boolean());
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[

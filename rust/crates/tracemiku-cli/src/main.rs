@@ -314,6 +314,8 @@ enum Cmd {
         #[arg(long, default_value_t = 5)]
         top_blocks: usize,
     },
+    /// GET /api/crypto-scan.
+    CryptoScan { trace_dir: PathBuf },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -645,6 +647,9 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let params = vec![("fn", fn_name), ("top_blocks", top_blocks.to_string())];
             route_get_json(trace_dir, route_path("/api/fn-summary", &params)).await
+        }
+        Some(Cmd::CryptoScan { trace_dir }) => {
+            route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await
