@@ -63,7 +63,17 @@ pub async fn strings_handler(
 }
 
 fn strings_response(inner: &crate::state::AppStateInner, q: StringsQuery) -> StringsResponse {
-    let mem = inner.memshadow();
+    let mem = match inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
+            return StringsResponse {
+                status,
+                count: 0,
+                cursor: q.cursor,
+                strings: Vec::new(),
+            };
+        }
+    };
     let mut results = mem.find_strings(q.min_len);
     if q.cursor >= 0 {
         let cursor = q.cursor as u64;

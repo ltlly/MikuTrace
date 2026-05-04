@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
@@ -16,7 +16,10 @@ interface StringsSource {
   q: string;
   limit: number;
   cursor: number;
+  retry: number;
 }
+
+const STRINGS_RETRY_MS = 500;
 
 export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
@@ -24,6 +27,7 @@ export default function StringsPanel(props: StringsPanelProps) {
   const [atCursor, setAtCursor] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
+  const [retry, setRetry] = createSignal(0);
   let singleClickTimer: number | undefined;
   let jumpSeq = 0;
   let jumpAbort: AbortController | undefined;
@@ -34,12 +38,14 @@ export default function StringsPanel(props: StringsPanelProps) {
       q: query(),
       limit: Math.max(1, Math.min(5000, limit())),
       cursor: atCursor() ? props.idx : -1,
+      retry: retry(),
     };
     return prev &&
       prev.minLen === next.minLen &&
       prev.q === next.q &&
       prev.limit === next.limit &&
-      prev.cursor === next.cursor
+      prev.cursor === next.cursor &&
+      prev.retry === next.retry
       ? prev
       : next;
   });
@@ -56,6 +62,16 @@ export default function StringsPanel(props: StringsPanelProps) {
       r.request_cursor === s.cursor
       ? r
       : undefined;
+  });
+  const readyResp = createMemo(() => {
+    const r = currentResp();
+    return r?.status === "ready" ? r : undefined;
+  });
+
+  createEffect(() => {
+    if (!props.active || resp.loading || currentResp()?.status !== "loading") return;
+    const timer = window.setTimeout(() => setRetry((n) => n + 1), STRINGS_RETRY_MS);
+    onCleanup(() => window.clearTimeout(timer));
   });
 
   function clearSingleClickTimer() {
@@ -171,10 +187,10 @@ export default function StringsPanel(props: StringsPanelProps) {
       <Show when={jumpErr()}>
         <p class="err">{jumpErr()}</p>
       </Show>
-      <Show when={resp.loading}>
-        <p class="dim">loading…</p>
+      <Show when={resp.loading || currentResp()?.status === "loading"}>
+        <p class="dim">memory index loading…</p>
       </Show>
-      <Show when={currentResp()}>
+      <Show when={readyResp()}>
         {(r) => (
           <>
             <p class="dim small">

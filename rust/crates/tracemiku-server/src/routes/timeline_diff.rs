@@ -144,12 +144,11 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
     let after_t = q.idx as u64;
     let mut bytes = Vec::with_capacity(q.size);
     let mut changed_count = 0usize;
-    let mem = match inner.memshadow_if_ready() {
-        Some(mem) => mem,
-        None if inner.memshadow_status() == "idle" => inner.memshadow(),
-        None => {
+    let mem = match inner.memshadow_ready_or_block_if_idle() {
+        Ok(mem) => mem,
+        Err(status) => {
             return MemDiffResponse {
-                status: "loading",
+                status,
                 idx: q.idx,
                 addr: q.addr,
                 size: q.size,

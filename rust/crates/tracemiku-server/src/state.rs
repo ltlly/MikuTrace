@@ -262,6 +262,20 @@ impl AppStateInner {
         self.memshadow.get()
     }
 
+    pub fn memshadow_ready_or_block_if_idle(&self) -> Result<&MemShadow, &'static str> {
+        match self.memshadow_if_ready() {
+            Some(mem) => Ok(mem),
+            None => {
+                let status = self.memshadow_status();
+                if status == "idle" || status == "ready" {
+                    Ok(self.memshadow())
+                } else {
+                    Err(status)
+                }
+            }
+        }
+    }
+
     pub fn memshadow_status(&self) -> &'static str {
         if self.memshadow.get().is_some() {
             return "ready";

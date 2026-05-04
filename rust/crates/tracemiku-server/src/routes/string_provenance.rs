@@ -59,7 +59,17 @@ fn string_provenance_response(
 ) -> Result<StringProvenanceResponse, StatusCode> {
     let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
     let length = q.length.clamp(1, MAX_LENGTH);
-    let memshadow = inner.memshadow();
+    let memshadow = match inner.memshadow_ready_or_block_if_idle() {
+        Ok(memshadow) => memshadow,
+        Err(status) => {
+            return Ok(StringProvenanceResponse {
+                status,
+                addr: q.addr,
+                length,
+                bytes: Vec::new(),
+            });
+        }
+    };
     let (writers, writers_total) = covering_idxs_by_byte(&inner.index.mem_writes, start, length);
     let (readers, readers_total) = covering_idxs_by_byte(&inner.index.mem_reads, start, length);
     let mut bytes = Vec::with_capacity(length);

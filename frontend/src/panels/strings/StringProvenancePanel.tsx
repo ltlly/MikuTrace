@@ -1,4 +1,4 @@
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchStringProvenance } from "~/api/client";
 import type { StringProvByte } from "~/api/types";
@@ -20,7 +20,10 @@ interface Source {
   token: number;
   addr: string;
   len: number;
+  retry: number;
 }
+
+const PROVENANCE_RETRY_MS = 500;
 
 function printable(byte: number | null): string {
   if (byte === null) return ".";
@@ -41,17 +44,20 @@ function kindLabel(kind: string): string {
 }
 
 export default function StringProvenancePanel(props: StringProvenancePanelProps) {
+  const [retry, setRetry] = createSignal(0);
   const source = createMemo<Source | undefined>((prev) => {
     if (!props.active || !props.request) return undefined;
     const next = {
       token: props.request.token,
       addr: props.request.addr,
       len: Math.max(1, Math.min(512, props.request.len)),
+      retry: retry(),
     };
     return prev &&
       prev.token === next.token &&
       prev.addr === next.addr &&
-      prev.len === next.len
+      prev.len === next.len &&
+      prev.retry === next.retry
       ? prev
       : next;
   });
@@ -62,11 +68,21 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
     if (!r || !s) return undefined;
     return r.addr === s.addr && r.length === s.len ? r : undefined;
   });
+  const readyResp = createMemo(() => {
+    const r = currentResp();
+    return r?.status === "ready" ? r : undefined;
+  });
 
   const shownBytes = createMemo(() => {
-    const bytes = currentResp()?.bytes ?? [];
+    const bytes = readyResp()?.bytes ?? [];
     const nul = bytes.findIndex((b) => b.byte === 0);
     return nul >= 0 ? bytes.slice(0, nul + 1) : bytes;
+  });
+
+  createEffect(() => {
+    if (!props.active || resp.loading || currentResp()?.status !== "loading") return;
+    const timer = window.setTimeout(() => setRetry((n) => n + 1), PROVENANCE_RETRY_MS);
+    onCleanup(() => window.clearTimeout(timer));
   });
 
   function idxButtons(byte: StringProvByte, kind: "w" | "r") {
@@ -103,10 +119,10 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
             <Show when={!resp.loading && resp.error}>
               <p class="err">provenance failed: {String(resp.error)}</p>
             </Show>
-            <Show when={resp.loading}>
-              <p class="dim">loading provenance…</p>
+            <Show when={resp.loading || currentResp()?.status === "loading"}>
+              <p class="dim">memory index loading…</p>
             </Show>
-            <Show when={currentResp()}>
+            <Show when={readyResp()}>
               <table class="string-prov-table">
                 <thead>
                   <tr>
