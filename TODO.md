@@ -148,6 +148,9 @@
 2. 前端 HLIL tab 仍按 cursor PC 查 `/api/hlil-for-pc`, **没消费 `/api/hlil-for-fn`**.
    FunctionIndex 不是 HLIL 的 canonical source.
 3. LLIL `scope=body` 只对 `trace:F0` 生效 (root trace view), UI 文案没说清楚.
+   ✅ v2 Rust route resolved this by using explicit `fn_id`-scoped LLIL render
+   (`/api/llil/render` / `/api/llil/llm`) for trace:* / sym:* functions instead of
+   the legacy root-only `scope=body` toggle.
 
 **已修(本节追加)**:
 
@@ -168,6 +171,7 @@
 | T6 | feat(web ui) Functions panel + Decompile consume /api/functions | 3708e06 |
 | T7 | test(web) pin dec/fn sync-CFG fallback — sym:* must not block on BG | 456aaa0 |
 | T8 | feat(web) /api/hlil-for-fn — FunctionIndex-keyed HLIL lookup (端点已开, 前端未接) | 62af3ec |
+| T9 | feat(server/frontend) v2 LLIL render/LLM by explicit fn_id range | 513babb / 9b41470 / 82af441 |
 
 (再加 T9 / 修复 commit 见 git log)
 
@@ -188,6 +192,9 @@
 - **F3**: LLIL `scope=body` 通用化到任意 fn (用 calltree per-frame range),
   stats 加 `body_only_applied: bool` 让前端区分 "无 callee 排除" vs
   "filter 不适用此 fn". 或保持现状但 UI 文案改成 "Body only (root only)".
+  ✅ 2026-05-04: v2 Rust LLIL APIs now render by explicit `fn_id` range
+  (`trace:*` / `sym:*`) and the Solid frontend labels it as LLIL render, not
+  legacy root-only Body scope.
 
 合入门槛: F1 + F2 + F3 任一项实现就更新本节, 或写明 deferred reason.
 

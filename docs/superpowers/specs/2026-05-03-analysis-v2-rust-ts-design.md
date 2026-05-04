@@ -312,7 +312,7 @@ For each Rust module landed in M2-M5, write a side-by-side comparison script tha
 | **M2** | tracemiku-core | Trace parser, module/sym, CFG, Index, MemShadow, taint, FunctionIndex, calltree | `cargo test -p tracemiku-core` green; parity scripts vs Python pass |
 | **M3** | tracemiku-server endpoints | All ~25 trace-only endpoints (no BN), WebSocket job system | `tracemiku-server` serves all current /api/* (sans BN); per-route smoke tests via `axum-test` or `tower::ServiceExt` green |
 | **M4** | TS frontend core | records / cfg / functions / decompile panels working in browser | ✅ 2026-05-04: Solid panels cover core browser flows |
-| **M5** | LLIL pipeline (Rust) | lift → SSA → passes → render — Rust port | parity vs Python LLIL output (token-level) |
+| **M5** | LLIL pipeline (Rust) | lift → SSA → passes → render — Rust port | ✅ 2026-05-04: Rust LLIL pipeline + `/api/llil/render` + `/api/llil/llm`; real-trace parity hardening continues |
 | **M6** | BN python sidecar | JSON-RPC sidecar + Rust spawn/lifecycle + HLIL endpoints | BN HLIL panel working in TS frontend |
 | **M7** | Cutover + delete legacy | `tracemiku web` defaults to v2; delete `viewer/` (analysis side), `webui/` entirely; rewrite `./tracemiku` dispatcher | single binary `tracemiku-server` + frontend dist |
 
@@ -474,7 +474,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `fn-summary` | ✅ M3-ω | REST-backed function overview |
 | `field-at` | ✅ M3-field-at | BN-gated fallback shape; real inference remains M6 |
 | `export` (CSV/JSON dump) | ⏸ | Power-user; defer |
-| `dec` (LLM-assisted decompile, route B) | 🔜 M5 | uses llm_client |
+| `dec` (LLM-assisted decompile, route B) | ✅ M3-ι2d / ✅ M5-η | Rust route-B LLM calls plus LLIL→LLM endpoint |
 | `dec-bench` (multi-model benchmark) | ⏸ | Defer until base `dec` parity holds |
 | `view` (web subcommand wrapper) | 🔜 M7 | dispatcher to `tracemiku-server` |
 | `query` (ad-hoc Python eval) | ❌ | Replaced by `tracemiku-cli` typed subcommands |
