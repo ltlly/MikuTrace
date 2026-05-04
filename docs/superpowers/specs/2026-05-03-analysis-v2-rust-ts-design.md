@@ -456,7 +456,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `find-mem-pattern` | ✅ M3-π | REST-backed wrapper for `/api/find-mem-pattern` |
 | `mem-writes-in-range` | ✅ M3-π | covered by `idxs-touching-range` writer partition |
 | `mem-flow` | ✅ M3-φ | REST-backed per-byte event timeline |
-| `crypto-scan` | 🔜 M3 | 22 standard primitives |
+| `crypto-scan` | ✅ M3-crypto | 22 standard primitive constant scan |
 | `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
 | `call-chain` | ✅ M3-σ | REST-backed LR walking wrapper |
 | `hash-input-search` | 🔜 M3 | |
@@ -522,7 +522,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
 | `/api/call-chain` | ✅ M3-σ | LR walking caller chain |
 | `/api/fork-events` | ✅ M3-ο | per-call fork lifecycle events with status filter |
-| `/api/crypto-scan` | 🔜 M3 | |
+| `/api/crypto-scan` | ✅ M3-crypto | 22 standard primitive constant scan |
 | `/api/ollvm-detect-vm` | ✅ M3-ψ | OLLVM VM dispatcher heuristic |
 | `/api/hash-finalize-detect`, `/api/hash-input-search` | 🔜 M3 | |
 | `/api/auto-phase-detect` | 🔜 M3 | |
