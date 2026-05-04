@@ -1,25 +1,5 @@
 #!/usr/bin/env python3
-# Auto-fallback to a Python with our deps (capstone/numpy) when the
-# `env`-resolved python3 lacks them — common on dev machines with multiple
-# venvs in PATH where the first one is for an unrelated project.
-# 注意: 顶层只 smoke capstone (大多数子命令要 disasm). frida 是 trace-only,
-# 延迟到 cmd_trace() 内 import — 让 web/list/info/dec 等离线子命令在没装
-# frida 的环境也能跑.
 import os, sys
-try:
-    import capstone   # smoke check for viewer/disasm deps
-except ImportError:
-    for _p in ("/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"):
-        if os.path.exists(_p) and _p != sys.executable:
-            try: os.execv(_p, [_p, *sys.argv])
-            except Exception: pass
-    sys.stderr.write(
-        f"error: missing 'capstone' in {sys.executable}\n"
-        f"  pip install capstone fastapi 'pydantic>=2' uvicorn numpy\n"
-        f"  (frida 仅 trace 子命令需要, 单独装: pip install frida)\n"
-        f"  or invoke directly with the right interpreter: "
-        f"<other-python> ./tracemiku ...\n")
-    sys.exit(1)
 
 """tracemiku — 安卓真机 ARM64 指令级 trace 全栈工具.
 
@@ -925,8 +905,8 @@ def cmd_finalize(args):
 
 
 def cmd_view(args):
-    from viewer.app import TraceMikuApp
-    app = TraceMikuApp(args.path); app.run(); return 0
+    return _run_rust_web(path=args.path, host="127.0.0.1", port=18900,
+                         no_browser=False, so=None)
 
 
 def cmd_dec(args):
@@ -1106,14 +1086,36 @@ def cmd_dec_bench(args):
 
 
 def cmd_web(args):
-    from webui.server import serve
     so = pathlib.Path(args.so).expanduser() if args.so else None
     if so and not so.exists():
         print(f"[!] --so 路径不存在: {so}"); return 1
-    serve(pathlib.Path(args.path), host=args.host, port=args.port,
-          open_browser=not args.no_browser,
-          decomp_so=so, decomp_backend=args.decomp)
-    return 0
+    return _run_rust_web(path=args.path, host=args.host, port=args.port,
+                         no_browser=args.no_browser, so=so)
+
+
+def _run_rust_web(path, host, port, no_browser, so):
+    """M7 cutover wrapper: serve the Solid frontend through tracemiku-server."""
+    env = os.environ.copy()
+    if so:
+        env["TRACEMIKU_BN_SO"] = str(so)
+    port = int(port or 18900)
+    bin_path = env.get("TRACEMIKU_SERVER_BIN")
+    if bin_path:
+        cmd = [bin_path, str(path), "--host", host, "--port", str(port)]
+    else:
+        cmd = [
+            "cargo", "run", "--manifest-path", str(HERE / "rust" / "Cargo.toml"),
+            "-p", "tracemiku-server", "--", str(path),
+            "--host", host, "--port", str(port),
+        ]
+    if not no_browser:
+        import threading, webbrowser
+        def _open():
+            time.sleep(1.0)
+            webbrowser.open(f"http://127.0.0.1:{port}/")
+        threading.Thread(target=_open, daemon=True).start()
+    print(f"[web] starting Rust v2 server on http://{host}:{port}/", flush=True)
+    return subprocess.call(cmd, env=env)
 
 
 def cmd_list(args):
@@ -1566,7 +1568,7 @@ def main():
                       help="自定义首页文本 regex (默认: 同意按钮消失 + UI settle 即认为首页就绪)")
 
     # view
-    p_vw = sp.add_parser("view", help="启动 TUI 查看器")
+    p_vw = sp.add_parser("view", help="启动 Rust v2 Web 查看器")
     p_vw.add_argument("path", help="trace 目录或 .bin 文件")
 
     # query (AI 友好)
@@ -1659,16 +1661,16 @@ def main():
     p_db.add_argument("--out", default=None, help="输出根 (默认 = path/decompile)")
 
     # web (single-page IDA-style SPA, 推荐替代 view)
-    p_web = sp.add_parser("web", help="单页 SPA: 左 trace + 右 CFG, IDA 风格分屏 (默认推荐)")
+    p_web = sp.add_parser("web", help="Rust v2 Solid SPA")
     p_web.add_argument("path", help="trace 目录 (run 或 per-call)")
     p_web.add_argument("--host", default="0.0.0.0")
-    p_web.add_argument("--port", type=int, default=0, help="0=自动")
+    p_web.add_argument("--port", type=int, default=18900)
     p_web.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
     p_web.add_argument("--so", default=None,
                        help="SO 文件路径 (启用 HLIL 反编译 tab; 启动时后台加载)")
     p_web.add_argument("--decomp", default=None,
                        choices=("binja", "ghidra", "none"),
-                       help="反编译后端 (默认按可用性自动选)")
+                       help="deprecated; BN uses TRACEMIKU_BN_SO / --so in Rust v2")
 
     args = ap.parse_args()
     if args.subcommand == "trace":   return cmd_trace(args)

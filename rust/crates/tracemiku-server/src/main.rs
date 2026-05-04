@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::Parser;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -16,6 +17,9 @@ struct Cli {
     /// Bind host.
     #[arg(long, default_value = "0.0.0.0")]
     host: String,
+    /// Frontend dist directory. Defaults to repo-root/frontend/dist.
+    #[arg(long)]
+    static_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -28,6 +32,10 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     let app = tracemiku_server::build_router(cli.trace_dir.clone()).context("build router")?;
+    let static_dir = cli.static_dir.unwrap_or_else(default_static_dir);
+    let app = app.fallback_service(
+        ServeDir::new(&static_dir).not_found_service(ServeFile::new(static_dir.join("index.html"))),
+    );
     let addr: SocketAddr = format!("{}:{}", cli.host, cli.port).parse()?;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -38,4 +46,13 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn default_static_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+        .join("frontend")
+        .join("dist")
 }
