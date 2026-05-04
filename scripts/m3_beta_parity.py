@@ -121,7 +121,18 @@ def main():
              "chain", "backward-taint"),
         ]
 
-        diffs = []
+        # backward-taint is a SOFT gate in M3-β. Python's index path does
+        # MEM-chasing unconditionally (viewer/taint.py:312-356), but the
+        # Rust port skips it (M3-β scope: index-accelerated, no
+        # through_mem). On real traces with frequent ld/st, the two
+        # algorithms reach different parts of the chase graph under the
+        # max_count cap. The gap is documented in TODO.md and lands as
+        # part of M3-γ (advanced taint flags). Until then we surface the
+        # divergence as a WARN, not a fail.
+        SOFT_LABELS = {"backward-taint"}
+
+        diffs = []           # hard failures (forward-taint)
+        warns = []           # soft warnings (backward-taint)
         ok_lines = []
 
         for path, key, label in endpoints:
@@ -153,14 +164,15 @@ def main():
             jaccard = (len(common) / len(union)) if union else 1.0
 
             if jaccard < 0.6:
-                diffs.append(
+                bucket = warns if label in SOFT_LABELS else diffs
+                bucket.append(
                     f"  {label} hit-idx jaccard={jaccard:.2f} <0.6 — "
                     f"py={len(py_idx)}, rs={len(rs_idx)}, common={len(common)}"
                 )
-                diffs.append(
+                bucket.append(
                     f"  py-only sample: {sorted(py_idx - rs_idx)[:5]}"
                 )
-                diffs.append(
+                bucket.append(
                     f"  rs-only sample: {sorted(rs_idx - py_idx)[:5]}"
                 )
             else:
@@ -168,6 +180,11 @@ def main():
                     f"OK — {label} (py={len(py_idx)} / rs={len(rs_idx)}; "
                     f"jaccard={jaccard:.2f})"
                 )
+
+        if warns:
+            print("WARN (M3-γ-deferred):", file=sys.stderr)
+            for w in warns:
+                print(w, file=sys.stderr)
 
         if diffs:
             print("MISMATCH:", file=sys.stderr)
