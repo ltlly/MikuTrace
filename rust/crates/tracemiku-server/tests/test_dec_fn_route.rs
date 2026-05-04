@@ -3,7 +3,10 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::fs;
+use std::sync::Mutex;
 use tower::ServiceExt;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn synth_root_only() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -229,10 +232,14 @@ async fn dec_fn_returns_404_for_unknown_symbol() {
 }
 
 #[tokio::test]
-async fn dec_fn_returns_404_for_bn_source_until_backend_lands() {
+async fn dec_fn_returns_503_for_bn_source_without_sidecar() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
     let dir = synth_root_only();
     let cd = call_dir(&dir);
     let app = tracemiku_server::build_router(cd).expect("router builds");
+    drop(_guard);
     let resp = app
         .oneshot(
             Request::builder()
@@ -242,7 +249,67 @@ async fn dec_fn_returns_404_for_bn_source_until_backend_lands() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn dec_fn_returns_bn_hlil_markdown_when_sidecar_is_ready() {
+    let dir = synth_root_only();
+    let sidecar = dir.path().join("fake_bn_sidecar.py");
+    fs::write(
+        &sidecar,
+        r#"#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    req = json.loads(line)
+    result = {
+        "ok": True,
+        "ready": True,
+        "fn": {"name": "bn_root", "start": 1048576, "end": 1048584},
+        "lines": [{"pc": "0x100000", "text": "return 7;", "tokens": []}],
+        "vars": [],
+    }
+    print(json.dumps({"id": req.get("id"), "result": result}), flush=True)
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&sidecar).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sidecar, perms).unwrap();
+    }
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", &sidecar);
+    let app = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/bn:0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["fn_id"], "bn:0x100000");
+    assert_eq!(v["name"], "bn_root");
+    let md = v["markdown"].as_str().unwrap();
+    assert!(md.contains("source: `bn-hlil`"), "{md}");
+    assert!(md.contains("return 7;"), "{md}");
 }
 
 #[tokio::test]

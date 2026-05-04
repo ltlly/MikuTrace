@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{build_symbol_func_ir, render_func_md};
@@ -62,13 +63,75 @@ pub async fn dec_fn_handler(
                 markdown,
             }))
         }
-        "bn" => Err((
-            StatusCode::NOT_FOUND,
-            "bn:* dec_fn support is deferred until the Rust BN backend lands".to_string(),
-        )),
+        "bn" => render_bn_hlil_fn(&state, &fn_id, &payload, q.tier).map(Json),
         _ => Err((
             StatusCode::BAD_REQUEST,
             format!("unsupported fn_id source {src}"),
         )),
+    }
+}
+
+fn render_bn_hlil_fn(
+    state: &AppState,
+    fn_id: &str,
+    payload: &str,
+    tier: String,
+) -> Result<DecFnResponse, (StatusCode, String)> {
+    let pc = parse_u64(payload)
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("invalid bn fn id {fn_id}")))?;
+    let result = state
+        .inner
+        .bn_sidecar
+        .lock()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .request("hlil_for", json!({"pc": pc}));
+    if !result.get("ready").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let err = result
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("BN sidecar is not ready");
+        return Err((StatusCode::SERVICE_UNAVAILABLE, err.to_string()));
+    }
+    if !result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let err = result
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("BN HLIL request failed");
+        return Err((StatusCode::NOT_FOUND, err.to_string()));
+    }
+    let name = result
+        .get("fn")
+        .and_then(|f| f.get("name"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("sub_{pc:x}"));
+    let mut markdown = format!("# {name}\n\n- id: `{fn_id}`\n- source: `bn-hlil`\n\n```c\n");
+    if let Some(lines) = result.get("lines").and_then(|v| v.as_array()) {
+        for line in lines {
+            if let Some(text) = line.get("text").and_then(|v| v.as_str()) {
+                markdown.push_str(text);
+                markdown.push('\n');
+            }
+        }
+    }
+    markdown.push_str("```\n");
+    Ok(DecFnResponse {
+        fn_id: fn_id.to_string(),
+        name,
+        tier,
+        markdown,
+    })
+}
+
+fn parse_u64(s: &str) -> Option<u64> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        t.parse::<u64>().ok()
     }
 }
