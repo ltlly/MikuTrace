@@ -121,10 +121,12 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const rowObjectCache = new Map<number, RecordRow>();
   let viewport: HTMLDivElement | undefined;
   let regContextSeq = 0;
+  let regNavSeq = 0;
   let regContextAbort: AbortController | undefined;
 
   function cancelRegContext() {
     regContextSeq += 1;
+    regNavSeq += 1;
     regContextAbort?.abort();
     regContextAbort = undefined;
   }
@@ -275,13 +277,19 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   }
 
   async function jumpLastWrite(idx: number, reg: string) {
+    const navSeq = ++regNavSeq;
+    const contextToken = regContext()?.token;
     const r = await fetchLastWriteOfReg(idx, reg);
+    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
     if (r.idx !== null && r.idx !== undefined) props.onSelect(r.idx);
   }
 
   async function jumpPcValue(value: string | null | undefined, idx: number) {
     if (!value) return;
+    const navSeq = ++regNavSeq;
+    const contextToken = regContext()?.token;
     const r = await fetchIdxsForPc(value, idx, 40);
+    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
     const candidates = [...r.before, ...r.after];
     if (!candidates.length) return;
     candidates.sort((a, b) => Math.abs(a - idx) - Math.abs(b - idx));
@@ -290,12 +298,16 @@ export default function RecordsPanel(props: RecordsPanelProps) {
 
   async function jumpCfgAtValue(value: string | null | undefined) {
     if (!value) return;
+    const navSeq = ++regNavSeq;
+    const contextToken = regContext()?.token;
     const block = await fetchBlockForPc(value);
+    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
     if (!block.block) {
       setRegContext((current) => (current ? { ...current, err: "PC not in any tracked block" } : current));
       return;
     }
     const idxs = await fetchIdxsForBlock(block.block, 1);
+    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
     if (idxs.idxs.length > 0) props.onSelect(idxs.idxs[0]);
     else setRegContext((current) => (current ? { ...current, err: "block not executed in trace" } : current));
   }
