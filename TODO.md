@@ -116,7 +116,8 @@
 - M4: TS frontend core polish / panels complete ✅ 2026-05-04
 - M5-α: Rust LLIL expression model + ARM64 lift MVP ✅ 2026-05-04
 - M5-β: Rust LLIL block-local SSA + AAPCS64 call kill ✅ 2026-05-04
-- M5 (next): LLIL constfold / DCE / flag-elim / render / `/api/llil/*`
+- M5-γ: Rust LLIL constfold + iterative DCE passes ✅ 2026-05-04
+- M5 (next): LLIL flag-elim / render / `/api/llil/*`
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**

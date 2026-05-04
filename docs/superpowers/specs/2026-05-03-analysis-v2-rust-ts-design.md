@@ -427,8 +427,8 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `vm_candidate.py` (OLLVM VM detection, DEC3-D) | `tracemiku-core::decompiler::vm_candidate` | ✅ M3-ι2b | 1:1 port; detect_vm_candidates emits VmCandidateIR with hex_dump from MemShadow. Helpers find_self_update_loads + bytecode_range. 3 unit tests. |
 | `llil/lift.py` (capstone → LLIL) | `tracemiku-core::llil::lift` | ✅ M5-α | expression model + ARM64 lifter MVP over capstone-rs decode; core tests cover nop/mov/mem/branch/call |
 | `llil/ssa.py` (block-local SSA + cross-block phi) | `tracemiku-core::llil::ssa` | 🟡 M5-β | block-local SSA + AAPCS64 caller-saved kill shipped; cross-block phi remains |
-| `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | 🔜 M5 | |
-| `llil/pass_dce.py` | `tracemiku-core::llil::pass_dce` | 🔜 M5 | |
+| `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | ✅ M5-γ | recursive integer const folding for arithmetic/bitwise/compare ops |
+| `llil/pass_dce.py` | `tracemiku-core::llil::pass_dce` | ✅ M5-γ | iterative SSA-driven dead `SET_REG` removal |
 | `llil/pass_flag_elim.py` | `tracemiku-core::llil::pass_flag_elim` | 🔜 M5 | |
 | `llil/pass_typelat.py` | `tracemiku-core::llil::pass_typelat` | 🔜 M5 | |
 | `llil/pass_struct.py` | `tracemiku-core::llil::pass_struct` | 🔜 M5 | |
