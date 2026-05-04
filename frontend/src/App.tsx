@@ -1,4 +1,5 @@
 import CallTreePanel from "./panels/calltree/CallTreePanel";
+import CfgPanel from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
@@ -15,6 +16,7 @@ export default function App() {
       </header>
       <MetaPanel />
       <FunctionsPanel />
+      <CfgPanel />
       <CallTreePanel />
       <TaintPanel />
       <DecompilerPanel />

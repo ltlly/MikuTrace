@@ -9,6 +9,7 @@ import type {
   ForwardTaintResponse,
   BackwardTaintResponse,
   DecSummaryResponse,
+  CfgSvgResponse,
 } from "./types";
 
 export async function fetchMeta(): Promise<MetaResponse> {
@@ -46,6 +47,21 @@ export async function fetchFunctions(): Promise<FunctionsResponse> {
   const r = await fetch("/api/functions");
   if (!r.ok) throw new Error(`/api/functions returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as FunctionsResponse;
+}
+
+export interface FetchCfgSvgOpts {
+  fnName?: string;
+  timeout?: number;
+}
+
+export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgResponse> {
+  const params = new URLSearchParams();
+  if (opts.fnName) params.set("fn", opts.fnName);
+  if (opts.timeout !== undefined) params.set("timeout", String(opts.timeout));
+  const qs = params.toString();
+  const r = await fetch(`/api/cfg-svg${qs ? "?" + qs : ""}`);
+  if (!r.ok) throw new Error(`/api/cfg-svg returned ${r.status}: ${await r.text()}`);
+  return (await r.json()) as CfgSvgResponse;
 }
 
 export async function fetchStrings(minLen = 4, q = ""): Promise<StringsResponse> {

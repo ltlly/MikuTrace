@@ -73,6 +73,33 @@ export interface FunctionsResponse {
   functions: FunctionEntry[];
 }
 
+// ── /api/cfg-svg ─────────────────────────────────────────────────────────
+
+export interface CfgSvgReadyResponse {
+  status: "ready";
+  svg: string;
+  fn: string | null;
+  block_count: number;
+  total_block_count: number;
+  cached: boolean;
+}
+
+export interface CfgSvgEmptyResponse {
+  status: "empty";
+  fn: string | null;
+  svg: null;
+}
+
+export interface CfgSvgErrorResponse {
+  status: "error";
+  err: string;
+}
+
+export type CfgSvgResponse =
+  | CfgSvgReadyResponse
+  | CfgSvgEmptyResponse
+  | CfgSvgErrorResponse;
+
 // ── /api/strings ─────────────────────────────────────────────────────────
 
 export interface StringEntry {

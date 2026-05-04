@@ -167,6 +167,53 @@ ul {
   font-weight: 500;
 }
 
+.cfg-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.cfg-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+}
+
+.cfg-controls select,
+.cfg-controls input,
+.cfg-controls button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.cfg-controls select { min-width: 220px; }
+.cfg-controls input[type="number"] { width: 72px; }
+
+.cfg-controls button {
+  cursor: pointer;
+}
+
+.cfg-svg-frame {
+  height: min(72vh, 720px);
+  min-height: 320px;
+  overflow: auto;
+  background: #0e1117;
+  border: 1px solid var(--border);
+}
+
+.cfg-svg-frame svg {
+  display: block;
+  max-width: none;
+}
+
 .strings-controls {
   display: flex;
   gap: 12px;
