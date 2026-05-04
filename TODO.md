@@ -121,7 +121,8 @@
 - M5-ε: frontend LLIL render controls in Decompile panel ✅ 2026-05-04
 - M5-ζ: Rust LLIL flag-elim pass wired into `/api/llil/render` ✅ 2026-05-04
 - M5-η: `/api/llil/llm` endpoint ✅ 2026-05-04
-- M5 (next): LLIL typelat / struct / var-unify / restructure / UIDF refinement
+- M5-θ: Rust LLIL typelat / struct-shape / var-unify / UIDF summaries ✅ 2026-05-04
+- M5 (next): LLIL restructure refinement + parity hardening
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**

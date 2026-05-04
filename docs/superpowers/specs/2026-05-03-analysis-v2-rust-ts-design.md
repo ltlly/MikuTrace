@@ -430,11 +430,11 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | ✅ M5-γ | recursive integer const folding for arithmetic/bitwise/compare ops |
 | `llil/pass_dce.py` | `tracemiku-core::llil::pass_dce` | ✅ M5-γ | iterative SSA-driven dead `SET_REG` removal |
 | `llil/pass_flag_elim.py` | `tracemiku-core::llil::pass_flag_elim` | ✅ M5-ζ | folds cmp_result flag producers into following LLIL_IF branches |
-| `llil/pass_typelat.py` | `tracemiku-core::llil::pass_typelat` | 🔜 M5 | |
-| `llil/pass_struct.py` | `tracemiku-core::llil::pass_struct` | 🔜 M5 | |
-| `llil/pass_var_unify.py` | `tracemiku-core::llil::pass_var_unify` | 🔜 M5 | |
+| `llil/pass_typelat.py` | `tracemiku-core::llil::pass_typelat` | ✅ M5-θ | conservative type lattice over SSA LLIL; exposed in `/api/llil/render` |
+| `llil/pass_struct.py` | `tracemiku-core::llil::pass_struct` | ✅ M5-θ | pointer-field shape recovery from LLIL load/store accesses |
+| `llil/pass_var_unify.py` | `tracemiku-core::llil::pass_var_unify` | ✅ M5-θ | stable AAPCS64 arg/callee-save/SSA var naming map |
 | `llil/pass_restructure.py` | `tracemiku-core::llil::pass_restructure` | 🔜 M5 | CFG → if/while/for |
-| `llil/pass_uidf.py` | `tracemiku-core::llil::pass_uidf` | 🔜 M5 | trace-truth value injection |
+| `llil/pass_uidf.py` | `tracemiku-core::llil::pass_uidf` | ✅ M5-θ | trace-backed observed values for SSA defs; exposed as render metadata |
 | `llil/render.py` (HLIL pseudocode output) | `tracemiku-core::llil::render` | ✅ M5-δ | C-like formatter for LLIL statements/expressions |
 
 ### 13.4 CLI subcommands (`python -m viewer <cmd>` → `tracemiku-cli <cmd>`)
