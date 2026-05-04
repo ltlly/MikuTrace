@@ -359,6 +359,21 @@ fn jni_calls_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn jobj_history_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "jobj-history".into(),
+        cd.display().to_string(),
+        "--jobject".into(),
+        "0x2222".into(),
+        "--max".into(),
+        "5".into(),
+    ]);
+    assert_eq!(v["jobject"], "0x2222");
+    assert!(v["hits"].is_array());
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[

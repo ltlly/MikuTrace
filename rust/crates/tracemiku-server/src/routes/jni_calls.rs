@@ -23,7 +23,7 @@ fn default_max() -> usize {
     200
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct JniCallHit {
     pub idx: usize,
     pub pc: String,
@@ -46,27 +46,33 @@ pub async fn jni_calls_handler(
     State(state): State<AppState>,
     Query(q): Query<JniCallsQuery>,
 ) -> Json<JniCallsResponse> {
+    let (hits, vtable_size) = scan_jni_calls(&state, q.in_fn.as_deref(), q.max);
+    Json(JniCallsResponse {
+        in_fn: q.in_fn,
+        count: hits.len(),
+        hits,
+        vtable_size,
+    })
+}
+
+pub(crate) fn scan_jni_calls(
+    state: &AppState,
+    in_fn: Option<&str>,
+    max: usize,
+) -> (Vec<JniCallHit>, usize) {
     let jni_vtable = load_jni_vtable().unwrap_or_default();
     if jni_vtable.is_empty() {
-        return Json(JniCallsResponse {
-            in_fn: q.in_fn,
-            count: 0,
-            hits: Vec::new(),
-            vtable_size: 0,
-        });
+        return (Vec::new(), 0);
     }
 
-    let base = primary_base(&state);
+    let base = primary_base(state);
     let mut hits = Vec::new();
     let mut prev = None;
     for i in 0..state.inner.trace.len() {
         let record = state.inner.trace.record(i);
         let decoded = decode(record.pc, record.inst);
         let (func_name, _) = state.inner.symbols.lookup(record.pc);
-        if q.in_fn
-            .as_deref()
-            .is_some_and(|want| func_name.as_str() != want)
-        {
+        if in_fn.is_some_and(|want| func_name.as_str() != want) {
             prev = Some(decoded);
             continue;
         }
@@ -99,7 +105,7 @@ pub async fn jni_calls_handler(
                                     })
                                     .collect(),
                             });
-                            if q.max > 0 && hits.len() >= q.max {
+                            if max > 0 && hits.len() >= max {
                                 break;
                             }
                         }
@@ -109,13 +115,7 @@ pub async fn jni_calls_handler(
         }
         prev = Some(decoded);
     }
-
-    Json(JniCallsResponse {
-        in_fn: q.in_fn,
-        count: hits.len(),
-        hits,
-        vtable_size: jni_vtable.len(),
-    })
+    (hits, jni_vtable.len())
 }
 
 fn branch_reg(op_str: &str) -> Option<String> {
@@ -137,7 +137,7 @@ fn primary_base(state: &AppState) -> Option<u64> {
         .and_then(|m| parse_int(&m.base))
 }
 
-fn parse_int(s: &str) -> Option<u64> {
+pub(crate) fn parse_int(s: &str) -> Option<u64> {
     let t = s.trim();
     if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         u64::from_str_radix(hex, 16).ok()

@@ -338,6 +338,18 @@ enum Cmd {
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
+    /// GET /api/jobj-history.
+    JobjHistory {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        jobject: String,
+        #[arg(long, default_value_t = 0)]
+        start: usize,
+        #[arg(long, default_value_t = -1)]
+        end: isize,
+        #[arg(long, default_value_t = 200)]
+        max: usize,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -701,6 +713,21 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("in_fn", in_fn));
             }
             route_get_json(trace_dir, route_path("/api/jni-calls", &params)).await
+        }
+        Some(Cmd::JobjHistory {
+            trace_dir,
+            jobject,
+            start,
+            end,
+            max,
+        }) => {
+            let params = vec![
+                ("jobject", jobject),
+                ("start", start.to_string()),
+                ("end", end.to_string()),
+                ("max", max.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/jobj-history", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await
