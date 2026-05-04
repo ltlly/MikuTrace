@@ -29,7 +29,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
         .unwrap();
     std::fs::write(
         cd.join("meta.json"),
-        r#"{"records":3,"tid":100,"ms":1,"truncated":false,"known_offsets":{"0x0":"f_root"}}"#,
+        r#"{"records":3,"tid":100,"ms":1,"truncated":false,"known_offsets":{"0x0":"f_root"},"fork_events":[{"child_pid":123,"attach_status":"success"},{"child_pid":456,"attach_status":"failed_ptrace_conflict"}]}"#,
     )
     .unwrap();
     std::fs::write(
@@ -134,4 +134,17 @@ fn inspect_wrappers_use_server_wire_shape() {
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["value"], "0x6f6c6c6568");
+}
+
+#[test]
+fn fork_events_wrapper_filters_status() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "fork-events".into(),
+        cd.display().to_string(),
+        "--status".into(),
+        "failed_ptrace_conflict".into(),
+    ]);
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["events"][0]["child_pid"], 456);
 }

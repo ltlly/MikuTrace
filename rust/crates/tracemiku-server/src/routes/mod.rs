@@ -6,6 +6,7 @@ pub mod dec_fn;
 pub mod dec_llm_call;
 pub mod dec_models;
 pub mod dec_summary;
+pub mod fork_events;
 pub mod forward_taint;
 pub mod functions;
 pub mod idxs_for_block;
@@ -41,6 +42,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/cfg-svg", get(cfg_svg::cfg_svg_handler))
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
+        .route("/api/fork-events", get(fork_events::fork_events_handler))
         .route("/api/dec/summary", get(dec_summary::dec_summary_handler))
         .route("/api/dec/fn/:fn_id", get(dec_fn::dec_fn_handler))
         .route(

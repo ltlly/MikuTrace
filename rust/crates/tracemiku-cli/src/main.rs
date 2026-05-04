@@ -109,6 +109,12 @@ enum Cmd {
     },
     /// GET /api/functions.
     Functions { trace_dir: PathBuf },
+    /// GET /api/fork-events.
+    ForkEvents {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        status: Option<String>,
+    },
     /// GET /api/cfg.
     Cfg {
         trace_dir: PathBuf,
@@ -270,6 +276,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::Functions { trace_dir }) => {
             route_get_json(trace_dir, "/api/functions".to_string()).await
+        }
+        Some(Cmd::ForkEvents { trace_dir, status }) => {
+            let mut params = Vec::new();
+            if let Some(status) = status {
+                params.push(("status", status));
+            }
+            route_get_json(trace_dir, route_path("/api/fork-events", &params)).await
         }
         Some(Cmd::Cfg { trace_dir, fn_name }) => {
             let mut params = Vec::new();

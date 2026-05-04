@@ -72,6 +72,8 @@ struct PerCallMetaRaw {
     pub truncated: bool,
     #[serde(default)]
     pub last_insn_is_ret: bool,
+    #[serde(default)]
+    pub fork_events: Vec<serde_json::Value>,
 }
 
 /// Run-level meta.json fields we consume.
@@ -133,6 +135,7 @@ pub struct TraceMeta {
     pub regs: &'static [&'static str],
     pub truncated: bool,
     pub last_insn_is_ret: bool,
+    pub fork_events: Vec<serde_json::Value>,
 }
 
 impl TraceMeta {
@@ -194,6 +197,7 @@ impl TraceMeta {
             regs: REG_NAMES,
             truncated: per_call.truncated,
             last_insn_is_ret: per_call.last_insn_is_ret,
+            fork_events: per_call.fork_events,
         })
     }
 }
