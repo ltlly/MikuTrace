@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
-    build_symbol_func_ir, constfold_block, dce_block, decode, flag_elim_block, lift_arm64,
-    render_llil_block, ssa_block, FuncIR, LiftStats,
+    build_symbol_func_ir, collect_uidf, constfold_block, dce_block, decode, flag_elim_block,
+    lift_arm64, render_llil_block, ssa_block, struct_recover_block, typelat_block, unify_vars,
+    FuncIR, LiftStats,
 };
 
 use crate::state::AppState;
@@ -51,6 +52,10 @@ pub struct LlilRenderResponse {
     pub lift_intrinsic: usize,
     pub lift_coverage: f64,
     pub flag_elim_pairs: Vec<(String, String)>,
+    pub types: std::collections::BTreeMap<String, String>,
+    pub struct_shapes: serde_json::Value,
+    pub var_names: std::collections::BTreeMap<String, String>,
+    pub uidf: serde_json::Value,
     pub removed_pcs: Vec<String>,
     pub pseudocode: String,
 }
@@ -106,6 +111,16 @@ pub fn render_llil_response(
     if payload.ssa {
         exprs = ssa_block(&exprs).exprs;
     }
+    let types_raw = typelat_block(&exprs);
+    let types = types_raw
+        .iter()
+        .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
+        .collect();
+    let struct_shapes = serde_json::to_value(struct_recover_block(&exprs, &types_raw))
+        .unwrap_or_else(|_| serde_json::json!({}));
+    let var_names = unify_vars(&exprs);
+    let uidf = serde_json::to_value(collect_uidf(&inner.trace, &exprs, 64))
+        .unwrap_or_else(|_| serde_json::json!({}));
     let removed_pcs = if payload.dce {
         let dce = dce_block(&exprs);
         exprs = dce.exprs;
@@ -127,6 +142,10 @@ pub fn render_llil_response(
         lift_intrinsic: stats.intrinsic,
         lift_coverage: stats.coverage(),
         flag_elim_pairs,
+        types,
+        struct_shapes,
+        var_names,
+        uidf,
         removed_pcs,
         pseudocode,
     })

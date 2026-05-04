@@ -356,6 +356,10 @@ export interface LlilRenderResponse {
   lift_intrinsic: number;
   lift_coverage: number;
   flag_elim_pairs: [string, string][];
+  types: Record<string, string>;
+  struct_shapes: unknown;
+  var_names: Record<string, string>;
+  uidf: unknown;
   removed_pcs: string[];
   pseudocode: string;
 }

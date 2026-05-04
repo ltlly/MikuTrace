@@ -83,6 +83,7 @@ export default function DecompilerPanel() {
         `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · truncated" : ""}`,
         `lift coverage: ${(r.lift_coverage * 100).toFixed(1)}% · intrinsic ${r.lift_intrinsic}/${r.lift_total}`,
         r.flag_elim_pairs.length ? `flag elim: ${r.flag_elim_pairs.length} branch${r.flag_elim_pairs.length === 1 ? "" : "es"}` : "",
+        Object.keys(r.types).length ? `types: ${Object.keys(r.types).length} vars · names: ${Object.keys(r.var_names).length}` : "",
         r.removed_pcs.length ? `dce removed: ${r.removed_pcs.join(", ")}` : "",
         "",
         r.pseudocode,
