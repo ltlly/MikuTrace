@@ -27,6 +27,74 @@ pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
     }
     out.push('\n');
 
+    // Type anchors section (M3-ι2a Task 3) — JSON-spec-driven ABI ground
+    // truth, grouped by callee_name (or sub_<pc> when name is empty).
+    if !fn_.type_anchors.is_empty() {
+        use std::collections::BTreeMap;
+        struct Group<'a> {
+            count: usize,
+            callee_pc: u64,
+            params: &'a [(String, String)],
+            ret_reg: &'a str,
+            ret_type: &'a str,
+            provenance: &'a str,
+            hits: Vec<usize>,
+        }
+        let mut groups: BTreeMap<String, Group<'_>> = BTreeMap::new();
+        for ta in &fn_.type_anchors {
+            let key = if ta.callee_name.is_empty() {
+                format!("sub_{:x}", ta.callee_pc)
+            } else {
+                ta.callee_name.clone()
+            };
+            groups
+                .entry(key)
+                .and_modify(|g| {
+                    g.count += 1;
+                    g.hits.push(ta.idx);
+                })
+                .or_insert(Group {
+                    count: 1,
+                    callee_pc: ta.callee_pc,
+                    params: &ta.params,
+                    ret_reg: &ta.ret_reg,
+                    ret_type: &ta.ret_type,
+                    provenance: &ta.provenance,
+                    hits: vec![ta.idx],
+                });
+        }
+        out.push_str(&format!("## Type anchors ({})\n\n", fn_.type_anchors.len()));
+        out.push_str(
+            "> JSON-spec-driven (DEC3-B). LLM should trust these as ABI ground truth.\n\n",
+        );
+        for (name, g) in &groups {
+            let params_str = g
+                .params
+                .iter()
+                .map(|(r, t)| format!("{r}:{t}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret_str = if g.ret_type.is_empty() {
+                g.ret_reg.to_string()
+            } else {
+                format!("{}:{}", g.ret_reg, g.ret_type)
+            };
+            out.push_str(&format!(
+                "- **{}** ({:#x}, ×{}) `({})` → `{}`\n",
+                name, g.callee_pc, g.count, params_str, ret_str
+            ));
+            let shown: Vec<String> = g.hits.iter().take(5).map(|i| i.to_string()).collect();
+            let suffix = if g.hits.len() > 5 { ", ..." } else { "" };
+            out.push_str(&format!(
+                "  - hit idx: [{}{}]\n",
+                shown.join(", "),
+                suffix
+            ));
+            out.push_str(&format!("  - source: `{}`\n", g.provenance));
+        }
+        out.push('\n');
+    }
+
     // Per-block sections.
     let want_all = tier_filter == "all";
     for block in &fn_.blocks {
@@ -280,6 +348,36 @@ mod tests {
         assert!(md.contains("| `doCommandNative` |"));
         assert!(md.contains(" 2 |"), "blocks count missing: {md}");
         assert!(md.contains(" 0..99 |"));
+    }
+
+    #[test]
+    fn render_func_md_emits_type_anchors_section() {
+        use crate::decompiler::ir::TypeAnchorIR;
+        let f = FuncIR {
+            id: "F0".to_string(),
+            name: "f".to_string(),
+            type_anchors: vec![TypeAnchorIR {
+                idx: 5,
+                callee_pc: 0x2000,
+                callee_name: "FindClass".to_string(),
+                params: vec![
+                    ("x0".to_string(), "JNIEnv*".to_string()),
+                    ("x1".to_string(), "const char*".to_string()),
+                ],
+                ret_reg: "x0".to_string(),
+                ret_type: "jclass".to_string(),
+                provenance: "libart_jni.json#FindClass".to_string(),
+            }],
+            ..Default::default()
+        };
+        let md = render_func_md(&f, "all");
+        assert!(md.contains("## Type anchors (1)"), "missing section: {md}");
+        assert!(md.contains("**FindClass**"));
+        assert!(md.contains("(0x2000, ×1)"));
+        assert!(md.contains("`(x0:JNIEnv*, x1:const char*)`"));
+        assert!(md.contains("→ `x0:jclass`"));
+        assert!(md.contains("hit idx: [5]"));
+        assert!(md.contains("source: `libart_jni.json#FindClass`"));
     }
 
     #[test]

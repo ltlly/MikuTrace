@@ -48,16 +48,19 @@ impl AppState {
             .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
             .unwrap_or(0);
         let mut known_offsets = parse_known_offsets(&trace_dir).unwrap_or_default();
+        // Resolve repo root once; reused below for examples overlay AND for
+        // tools/hooks/ type-spec auto-discovery (M3-ι2a Task 3).
+        let repo_root = find_repo_root(&trace_dir);
         // Merge examples/<so>/known_offsets.json overlay if present. Static
         // (per-call meta.json) WIN; examples WIN over auto.
-        if let Some(repo_root) = find_repo_root(&trace_dir) {
+        if let Some(root) = repo_root.as_ref() {
             if let Some(so_name) = meta.module.as_ref().and_then(|m| {
                 m.name
                     .strip_suffix(".so")
                     .map(|s| s.to_string())
                     .or_else(|| Some(m.name.clone()))
             }) {
-                if let Some(examples) = parse_examples_known_offsets(&repo_root, &so_name) {
+                if let Some(examples) = parse_examples_known_offsets(root, &so_name) {
                     for (off, name) in examples {
                         known_offsets.entry(off).or_insert(name);
                     }
@@ -91,16 +94,19 @@ impl AppState {
         let memshadow = MemShadow::build_from_trace(&trace);
         let call_tree = build_call_tree(&trace, &symbols, 50);
         let frame_depths = build_frame_depth_map(&trace);
+        // Auto-discover type-spec JSONs (M3-ι2a Task 3): tools/hooks/*.json
+        // with `kind == "type_specs"` plus examples/<so>/type_specs.json.
+        let spec_paths: Vec<std::path::PathBuf> = if let Some(root) = repo_root.as_ref() {
+            let so_name = meta
+                .module
+                .as_ref()
+                .and_then(|m| m.name.strip_suffix(".so").map(|s| s.to_string()));
+            discover_type_spec_paths(root, so_name.as_deref())
+        } else {
+            Vec::new()
+        };
         // Defaults match Python webui (webui/server.py:2734-2735).
-        let top_ir = build_trace_ir(
-            &trace,
-            &meta,
-            &symbols,
-            &cfg,
-            10,
-            50,
-            &[] as &[std::path::PathBuf],
-        );
+        let top_ir = build_trace_ir(&trace, &meta, &symbols, &cfg, 10, 50, &spec_paths);
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -161,6 +167,48 @@ fn parse_examples_known_offsets(
         out.insert(off, name.to_string());
     }
     Some(out)
+}
+
+/// Walk `<repo_root>/tools/hooks/` collecting `*.json` files where the parsed
+/// top-level `kind == "type_specs"`. Sorted alphabetically for stable order.
+/// If `so_name_no_ext` is Some, additionally appends
+/// `<repo_root>/examples/<so>/type_specs.json` when it exists. Returns
+/// absolute paths. (M3-ι2a Task 3 — auto-discovery for build_trace_ir.)
+fn discover_type_spec_paths(
+    repo_root: &std::path::Path,
+    so_name_no_ext: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let hooks_dir = repo_root.join("tools").join("hooks");
+    if let Ok(entries) = std::fs::read_dir(&hooks_dir) {
+        let mut candidates: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        candidates.sort();
+        for path in candidates {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if v.get("kind").and_then(|k| k.as_str()) == Some("type_specs") {
+                out.push(path);
+            }
+        }
+    }
+    if let Some(so) = so_name_no_ext {
+        let p = repo_root
+            .join("examples")
+            .join(so)
+            .join("type_specs.json");
+        if p.is_file() {
+            out.push(p);
+        }
+    }
+    out
 }
 
 /// Find the repo root by walking up from `call_dir` looking for an `examples/`
