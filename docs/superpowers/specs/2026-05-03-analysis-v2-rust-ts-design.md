@@ -515,7 +515,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/mem-flow` | ✅ M3-φ | per-byte read/write event timeline |
 | `/api/mem-diff` | ✅ M3-υ | MemShadow byte diff between idx-1 and idx |
 | `/api/reg-timeline` | ✅ M3-υ | distinct register value timeline |
-| `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings`, `/api/jni-events` | 🔜 M3 | reads jni_hooks.jsonl |
+| `/api/jni-events` | ✅ M3-jni-events | reads jni_hooks.jsonl with id/idx filters |
+| `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings` | 🔜 M3 | reads jni_hooks.jsonl / vtable reconstruction |
 | `/api/field-at` | 🔜 M3 | |
 | `/api/fn-summary` | ✅ M3-ω | function overview with hot blocks and callees |
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
