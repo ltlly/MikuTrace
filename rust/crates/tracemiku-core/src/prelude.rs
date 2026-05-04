@@ -9,7 +9,9 @@ pub use crate::decompiler::backend::{
     Backend, CfgBlock as DecCfgBlock, CfgEdge as DecCfgEdge, FieldHint, Function as DecFunction,
     HlilLine, NoneBackend, Token as DecToken, VarType,
 };
-pub use crate::decompiler::builder::{build_trace_ir, classify_blocks_by_tier};
+pub use crate::decompiler::builder::{
+    attach_type_anchors, build_trace_ir, classify_blocks_by_tier,
+};
 pub use crate::decompiler::ir::{
     BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
 };

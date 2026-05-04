@@ -92,7 +92,15 @@ impl AppState {
         let call_tree = build_call_tree(&trace, &symbols, 50);
         let frame_depths = build_frame_depth_map(&trace);
         // Defaults match Python webui (webui/server.py:2734-2735).
-        let top_ir = build_trace_ir(&trace, &meta, &symbols, &cfg, 10, 50);
+        let top_ir = build_trace_ir(
+            &trace,
+            &meta,
+            &symbols,
+            &cfg,
+            10,
+            50,
+            &[] as &[std::path::PathBuf],
+        );
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
