@@ -1,9 +1,9 @@
 //! Forward + backward taint propagation on a trace.
 //!
-//! Direct port of `viewer/taint.py` minus the slow-path fallback,
-//! `through_mem`, `data_only`, and `cross_fn_call` flags (those land in
-//! M3-γ Tasks 2/3/4). MVP scope: index-accelerated forward + backward
-//! with optional exclude-reg set.
+//! Direct port of `viewer/taint.py` minus the slow-path fallback and
+//! `cross_fn_call` flag (latter lands in M3-γ Task 4). Current scope:
+//! index-accelerated forward + backward with `through_mem` byte-overlap
+//! and `data_only` addressing-reg filter.
 //!
 //! Algorithm (backward): BFS via VecDeque<BwdItem> where BwdItem is
 //! either a (cur_idx, want_reg) reg-chase or a (before_idx, addr, size)
@@ -20,9 +20,17 @@ use crate::index::Index;
 use crate::memshadow::MemShadow;
 use crate::trace::Trace;
 
+/// Default frame registers almost always skipped during data-only taint.
+/// Matches viewer/taint.py:37 DEFAULT_FRAME_REGS.
+pub const DEFAULT_FRAME_REGS: &[&str] = &["sp", "fp", "lr"];
+
+/// Build the default frame-reg HashSet (sp, fp, lr).
+pub fn default_frame_reg_set() -> HashSet<String> {
+    DEFAULT_FRAME_REGS.iter().map(|s| s.to_string()).collect()
+}
+
 /// Set of registers used purely as base/index of memory ops in this insn.
 /// Mirrors `viewer/taint.py:83` `_addressing_regs(d)`.
-#[allow(dead_code)] // M3-γ Task 3 consumer (data_only filter).
 fn addressing_regs(mem_ops: &[MemOp]) -> HashSet<String> {
     let mut s = HashSet::new();
     for op in mem_ops {
@@ -73,7 +81,7 @@ pub fn build_frame_depth_map(trace: &Trace) -> Vec<u32> {
     out
 }
 
-#[allow(clippy::too_many_arguments)] // M3-γ Tasks 3+4 will add data_only + cross_fn_call.
+#[allow(clippy::too_many_arguments)] // M3-γ Task 4 will add cross_fn_call.
 pub fn forward_taint(
     trace: &Trace,
     index: &Index,
@@ -83,6 +91,7 @@ pub fn forward_taint(
     exclude_regs: &HashSet<String>,
     through_mem: bool,
     _mem: Option<&MemShadow>,
+    data_only: bool,
 ) -> (Vec<TaintHit>, bool) {
     // _mem is unused on the forward side because tagging is index-only —
     // Python also doesn't use MemShadow on the forward path (only on backward).
@@ -127,9 +136,19 @@ pub fn forward_taint(
         }
         let r = trace.record(i);
         let d = decode(r.pc, r.inst);
+        let addr_regs = if data_only {
+            addressing_regs(&d.mem_op)
+        } else {
+            HashSet::new()
+        };
         // Tainted regs that this insn READS.
+        // In data_only mode, an insn only counts as "used" if the tainted
+        // use is NOT purely an addressing reg (Python:155-156).
         let mut used: Vec<String> = Vec::new();
         for u in &d.regs_use {
+            if data_only && addr_regs.contains(u) {
+                continue;
+            }
             if tainted_regs.contains(u) {
                 used.push(u.clone());
             }
@@ -233,7 +252,7 @@ fn mem_writers_overlapping(
     out
 }
 
-#[allow(clippy::too_many_arguments)] // M3-γ Tasks 3+4 will add data_only + cross_fn_call.
+#[allow(clippy::too_many_arguments)] // M3-γ Task 4 will add cross_fn_call.
 pub fn backward_taint(
     trace: &Trace,
     index: &Index,
@@ -243,6 +262,7 @@ pub fn backward_taint(
     exclude_regs: &HashSet<String>,
     through_mem: bool,
     mem: Option<&MemShadow>,
+    data_only: bool,
 ) -> (Vec<TaintHit>, bool) {
     let mut pending: VecDeque<BwdItem> = VecDeque::new();
     let mut visited: HashSet<(usize, String)> = HashSet::new();
@@ -258,8 +278,16 @@ pub fn backward_taint(
     if starts_with_def && !exclude_regs.contains(taint_reg) {
         raw_out.push((idx, taint_reg.to_string()));
         visited.insert((idx, taint_reg.to_string()));
+        let addr_regs0 = if data_only {
+            addressing_regs(&d0.mem_op)
+        } else {
+            HashSet::new()
+        };
         for u in &d0.regs_use {
             if exclude_regs.contains(u) {
+                continue;
+            }
+            if data_only && addr_regs0.contains(u) {
                 continue;
             }
             pending.push_back(BwdItem::Reg(idx, u.clone()));
@@ -321,8 +349,16 @@ pub fn backward_taint(
 
                 let r = trace.record(j);
                 let d = decode(r.pc, r.inst);
+                let addr_regs = if data_only {
+                    addressing_regs(&d.mem_op)
+                } else {
+                    HashSet::new()
+                };
                 for u in &d.regs_use {
                     if exclude_regs.contains(u) {
+                        continue;
+                    }
+                    if data_only && addr_regs.contains(u) {
                         continue;
                     }
                     pending.push_back(BwdItem::Reg(j, u.clone()));
@@ -454,7 +490,8 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None);
+        let (hits, stopped) =
+            forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
         assert!(hits.is_empty());
         assert!(!stopped);
     }
@@ -465,7 +502,8 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = backward_taint(&t, &idx, 8, "x0", 100, &exclude, false, None);
+        let (hits, stopped) =
+            backward_taint(&t, &idx, 8, "x0", 100, &exclude, false, None, false);
         assert!(hits.is_empty());
         assert!(!stopped);
     }
@@ -476,7 +514,8 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 3, &exclude, false, None);
+        let (hits, stopped) =
+            forward_taint(&t, &idx, 0, "x0", 3, &exclude, false, None, false);
         assert_eq!(hits.len(), 3, "should stop after 3 hits, got {hits:?}");
         assert!(stopped, "max_count truncation should set stopped=true");
         for h in &hits {
@@ -493,7 +532,8 @@ mod tests {
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, stopped) = backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None);
+        let (hits, stopped) =
+            backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None, false);
         assert!(!hits.is_empty(), "should chase x0 def chain backwards");
         assert!(!stopped);
         // Wire-shape pin: `why` is the bare reg name, NOT "via:x0".
@@ -566,7 +606,8 @@ mod tests {
         let t = Trace::load(&cd_path).unwrap();
         let idx = Index::build(&t);
         let exclude = HashSet::new();
-        let (hits, _stopped) = backward_taint(&t, &idx, 3, "x1", 100, &exclude, false, None);
+        let (hits, _stopped) =
+            backward_taint(&t, &idx, 3, "x1", 100, &exclude, false, None, false);
         let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
         assert!(
             idxs.contains(&0),
@@ -645,7 +686,7 @@ mod tests {
 
         // through_mem=true: idx 2 hits with "mem" in why (byte-overlap match).
         let (hits_on, _stopped) = forward_taint(
-            &t, &idx, 0, "x0", 100, &exclude, true, Some(&mem),
+            &t, &idx, 0, "x0", 100, &exclude, true, Some(&mem), false,
         );
         let idxs_on: Vec<usize> = hits_on.iter().map(|h| h.idx).collect();
         assert!(idxs_on.contains(&1), "idx 1 (str) should emit; got {idxs_on:?}");
@@ -662,12 +703,104 @@ mod tests {
         // through_mem=false: idx 2 still emits (regs:x0 use), but NO "mem" —
         // only the base byte (x0_val) is tagged, load reads x0_val+4..+8.
         let (hits_off, _stopped) = forward_taint(
-            &t, &idx, 0, "x0", 100, &exclude, false, None,
+            &t, &idx, 0, "x0", 100, &exclude, false, None, false,
         );
         let row2_off = hits_off.iter().find(|h| h.idx == 2).unwrap();
         assert!(
             !row2_off.why.contains("mem"),
             "through_mem=false: idx 2 why must NOT contain 'mem' (base-only tag); got {row2_off:?}"
+        );
+    }
+
+    #[test]
+    fn forward_taint_data_only_filters_addressing_regs() {
+        // 4-record trace where x1 is tainted; an `ldr w2, [x0, x1]` uses x1
+        // PURELY as an index reg (addressing), and `add x3, x3, x1` uses x1
+        // as a value reg.
+        //
+        //   idx 0: mov x1, #0xab    (defines x1)
+        //   idx 1: ldr w2, [x0, x1] (reads x1 as index → addressing)
+        //   idx 2: add x3, x3, x1   (reads x1 as value)
+        //   idx 3: nop
+        //
+        // forward_taint(start=0, reg=x1):
+        //   data_only=false: hits include idx 1 (x1 in regs_use, even if addressing)
+        //                    AND idx 2 (x1 in regs_use as value).
+        //   data_only=true:  hits exclude idx 1 (x1 filtered as addressing reg).
+        //                    Includes idx 2 only.
+        //
+        // Opcodes (ARM64 LE):
+        //   mov x1, #0xab        = 0xd2801561
+        //   ldr w2, [x0, x1]     = 0xb8616802  (extended-reg form; x1 = index)
+        //   add x3, x3, x1       = 0x8b010063
+        //   nop                  = 0xd503201f
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir
+            .path()
+            .join("run")
+            .join("calls")
+            .join("call_001_tid1_4r_1ms");
+        std::fs::create_dir_all(&cd).unwrap();
+        let pcs: [u64; 4] = [0x100000, 0x100004, 0x100008, 0x10000c];
+        let insts: [u32; 4] = [0xd2801561, 0xb8616802, 0x8b010063, 0xd503201f];
+        let mut buf = vec![0u8; REC_SIZE * 4];
+        for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            buf[off + 8..off + 16].copy_from_slice(&0u64.to_le_bytes()); // x0
+            buf[off + 16..off + 24].copy_from_slice(&0xabu64.to_le_bytes()); // x1
+            buf[off + 24..off + 32].copy_from_slice(&0u64.to_le_bytes()); // x2
+            buf[off + 32..off + 40].copy_from_slice(&0u64.to_le_bytes()); // x3
+            buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x100000","size":4096}}"#,
+        )
+        .unwrap();
+        let cd_path = dir
+            .path()
+            .join("run")
+            .join("calls")
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let t = Trace::load(&cd_path).unwrap();
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+
+        // data_only=false: should hit idx 1 AND idx 2 on x1.
+        let (hits_loose, _) = forward_taint(
+            &t, &idx, 0, "x1", 100, &exclude, false, None, false,
+        );
+        let idxs_loose: Vec<usize> = hits_loose.iter().map(|h| h.idx).collect();
+        assert!(
+            idxs_loose.contains(&1),
+            "data_only=false: idx 1 (ldr [x0,x1]) should hit; got {idxs_loose:?}"
+        );
+        assert!(
+            idxs_loose.contains(&2),
+            "data_only=false: idx 2 (add x3,x3,x1) should hit; got {idxs_loose:?}"
+        );
+
+        // data_only=true: should hit idx 2 only — idx 1 filtered as addressing.
+        let (hits_strict, _) = forward_taint(
+            &t, &idx, 0, "x1", 100, &exclude, false, None, true,
+        );
+        let idxs_strict: Vec<usize> = hits_strict.iter().map(|h| h.idx).collect();
+        assert!(
+            !idxs_strict.contains(&1),
+            "data_only=true: idx 1 should be filtered (x1 is index reg); got {idxs_strict:?}"
+        );
+        assert!(
+            idxs_strict.contains(&2),
+            "data_only=true: idx 2 should still hit; got {idxs_strict:?}"
         );
     }
 }

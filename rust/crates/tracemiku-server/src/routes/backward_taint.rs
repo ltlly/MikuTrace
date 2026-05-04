@@ -7,7 +7,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use tracemiku_core::disasm::decode;
-use tracemiku_core::prelude::backward_taint;
+use tracemiku_core::prelude::{backward_taint, default_frame_reg_set};
 
 use crate::state::AppState;
 
@@ -21,6 +21,8 @@ pub struct BackwardTaintQuery {
     pub max_count: Option<usize>,
     #[serde(default)]
     pub through_mem: bool,
+    #[serde(default)]
+    pub data_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,7 +52,11 @@ pub async fn backward_taint_handler(
     let inner = &state.inner;
     let raw = q.max_count.unwrap_or(DEFAULT_MAX_COUNT);
     let eff = raw.min(MAX_COUNT_CEILING);
-    let exclude: HashSet<String> = HashSet::new();
+    let exclude: HashSet<String> = if q.data_only {
+        default_frame_reg_set()
+    } else {
+        HashSet::new()
+    };
     let mem_arg = if q.through_mem {
         Some(&inner.memshadow)
     } else {
@@ -65,6 +71,7 @@ pub async fn backward_taint_handler(
         &exclude,
         q.through_mem,
         mem_arg,
+        q.data_only,
     );
 
     let base = inner
