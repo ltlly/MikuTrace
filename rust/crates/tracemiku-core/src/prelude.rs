@@ -29,6 +29,7 @@ pub use crate::function_index::{
 };
 pub use crate::hashfin::{hash_finalize_detect, HashFinalizeCandidate};
 pub use crate::index::{Index, MemRec};
+pub use crate::llil::{lift_arm64, LiftStats, LlilExpr, LlilOp, LlilOperand};
 pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
 pub use crate::ollvmdet::{ollvm_detect_vm, OllvmFinding};
 pub use crate::symbols::{build_from_trace, ModuleResolver, SymbolMap};

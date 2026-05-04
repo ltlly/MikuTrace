@@ -16,6 +16,7 @@ pub mod disasm;
 pub mod function_index;
 pub mod hashfin;
 pub mod index;
+pub mod llil;
 pub mod memshadow;
 pub mod ollvmdet;
 pub mod prelude;
