@@ -1330,6 +1330,35 @@ html[data-density="dense"] .xref-table td {
   cursor: pointer;
 }
 
+.cfg-loading {
+  flex: 1;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--dim);
+  background: #0e1117;
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.cfg-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(139, 148, 158, 0.35);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cfg-spin 0.8s linear infinite;
+}
+
+@keyframes cfg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .hlil-controls {
   display: flex;
   align-items: center;

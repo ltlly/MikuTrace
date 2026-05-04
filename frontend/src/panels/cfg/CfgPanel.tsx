@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
 import type { CfgSvgResponse } from "~/api/types";
@@ -54,6 +54,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   let lastCenteredIdx = -1;
   let lastPanFn = "";
   let graphSeq = 0;
+  let graphAbort: AbortController | undefined;
 
   const [functions] = createResource(
     () => (props.active ? "active" : undefined),
@@ -100,6 +101,9 @@ export default function CfgPanel(props: CfgPanelProps) {
   createEffect(() => {
     if (!props.active || !fnName()) {
       graphSeq += 1;
+      graphAbort?.abort();
+      graphAbort = undefined;
+      frame = undefined;
       setGraph(null);
       setGraphLoading(false);
       setGraphError(null);
@@ -112,21 +116,33 @@ export default function CfgPanel(props: CfgPanelProps) {
     reload();
 
     const seq = ++graphSeq;
+    graphAbort?.abort();
+    const abort = new AbortController();
+    graphAbort = abort;
+    frame = undefined;
     setGraph(null);
     setGraphLoading(true);
     setGraphError(null);
-    void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout })
+    void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, signal: abort.signal })
       .then((resp) => {
-        if (seq !== graphSeq) return;
+        if (seq !== graphSeq || abort.signal.aborted) return;
         setGraph({ ...resp, requestFn, auto: requestAuto });
       })
       .catch((err) => {
-        if (seq !== graphSeq) return;
+        if (seq !== graphSeq || abort.signal.aborted) return;
         setGraphError(err);
       })
       .finally(() => {
-        if (seq === graphSeq) setGraphLoading(false);
+        if (seq === graphSeq && !abort.signal.aborted) {
+          if (graphAbort === abort) graphAbort = undefined;
+          setGraphLoading(false);
+        }
       });
+  });
+
+  onCleanup(() => {
+    graphSeq += 1;
+    graphAbort?.abort();
   });
 
   createEffect(() => {
@@ -313,13 +329,16 @@ export default function CfgPanel(props: CfgPanelProps) {
         {(err) => <p class="err">graph load failed: {String(err())}</p>}
       </Show>
       <Show when={graphLoading()}>
-        <p class="dim">rendering graph…</p>
+        <div class="cfg-loading" role="status" aria-live="polite">
+          <span class="cfg-spinner" />
+          <span>rendering graph…</span>
+        </div>
       </Show>
       <Show when={jumpErr()}>
         <p class="err">{jumpErr()}</p>
       </Show>
 
-      <Show when={graph()}>
+      <Show when={!graphLoading() && graph()}>
         {(resp) => {
           const r = resp();
           return (

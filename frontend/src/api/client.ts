@@ -85,6 +85,7 @@ export async function fetchFunctions(): Promise<FunctionsResponse> {
 export interface FetchCfgSvgOpts {
   fnName?: string;
   timeout?: number;
+  signal?: AbortSignal;
 }
 
 export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgResponse> {
@@ -92,7 +93,7 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
   if (opts.fnName) params.set("fn", opts.fnName);
   if (opts.timeout !== undefined) params.set("timeout", String(opts.timeout));
   const qs = params.toString();
-  const r = await fetch(`/api/cfg-svg${qs ? "?" + qs : ""}`);
+  const r = await fetch(`/api/cfg-svg${qs ? "?" + qs : ""}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/cfg-svg returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as CfgSvgResponse;
 }
