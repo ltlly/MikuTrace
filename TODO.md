@@ -51,6 +51,8 @@
 - M3-disasm-followup ARM64 pre/post-indexed writeback in decoder.rs: ✅ 2026-05-04 (closed M3-γ backward parity gap)
 - M3-δ tracemiku-core::decompiler::{ir,backend,builder}: ✅ 2026-05-04 (skeleton — root F0 only; advanced features in M3-ε)
 - M3-δ /api/dec/summary + DecompilerPanel + scripts/m3_delta_parity.py: ✅ 2026-05-04 (parity soft-gated 0.01 jaccard pending M3-ε symbol fallback)
+- M3-ε split_top_k_callees in build_trace_ir (metadata only, no BlockIR yet): ✅ 2026-05-04
+- M3-ε /api/dec/summary symbol-source fallback + parity HARD-gate (0.99 jaccard on real trace): ✅ 2026-05-04
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
@@ -61,10 +63,11 @@
 - M3-β: basic taint forward/backward + frame_depth + 2 endpoints + TaintPanel + parity ✅ 2026-05-04 (forward green; backward soft-gated)
 - M3-γ: advanced taint (MEM-chasing + through_mem + data_only + cross_fn_call) + frontend toggles ✅ 2026-05-04
 - M3-δ: decompiler skeleton — ir + backend stub + builder skeleton + /api/dec/summary + DecompilerPanel + parity (soft) ✅ 2026-05-04
-- M3-ε (next): full TraceIR — BlockIR construction (asm/samples/exits/tier), top-K callee splits (split_top_k/split_min_records), type_anchor.py port (json-spec driven), vm_candidate.py port, /api/dec/fn/{id}, /api/dec/llm-call, render_summary_md fidelity, symbol-source fallback in /api/dec/summary, hard-gate dec-summary parity
-- M3-ζ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
-- M3-η: memshadow v3 binary sidecar (.memshadow.v3.bin)
-- M3-θ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-ε: split_top_k_callees + /api/dec/summary symbol-source fallback + parity hard-gate ✅ 2026-05-04
+- M3-ζ (next): BlockIR construction (asm/samples/exits/tier), /api/dec/fn/{id} per-fn markdown, render_summary_md fidelity, type_anchor.py port (json-spec driven), vm_candidate.py port
+- M3-η: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-θ: memshadow v3 binary sidecar (.memshadow.v3.bin)
+- M3-ι: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
