@@ -29,6 +29,108 @@ pub struct CallNode {
     pub truncated_children: Option<u32>,
 }
 
+/// Build nested call tree.
+///
+/// `max_depth` caps nesting; deeper calls are flattened into the deepest
+/// permitted frame's `truncated_children` count rather than nested further.
+/// Prevents runaway HTML for OLLVM auto-recursive jumpouts (Python parity).
+///
+/// Algorithm (parity with `viewer/calltree.py`):
+/// - Init stack with root frame `{fn: "?", depth: 0, ...}`.
+/// - For each record `i`:
+///     - `bl`/`blr`: resolve callee name from PC of record `i+1`.
+///       If new_depth > max_depth, increment top.truncated_children
+///       and a `cap_balance` counter (so the next ret skips popping).
+///       Otherwise push a new child frame onto the stack.
+///     - `ret`: if `cap_balance > 0`, decrement it (skip pop). Otherwise
+///       pop top, set its `exit_idx = i`, and attach to parent's children.
+/// - At trace end: close any unclosed frames with `exit_idx = last_idx`.
+///
+/// Note on cap balance: Python's algorithm `stack.append(top)` pushes the
+/// SAME dict reference as the current top. We can't replicate that with
+/// `Vec<CallNode>` (unique ownership), so we use a parallel counter that
+/// records "skip the next N rets" — produces the same observable tree.
+pub fn build_call_tree(trace: &Trace, sym: &SymbolMap, max_depth: usize) -> CallNode {
+    let n = trace.len();
+    let last_idx = n.saturating_sub(1);
+
+    let root = CallNode {
+        fn_name: Some("?".to_string()),
+        fn_pc: 0,
+        enter_idx: 0,
+        exit_idx: last_idx,
+        depth: 0,
+        children: Vec::new(),
+        truncated_children: None,
+    };
+    let mut stack: Vec<CallNode> = vec![root];
+    // Number of pending cap-balance rets (each "extra" bl at cap pushes
+    // a phantom frame in Python; here we just count them and skip the
+    // matching number of rets).
+    let mut cap_balance: u32 = 0;
+
+    for i in 0..n {
+        let r = trace.record(i);
+        let d = decode(r.pc, r.inst);
+        let m = d.mnemonic.as_str();
+        let is_call = m == "bl" || m == "blr";
+        let is_ret = m == "ret";
+
+        if is_call {
+            // Resolve callee name from PC of the *next* trace record (the
+            // first instruction the call lands on).
+            let target_pc = if i + 1 < n { trace.pc(i + 1) } else { 0 };
+            let (cf, _off) = if target_pc != 0 {
+                sym.lookup(target_pc)
+            } else {
+                ("?".to_string(), 0u64)
+            };
+            let top_depth = stack.last().expect("stack non-empty").depth;
+            let new_depth = top_depth + 1;
+            if new_depth > max_depth {
+                // Cap reached. Flatten: bump truncated_children on top,
+                // and remember to skip one ret.
+                let top = stack.last_mut().expect("stack non-empty");
+                top.truncated_children = Some(top.truncated_children.unwrap_or(0) + 1);
+                cap_balance += 1;
+                continue;
+            }
+            let child = CallNode {
+                fn_name: if cf == "?" { None } else { Some(cf) },
+                fn_pc: target_pc,
+                enter_idx: i,
+                exit_idx: i,
+                depth: new_depth,
+                children: Vec::new(),
+                truncated_children: None,
+            };
+            stack.push(child);
+        } else if is_ret {
+            if cap_balance > 0 {
+                cap_balance -= 1;
+                continue;
+            }
+            if stack.len() > 1 {
+                let mut top = stack.pop().expect("stack > 1");
+                top.exit_idx = i;
+                let parent = stack.last_mut().expect("stack non-empty");
+                parent.children.push(top);
+            }
+        }
+    }
+
+    // Close any remaining open frames at last_idx.
+    while stack.len() > 1 {
+        let mut top = stack.pop().expect("stack > 1");
+        top.exit_idx = last_idx;
+        let parent = stack.last_mut().expect("stack non-empty");
+        parent.children.push(top);
+    }
+    let mut root = stack.pop().expect("root left");
+    root.exit_idx = last_idx;
+    root
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,106 +281,4 @@ mod tests {
             "two bl-targets flattened into root"
         );
     }
-}
-
-/// Build nested call tree.
-///
-/// `max_depth` caps nesting; deeper calls are flattened into the deepest
-/// permitted frame's `truncated_children` count rather than nested further.
-/// Prevents runaway HTML for OLLVM auto-recursive jumpouts (Python parity).
-///
-/// Algorithm (parity with `viewer/calltree.py`):
-/// - Init stack with root frame `{fn: "?", depth: 0, ...}`.
-/// - For each record `i`:
-///     - `bl`/`blr`: resolve callee name from PC of record `i+1`.
-///       If new_depth > max_depth, increment top.truncated_children
-///       and a `cap_balance` counter (so the next ret skips popping).
-///       Otherwise push a new child frame onto the stack.
-///     - `ret`: if `cap_balance > 0`, decrement it (skip pop). Otherwise
-///       pop top, set its `exit_idx = i`, and attach to parent's children.
-/// - At trace end: close any unclosed frames with `exit_idx = last_idx`.
-///
-/// Note on cap balance: Python's algorithm `stack.append(top)` pushes the
-/// SAME dict reference as the current top. We can't replicate that with
-/// `Vec<CallNode>` (unique ownership), so we use a parallel counter that
-/// records "skip the next N rets" — produces the same observable tree.
-pub fn build_call_tree(trace: &Trace, sym: &SymbolMap, max_depth: usize) -> CallNode {
-    let n = trace.len();
-    let last_idx = n.saturating_sub(1);
-
-    let root = CallNode {
-        fn_name: Some("?".to_string()),
-        fn_pc: 0,
-        enter_idx: 0,
-        exit_idx: last_idx,
-        depth: 0,
-        children: Vec::new(),
-        truncated_children: None,
-    };
-    let mut stack: Vec<CallNode> = vec![root];
-    // Number of pending cap-balance rets (each "extra" bl at cap pushes
-    // a phantom frame in Python; here we just count them and skip the
-    // matching number of rets).
-    let mut cap_balance: u32 = 0;
-
-    for i in 0..n {
-        let r = trace.record(i);
-        let d = decode(r.pc, r.inst);
-        let m = d.mnemonic.as_str();
-        let is_call = m == "bl" || m == "blr";
-        let is_ret = m == "ret";
-
-        if is_call {
-            // Resolve callee name from PC of the *next* trace record (the
-            // first instruction the call lands on).
-            let target_pc = if i + 1 < n { trace.pc(i + 1) } else { 0 };
-            let (cf, _off) = if target_pc != 0 {
-                sym.lookup(target_pc)
-            } else {
-                ("?".to_string(), 0u64)
-            };
-            let top_depth = stack.last().expect("stack non-empty").depth;
-            let new_depth = top_depth + 1;
-            if new_depth > max_depth {
-                // Cap reached. Flatten: bump truncated_children on top,
-                // and remember to skip one ret.
-                let top = stack.last_mut().expect("stack non-empty");
-                top.truncated_children = Some(top.truncated_children.unwrap_or(0) + 1);
-                cap_balance += 1;
-                continue;
-            }
-            let child = CallNode {
-                fn_name: if cf == "?" { None } else { Some(cf) },
-                fn_pc: target_pc,
-                enter_idx: i,
-                exit_idx: i,
-                depth: new_depth,
-                children: Vec::new(),
-                truncated_children: None,
-            };
-            stack.push(child);
-        } else if is_ret {
-            if cap_balance > 0 {
-                cap_balance -= 1;
-                continue;
-            }
-            if stack.len() > 1 {
-                let mut top = stack.pop().expect("stack > 1");
-                top.exit_idx = i;
-                let parent = stack.last_mut().expect("stack non-empty");
-                parent.children.push(top);
-            }
-        }
-    }
-
-    // Close any remaining open frames at last_idx.
-    while stack.len() > 1 {
-        let mut top = stack.pop().expect("stack > 1");
-        top.exit_idx = last_idx;
-        let parent = stack.last_mut().expect("stack non-empty");
-        parent.children.push(top);
-    }
-    let mut root = stack.pop().expect("root left");
-    root.exit_idx = last_idx;
-    root
 }
