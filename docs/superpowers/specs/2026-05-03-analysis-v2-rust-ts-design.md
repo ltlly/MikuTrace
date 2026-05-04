@@ -460,7 +460,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
 | `call-chain` | ✅ M3-σ | REST-backed LR walking wrapper |
 | `hash-input-search` | ✅ M3-hash-input-search | SHA/MD5/HMAC/CRC candidate input search |
-| `diff-traces` | 🔜 M3 | |
+| `diff-traces` | ✅ M3-diff-traces | JNI output byte-level stable/variable diff |
 | `fork-events` | ✅ M3-ο | reads per-call meta.json fork_events via REST wrapper |
 | `ollvm-detect-vm` | ✅ M3-ψ | REST-backed OLLVM VM dispatcher heuristic |
 | `hash-finalize-detect` | ✅ M3-hash-finalize | MemShadow contiguous digest-output heuristic |
@@ -532,7 +532,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/hash-finalize-detect` | ✅ M3-hash-finalize | MemShadow contiguous digest-output heuristic |
 | `/api/hash-input-search` | ✅ M3-hash-input-search | SHA/MD5/HMAC/CRC candidate input search |
 | `/api/auto-phase-detect` | ✅ M3-auto-phase | heuristic phase timeline |
-| `/api/diff-traces` | 🔜 M3 | |
+| `/api/diff-traces` | ✅ M3-diff-traces | JNI output byte-level stable/variable diff |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
 | `/api/dec/summary` | ✅ M3-ι2c | trace-ir + symbol-source fallback + VM candidates wire/markdown shipped; m3_iota_parity.py HARD-gate green on real xsign trace (fns 0.978 / summary_md 0.943 / VM exact) |
 | `/api/dec/fn/{id}` | ✅ M3-ι2c | trace:* + bare F0 + sym:* + legacy cfg:* supported via render_func_md (hot blocks full + warm stubs; asm/samples/exits). `bn:*` remains gated on Rust BN sidecar/backend (M6). |

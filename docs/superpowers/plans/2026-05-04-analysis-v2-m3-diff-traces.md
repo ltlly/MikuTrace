@@ -12,8 +12,8 @@
 
 ## Tasks
 
-- [ ] Add server route and output extraction from `jni_hooks.jsonl`.
-- [ ] Add CLI wrapper using POST helper.
-- [ ] Add server/CLI tests.
-- [ ] Run server/CLI tests and clippy.
-- [ ] Update TODO/spec status.
+- [x] Add server route and output extraction from `jni_hooks.jsonl`.
+- [x] Add CLI wrapper using POST helper.
+- [x] Add server/CLI tests.
+- [x] Run server/CLI tests and clippy.
+- [x] Update TODO/spec status.
