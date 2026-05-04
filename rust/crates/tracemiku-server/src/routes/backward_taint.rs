@@ -53,7 +53,29 @@ pub async fn backward_taint_handler(
     State(state): State<AppState>,
     Query(q): Query<BackwardTaintQuery>,
 ) -> Json<BackwardTaintResponse> {
-    let inner = &state.inner;
+    let start = q.start;
+    let reg = q.reg.clone();
+    let inner = state.inner.clone();
+    let response = tokio::task::spawn_blocking(move || backward_taint_response(&inner, q))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "backward taint worker failed: {err}");
+            BackwardTaintResponse {
+                count: 0,
+                from: start,
+                reg,
+                chain: Vec::new(),
+                stopped_at_max: true,
+                max_count_used: 0,
+            }
+        });
+    Json(response)
+}
+
+fn backward_taint_response(
+    inner: &crate::state::AppStateInner,
+    q: BackwardTaintQuery,
+) -> BackwardTaintResponse {
     let raw = q.max_count.unwrap_or(DEFAULT_MAX_COUNT);
     let eff = raw.min(MAX_COUNT_CEILING);
     let exclude: HashSet<String> = if q.data_only {
@@ -111,12 +133,12 @@ pub async fn backward_taint_handler(
         })
         .collect();
 
-    Json(BackwardTaintResponse {
+    BackwardTaintResponse {
         count: rows.len(),
         from: q.start,
         reg: q.reg,
         chain: rows,
         stopped_at_max: stopped,
         max_count_used: eff,
-    })
+    }
 }

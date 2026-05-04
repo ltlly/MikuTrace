@@ -25,6 +25,7 @@ const REG_ORDER = [
 const REG_ADDR_RE = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)$/i;
 
 interface MemContext {
+  token: number;
   x: number;
   y: number;
   addr: string;
@@ -102,17 +103,31 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   );
   let autoAddr = "";
   let lastAddrRequest = -1;
+  let memContextSeq = 0;
+  let memContextAbort: AbortController | undefined;
+
+  function cancelMemContext() {
+    memContextSeq += 1;
+    memContextAbort?.abort();
+    memContextAbort = undefined;
+  }
+
+  function closeMemContext(clearSelection = false) {
+    cancelMemContext();
+    setMemContext(null);
+    if (clearSelection) setSelection(null);
+  }
+
   createEffect(() => {
     if (!memContext()) return;
     const closeOnPointer = (e: PointerEvent) => {
       const target = e.target as Element | null;
       if (target?.closest(".memory-context-menu") || target?.closest(".mem-byte")) return;
-      setMemContext(null);
+      closeMemContext();
     };
     const closeOnKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setMemContext(null);
-        setSelection(null);
+        closeMemContext(true);
       }
     };
     document.addEventListener("pointerdown", closeOnPointer);
@@ -122,6 +137,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       document.removeEventListener("keydown", closeOnKey);
     });
   });
+  onCleanup(() => cancelMemContext());
   createEffect(() => {
     const req = props.addrRequest;
     if (!req || req.token === lastAddrRequest) return;
@@ -225,8 +241,13 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   async function openMemContext(e: MouseEvent, b: MemDumpByte) {
     e.preventDefault();
     e.stopPropagation();
+    cancelMemContext();
     const bounds = selectedBounds(b.addr);
+    const token = ++memContextSeq;
+    const abort = new AbortController();
+    memContextAbort = abort;
     const base: MemContext = {
+      token,
       x: Math.min(e.clientX, window.innerWidth - 320),
       y: Math.min(e.clientY, window.innerHeight - 260),
       addr: bounds.lo,
@@ -235,7 +256,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     };
     setMemContext(base);
     try {
-      const hits = await fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, 30);
+      const hits = await fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, 30, abort.signal);
       let writes: MemWritesInRangeResponse | undefined;
       let writeErr: string | undefined;
       try {
@@ -245,26 +266,31 @@ export default function MemoryPanel(props: MemoryPanelProps) {
           addrLo: bounds.lo,
           addrHi: addToAddr(bounds.hi, 1),
           max: 30,
+          signal: abort.signal,
         });
       } catch (err) {
+        if (abort.signal.aborted) return;
         writeErr = String(err);
       }
       setMemContext((current) =>
-        current?.addr === bounds.lo && current.size === bounds.size
+        current?.token === token
           ? { ...current, hits, writes, writeErr }
           : current,
       );
     } catch (err) {
+      if (abort.signal.aborted) return;
       setMemContext((current) =>
-        current?.addr === bounds.lo && current.size === bounds.size
+        current?.token === token
           ? { ...current, err: String(err) }
           : current,
       );
+    } finally {
+      if (memContextAbort === abort) memContextAbort = undefined;
     }
   }
 
   return (
-    <section class="panel" onClick={() => setMemContext(null)} onMouseUp={() => setDragAnchor(null)}>
+    <section class="panel" onClick={() => closeMemContext()} onMouseUp={() => setDragAnchor(null)}>
       <h2>Memory</h2>
       <div class="memory-controls">
         <label>

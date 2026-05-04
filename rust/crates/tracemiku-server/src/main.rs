@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
                 move || serve_index(index_path.clone())
             }),
         )
+        .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .fallback_service(
             ServeDir::new(&static_dir)
                 .not_found_service(ServeFile::new(static_dir.join("index.html"))),

@@ -188,6 +188,7 @@ export async function fetchIdxsTouchingRange(
   size = 1,
   cursor = 0,
   limit = 30,
+  signal?: AbortSignal,
 ): Promise<TouchingRangeResponse> {
   const params = new URLSearchParams({
     addr,
@@ -195,7 +196,7 @@ export async function fetchIdxsTouchingRange(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fx(`/api/idxs-touching-range?${params}`);
+  const r = await fx(`/api/idxs-touching-range?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/idxs-touching-range ${r.status}: ${await r.text()}`);
   return (await r.json()) as TouchingRangeResponse;
 }
@@ -308,6 +309,7 @@ export async function fetchForwardTaint(
   reg: string,
   maxCount = 200,
   flags: TaintFlags = {},
+  signal?: AbortSignal,
 ): Promise<ForwardTaintResponse> {
   const params = new URLSearchParams({
     start: String(start),
@@ -317,7 +319,7 @@ export async function fetchForwardTaint(
   if (flags.through_mem) params.set("through_mem", "true");
   if (flags.data_only) params.set("data_only", "true");
   if (flags.cross_fn_call) params.set("cross_fn_call", "true");
-  const r = await fx(`/api/forward-taint?${params}`);
+  const r = await fx(`/api/forward-taint?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/forward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as ForwardTaintResponse;
 }
@@ -327,6 +329,7 @@ export async function fetchBackwardTaint(
   reg: string,
   maxCount = 200,
   flags: TaintFlags = {},
+  signal?: AbortSignal,
 ): Promise<BackwardTaintResponse> {
   const params = new URLSearchParams({
     start: String(start),
@@ -336,7 +339,7 @@ export async function fetchBackwardTaint(
   if (flags.through_mem) params.set("through_mem", "true");
   if (flags.data_only) params.set("data_only", "true");
   if (flags.cross_fn_call) params.set("cross_fn_call", "true");
-  const r = await fx(`/api/backward-taint?${params}`);
+  const r = await fx(`/api/backward-taint?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/backward-taint ${r.status}: ${await r.text()}`);
   return (await r.json()) as BackwardTaintResponse;
 }
@@ -385,6 +388,7 @@ export interface FetchMemWritesInRangeOpts {
   addrLo?: string;
   addrHi?: string;
   max?: number;
+  signal?: AbortSignal;
 }
 
 export async function fetchMemWritesInRange(
@@ -396,7 +400,7 @@ export async function fetchMemWritesInRange(
   if (opts.addrLo) params.set("addr_lo", opts.addrLo);
   if (opts.addrHi) params.set("addr_hi", opts.addrHi);
   if (opts.max !== undefined) params.set("max", String(opts.max));
-  const r = await fx(`/api/mem-writes-in-range?${params}`);
+  const r = await fx(`/api/mem-writes-in-range?${params}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/mem-writes-in-range ${r.status}: ${await r.text()}`);
   return (await r.json()) as MemWritesInRangeResponse;
 }

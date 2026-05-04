@@ -1,10 +1,10 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
-type ViewMode = "flow" | "table";
+type ViewMode = "tree" | "table";
 
 interface RunRequest {
   token: number;
@@ -18,6 +18,8 @@ interface RunResult {
   count: number;
   stopped: boolean;
   direction: Direction;
+  from: number;
+  reg: string;
   showDepth: boolean;
 }
 
@@ -34,7 +36,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [start, setStart] = createSignal(0);
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
-  const [viewMode, setViewMode] = createSignal<ViewMode>("flow");
+  const [viewMode, setViewMode] = createSignal<ViewMode>("tree");
   const [maxCount, setMaxCount] = createSignal(200);
   const [throughMem, setThroughMem] = createSignal(false);
   const [dataOnly, setDataOnly] = createSignal(false);
@@ -42,6 +44,16 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [running, setRunning] = createSignal(false);
   const [result, setResult] = createSignal<RunResult | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  let runSeq = 0;
+  let runAbort: AbortController | undefined;
+
+  function cancelRun() {
+    runSeq += 1;
+    runAbort?.abort();
+    runAbort = undefined;
+  }
+
+  onCleanup(() => cancelRun());
 
   createEffect(() => {
     if (!props.active) return;
@@ -61,8 +73,13 @@ export default function TaintPanel(props: TaintPanelProps) {
   });
 
   async function run(dirArg = direction(), startArg = start(), regArg = reg()) {
+    cancelRun();
+    const seq = ++runSeq;
+    const abort = new AbortController();
+    runAbort = abort;
     setRunning(true);
     setError(null);
+    setResult(null);
     try {
       const dir = dirArg;
       const flags = {
@@ -71,28 +88,39 @@ export default function TaintPanel(props: TaintPanelProps) {
         cross_fn_call: crossFnCall(),
       };
       if (dir === "forward") {
-        const resp = await fetchForwardTaint(startArg, regArg, maxCount(), flags);
+        const resp = await fetchForwardTaint(startArg, regArg, maxCount(), flags, abort.signal);
+        if (seq !== runSeq || abort.signal.aborted) return;
         setResult({
           rows: resp.hits,
           count: resp.count,
           stopped: resp.stopped_at_max,
           direction: "forward",
+          from: resp.from,
+          reg: resp.reg,
           showDepth: flags.cross_fn_call,
         });
       } else {
-        const resp = await fetchBackwardTaint(startArg, regArg, maxCount(), flags);
+        const resp = await fetchBackwardTaint(startArg, regArg, maxCount(), flags, abort.signal);
+        if (seq !== runSeq || abort.signal.aborted) return;
         setResult({
           rows: resp.chain,
           count: resp.count,
           stopped: resp.stopped_at_max,
           direction: "backward",
+          from: resp.from,
+          reg: resp.reg,
           showDepth: flags.cross_fn_call,
         });
       }
     } catch (e: unknown) {
+      if (abort.signal.aborted) return;
+      if (seq !== runSeq) return;
       setError(String(e instanceof Error ? e.message : e));
     } finally {
-      setRunning(false);
+      if (seq === runSeq && !abort.signal.aborted) {
+        if (runAbort === abort) runAbort = undefined;
+        setRunning(false);
+      }
     }
   }
 
@@ -177,12 +205,12 @@ export default function TaintPanel(props: TaintPanelProps) {
         <label>
           view
           <select value={viewMode()} onChange={(e) => setViewMode(e.currentTarget.value as ViewMode)}>
-            <option value="flow">flow</option>
+            <option value="tree">flow tree</option>
             <option value="table">table</option>
           </select>
         </label>
-        <button type="button" disabled={running()} onClick={() => void run()}>
-          {running() ? "running…" : "Run"}
+        <button type="button" onClick={() => void run()}>
+          {running() ? "restart" : "Run"}
         </button>
       </div>
       <Show when={error()}>
@@ -192,12 +220,12 @@ export default function TaintPanel(props: TaintPanelProps) {
         {(r) => (
           <>
             <p class="dim small">
-              {r().direction} from traceIdx {start()} reg {reg()} · {r().count} row{r().count === 1 ? "" : "s"}
+              {r().direction} from traceIdx {r().from} reg {r().reg} · {r().count} row{r().count === 1 ? "" : "s"}
               <Show when={r().stopped}>
                 {" "}· stopped at max
               </Show>
             </p>
-            <Show when={viewMode() === "flow"} fallback={
+            <Show when={viewMode() === "tree"} fallback={
               <table class="taint-table">
                 <thead>
                   <tr>
@@ -225,12 +253,12 @@ export default function TaintPanel(props: TaintPanelProps) {
                 </tbody>
               </table>
             }>
-              <div class="taint-flow">
+              <div class="taint-tree">
                 <For each={r().rows}>
                   {(row) => (
                     <button
                       type="button"
-                      class="taint-flow-row"
+                      class="taint-tree-row"
                       style={{ "padding-left": rowIndent(row) }}
                       onClick={() => props.onSelect(row.idx)}
                     >

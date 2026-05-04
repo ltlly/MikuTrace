@@ -718,6 +718,11 @@ body.is-resizing {
   box-shadow: inset 2px 0 0 var(--warn);
 }
 
+.reg-diff-table tbody tr.changed.selected {
+  background: linear-gradient(90deg, rgba(88, 166, 255, 0.18), rgba(247, 129, 102, 0.14));
+  box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px rgba(88, 166, 255, 0.35);
+}
+
 .reg-diff-table tbody tr.changed th,
 .reg-diff-table tbody tr.changed td:first-of-type {
   color: var(--warn);
@@ -1672,13 +1677,13 @@ html[data-density="dense"] .xref-table td {
 .taint-table th { color: var(--dim, #888); font-weight: normal; }
 .taint-table tbody tr { cursor: pointer; }
 .taint-table tbody tr:hover { background: var(--bg3); }
-.taint-flow {
+.taint-tree {
   display: flex;
   flex-direction: column;
   gap: 2px;
   font-family: var(--font-mono);
 }
-.taint-flow-row {
+.taint-tree-row {
   display: grid;
   grid-template-columns: 72px minmax(90px, 160px) minmax(0, 1fr) minmax(80px, 180px);
   gap: 8px;
@@ -1693,11 +1698,11 @@ html[data-density="dense"] .xref-table td {
   text-align: left;
   cursor: pointer;
 }
-.taint-flow-row:hover {
+.taint-tree-row:hover {
   background: var(--bg3);
   border-left-color: var(--accent);
 }
-.taint-flow-row code {
+.taint-tree-row code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

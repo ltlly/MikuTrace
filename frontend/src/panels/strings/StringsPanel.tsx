@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
@@ -19,12 +19,22 @@ export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
+  let singleClickTimer: number | undefined;
   const source = createMemo<StringsSource | undefined>((prev) => {
     if (!props.active) return undefined;
     const next = { minLen: minLen(), q: query() };
     return prev && prev.minLen === next.minLen && prev.q === next.q ? prev : next;
   });
   const [resp] = createResource(source, async ({ minLen, q }) => fetchStrings(minLen, q));
+
+  function clearSingleClickTimer() {
+    if (singleClickTimer !== undefined) {
+      window.clearTimeout(singleClickTimer);
+      singleClickTimer = undefined;
+    }
+  }
+
+  onCleanup(() => clearSingleClickTimer());
 
   async function jumpString(s: StringEntry) {
     setJumpErr("");
@@ -45,7 +55,16 @@ export default function StringsPanel(props: StringsPanelProps) {
     }
   }
 
+  function scheduleJumpString(s: StringEntry) {
+    clearSingleClickTimer();
+    singleClickTimer = window.setTimeout(() => {
+      singleClickTimer = undefined;
+      void jumpString(s);
+    }, 180);
+  }
+
   function showProvenance(s: StringEntry) {
+    clearSingleClickTimer();
     setJumpErr("");
     props.onShowProvenance({
       addr: s.addr,
@@ -101,8 +120,13 @@ export default function StringsPanel(props: StringsPanelProps) {
                 {(s) => (
                   <li
                     title="单击跳到第一次写入/触碰；双击查看逐字符 provenance"
-                    onClick={() => void jumpString(s)}
-                    onDblClick={() => showProvenance(s)}
+                    onClick={(e) => {
+                      if (e.detail === 1) scheduleJumpString(s);
+                    }}
+                    onDblClick={(e) => {
+                      e.preventDefault();
+                      showProvenance(s);
+                    }}
                   >
                     <span class="dim small">{s.addr}</span>
                     <span class="dim small">{s.len}</span>
