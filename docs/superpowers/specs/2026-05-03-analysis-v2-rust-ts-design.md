@@ -420,7 +420,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
 | `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
 | `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
-| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-η | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η). BlockIR.exits with kind/taken_count, render_summary_md fidelity, render_func_md still defer to M3-θ |
+| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ι | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η) + BlockIR.exits with kind/taken_count via CFG EdgeMeta (M3-ι) + render_summary_md fidelity (M3-ι). type_anchor + vm_candidate ports defer to next milestone. |
 | `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
 | `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
 | `type_anchor.py` (JSON-spec → typed pointer hints) | `tracemiku-core::decompiler::type_anchor` | 🔜 M3 | reads `tools/hooks/*.json` |
@@ -522,7 +522,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/diff-traces` | 🔜 M3 | |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
 | `/api/dec/summary` | ✅ M3-ε | trace-ir + symbol-source fallback shipped; parity HARD-gate green at 0.99 jaccard on real trace |
-| `/api/dec/fn/{id}` | 🟡 M3-θ | trace:* + bare F0 legacy id supported via render_func_md (skeleton — header + metadata + per-block asm/samples + tier filter). sym:* / bn:* sources + render_summary_md fidelity + LLM bundle defer to later milestones |
+| `/api/dec/fn/{id}` | 🟡 M3-ι | trace:* + bare F0 legacy id supported via render_func_md (header + metadata + per-block asm/samples + exits + tier filter). sym:* / bn:* sources defer to BN-backend milestone. |
 | `/api/dec/llm-call` | 🔜 M3 | |
 | `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
 | `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |
