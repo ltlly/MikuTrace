@@ -1,7 +1,7 @@
 import { createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { fetchMeta, fetchSearch } from "./api/client";
+import { fetchMeta, fetchSearch, fetchSearchPc } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel from "./panels/cfg/CfgPanel";
@@ -149,6 +149,30 @@ export default function App() {
 
   function jumpToIdx(idx: number) {
     setSelectedIdx(clampIdx(idx));
+  }
+
+  function pcFromHash(hash = window.location.hash): string | null {
+    const m = hash.match(/^#insn_([0-9a-f]+)$/i);
+    return m ? `0x${m[1].toLowerCase()}` : null;
+  }
+
+  async function jumpToHashPc(hash = window.location.hash) {
+    const pc = pcFromHash(hash);
+    if (!pc) return;
+    setCmdStatus(`resolving ${pc}...`);
+    try {
+      const r = await fetchSearchPc(pc, 200);
+      if (!r.idxs.length) {
+        setCmdStatus(`${pc}: not executed in trace`);
+        return;
+      }
+      const cursor = selectedIdx();
+      const nearest = [...r.idxs].sort((a, b) => Math.abs(a - cursor) - Math.abs(b - cursor))[0];
+      jumpToIdx(nearest);
+      setCmdStatus(`${pc}: jumped to #${nearest}`);
+    } catch (err) {
+      setCmdStatus(`hash jump ${pc} failed: ${String(err)}`);
+    }
   }
 
   function setHiddenSos(next: Set<string>) {
@@ -336,6 +360,12 @@ export default function App() {
   }
 
   onMount(() => {
+    void jumpToHashPc();
+    const onHashChange = () => {
+      void jumpToHashPc();
+    };
+    window.addEventListener("hashchange", onHashChange);
+
     const onKey = (e: KeyboardEvent) => {
       if (helpState()) {
         if (e.key === "Escape") setHelpState(null);
@@ -371,7 +401,10 @@ export default function App() {
       else if (e.key === "N") stepSearch(-1);
     };
     window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    onCleanup(() => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("keydown", onKey);
+    });
   });
 
   const leftTitle = createMemo(() => {
