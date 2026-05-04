@@ -435,6 +435,45 @@ ul {
 .taint-table th, .taint-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .taint-table th { color: var(--dim, #888); font-weight: normal; }
 
+.dec-grid { display: grid; grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr); gap: 16px; align-items: start; }
+.dec-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; font-size: 12px; color: var(--dim); }
+.dec-controls label { display: flex; align-items: center; gap: 6px; }
+.dec-controls select,
+.dec-controls input,
+.dec-controls button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+.dec-controls select { max-width: 300px; }
+.dec-controls input[type="number"] { width: 7em; }
+.dec-controls button { cursor: pointer; }
+.dec-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
 .dec-table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; }
 .dec-table th, .dec-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .dec-table th { color: var(--dim, #888); font-weight: normal; }
+.dec-table tbody tr { cursor: pointer; }
+.dec-table tbody tr:hover { background: rgba(98, 160, 234, 0.08); }
+.dec-table tbody tr.selected { background: rgba(98, 160, 234, 0.16); }
+.dec-markdown,
+.dec-llm {
+  max-height: 520px;
+  overflow: auto;
+  margin: 0 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dec-llm { border-color: rgba(87, 199, 133, 0.35); }
+@media (max-width: 960px) {
+  .dec-grid { grid-template-columns: 1fr; }
+}

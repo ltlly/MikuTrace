@@ -272,3 +272,35 @@ export interface DecSummaryResponse {
   vm_candidates: unknown[];
   summary_md: string;
 }
+
+export interface DecFnResponse {
+  fn_id: string;
+  name: string;
+  tier: string;
+  markdown: string;
+}
+
+export interface DecModelsResponse {
+  models: string[];
+  api_keys_configured: Record<string, boolean>;
+}
+
+export interface DecLlmCallPayload {
+  fn_id: string;
+  model: string;
+  max_tokens: number;
+  lang: string;
+  tier: string;
+}
+
+export interface DecLlmCallResponse {
+  ok: boolean;
+  model: string;
+  error: string | null;
+  c_code: string | null;
+  in_tokens: number | null;
+  out_tokens: number | null;
+  latency_ms: number | null;
+  estimated_prompt_tokens: number;
+  cache_hit: boolean;
+}

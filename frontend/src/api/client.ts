@@ -12,6 +12,10 @@ import type {
   ForkEventsResponse,
   ForwardTaintResponse,
   BackwardTaintResponse,
+  DecFnResponse,
+  DecLlmCallPayload,
+  DecLlmCallResponse,
+  DecModelsResponse,
   DecSummaryResponse,
   CfgSvgResponse,
 } from "./types";
@@ -184,4 +188,27 @@ export async function fetchDecSummary(): Promise<DecSummaryResponse> {
   const r = await fetch("/api/dec/summary");
   if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecSummaryResponse;
+}
+
+export async function fetchDecFn(fnId: string, tier = "hot"): Promise<DecFnResponse> {
+  const params = new URLSearchParams({ tier });
+  const r = await fetch(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`);
+  if (!r.ok) throw new Error(`/api/dec/fn/${fnId} ${r.status}: ${await r.text()}`);
+  return (await r.json()) as DecFnResponse;
+}
+
+export async function fetchDecModels(): Promise<DecModelsResponse> {
+  const r = await fetch("/api/dec/models");
+  if (!r.ok) throw new Error(`/api/dec/models ${r.status}: ${await r.text()}`);
+  return (await r.json()) as DecModelsResponse;
+}
+
+export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCallResponse> {
+  const r = await fetch("/api/dec/llm-call", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`/api/dec/llm-call ${r.status}: ${await r.text()}`);
+  return (await r.json()) as DecLlmCallResponse;
 }

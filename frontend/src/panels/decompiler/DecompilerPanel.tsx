@@ -1,52 +1,183 @@
-import { createResource, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchDecSummary } from "~/api/client";
+import { callDecLlm, fetchDecFn, fetchDecModels, fetchDecSummary } from "~/api/client";
 
 export default function DecompilerPanel() {
-  const [resp] = createResource(fetchDecSummary);
+  const [summary] = createResource(fetchDecSummary);
+  const [models] = createResource(fetchDecModels);
+  const [selectedFn, setSelectedFn] = createSignal("");
+  const [tier, setTier] = createSignal("hot");
+  const [model, setModel] = createSignal("mimo");
+  const [lang, setLang] = createSignal("en");
+  const [maxTokens, setMaxTokens] = createSignal(4096);
+  const [llmLoading, setLlmLoading] = createSignal(false);
+  const [llmError, setLlmError] = createSignal("");
+  const [llmOutput, setLlmOutput] = createSignal("");
+
+  createEffect(() => {
+    const first = summary()?.fns[0]?.id;
+    if (!selectedFn() && first) setSelectedFn(first);
+  });
+
+  createEffect(() => {
+    const first = models()?.models[0];
+    if (first && !models()?.models.includes(model())) setModel(first);
+  });
+
+  const fnSource = createMemo(() => {
+    const fnId = selectedFn();
+    if (!fnId) return null;
+    return { fnId, tier: tier() };
+  });
+  const [fnResp] = createResource(fnSource, (s) => (s ? fetchDecFn(s.fnId, s.tier) : undefined));
+
+  async function runLlm() {
+    const fnId = selectedFn();
+    if (!fnId) return;
+    setLlmLoading(true);
+    setLlmError("");
+    setLlmOutput("");
+    try {
+      const r = await callDecLlm({
+        fn_id: fnId,
+        model: model(),
+        max_tokens: Math.max(256, Math.min(32768, maxTokens())),
+        lang: lang(),
+        tier: tier(),
+      });
+      if (r.error) setLlmError(r.error);
+      setLlmOutput([
+        `model: ${r.model}`,
+        `cache: ${r.cache_hit ? "hit" : "miss"} · estimated prompt tokens: ${r.estimated_prompt_tokens}`,
+        "",
+        r.c_code ?? "",
+      ].join("\n"));
+    } catch (err) {
+      setLlmError(String(err));
+    } finally {
+      setLlmLoading(false);
+    }
+  }
+
   return (
     <section class="panel">
-      <h2>Decompiler (skeleton)</h2>
-      <Show when={resp.error}>
-        <p class="err">load failed: {String(resp.error)}</p>
+      <h2>Decompiler</h2>
+      <Show when={summary.error}>
+        <p class="err">load failed: {String(summary.error)}</p>
       </Show>
-      <Show when={resp.loading}>
+      <Show when={summary.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={resp()}>
+      <Show when={summary()}>
         {(r) => (
           <>
             <p class="dim small">
               {r().records} records · module {r().module_name} · {r().fns.length} fn{r().fns.length === 1 ? "" : "s"}
             </p>
-            <table class="dec-table">
-              <thead>
-                <tr>
-                  <th>id</th>
-                  <th>name</th>
-                  <th>blocks</th>
-                  <th>calls</th>
-                  <th>idx range</th>
-                  <th>source</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={r().fns}>
-                  {(f) => (
+            <div class="dec-grid">
+              <div>
+                <div class="dec-controls">
+                  <label>
+                    function
+                    <select value={selectedFn()} onChange={(e) => setSelectedFn(e.currentTarget.value)}>
+                      <For each={r().fns}>
+                        {(f) => <option value={f.id}>{f.id} · {f.name}</option>}
+                      </For>
+                    </select>
+                  </label>
+                  <label>
+                    tier
+                    <select value={tier()} onChange={(e) => setTier(e.currentTarget.value)}>
+                      <option value="hot">hot</option>
+                      <option value="all">all</option>
+                    </select>
+                  </label>
+                </div>
+                <table class="dec-table">
+                  <thead>
                     <tr>
-                      <td class="dim small">{f.id}</td>
-                      <td>{f.name}</td>
-                      <td>{f.blocks}</td>
-                      <td>{f.calls}</td>
-                      <td class="dim small">
-                        {f.entry_idx ?? "?"}..{f.exit_idx ?? "?"}
-                      </td>
-                      <td class="dim small">{f.source}</td>
+                      <th>id</th>
+                      <th>name</th>
+                      <th>blocks</th>
+                      <th>calls</th>
+                      <th>idx range</th>
+                      <th>source</th>
                     </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    <For each={r().fns}>
+                      {(f) => (
+                        <tr
+                          class={selectedFn() === f.id ? "selected" : ""}
+                          onClick={() => setSelectedFn(f.id)}
+                        >
+                          <td class="dim small">{f.id}</td>
+                          <td>{f.name}</td>
+                          <td>{f.blocks}</td>
+                          <td>{f.calls}</td>
+                          <td class="dim small">
+                            {f.entry_idx ?? "?"}..{f.exit_idx ?? "?"}
+                          </td>
+                          <td class="dim small">{f.source}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <div class="dec-controls">
+                  <label>
+                    model
+                    <select value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
+                      <For each={models()?.models ?? ["mimo"]}>
+                        {(m) => (
+                          <option value={m}>
+                            {m}{models()?.api_keys_configured[m] === false ? " (no key)" : ""}
+                          </option>
+                        )}
+                      </For>
+                    </select>
+                  </label>
+                  <label>
+                    lang
+                    <select value={lang()} onChange={(e) => setLang(e.currentTarget.value)}>
+                      <option value="en">en</option>
+                      <option value="zh">zh</option>
+                    </select>
+                  </label>
+                  <label>
+                    max tokens
+                    <input
+                      type="number"
+                      min="256"
+                      max="32768"
+                      step="256"
+                      value={maxTokens()}
+                      onInput={(e) => setMaxTokens(Number(e.currentTarget.value) || 4096)}
+                    />
+                  </label>
+                  <button type="button" disabled={llmLoading()} onClick={runLlm}>
+                    {llmLoading() ? "calling…" : "call LLM"}
+                  </button>
+                </div>
+                <Show when={fnResp.error}>
+                  <p class="err">fn load failed: {String(fnResp.error)}</p>
+                </Show>
+                <Show when={fnResp.loading}>
+                  <p class="dim">loading fn…</p>
+                </Show>
+                <Show when={fnResp()}>
+                  {(f) => <pre class="dec-markdown">{f().markdown}</pre>}
+                </Show>
+                <Show when={llmError()}>
+                  <p class="err">llm failed: {llmError()}</p>
+                </Show>
+                <Show when={llmOutput()}>
+                  <pre class="dec-llm">{llmOutput()}</pre>
+                </Show>
+              </div>
+            </div>
           </>
         )}
       </Show>
