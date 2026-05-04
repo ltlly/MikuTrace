@@ -7,6 +7,9 @@ import type {
   MemDumpResponse,
   MemDiffResponse,
   IdxsForPcResponse,
+  OpenApiResponse,
+  SearchPcResponse,
+  SearchResponse,
   CallTreeResponse,
   BacktraceResponse,
   ForkEventsResponse,
@@ -117,6 +120,26 @@ export async function fetchIdxsForPc(
   return (await r.json()) as IdxsForPcResponse;
 }
 
+export async function fetchSearch(pattern: string, maxResults = 200): Promise<SearchResponse> {
+  const params = new URLSearchParams({
+    pattern,
+    max_results: String(maxResults),
+  });
+  const r = await fetch(`/api/search?${params}`);
+  if (!r.ok) throw new Error(`/api/search ${r.status}: ${await r.text()}`);
+  return (await r.json()) as SearchResponse;
+}
+
+export async function fetchSearchPc(pc: string, limit = 50): Promise<SearchPcResponse> {
+  const params = new URLSearchParams({
+    pc,
+    limit: String(limit),
+  });
+  const r = await fetch(`/api/search-pc?${params}`);
+  if (!r.ok) throw new Error(`/api/search-pc ${r.status}: ${await r.text()}`);
+  return (await r.json()) as SearchPcResponse;
+}
+
 export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   const params = new URLSearchParams({ max_depth: String(maxDepth) });
   const r = await fetch(`/api/call-tree?${params}`);
@@ -201,6 +224,12 @@ export async function fetchDecModels(): Promise<DecModelsResponse> {
   const r = await fetch("/api/dec/models");
   if (!r.ok) throw new Error(`/api/dec/models ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecModelsResponse;
+}
+
+export async function fetchOpenApi(): Promise<OpenApiResponse> {
+  const r = await fetch("/openapi.json");
+  if (!r.ok) throw new Error(`/openapi.json ${r.status}: ${await r.text()}`);
+  return (await r.json()) as OpenApiResponse;
 }
 
 export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCallResponse> {

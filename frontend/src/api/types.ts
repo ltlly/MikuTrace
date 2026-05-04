@@ -162,6 +162,30 @@ export interface IdxsForPcResponse {
   after_capped: boolean;
 }
 
+// ── /api/search, /api/search-pc ──────────────────────────────────────────
+
+export interface SearchHit {
+  idx: number;
+  pc: string;
+  rel: string | null;
+  func: string | null;
+  off: string | null;
+  asm: string;
+}
+
+export interface SearchResponse {
+  count: number;
+  pattern: string;
+  hits: SearchHit[];
+}
+
+export interface SearchPcResponse {
+  pc: string;
+  count: number;
+  idxs: number[];
+  truncated: boolean;
+}
+
 // ── /api/call-tree ────────────────────────────────────────────────────────
 
 export interface CallNode {
@@ -283,6 +307,15 @@ export interface DecFnResponse {
 export interface DecModelsResponse {
   models: string[];
   api_keys_configured: Record<string, boolean>;
+}
+
+export interface OpenApiResponse {
+  openapi: string;
+  info: {
+    title: string;
+    version: string;
+  };
+  paths: Record<string, unknown>;
 }
 
 export interface DecLlmCallPayload {

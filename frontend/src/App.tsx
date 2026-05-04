@@ -10,9 +10,11 @@ import MemoryPanel from "./panels/memory/MemoryPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
+import SettingsPanel from "./panels/settings/SettingsPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
 import TaintPanel from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
+import XrefPanel from "./panels/xref/XrefPanel";
 
 export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
@@ -25,10 +27,12 @@ export default function App() {
       </header>
       <MetaPanel />
       <FunctionsPanel />
+      <SettingsPanel />
       <CfgPanel />
       <RegistersPanel idx={selectedIdx()} />
       <MemoryPanel idx={selectedIdx()} />
       <TraceForPcPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
+      <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
       <BacktracePanel idx={selectedIdx()} onSelect={setSelectedIdx} />
       <CallTreePanel />
       <ForksPanel />
