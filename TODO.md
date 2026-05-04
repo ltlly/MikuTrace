@@ -114,6 +114,8 @@
 - M4-γ: richer Decompile UX for function markdown + LLM-call controls ✅ 2026-05-04
 - M4-δ: Xref / Settings frontend panels ✅ 2026-05-04
 - M4: TS frontend core polish / panels complete ✅ 2026-05-04
+- M5-α: Rust LLIL expression model + ARM64 lift MVP ✅ 2026-05-04
+- M5 (next): LLIL SSA / constfold / DCE / flag-elim / render / `/api/llil/*`
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**

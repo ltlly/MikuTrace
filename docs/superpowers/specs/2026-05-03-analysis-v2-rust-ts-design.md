@@ -425,7 +425,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | ✅ M3-ι2d | prompt + VM context injection + hot-block truncation logic |
 | `type_anchor.py` (TypeSpec/TypeAnchor + load + find) | `tracemiku-core::decompiler::type_anchor` + `attach_type_anchors` in builder | ✅ M3-ι2a | 1:1 port; auto-discovers tools/hooks/*.json with kind=="type_specs" plus examples/<so>/type_specs.json. Render markdown section parity with Python markdown.py:207-229. |
 | `vm_candidate.py` (OLLVM VM detection, DEC3-D) | `tracemiku-core::decompiler::vm_candidate` | ✅ M3-ι2b | 1:1 port; detect_vm_candidates emits VmCandidateIR with hex_dump from MemShadow. Helpers find_self_update_loads + bytecode_range. 3 unit tests. |
-| `llil/lift.py` (capstone → LLIL) | `tracemiku-core::llil::lift` | 🔜 M5 | capstone-rs feed |
+| `llil/lift.py` (capstone → LLIL) | `tracemiku-core::llil::lift` | ✅ M5-α | expression model + ARM64 lifter MVP over capstone-rs decode; core tests cover nop/mov/mem/branch/call |
 | `llil/ssa.py` (block-local SSA + cross-block phi) | `tracemiku-core::llil::ssa` | 🔜 M5 | including AAPCS64 caller-saved kill |
 | `llil/pass_constfold.py` | `tracemiku-core::llil::pass_constfold` | 🔜 M5 | |
 | `llil/pass_dce.py` | `tracemiku-core::llil::pass_dce` | 🔜 M5 | |
