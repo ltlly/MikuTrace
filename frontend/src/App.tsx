@@ -420,7 +420,8 @@ export default function App() {
     searchAbort = abort;
     setCmdStatus(`searching ${q}...`);
     try {
-      const r = await fetchSearch(q, 2000, abort.signal);
+      const cursor = selectedIdx();
+      const r = await fetchSearch(q, 2000, abort.signal, cursor);
       if (seq !== searchSeq || abort.signal.aborted) return;
       const hits = r.hits.map((hit) => hit.idx).sort((a, b) => a - b);
       setSearchPattern(q);
@@ -430,7 +431,7 @@ export default function App() {
         setCmdStatus(`${q}: 0 hits`);
         return;
       }
-      let pos = hits.findIndex((idx) => idx >= selectedIdx());
+      let pos = hits.findIndex((idx) => idx >= cursor);
       if (pos < 0) pos = 0;
       setSearchPos(pos);
       jumpToIdx(hits[pos]);

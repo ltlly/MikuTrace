@@ -89,6 +89,23 @@ async fn search_caps_returned_hits() {
 }
 
 #[tokio::test]
+async fn search_cursor_returns_hits_around_cursor() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/search?pattern=ret&max_results=2&cursor=4").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["cursor"], 4);
+    assert_eq!(
+        v["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["idx"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![3, 4]
+    );
+}
+
+#[tokio::test]
 async fn search_no_hit_returns_empty() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(cd, "/api/search?pattern=does_not_exist&max_results=10").await;

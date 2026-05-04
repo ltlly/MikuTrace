@@ -271,16 +271,19 @@ export async function fetchSearch(
   pattern: string,
   maxResults = 200,
   signal?: AbortSignal,
+  cursor?: number,
 ): Promise<SearchResponse> {
   const params = new URLSearchParams({
     pattern,
     max_results: String(maxResults),
   });
+  if (cursor !== undefined) params.set("cursor", String(cursor));
   const r = await fx(`/api/search?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/search ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as SearchResponse;
   out.request_pattern = pattern;
   out.request_max_results = maxResults;
+  out.request_cursor = cursor;
   return out;
 }
 

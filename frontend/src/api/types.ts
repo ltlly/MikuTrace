@@ -275,9 +275,11 @@ export interface SearchHit {
 export interface SearchResponse {
   count: number;
   pattern: string;
+  cursor?: number;
   hits: SearchHit[];
   request_pattern?: string;
   request_max_results?: number;
+  request_cursor?: number;
 }
 
 export interface SearchPcResponse {
