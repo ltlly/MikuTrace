@@ -235,3 +235,31 @@ fn data_chase_wrapper_uses_server_wire_shape() {
     assert_eq!(v["reg"], "x2");
     assert_eq!(v["steps"][0]["via"], "mem-load");
 }
+
+#[test]
+fn timeline_diff_wrappers_use_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "reg-timeline".into(),
+        cd.display().to_string(),
+        "--reg".into(),
+        "x0".into(),
+    ]);
+    assert_eq!(v["reg"], "x0");
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["points"][0]["value"], "0x6f6c6c6568");
+
+    let v = run_json(&[
+        "mem-diff".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "1".into(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--size".into(),
+        "1".into(),
+    ]);
+    assert_eq!(v["idx"], 1);
+    assert_eq!(v["size"], 1);
+    assert_eq!(v["bytes"].as_array().unwrap().len(), 1);
+}

@@ -251,6 +251,28 @@ enum Cmd {
         #[arg(long, default_value = "sp,fp,lr")]
         exclude_regs: String,
     },
+    /// GET /api/reg-timeline.
+    RegTimeline {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        reg: String,
+        #[arg(long, default_value_t = 0)]
+        start: usize,
+        #[arg(long, default_value_t = -1)]
+        end: isize,
+        #[arg(long, default_value_t = 1000)]
+        max_points: usize,
+    },
+    /// GET /api/mem-diff.
+    MemDiff {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        idx: usize,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 16)]
+        size: usize,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -502,6 +524,34 @@ async fn main() -> anyhow::Result<()> {
                 ("exclude_regs", exclude_regs),
             ];
             route_get_json(trace_dir, route_path("/api/data-chase", &params)).await
+        }
+        Some(Cmd::RegTimeline {
+            trace_dir,
+            reg,
+            start,
+            end,
+            max_points,
+        }) => {
+            let params = vec![
+                ("reg", reg),
+                ("start", start.to_string()),
+                ("end", end.to_string()),
+                ("max_points", max_points.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/reg-timeline", &params)).await
+        }
+        Some(Cmd::MemDiff {
+            trace_dir,
+            idx,
+            addr,
+            size,
+        }) => {
+            let params = vec![
+                ("idx", idx.to_string()),
+                ("addr", addr),
+                ("size", size.to_string()),
+            ];
+            route_get_json(trace_dir, route_path("/api/mem-diff", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await

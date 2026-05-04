@@ -23,6 +23,7 @@ pub mod reg_value_at;
 pub mod search;
 pub mod so_stats;
 pub mod strings;
+pub mod timeline_diff;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -73,6 +74,11 @@ pub fn router(state: AppState) -> Router {
             get(backward_taint::backward_taint_handler),
         )
         .route("/api/data-chase", get(data_chase::data_chase_handler))
+        .route(
+            "/api/reg-timeline",
+            get(timeline_diff::reg_timeline_handler),
+        )
+        .route("/api/mem-diff", get(timeline_diff::mem_diff_handler))
         .route("/api/strings", get(strings::strings_handler))
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
         .route(
