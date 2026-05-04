@@ -1,6 +1,7 @@
 pub mod backward_taint;
 pub mod call_tree;
 pub mod cfg;
+pub mod cfg_svg;
 pub mod dec_fn;
 pub mod dec_llm_call;
 pub mod dec_models;
@@ -32,6 +33,7 @@ pub fn router(state: AppState) -> Router {
             get(idxs_for_block::idxs_for_block_handler),
         )
         .route("/api/cfg", get(cfg::cfg_handler))
+        .route("/api/cfg-svg", get(cfg_svg::cfg_svg_handler))
         .route("/api/call-tree", get(call_tree::call_tree_handler))
         .route("/api/functions", get(functions::functions_handler))
         .route("/api/dec/summary", get(dec_summary::dec_summary_handler))

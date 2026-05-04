@@ -5,9 +5,9 @@ use std::sync::Mutex;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
-    build_call_tree, build_frame_depth_map, build_from_trace, build_function_index,
-    build_trace_ir, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
-    Trace, TraceMeta, CFG,
+    build_call_tree, build_frame_depth_map, build_from_trace, build_function_index, build_trace_ir,
+    CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR, Trace, TraceMeta,
+    CFG,
 };
 use tracemiku_core::symbols::auto_known_offsets_with_base;
 
@@ -30,6 +30,14 @@ pub struct AppStateInner {
     pub frame_depths: Vec<u32>,
     pub top_ir: TopIR,
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
+    pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CfgSvgCached {
+    pub svg: String,
+    pub block_count: usize,
+    pub total_block_count: usize,
 }
 
 impl AppState {
@@ -134,6 +142,7 @@ impl AppState {
                 frame_depths,
                 top_ir,
                 llm_cache: Mutex::new(HashMap::new()),
+                cfg_svg_cache: Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -212,10 +221,7 @@ fn discover_type_spec_paths(
         }
     }
     if let Some(so) = so_name_no_ext {
-        let p = repo_root
-            .join("examples")
-            .join(so)
-            .join("type_specs.json");
+        let p = repo_root.join("examples").join(so).join("type_specs.json");
         if p.is_file() {
             out.push(p);
         }

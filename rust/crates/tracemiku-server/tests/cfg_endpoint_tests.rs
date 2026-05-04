@@ -1,11 +1,18 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+
+static DOT_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn dot_env_lock() -> &'static Mutex<()> {
+    DOT_ENV_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
@@ -49,6 +56,113 @@ fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
     fs::write(tmp.path().join("run").join("meta.json"),
               r#"{"pkg":"tst","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
     (tmp, cd)
+}
+
+#[tokio::test]
+async fn cfg_svg_returns_ready_and_cache_when_dot_available() {
+    let _guard = dot_env_lock().lock().unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+    let dot_available = std::process::Command::new("dot").arg("-V").output().is_ok();
+
+    let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_alpha")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    if !dot_available {
+        assert_eq!(v["status"], "error");
+        assert!(v["err"].as_str().unwrap_or("").contains("not found"));
+        return;
+    }
+
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["fn"], "f_alpha");
+    assert_eq!(v["cached"], false);
+    assert_eq!(v["block_count"].as_u64(), Some(1));
+    assert!(v["total_block_count"].as_u64().unwrap_or(0) >= 1);
+    assert!(
+        v["svg"]
+            .as_str()
+            .is_some_and(|s| s.contains("<svg") && s.contains("insn_100100")),
+        "expected graphviz SVG with instruction anchors: {v}"
+    );
+
+    let resp2 = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_alpha")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    let v2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    assert_eq!(v2["status"], "ready");
+    assert_eq!(v2["cached"], true);
+}
+
+#[tokio::test]
+async fn cfg_svg_unknown_fn_is_empty() {
+    let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=does_not_exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "empty");
+    assert_eq!(v["fn"], "does_not_exist");
+    assert!(v["svg"].is_null());
+}
+
+#[tokio::test]
+async fn cfg_svg_dot_failure_returns_error_json() {
+    let _guard = dot_env_lock().lock().unwrap();
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_alpha")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "error");
+    assert!(
+        v["err"]
+            .as_str()
+            .is_some_and(|s| s.contains("not found") || s.contains("failed")),
+        "expected graphviz spawn error: {v}"
+    );
 }
 
 #[tokio::test]
