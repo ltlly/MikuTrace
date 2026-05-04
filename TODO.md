@@ -84,7 +84,8 @@
 - M3-κ: Graph panel SVG (`/api/cfg-svg` via Graphviz dot + Solid Graph panel) ✅ 2026-05-04
 - M3-λ: memshadow v3 binary sidecar (`trace.bin.memshadow.v3.bin`) ✅ 2026-05-04
 - M3-μ: Python viewer cutover prep — Rust CLI route wrappers + list/info parity; legacy delete deferred to M7 sign-off ✅ 2026-05-04
-- M4 (next): TS frontend core polish / remaining panels
+- M4-α: shared selected-record cursor + Registers / Memory hex dump / Trace-for-PC panels ✅ 2026-05-04
+- M4 (next): TS frontend core polish / remaining panels (Backtrace, Forks, Xref, Settings, Memory diff, richer Decompile UX)
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**

@@ -550,13 +550,13 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | SO Filter | left | ⏸ | Multi-SO trace filter; rare path |
 | Settings | left | 🔜 M4 | |
 | Graph (CFG) | right | ✅ M3-κ | SVG render via `/api/cfg-svg` |
-| Registers | right | 🔜 M4 | with smart deref |
+| Registers | right | ✅ M4-α | selected-record register table |
 | HLIL | right | 🔜 M6 | needs BN sidecar |
 | Decompile | right | ✅ M3-ι2d (raw) / M5 (LLIL) | TraceIR summary + fn markdown + LLM-call API; richer frontend UX remains M4 |
-| Memory | bottom | 🔜 M4 | hex dump + diff |
+| Memory | bottom | ✅ M4-α / 🔜 M4 | MemShadow hex dump + selected-record register shortcuts shipped; diff remains |
 | Call Tree (bottom view) | bottom | ⏸ | Duplicate of left-panel Call Tree; consolidate to one |
 | Navigation | bottom | ⏸ | Lightweight nav widget; rebuild post-cutover |
-| Trace for PC | bottom | 🔜 M4 | PC execution history |
+| Trace for PC | bottom | ✅ M4-α | PC execution history via `/api/idxs-for-pc` |
 
 > **Note:** M1 added a placeholder `MetaPanel` (frontend/src/panels/meta/MetaPanel.tsx) as scaffolding to validate the end-to-end Vite/Solid/TS toolchain. It is not in the panel table above; it will be replaced by the proper layout in M4.
 

@@ -37,25 +37,25 @@
 
 ## Task 1: Shared cursor
 
-- [ ] Add `selectedIdx` signal in `App.tsx`.
-- [ ] Pass the cursor to `RecordsPanel` and new cursor-driven panels.
-- [ ] Records rows select the cursor via click or Enter.
+- [x] Add `selectedIdx` signal in `App.tsx`.
+- [x] Pass the cursor to `RecordsPanel` and new cursor-driven panels.
+- [x] Records rows select the cursor via click or Enter.
 
 **Commit:** Fold into frontend feature commit.
 
 ## Task 2: Cursor-driven panels
 
-- [ ] `RegistersPanel` fetches `/api/record/{idx}` and renders PC/asm/regs.
-- [ ] `MemoryPanel` fetches `/api/mem-dump` and offers selected-record register shortcuts (`x0`..`x3`, `sp` when present).
-- [ ] `TraceForPcPanel` fetches `/api/idxs-for-pc` for the selected record PC and can jump the shared cursor.
+- [x] `RegistersPanel` fetches `/api/record/{idx}` and renders PC/asm/regs.
+- [x] `MemoryPanel` fetches `/api/mem-dump` and offers selected-record register shortcuts (`x0`..`x3`, `sp` when present).
+- [x] `TraceForPcPanel` fetches `/api/idxs-for-pc` for the selected record PC and can jump the shared cursor.
 
 **Commit:** `feat(frontend): add cursor registers memory panels`
 
 ## Task 3: Verification and docs
 
-- [ ] Run frontend typecheck.
-- [ ] Run frontend production build.
-- [ ] Mark M4-alpha done in TODO/spec; leave remaining M4 panels as TODO.
+- [x] Run frontend typecheck.
+- [x] Run frontend production build.
+- [x] Mark M4-alpha done in TODO/spec; leave remaining M4 panels as TODO.
 
 **Verify:**
 
@@ -71,7 +71,7 @@ npm run build
 
 ## Self-Review
 
-- [ ] No changes to legacy `webui/` or frozen `viewer/app.py`.
-- [ ] The new panels are endpoint consumers only; backend scope stays unchanged.
-- [ ] A cursor change updates dependent views without page reload.
-- [ ] M4 remaining work is still visible in TODO/spec.
+- [x] No changes to legacy `webui/` or frozen `viewer/app.py`.
+- [x] The new panels are endpoint consumers only; backend scope stays unchanged.
+- [x] A cursor change updates dependent views without page reload.
+- [x] M4 remaining work is still visible in TODO/spec.
