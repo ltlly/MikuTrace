@@ -1,5 +1,7 @@
 //! POST /api/hash-input-search.
 
+use std::collections::HashMap;
+
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -78,6 +80,16 @@ pub struct HashInputSearchResponse {
     pub found_count: usize,
 }
 
+struct PendingMemSearch {
+    algo: String,
+    input: String,
+    key: String,
+    combo: String,
+    msg_hex: String,
+    hash_full: String,
+    prefix: Vec<u8>,
+}
+
 pub async fn hash_input_search_handler(
     State(state): State<AppState>,
     Json(req): Json<HashInputSearchRequest>,
@@ -111,6 +123,7 @@ fn hash_input_search_response(
     let mem = req.search_in_mem.then(|| state.inner.memshadow());
 
     let mut found = Vec::new();
+    let mut pending_mem = Vec::new();
     let mut tried = 0usize;
     for input in &req.inputs {
         for key in &keys {
@@ -147,25 +160,43 @@ fn hash_input_search_response(
                         });
                         continue;
                     }
-                    if let Some(mem) = mem {
-                        let mem_hits = find_in_mem(mem, &hash[..prefix_n], 1);
-                        if !mem_hits.is_empty() {
-                            found.push(HashFound {
-                                algo: algo.clone(),
-                                input: input.clone(),
-                                key: key.clone(),
-                                combo: combo.clone(),
-                                msg_hex: preview_hex(&msg),
-                                hash_full: hex_encode(&hash),
-                                full_match: None,
-                                matches_n_bytes: None,
-                                found_in_mem: Some(mem_hits),
-                                match_type: Some("in_mem"),
-                            });
-                        }
+                    if mem.is_some() {
+                        pending_mem.push(PendingMemSearch {
+                            algo: algo.clone(),
+                            input: input.clone(),
+                            key: key.clone(),
+                            combo: combo.clone(),
+                            msg_hex: preview_hex(&msg),
+                            hash_full: hex_encode(&hash),
+                            prefix: hash[..prefix_n].to_vec(),
+                        });
                     }
                 }
             }
+        }
+    }
+    if let Some(mem) = mem {
+        let prefixes = pending_mem
+            .iter()
+            .map(|pending| pending.prefix.as_slice())
+            .collect::<Vec<_>>();
+        let hits_by_prefix = find_prefixes_in_mem(mem, &prefixes, 1);
+        for (pending, mem_hits) in pending_mem.into_iter().zip(hits_by_prefix) {
+            if mem_hits.is_empty() {
+                continue;
+            }
+            found.push(HashFound {
+                algo: pending.algo,
+                input: pending.input,
+                key: pending.key,
+                combo: pending.combo,
+                msg_hex: pending.msg_hex,
+                hash_full: pending.hash_full,
+                full_match: None,
+                matches_n_bytes: None,
+                found_in_mem: Some(mem_hits),
+                match_type: Some("in_mem"),
+            });
         }
     }
     Ok(HashInputSearchResponse {
@@ -262,37 +293,64 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
     Some(mac.finalize().into_bytes().to_vec())
 }
 
-fn find_in_mem(mem: &MemShadow, prefix: &[u8], max_hits: usize) -> Vec<HashMemHit> {
-    let mut hits = Vec::new();
-    for &addr in mem.bytes.keys() {
-        let mut last_idx = None;
-        let mut matched = true;
-        for (offset, want) in prefix.iter().enumerate() {
-            let Some(events) = mem.bytes.get(&(addr + offset as u64)) else {
-                matched = false;
-                break;
-            };
-            let Some(event) = events.last() else {
-                matched = false;
-                break;
-            };
-            if event.byte != *want {
-                matched = false;
-                break;
-            }
-            last_idx = Some(event.idx);
+fn find_prefixes_in_mem(
+    mem: &MemShadow,
+    prefixes: &[&[u8]],
+    max_hits: usize,
+) -> Vec<Vec<HashMemHit>> {
+    let mut hits = (0..prefixes.len()).map(|_| Vec::new()).collect::<Vec<_>>();
+    if prefixes.is_empty() {
+        return hits;
+    }
+
+    let mut by_first: HashMap<u8, Vec<usize>> = HashMap::new();
+    for (idx, prefix) in prefixes.iter().enumerate() {
+        if let Some(&first) = prefix.first() {
+            by_first.entry(first).or_default().push(idx);
         }
-        if matched {
-            hits.push(HashMemHit {
+    }
+
+    let mut remaining = prefixes.len();
+    for (&addr, events) in &mem.bytes {
+        if remaining == 0 {
+            break;
+        }
+        let Some(last) = events.last() else {
+            continue;
+        };
+        let Some(candidate_idxs) = by_first.get(&last.byte) else {
+            continue;
+        };
+        for &prefix_idx in candidate_idxs {
+            if max_hits > 0 && hits[prefix_idx].len() >= max_hits {
+                continue;
+            }
+            let Some(last_idx) = match_prefix_at(mem, addr, prefixes[prefix_idx]) else {
+                continue;
+            };
+            hits[prefix_idx].push(HashMemHit {
                 addr: format!("{addr:#x}"),
-                idx: last_idx.unwrap_or(0),
+                idx: last_idx,
             });
-            if max_hits > 0 && hits.len() >= max_hits {
-                break;
+            if max_hits > 0 && hits[prefix_idx].len() == max_hits {
+                remaining = remaining.saturating_sub(1);
             }
         }
     }
     hits
+}
+
+fn match_prefix_at(mem: &MemShadow, addr: u64, prefix: &[u8]) -> Option<usize> {
+    let mut last_idx = None;
+    for (offset, want) in prefix.iter().enumerate() {
+        let events = mem.bytes.get(&(addr + offset as u64))?;
+        let event = events.last()?;
+        if event.byte != *want {
+            return None;
+        }
+        last_idx = Some(event.idx);
+    }
+    last_idx
 }
 
 fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
