@@ -99,6 +99,7 @@
 - M3-crypto: `/api/crypto-scan` + CLI wrapper ✅ 2026-05-04
 - M3-string-provenance: `/api/string-provenance` ✅ 2026-05-04
 - M3-hash-finalize: `/api/hash-finalize-detect` + CLI wrapper ✅ 2026-05-04
+- M3-auto-phase: `/api/auto-phase-detect` + CLI wrapper ✅ 2026-05-04
 - M4-α: shared selected-record cursor + Registers / Memory hex dump / Trace-for-PC panels ✅ 2026-05-04
 - M4 (next): TS frontend core polish / remaining panels (Backtrace, Forks, Xref, Settings, Memory diff, richer Decompile UX)
 - M3-M7: 见 spec §9 milestones

@@ -464,7 +464,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `fork-events` | ✅ M3-ο | reads per-call meta.json fork_events via REST wrapper |
 | `ollvm-detect-vm` | ✅ M3-ψ | REST-backed OLLVM VM dispatcher heuristic |
 | `hash-finalize-detect` | ✅ M3-hash-finalize | MemShadow contiguous digest-output heuristic |
-| `auto-phase-detect` | 🔜 M3 | |
+| `auto-phase-detect` | ✅ M3-auto-phase | heuristic phase timeline |
 | `jni-calls`, `jobj-history`, `jni-strings` | 🔜 M3 | reads jni_hooks.jsonl |
 | `mem-dump` | ✅ M3-μ | see `strings`, `mem-dump` row above |
 | `reg-timeline` | ✅ M3-υ | REST-backed register change timeline |
@@ -526,7 +526,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/ollvm-detect-vm` | ✅ M3-ψ | OLLVM VM dispatcher heuristic |
 | `/api/hash-finalize-detect` | ✅ M3-hash-finalize | MemShadow contiguous digest-output heuristic |
 | `/api/hash-input-search` | 🔜 M3 | |
-| `/api/auto-phase-detect` | 🔜 M3 | |
+| `/api/auto-phase-detect` | ✅ M3-auto-phase | heuristic phase timeline |
 | `/api/diff-traces` | 🔜 M3 | |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
 | `/api/dec/summary` | ✅ M3-ι2c | trace-ir + symbol-source fallback + VM candidates wire/markdown shipped; m3_iota_parity.py HARD-gate green on real xsign trace (fns 0.978 / summary_md 0.943 / VM exact) |
