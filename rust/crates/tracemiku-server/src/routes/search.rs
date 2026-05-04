@@ -5,6 +5,9 @@
 
 use axum::extract::{Query, State};
 use axum::Json;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -68,14 +71,31 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
         .as_ref()
         .and_then(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).ok());
     let mut hits = Vec::new();
+    let mut groups = Vec::new();
 
-    for i in 0..inner.trace.len() {
-        let r = inner.trace.record(i);
+    for idxs in inner.index.pc_to_idxs.values() {
+        let Some(&first_idx) = idxs.first() else {
+            continue;
+        };
+        let r = inner.trace.record(first_idx);
         let d = decode(r.pc, r.inst);
         let asm = format!("{} {}", d.mnemonic, d.op_str).trim().to_string();
         if !matches_pattern(&re, &q.pattern, &asm) {
             continue;
         }
+        groups.push(MatchedGroup { asm, idxs });
+    }
+
+    let mut heap = BinaryHeap::new();
+    for (group_idx, group) in groups.iter().enumerate() {
+        if let Some(&idx) = group.idxs.first() {
+            heap.push(Reverse((idx, group_idx, 0usize)));
+        }
+    }
+
+    while let Some(Reverse((i, group_idx, pos))) = heap.pop() {
+        let group = &groups[group_idx];
+        let r = inner.trace.record(i);
         let (func_name, func_off) = inner.symbols.lookup(r.pc);
         let (func, off) = if func_name == "?" {
             (None, None)
@@ -88,10 +108,14 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
             rel: base.map(|b| format!("{:#x}", r.pc.wrapping_sub(b))),
             func,
             off,
-            asm,
+            asm: group.asm.clone(),
         });
         if hits.len() >= max_results {
             break;
+        }
+        let next_pos = pos + 1;
+        if let Some(&next_idx) = group.idxs.get(next_pos) {
+            heap.push(Reverse((next_idx, group_idx, next_pos)));
         }
     }
 
@@ -100,6 +124,11 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
         pattern: q.pattern,
         hits,
     }
+}
+
+struct MatchedGroup<'a> {
+    asm: String,
+    idxs: &'a [usize],
 }
 
 fn compile_pattern(pattern: &str) -> Option<Regex> {
