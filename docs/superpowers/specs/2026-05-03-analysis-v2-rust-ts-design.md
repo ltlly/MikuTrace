@@ -458,7 +458,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `mem-flow` | 🔜 M3 | per-byte event timeline |
 | `crypto-scan` | 🔜 M3 | 22 standard primitives |
 | `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
-| `call-chain` | 🔜 M3 | |
+| `call-chain` | ✅ M3-σ | REST-backed LR walking wrapper |
 | `hash-input-search` | 🔜 M3 | |
 | `diff-traces` | 🔜 M3 | |
 | `fork-events` | ✅ M3-ο | reads per-call meta.json fork_events via REST wrapper |
@@ -519,7 +519,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/fn-summary` | 🔜 M3 | |
 | `/api/asm-tokens-for-pcs` | 🔜 M3 | BN-asm-tokens (BN sidecar M6) |
 | `/api/call-tree` | ✅ M3-α | eager-built at AppState load; max_depth query rebuilds on override |
-| `/api/call-chain` | 🔜 M3 | |
+| `/api/call-chain` | ✅ M3-σ | LR walking caller chain |
 | `/api/fork-events` | ✅ M3-ο | per-call fork lifecycle events with status filter |
 | `/api/crypto-scan` | 🔜 M3 | |
 | `/api/ollvm-detect-vm` | 🔜 M3 | |
