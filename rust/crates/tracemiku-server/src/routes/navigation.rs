@@ -77,17 +77,24 @@ pub async fn block_handler(
     let func = (func_name != "?").then_some(func_name);
     let off = func.as_ref().map(|_| format!("{off_u64:#x}"));
 
-    let mut pcs = BTreeSet::new();
-    for i in 0..inner.trace.len() {
-        let rec_pc = inner.trace.pc(i);
-        if rec_pc >= block.start_pc && rec_pc <= block.end_pc {
-            pcs.insert(rec_pc);
-        }
-    }
+    let mut pcs = inner
+        .index
+        .pc_to_idxs
+        .keys()
+        .copied()
+        .filter(|pc| *pc >= block.start_pc && *pc <= block.end_pc)
+        .collect::<Vec<_>>();
+    pcs.sort_unstable();
     let insns = pcs
         .into_iter()
         .map(|pc| {
-            let inst = first_inst_for_pc(&inner.trace, pc).unwrap_or(0);
+            let inst = inner
+                .index
+                .pc_to_idxs
+                .get(&pc)
+                .and_then(|idxs| idxs.first())
+                .map(|idx| inner.trace.inst(*idx))
+                .unwrap_or(0);
             let d = decode(pc, inst);
             BlockInsn {
                 pc: format!("{pc:#x}"),
@@ -323,15 +330,6 @@ fn find_block_for_pc(state: &AppState, pc: u64) -> Option<&tracemiku_core::cfg::
         .blocks()
         .into_iter()
         .find(|block| pc >= block.start_pc && pc <= block.end_pc)
-}
-
-fn first_inst_for_pc(trace: &Trace, pc: u64) -> Option<u32> {
-    for i in 0..trace.len() {
-        if trace.pc(i) == pc {
-            return Some(trace.inst(i));
-        }
-    }
-    None
 }
 
 fn last_pc_before(trace: &Trace, pc: u64, before_idx: usize) -> Option<usize> {
