@@ -316,7 +316,7 @@ For each Rust module landed in M2-M5, write a side-by-side comparison script tha
 | **M6** | BN python sidecar | JSON-RPC sidecar + Rust spawn/lifecycle + HLIL endpoints | BN HLIL panel working in TS frontend |
 | **M7** | Cutover + delete legacy | `tracemiku web` defaults to v2; delete `viewer/` (analysis side), `webui/` entirely; rewrite `./tracemiku` dispatcher | single binary `tracemiku-server` + frontend dist |
 
-LLM-side `viewer/decompiler/llm_*.py` (prompt builder, model adapters) gets ported to Rust in M3 (just async `reqwest` calls + JSON serde). LLIL renderer (M5) is the only piece of `viewer/decompiler/` that's algorithmically complex.
+LLM-side `viewer/decompiler/llm_*.py` (prompt builder, model adapters) gets ported after the M3-ι trace-only decompiler parity gate (M3-ι2d target: async `reqwest` calls + JSON serde). LLIL renderer (M5) is the only piece of `viewer/decompiler/` that's algorithmically complex.
 
 ## 10. Risk register
 
@@ -420,7 +420,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `backends/{ghidra,ida,r2}.py` | n/a | ❌ | Stub-only today; never wired up |
 | `backends/none.py` | `tracemiku-core::decompiler::backend::NoneBackend` | ✅ M3-δ | trivial null backend; returns None / Default everywhere |
 | `ir.py` (TraceIR dataclasses — TopIR / FuncIR / BlockIR / EdgeIR / LoopIR / CallIR / TypeAnchorIR / VmCandidateIR / InductionVarIR) | `tracemiku-core::decompiler::ir` | ✅ M3-δ | direct port; TopIR::fn_by_id helper; serde rename for `ref` / `final` / `static` Rust keywords |
-| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ι2b | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η) + BlockIR.exits with kind/taken_count via CFG EdgeMeta (M3-ι) + render_summary_md fidelity (M3-ι). type_anchor + vm_candidate ports defer to next milestone. + type_anchors auto-discovery (M3-ι2a) + vm_candidates auto-populated when memshadow provided (M3-ι2b) + VM-candidates body fidelity (M3-ι2b) |
+| `builder.py` (build_trace_ir, render_summary_md, render_func_md) | `tracemiku-core::decompiler::builder` | 🟡 M3-ι2c | metadata + root F0 (M3-δ) + top-K callee splits (M3-ε) + BlockIR id/pc/end_pc/insns/exec_count (M3-ζ) + BlockIR asm/samples/tier (M3-η) + BlockIR.exits with kind/taken_count via CFG EdgeMeta (M3-ι) + render_summary_md fidelity (M3-ι) + type_anchors auto-discovery/render (M3-ι2a) + vm_candidates auto-populated with MemShadow hex dump (M3-ι2b) + on-demand symbol FuncIR for `sym:*`/`cfg:*` dec_fn (M3-ι2c). Still partial: root LoopIR/CallIR/induction-var population remains deferred. |
 | `llm_client.py` (claude/deepseek/qwen/mimo) | `tracemiku-server::llm` | 🔜 M3 | reqwest + serde JSON |
 | `llm_bundle.py` (build_fn_decompile_prompt) | `tracemiku-core::decompiler::prompt` | 🔜 M3 | prompt + truncation logic |
 | `type_anchor.py` (TypeSpec/TypeAnchor + load + find) | `tracemiku-core::decompiler::type_anchor` + `attach_type_anchors` in builder | ✅ M3-ι2a | 1:1 port; auto-discovers tools/hooks/*.json with kind=="type_specs" plus examples/<so>/type_specs.json. Render markdown section parity with Python markdown.py:207-229. |
@@ -521,9 +521,9 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/auto-phase-detect` | 🔜 M3 | |
 | `/api/diff-traces` | 🔜 M3 | |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
-| `/api/dec/summary` | ✅ M3-ε | trace-ir + symbol-source fallback shipped; parity HARD-gate green at 0.99 jaccard on real trace |
-| `/api/dec/fn/{id}` | 🟡 M3-ι | trace:* + bare F0 legacy id supported via render_func_md (header + metadata + per-block asm/samples + exits + tier filter). sym:* / bn:* sources defer to BN-backend milestone. |
-| `/api/dec/llm-call` | 🔜 M3 | |
+| `/api/dec/summary` | ✅ M3-ι2c | trace-ir + symbol-source fallback + VM candidates wire/markdown shipped; m3_iota_parity.py HARD-gate green on real xsign trace (fns 0.978 / summary_md 0.943 / VM exact) |
+| `/api/dec/fn/{id}` | ✅ M3-ι2c | trace:* + bare F0 + sym:* + legacy cfg:* supported via render_func_md (hot blocks full + warm stubs; asm/samples/exits). `bn:*` remains gated on Rust BN sidecar/backend (M6). |
+| `/api/dec/llm-call` | 🔜 M3-ι2d | LLM client port (claude / deepseek / qwen / mimo via reqwest + serde JSON) |
 | `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
 | `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |
 | `/api/hlil-for-pc`, `/api/hlil-for-fn` | 🔜 M6 | BN sidecar |
