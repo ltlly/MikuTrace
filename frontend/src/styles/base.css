@@ -135,6 +135,108 @@ ul {
   padding: 0;
 }
 
+.records-table tbody tr {
+  cursor: pointer;
+}
+
+.records-table tbody tr:hover,
+.records-table tbody tr:focus {
+  background: rgba(98, 160, 234, 0.08);
+  outline: none;
+}
+
+.records-table tbody tr.selected {
+  background: rgba(98, 160, 234, 0.16);
+}
+
+.selected-record {
+  margin-bottom: 8px;
+}
+
+.reg-table,
+.memory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.reg-table th,
+.reg-table td,
+.memory-table th,
+.memory-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.reg-table th,
+.memory-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.reg-table td code,
+.memory-table td code {
+  background: transparent;
+  padding: 0;
+}
+
+.memory-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.memory-controls label,
+.memory-quick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-controls input,
+.memory-controls button,
+.tracepc-list button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.memory-controls input[type="text"] { width: 12em; }
+.memory-controls input[type="number"] { width: 5em; }
+
+.memory-controls button,
+.tracepc-list button {
+  cursor: pointer;
+}
+
+.tracepc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tracepc-grid h3 {
+  margin: 0 0 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.tracepc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 26px;
+}
+
 .functions-list {
   list-style: none;
   padding: 0;

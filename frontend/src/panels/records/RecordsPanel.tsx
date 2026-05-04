@@ -3,7 +3,12 @@ import { fetchRecords } from "~/api/client";
 
 const PAGE = 50;
 
-export default function RecordsPanel() {
+interface RecordsPanelProps {
+  selectedIdx: number;
+  onSelect: (idx: number) => void;
+}
+
+export default function RecordsPanel(props: RecordsPanelProps) {
   const [start, setStart] = createSignal(0);
   const [resp] = createResource(
     () => start(),
@@ -48,7 +53,14 @@ export default function RecordsPanel() {
               <tbody>
                 <For each={r().records}>
                   {(row) => (
-                    <tr>
+                    <tr
+                      class={row.idx === props.selectedIdx ? "selected" : ""}
+                      tabIndex={0}
+                      onClick={() => props.onSelect(row.idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") props.onSelect(row.idx);
+                      }}
+                    >
                       <td>{row.idx}</td>
                       <td><code>{row.pc}</code></td>
                       <td><code>{row.rel ?? "—"}</code></td>

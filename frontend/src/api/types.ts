@@ -131,6 +131,20 @@ export interface MemDumpResponse {
   bytes: MemDumpByte[];
 }
 
+// ── /api/idxs-for-pc ─────────────────────────────────────────────────────
+
+export interface IdxsForPcResponse {
+  status: string;
+  pc: string;
+  cursor: number;
+  before: number[];
+  after: number[];
+  total_before: number;
+  total_after: number;
+  before_capped: boolean;
+  after_capped: boolean;
+}
+
 // ── /api/call-tree ────────────────────────────────────────────────────────
 
 export interface CallNode {

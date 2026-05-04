@@ -1,13 +1,20 @@
+import { createSignal } from "solid-js";
+
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
+import MemoryPanel from "./panels/memory/MemoryPanel";
 import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
+import RegistersPanel from "./panels/registers/RegistersPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
 import TaintPanel from "./panels/taint/TaintPanel";
+import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 
 export default function App() {
+  const [selectedIdx, setSelectedIdx] = createSignal(0);
+
   return (
     <main class="layout">
       <header class="header">
@@ -17,11 +24,14 @@ export default function App() {
       <MetaPanel />
       <FunctionsPanel />
       <CfgPanel />
+      <RegistersPanel idx={selectedIdx()} />
+      <MemoryPanel idx={selectedIdx()} />
+      <TraceForPcPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
       <CallTreePanel />
       <TaintPanel />
       <DecompilerPanel />
       <StringsPanel />
-      <RecordsPanel />
+      <RecordsPanel selectedIdx={selectedIdx()} onSelect={setSelectedIdx} />
     </main>
   );
 }

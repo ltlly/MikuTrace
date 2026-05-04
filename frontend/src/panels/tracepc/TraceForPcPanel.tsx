@@ -1,0 +1,86 @@
+import { createResource, For, Show } from "solid-js";
+
+import { fetchIdxsForPc, fetchRecord } from "~/api/client";
+import type { IdxsForPcResponse } from "~/api/types";
+
+interface TraceForPcPanelProps {
+  idx: number;
+  onSelect: (idx: number) => void;
+}
+
+interface IpcSource {
+  pc: string;
+  idx: number;
+}
+
+export default function TraceForPcPanel(props: TraceForPcPanelProps) {
+  const [record] = createResource(() => props.idx, fetchRecord);
+  const [idxs] = createResource<IdxsForPcResponse, IpcSource | undefined>(
+    () => {
+      const r = record();
+      return r ? { pc: r.pc, idx: props.idx } : undefined;
+    },
+    (source) => {
+      if (!source) throw new Error("missing selected record");
+      return fetchIdxsForPc(source.pc, source.idx, 20);
+    },
+  );
+
+  return (
+    <section class="panel">
+      <h2>Trace for PC</h2>
+      <Show when={record.error}>
+        <p class="err">record load failed: {String(record.error)}</p>
+      </Show>
+      <Show when={idxs.error}>
+        <p class="err">pc history failed: {String(idxs.error)}</p>
+      </Show>
+      <Show when={record.loading || idxs.loading}>
+        <p class="dim">loading…</p>
+      </Show>
+      <Show when={idxs()}>
+        {(history) => (
+          <>
+            <p class="dim small">
+              idx {props.idx} · <code>{record()!.pc}</code> · {record()!.asm}
+            </p>
+            <div class="tracepc-grid">
+              <div>
+                <h3>before</h3>
+                <div class="tracepc-list">
+                  <For each={history().before}>
+                    {(idx) => (
+                      <button type="button" onClick={() => props.onSelect(idx)}>
+                        {idx}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <p class="dim small">
+                  total {history().total_before}
+                  {history().before_capped ? " · capped" : ""}
+                </p>
+              </div>
+              <div>
+                <h3>after</h3>
+                <div class="tracepc-list">
+                  <For each={history().after}>
+                    {(idx) => (
+                      <button type="button" onClick={() => props.onSelect(idx)}>
+                        {idx}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <p class="dim small">
+                  total {history().total_after}
+                  {history().after_capped ? " · capped" : ""}
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+      </Show>
+    </section>
+  );
+}

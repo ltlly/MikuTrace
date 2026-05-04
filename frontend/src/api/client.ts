@@ -5,6 +5,7 @@ import type {
   FunctionsResponse,
   StringsResponse,
   MemDumpResponse,
+  IdxsForPcResponse,
   CallTreeResponse,
   ForwardTaintResponse,
   BackwardTaintResponse,
@@ -77,6 +78,21 @@ export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpRes
   const r = await fetch(`/api/mem-dump?${params}`);
   if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
   return (await r.json()) as MemDumpResponse;
+}
+
+export async function fetchIdxsForPc(
+  pc: string,
+  cursor = 0,
+  limit = 30,
+): Promise<IdxsForPcResponse> {
+  const params = new URLSearchParams({
+    pc,
+    cursor: String(cursor),
+    limit: String(limit),
+  });
+  const r = await fetch(`/api/idxs-for-pc?${params}`);
+  if (!r.ok) throw new Error(`/api/idxs-for-pc ${r.status}: ${await r.text()}`);
+  return (await r.json()) as IdxsForPcResponse;
 }
 
 export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
