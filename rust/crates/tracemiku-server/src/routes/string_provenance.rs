@@ -10,6 +10,7 @@ use tracemiku_core::prelude::MemRec;
 use crate::state::AppState;
 
 const WRITERS_CAP: usize = 20;
+const MAX_LENGTH: usize = 4096;
 
 #[derive(Debug, Deserialize)]
 pub struct StringProvenanceQuery {
@@ -46,35 +47,58 @@ pub async fn string_provenance_handler(
     Query(q): Query<StringProvenanceQuery>,
 ) -> Result<Json<StringProvenanceResponse>, StatusCode> {
     let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
-    let mut bytes = Vec::with_capacity(q.length);
-    for offset in 0..q.length {
+    let length = q.length.clamp(1, MAX_LENGTH);
+    let memshadow = state.inner.memshadow();
+    let (writers, writers_total) =
+        covering_idxs_by_byte(&state.inner.index.mem_writes, start, length);
+    let (readers, readers_total) =
+        covering_idxs_by_byte(&state.inner.index.mem_reads, start, length);
+    let mut bytes = Vec::with_capacity(length);
+    for offset in 0..length {
         let addr = start + offset as u64;
-        let (byte, kind, _) = state.inner.memshadow().byte_at(addr, u64::MAX);
-        let writer_idxs = covering_idxs(&state.inner.index.mem_writes, addr);
-        let reader_idxs = covering_idxs(&state.inner.index.mem_reads, addr);
+        let (byte, kind, _) = memshadow.byte_at(addr, u64::MAX);
         bytes.push(StringProvByte {
             addr: format!("{addr:#x}"),
             byte,
             kind,
-            writers: writer_idxs.iter().copied().take(WRITERS_CAP).collect(),
-            readers: reader_idxs.iter().copied().take(WRITERS_CAP).collect(),
-            writers_total: writer_idxs.len(),
-            readers_total: reader_idxs.len(),
+            writers: writers[offset].clone(),
+            readers: readers[offset].clone(),
+            writers_total: writers_total[offset],
+            readers_total: readers_total[offset],
         });
     }
     Ok(Json(StringProvenanceResponse {
         status: "ready",
         addr: q.addr,
-        length: q.length,
+        length,
         bytes,
     }))
 }
 
-fn covering_idxs(recs: &[MemRec], target: u64) -> Vec<usize> {
-    recs.iter()
-        .filter(|rec| target >= rec.addr && target < rec.addr.saturating_add(rec.size as u64))
-        .map(|rec| rec.idx)
-        .collect()
+fn covering_idxs_by_byte(
+    recs: &[MemRec],
+    start: u64,
+    length: usize,
+) -> (Vec<Vec<usize>>, Vec<usize>) {
+    let mut idxs = vec![Vec::new(); length];
+    let mut totals = vec![0usize; length];
+    let end = start.saturating_add(length as u64);
+    for rec in recs {
+        let rec_end = rec.addr.saturating_add(rec.size as u64);
+        let lo = rec.addr.max(start);
+        let hi = rec_end.min(end);
+        if lo >= hi {
+            continue;
+        }
+        for addr in lo..hi {
+            let offset = (addr - start) as usize;
+            totals[offset] += 1;
+            if idxs[offset].len() < WRITERS_CAP {
+                idxs[offset].push(rec.idx);
+            }
+        }
+    }
+    (idxs, totals)
 }
 
 fn parse_int(s: &str) -> Option<u64> {
