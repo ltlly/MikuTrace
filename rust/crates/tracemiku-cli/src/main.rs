@@ -330,6 +330,14 @@ enum Cmd {
         #[arg(long, default_value_t = true)]
         detect_byte_streams: bool,
     },
+    /// GET /api/jni-calls.
+    JniCalls {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        in_fn: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        max: usize,
+    },
     /// GET /api/dec/summary.
     DecSummary { trace_dir: PathBuf },
     /// GET /api/dec/fn/{id}.
@@ -682,6 +690,17 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let params = vec![("detect_byte_streams", detect_byte_streams.to_string())];
             route_get_json(trace_dir, route_path("/api/auto-phase-detect", &params)).await
+        }
+        Some(Cmd::JniCalls {
+            trace_dir,
+            in_fn,
+            max,
+        }) => {
+            let mut params = vec![("max", max.to_string())];
+            if let Some(in_fn) = in_fn {
+                params.push(("in_fn", in_fn));
+            }
+            route_get_json(trace_dir, route_path("/api/jni-calls", &params)).await
         }
         Some(Cmd::DecSummary { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/summary".to_string()).await

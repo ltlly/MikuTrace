@@ -346,6 +346,19 @@ fn auto_phase_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn jni_calls_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "jni-calls".into(),
+        cd.display().to_string(),
+        "--max".into(),
+        "5".into(),
+    ]);
+    assert!(v["vtable_size"].as_u64().unwrap() > 100);
+    assert!(v["hits"].is_array());
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
