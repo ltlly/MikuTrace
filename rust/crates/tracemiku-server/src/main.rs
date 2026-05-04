@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
 
 use anyhow::Context;
 use axum::http::header::{CACHE_CONTROL, PRAGMA};
@@ -36,6 +37,14 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let available_parallelism = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    tracing::info!(
+        target: "tracemiku-server",
+        available_parallelism,
+        "detected host analysis parallelism"
+    );
     let app = tracemiku_server::build_router(cli.trace_dir.clone()).context("build router")?;
     let static_dir = cli.static_dir.unwrap_or_else(default_static_dir);
     let index_path = Arc::new(static_dir.join("index.html"));

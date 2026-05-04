@@ -37,7 +37,7 @@ pub async fn bg_status_handler(State(state): State<AppState>) -> Json<Value> {
         "pc_to_block": ready_task_status(),
         "block_idxs": ready_task_status(),
         "index": ready_task_status(),
-        "mem": ready_task_status(),
+        "mem": mem_status_value(&state),
         "decomp": decomp_status_value(&state),
     }))
 }
@@ -49,6 +49,15 @@ pub async fn decomp_status_handler(State(state): State<AppState>) -> Json<Value>
 fn ready_task_status() -> Value {
     json!({
         "status": "ready",
+        "started_at": null,
+        "ready_at": null,
+        "err": null,
+    })
+}
+
+fn mem_status_value(state: &AppState) -> Value {
+    json!({
+        "status": state.inner.memshadow_status(),
         "started_at": null,
         "ready_at": null,
         "err": null,

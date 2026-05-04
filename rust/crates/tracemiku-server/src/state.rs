@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::thread;
+use std::time::Instant;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::prelude::{
@@ -15,6 +18,9 @@ use tracemiku_core::symbols::auto_known_offsets_with_base;
 use crate::bn_sidecar::BnSidecarManager;
 
 const EAGER_MEMSHADOW_MAX_RECORDS: usize = 1_000_000;
+const MEMSHADOW_NOT_STARTED: u8 = 0;
+const MEMSHADOW_LOADING: u8 = 1;
+const MEMSHADOW_READY: u8 = 2;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,6 +37,7 @@ pub struct AppStateInner {
     pub cfg: CFG,
     pub function_index: FunctionIndex,
     memshadow: OnceLock<MemShadow>,
+    memshadow_status: AtomicU8,
     call_tree: OnceLock<CallNode>,
     frame_depths: OnceLock<Vec<u32>>,
     top_ir: OnceLock<TopIR>,
@@ -120,30 +127,67 @@ impl AppState {
             Vec::new()
         };
         let memshadow = OnceLock::new();
+        let memshadow_status = AtomicU8::new(MEMSHADOW_NOT_STARTED);
         if trace.len() <= EAGER_MEMSHADOW_MAX_RECORDS {
+            let start = Instant::now();
             let _ = memshadow.set(MemShadow::load_or_build(&trace));
+            memshadow_status.store(MEMSHADOW_READY, Ordering::Release);
+            tracing::info!(
+                target: "tracemiku-server",
+                records = trace.len(),
+                elapsed_ms = start.elapsed().as_millis(),
+                "loaded eager MemShadow"
+            );
         }
 
-        Ok(Self {
-            inner: Arc::new(AppStateInner {
-                trace_dir,
-                meta,
-                trace,
-                index,
-                symbols,
-                modules,
-                cfg,
-                function_index,
-                memshadow,
-                call_tree: OnceLock::new(),
-                frame_depths: OnceLock::new(),
-                top_ir: OnceLock::new(),
-                type_spec_paths: spec_paths,
-                llm_cache: Mutex::new(HashMap::new()),
-                cfg_svg_cache: Mutex::new(HashMap::new()),
-                bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
-            }),
-        })
+        let inner = Arc::new(AppStateInner {
+            trace_dir,
+            meta,
+            trace,
+            index,
+            symbols,
+            modules,
+            cfg,
+            function_index,
+            memshadow,
+            memshadow_status,
+            call_tree: OnceLock::new(),
+            frame_depths: OnceLock::new(),
+            top_ir: OnceLock::new(),
+            type_spec_paths: spec_paths,
+            llm_cache: Mutex::new(HashMap::new()),
+            cfg_svg_cache: Mutex::new(HashMap::new()),
+            bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
+        });
+
+        if inner.trace.len() > EAGER_MEMSHADOW_MAX_RECORDS && background_memshadow_enabled() {
+            let warm_inner = inner.clone();
+            if let Err(err) = thread::Builder::new()
+                .name("tracemiku-mem-warm".to_string())
+                .spawn(move || {
+                    tracing::info!(
+                        target: "tracemiku-server",
+                        records = warm_inner.trace.len(),
+                        "warming MemShadow in background"
+                    );
+                    let start = Instant::now();
+                    let _ = warm_inner.memshadow();
+                    tracing::info!(
+                        target: "tracemiku-server",
+                        records = warm_inner.trace.len(),
+                        elapsed_ms = start.elapsed().as_millis(),
+                        "background MemShadow ready"
+                    );
+                })
+            {
+                tracing::warn!(
+                    target: "tracemiku-server",
+                    "failed to spawn MemShadow warmer: {err}"
+                );
+            }
+        }
+
+        Ok(Self { inner })
     }
 }
 
@@ -174,12 +218,51 @@ impl AppStateInner {
     }
 
     pub fn memshadow(&self) -> &MemShadow {
-        self.memshadow
-            .get_or_init(|| MemShadow::load_or_build(&self.trace))
+        if let Some(mem) = self.memshadow.get() {
+            self.memshadow_status
+                .store(MEMSHADOW_READY, Ordering::Release);
+            return mem;
+        }
+        let _ = self.memshadow_status.compare_exchange(
+            MEMSHADOW_NOT_STARTED,
+            MEMSHADOW_LOADING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        let mem = self.memshadow.get_or_init(|| {
+            let start = Instant::now();
+            tracing::info!(
+                target: "tracemiku-server",
+                records = self.trace.len(),
+                "loading MemShadow"
+            );
+            let mem = MemShadow::load_or_build(&self.trace);
+            tracing::info!(
+                target: "tracemiku-server",
+                records = self.trace.len(),
+                elapsed_ms = start.elapsed().as_millis(),
+                "loaded MemShadow"
+            );
+            mem
+        });
+        self.memshadow_status
+            .store(MEMSHADOW_READY, Ordering::Release);
+        mem
     }
 
     pub fn memshadow_if_ready(&self) -> Option<&MemShadow> {
         self.memshadow.get()
+    }
+
+    pub fn memshadow_status(&self) -> &'static str {
+        if self.memshadow.get().is_some() {
+            return "ready";
+        }
+        match self.memshadow_status.load(Ordering::Acquire) {
+            MEMSHADOW_LOADING => "loading",
+            MEMSHADOW_READY => "ready",
+            _ => "idle",
+        }
     }
 
     pub fn call_tree(&self) -> &CallNode {
@@ -191,6 +274,15 @@ impl AppStateInner {
         self.frame_depths
             .get_or_init(|| build_frame_depth_map(&self.trace))
     }
+}
+
+fn background_memshadow_enabled() -> bool {
+    std::env::var("TRACEMIKU_MEMSHADOW_BACKGROUND")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "0" || v == "false" || v == "off" || v == "no")
+        })
+        .unwrap_or(true)
 }
 
 /// Read `<call_dir>/meta.json::known_offsets` and parse into hex-keyed map.
