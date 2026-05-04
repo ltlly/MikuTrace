@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
-    build_symbol_func_ir, collect_uidf, constfold_block, dce_block, decode, flag_elim_block,
-    lift_arm64, render_llil_block, restructure_block, ssa_block, struct_recover_block,
-    typelat_block, unify_vars, FuncIR, LiftStats,
+    build_symbol_func_ir_indexed, collect_uidf_indexed, constfold_block, dce_block, decode,
+    flag_elim_block, lift_arm64, render_llil_block, restructure_block, ssa_block,
+    struct_recover_block, typelat_block, unify_vars, FuncIR, LiftStats,
 };
 
 use crate::state::AppState;
@@ -65,7 +65,16 @@ pub async fn llil_render_handler(
     State(state): State<AppState>,
     Json(payload): Json<LlilRenderPayload>,
 ) -> Result<Json<LlilRenderResponse>, (StatusCode, String)> {
-    render_llil_response(&state, payload).map(Json)
+    let response = tokio::task::spawn_blocking(move || render_llil_response(&state, payload))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "llil render worker failed: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "llil render worker failed".to_string(),
+            )
+        })??;
+    Ok(Json(response))
 }
 
 pub fn render_llil_response(
@@ -120,7 +129,7 @@ pub fn render_llil_response(
     let struct_shapes = serde_json::to_value(struct_recover_block(&exprs, &types_raw))
         .unwrap_or_else(|_| serde_json::json!({}));
     let var_names = unify_vars(&exprs);
-    let uidf = serde_json::to_value(collect_uidf(&inner.trace, &exprs, 64))
+    let uidf = serde_json::to_value(collect_uidf_indexed(&inner.trace, &inner.index, &exprs, 64))
         .unwrap_or_else(|_| serde_json::json!({}));
     let structured =
         serde_json::to_value(restructure_block(&exprs)).unwrap_or_else(|_| serde_json::json!([]));
@@ -165,8 +174,14 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
             .fn_by_id(&payload)
             .cloned()
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}"))),
-        "sym" => build_symbol_func_ir(&inner.trace, &inner.symbols, &inner.cfg, &payload)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
+        "sym" => build_symbol_func_ir_indexed(
+            &inner.trace,
+            &inner.symbols,
+            &inner.cfg,
+            &inner.index,
+            &payload,
+        )
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
         "bn" => Err((
             StatusCode::NOT_FOUND,
             "bn:* LLIL render is deferred until the Rust BN backend lands".to_string(),

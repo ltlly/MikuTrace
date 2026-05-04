@@ -6,7 +6,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use tracemiku_core::function_index::parse_id;
-use tracemiku_core::prelude::{build_fn_decompile_prompt, build_symbol_func_ir, FuncIR};
+use tracemiku_core::prelude::{build_fn_decompile_prompt, build_symbol_func_ir_indexed, FuncIR};
 
 use crate::state::AppState;
 
@@ -126,8 +126,14 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
             .fn_by_id(&payload)
             .cloned()
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}"))),
-        "sym" => build_symbol_func_ir(&inner.trace, &inner.symbols, &inner.cfg, &payload)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
+        "sym" => build_symbol_func_ir_indexed(
+            &inner.trace,
+            &inner.symbols,
+            &inner.cfg,
+            &inner.index,
+            &payload,
+        )
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
         "bn" => Err((
             StatusCode::NOT_FOUND,
             "bn:* dec llm-call support is deferred until the Rust BN backend lands".to_string(),

@@ -102,6 +102,7 @@ fn app_state_eagerly_loads_memshadow() {
     let state = tracemiku_server::AppState::load(call_dir).expect("load AppState");
     // synth fixture has no stores → memshadow.bytes is empty but the field
     // exists and is queryable.
-    let _ = state.inner.memshadow.bytes.len();
-    let _ = state.inner.memshadow.byte_at(0x7000, 1 << 60);
+    let memshadow = state.inner.memshadow();
+    let _ = memshadow.bytes.len();
+    let _ = memshadow.byte_at(0x7000, 1 << 60);
 }

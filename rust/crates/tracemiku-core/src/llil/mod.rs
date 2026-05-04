@@ -26,7 +26,7 @@ pub use pass_flag_elim::{flag_elim_block, FlagElimResult};
 pub use pass_restructure::{restructure_block, StructNode};
 pub use pass_struct::{struct_recover_block, FieldAccess, StructShape};
 pub use pass_typelat::{join_type, typelat_block, TypeEnv, TypeKind};
-pub use pass_uidf::{collect_uidf, ObservedValues};
+pub use pass_uidf::{collect_uidf, collect_uidf_indexed, ObservedValues};
 pub use pass_var_unify::{unify_vars, VarNameMap};
 pub use render::{render_expr, render_llil_block, render_stmt};
 pub use ssa::{ssa_block, SsaBlock, SsaVar};

@@ -88,6 +88,28 @@ fn build_block_idx_map(trace: &Trace, cfg: &CFG) -> HashMap<u64, Vec<usize>> {
     map
 }
 
+fn block_idx_bounds_from_index(block: &crate::cfg::Block, index: &Index) -> Option<(usize, usize)> {
+    let mut first: Option<usize> = None;
+    let mut last: Option<usize> = None;
+    let mut pc = block.start_pc;
+    while pc <= block.end_pc {
+        if let Some(idxs) = index.pc_to_idxs.get(&pc) {
+            if let Some(&head) = idxs.first() {
+                first = Some(first.map_or(head, |old| old.min(head)));
+            }
+            if let Some(&tail) = idxs.last() {
+                last = Some(last.map_or(tail, |old| old.max(tail)));
+            }
+        }
+        let next = pc.saturating_add(4);
+        if next == u64::MAX || next <= pc {
+            break;
+        }
+        pc = next;
+    }
+    first.zip(last)
+}
+
 /// Build one BlockIR with id/pc/end_pc/insns/exec_count, plus
 /// asm + samples (M3-η Task 1) and exits (M3-ι Task 2).
 ///
@@ -378,6 +400,26 @@ pub fn build_symbol_func_ir(
     cfg: &CFG,
     name: &str,
 ) -> Option<FuncIR> {
+    build_symbol_func_ir_impl(trace, sym, cfg, None, name)
+}
+
+pub fn build_symbol_func_ir_indexed(
+    trace: &Trace,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    index: &Index,
+    name: &str,
+) -> Option<FuncIR> {
+    build_symbol_func_ir_impl(trace, sym, cfg, Some(index), name)
+}
+
+fn build_symbol_func_ir_impl(
+    trace: &Trace,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    index: Option<&Index>,
+    name: &str,
+) -> Option<FuncIR> {
     let mut own_blocks: Vec<&crate::cfg::Block> = cfg
         .blocks()
         .into_iter()
@@ -393,21 +435,35 @@ pub fn build_symbol_func_ir(
         .enumerate()
         .map(|(i, b)| (b.start_pc, format!("B{i}")))
         .collect();
-    let first_idx = build_first_idx_map(trace);
-    let block_idxs = build_block_idx_map(trace, cfg);
+    let first_idx = if let Some(index) = index {
+        build_first_idx_map_from_index(index)
+    } else {
+        build_first_idx_map(trace)
+    };
+    let block_idxs = index.is_none().then(|| build_block_idx_map(trace, cfg));
 
     let mut first_idxs: Vec<usize> = Vec::new();
     let mut last_idxs: Vec<usize> = Vec::new();
+    let mut exec_count = 0u64;
     let blocks: Vec<BlockIR> = own_blocks
         .iter()
         .map(|block| {
-            if let Some(idxs) = block_idxs.get(&block.start_pc) {
-                if let Some(first) = idxs.first() {
-                    first_idxs.push(*first);
-                }
-                if let Some(last) = idxs.last() {
-                    last_idxs.push(*last);
-                }
+            let bounds = if let Some(index) = index {
+                block_idx_bounds_from_index(block, index)
+            } else {
+                block_idxs
+                    .as_ref()
+                    .and_then(|idxs| idxs.get(&block.start_pc))
+                    .and_then(|idxs| {
+                        idxs.first()
+                            .zip(idxs.last())
+                            .map(|(first, last)| (*first, *last))
+                    })
+            };
+            if let Some((first, last)) = bounds {
+                first_idxs.push(first);
+                last_idxs.push(last);
+                exec_count += 1;
             }
 
             let id = block_ids
@@ -430,14 +486,6 @@ pub fn build_symbol_func_ir(
         .map(|b| b.end_pc)
         .max()
         .unwrap_or(pc_start);
-    let exec_count = own_blocks
-        .iter()
-        .filter(|b| {
-            block_idxs
-                .get(&b.start_pc)
-                .is_some_and(|idxs| !idxs.is_empty())
-        })
-        .count() as u64;
 
     Some(FuncIR {
         id: make_sym_id(name),
@@ -1013,6 +1061,35 @@ mod tests {
         assert!(func.blocks.iter().any(|b| !b.samples.is_empty()));
         assert!(func.exec_count > 0);
         assert!(func.entry_idx <= func.exit_idx);
+    }
+
+    #[test]
+    fn build_symbol_func_ir_indexed_matches_sequential() {
+        let dir = synth_two_callees();
+        let (t, _meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let index = Index::build(&t);
+        let sequential =
+            build_symbol_func_ir(&t, &sym, &cfg, "f_alpha").expect("sequential symbol FuncIR");
+        let indexed = build_symbol_func_ir_indexed(&t, &sym, &cfg, &index, "f_alpha")
+            .expect("indexed symbol FuncIR");
+
+        assert_eq!(indexed.entry_idx, sequential.entry_idx);
+        assert_eq!(indexed.exit_idx, sequential.exit_idx);
+        assert_eq!(indexed.exec_count, sequential.exec_count);
+        assert_eq!(indexed.blocks.len(), sequential.blocks.len());
+        assert_eq!(
+            indexed
+                .blocks
+                .iter()
+                .map(|b| (&b.id, b.pc, b.end_pc, &b.asm))
+                .collect::<Vec<_>>(),
+            sequential
+                .blocks
+                .iter()
+                .map(|b| (&b.id, b.pc, b.end_pc, &b.asm))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

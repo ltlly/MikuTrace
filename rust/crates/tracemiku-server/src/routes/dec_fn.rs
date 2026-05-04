@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use tracemiku_core::function_index::parse_id;
-use tracemiku_core::prelude::{build_symbol_func_ir, render_func_md};
+use tracemiku_core::prelude::{build_symbol_func_ir_indexed, render_func_md};
 
 use crate::state::AppState;
 
@@ -53,8 +53,14 @@ pub async fn dec_fn_handler(
             }))
         }
         "sym" => {
-            let fn_ = build_symbol_func_ir(&inner.trace, &inner.symbols, &inner.cfg, &payload)
-                .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}")))?;
+            let fn_ = build_symbol_func_ir_indexed(
+                &inner.trace,
+                &inner.symbols,
+                &inner.cfg,
+                &inner.index,
+                &payload,
+            )
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}")))?;
             let markdown = render_func_md(&fn_, &q.tier);
             Ok(Json(DecFnResponse {
                 fn_id,

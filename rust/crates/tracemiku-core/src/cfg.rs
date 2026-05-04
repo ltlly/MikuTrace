@@ -342,6 +342,13 @@ fn scan_branch_info(trace: &crate::trace::Trace) -> BranchScan {
         };
     }
 
+    tracing::info!(
+        target: "tracemiku-core",
+        records = n,
+        workers,
+        "scanning CFG branch instructions in parallel"
+    );
+
     let chunk_size = n.div_ceil(workers);
     let partials = thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
