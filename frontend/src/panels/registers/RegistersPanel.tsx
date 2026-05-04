@@ -60,6 +60,30 @@ function prevValue(reg: string, prevRegs: Record<string, string> | undefined): s
   return prevRegs[reg];
 }
 
+function parseHex(value: string | undefined): bigint | null {
+  if (!value) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function regNote(reg: string, value: string, regs: Record<string, string>, changed: boolean): string {
+  const n = parseHex(value);
+  if (n === null) return changed ? "changed" : "";
+  if (n === 0n) return "zero";
+  if (reg === "pc") return "pc";
+  if (reg === "sp") return changed ? "stack changed" : "stack";
+  const sp = parseHex(regs.sp);
+  if (sp !== null) {
+    const diff = n > sp ? n - sp : sp - n;
+    if (diff < 0x100000n) return changed ? "stack ptr changed" : "stack ptr";
+  }
+  if (n > 0x100000000n) return changed ? "ptr changed" : "ptr?";
+  return changed ? "changed" : "";
+}
+
 export default function RegistersPanel(props: RegistersPanelProps) {
   const [record] = createResource(() => props.idx, fetchRecord);
   const prevIdx = createMemo(() => (props.idx > 0 ? props.idx - 1 : 0));
@@ -94,7 +118,7 @@ export default function RegistersPanel(props: RegistersPanelProps) {
                 <tr>
                   <th>reg</th>
                   <th>value</th>
-                  <th>prev</th>
+                  <th>note</th>
                 </tr>
               </thead>
               <tbody>
@@ -114,11 +138,7 @@ export default function RegistersPanel(props: RegistersPanelProps) {
                         <td>
                           <code>{value}</code>
                         </td>
-                        <td>
-                          <Show when={changed()} fallback={<span class="dim">same</span>}>
-                            <code>{before()}</code>
-                          </Show>
-                        </td>
+                        <td class="reg-note">{regNote(reg, value, r().regs, changed())}</td>
                       </tr>
                     );
                   }}

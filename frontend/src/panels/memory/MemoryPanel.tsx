@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchMemDiff, fetchMemDump, fetchRecord } from "~/api/client";
-import type { MemDiffByte, MemDumpByte } from "~/api/types";
+import type { MemDumpByte } from "~/api/types";
 
 interface MemoryPanelProps {
   idx: number;
@@ -17,10 +17,6 @@ function hexByte(byte: number | null): string {
 function asciiByte(byte: number | null): string {
   if (byte === null || byte < 0x20 || byte > 0x7e) return ".";
   return String.fromCharCode(byte);
-}
-
-function diffTitle(idx: number): string {
-  return idx > 0 ? `diff at idx ${idx - 1} -> ${idx}` : `diff before idx ${idx}`;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -55,6 +51,13 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     size: Math.max(1, Math.min(128, count())),
   }));
   const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
+  const changedAddrs = createMemo(() => {
+    const set = new Set<string>();
+    for (const b of diff()?.bytes ?? []) {
+      if (b.changed) set.add(b.addr);
+    }
+    return set;
+  });
 
   return (
     <section class="panel">
@@ -95,9 +98,6 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       <Show when={dump.error}>
         <p class="err">load failed: {String(dump.error)}</p>
       </Show>
-      <Show when={diff.error}>
-        <p class="err">diff failed: {String(diff.error)}</p>
-      </Show>
       <Show when={dump.loading}>
         <p class="dim">loading…</p>
       </Show>
@@ -124,7 +124,9 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                         <For each={line}>
                           {(b) => (
                             <span
-                              class={byteCellClass(b.kind)}
+                              class={`${byteCellClass(b.kind)} ${
+                                changedAddrs().has(b.addr) ? "changed" : ""
+                              }`}
                               title={`${b.addr} ${b.kind} src=${b.src_idx ?? ""}`}
                             >
                               {hexByte(b.byte)}
@@ -141,58 +143,6 @@ export default function MemoryPanel(props: MemoryPanelProps) {
               </tbody>
             </table>
           </>
-        )}
-      </Show>
-      <Show when={diff()}>
-        {(d) => (
-          <div class="memory-diff">
-            <h3>{diffTitle(d().idx)}</h3>
-            <p class="dim small">
-              {d().addr} · {d().changed_count}/{d().size} changed
-            </p>
-            <table class="memory-hex-table">
-              <thead>
-                <tr>
-                  <th>addr</th>
-                  <th>before</th>
-                  <th>after</th>
-                  <th>ascii</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={chunk<MemDiffByte>(d().bytes, 16)}>
-                  {(line) => (
-                    <tr class={line.some((b) => b.changed) ? "changed" : ""}>
-                      <td>
-                        <code>{line[0]?.addr}</code>
-                      </td>
-                      <td class="mem-hex-cells">
-                        <For each={line}>
-                          {(b) => (
-                            <span class={b.changed ? "mem-byte changed" : "mem-byte"}>
-                              {hexByte(b.before)}
-                            </span>
-                          )}
-                        </For>
-                      </td>
-                      <td class="mem-hex-cells">
-                        <For each={line}>
-                          {(b) => (
-                            <span class={b.changed ? "mem-byte changed" : "mem-byte"}>
-                              {hexByte(b.after)}
-                            </span>
-                          )}
-                        </For>
-                      </td>
-                      <td class="mem-ascii">
-                        <For each={line}>{(b) => <span>{asciiByte(b.after)}</span>}</For>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
         )}
       </Show>
     </section>

@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
@@ -29,6 +29,7 @@ type LeftTab =
   | "settings";
 type RightTab = "cfg" | "regs" | "hlil" | "dec";
 type BottomTab = "memory" | "navigation" | "trace-for-pc";
+type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 
 export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
@@ -37,6 +38,7 @@ export default function App() {
   const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
   const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
   const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
+  const [helpTopic, setHelpTopic] = createSignal<HelpTopic | null>(null);
 
   const leftTitle = createMemo(() => {
     const titles: Record<LeftTab, string> = {
@@ -91,6 +93,47 @@ export default function App() {
       {label}
     </button>
   );
+  const helpButton = (topic: HelpTopic) => (
+    <button class="help-btn" type="button" title="帮助" onClick={() => setHelpTopic(topic)}>
+      ?
+    </button>
+  );
+  const helpTitle = createMemo(() => {
+    const topic = helpTopic();
+    if (topic === "overview") return "traceMiku Web";
+    if (topic === "disasm") return "Disassembly";
+    if (topic === "right") return rightTitle();
+    if (topic === "bottom") return bottomTab() === "memory" ? "Memory" : bottomTab() === "trace-for-pc" ? "Trace for PC" : "Navigation";
+    return leftTitle();
+  });
+  const helpBody = createMemo(() => {
+    const topic = helpTopic();
+    if (topic === "overview") {
+      return "IDA/x64dbg-style workbench: left analysis tabs, center dynamic instruction trace, bottom memory/history, right CFG/register/decompile. The cursor is the selected trace idx; panels follow it.";
+    }
+    if (topic === "disasm") {
+      return "One row is one executed instruction snapshot. Scroll to extend the trace window. Click a row to set the cursor; the first register seen in asm becomes the active register for taint/register workflows. Function column shows func+offset when symbols are known.";
+    }
+    if (topic === "right") {
+      if (rightTab() === "cfg") return "Graph renders CFG for the selected function. Full-trace CFG is intentionally not auto-rendered on large traces because Graphviz can timeout.";
+      if (rightTab() === "regs") return "Registers follow the current cursor. Changed registers are highlighted like pwndbg; notes mark zero, stack pointers, and likely pointers. Click a register to make it the active taint register.";
+      if (rightTab() === "hlil") return "HLIL follows the selected FunctionIndex entry and uses the BN sidecar when configured with --so/TRACEMIKU_BN_SO.";
+      return "Decompile shows TraceIR/LLIL/LLM outputs for the selected function. Select functions from the Functions panel.";
+    }
+    if (topic === "bottom") {
+      if (bottomTab() === "memory") return "Memory is a hex+ASCII dump at an address or quick register value. Byte colors encode source/kind; changed bytes at the current cursor are highlighted inline.";
+      if (bottomTab() === "trace-for-pc") return "Trace for PC lists other executions of the same PC around the cursor. Use it to inspect loops, repeated dispatchers, and hot instructions without searching manually.";
+      return "Navigation is reserved for cursor history/back-forward behavior.";
+    }
+    if (leftTab() === "funcs") return "Functions lists trace/symbol/BN function entries. Select one to drive CFG, HLIL, and Decompile.";
+    if (leftTab() === "back") return "Backtrace reconstructs the dynamic call stack at the current cursor. Click a frame to jump to its call site.";
+    if (leftTab() === "calltree") return "Call Tree shows nested dynamic calls. locate current fn expands to the node containing the selected trace idx.";
+    if (leftTab() === "strings") return "Strings are recovered from MemShadow writes. Use filters to find decoded buffers and interesting constants.";
+    if (leftTab() === "taint") return "Taint starts from the current cursor and active register by default. Forward follows future uses; backward walks value provenance.";
+    if (leftTab() === "xref") return "Cross Ref shows executions of the current PC and asm regex hits. Rows jump the trace cursor.";
+    if (leftTab() === "settings") return "Settings controls density and backend/API status.";
+    return "SO Filter is reserved for multi-SO folding controls.";
+  });
 
   return (
     <>
@@ -105,6 +148,7 @@ export default function App() {
           <span>同步 (sync trace ↔ CFG)</span>
         </label>
         <span class="hint">j/k 单步 · g/G 头尾 · / 搜索 · :N 跳转</span>
+        {helpButton("overview")}
       </header>
 
       <main id="layout">
@@ -125,6 +169,7 @@ export default function App() {
             <span>{leftTitle()}</span>
             <span class="grow" />
             <span class="dim">idx {selectedIdx()}</span>
+            {helpButton("left")}
           </div>
           <div id="left-panel-body">
             <div class="lp-tab" classList={{ active: leftTab() === "funcs" }}>
@@ -170,6 +215,7 @@ export default function App() {
             <span class="dim">
               cursor {selectedIdx()} · reg {selectedReg()}
             </span>
+            {helpButton("disasm")}
           </div>
           <div id="stream-header">
             <span class="hd ec-spacer" />
@@ -191,6 +237,7 @@ export default function App() {
             {btab("navigation", "Navigation")}
             {btab("trace-for-pc", "Trace for PC")}
             <span class="grow" />
+            {helpButton("bottom")}
           </div>
           <div id="bottom-content">
             <div class="bbody" classList={{ active: bottomTab() === "memory" }}>
@@ -210,10 +257,11 @@ export default function App() {
             <span>{rightTitle()}</span>
             <span class="grow" />
             <span class="dim">{selectedFn() || "no fn selected"}</span>
+            {helpButton("right")}
           </div>
           <div id="right-body">
             <div class="rbody" classList={{ active: rightTab() === "cfg" }}>
-              <CfgPanel />
+              <CfgPanel selectedFn={selectedFn()} />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
               <RegistersPanel idx={selectedIdx()} selectedReg={selectedReg()} onSelectReg={setSelectedReg} />
@@ -239,6 +287,17 @@ export default function App() {
           <input id="cmd-input" type="text" class="inp" placeholder="command bar pending" />
         </footer>
       </main>
+      <Show when={helpTopic()}>
+        <div class="help-popover" role="dialog" aria-modal="true" onClick={() => setHelpTopic(null)}>
+          <div class="help-card" onClick={(e) => e.stopPropagation()}>
+            <button class="help-close" type="button" onClick={() => setHelpTopic(null)}>
+              ×
+            </button>
+            <h3>{helpTitle()}</h3>
+            <p>{helpBody()}</p>
+          </div>
+        </div>
+      </Show>
     </>
   );
 }

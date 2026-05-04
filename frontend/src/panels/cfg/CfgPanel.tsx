@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchCfgSvg, fetchFunctions } from "~/api/client";
 
@@ -7,11 +7,21 @@ function clampTimeout(raw: number): number {
   return Math.min(300, Math.max(5, Math.trunc(raw)));
 }
 
-export default function CfgPanel() {
+interface CfgPanelProps {
+  selectedFn: string;
+}
+
+export default function CfgPanel(props: CfgPanelProps) {
   const [fnName, setFnName] = createSignal("");
   const [timeout, setTimeout] = createSignal(60);
   const [reload, setReload] = createSignal(0);
   const [functions] = createResource(fetchFunctions);
+  const selectedFnName = createMemo(() => {
+    const want = props.selectedFn;
+    if (!want) return "";
+    const fn = (functions()?.functions ?? []).find((f) => f.id === want);
+    return fn?.source === "bn" ? "" : fn?.name ?? "";
+  });
   const fnNames = createMemo(() => {
     const names = new Set<string>();
     for (const fn of functions()?.functions ?? []) {
@@ -21,8 +31,22 @@ export default function CfgPanel() {
     return [...names].sort((a, b) => a.localeCompare(b));
   });
 
+  createEffect(() => {
+    const selected = selectedFnName();
+    if (selected && selected !== fnName()) {
+      setFnName(selected);
+      return;
+    }
+    if (!fnName() && fnNames().length > 0) {
+      setFnName(fnNames()[0]);
+    }
+  });
+
   const [graph] = createResource(
-    () => ({ fnName: fnName() || undefined, timeout: timeout(), reload: reload() }),
+    () => {
+      const name = fnName();
+      return name ? { fnName: name, timeout: timeout(), reload: reload() } : undefined;
+    },
     (opts) => fetchCfgSvg({ fnName: opts.fnName, timeout: opts.timeout }),
   );
 
@@ -33,7 +57,7 @@ export default function CfgPanel() {
         <label>
           function
           <select value={fnName()} onInput={(e) => setFnName(e.currentTarget.value)}>
-            <option value="">all traced blocks</option>
+            <option value="" disabled>select function</option>
             <For each={fnNames()}>{(name) => <option value={name}>{name}</option>}</For>
           </select>
         </label>
@@ -52,6 +76,9 @@ export default function CfgPanel() {
 
       <Show when={functions.error}>
         <p class="err">function list failed: {String(functions.error)}</p>
+      </Show>
+      <Show when={!fnName() && !functions.loading}>
+        <p class="dim">select a function to render CFG. Full-trace CFG is not rendered by default.</p>
       </Show>
       <Show when={graph.error}>
         <p class="err">graph load failed: {String(graph.error)}</p>

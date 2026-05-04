@@ -3,6 +3,7 @@ import { createEffect, createMemo, createResource, createSignal, For, Show } fro
 import { fetchRecords } from "~/api/client";
 
 const PAGE = 220;
+const MAX_WINDOW = 2200;
 const REG_RE = /\b(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)\b/gi;
 
 interface RecordsPanelProps {
@@ -32,7 +33,8 @@ function fnLabel(row: { func: string | null; off: string | null; module: string 
 
 export default function RecordsPanel(props: RecordsPanelProps) {
   const [start, setStart] = createSignal(0);
-  const source = createMemo(() => ({ start: start(), count: PAGE }));
+  const [count, setCount] = createSignal(PAGE);
+  const source = createMemo(() => ({ start: start(), count: count() }));
   const [resp] = createResource(source, (s) => fetchRecords(s));
 
   createEffect(() => {
@@ -40,6 +42,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     if (!r) return;
     if (props.selectedIdx < r.start || props.selectedIdx >= r.end) {
       setStart(Math.max(0, props.selectedIdx - Math.floor(PAGE / 3)));
+      setCount(PAGE);
     }
   });
 
@@ -55,16 +58,14 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     if (!r) return;
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 80;
     const nearTop = el.scrollTop <= 20;
-    if (nearBottom && r.count >= PAGE) {
-      setStart(r.end);
-      queueMicrotask(() => {
-        el.scrollTop = 24;
-      });
+    if (nearBottom && r.count >= count() && count() < MAX_WINDOW) {
+      setCount(Math.min(MAX_WINDOW, count() + PAGE));
     } else if (nearTop && r.start > 0) {
       const next = Math.max(0, r.start - PAGE);
       setStart(next);
+      setCount(Math.min(MAX_WINDOW, count() + PAGE));
       queueMicrotask(() => {
-        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 32);
+        el.scrollTop = 48;
       });
     }
   }
