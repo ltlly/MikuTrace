@@ -8,6 +8,7 @@ use md5::Md5;
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
+use tracemiku_core::prelude::MemShadow;
 
 use crate::state::AppState;
 
@@ -81,6 +82,19 @@ pub async fn hash_input_search_handler(
     State(state): State<AppState>,
     Json(req): Json<HashInputSearchRequest>,
 ) -> Result<Json<HashInputSearchResponse>, StatusCode> {
+    let response = tokio::task::spawn_blocking(move || hash_input_search_response(&state, req))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "hash input search worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })??;
+    Ok(Json(response))
+}
+
+fn hash_input_search_response(
+    state: &AppState,
+    req: HashInputSearchRequest,
+) -> Result<HashInputSearchResponse, StatusCode> {
     let target = parse_hex_bytes(&req.target_bytes).ok_or(StatusCode::BAD_REQUEST)?;
     let prefix_n = req.prefix_bytes.max(4).min(target.len());
     let target_prefix = &target[..prefix_n];
@@ -94,6 +108,7 @@ pub async fn hash_input_search_handler(
     } else {
         req.keys.clone()
     };
+    let mem = req.search_in_mem.then(|| state.inner.memshadow());
 
     let mut found = Vec::new();
     let mut tried = 0usize;
@@ -132,8 +147,8 @@ pub async fn hash_input_search_handler(
                         });
                         continue;
                     }
-                    if req.search_in_mem {
-                        let mem_hits = find_in_mem(&state, &hash[..prefix_n], 1);
+                    if let Some(mem) = mem {
+                        let mem_hits = find_in_mem(mem, &hash[..prefix_n], 1);
                         if !mem_hits.is_empty() {
                             found.push(HashFound {
                                 algo: algo.clone(),
@@ -153,12 +168,12 @@ pub async fn hash_input_search_handler(
             }
         }
     }
-    Ok(Json(HashInputSearchResponse {
+    Ok(HashInputSearchResponse {
         target_prefix: hex_encode(target_prefix),
         tried_combos: tried,
         found_count: found.len(),
         found,
-    }))
+    })
 }
 
 fn is_valid_algo(algo: &str) -> bool {
@@ -247,13 +262,13 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
     Some(mac.finalize().into_bytes().to_vec())
 }
 
-fn find_in_mem(state: &AppState, prefix: &[u8], max_hits: usize) -> Vec<HashMemHit> {
+fn find_in_mem(mem: &MemShadow, prefix: &[u8], max_hits: usize) -> Vec<HashMemHit> {
     let mut hits = Vec::new();
-    for &addr in state.inner.memshadow().bytes.keys() {
+    for &addr in mem.bytes.keys() {
         let mut last_idx = None;
         let mut matched = true;
         for (offset, want) in prefix.iter().enumerate() {
-            let Some(events) = state.inner.memshadow().bytes.get(&(addr + offset as u64)) else {
+            let Some(events) = mem.bytes.get(&(addr + offset as u64)) else {
                 matched = false;
                 break;
             };

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::routes::jni_calls::{parse_int, scan_jni_calls};
 use crate::state::AppState;
+use tracemiku_core::prelude::MemShadow;
 
 #[derive(Debug, Deserialize)]
 pub struct JniStringsQuery {
@@ -52,7 +53,25 @@ pub async fn jni_strings_handler(
     State(state): State<AppState>,
     Query(q): Query<JniStringsQuery>,
 ) -> Json<JniStringsResponse> {
-    let (calls, _) = scan_jni_calls(&state, None, 0);
+    Json(
+        tokio::task::spawn_blocking(move || jni_strings_response(&state, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "jni strings worker failed: {err}");
+                JniStringsResponse {
+                    count: 0,
+                    with_observed_string: 0,
+                    without_observed_string: 0,
+                    note: "worker failed",
+                    hits: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsResponse {
+    let (calls, _) = scan_jni_calls(state, None, 0);
+    let mem = state.inner.memshadow();
     let mut hits = Vec::new();
     for call in calls {
         let Some((arg_name, direction)) = jni_string_op(&call.jni_fn) else {
@@ -68,7 +87,7 @@ pub async fn jni_strings_handler(
             _ => (None, call.idx),
         };
         let (observed_bytes, string) = if let Some(addr) = buffer_addr {
-            let (s, seen) = read_string(&state, addr, cursor, q.max_len);
+            let (s, seen) = read_string(mem, addr, cursor, q.max_len);
             (Some(seen), s)
         } else {
             (None, None)
@@ -92,13 +111,13 @@ pub async fn jni_strings_handler(
         }
     }
     let with_observed_string = hits.iter().filter(|hit| hit.string.is_some()).count();
-    Json(JniStringsResponse {
+    JniStringsResponse {
         count: hits.len(),
         with_observed_string,
         without_observed_string: hits.len() - with_observed_string,
         note: "buffers in libart heap are Stalker-excluded; agent-side hook on GetStringUTFChars needed for content",
         hits,
-    })
+    }
 }
 
 fn jni_string_op(name: &str) -> Option<(&'static str, &'static str)> {
@@ -120,7 +139,7 @@ fn jni_string_op(name: &str) -> Option<(&'static str, &'static str)> {
 }
 
 fn read_string(
-    state: &AppState,
+    mem: &MemShadow,
     addr: u64,
     cursor: usize,
     max_len: usize,
@@ -131,10 +150,7 @@ fn read_string(
     let mut bytes = Vec::new();
     let mut seen = 0;
     for offset in 0..max_len {
-        let (byte, _, _) = state
-            .inner
-            .memshadow()
-            .byte_at(addr + offset as u64, cursor as u64);
+        let (byte, _, _) = mem.byte_at(addr + offset as u64, cursor as u64);
         let Some(byte) = byte else {
             if seen == 0 {
                 return (None, 0);

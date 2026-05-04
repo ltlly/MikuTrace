@@ -46,13 +46,27 @@ pub async fn jni_calls_handler(
     State(state): State<AppState>,
     Query(q): Query<JniCallsQuery>,
 ) -> Json<JniCallsResponse> {
-    let (hits, vtable_size) = scan_jni_calls(&state, q.in_fn.as_deref(), q.max);
-    Json(JniCallsResponse {
-        in_fn: q.in_fn,
-        count: hits.len(),
-        hits,
-        vtable_size,
-    })
+    Json(
+        tokio::task::spawn_blocking(move || {
+            let (hits, vtable_size) = scan_jni_calls(&state, q.in_fn.as_deref(), q.max);
+            JniCallsResponse {
+                in_fn: q.in_fn,
+                count: hits.len(),
+                hits,
+                vtable_size,
+            }
+        })
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "jni calls worker failed: {err}");
+            JniCallsResponse {
+                in_fn: None,
+                count: 0,
+                hits: Vec::new(),
+                vtable_size: 0,
+            }
+        }),
+    )
 }
 
 pub(crate) fn scan_jni_calls(

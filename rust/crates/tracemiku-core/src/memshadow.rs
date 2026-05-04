@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
+use std::thread;
 
 use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
 use crate::trace::Trace;
@@ -51,6 +52,8 @@ pub struct MemRec {
 const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV3\0\0";
 const SIDECAR_VERSION: u32 = 3;
 pub const SIDECAR_SUFFIX: &str = ".memshadow.v3.bin";
+const PARALLEL_MIN_RECORDS: usize = 250_000;
+const MIN_CHUNK_RECORDS: usize = 200_000;
 
 /// Sparse byte-level memory shadow over a trace.
 ///
@@ -87,43 +90,35 @@ impl MemShadow {
     /// load/save and the external_writes.bin handling.
     pub fn build_from_trace(trace: &Trace) -> Self {
         let n = trace.len();
-        let mut writes: Vec<MemRec> = Vec::new();
-        let mut reads: Vec<MemRec> = Vec::new();
-        let mut bytes: BTreeMap<u64, Vec<ByteEvent>> = BTreeMap::new();
-        for i in 0..n {
-            let rec = trace.record(i);
-            let d = decode(rec.pc, rec.inst);
-            for op in &d.mem_op {
-                if op.base.is_empty() {
+        let workers = memshadow_worker_count(n);
+        if workers <= 1 {
+            return build_range(trace, 0, n);
+        }
+        tracing::info!(
+            target: "tracemiku-core",
+            records = n,
+            workers,
+            "building MemShadow in parallel"
+        );
+
+        let chunk_size = n.div_ceil(workers);
+        let partials = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            for worker in 0..workers {
+                let start = worker * chunk_size;
+                let end = (start + chunk_size).min(n);
+                if start >= end {
                     continue;
                 }
-                let addr = addr_of(&rec, op);
-                if op.is_write {
-                    if let Some(v) = value_of_write(trace, i, op, &d) {
-                        writes.push(MemRec {
-                            idx: i,
-                            addr,
-                            size: op.size,
-                            value: v,
-                        });
-                        splat_bytes(&mut bytes, addr, op.size, v, i, "w");
-                    }
-                } else if let Some(v) = value_of_read(trace, i, op, &d) {
-                    reads.push(MemRec {
-                        idx: i,
-                        addr,
-                        size: op.size,
-                        value: v,
-                    });
-                    splat_bytes(&mut bytes, addr, op.size, v, i, "r");
-                }
+                handles.push(scope.spawn(move || build_range(trace, start, end)));
             }
-        }
-        Self {
-            writes,
-            reads,
-            bytes,
-        }
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("memshadow worker panicked"))
+                .collect::<Vec<_>>()
+        });
+
+        merge_partials(partials)
     }
 
     /// Try to load `<call_dir>/trace.bin.memshadow.v3.bin`.
@@ -361,6 +356,79 @@ impl MemShadow {
     }
 }
 
+fn memshadow_worker_count(n: usize) -> usize {
+    let requested = std::env::var("TRACEMIKU_MEMSHADOW_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v > 0);
+    let available = requested.unwrap_or_else(|| {
+        thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+    if available <= 1 || (requested.is_none() && n < PARALLEL_MIN_RECORDS) {
+        return 1;
+    }
+    let chunk_cap = n.div_ceil(MIN_CHUNK_RECORDS).max(1);
+    available.min(chunk_cap).max(1)
+}
+
+fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
+    let mut writes: Vec<MemRec> = Vec::new();
+    let mut reads: Vec<MemRec> = Vec::new();
+    let mut bytes: BTreeMap<u64, Vec<ByteEvent>> = BTreeMap::new();
+    for i in start..end {
+        let rec = trace.record(i);
+        let d = decode(rec.pc, rec.inst);
+        for op in &d.mem_op {
+            if op.base.is_empty() {
+                continue;
+            }
+            let addr = addr_of(&rec, op);
+            if op.is_write {
+                if let Some(v) = value_of_write(trace, i, op, &d) {
+                    writes.push(MemRec {
+                        idx: i,
+                        addr,
+                        size: op.size,
+                        value: v,
+                    });
+                    splat_bytes(&mut bytes, addr, op.size, v, i, "w");
+                }
+            } else if let Some(v) = value_of_read(trace, i, op, &d) {
+                reads.push(MemRec {
+                    idx: i,
+                    addr,
+                    size: op.size,
+                    value: v,
+                });
+                splat_bytes(&mut bytes, addr, op.size, v, i, "r");
+            }
+        }
+    }
+    MemShadow {
+        writes,
+        reads,
+        bytes,
+    }
+}
+
+fn merge_partials(partials: Vec<MemShadow>) -> MemShadow {
+    let mut out = MemShadow {
+        writes: Vec::new(),
+        reads: Vec::new(),
+        bytes: BTreeMap::new(),
+    };
+    for mut partial in partials {
+        out.writes.append(&mut partial.writes);
+        out.reads.append(&mut partial.reads);
+        for (addr, mut events) in partial.bytes {
+            out.bytes.entry(addr).or_default().append(&mut events);
+        }
+    }
+    out
+}
+
 /// Flush a pending printable-ASCII run into `out` if it meets `min_len`,
 /// then reset the run state. Always resets, even if the run was too short.
 fn flush_run(
@@ -495,4 +563,64 @@ fn code_to_kind(code: u8) -> std::io::Result<&'static str> {
 
 fn invalid_data(msg: &'static str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_partials_keeps_trace_order_for_same_address() {
+        let partial_a = MemShadow {
+            writes: vec![MemRec {
+                idx: 1,
+                addr: 0x7000,
+                size: 1,
+                value: 0x41,
+            }],
+            reads: Vec::new(),
+            bytes: BTreeMap::from([(
+                0x7000,
+                vec![ByteEvent {
+                    idx: 1,
+                    byte: 0x41,
+                    kind: "w",
+                }],
+            )]),
+        };
+        let partial_b = MemShadow {
+            writes: vec![MemRec {
+                idx: 3,
+                addr: 0x7000,
+                size: 1,
+                value: 0x42,
+            }],
+            reads: Vec::new(),
+            bytes: BTreeMap::from([(
+                0x7000,
+                vec![ByteEvent {
+                    idx: 3,
+                    byte: 0x42,
+                    kind: "w",
+                }],
+            )]),
+        };
+
+        let merged = merge_partials(vec![partial_a, partial_b]);
+
+        assert_eq!(
+            merged
+                .bytes
+                .get(&0x7000)
+                .unwrap()
+                .iter()
+                .map(|ev| ev.idx)
+                .collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(
+            merged.writes.iter().map(|rec| rec.idx).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+    }
 }

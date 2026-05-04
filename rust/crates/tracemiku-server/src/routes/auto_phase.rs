@@ -4,6 +4,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracemiku_core::prelude::MemShadow;
 
 use crate::state::AppState;
 
@@ -41,11 +42,26 @@ pub async fn auto_phase_detect_handler(
     State(state): State<AppState>,
     Query(q): Query<AutoPhaseQuery>,
 ) -> Json<AutoPhaseResponse> {
+    Json(
+        tokio::task::spawn_blocking(move || auto_phase_response(&state, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "auto phase worker failed: {err}");
+                AutoPhaseResponse {
+                    trace_records: 0,
+                    phases: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse {
     let mut phases = Vec::new();
-    append_jni_phases(&state, &mut phases);
-    append_crypto_phases(&state, &mut phases);
+    append_jni_phases(state, &mut phases);
+    let mem = state.inner.memshadow();
+    append_crypto_phases(mem, &mut phases);
     if q.detect_byte_streams {
-        append_byte_stream_phases(&state, &mut phases);
+        append_byte_stream_phases(mem, &mut phases);
     }
     phases.sort_by_key(|p| p.idx);
     let mut dedup = Vec::<PhaseEntry>::new();
@@ -58,10 +74,10 @@ pub async fn auto_phase_detect_handler(
         }
         dedup.push(phase);
     }
-    Json(AutoPhaseResponse {
+    AutoPhaseResponse {
         trace_records: state.inner.trace.len(),
         phases: dedup,
-    })
+    }
 }
 
 fn append_jni_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
@@ -115,14 +131,13 @@ fn append_jni_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
     }
 }
 
-fn append_crypto_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
+fn append_crypto_phases(mem: &MemShadow, phases: &mut Vec<PhaseEntry>) {
     for (label, pattern) in CRYPTO_PHASE_PATTERNS {
-        for &addr in state.inner.memshadow().bytes.keys() {
+        for &addr in mem.bytes.keys() {
             let mut first_idx: Option<usize> = None;
             let mut matched = true;
             for (offset, want) in pattern.iter().enumerate() {
-                let Some(events) = state.inner.memshadow().bytes.get(&(addr + offset as u64))
-                else {
+                let Some(events) = mem.bytes.get(&(addr + offset as u64)) else {
                     matched = false;
                     break;
                 };
@@ -151,10 +166,8 @@ fn append_crypto_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
     }
 }
 
-fn append_byte_stream_phases(state: &AppState, phases: &mut Vec<PhaseEntry>) {
-    let writes = state
-        .inner
-        .memshadow()
+fn append_byte_stream_phases(mem: &MemShadow, phases: &mut Vec<PhaseEntry>) {
+    let writes = mem
         .writes
         .iter()
         .filter(|w| w.size == 1)
