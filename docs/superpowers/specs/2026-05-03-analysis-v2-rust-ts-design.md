@@ -452,9 +452,10 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `taint-fwd`, `taint-bwd` | ✅ M3-μ | REST-backed wrappers for M3-γ taint endpoints |
 | `data-chase` | 🔜 M3 | follow data flow |
 | `so-stats` | ✅ M3-ξ | REST-backed wrapper for `/api/so-stats` |
-| `last-write-of-addr` | 🔜 M3 | |
-| `find-mem-pattern` | 🔜 M3 | |
-| `mem-writes-in-range`, `mem-flow` | 🔜 M3 | |
+| `last-write-of-addr` | ✅ M3-π | REST-backed wrapper for `/api/last-write-of-addr` |
+| `find-mem-pattern` | ✅ M3-π | REST-backed wrapper for `/api/find-mem-pattern` |
+| `mem-writes-in-range` | ✅ M3-π | covered by `idxs-touching-range` writer partition |
+| `mem-flow` | 🔜 M3 | per-byte event timeline |
 | `crypto-scan` | 🔜 M3 | 22 standard primitives |
 | `reg-value-at`, `reg-at-idx` | ✅ M3-ξ | REST-backed wrappers for `/api/reg-value-at` |
 | `call-chain` | 🔜 M3 | |
@@ -496,8 +497,8 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/backtrace` | 🔜 M3 | |
 | `/api/idxs-for-pc` | ✅ M2-γ | linear pc-scan; ~50ms on 15M records; hashed pc index deferred to M2-δ if profiling demands |
 | `/api/idxs-for-block` | ✅ M2-δ | linear pc-scan in [start_pc, end_pc]; M2-ε precomputed map if profiling demands |
-| `/api/idxs-touching-addr` | 🔜 M3 | |
-| `/api/idxs-touching-range` | 🔜 M3 | |
+| `/api/idxs-touching-addr` | ✅ M3-π | split read/write touches around cursor |
+| `/api/idxs-touching-range` | ✅ M3-π | overlapping read/write ranges around cursor |
 | `/api/search` | ✅ M3-ν | case-insensitive regex over decoded asm |
 | `/api/forward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; parity hard-gate green at 0.90 jaccard |
 | `/api/backward-taint` | ✅ M3-γ | through_mem / data_only / cross_fn_call query params + frame_depth row field; backward MEM-chasing + ARM64 writeback handling shipped; parity hard-gate green at 0.81 jaccard |
@@ -505,11 +506,12 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/string-provenance` | 🔜 M3 | |
 | `/api/mem-dump` | ✅ M2-ζ | MemShadow-backed; eager build on AppState::load |
 | `/api/last-write-of-reg` | ✅ M2-ε | linear backward scan from idx; returns {idx, pc, value} |
-| `/api/last-write-of-addr` | 🔜 M3 | needs MemShadow |
+| `/api/last-write-of-addr` | ✅ M3-π | latest overlapping write before cursor |
 | `/api/reg-value-at`, `/api/reg-at-idx` | ✅ M3-ν | cursor register lookup with x/w/fp/lr aliases |
 | `/api/data-chase` | 🔜 M3 | |
-| `/api/find-mem-pattern` | 🔜 M3 | |
-| `/api/mem-writes-in-range`, `/api/mem-flow` | 🔜 M3 | |
+| `/api/find-mem-pattern` | ✅ M3-π | MemShadow byte-pattern scan with idx filters |
+| `/api/mem-writes-in-range` | ✅ M3-π | covered by `/api/idxs-touching-range` writer partition |
+| `/api/mem-flow` | 🔜 M3 | |
 | `/api/mem-diff` | 🔜 M3 | |
 | `/api/reg-timeline` | 🔜 M3 | |
 | `/api/jni-calls`, `/api/jobj-history`, `/api/jni-strings`, `/api/jni-events` | 🔜 M3 | reads jni_hooks.jsonl |

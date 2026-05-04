@@ -17,7 +17,7 @@
 
 ## Tasks
 
-- [ ] Add server routes and tests.
-- [ ] Add CLI wrappers and smoke tests.
-- [ ] Run server/CLI tests and clippy.
-- [ ] Update TODO/spec status for the covered rows only.
+- [x] Add server routes and tests.
+- [x] Add CLI wrappers and smoke tests.
+- [x] Run server/CLI tests and clippy.
+- [x] Update TODO/spec status for the covered rows only.
