@@ -12,3 +12,4 @@ pub mod builder;
 pub mod ir;
 pub mod render;
 pub mod type_anchor;
+pub mod vm_candidate;
