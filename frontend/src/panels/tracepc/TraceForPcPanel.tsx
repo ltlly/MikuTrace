@@ -19,9 +19,13 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
   );
+  const currentRecord = createMemo(() => {
+    const r = record();
+    return r && r.idx === props.idx ? r : undefined;
+  });
   const source = createMemo<IpcSource | undefined>((prev) => {
     if (!props.active) return undefined;
-    const r = record();
+    const r = currentRecord();
     if (!r) return undefined;
     const next = { pc: r.pc, idx: props.idx };
     return prev && prev.pc === next.pc && prev.idx === next.idx ? prev : next;
@@ -33,6 +37,7 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
       return fetchIdxsForPc(source.pc, source.idx, 20);
     },
   );
+  const currentHistory = createMemo(() => (source() ? idxs() : undefined));
 
   return (
     <section class="panel">
@@ -46,11 +51,11 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
       <Show when={record.loading || idxs.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={idxs()}>
+      <Show when={currentHistory()}>
         {(history) => (
           <>
             <p class="dim small">
-              idx {props.idx} · <code>{record()!.pc}</code> · {record()!.asm}
+              idx {props.idx} · <code>{currentRecord()!.pc}</code> · {currentRecord()!.asm}
             </p>
             <div class="tracepc-grid">
               <div>

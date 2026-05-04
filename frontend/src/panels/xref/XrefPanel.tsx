@@ -23,15 +23,21 @@ export default function XrefPanel(props: XrefPanelProps) {
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
   );
-  const pcPattern = createMemo(() => (props.active ? refPattern(record()?.pc) : ""));
+  const currentRecord = createMemo(() => {
+    const r = record();
+    return r && r.idx === props.idx ? r : undefined;
+  });
+  const pcPattern = createMemo(() => (props.active ? refPattern(currentRecord()?.pc) : ""));
   const [pcRefs] = createResource(pcPattern, (pc) => (pc ? fetchSearchPc(pc, 60) : undefined));
   const defaultAsmPattern = createMemo(() => {
-    if (!props.active || !record()?.asm) return "";
-    return `^${escapeRegex(record()?.asm)}$`;
+    if (!props.active || !currentRecord()?.asm) return "";
+    return `^${escapeRegex(currentRecord()?.asm)}$`;
   });
   const usingDefaultAsm = createMemo(() => !pattern().trim());
   const asmPattern = createMemo(() => (props.active ? pattern().trim() || defaultAsmPattern() : ""));
   const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
+  const currentPcRefs = createMemo(() => (currentRecord() ? pcRefs() : undefined));
+  const currentAsmRefs = createMemo(() => (currentRecord() || pattern().trim() ? asmRefs() : undefined));
 
   return (
     <section class="panel">
@@ -42,11 +48,11 @@ export default function XrefPanel(props: XrefPanelProps) {
           <input
             type="text"
             value={pattern()}
-            placeholder={record()?.asm ? `exact: ${record()?.asm}` : "mnemonic/op_str regex…"}
+            placeholder={currentRecord()?.asm ? `exact: ${currentRecord()?.asm}` : "mnemonic/op_str regex…"}
             onInput={(e) => setPattern(e.currentTarget.value)}
           />
         </label>
-        <Show when={record()}>
+        <Show when={currentRecord()}>
           {(r) => <span class="dim small">selected idx {r().idx} · pc {r().pc}</span>}
         </Show>
       </div>
@@ -62,7 +68,7 @@ export default function XrefPanel(props: XrefPanelProps) {
           <Show when={pcRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
-          <Show when={pcRefs()}>
+          <Show when={currentPcRefs()}>
             {(r) => (
               <>
                 <p class="dim small">
@@ -101,7 +107,7 @@ export default function XrefPanel(props: XrefPanelProps) {
           <Show when={asmRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
-          <Show when={asmRefs()}>
+          <Show when={currentAsmRefs()}>
             {(r) => (
               <>
                 <p class="dim small">

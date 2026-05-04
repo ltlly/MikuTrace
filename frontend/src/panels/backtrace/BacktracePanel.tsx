@@ -1,4 +1,4 @@
-import { createResource, For, Show } from "solid-js";
+import { createMemo, createResource, For, Show } from "solid-js";
 
 import { fetchBacktrace } from "~/api/client";
 
@@ -13,6 +13,10 @@ export default function BacktracePanel(props: BacktracePanelProps) {
     () => (props.active ? props.idx : undefined),
     (idx) => fetchBacktrace(idx),
   );
+  const currentResp = createMemo(() => {
+    const r = resp();
+    return r && r.idx === props.idx ? r : undefined;
+  });
 
   return (
     <section class="panel">
@@ -23,7 +27,7 @@ export default function BacktracePanel(props: BacktracePanelProps) {
       <Show when={resp.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={resp()}>
+      <Show when={currentResp()}>
         {(r) => (
           <>
             <p class="dim small">idx {r().idx} · depth {r().depth}</p>

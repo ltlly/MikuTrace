@@ -1,4 +1,4 @@
-import { createSignal, createResource, For, Show } from "solid-js";
+import { createMemo, createSignal, createResource, For, Show } from "solid-js";
 
 import { fetchLastWriteOfReg, fetchRecord } from "~/api/client";
 
@@ -158,6 +158,10 @@ export default function RegistersPanel(props: RegistersPanelProps) {
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
   );
+  const currentRecord = createMemo(() => {
+    const r = record();
+    return r && r.idx === props.idx ? r : undefined;
+  });
 
   function saveCols() {
     localStorage.setItem(
@@ -210,7 +214,7 @@ export default function RegistersPanel(props: RegistersPanelProps) {
       <Show when={record.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={record()}>
+      <Show when={currentRecord()}>
         {(r) => (
           <>
             <dl class="kv selected-record">

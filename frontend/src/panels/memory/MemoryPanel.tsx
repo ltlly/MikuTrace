@@ -101,6 +101,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
   );
+  const currentRecord = createMemo(() => {
+    const r = record();
+    return r && r.idx === props.idx ? r : undefined;
+  });
   let autoAddr = "";
   let lastAddrRequest = -1;
   let memContextSeq = 0;
@@ -146,7 +150,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     setAddr(req.addr);
   });
   createEffect(() => {
-    const r = record();
+    const r = currentRecord();
     const sp = r?.regs.sp;
     if (!sp) return;
     const current = addr().trim();
@@ -159,12 +163,14 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     const raw = addr().trim();
     if (!raw) return "0x0";
     if (!REG_ADDR_RE.test(raw)) return raw;
-    return record()?.regs[normalizeRegName(raw)] ?? "0x0";
+    return currentRecord()?.regs[normalizeRegName(raw)];
   });
   const dumpSource = createMemo<DumpSource | undefined>((prev) => {
     if (!props.active) return undefined;
+    const resolved = resolvedAddr();
+    if (!resolved) return undefined;
     const next = {
-      addr: resolvedAddr(),
+      addr: resolved,
       count: Math.max(1, Math.min(512, count())),
     };
     return prev && prev.addr === next.addr && prev.count === next.count ? prev : next;
@@ -172,9 +178,11 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
   const diffSource = createMemo<DiffSource | undefined>((prev) => {
     if (!props.active) return undefined;
+    const resolved = resolvedAddr();
+    if (!resolved) return undefined;
     const next = {
       idx: props.idx,
-      addr: resolvedAddr(),
+      addr: resolved,
       size: Math.max(1, Math.min(128, count())),
     };
     return prev &&
@@ -185,8 +193,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       : next;
   });
   const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
+  const currentDump = createMemo(() => (dumpSource() ? dump() : undefined));
   const changedAddrs = createMemo(() => {
     const set = new Set<string>();
+    if (!diffSource()) return set;
     for (const b of diff()?.bytes ?? []) {
       if (b.changed) set.add(b.addr);
     }
@@ -311,7 +321,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
             onInput={(e) => setCount(Number(e.currentTarget.value) || 64)}
           />
         </label>
-        <Show when={record()}>
+        <Show when={currentRecord()}>
           {(r) => (
             <label>
               reg
@@ -338,12 +348,12 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       <Show when={dump.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={dump()}>
+      <Show when={currentDump()}>
         {(d) => (
           <>
             <p class="dim small">
               {d().addr} · {d().count} bytes
-              <Show when={addr().trim() !== resolvedAddr()}>
+              <Show when={resolvedAddr() && addr().trim() !== resolvedAddr()}>
                 {" "}· {addr().trim()}={resolvedAddr()}
               </Show>
             </p>
