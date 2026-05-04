@@ -40,13 +40,17 @@ interface MemContext {
 interface DumpSource {
   addr: string;
   count: number;
+  retry: number;
 }
 
 interface DiffSource {
   idx: number;
   addr: string;
   size: number;
+  retry: number;
 }
+
+const MEMORY_RETRY_MS = 350;
 
 function hexByte(byte: number | null): string {
   if (byte === null) return "??";
@@ -97,6 +101,8 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   const [memContext, setMemContext] = createSignal<MemContext | null>(null);
   const [selection, setSelection] = createSignal<{ anchor: string; head: string } | null>(null);
   const [dragAnchor, setDragAnchor] = createSignal<string | null>(null);
+  const [dumpRetry, setDumpRetry] = createSignal(0);
+  const [diffRetry, setDiffRetry] = createSignal(0);
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
@@ -175,33 +181,42 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     const next = {
       addr: resolved,
       count: Math.max(1, Math.min(512, count())),
-    };
-    return prev && prev.addr === next.addr && prev.count === next.count ? prev : next;
-  });
-  const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
-  const diffSource = createMemo<DiffSource | undefined>((prev) => {
-    if (!props.active) return undefined;
-    const resolved = resolvedAddr();
-    if (!resolved) return undefined;
-    const next = {
-      idx: props.idx,
-      addr: resolved,
-      size: Math.max(1, Math.min(128, count())),
+      retry: dumpRetry(),
     };
     return prev &&
-      prev.idx === next.idx &&
       prev.addr === next.addr &&
-      prev.size === next.size
+      prev.count === next.count &&
+      prev.retry === next.retry
       ? prev
       : next;
   });
-  const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
+  const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
   const currentDump = createMemo(() => {
     const s = dumpSource();
     const r = dump();
     if (!s || !r) return undefined;
     return r.request_addr === s.addr && r.request_count === s.count ? r : undefined;
   });
+  const diffSource = createMemo<DiffSource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    if (currentDump()?.status !== "ready") return undefined;
+    const resolved = resolvedAddr();
+    if (!resolved) return undefined;
+    const next = {
+      idx: props.idx,
+      addr: resolved,
+      size: Math.max(1, Math.min(128, count())),
+      retry: diffRetry(),
+    };
+    return prev &&
+      prev.idx === next.idx &&
+      prev.addr === next.addr &&
+      prev.size === next.size &&
+      prev.retry === next.retry
+      ? prev
+      : next;
+  });
+  const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
   const currentDiff = createMemo(() => {
     const s = diffSource();
     const r = diff();
@@ -212,13 +227,31 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       ? r
       : undefined;
   });
+  const readyDump = createMemo(() => {
+    const r = currentDump();
+    return r?.status === "ready" ? r : undefined;
+  });
   const changedAddrs = createMemo(() => {
     const set = new Set<string>();
     if (!diffSource()) return set;
-    for (const b of currentDiff()?.bytes ?? []) {
+    const r = currentDiff();
+    if (r?.status !== "ready") return set;
+    for (const b of r.bytes) {
       if (b.changed) set.add(b.addr);
     }
     return set;
+  });
+
+  createEffect(() => {
+    if (!props.active || dump.loading || currentDump()?.status !== "loading") return;
+    const timer = window.setTimeout(() => setDumpRetry((n) => n + 1), MEMORY_RETRY_MS);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  createEffect(() => {
+    if (!props.active || diff.loading || currentDiff()?.status !== "loading") return;
+    const timer = window.setTimeout(() => setDiffRetry((n) => n + 1), MEMORY_RETRY_MS);
+    onCleanup(() => window.clearTimeout(timer));
   });
 
   function addrBig(addr: string): bigint {
@@ -363,10 +396,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       <Show when={!dump.loading && dump.error}>
         <p class="err">load failed: {String(dump.error)}</p>
       </Show>
-      <Show when={dump.loading}>
-        <p class="dim">loading…</p>
+      <Show when={dump.loading || currentDump()?.status === "loading"}>
+        <p class="dim">memory index loading…</p>
       </Show>
-      <Show when={currentDump()}>
+      <Show when={readyDump()}>
         {(d) => (
           <>
             <p class="dim small">

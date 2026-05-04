@@ -75,6 +75,7 @@ async fn mem_diff_compares_idx_minus_one_to_idx() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(cd, "/api/mem-diff?idx=1&addr=0x7000&size=2").await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["status"], "ready");
     assert_eq!(v["idx"], 1);
     assert_eq!(v["changed_count"], 1);
     assert_eq!(v["bytes"][0]["before"], 65);

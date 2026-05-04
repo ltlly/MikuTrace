@@ -162,6 +162,12 @@ impl AppState {
 
         if inner.trace.len() > EAGER_MEMSHADOW_MAX_RECORDS && background_memshadow_enabled() {
             let warm_inner = inner.clone();
+            let _ = inner.memshadow_status.compare_exchange(
+                MEMSHADOW_NOT_STARTED,
+                MEMSHADOW_LOADING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
             if let Err(err) = thread::Builder::new()
                 .name("tracemiku-mem-warm".to_string())
                 .spawn(move || {
@@ -184,6 +190,9 @@ impl AppState {
                     target: "tracemiku-server",
                     "failed to spawn MemShadow warmer: {err}"
                 );
+                inner
+                    .memshadow_status
+                    .store(MEMSHADOW_NOT_STARTED, Ordering::Release);
             }
         }
         Ok(Self { inner })

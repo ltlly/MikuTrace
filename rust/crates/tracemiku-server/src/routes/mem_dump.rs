@@ -52,7 +52,18 @@ fn mem_dump_response(
     let stripped = q.addr.trim_start_matches("0x").trim_start_matches("0X");
     let start =
         u64::from_str_radix(stripped, 16).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    let mem = inner.memshadow();
+    let mem = match inner.memshadow_if_ready() {
+        Some(mem) => mem,
+        None if inner.memshadow_status() == "idle" => inner.memshadow(),
+        None => {
+            return Ok(MemDumpResponse {
+                status: "loading",
+                addr: q.addr,
+                count: q.count,
+                bytes: Vec::new(),
+            });
+        }
+    };
     let mut bytes = Vec::with_capacity(q.count);
     for i in 0..q.count {
         let a = start + i as u64;

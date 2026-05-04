@@ -234,6 +234,7 @@ export interface MemDiffByte {
 }
 
 export interface MemDiffResponse {
+  status: string;
   idx: number;
   addr: string;
   size: number;

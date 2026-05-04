@@ -108,6 +108,7 @@ pub struct MemDiffByte {
 
 #[derive(Debug, Serialize)]
 pub struct MemDiffResponse {
+    pub status: &'static str,
     pub idx: usize,
     pub addr: String,
     pub size: usize,
@@ -126,6 +127,7 @@ pub async fn mem_diff_handler(
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "mem diff worker failed: {err}");
                 MemDiffResponse {
+                    status: "error",
                     idx: 0,
                     addr: String::new(),
                     size: 0,
@@ -142,7 +144,20 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
     let after_t = q.idx as u64;
     let mut bytes = Vec::with_capacity(q.size);
     let mut changed_count = 0usize;
-    let mem = inner.memshadow();
+    let mem = match inner.memshadow_if_ready() {
+        Some(mem) => mem,
+        None if inner.memshadow_status() == "idle" => inner.memshadow(),
+        None => {
+            return MemDiffResponse {
+                status: "loading",
+                idx: q.idx,
+                addr: q.addr,
+                size: q.size,
+                bytes,
+                changed_count,
+            };
+        }
+    };
     for offset in 0..q.size {
         let addr = start + offset as u64;
         let (before, _, _) = mem.byte_at(addr, before_t);
@@ -159,6 +174,7 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
         });
     }
     MemDiffResponse {
+        status: "ready",
         idx: q.idx,
         addr: q.addr,
         size: q.size,
