@@ -433,7 +433,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `llil/pass_typelat.py` | `tracemiku-core::llil::pass_typelat` | ✅ M5-θ | conservative type lattice over SSA LLIL; exposed in `/api/llil/render` |
 | `llil/pass_struct.py` | `tracemiku-core::llil::pass_struct` | ✅ M5-θ | pointer-field shape recovery from LLIL load/store accesses |
 | `llil/pass_var_unify.py` | `tracemiku-core::llil::pass_var_unify` | ✅ M5-θ | stable AAPCS64 arg/callee-save/SSA var naming map |
-| `llil/pass_restructure.py` | `tracemiku-core::llil::pass_restructure` | 🔜 M5 | CFG → if/while/for |
+| `llil/pass_restructure.py` | `tracemiku-core::llil::pass_restructure` | ✅ M5-ι | conservative stmt/if/goto/return structure metadata; loop refinement remains parity hardening |
 | `llil/pass_uidf.py` | `tracemiku-core::llil::pass_uidf` | ✅ M5-θ | trace-backed observed values for SSA defs; exposed as render metadata |
 | `llil/render.py` (HLIL pseudocode output) | `tracemiku-core::llil::render` | ✅ M5-δ | C-like formatter for LLIL statements/expressions |
 

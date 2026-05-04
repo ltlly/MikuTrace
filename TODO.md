@@ -122,7 +122,8 @@
 - M5-ζ: Rust LLIL flag-elim pass wired into `/api/llil/render` ✅ 2026-05-04
 - M5-η: `/api/llil/llm` endpoint ✅ 2026-05-04
 - M5-θ: Rust LLIL typelat / struct-shape / var-unify / UIDF summaries ✅ 2026-05-04
-- M5 (next): LLIL restructure refinement + parity hardening
+- M5-ι: Rust LLIL restructure metadata ✅ 2026-05-04
+- M5 (next): LLIL parity hardening on real traces
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
