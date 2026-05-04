@@ -17,4 +17,5 @@ pub mod index;
 pub mod memshadow;
 pub mod prelude;
 pub mod symbols;
+pub mod taint;
 pub mod trace;
