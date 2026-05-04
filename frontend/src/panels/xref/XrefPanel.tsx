@@ -5,6 +5,7 @@ import { fetchRecord, fetchSearch, fetchSearchPc } from "~/api/client";
 interface XrefPanelProps {
   idx: number;
   onSelect: (idx: number) => void;
+  active: boolean;
 }
 
 function refPattern(pc: string | undefined): string {
@@ -14,10 +15,13 @@ function refPattern(pc: string | undefined): string {
 
 export default function XrefPanel(props: XrefPanelProps) {
   const [pattern, setPattern] = createSignal("");
-  const [record] = createResource(() => props.idx, fetchRecord);
-  const pcPattern = createMemo(() => refPattern(record()?.pc));
+  const [record] = createResource(
+    () => (props.active ? props.idx : undefined),
+    (idx) => fetchRecord(idx),
+  );
+  const pcPattern = createMemo(() => (props.active ? refPattern(record()?.pc) : ""));
   const [pcRefs] = createResource(pcPattern, (pc) => (pc ? fetchSearchPc(pc, 60) : undefined));
-  const asmPattern = createMemo(() => pattern().trim() || pcPattern());
+  const asmPattern = createMemo(() => (props.active ? pattern().trim() || pcPattern() : ""));
   const [asmRefs] = createResource(asmPattern, (p) => (p ? fetchSearch(p, 120) : undefined));
 
   return (

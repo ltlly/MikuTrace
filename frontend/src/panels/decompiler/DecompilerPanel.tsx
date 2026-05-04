@@ -1,16 +1,25 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { callDecLlm, fetchDecFn, fetchDecModels, fetchDecSummary, renderLlil } from "~/api/client";
+import {
+  callDecLlm,
+  callLlilLlm,
+  fetchDecFn,
+  fetchDecModels,
+  fetchDecSummary,
+  renderLlil,
+} from "~/api/client";
 import type { Accessor, Setter } from "solid-js";
 
 export interface DecompilerPanelProps {
   selectedFn: Accessor<string>;
   onSelectFn: Setter<string>;
+  active: boolean;
 }
 
 export default function DecompilerPanel(props: DecompilerPanelProps) {
-  const [summary] = createResource(fetchDecSummary);
-  const [models] = createResource(fetchDecModels);
+  const activeSource = () => (props.active ? "active" : undefined);
+  const [summary] = createResource(activeSource, () => fetchDecSummary());
+  const [models] = createResource(activeSource, () => fetchDecModels());
   const [tier, setTier] = createSignal("hot");
   const [model, setModel] = createSignal("mimo");
   const [lang, setLang] = createSignal("en");
@@ -21,20 +30,26 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   const [llilLoading, setLlilLoading] = createSignal(false);
   const [llilError, setLlilError] = createSignal("");
   const [llilOutput, setLlilOutput] = createSignal("");
+  const [llilLlmLoading, setLlilLlmLoading] = createSignal(false);
+  const [llilLlmError, setLlilLlmError] = createSignal("");
+  const [llilLlmOutput, setLlilLlmOutput] = createSignal("");
   const [llilMaxRecords, setLlilMaxRecords] = createSignal(300);
   const [llilDce, setLlilDce] = createSignal(false);
 
   createEffect(() => {
+    if (!props.active) return;
     const first = summary()?.fns[0]?.id;
     if (!props.selectedFn() && first) props.onSelectFn(first);
   });
 
   createEffect(() => {
+    if (!props.active) return;
     const first = models()?.models[0];
     if (first && !models()?.models.includes(model())) setModel(first);
   });
 
   const fnSource = createMemo(() => {
+    if (!props.active) return undefined;
     const fnId = props.selectedFn();
     if (!fnId) return null;
     return { fnId, tier: tier() };
@@ -97,6 +112,34 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
       setLlilError(String(err));
     } finally {
       setLlilLoading(false);
+    }
+  }
+
+  async function runLlilLlm() {
+    const fnId = props.selectedFn();
+    if (!fnId) return;
+    setLlilLlmLoading(true);
+    setLlilLlmError("");
+    setLlilLlmOutput("");
+    try {
+      const r = await callLlilLlm({
+        fn_id: fnId,
+        model: model(),
+        max_tokens: Math.max(256, Math.min(32768, maxTokens())),
+        lang: lang(),
+        max_records: Math.max(1, Math.min(10000, llilMaxRecords())),
+      });
+      if (r.error) setLlilLlmError(r.error);
+      setLlilLlmOutput([
+        `LLIL -> LLM · ${r.model} · ${r.in_tokens}->${r.out_tokens} tok · ${r.latency_ms}ms`,
+        `records: ${r.llil_records} · estimated prompt tokens: ${r.estimated_prompt_tokens}`,
+        "",
+        r.c_code ?? "",
+      ].join("\n"));
+    } catch (err) {
+      setLlilLlmError(String(err));
+    } finally {
+      setLlilLlmLoading(false);
     }
   }
 
@@ -228,6 +271,9 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                   <button type="button" disabled={llilLoading()} onClick={runLlil}>
                     {llilLoading() ? "rendering…" : "render LLIL"}
                   </button>
+                  <button type="button" disabled={llilLlmLoading()} onClick={runLlilLlm}>
+                    {llilLlmLoading() ? "calling…" : "LLIL → LLM"}
+                  </button>
                 </div>
                 <Show when={fnResp.error}>
                   <p class="err">fn load failed: {String(fnResp.error)}</p>
@@ -249,6 +295,12 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                 </Show>
                 <Show when={llilOutput()}>
                   <pre class="dec-llil">{llilOutput()}</pre>
+                </Show>
+                <Show when={llilLlmError()}>
+                  <p class="err">llil llm failed: {llilLlmError()}</p>
+                </Show>
+                <Show when={llilLlmOutput()}>
+                  <pre class="dec-llil">{llilLlmOutput()}</pre>
                 </Show>
               </div>
             </div>

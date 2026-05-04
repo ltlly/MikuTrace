@@ -1,5 +1,7 @@
-import { createMemo, createSignal, Show } from "solid-js";
+import { createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import type { JSX } from "solid-js";
 
+import { fetchMeta, fetchSearch } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel from "./panels/cfg/CfgPanel";
@@ -8,10 +10,10 @@ import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
-import MetaPanel from "./panels/meta/MetaPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
 import SettingsPanel from "./panels/settings/SettingsPanel";
+import SoFilterPanel from "./panels/sofilter/SoFilterPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
 import TaintPanel from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
@@ -31,8 +33,74 @@ type RightTab = "cfg" | "regs" | "hlil" | "dec";
 type BottomTab = "memory" | "navigation" | "trace-for-pc";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 type HelpState = { topic: HelpTopic; x: number; y: number };
+type CmdMode = "" | "/" | ":";
+type TaintRunDirection = "forward" | "backward";
+type MemoryRequest = { token: number; addr: string };
+type TaintRunRequest = { token: number; idx: number; reg: string; direction: TaintRunDirection };
+
+const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
+const LAYOUT_KEY = "tracemiku-layout-v2";
+
+interface LayoutState {
+  leftW: number;
+  rightW: number;
+  bottomH: number;
+  colIdx: number;
+  colPc: number;
+  colFunc: number;
+  syncCfg: boolean;
+}
+
+const DEFAULT_LAYOUT: LayoutState = {
+  leftW: 340,
+  rightW: 520,
+  bottomH: 240,
+  colIdx: 60,
+  colPc: 112,
+  colFunc: 96,
+  syncCfg: false,
+};
+
+function clampNumber(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function initialLayout(): LayoutState {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      leftW: clampNumber(Number(parsed.leftW) || DEFAULT_LAYOUT.leftW, 180, 680),
+      rightW: clampNumber(Number(parsed.rightW) || DEFAULT_LAYOUT.rightW, 320, 960),
+      bottomH: clampNumber(Number(parsed.bottomH) || DEFAULT_LAYOUT.bottomH, 120, 560),
+      colIdx: clampNumber(Number(parsed.colIdx) || DEFAULT_LAYOUT.colIdx, 44, 140),
+      colPc: clampNumber(Number(parsed.colPc) || DEFAULT_LAYOUT.colPc, 80, 260),
+      colFunc: clampNumber(Number(parsed.colFunc) || DEFAULT_LAYOUT.colFunc, 80, 420),
+      syncCfg: typeof parsed.syncCfg === "boolean" ? parsed.syncCfg : DEFAULT_LAYOUT.syncCfg,
+    };
+  } catch {
+    return { ...DEFAULT_LAYOUT };
+  }
+}
+
+function initialHiddenSos(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_SOS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
 
 export default function App() {
+  const initial = initialLayout();
   const [selectedIdx, setSelectedIdx] = createSignal(0);
   const [selectedReg, setSelectedReg] = createSignal("x0");
   const [selectedFn, setSelectedFn] = createSignal("");
@@ -40,7 +108,241 @@ export default function App() {
   const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
   const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
   const [helpState, setHelpState] = createSignal<HelpState | null>(null);
+  const [hiddenSos, setHiddenSosSignal] = createSignal<Set<string>>(initialHiddenSos());
+  const [cmdMode, setCmdMode] = createSignal<CmdMode>("");
+  const [cmdValue, setCmdValue] = createSignal("");
+  const [cmdStatus, setCmdStatus] = createSignal("j/k step · g/G edge · / search · : idx · n/N next");
+  const [searchHits, setSearchHits] = createSignal<number[]>([]);
+  const [searchPos, setSearchPos] = createSignal(0);
+  const [searchPattern, setSearchPattern] = createSignal("");
+  const [memoryRequest, setMemoryRequest] = createSignal<MemoryRequest | undefined>();
+  const [taintRequest, setTaintRequest] = createSignal<TaintRunRequest | undefined>();
+  const [leftW, setLeftW] = createSignal(initial.leftW);
+  const [rightW, setRightW] = createSignal(initial.rightW);
+  const [bottomH, setBottomH] = createSignal(initial.bottomH);
+  const [colIdx, setColIdx] = createSignal(initial.colIdx);
+  const [colPc, setColPc] = createSignal(initial.colPc);
+  const [colFunc, setColFunc] = createSignal(initial.colFunc);
+  const [syncCfg, setSyncCfgSignal] = createSignal(initial.syncCfg);
+  const [meta] = createResource(fetchMeta);
   const helpTopic = createMemo(() => helpState()?.topic ?? null);
+  let cmdInput: HTMLInputElement | undefined;
+
+  function totalRecords(): number {
+    return meta()?.records ?? 0;
+  }
+
+  function clampIdx(idx: number): number {
+    const total = totalRecords();
+    if (total <= 0) return Math.max(0, idx);
+    return Math.min(total - 1, Math.max(0, idx));
+  }
+
+  function jumpToIdx(idx: number) {
+    setSelectedIdx(clampIdx(idx));
+  }
+
+  function setHiddenSos(next: Set<string>) {
+    setHiddenSosSignal(new Set(next));
+    localStorage.setItem(HIDDEN_SOS_KEY, JSON.stringify([...next]));
+  }
+
+  function layoutSnapshot(overrides: Partial<LayoutState> = {}): LayoutState {
+    return {
+      leftW: leftW(),
+      rightW: rightW(),
+      bottomH: bottomH(),
+      colIdx: colIdx(),
+      colPc: colPc(),
+      colFunc: colFunc(),
+      syncCfg: syncCfg(),
+      ...overrides,
+    };
+  }
+
+  function persistLayout(overrides: Partial<LayoutState> = {}) {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layoutSnapshot(overrides)));
+  }
+
+  function setSyncCfg(next: boolean) {
+    setSyncCfgSignal(next);
+    persistLayout({ syncCfg: next });
+  }
+
+  function startPanelResize(kind: "left" | "right" | "bottom", e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startLeft = leftW();
+    const startRight = rightW();
+    const startBottom = bottomH();
+    document.body.classList.add("is-resizing");
+    document.body.style.cursor = kind === "bottom" ? "row-resize" : "col-resize";
+
+    const onMove = (ev: PointerEvent) => {
+      if (kind === "left") {
+        setLeftW(clampNumber(startLeft + ev.clientX - startX, 180, 680));
+      } else if (kind === "right") {
+        setRightW(clampNumber(startRight - (ev.clientX - startX), 320, 960));
+      } else {
+        setBottomH(clampNumber(startBottom - (ev.clientY - startY), 120, 560));
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-resizing");
+      document.body.style.cursor = "";
+      persistLayout();
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }
+
+  function startAsmColResize(kind: "idx" | "pc" | "func", e: PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const starts = {
+      idx: colIdx(),
+      pc: colPc(),
+      func: colFunc(),
+    };
+    document.body.classList.add("is-resizing");
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: PointerEvent) => {
+      const delta = ev.clientX - startX;
+      if (kind === "idx") setColIdx(clampNumber(starts.idx + delta, 44, 140));
+      else if (kind === "pc") setColPc(clampNumber(starts.pc + delta, 80, 260));
+      else setColFunc(clampNumber(starts.func + delta, 80, 420));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-resizing");
+      document.body.style.cursor = "";
+      persistLayout();
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }
+
+  const layoutStyle = createMemo<JSX.CSSProperties>(() => ({
+    "--left-w": `${leftW()}px`,
+    "--right-w": `${rightW()}px`,
+    "--bottom-h": `${bottomH()}px`,
+  }));
+
+  const asmStyle = createMemo<JSX.CSSProperties>(() => ({
+    "--col-idx": `${colIdx()}px`,
+    "--col-pc": `${colPc()}px`,
+    "--col-func": `${colFunc()}px`,
+  }));
+
+  function openMemoryAt(addr: string) {
+    setBottomTab("memory");
+    setMemoryRequest({ token: Date.now(), addr });
+  }
+
+  function runTaintFrom(idx: number, reg: string, direction: TaintRunDirection) {
+    jumpToIdx(idx);
+    setSelectedReg(reg);
+    setLeftTab("taint");
+    setTaintRequest({ token: Date.now(), idx, reg, direction });
+  }
+
+  function openCmd(mode: CmdMode) {
+    setCmdMode(mode);
+    setCmdValue("");
+    queueMicrotask(() => cmdInput?.focus());
+  }
+
+  function closeCmd() {
+    setCmdMode("");
+    setCmdValue("");
+    cmdInput?.blur();
+  }
+
+  async function runSearch(pattern: string) {
+    const q = pattern.trim();
+    if (!q) return;
+    setCmdStatus(`searching ${q}...`);
+    try {
+      const r = await fetchSearch(q, 2000);
+      const hits = r.hits.map((hit) => hit.idx).sort((a, b) => a - b);
+      setSearchPattern(q);
+      setSearchHits(hits);
+      if (hits.length === 0) {
+        setSearchPos(0);
+        setCmdStatus(`${q}: 0 hits`);
+        return;
+      }
+      let pos = hits.findIndex((idx) => idx >= selectedIdx());
+      if (pos < 0) pos = 0;
+      setSearchPos(pos);
+      jumpToIdx(hits[pos]);
+      setCmdStatus(`${q}: ${pos + 1}/${hits.length} hits`);
+    } catch (err) {
+      setCmdStatus(`search failed: ${String(err)}`);
+    }
+  }
+
+  function stepSearch(dir: 1 | -1) {
+    const hits = searchHits();
+    if (hits.length === 0) {
+      setCmdStatus("no search results, press / first");
+      return;
+    }
+    let pos = searchPos() + dir;
+    if (pos < 0) pos = hits.length - 1;
+    if (pos >= hits.length) pos = 0;
+    setSearchPos(pos);
+    jumpToIdx(hits[pos]);
+    setCmdStatus(`${searchPattern()}: ${pos + 1}/${hits.length} hits`);
+  }
+
+  function submitCmd() {
+    const mode = cmdMode();
+    const value = cmdValue();
+    closeCmd();
+    if (mode === "/") {
+      void runSearch(value);
+      return;
+    }
+    if (mode === ":") {
+      const idx = Number.parseInt(value.trim(), 10);
+      if (Number.isFinite(idx)) {
+        jumpToIdx(idx);
+        setCmdStatus(`idx ${clampIdx(idx)}`);
+      }
+    }
+  }
+
+  onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (helpState()) {
+        if (e.key === "Escape") setHelpState(null);
+        return;
+      }
+      if (isEditableTarget(e.target)) return;
+      if (e.key === "j" || e.key === "ArrowDown") jumpToIdx(selectedIdx() + 1);
+      else if (e.key === "k" || e.key === "ArrowUp") jumpToIdx(selectedIdx() - 1);
+      else if (e.key === "PageDown") jumpToIdx(selectedIdx() + 20);
+      else if (e.key === "PageUp") jumpToIdx(selectedIdx() - 20);
+      else if (e.key === "g") jumpToIdx(0);
+      else if (e.key === "G") jumpToIdx(Math.max(0, totalRecords() - 1));
+      else if (e.key === "/") {
+        e.preventDefault();
+        openCmd("/");
+      } else if (e.key === ":") {
+        e.preventDefault();
+        openCmd(":");
+      } else if (e.key === "n") stepSearch(1);
+      else if (e.key === "N") stepSearch(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
 
   const leftTitle = createMemo(() => {
     const titles: Record<LeftTab, string> = {
@@ -159,15 +461,29 @@ export default function App() {
         </span>
         <span class="meta">Rust v2</span>
         <span class="grow" />
-        <label class="toggle" title="placeholder for legacy trace/CFG sync">
-          <input type="checkbox" checked readOnly />
-          <span>同步 (sync trace ↔ CFG)</span>
+        <label class="toggle" title="关闭后跨函数移动 cursor 不会自动重渲染 CFG">
+          <input
+            type="checkbox"
+            checked={syncCfg()}
+            onChange={(e) => setSyncCfg(e.currentTarget.checked)}
+          />
+          <span>同步 CFG</span>
         </label>
         <span class="hint">j/k 单步 · g/G 头尾 · / 搜索 · :N 跳转</span>
         {helpButton("overview")}
       </header>
 
-      <main id="layout">
+      <main id="layout" style={layoutStyle()}>
+        <div
+          class="layout-splitter layout-splitter-left"
+          title="拖拽调整左侧面板宽度"
+          onPointerDown={(e) => startPanelResize("left", e)}
+        />
+        <div
+          class="layout-splitter layout-splitter-right"
+          title="拖拽调整右侧面板宽度"
+          onPointerDown={(e) => startPanelResize("right", e)}
+        />
         <aside id="left-tabs">
           {vtab("funcs", "Functions", "函数列表")}
           {vtab("back", "Backtrace", "当前 cursor 处的调用栈")}
@@ -177,8 +493,8 @@ export default function App() {
           {vtab("taint", "Taint", "寄存器/内存污点追踪")}
           {vtab("xref", "Cross Ref", "当前 PC 执行历史和汇编搜索")}
           {vtab("sofilter", "SO Filter", "multi-SO 过滤状态")}
-          {vtab("settings", "Settings", "显示和 API 状态")}
-        </aside>
+            {vtab("settings", "Settings", "显示和 API 状态")}
+          </aside>
 
         <section id="left-panel">
           <div class="panelhead">
@@ -189,19 +505,19 @@ export default function App() {
           </div>
           <div id="left-panel-body">
             <div class="lp-tab" classList={{ active: leftTab() === "funcs" }}>
-              <FunctionsPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />
+              <FunctionsPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} active={leftTab() === "funcs"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "back" }}>
-              <BacktracePanel idx={selectedIdx()} onSelect={setSelectedIdx} />
+              <BacktracePanel idx={selectedIdx()} onSelect={setSelectedIdx} active={leftTab() === "back"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "calltree" }}>
-              <CallTreePanel currentIdx={selectedIdx()} onSelect={setSelectedIdx} />
+              <CallTreePanel currentIdx={selectedIdx()} onSelect={setSelectedIdx} active={leftTab() === "calltree"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "forks" }}>
-              <ForksPanel />
+              <ForksPanel active={leftTab() === "forks"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "strings" }}>
-              <StringsPanel onSelect={setSelectedIdx} />
+              <StringsPanel onSelect={setSelectedIdx} active={leftTab() === "strings"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "taint" }}>
               <TaintPanel
@@ -209,25 +525,23 @@ export default function App() {
                 reg={selectedReg()}
                 onRegChange={setSelectedReg}
                 onSelect={setSelectedIdx}
+                runRequest={taintRequest()}
+                active={leftTab() === "taint"}
               />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>
-              <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
+              <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} active={leftTab() === "xref"} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "sofilter" }}>
-              <section class="panel">
-                <h2>SO Filter</h2>
-                <p class="dim">multi-SO folding controls will be rebuilt here.</p>
-                <MetaPanel />
-              </section>
+              <SoFilterPanel hiddenSos={hiddenSos()} onHiddenSosChange={setHiddenSos} />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "settings" }}>
-              <SettingsPanel />
+              <SettingsPanel active={leftTab() === "settings"} />
             </div>
           </div>
         </section>
 
-        <section id="asm-col">
+        <section id="asm-col" style={asmStyle()}>
           <div class="panelhead">
             <span>
               Disassembly <span class="dim">trace stream</span>
@@ -240,9 +554,18 @@ export default function App() {
           </div>
           <div id="stream-header">
             <span class="hd ec-spacer" />
-            <span class="hd hd-idx">idx</span>
-            <span class="hd hd-pc">pc</span>
-            <span class="hd hd-func">rel</span>
+            <span class="hd hd-idx">
+              idx
+              <span class="col-resize" title="调整 idx 列宽" onPointerDown={(e) => startAsmColResize("idx", e)} />
+            </span>
+            <span class="hd hd-pc">
+              pc
+              <span class="col-resize" title="调整 pc 列宽" onPointerDown={(e) => startAsmColResize("pc", e)} />
+            </span>
+            <span class="hd hd-func">
+              rel
+              <span class="col-resize" title="调整 rel 列宽" onPointerDown={(e) => startAsmColResize("func", e)} />
+            </span>
             <span class="hd hd-asm">asm</span>
           </div>
           <div id="stream">
@@ -251,8 +574,16 @@ export default function App() {
               selectedReg={selectedReg()}
               onSelect={setSelectedIdx}
               onSelectReg={setSelectedReg}
+              hiddenSos={hiddenSos()}
+              onOpenMemory={openMemoryAt}
+              onRunTaint={runTaintFrom}
             />
           </div>
+          <div
+            id="bottom-resize"
+            title="拖拽调整底部面板高度"
+            onPointerDown={(e) => startPanelResize("bottom", e)}
+          />
           <div id="bottom-tabs">
             {btab("memory", "Memory")}
             {btab("navigation", "Navigation")}
@@ -262,13 +593,22 @@ export default function App() {
           </div>
           <div id="bottom-content">
             <div class="bbody" classList={{ active: bottomTab() === "memory" }}>
-              <MemoryPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
+              <MemoryPanel
+                idx={selectedIdx()}
+                onSelect={setSelectedIdx}
+                addrRequest={memoryRequest()}
+                active={bottomTab() === "memory"}
+              />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "navigation" }}>
               <p class="dim">navigation history pending</p>
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "trace-for-pc" }}>
-              <TraceForPcPanel idx={selectedIdx()} onSelect={setSelectedIdx} />
+              <TraceForPcPanel
+                idx={selectedIdx()}
+                onSelect={setSelectedIdx}
+                active={bottomTab() === "trace-for-pc"}
+              />
             </div>
           </div>
         </section>
@@ -282,16 +622,34 @@ export default function App() {
           </div>
           <div id="right-body">
             <div class="rbody" classList={{ active: rightTab() === "cfg" }}>
-              <CfgPanel selectedFn={selectedFn()} currentIdx={selectedIdx()} onSelect={setSelectedIdx} />
+              <CfgPanel
+                selectedFn={selectedFn()}
+                currentIdx={selectedIdx()}
+                onSelect={setSelectedIdx}
+                active={rightTab() === "cfg"}
+                syncEnabled={syncCfg()}
+              />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
-              <RegistersPanel idx={selectedIdx()} selectedReg={selectedReg()} onSelectReg={setSelectedReg} />
+              <RegistersPanel
+                idx={selectedIdx()}
+                selectedReg={selectedReg()}
+                onSelectReg={setSelectedReg}
+                onSelect={setSelectedIdx}
+                active={rightTab() === "regs"}
+              />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "hlil" }}>
-              <HlilPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />
+              <HlilPanel
+                selectedFn={selectedFn}
+                onSelectFn={setSelectedFn}
+                currentIdx={selectedIdx()}
+                onSelect={setSelectedIdx}
+                active={rightTab() === "hlil"}
+              />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "dec" }}>
-              <DecompilerPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} />
+              <DecompilerPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} active={rightTab() === "dec"} />
             </div>
           </div>
         </section>
@@ -304,8 +662,24 @@ export default function App() {
         </aside>
 
         <footer id="cmdbar">
-          <span class="dim">:</span>
-          <input id="cmd-input" type="text" class="inp" placeholder="command bar pending" />
+          <span class="dim">{cmdMode() || ":"}</span>
+          <input
+            ref={(el) => {
+              cmdInput = el;
+            }}
+            id="cmd-input"
+            type="text"
+            class="inp"
+            value={cmdValue()}
+            readOnly={!cmdMode()}
+            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "jump to idx..." : "press / or :"}
+            onInput={(e) => setCmdValue(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") closeCmd();
+              if (e.key === "Enter") submitCmd();
+            }}
+          />
+          <span class="cmd-status dim">{cmdStatus()}</span>
         </footer>
       </main>
       <Show when={helpState()}>

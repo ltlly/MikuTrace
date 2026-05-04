@@ -17,10 +17,14 @@ const SOURCE_TITLES: Record<string, string> = {
 export interface FunctionsPanelProps {
   selectedFn: Accessor<string>;
   onSelectFn: Setter<string>;
+  active: boolean;
 }
 
 export default function FunctionsPanel(props: FunctionsPanelProps) {
-  const [resp] = createResource(fetchFunctions);
+  const [resp] = createResource(
+    () => (props.active ? "active" : undefined),
+    () => fetchFunctions(),
+  );
   return (
     <section class="panel">
       <h2>Functions</h2>

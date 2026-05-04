@@ -9,7 +9,15 @@ import {
   Show,
 } from "solid-js";
 
-import { fetchMeta, fetchRecords } from "~/api/client";
+import {
+  fetchBlockForPc,
+  fetchIdxsForBlock,
+  fetchIdxsForPc,
+  fetchLastWriteOfReg,
+  fetchMeta,
+  fetchRecords,
+  fetchRegValueAt,
+} from "~/api/client";
 import type { RecordRow } from "~/api/types";
 
 const ROW_HEIGHT = 18;
@@ -22,6 +30,18 @@ interface RecordsPanelProps {
   selectedReg: string;
   onSelect: (idx: number) => void;
   onSelectReg: (reg: string) => void;
+  hiddenSos: Set<string>;
+  onOpenMemory: (addr: string) => void;
+  onRunTaint: (idx: number, reg: string, direction: "forward" | "backward") => void;
+}
+
+interface RegContext {
+  x: number;
+  y: number;
+  idx: number;
+  reg: string;
+  value?: string | null;
+  err?: string;
 }
 
 function normalizeReg(reg: string): string {
@@ -35,6 +55,20 @@ function normalizeReg(reg: string): string {
 function firstAsmReg(asm: string): string | null {
   const m = asm.match(REG_RE);
   return m?.[0] ? normalizeReg(m[0]) : null;
+}
+
+function asmParts(asm: string): Array<{ text: string; reg?: string }> {
+  const re = /\b(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)\b/gi;
+  const parts: Array<{ text: string; reg?: string }> = [];
+  let last = 0;
+  for (const m of asm.matchAll(re)) {
+    const i = m.index ?? 0;
+    if (i > last) parts.push({ text: asm.slice(last, i) });
+    parts.push({ text: m[0], reg: normalizeReg(m[0]) });
+    last = i + m[0].length;
+  }
+  if (last < asm.length) parts.push({ text: asm.slice(last) });
+  return parts.length ? parts : [{ text: asm }];
 }
 
 function fnLabel(row: { func: string | null; off: string | null; module: string | null }): string {
@@ -56,7 +90,9 @@ function clamp(n: number, lo: number, hi: number): number {
 export default function RecordsPanel(props: RecordsPanelProps) {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewHeight, setViewHeight] = createSignal(0);
+  const [regContext, setRegContext] = createSignal<RegContext | null>(null);
   const [meta] = createResource(fetchMeta);
+  const regValueTitleCache = new Map<string, string>();
   let viewport: HTMLDivElement | undefined;
 
   const totalRecords = createMemo(() => meta()?.records ?? 0);
@@ -126,8 +162,76 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     if (reg) props.onSelectReg(reg);
   }
 
+  async function jumpLastWrite(idx: number, reg: string) {
+    const r = await fetchLastWriteOfReg(idx, reg);
+    if (r.idx !== null && r.idx !== undefined) props.onSelect(r.idx);
+  }
+
+  async function jumpPcValue(value: string | null | undefined, idx: number) {
+    if (!value) return;
+    const r = await fetchIdxsForPc(value, idx, 40);
+    const candidates = [...r.before, ...r.after];
+    if (!candidates.length) return;
+    candidates.sort((a, b) => Math.abs(a - idx) - Math.abs(b - idx));
+    props.onSelect(candidates[0]);
+  }
+
+  async function jumpCfgAtValue(value: string | null | undefined) {
+    if (!value) return;
+    const block = await fetchBlockForPc(value);
+    if (!block.block) {
+      setRegContext((current) => (current ? { ...current, err: "PC not in any tracked block" } : current));
+      return;
+    }
+    const idxs = await fetchIdxsForBlock(block.block, 1);
+    if (idxs.idxs.length > 0) props.onSelect(idxs.idxs[0]);
+    else setRegContext((current) => (current ? { ...current, err: "block not executed in trace" } : current));
+  }
+
+  async function loadRegTitle(el: HTMLElement, idx: number, reg: string) {
+    const key = `${idx}:${reg}`;
+    const cached = regValueTitleCache.get(key);
+    if (cached) {
+      el.title = cached;
+      return;
+    }
+    try {
+      const r = await fetchRegValueAt(idx, reg);
+      const title = r.status === "ready" && r.value ? `${reg} = ${r.value}` : `${reg}`;
+      regValueTitleCache.set(key, title);
+      el.title = title;
+    } catch {
+      el.title = reg;
+    }
+  }
+
+  async function openRegContext(e: MouseEvent, row: RecordRow, reg: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    props.onSelectReg(reg);
+    const base: RegContext = {
+      x: Math.min(e.clientX, window.innerWidth - 300),
+      y: Math.min(e.clientY, window.innerHeight - 180),
+      idx: row.idx,
+      reg,
+    };
+    setRegContext(base);
+    try {
+      const r = await fetchRegValueAt(row.idx, reg);
+      setRegContext((current) =>
+        current?.idx === row.idx && current.reg === reg
+          ? { ...current, value: r.value, err: r.error }
+          : current,
+      );
+    } catch (err) {
+      setRegContext((current) =>
+        current?.idx === row.idx && current.reg === reg ? { ...current, err: String(err) } : current,
+      );
+    }
+  }
+
   return (
-    <section class="panel records-panel">
+    <section class="panel records-panel" onClick={() => setRegContext(null)}>
       <h2>Records</h2>
       <Show when={meta.error}>
         <p class="err">meta failed: {String(meta.error)}</p>
@@ -163,6 +267,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   "is-call": row.is_call,
                   "is-ret": row.is_ret,
                   "is-branch": row.is_branch && !row.is_call && !row.is_ret,
+                  "so-hidden": row.module !== null && props.hiddenSos.has(row.module),
                 }}
                 style={{ top: rowTop(row), height: `${ROW_HEIGHT}px` }}
                 tabIndex={0}
@@ -180,11 +285,86 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   {fnLabel(row)}
                 </span>
                 <span class="asm" title={row.asm}>
-                  <code>{row.asm}</code>
+                  <code>
+                    <For each={asmParts(row.asm)}>
+                      {(part) => (
+                        <Show
+                          when={part.reg}
+                          fallback={<span>{part.text}</span>}
+                        >
+                          {(reg) => (
+                            <span
+                              class="op-reg"
+                              title={`${reg()} · double-click last write · right-click actions`}
+                              onClick={(e) => e.stopPropagation()}
+                              onDblClick={(e) => {
+                                e.stopPropagation();
+                                void jumpLastWrite(row.idx, reg());
+                              }}
+                              onMouseEnter={(e) => void loadRegTitle(e.currentTarget, row.idx, reg())}
+                              onContextMenu={(e) => void openRegContext(e, row, reg())}
+                            >
+                              {part.text}
+                            </span>
+                          )}
+                        </Show>
+                      )}
+                    </For>
+                  </code>
                 </span>
               </div>
             )}
           </For>
+          <Show when={regContext()}>
+            {(ctx) => (
+              <div
+                class="reg-context-menu"
+                style={{ left: `${ctx().x}px`, top: `${ctx().y}px` }}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                <div class="memory-context-title">
+                  {ctx().reg} @ idx {ctx().idx}
+                </div>
+                <p class="dim small">
+                  {ctx().value ? `${ctx().reg} = ${ctx().value}` : ctx().err ?? "loading..."}
+                </p>
+                <button type="button" onClick={() => void jumpLastWrite(ctx().idx, ctx().reg)}>
+                  jump to last write
+                </button>
+                <Show when={ctx().value}>
+                  {(value) => (
+                    <>
+                      <button type="button" onClick={() => props.onOpenMemory(value())}>
+                        open Memory at value
+                      </button>
+                      <button type="button" onClick={() => void jumpCfgAtValue(value())}>
+                        CFG view at value
+                      </button>
+                      <button type="button" onClick={() => void jumpPcValue(value(), ctx().idx)}>
+                        jump to nearest PC value
+                      </button>
+                    </>
+                  )}
+                </Show>
+                <button
+                  type="button"
+                  onClick={() => {
+                    props.onSelectReg(ctx().reg);
+                    setRegContext(null);
+                  }}
+                >
+                  use for taint
+                </button>
+                <button type="button" onClick={() => props.onRunTaint(ctx().idx, ctx().reg, "forward")}>
+                  run forward taint
+                </button>
+                <button type="button" onClick={() => props.onRunTaint(ctx().idx, ctx().reg, "backward")}>
+                  run backward taint
+                </button>
+              </div>
+            )}
+          </Show>
         </div>
       </div>
     </section>

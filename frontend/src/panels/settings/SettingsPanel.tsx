@@ -1,6 +1,12 @@
 import { createEffect, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchDecModels, fetchMeta, fetchOpenApi } from "~/api/client";
+import {
+  fetchBgStatus,
+  fetchDecompStatus,
+  fetchDecModels,
+  fetchMeta,
+  fetchOpenApi,
+} from "~/api/client";
 
 const DENSE_KEY = "tracemiku.dense";
 
@@ -8,11 +14,23 @@ function initialDense(): boolean {
   return localStorage.getItem(DENSE_KEY) === "1";
 }
 
-export default function SettingsPanel() {
+function statusText(item: unknown): string {
+  if (!item || typeof item !== "object" || !("status" in item)) return "?";
+  return String((item as { status?: unknown }).status ?? "?");
+}
+
+interface SettingsPanelProps {
+  active: boolean;
+}
+
+export default function SettingsPanel(props: SettingsPanelProps) {
   const [dense, setDense] = createSignal(initialDense());
-  const [meta] = createResource(fetchMeta);
-  const [models] = createResource(fetchDecModels);
-  const [openapi] = createResource(fetchOpenApi);
+  const activeSource = () => (props.active ? "active" : undefined);
+  const [meta] = createResource(activeSource, () => fetchMeta());
+  const [models] = createResource(activeSource, () => fetchDecModels());
+  const [openapi] = createResource(activeSource, () => fetchOpenApi());
+  const [bg] = createResource(activeSource, () => fetchBgStatus());
+  const [decomp] = createResource(activeSource, () => fetchDecompStatus());
 
   createEffect(() => {
     localStorage.setItem(DENSE_KEY, dense() ? "1" : "0");
@@ -76,10 +94,28 @@ export default function SettingsPanel() {
             </div>
           )}
         </Show>
+        <Show when={bg() || decomp()}>
+          <div>
+            <h3>backend</h3>
+            <dl class="kv settings-kv">
+              <dt>cfg</dt>
+              <dd>{statusText(bg()?.cfg)}</dd>
+              <dt>index</dt>
+              <dd>{statusText(bg()?.index)}</dd>
+              <dt>mem</dt>
+              <dd>{statusText(bg()?.mem)}</dd>
+              <dt>decomp</dt>
+              <dd>{decomp()?.status ?? statusText(bg()?.decomp)}</dd>
+              <dt>bn so</dt>
+              <dd>{decomp()?.so_path ?? "not configured"}</dd>
+            </dl>
+          </div>
+        </Show>
       </div>
-      <Show when={meta.error || models.error || openapi.error}>
+      <Show when={meta.error || models.error || openapi.error || bg.error || decomp.error}>
         <p class="err">
-          settings load warning: {String(meta.error || models.error || openapi.error)}
+          settings load warning:{" "}
+          {String(meta.error || models.error || openapi.error || bg.error || decomp.error)}
         </p>
       </Show>
     </section>

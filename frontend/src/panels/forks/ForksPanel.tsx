@@ -14,9 +14,16 @@ function pidOf(event: Record<string, unknown>): string {
   return typeof pid === "number" ? String(pid) : "";
 }
 
-export default function ForksPanel() {
+interface ForksPanelProps {
+  active: boolean;
+}
+
+export default function ForksPanel(props: ForksPanelProps) {
   const [status, setStatus] = createSignal("");
-  const [resp] = createResource(status, fetchForkEvents);
+  const [resp] = createResource(
+    () => (props.active ? status() : undefined),
+    (s) => fetchForkEvents(s),
+  );
   const failedCount = createMemo(
     () => resp()?.events.filter((e) => statusOf(e).startsWith("failed")).length ?? 0,
   );

@@ -1,5 +1,6 @@
 import type {
   MetaResponse,
+  SoStatsResponse,
   RecordsResponse,
   RecordDetail,
   FunctionsResponse,
@@ -10,8 +11,15 @@ import type {
   MemDiffResponse,
   IdxsForPcResponse,
   OpenApiResponse,
+  BgStatusResponse,
+  DecompStatusResponse,
+  MemWritesInRangeResponse,
+  BlockForPcResponse,
+  IdxsForBlockResponse,
   SearchPcResponse,
   SearchResponse,
+  RegValueAtResponse,
+  LastWriteOfRegResponse,
   CallTreeResponse,
   BacktraceResponse,
   ForkEventsResponse,
@@ -24,6 +32,8 @@ import type {
   DecSummaryResponse,
   LlilRenderPayload,
   LlilRenderResponse,
+  LlilLlmPayload,
+  LlilLlmResponse,
   HlilForFnResponse,
   CfgSvgResponse,
 } from "./types";
@@ -34,6 +44,13 @@ export async function fetchMeta(): Promise<MetaResponse> {
     throw new Error(`/api/meta returned ${r.status}: ${await r.text()}`);
   }
   return (await r.json()) as MetaResponse;
+}
+
+export async function fetchSoStats(top = 200, all = false): Promise<SoStatsResponse> {
+  const params = new URLSearchParams({ top: String(top), all: String(all) });
+  const r = await fetch(`/api/so-stats?${params}`);
+  if (!r.ok) throw new Error(`/api/so-stats returned ${r.status}: ${await r.text()}`);
+  return (await r.json()) as SoStatsResponse;
 }
 
 export interface FetchRecordsOpts {
@@ -177,6 +194,23 @@ export async function fetchSearchPc(pc: string, limit = 50): Promise<SearchPcRes
   return (await r.json()) as SearchPcResponse;
 }
 
+export async function fetchRegValueAt(idx: number, reg: string): Promise<RegValueAtResponse> {
+  const params = new URLSearchParams({ idx: String(idx), reg });
+  const r = await fetch(`/api/reg-value-at?${params}`);
+  if (!r.ok) throw new Error(`/api/reg-value-at ${r.status}: ${await r.text()}`);
+  return (await r.json()) as RegValueAtResponse;
+}
+
+export async function fetchLastWriteOfReg(
+  before: number,
+  reg: string,
+): Promise<LastWriteOfRegResponse> {
+  const params = new URLSearchParams({ before: String(before), reg });
+  const r = await fetch(`/api/last-write-of-reg?${params}`);
+  if (!r.ok) throw new Error(`/api/last-write-of-reg ${r.status}: ${await r.text()}`);
+  return (await r.json()) as LastWriteOfRegResponse;
+}
+
 export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
   const params = new URLSearchParams({ max_depth: String(maxDepth) });
   const r = await fetch(`/api/call-tree?${params}`);
@@ -269,6 +303,58 @@ export async function fetchOpenApi(): Promise<OpenApiResponse> {
   return (await r.json()) as OpenApiResponse;
 }
 
+export async function fetchBgStatus(): Promise<BgStatusResponse> {
+  const r = await fetch("/api/bg-status");
+  if (!r.ok) throw new Error(`/api/bg-status ${r.status}: ${await r.text()}`);
+  return (await r.json()) as BgStatusResponse;
+}
+
+export async function fetchDecompStatus(): Promise<DecompStatusResponse> {
+  const r = await fetch("/api/decomp-status");
+  if (!r.ok) throw new Error(`/api/decomp-status ${r.status}: ${await r.text()}`);
+  return (await r.json()) as DecompStatusResponse;
+}
+
+export interface FetchMemWritesInRangeOpts {
+  idxLo: number;
+  idxHi?: number;
+  srcByte?: string;
+  addrLo?: string;
+  addrHi?: string;
+  max?: number;
+}
+
+export async function fetchMemWritesInRange(
+  opts: FetchMemWritesInRangeOpts,
+): Promise<MemWritesInRangeResponse> {
+  const params = new URLSearchParams({ idx_lo: String(opts.idxLo) });
+  if (opts.idxHi !== undefined) params.set("idx_hi", String(opts.idxHi));
+  if (opts.srcByte) params.set("src_byte", opts.srcByte);
+  if (opts.addrLo) params.set("addr_lo", opts.addrLo);
+  if (opts.addrHi) params.set("addr_hi", opts.addrHi);
+  if (opts.max !== undefined) params.set("max", String(opts.max));
+  const r = await fetch(`/api/mem-writes-in-range?${params}`);
+  if (!r.ok) throw new Error(`/api/mem-writes-in-range ${r.status}: ${await r.text()}`);
+  return (await r.json()) as MemWritesInRangeResponse;
+}
+
+export async function fetchBlockForPc(pc: string): Promise<BlockForPcResponse> {
+  const params = new URLSearchParams({ pc });
+  const r = await fetch(`/api/block-for-pc?${params}`);
+  if (!r.ok) throw new Error(`/api/block-for-pc ${r.status}: ${await r.text()}`);
+  return (await r.json()) as BlockForPcResponse;
+}
+
+export async function fetchIdxsForBlock(
+  pc: string,
+  maxCount = 1,
+): Promise<IdxsForBlockResponse> {
+  const params = new URLSearchParams({ pc, max_count: String(maxCount) });
+  const r = await fetch(`/api/idxs-for-block?${params}`);
+  if (!r.ok) throw new Error(`/api/idxs-for-block ${r.status}: ${await r.text()}`);
+  return (await r.json()) as IdxsForBlockResponse;
+}
+
 export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCallResponse> {
   const r = await fetch("/api/dec/llm-call", {
     method: "POST",
@@ -287,6 +373,16 @@ export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRender
   });
   if (!r.ok) throw new Error(`/api/llil/render ${r.status}: ${await r.text()}`);
   return (await r.json()) as LlilRenderResponse;
+}
+
+export async function callLlilLlm(payload: LlilLlmPayload): Promise<LlilLlmResponse> {
+  const r = await fetch("/api/llil/llm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`/api/llil/llm ${r.status}: ${await r.text()}`);
+  return (await r.json()) as LlilLlmResponse;
 }
 
 export async function fetchHlilForFn(fnId: string): Promise<HlilForFnResponse> {

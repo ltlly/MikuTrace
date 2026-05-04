@@ -5,6 +5,7 @@ import type { StringEntry } from "~/api/types";
 
 interface StringsPanelProps {
   onSelect: (idx: number) => void;
+  active: boolean;
 }
 
 export default function StringsPanel(props: StringsPanelProps) {
@@ -12,7 +13,7 @@ export default function StringsPanel(props: StringsPanelProps) {
   const [query, setQuery] = createSignal("");
   const [jumpErr, setJumpErr] = createSignal("");
   const [resp] = createResource(
-    () => ({ minLen: minLen(), q: query() }),
+    () => (props.active ? { minLen: minLen(), q: query() } : undefined),
     async ({ minLen, q }) => fetchStrings(minLen, q),
   );
 

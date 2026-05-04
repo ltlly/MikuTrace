@@ -1,9 +1,11 @@
 //! Memory query endpoints backed by Index + MemShadow.
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use tracemiku_core::disasm::addr_of;
 use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
@@ -85,7 +87,7 @@ pub async fn last_write_of_addr_handler(
     let (func_name, _) = inner.symbols.lookup(record.pc);
     let func = (func_name != "?").then_some(func_name);
     let base = primary_base(&inner.meta);
-    let src_reg = source_reg_for_write(&decoded);
+    let src_reg = source_reg_for_write_at(&decoded, &record, addr);
     let src_value = src_reg
         .as_deref()
         .and_then(|reg| record.reg_by_name(reg))
@@ -107,6 +109,111 @@ pub async fn last_write_of_addr_handler(
         writes_before: cut,
         writes_after: writes.len().saturating_sub(cut),
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemWritesInRangeQuery {
+    pub idx_lo: usize,
+    #[serde(default = "default_idx_hi")]
+    pub idx_hi: isize,
+    pub src_byte: Option<String>,
+    pub addr_lo: Option<String>,
+    pub addr_hi: Option<String>,
+    #[serde(default = "default_writes_max")]
+    pub max: usize,
+}
+
+fn default_idx_hi() -> isize {
+    -1
+}
+
+fn default_writes_max() -> usize {
+    200
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemWriteRow {
+    pub idx: usize,
+    pub pc: String,
+    pub rel: Option<String>,
+    pub func: Option<String>,
+    pub asm: String,
+    pub dst_addr: String,
+    pub size: u32,
+    pub src_reg: Option<String>,
+    pub src_value: String,
+    pub byte0: u8,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemWritesInRangeResponse {
+    pub idx_range: Vec<usize>,
+    pub matched: usize,
+    pub returned: usize,
+    pub writes: Vec<MemWriteRow>,
+}
+
+pub async fn mem_writes_in_range_handler(
+    State(state): State<AppState>,
+    Query(q): Query<MemWritesInRangeQuery>,
+) -> Result<Json<MemWritesInRangeResponse>, (StatusCode, String)> {
+    let inner = &state.inner;
+    let lo = q.idx_lo.min(inner.trace.len());
+    let hi = if q.idx_hi >= 0 {
+        (q.idx_hi as usize).min(inner.trace.len())
+    } else {
+        inner.trace.len()
+    };
+    let addr_lo = parse_optional_int("addr_lo", &q.addr_lo)?;
+    let addr_hi = parse_optional_int("addr_hi", &q.addr_hi)?;
+    let src_byte = parse_optional_int("src_byte", &q.src_byte)?.map(|v| (v & 0xff) as u8);
+    let base = primary_base(&inner.meta);
+
+    let mut matched = 0usize;
+    let mut rows = Vec::new();
+    for write in &inner.memshadow.writes {
+        if write.idx < lo || write.idx >= hi {
+            continue;
+        }
+        if addr_lo.is_some_and(|a| write.addr < a) {
+            continue;
+        }
+        if addr_hi.is_some_and(|a| write.addr >= a) {
+            continue;
+        }
+        if src_byte.is_some_and(|b| (write.value & 0xff) as u8 != b) {
+            continue;
+        }
+        matched += 1;
+        if q.max > 0 && rows.len() >= q.max {
+            continue;
+        }
+
+        let record = inner.trace.record(write.idx);
+        let decoded = decode(record.pc, record.inst);
+        let (func_name, _) = inner.symbols.lookup(record.pc);
+        rows.push(MemWriteRow {
+            idx: write.idx,
+            pc: format!("{:#x}", record.pc),
+            rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+            func: (func_name != "?").then_some(func_name),
+            asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
+                .trim()
+                .to_string(),
+            dst_addr: format!("{:#x}", write.addr),
+            size: write.size,
+            src_reg: source_reg_for_write_at(&decoded, &record, write.addr),
+            src_value: format!("{:#x}", write.value),
+            byte0: (write.value & 0xff) as u8,
+        });
+    }
+
+    Ok(Json(MemWritesInRangeResponse {
+        idx_range: vec![lo, hi],
+        matched,
+        returned: rows.len(),
+        writes: rows,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,6 +463,21 @@ fn parse_int(s: &str) -> Option<u64> {
     }
 }
 
+fn parse_optional_int(
+    name: &str,
+    value: &Option<String>,
+) -> Result<Option<u64>, (StatusCode, String)> {
+    let Some(raw) = value.as_deref() else {
+        return Ok(None);
+    };
+    parse_int(raw).map(Some).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("bad {name}, expected decimal or hex: {raw:?}"),
+        )
+    })
+}
+
 fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
     let cleaned = s.replace("0x", "").replace("0X", "").replace(' ', "");
     if !cleaned.len().is_multiple_of(2) {
@@ -401,17 +523,23 @@ fn split_around_cursor(idxs: &[usize], cursor: usize, limit: usize) -> (Vec<usiz
     (before, after)
 }
 
-fn source_reg_for_write(decoded: &DecodedInsn) -> Option<String> {
-    let (base, idx) = decoded
+fn source_reg_for_write_at(
+    decoded: &DecodedInsn,
+    record: &Record,
+    dst_addr: u64,
+) -> Option<String> {
+    let op = decoded
         .mem_op
         .iter()
-        .find(|op| op.is_write)
-        .map(|op| (op.base.as_str(), op.idx.as_str()))
-        .unwrap_or(("", ""));
+        .find(|op| op.is_write && addr_of(record, op) == dst_addr)
+        .or_else(|| decoded.mem_op.iter().find(|op| op.is_write))?;
+    if !op.src_reg.is_empty() {
+        return Some(op.src_reg.clone());
+    }
     decoded
         .regs_use
         .iter()
-        .find(|reg| reg.as_str() != base && reg.as_str() != idx)
+        .find(|reg| reg.as_str() != op.base.as_str() && reg.as_str() != op.idx.as_str())
         .cloned()
 }
 

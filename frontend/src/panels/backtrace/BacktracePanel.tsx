@@ -5,10 +5,14 @@ import { fetchBacktrace } from "~/api/client";
 interface BacktracePanelProps {
   idx: number;
   onSelect: (idx: number) => void;
+  active: boolean;
 }
 
 export default function BacktracePanel(props: BacktracePanelProps) {
-  const [resp] = createResource(() => props.idx, fetchBacktrace);
+  const [resp] = createResource(
+    () => (props.active ? props.idx : undefined),
+    (idx) => fetchBacktrace(idx),
+  );
 
   return (
     <section class="panel">

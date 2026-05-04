@@ -162,6 +162,7 @@ async fn last_write_of_reg_finds_last_def() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
+    assert_eq!(v["status"], "ready");
 
     // last write of x0 BEFORE idx 1 → idx 0
     let resp = app
@@ -177,6 +178,21 @@ async fn last_write_of_reg_finds_last_def() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["idx"].as_u64().unwrap_or(99), 0);
+
+    // Python web compatibility: old UI sends cursor= instead of before=.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/last-write-of-reg?reg=x0&cursor=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
 
     // x99 has no defs → null
     let resp = app

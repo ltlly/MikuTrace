@@ -18,6 +18,25 @@ export interface MetaResponse {
   regs: string[];
 }
 
+// ── /api/so-stats ────────────────────────────────────────────────────────
+
+export interface SoStatsModule {
+  name: string;
+  base: string;
+  end: string;
+  size: number;
+  records: number;
+  percent: number;
+}
+
+export interface SoStatsResponse {
+  records: number;
+  modules_total: number;
+  unknown_records: number;
+  unknown_percent: number;
+  modules: SoStatsModule[];
+}
+
 // ── /api/records, /api/record/{idx} ───────────────────────────────────────
 
 export interface RecordRow {
@@ -216,6 +235,23 @@ export interface SearchPcResponse {
   truncated: boolean;
 }
 
+// ── /api/reg-value-at, /api/last-write-of-reg ────────────────────────────
+
+export interface RegValueAtResponse {
+  status: string;
+  idx: number;
+  reg: string;
+  value: string | null;
+  error?: string;
+}
+
+export interface LastWriteOfRegResponse {
+  status?: string;
+  idx: number | null;
+  value?: string | null;
+  err?: string;
+}
+
 // ── /api/call-tree ────────────────────────────────────────────────────────
 
 export interface CallNode {
@@ -348,6 +384,64 @@ export interface OpenApiResponse {
   paths: Record<string, unknown>;
 }
 
+// ── /api/bg-status, /api/decomp-status ───────────────────────────────────
+
+export interface BgTaskStatus {
+  status: string;
+  started_at?: number | null;
+  ready_at?: number | null;
+  err?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DecompStatusResponse {
+  status: string;
+  name?: string | null;
+  err?: string | null;
+  started_at?: number | null;
+  ready_at?: number | null;
+  so_path?: string | null;
+  elapsed?: number | null;
+}
+
+export type BgStatusResponse = Record<string, BgTaskStatus | DecompStatusResponse>;
+
+// ── /api/mem-writes-in-range ─────────────────────────────────────────────
+
+export interface MemWriteRow {
+  idx: number;
+  pc: string;
+  rel: string | null;
+  func: string | null;
+  asm: string;
+  dst_addr: string;
+  size: number;
+  src_reg: string | null;
+  src_value: string;
+  byte0: number;
+}
+
+export interface MemWritesInRangeResponse {
+  idx_range: number[];
+  matched: number;
+  returned: number;
+  writes: MemWriteRow[];
+  status?: string | null;
+}
+
+// ── CFG navigation helpers ───────────────────────────────────────────────
+
+export interface BlockForPcResponse {
+  pc: string;
+  block: string | null;
+  cfg_status?: string | null;
+}
+
+export interface IdxsForBlockResponse {
+  status: string;
+  idxs: number[];
+}
+
 export interface DecLlmCallPayload {
   fn_id: string;
   model: string;
@@ -393,6 +487,27 @@ export interface LlilRenderResponse {
   structured: unknown;
   removed_pcs: string[];
   pseudocode: string;
+}
+
+export interface LlilLlmPayload {
+  fn_id: string;
+  model: string;
+  max_tokens: number;
+  lang: string;
+  max_records: number;
+}
+
+export interface LlilLlmResponse {
+  ok: boolean;
+  fn_id: string;
+  model: string;
+  error: string | null;
+  c_code: string;
+  in_tokens: number;
+  out_tokens: number;
+  latency_ms: number;
+  llil_records: number;
+  estimated_prompt_tokens: number;
 }
 
 // ── /api/hlil-for-fn ─────────────────────────────────────────────────────

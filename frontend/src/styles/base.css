@@ -16,6 +16,35 @@
 
 * { box-sizing: border-box; }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3b4654 var(--bg);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 2px solid var(--bg);
+  border-radius: 8px;
+  background: #3b4654;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #4b5a6a;
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--bg2);
+}
+
 html, body {
   background: var(--bg);
   color: var(--fg);
@@ -124,13 +153,45 @@ body {
 
 #layout {
   display: grid;
-  grid-template-columns: 28px 340px minmax(520px, 1.15fr) minmax(440px, 0.95fr) 28px;
+  grid-template-columns: 28px var(--left-w, 340px) minmax(420px, 1fr) minmax(320px, var(--right-w, 520px)) 28px;
   grid-template-rows: 1fr 22px;
   grid-template-areas:
     "lt lp asm right rt"
     "cmd cmd cmd cmd cmd";
   height: calc(100vh - 28px);
   min-height: 0;
+  position: relative;
+  --left-w: 340px;
+  --right-w: 520px;
+  --bottom-h: 240px;
+}
+
+.layout-splitter {
+  position: absolute;
+  top: 0;
+  bottom: 22px;
+  z-index: 20;
+  width: 7px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.layout-splitter-left {
+  left: calc(28px + var(--left-w) - 3px);
+}
+
+.layout-splitter-right {
+  left: calc(100% - 28px - var(--right-w) - 4px);
+}
+
+.layout-splitter:hover,
+.layout-splitter:active {
+  background: rgba(88, 166, 255, 0.34);
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 #left-tabs {
@@ -200,6 +261,14 @@ body {
   outline: none;
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.cmd-status {
+  flex: 0 0 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vtab {
@@ -281,9 +350,25 @@ body {
 }
 
 #stream-header .hd {
+  position: relative;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#stream-header .col-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+}
+
+#stream-header .col-resize:hover,
+#stream-header .col-resize:active {
+  background: rgba(88, 166, 255, 0.45);
 }
 
 #bottom-tabs {
@@ -309,11 +394,25 @@ body {
 .btab.active { color: var(--fg); background: var(--bg3); }
 
 #bottom-content {
-  flex: 0 0 240px;
+  flex: 0 0 var(--bottom-h, 240px);
   min-height: 0;
   overflow: hidden;
   background: var(--bg2);
   border-top: 1px solid var(--border);
+}
+
+#bottom-resize {
+  flex: 0 0 6px;
+  margin: 0;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  cursor: row-resize;
+}
+
+#bottom-resize:hover,
+#bottom-resize:active {
+  background: rgba(88, 166, 255, 0.34);
 }
 
 .bbody {
@@ -439,9 +538,52 @@ body {
   background: var(--hl);
 }
 
+#stream .records-row.so-hidden {
+  display: none;
+}
+
 #stream .records-row.is-call .asm code { color: var(--accent); }
 #stream .records-row.is-ret .asm code { color: var(--warn); }
 #stream .records-row.is-branch .asm code { color: var(--accent2); }
+
+.op-reg {
+  color: var(--accent);
+  cursor: context-menu;
+}
+
+.op-reg:hover {
+  color: var(--warn);
+  text-decoration: underline;
+}
+
+.reg-context-menu {
+  position: fixed;
+  z-index: 130;
+  width: 260px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+}
+
+.reg-context-menu button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+  padding: 2px 6px;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reg-context-menu button:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
 
 .records-loading {
   position: sticky;
@@ -560,6 +702,7 @@ body {
 .mem-byte.external { color: var(--warn); background: rgba(247, 179, 43, 0.12); }
 .mem-byte.unknown { color: var(--dim); }
 .mem-byte.changed { color: white; background: rgba(248, 81, 73, 0.5); }
+.mem-byte.selected { outline: 1px solid var(--accent); background: rgba(88, 166, 255, 0.22); }
 .mem-byte:hover { outline: 1px solid rgba(88, 166, 255, 0.55); }
 
 .mem-ascii {
@@ -614,6 +757,72 @@ body {
   color: var(--dim);
   font-size: 11px;
   font-weight: normal;
+}
+
+.memory-context-writes {
+  margin-top: 8px;
+}
+
+.memory-context-writes h3 {
+  margin: 6px 0 4px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.so-filter-actions {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.so-filter-actions button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.so-filter-actions button:hover {
+  border-color: var(--accent);
+}
+
+.so-list {
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+}
+
+.so-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+
+.so-row:hover {
+  background: var(--bg3);
+}
+
+.so-row.hidden {
+  opacity: 0.5;
+}
+
+.mod-badge {
+  display: inline-block;
+  min-width: 60px;
+  font-size: 10px;
+}
+
+.so-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kv {
@@ -1102,6 +1311,14 @@ html[data-density="dense"] .xref-table td {
 .hlil-table td:first-child {
   width: 8em;
   white-space: nowrap;
+}
+
+.hlil-table tr {
+  cursor: pointer;
+}
+
+.hlil-table tr:hover {
+  background: var(--bg3);
 }
 
 .hlil-table code {

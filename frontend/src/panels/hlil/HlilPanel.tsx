@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 import type { Accessor, Setter } from "solid-js";
 
-import { fetchFunctions, fetchHlilForFn } from "~/api/client";
+import { fetchFunctions, fetchHlilForFn, fetchIdxsForPc } from "~/api/client";
 
 const SOURCE_TAGS: Record<string, string> = {
   "trace-ir": "TR",
@@ -12,23 +12,39 @@ const SOURCE_TAGS: Record<string, string> = {
 export interface HlilPanelProps {
   selectedFn: Accessor<string>;
   onSelectFn: Setter<string>;
+  currentIdx: number;
+  onSelect: (idx: number) => void;
+  active: boolean;
 }
 
 export default function HlilPanel(props: HlilPanelProps) {
   const [reload, setReload] = createSignal(0);
-  const [functions] = createResource(fetchFunctions);
+  const [functions] = createResource(
+    () => (props.active ? "active" : undefined),
+    () => fetchFunctions(),
+  );
 
   createEffect(() => {
+    if (!props.active) return;
     const first = functions()?.functions[0]?.id;
     if (!props.selectedFn() && first) props.onSelectFn(first);
   });
 
   const source = createMemo(() => {
+    if (!props.active) return undefined;
     const fnId = props.selectedFn();
-    if (!fnId) return null;
+    if (!fnId) return undefined;
     return { fnId, reload: reload() };
   });
   const [hlil] = createResource(source, (s) => (s ? fetchHlilForFn(s.fnId) : undefined));
+
+  async function jumpLine(pc: string) {
+    const r = await fetchIdxsForPc(pc, props.currentIdx, 40);
+    const candidates = [...r.before, ...r.after];
+    if (!candidates.length) return;
+    candidates.sort((a, b) => Math.abs(a - props.currentIdx) - Math.abs(b - props.currentIdx));
+    props.onSelect(candidates[0]);
+  }
 
   return (
     <section class="panel">
@@ -69,7 +85,7 @@ export default function HlilPanel(props: HlilPanelProps) {
               <tbody>
                 <For each={r().lines ?? []}>
                   {(line) => (
-                    <tr>
+                    <tr onClick={() => void jumpLine(line.pc)} title="jump to nearest trace execution">
                       <td class="dim small">{line.pc}</td>
                       <td><code>{line.text}</code></td>
                     </tr>

@@ -6,6 +6,7 @@ import type { IdxsForPcResponse } from "~/api/types";
 interface TraceForPcPanelProps {
   idx: number;
   onSelect: (idx: number) => void;
+  active: boolean;
 }
 
 interface IpcSource {
@@ -14,9 +15,13 @@ interface IpcSource {
 }
 
 export default function TraceForPcPanel(props: TraceForPcPanelProps) {
-  const [record] = createResource(() => props.idx, fetchRecord);
+  const [record] = createResource(
+    () => (props.active ? props.idx : undefined),
+    (idx) => fetchRecord(idx),
+  );
   const [idxs] = createResource<IdxsForPcResponse, IpcSource | undefined>(
     () => {
+      if (!props.active) return undefined;
       const r = record();
       return r ? { pc: r.pc, idx: props.idx } : undefined;
     },

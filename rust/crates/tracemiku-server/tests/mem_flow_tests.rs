@@ -83,6 +83,34 @@ async fn mem_flow_filters_and_caps_newest_events() {
 }
 
 #[tokio::test]
+async fn mem_writes_in_range_filters_by_idx_addr_and_src_byte() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(
+        cd,
+        "/api/mem-writes-in-range?idx_lo=0&idx_hi=2&addr_lo=0x7000&addr_hi=0x7001&src_byte=0x42&max=10",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["idx_range"][0], 0);
+    assert_eq!(v["idx_range"][1], 2);
+    assert_eq!(v["matched"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["writes"][0]["idx"], 1);
+    assert_eq!(v["writes"][0]["pc"], "0x100004");
+    assert_eq!(v["writes"][0]["dst_addr"], "0x7000");
+    assert_eq!(v["writes"][0]["src_reg"], "x0");
+    assert_eq!(v["writes"][0]["src_value"], "0x42");
+    assert_eq!(v["writes"][0]["byte0"], 66);
+}
+
+#[tokio::test]
+async fn mem_writes_in_range_bad_filter_is_400() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, _v) = get(cd, "/api/mem-writes-in-range?idx_lo=0&src_byte=bogus").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn mem_flow_bad_addr_is_400() {
     let (_tmp, cd) = synth_call_dir();
     let (status, _v) = get(cd, "/api/mem-flow?addr=bogus").await;

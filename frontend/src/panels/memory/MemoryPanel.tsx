@@ -1,11 +1,19 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
-import { fetchIdxsTouchingAddr, fetchMemDiff, fetchMemDump, fetchRecord } from "~/api/client";
-import type { MemDumpByte, TouchingAddrResponse } from "~/api/types";
+import {
+  fetchIdxsTouchingRange,
+  fetchMemDiff,
+  fetchMemDump,
+  fetchMemWritesInRange,
+  fetchRecord,
+} from "~/api/client";
+import type { MemDumpByte, MemWritesInRangeResponse, TouchingRangeResponse } from "~/api/types";
 
 interface MemoryPanelProps {
   idx: number;
   onSelect: (idx: number) => void;
+  addrRequest?: { token: number; addr: string };
+  active: boolean;
 }
 
 const QUICK_REGS = ["x0", "x1", "x2", "x3", "sp"];
@@ -15,8 +23,10 @@ interface MemContext {
   x: number;
   y: number;
   addr: string;
+  size: number;
   srcIdx: number | null;
-  hits?: TouchingAddrResponse;
+  hits?: TouchingRangeResponse;
+  writes?: MemWritesInRangeResponse;
   err?: string;
 }
 
@@ -55,8 +65,21 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   const [addr, setAddr] = createSignal("0x0");
   const [count, setCount] = createSignal(64);
   const [memContext, setMemContext] = createSignal<MemContext | null>(null);
-  const [record] = createResource(() => props.idx, fetchRecord);
+  const [selection, setSelection] = createSignal<{ anchor: string; head: string } | null>(null);
+  const [dragAnchor, setDragAnchor] = createSignal<string | null>(null);
+  const [record] = createResource(
+    () => (props.active ? props.idx : undefined),
+    (idx) => fetchRecord(idx),
+  );
   let autoAddr = "";
+  let lastAddrRequest = -1;
+  createEffect(() => {
+    const req = props.addrRequest;
+    if (!req || req.token === lastAddrRequest) return;
+    lastAddrRequest = req.token;
+    autoAddr = req.addr;
+    setAddr(req.addr);
+  });
   createEffect(() => {
     const r = record();
     const sp = r?.regs.sp;
@@ -73,16 +96,24 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     if (!REG_ADDR_RE.test(raw)) return raw;
     return record()?.regs[normalizeRegName(raw)] ?? "0x0";
   });
-  const dumpSource = createMemo(() => ({
-    addr: resolvedAddr(),
-    count: Math.max(1, Math.min(512, count())),
-  }));
+  const dumpSource = createMemo(() =>
+    props.active
+      ? {
+          addr: resolvedAddr(),
+          count: Math.max(1, Math.min(512, count())),
+        }
+      : undefined,
+  );
   const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
-  const diffSource = createMemo(() => ({
-    idx: props.idx,
-    addr: resolvedAddr(),
-    size: Math.max(1, Math.min(128, count())),
-  }));
+  const diffSource = createMemo(() =>
+    props.active
+      ? {
+          idx: props.idx,
+          addr: resolvedAddr(),
+          size: Math.max(1, Math.min(128, count())),
+        }
+      : undefined,
+  );
   const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
   const changedAddrs = createMemo(() => {
     const set = new Set<string>();
@@ -92,28 +123,86 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     return set;
   });
 
+  function addrBig(addr: string): bigint {
+    try {
+      return BigInt(addr);
+    } catch {
+      return 0n;
+    }
+  }
+
+  function fmtAddr(n: bigint): string {
+    return `0x${n.toString(16)}`;
+  }
+
+  function selectedBounds(fallback: string): { lo: string; hi: string; size: number; selected: boolean } {
+    const sel = selection();
+    if (!sel) return { lo: fallback, hi: fallback, size: 1, selected: false };
+    const a = addrBig(sel.anchor);
+    const h = addrBig(sel.head);
+    const f = addrBig(fallback);
+    const lo = a <= h ? a : h;
+    const hi = a <= h ? h : a;
+    if (f < lo || f > hi) return { lo: fallback, hi: fallback, size: 1, selected: false };
+    return { lo: fmtAddr(lo), hi: fmtAddr(hi), size: Number(hi - lo + 1n), selected: true };
+  }
+
+  function isSelected(addr: string): boolean {
+    return selectedBounds(addr).selected;
+  }
+
+  function startSelect(e: MouseEvent, addr: string) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    setDragAnchor(addr);
+    setSelection({ anchor: addr, head: addr });
+  }
+
+  function extendSelect(e: MouseEvent, addr: string) {
+    const anchor = dragAnchor();
+    if (!anchor || e.buttons !== 1) return;
+    setSelection({ anchor, head: addr });
+  }
+
   async function openMemContext(e: MouseEvent, b: MemDumpByte) {
     e.preventDefault();
     e.stopPropagation();
+    const bounds = selectedBounds(b.addr);
     const base: MemContext = {
       x: Math.min(e.clientX, window.innerWidth - 320),
       y: Math.min(e.clientY, window.innerHeight - 260),
-      addr: b.addr,
-      srcIdx: b.src_idx,
+      addr: bounds.lo,
+      size: bounds.size,
+      srcIdx: bounds.size === 1 ? b.src_idx : null,
     };
     setMemContext(base);
     try {
-      const hits = await fetchIdxsTouchingAddr(b.addr, props.idx, 24);
-      setMemContext((current) => (current?.addr === b.addr ? { ...current, hits } : current));
+      const [hits, writes] = await Promise.all([
+        fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, 30),
+        fetchMemWritesInRange({
+          idxLo: 0,
+          idxHi: props.idx,
+          addrLo: bounds.lo,
+          addrHi: bounds.hi,
+          max: 30,
+        }),
+      ]);
+      setMemContext((current) =>
+        current?.addr === bounds.lo && current.size === bounds.size
+          ? { ...current, hits, writes }
+          : current,
+      );
     } catch (err) {
       setMemContext((current) =>
-        current?.addr === b.addr ? { ...current, err: String(err) } : current,
+        current?.addr === bounds.lo && current.size === bounds.size
+          ? { ...current, err: String(err) }
+          : current,
       );
     }
   }
 
   return (
-    <section class="panel" onClick={() => setMemContext(null)}>
+    <section class="panel" onClick={() => setMemContext(null)} onMouseUp={() => setDragAnchor(null)}>
       <h2>Memory</h2>
       <div class="memory-controls">
         <label>
@@ -184,8 +273,14 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                             <span
                               class={`${byteCellClass(b.kind)} ${
                                 changedAddrs().has(b.addr) ? "changed" : ""
+                              } ${
+                                isSelected(b.addr) ? "selected" : ""
                               }`}
                               title={`${b.addr} ${b.kind} src=${b.src_idx ?? ""}`}
+                              data-addr={b.addr}
+                              onMouseDown={(e) => startSelect(e, b.addr)}
+                              onMouseEnter={(e) => extendSelect(e, b.addr)}
+                              onMouseUp={() => setDragAnchor(null)}
                               onContextMenu={(e) => void openMemContext(e, b)}
                               onDblClick={() => {
                                 if (b.src_idx !== null) props.onSelect(b.src_idx);
@@ -213,7 +308,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                   onContextMenu={(e) => e.preventDefault()}
                 >
                   <div class="memory-context-title">
-                    <code>{ctx().addr}</code>
+                    <code>{ctx().addr}</code> <span class="dim">size {ctx().size}</span>
                   </div>
                   <Show when={ctx().srcIdx !== null}>
                     <button type="button" onClick={() => props.onSelect(ctx().srcIdx!)}>
@@ -231,28 +326,40 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                       <>
                         <div class="memory-context-grid">
                           <div>
-                            <h3>之前触碰</h3>
-                            <For each={hits().before}>
-                              {(hit) => (
-                                <button type="button" onClick={() => props.onSelect(hit.idx)}>
-                                  {hit.kind} {hit.idx}
+                            <h3>writers</h3>
+                            <For each={[...hits().writers_before, ...hits().writers_after]}>
+                              {(idx) => (
+                                <button type="button" onClick={() => props.onSelect(idx)}>
+                                  write {idx}
                                 </button>
                               )}
                             </For>
-                            <p class="dim small">total {hits().total_before}</p>
+                            <p class="dim small">total {hits().writers_total}</p>
                           </div>
                           <div>
-                            <h3>之后触碰</h3>
-                            <For each={hits().after}>
-                              {(hit) => (
-                                <button type="button" onClick={() => props.onSelect(hit.idx)}>
-                                  {hit.kind} {hit.idx}
+                            <h3>readers</h3>
+                            <For each={[...hits().readers_before, ...hits().readers_after]}>
+                              {(idx) => (
+                                <button type="button" onClick={() => props.onSelect(idx)}>
+                                  read {idx}
                                 </button>
                               )}
                             </For>
-                            <p class="dim small">total {hits().total_after}</p>
+                            <p class="dim small">total {hits().readers_total}</p>
                           </div>
                         </div>
+                        <Show when={ctx().writes?.writes.length}>
+                          <div class="memory-context-writes">
+                            <h3>write details</h3>
+                            <For each={ctx().writes?.writes ?? []}>
+                              {(w) => (
+                                <button type="button" onClick={() => props.onSelect(w.idx)}>
+                                  {w.idx} {w.dst_addr} {w.src_reg ?? ""} {w.asm}
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
                       </>
                     )}
                   </Show>

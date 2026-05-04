@@ -1,11 +1,13 @@
 import { createMemo, createResource, For, Show } from "solid-js";
 
-import { fetchRecord } from "~/api/client";
+import { fetchLastWriteOfReg, fetchRecord } from "~/api/client";
 
 interface RegistersPanelProps {
   idx: number;
   selectedReg: string;
   onSelectReg: (reg: string) => void;
+  onSelect: (idx: number) => void;
+  active: boolean;
 }
 
 const REG_ORDER = [
@@ -85,9 +87,17 @@ function regNote(reg: string, value: string, regs: Record<string, string>, chang
 }
 
 export default function RegistersPanel(props: RegistersPanelProps) {
-  const [record] = createResource(() => props.idx, fetchRecord);
-  const prevIdx = createMemo(() => (props.idx > 0 ? props.idx - 1 : 0));
-  const [prevRecord] = createResource(prevIdx, fetchRecord);
+  const [record] = createResource(
+    () => (props.active ? props.idx : undefined),
+    (idx) => fetchRecord(idx),
+  );
+  const prevIdx = createMemo(() => (props.active ? (props.idx > 0 ? props.idx - 1 : 0) : undefined));
+  const [prevRecord] = createResource(prevIdx, (idx) => fetchRecord(idx));
+
+  async function jumpLastWrite(reg: string) {
+    const r = await fetchLastWriteOfReg(props.idx, reg);
+    if (r.idx !== null && r.idx !== undefined) props.onSelect(r.idx);
+  }
 
   return (
     <section class="panel">
@@ -133,6 +143,8 @@ export default function RegistersPanel(props: RegistersPanelProps) {
                           selected: reg === props.selectedReg,
                         }}
                         onClick={() => props.onSelectReg(reg)}
+                        onDblClick={() => void jumpLastWrite(reg)}
+                        title="double-click to jump to last write"
                       >
                         <th>{reg}</th>
                         <td>

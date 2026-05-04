@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc, fetchRecord } from "~/api/client";
 
@@ -15,6 +15,8 @@ interface CfgPanelProps {
   selectedFn: string;
   currentIdx: number;
   onSelect: (idx: number) => void;
+  active: boolean;
+  syncEnabled: boolean;
 }
 
 export default function CfgPanel(props: CfgPanelProps) {
@@ -29,9 +31,17 @@ export default function CfgPanel(props: CfgPanelProps) {
   let frame: HTMLDivElement | undefined;
   let suppressNextClick = false;
   let lastCenteredIdx = -1;
+  let lastSelectedFn = "";
+  let lastPanFn = "";
 
-  const [functions] = createResource(fetchFunctions);
-  const [record] = createResource(() => props.currentIdx, fetchRecord);
+  const [functions] = createResource(
+    () => (props.active ? "active" : undefined),
+    () => fetchFunctions(),
+  );
+  const [record] = createResource(
+    () => (props.active && props.syncEnabled ? props.currentIdx : undefined),
+    (idx) => fetchRecord(idx),
+  );
   const selectedFnName = createMemo(() => {
     const want = props.selectedFn;
     if (!want) return "";
@@ -49,11 +59,28 @@ export default function CfgPanel(props: CfgPanelProps) {
   const cursorFnName = createMemo(() => record()?.func ?? "");
 
   createEffect(() => {
-    const preferred = cursorFnName() || selectedFnName();
-    if (preferred && preferred !== fnName()) {
-      setFnName(preferred);
-      return;
+    if (!props.active) return;
+    const selected = selectedFnName();
+    if (selected && selected !== lastSelectedFn) {
+      lastSelectedFn = selected;
+      setFnName(selected);
     }
+  });
+
+  createEffect(() => {
+    if (!props.active) return;
+    const cursorFn = cursorFnName();
+    if (!props.syncEnabled || !cursorFn || cursorFn === fnName()) return;
+    const timer = window.setTimeout(() => {
+      if (props.active && props.syncEnabled && cursorFn === cursorFnName()) {
+        setFnName(cursorFn);
+      }
+    }, 220);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  createEffect(() => {
+    if (!props.active) return;
     if (!fnName() && fnNames().length > 0) {
       setFnName(fnNames()[0]);
     }
@@ -61,6 +88,7 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   const [graph] = createResource(
     () => {
+      if (!props.active) return undefined;
       const name = fnName();
       return name ? { fnName: name, timeout: timeout(), reload: reload() } : undefined;
     },
@@ -68,12 +96,15 @@ export default function CfgPanel(props: CfgPanelProps) {
   );
 
   createEffect(() => {
-    graph();
-    fnName();
+    const name = fnName();
+    if (!props.active || !name || name === lastPanFn) return;
+    lastPanFn = name;
+    lastCenteredIdx = -1;
     setPan({ x: 0, y: 0, scale: 1 });
   });
 
   createEffect(() => {
+    if (!props.active || !props.syncEnabled) return;
     const idx = props.currentIdx;
     const r = record();
     if (!r || r.idx !== idx) return;
@@ -205,6 +236,7 @@ export default function CfgPanel(props: CfgPanelProps) {
         </label>
         <button onClick={() => setReload((n) => n + 1)}>reload</button>
         <button onClick={() => setPan({ x: 0, y: 0, scale: 1 })}>fit</button>
+        <span class="dim small">{props.syncEnabled ? "sync on" : "sync paused"}</span>
       </div>
 
       <Show when={functions.error}>

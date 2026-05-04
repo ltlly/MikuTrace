@@ -5,6 +5,13 @@ import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
 
+interface RunRequest {
+  token: number;
+  idx: number;
+  reg: string;
+  direction: Direction;
+}
+
 interface RunResult {
   rows: TaintRow[];
   count: number;
@@ -18,6 +25,8 @@ interface TaintPanelProps {
   reg: string;
   onRegChange: (reg: string) => void;
   onSelect: (idx: number) => void;
+  runRequest?: RunRequest;
+  active: boolean;
 }
 
 export default function TaintPanel(props: TaintPanelProps) {
@@ -33,22 +42,34 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [error, setError] = createSignal<string | null>(null);
 
   createEffect(() => {
+    if (!props.active) return;
     setStart(props.idx);
     if (props.reg) setReg(props.reg);
   });
 
-  async function run() {
+  createEffect(() => {
+    if (!props.active) return;
+    const req = props.runRequest;
+    if (!req) return;
+    setStart(req.idx);
+    setReg(req.reg);
+    setDirection(req.direction);
+    props.onRegChange(req.reg);
+    queueMicrotask(() => void run(req.direction, req.idx, req.reg));
+  });
+
+  async function run(dirArg = direction(), startArg = start(), regArg = reg()) {
     setRunning(true);
     setError(null);
     try {
-      const dir = direction();
+      const dir = dirArg;
       const flags = {
         through_mem: throughMem(),
         data_only: dataOnly(),
         cross_fn_call: crossFnCall(),
       };
       if (dir === "forward") {
-        const resp = await fetchForwardTaint(start(), reg(), maxCount(), flags);
+        const resp = await fetchForwardTaint(startArg, regArg, maxCount(), flags);
         setResult({
           rows: resp.hits,
           count: resp.count,
@@ -57,7 +78,7 @@ export default function TaintPanel(props: TaintPanelProps) {
           showDepth: flags.cross_fn_call,
         });
       } else {
-        const resp = await fetchBackwardTaint(start(), reg(), maxCount(), flags);
+        const resp = await fetchBackwardTaint(startArg, regArg, maxCount(), flags);
         setResult({
           rows: resp.chain,
           count: resp.count,
@@ -148,7 +169,7 @@ export default function TaintPanel(props: TaintPanelProps) {
           />
           {" "}cross_fn_call
         </label>
-        <button type="button" disabled={running()} onClick={run}>
+        <button type="button" disabled={running()} onClick={() => void run()}>
           {running() ? "running…" : "Run"}
         </button>
       </div>

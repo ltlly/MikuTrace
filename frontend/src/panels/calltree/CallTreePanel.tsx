@@ -10,6 +10,7 @@ const MAX_DEPTH = 50;
 interface CallTreePanelProps {
   currentIdx?: number;
   onSelect?: (idx: number) => void;
+  active: boolean;
 }
 
 function keyOf(node: CallNode): string {
@@ -100,7 +101,10 @@ function CallTreeRow(props: RowProps) {
 
 export default function CallTreePanel(props: CallTreePanelProps) {
   const [depth, setDepth] = createSignal(DEFAULT_DEPTH);
-  const [resp] = createResource(depth, fetchCallTree);
+  const [resp] = createResource(
+    () => (props.active ? depth() : undefined),
+    (maxDepth) => fetchCallTree(maxDepth),
+  );
   const [openKeys, setOpenKeys] = createSignal<Set<string>>(new Set());
   const [locatedKey, setLocatedKey] = createSignal("");
 

@@ -44,8 +44,37 @@ async fn openapi_json_lists_current_paths() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["openapi"], "3.0.3");
+    assert!(v["paths"]["/api/bg-status"]["get"].is_object());
+    assert!(v["paths"]["/api/decomp-status"]["get"].is_object());
+    assert!(v["paths"]["/api/mem-writes-in-range"]["get"].is_object());
     assert!(v["paths"]["/api/hash-input-search"]["post"].is_object());
     assert!(v["paths"]["/ws/jobs"]["get"].is_object());
+}
+
+#[tokio::test]
+async fn python_web_compat_status_endpoints_are_available() {
+    let (_tmp, cd) = synth_call_dir();
+    let app = tracemiku_server::build_router(cd).expect("build router");
+
+    for uri in ["/api/bg-status", "/api/decomp-status"] {
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        if uri == "/api/bg-status" {
+            assert_eq!(v["cfg"]["status"], "ready");
+            assert_eq!(v["index"]["status"], "ready");
+            assert_eq!(v["mem"]["status"], "ready");
+            assert!(v["decomp"]["status"].is_string());
+        } else {
+            assert!(v["status"].is_string());
+            assert!(v.get("so_path").is_some());
+        }
+    }
 }
 
 #[tokio::test]

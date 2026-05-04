@@ -55,6 +55,8 @@ pub fn router(state: AppState) -> Router {
         .route("/openapi.json", get(api_infra::openapi_handler))
         .route("/ws/jobs", get(api_infra::jobs_ws_handler))
         .route("/api/meta", get(meta::meta_handler))
+        .route("/api/bg-status", get(api_infra::bg_status_handler))
+        .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
@@ -153,6 +155,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/last-write-of-addr",
             get(memory_query::last_write_of_addr_handler),
+        )
+        .route(
+            "/api/mem-writes-in-range",
+            get(memory_query::mem_writes_in_range_handler),
         )
         .route(
             "/api/idxs-touching-range",

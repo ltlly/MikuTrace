@@ -1,9 +1,12 @@
 //! API discovery and job-progress infrastructure endpoints.
 
 use axum::extract::ws::{Message, WebSocketUpgrade};
+use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::{json, Value};
+
+use crate::state::AppState;
 
 pub async fn jobs_ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(|mut socket| async move {
@@ -25,6 +28,74 @@ pub async fn openapi_handler() -> Json<Value> {
         },
         "paths": openapi_paths(),
     }))
+}
+
+pub async fn bg_status_handler(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "cfg": ready_task_status(),
+        "pc_inst": ready_task_status(),
+        "pc_to_block": ready_task_status(),
+        "block_idxs": ready_task_status(),
+        "index": ready_task_status(),
+        "mem": ready_task_status(),
+        "decomp": decomp_status_value(&state),
+    }))
+}
+
+pub async fn decomp_status_handler(State(state): State<AppState>) -> Json<Value> {
+    Json(decomp_status_value(&state))
+}
+
+fn ready_task_status() -> Value {
+    json!({
+        "status": "ready",
+        "started_at": null,
+        "ready_at": null,
+        "err": null,
+    })
+}
+
+fn decomp_status_value(state: &AppState) -> Value {
+    let status = state
+        .inner
+        .bn_sidecar
+        .lock()
+        .map(|sidecar| sidecar.status())
+        .unwrap_or_else(|e| {
+            json!({
+                "ready": false,
+                "configured": false,
+                "so_path": null,
+                "error": e.to_string(),
+            })
+        });
+    let ready = status
+        .get("ready")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let configured = status
+        .get("configured")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_error = status.get("error").is_some_and(|v| !v.is_null());
+    let web_status = if ready {
+        "ready"
+    } else if has_error {
+        "error"
+    } else if configured {
+        "loading"
+    } else {
+        "disabled"
+    };
+    json!({
+        "status": web_status,
+        "name": if configured { Value::String("bn".to_string()) } else { Value::Null },
+        "err": status.get("error").cloned().unwrap_or(Value::Null),
+        "started_at": null,
+        "ready_at": null,
+        "so_path": status.get("so_path").cloned().unwrap_or(Value::Null),
+        "elapsed": null,
+    })
 }
 
 fn openapi_paths() -> Value {
@@ -64,9 +135,12 @@ fn openapi_paths() -> Value {
         ("/api/mem-dump", "get"),
         ("/api/last-write-of-reg", "get"),
         ("/api/last-write-of-addr", "get"),
+        ("/api/mem-writes-in-range", "get"),
         ("/api/idxs-touching-addr", "get"),
         ("/api/idxs-touching-range", "get"),
         ("/api/find-mem-pattern", "get"),
+        ("/api/bg-status", "get"),
+        ("/api/decomp-status", "get"),
         ("/api/jni-events", "get"),
         ("/api/jni-calls", "get"),
         ("/api/jobj-history", "get"),
