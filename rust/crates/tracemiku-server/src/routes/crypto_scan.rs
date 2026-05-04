@@ -1,5 +1,7 @@
 //! GET /api/crypto-scan.
 
+use std::collections::HashMap;
+
 use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
@@ -79,60 +81,81 @@ fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanRespon
             any_hit: false,
         };
     }
-    let addrs = mem.bytes.keys().copied().collect::<Vec<_>>();
-    let mut primitives = Vec::with_capacity(CRYPTO_PATTERNS.len());
-    for (name, hex_str) in CRYPTO_PATTERNS {
-        let pattern = parse_hex_bytes(hex_str).unwrap_or_default();
-        let hits = scan_pattern(mem, &addrs, &pattern);
-        primitives.push(CryptoPrimitive {
+    let parsed = CRYPTO_PATTERNS
+        .iter()
+        .filter_map(|(name, hex_str)| {
+            parse_hex_bytes(hex_str).map(|bytes| (*name, *hex_str, bytes))
+        })
+        .collect::<Vec<_>>();
+    let mut hits_by_pattern = (0..parsed.len()).map(|_| Vec::new()).collect::<Vec<_>>();
+    scan_patterns_by_first_byte(mem, &parsed, &mut hits_by_pattern);
+    let primitives = parsed
+        .into_iter()
+        .zip(hits_by_pattern)
+        .map(|((name, hex_str, _bytes), hits)| CryptoPrimitive {
             name,
             pattern: hex_str,
             hit_count: hits.len(),
             hits,
-        });
-    }
+        })
+        .collect::<Vec<_>>();
     let any_hit = primitives.iter().any(|p| p.hit_count > 0);
     CryptoScanResponse {
-        scanned: addrs.len(),
+        scanned: mem.bytes.len(),
         primitives,
         any_hit,
     }
 }
 
-fn scan_pattern(mem: &MemShadow, addrs: &[u64], pattern: &[u8]) -> Vec<CryptoHit> {
-    let mut hits = Vec::new();
-    if pattern.is_empty() {
-        return hits;
-    }
-    for &addr in addrs {
-        let mut first_idx: Option<usize> = None;
-        let mut matched = true;
-        for (offset, want) in pattern.iter().enumerate() {
-            let Some(events) = mem.bytes.get(&(addr + offset as u64)) else {
-                matched = false;
-                break;
-            };
-            let Some(last) = events.last() else {
-                matched = false;
-                break;
-            };
-            if last.byte != *want {
-                matched = false;
-                break;
-            }
-            first_idx = Some(first_idx.map_or(last.idx, |old| old.min(last.idx)));
+fn scan_patterns_by_first_byte(
+    mem: &MemShadow,
+    patterns: &[(&'static str, &'static str, Vec<u8>)],
+    hits_by_pattern: &mut [Vec<CryptoHit>],
+) {
+    let mut by_first: HashMap<u8, Vec<usize>> = HashMap::new();
+    for (idx, (_, _, bytes)) in patterns.iter().enumerate() {
+        if let Some(&first) = bytes.first() {
+            by_first.entry(first).or_default().push(idx);
         }
-        if matched {
-            hits.push(CryptoHit {
+    }
+
+    for (&addr, events) in &mem.bytes {
+        let Some(last) = events.last() else {
+            continue;
+        };
+        let Some(candidate_idxs) = by_first.get(&last.byte) else {
+            continue;
+        };
+        for &pattern_idx in candidate_idxs {
+            if hits_by_pattern[pattern_idx].len() >= 5 {
+                continue;
+            }
+            let pattern = &patterns[pattern_idx].2;
+            let Some(first_idx) = match_pattern_at(mem, addr, pattern) else {
+                continue;
+            };
+            hits_by_pattern[pattern_idx].push(CryptoHit {
                 addr: format!("{addr:#x}"),
-                first_idx,
+                first_idx: Some(first_idx),
             });
-            if hits.len() >= 5 {
-                break;
-            }
         }
     }
-    hits
+}
+
+fn match_pattern_at(mem: &MemShadow, addr: u64, pattern: &[u8]) -> Option<usize> {
+    if pattern.is_empty() {
+        return None;
+    }
+    let mut first_idx: Option<usize> = None;
+    for (offset, want) in pattern.iter().enumerate() {
+        let events = mem.bytes.get(&(addr + offset as u64))?;
+        let last = events.last()?;
+        if last.byte != *want {
+            return None;
+        }
+        first_idx = Some(first_idx.map_or(last.idx, |old| old.min(last.idx)));
+    }
+    first_idx
 }
 
 fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
