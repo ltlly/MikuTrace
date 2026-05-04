@@ -522,7 +522,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | `/api/diff-traces` | 🔜 M3 | |
 | `/api/functions` | ✅ M2-ε | FunctionIndex prize; trace + symbol + auto sources; source-tagged entries |
 | `/api/dec/summary` | ✅ M3-ε | trace-ir + symbol-source fallback shipped; parity HARD-gate green at 0.99 jaccard on real trace |
-| `/api/dec/fn/{id}` | 🔜 M3-ζ | per-fn markdown bundle |
+| `/api/dec/fn/{id}` | 🟡 M3-θ | trace:* + bare F0 legacy id supported via render_func_md (skeleton — header + metadata + per-block asm/samples + tier filter). sym:* / bn:* sources + render_summary_md fidelity + LLM bundle defer to later milestones |
 | `/api/dec/llm-call` | 🔜 M3 | |
 | `/api/dec/models` | ⏸ | Just lists configured LLM keys; UI nicety |
 | `/api/llil/render`, `/api/llil/llm` | 🔜 M5 | LLIL pipeline |

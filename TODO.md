@@ -56,6 +56,7 @@
 - M3-ζ BlockIR construction skeleton (id/pc/end_pc/insns/exec_count for F0 + split FuncIRs; stable B0..Bn ids; build_trace_ir gains &CFG): ✅ 2026-05-04
 - M3-η BlockIR.asm rendering + samples extraction (per-PC first-idx map; x0..x3 + sp at first occurrence): ✅ 2026-05-04
 - M3-η BlockIR.tier classification (hot top-150 by exec_count, warm, cold): ✅ 2026-05-04
+- M3-θ /api/dec/fn/{id} + render_func_md skeleton (header + metadata + per-block asm/samples; trace:* + bare F0): ✅ 2026-05-04
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
 - M3-γ data_only flag + DEFAULT_FRAME_REGS: ✅ 2026-05-04
@@ -69,10 +70,11 @@
 - M3-ε: split_top_k_callees + /api/dec/summary symbol-source fallback + parity hard-gate ✅ 2026-05-04
 - M3-ζ: BlockIR construction skeleton (id/pc/end_pc/insns/exec_count) ✅ 2026-05-04
 - M3-η: BlockIR asm + samples + tier ✅ 2026-05-04
-- M3-θ (next): BlockIR.exits with kind/taken_count (extends Rust CFG to track edge metadata), /api/dec/fn/{id} per-fn markdown, render_summary_md fidelity, type_anchor.py port (json-spec driven), vm_candidate.py port
-- M3-ι: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
-- M3-κ: memshadow v3 binary sidecar (.memshadow.v3.bin)
-- M3-λ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
+- M3-θ: /api/dec/fn/{id} + render_func_md skeleton ✅ 2026-05-04
+- M3-ι (next): BlockIR.exits with kind/taken_count (extends Rust CFG to track edge metadata), /api/dec/fn/{id} sym:* / bn:* source support, render_summary_md fidelity, type_anchor.py port (json-spec driven), vm_candidate.py port
+- M3-κ: Graph panel SVG (cfg-svg via petgraph or graphviz-rust)
+- M3-λ: memshadow v3 binary sidecar (.memshadow.v3.bin)
+- M3-μ: Python viewer cutover prep (CLI parity + remove webui after manual sign-off)
 - M3-M7: 见 spec §9 milestones
 
 **M3-γ scope (history):**
