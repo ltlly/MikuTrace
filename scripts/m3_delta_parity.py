@@ -82,10 +82,11 @@ def main():
         wait_listening(py_port)
         wait_listening(rs_port)
 
-        # M3-δ skeleton emits only the trace-ir root F0; Python
-        # emits trace-ir top-K + symbol-source fallback. Soft-gate
-        # the parity until M3-ε ports the symbol-source path.
-        SOFT_LABELS = {"dec-summary"}
+        # M3-ε closed the soft-gate by porting:
+        #   1. split_top_k_callees in build_trace_ir (F1..Fn entries)
+        #   2. symbol-source fallback in /api/dec/summary handler
+        # Both endpoints are now hard-gated; jaccard ≥ 0.6 required.
+        SOFT_LABELS: set[str] = set()
 
         # Python may take 30-60s on a 469k-record trace to build the IR
         # because TraceIR construction is lazy. fetch() has a 60s timeout.

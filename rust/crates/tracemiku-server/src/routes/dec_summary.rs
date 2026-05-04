@@ -1,8 +1,11 @@
 //! GET /api/dec/summary — TraceIR top-level summary.
 //!
-//! Wire shape mirrors webui/server.py:2756-2773. M3-δ skeleton: only
-//! "trace-ir" source entries (no symbol/bn fallback yet); minimal
-//! summary_md (Python's render_summary_md fidelity defers to M3-ε).
+//! Wire shape mirrors webui/server.py:2734-2773. M3-ε: trace-ir entries
+//! (root + top-K split callees from build_trace_ir) plus the
+//! symbol-source fallback (FunctionIndex entries with source=="symbol"
+//! whose names aren't already in the trace-ir set).
+
+use std::collections::HashSet;
 
 use axum::extract::State;
 use axum::Json;
@@ -58,6 +61,32 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
             trace_ir_id: Some(f.id.clone()),
         })
         .collect();
+
+    // Symbol-source fallback (Python parity at webui/server.py:2745-2755):
+    // for each FunctionIndex entry with source=="symbol" whose name isn't
+    // already in the trace-ir set, append as a sym-source DecFnEntry.
+    let trace_names: HashSet<String> = fns.iter().map(|f| f.name.clone()).collect();
+    let mut fns = fns;
+    for entry in &inner.function_index.entries {
+        if entry.source != "symbol" {
+            continue;
+        }
+        if trace_names.contains(&entry.name) {
+            continue;
+        }
+        fns.push(DecFnEntry {
+            id: entry.id.clone(), // already "sym:<name>" form
+            name: entry.name.clone(),
+            blocks: entry.blocks as usize,
+            loops: 0,
+            calls: 0,
+            type_anchors: 0,
+            entry_idx: None,
+            exit_idx: None,
+            source: "symbol",
+            trace_ir_id: None,
+        });
+    }
 
     let mut summary_md = format!(
         "trace: {} records, module={}\n",
