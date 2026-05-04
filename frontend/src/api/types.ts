@@ -343,6 +343,7 @@ export interface LlilRenderPayload {
   max_records: number;
   ssa: boolean;
   constfold: boolean;
+  flag_elim: boolean;
   dce: boolean;
 }
 
@@ -354,6 +355,7 @@ export interface LlilRenderResponse {
   lift_total: number;
   lift_intrinsic: number;
   lift_coverage: number;
+  flag_elim_pairs: [string, string][];
   removed_pcs: string[];
   pseudocode: string;
 }

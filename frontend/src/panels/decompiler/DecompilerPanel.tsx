@@ -76,11 +76,13 @@ export default function DecompilerPanel() {
         max_records: Math.max(1, Math.min(10000, llilMaxRecords())),
         ssa: true,
         constfold: true,
+        flag_elim: true,
         dce: llilDce(),
       });
       setLlilOutput([
         `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · truncated" : ""}`,
         `lift coverage: ${(r.lift_coverage * 100).toFixed(1)}% · intrinsic ${r.lift_intrinsic}/${r.lift_total}`,
+        r.flag_elim_pairs.length ? `flag elim: ${r.flag_elim_pairs.length} branch${r.flag_elim_pairs.length === 1 ? "" : "es"}` : "",
         r.removed_pcs.length ? `dce removed: ${r.removed_pcs.join(", ")}` : "",
         "",
         r.pseudocode,

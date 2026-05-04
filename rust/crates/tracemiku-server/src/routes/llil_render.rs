@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
-    build_symbol_func_ir, constfold_block, dce_block, decode, lift_arm64, render_llil_block,
-    ssa_block, FuncIR, LiftStats,
+    build_symbol_func_ir, constfold_block, dce_block, decode, flag_elim_block, lift_arm64,
+    render_llil_block, ssa_block, FuncIR, LiftStats,
 };
 
 use crate::state::AppState;
@@ -23,6 +23,8 @@ pub struct LlilRenderPayload {
     pub ssa: bool,
     #[serde(default = "default_true")]
     pub constfold: bool,
+    #[serde(default = "default_true")]
+    pub flag_elim: bool,
     #[serde(default)]
     pub dce: bool,
 }
@@ -48,6 +50,7 @@ pub struct LlilRenderResponse {
     pub lift_total: usize,
     pub lift_intrinsic: usize,
     pub lift_coverage: f64,
+    pub flag_elim_pairs: Vec<(String, String)>,
     pub removed_pcs: Vec<String>,
     pub pseudocode: String,
 }
@@ -82,6 +85,17 @@ pub async fn llil_render_handler(
     if payload.constfold {
         exprs = constfold_block(&exprs);
     }
+    let flag_elim_pairs = if payload.flag_elim {
+        let folded = flag_elim_block(&exprs);
+        exprs = folded.exprs;
+        folded
+            .folded_pairs
+            .into_iter()
+            .map(|(cmp, br)| (format!("{cmp:#x}"), format!("{br:#x}")))
+            .collect()
+    } else {
+        Vec::new()
+    };
     if payload.ssa {
         exprs = ssa_block(&exprs).exprs;
     }
@@ -105,6 +119,7 @@ pub async fn llil_render_handler(
         lift_total: stats.total,
         lift_intrinsic: stats.intrinsic,
         lift_coverage: stats.coverage(),
+        flag_elim_pairs,
         removed_pcs,
         pseudocode,
     }))
