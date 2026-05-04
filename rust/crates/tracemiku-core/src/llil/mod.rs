@@ -8,10 +8,12 @@ pub mod expr;
 pub mod lift;
 pub mod pass_constfold;
 pub mod pass_dce;
+pub mod render;
 pub mod ssa;
 
 pub use expr::{LlilExpr, LlilOp, LlilOperand};
 pub use lift::{lift_arm64, LiftStats};
 pub use pass_constfold::{constfold_block, constfold_expr};
 pub use pass_dce::{dce_block, DceResult};
+pub use render::{render_expr, render_llil_block, render_stmt};
 pub use ssa::{ssa_block, SsaBlock, SsaVar};
