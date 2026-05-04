@@ -51,6 +51,32 @@ interface DiffSource {
 }
 
 const MEMORY_RETRY_MS = 350;
+const MEM_COLS_KEY = "tracemiku-memory-cols";
+
+interface MemCols {
+  addr: number;
+  hex: number;
+  ascii: number;
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function initialMemCols(): MemCols {
+  try {
+    const raw = localStorage.getItem(MEM_COLS_KEY);
+    if (!raw) return { addr: 116, hex: 540, ascii: 150 };
+    const parsed = JSON.parse(raw) as Partial<MemCols>;
+    return {
+      addr: clamp(Number(parsed.addr) || 116, 76, 220),
+      hex: clamp(Number(parsed.hex) || 540, 280, 1100),
+      ascii: clamp(Number(parsed.ascii) || 150, 80, 360),
+    };
+  } catch {
+    return { addr: 116, hex: 540, ascii: 150 };
+  }
+}
 
 function hexByte(byte: number | null): string {
   if (byte === null) return "??";
@@ -96,8 +122,12 @@ function sortedRegNames(regs: Record<string, string>): string[] {
 }
 
 export default function MemoryPanel(props: MemoryPanelProps) {
+  const initialCols = initialMemCols();
   const [addr, setAddr] = createSignal("0x0");
   const [count, setCount] = createSignal(128);
+  const [addrW, setAddrW] = createSignal(initialCols.addr);
+  const [hexW, setHexW] = createSignal(initialCols.hex);
+  const [asciiW, setAsciiW] = createSignal(initialCols.ascii);
   const [memContext, setMemContext] = createSignal<MemContext | null>(null);
   const [selection, setSelection] = createSignal<{ anchor: string; head: string } | null>(null);
   const [dragAnchor, setDragAnchor] = createSignal<string | null>(null);
@@ -126,6 +156,37 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     cancelMemContext();
     setMemContext(null);
     if (clearSelection) setSelection(null);
+  }
+
+  function saveCols() {
+    localStorage.setItem(
+      MEM_COLS_KEY,
+      JSON.stringify({ addr: addrW(), hex: hexW(), ascii: asciiW() }),
+    );
+  }
+
+  function startResize(kind: keyof MemCols, e: PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const starts = { addr: addrW(), hex: hexW(), ascii: asciiW() };
+    document.body.classList.add("is-resizing");
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: PointerEvent) => {
+      const w = starts[kind] + ev.clientX - startX;
+      if (kind === "addr") setAddrW(clamp(w, 76, 220));
+      else if (kind === "hex") setHexW(clamp(w, 280, 1100));
+      else setAsciiW(clamp(w, 80, 360));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-resizing");
+      document.body.style.cursor = "";
+      saveCols();
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
   }
 
   createEffect(() => {
@@ -408,12 +469,28 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                 {" "}· {addr().trim()}={resolvedAddr()}
               </Show>
             </p>
-            <table class="memory-hex-table">
+            <table
+              class="memory-hex-table"
+              style={{
+                "--mem-col-addr": `${addrW()}px`,
+                "--mem-col-hex": `${hexW()}px`,
+                "--mem-col-ascii": `${asciiW()}px`,
+              }}
+            >
               <thead>
                 <tr>
-                  <th>addr</th>
-                  <th>00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f</th>
-                  <th>ascii</th>
+                  <th>
+                    addr
+                    <span class="col-resize" onPointerDown={(e) => startResize("addr", e)} />
+                  </th>
+                  <th>
+                    00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+                    <span class="col-resize" onPointerDown={(e) => startResize("hex", e)} />
+                  </th>
+                  <th>
+                    ascii
+                    <span class="col-resize" onPointerDown={(e) => startResize("ascii", e)} />
+                  </th>
                 </tr>
               </thead>
               <tbody>

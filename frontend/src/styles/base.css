@@ -751,22 +751,55 @@ body.is-resizing {
 }
 
 .memory-hex-table {
+  display: block;
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12px;
+  overflow-x: auto;
+}
+
+.memory-hex-table thead,
+.memory-hex-table tbody {
+  display: block;
+}
+
+.memory-hex-table tr {
+  display: grid;
+  grid-template-columns: var(--mem-col-addr, 116px) minmax(var(--mem-col-hex, 540px), 1fr) var(--mem-col-ascii, 150px);
+  align-items: start;
+  width: 100%;
 }
 
 .memory-hex-table th,
 .memory-hex-table td {
+  position: relative;
+  min-width: 0;
   text-align: left;
   padding: 2px 8px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
+  overflow: hidden;
 }
 
 .memory-hex-table th {
   color: var(--dim);
   font-weight: normal;
+}
+
+.memory-hex-table thead .col-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.memory-hex-table thead .col-resize:hover,
+.memory-hex-table thead .col-resize:active {
+  background: rgba(88, 166, 255, 0.45);
 }
 
 .mem-hex-cells {
