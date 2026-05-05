@@ -6,11 +6,13 @@ use axum::Json;
 use serde::Deserialize;
 
 use tracemiku_core::function_index::parse_id;
-use tracemiku_core::prelude::{build_fn_decompile_prompt, build_symbol_func_ir_indexed, FuncIR};
+use tracemiku_core::prelude::{
+    build_fn_decompile_prompt, build_symbol_func_ir_indexed, FuncIR, PromptBundle,
+};
 
 use crate::state::AppState;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DecLlmCallPayload {
     #[serde(default)]
     pub fn_id: String,
@@ -64,26 +66,22 @@ pub async fn dec_llm_call_handler(
         return Err((StatusCode::BAD_REQUEST, "fn_id is required".to_string()));
     }
 
-    let inner = &state.inner;
-    let fn_ = resolve_fn(&state, &payload.fn_id)?;
-    let canonical_id = fn_.id.clone();
-    let cache_key = cache_key(&payload, &canonical_id);
-
-    if let Some(mut cached) = inner
-        .llm_cache
-        .lock()
-        .expect("llm cache poisoned")
-        .get(&cache_key)
-        .cloned()
-    {
-        if let Some(obj) = cached.as_object_mut() {
-            obj.insert("cache_hit".to_string(), serde_json::Value::Bool(true));
-        }
-        return Ok(Json(cached));
-    }
-
-    let bundle =
-        build_fn_decompile_prompt(inner.top_ir(), &fn_, &payload.tier, &payload.lang, 200_000);
+    let prepare_state = state.clone();
+    let prepare_payload = payload.clone();
+    let prepared =
+        tokio::task::spawn_blocking(move || prepare_dec_llm_call(&prepare_state, &prepare_payload))
+            .await
+            .map_err(|err| {
+                tracing::warn!(target: "tracemiku-server", "dec llm prepare worker failed: {err}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "dec llm prepare worker failed".to_string(),
+                )
+            })??;
+    let (cache_key, bundle) = match prepared {
+        DecLlmPrepared::Cached(cached) => return Ok(Json(cached)),
+        DecLlmPrepared::Ready { cache_key, bundle } => (cache_key, bundle),
+    };
     let result = crate::llm::call_model(
         &payload.model,
         &bundle.user,
@@ -107,13 +105,49 @@ pub async fn dec_llm_call_handler(
     });
 
     if ok {
-        inner
+        state
+            .inner
             .llm_cache
             .lock()
             .expect("llm cache poisoned")
             .insert(cache_key, out.clone());
     }
     Ok(Json(out))
+}
+
+enum DecLlmPrepared {
+    Cached(serde_json::Value),
+    Ready {
+        cache_key: String,
+        bundle: PromptBundle,
+    },
+}
+
+fn prepare_dec_llm_call(
+    state: &AppState,
+    payload: &DecLlmCallPayload,
+) -> Result<DecLlmPrepared, (StatusCode, String)> {
+    let inner = &state.inner;
+    let fn_ = resolve_fn(state, &payload.fn_id)?;
+    let canonical_id = fn_.id.clone();
+    let cache_key = cache_key(payload, &canonical_id);
+
+    if let Some(mut cached) = inner
+        .llm_cache
+        .lock()
+        .expect("llm cache poisoned")
+        .get(&cache_key)
+        .cloned()
+    {
+        if let Some(obj) = cached.as_object_mut() {
+            obj.insert("cache_hit".to_string(), serde_json::Value::Bool(true));
+        }
+        return Ok(DecLlmPrepared::Cached(cached));
+    }
+
+    let bundle =
+        build_fn_decompile_prompt(inner.top_ir(), &fn_, &payload.tier, &payload.lang, 200_000);
+    Ok(DecLlmPrepared::Ready { cache_key, bundle })
 }
 
 fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, String)> {
