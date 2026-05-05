@@ -4,6 +4,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::io::BufRead;
 
 use crate::state::AppState;
 
@@ -12,11 +13,21 @@ pub struct JniEventsQuery {
     pub id: Option<String>,
     pub idx_lo: Option<usize>,
     pub idx_hi: Option<usize>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
 }
+
+fn default_limit() -> usize {
+    1_000
+}
+
+const MAX_LIMIT: usize = 5_000;
 
 #[derive(Debug, Serialize)]
 pub struct JniEventsResponse {
     pub count: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub events: Vec<Value>,
 }
 
@@ -31,6 +42,8 @@ pub async fn jni_events_handler(
             tracing::warn!(target: "tracemiku-server", "jni events worker failed: {err}");
             JniEventsResponse {
                 count: 0,
+                returned: 0,
+                truncated: false,
                 events: Vec::new(),
             }
         });
@@ -39,10 +52,13 @@ pub async fn jni_events_handler(
 
 fn jni_events_response(trace_dir: std::path::PathBuf, q: JniEventsQuery) -> JniEventsResponse {
     let path = trace_dir.join("jni_hooks.jsonl");
+    let limit = q.limit.min(MAX_LIMIT);
+    let mut count = 0usize;
     let mut events = Vec::new();
-    if let Ok(text) = std::fs::read_to_string(path) {
-        for line in text.lines() {
-            let Ok(value) = serde_json::from_str::<Value>(line) else {
+    if let Ok(file) = std::fs::File::open(path) {
+        let reader = std::io::BufReader::new(file);
+        for line in reader.lines().map_while(Result::ok) {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
             if q.id
@@ -65,11 +81,17 @@ fn jni_events_response(trace_dir: std::path::PathBuf, q: JniEventsQuery) -> JniE
             {
                 continue;
             }
-            events.push(value);
+            count += 1;
+            if events.len() < limit {
+                events.push(value);
+            }
         }
     }
+    let returned = events.len();
     JniEventsResponse {
-        count: events.len(),
+        count,
+        returned,
+        truncated: returned < count,
         events,
     }
 }

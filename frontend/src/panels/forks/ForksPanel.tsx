@@ -58,7 +58,10 @@ export default function ForksPanel(props: ForksPanelProps) {
       <Show when={currentResp()}>
         {(r) => (
           <>
-            <p class="dim small">{r().count} event{r().count === 1 ? "" : "s"}</p>
+            <p class="dim small">
+              {r().returned ?? r().events.length}/{r().count} event{r().count === 1 ? "" : "s"}
+              {r().truncated ? " · truncated" : ""}
+            </p>
             <table class="fork-table">
               <thead>
                 <tr>

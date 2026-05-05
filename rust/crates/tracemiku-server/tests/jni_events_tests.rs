@@ -54,6 +54,8 @@ async fn jni_events_filters_by_id_and_idx_range() {
     let (status, v) = get(cd, "/api/jni-events?id=NewStringUTF&idx_lo=2&idx_hi=8").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["events"][0]["id"], "NewStringUTF");
     assert_eq!(v["events"][0]["trace_idx"], 5);
 }
@@ -77,5 +79,18 @@ async fn jni_events_missing_file_returns_empty() {
     let (status, v) = get(cd, "/api/jni-events").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 0);
+    assert_eq!(v["returned"], 0);
+    assert_eq!(v["truncated"], false);
     assert!(v["events"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn jni_events_limit_truncates_returned_events() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/jni-events?limit=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["events"].as_array().unwrap().len(), 1);
 }

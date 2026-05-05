@@ -53,6 +53,8 @@ async fn fork_events_returns_all_events() {
     let (_tmp, call_dir) = synth_call_dir();
     let v = get_json(call_dir, "/api/fork-events").await;
     assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["events"][0]["child_pid"], 123);
     assert_eq!(v["events"][1]["attach_status"], "failed_ptrace_conflict");
 }
@@ -62,6 +64,7 @@ async fn fork_events_filters_by_attach_status() {
     let (_tmp, call_dir) = synth_call_dir();
     let v = get_json(call_dir, "/api/fork-events?status=failed_ptrace_conflict").await;
     assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
     assert_eq!(v["events"][0]["child_pid"], 456);
 }
 
@@ -70,5 +73,16 @@ async fn fork_events_filters_by_is_fork_like() {
     let (_tmp, call_dir) = synth_call_dir();
     let v = get_json(call_dir, "/api/fork-events?is_fork_like=true").await;
     assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
     assert_eq!(v["events"][0]["child_pid"], 123);
+}
+
+#[tokio::test]
+async fn fork_events_limit_truncates_returned_events() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let v = get_json(call_dir, "/api/fork-events?limit=1").await;
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["events"].as_array().unwrap().len(), 1);
 }

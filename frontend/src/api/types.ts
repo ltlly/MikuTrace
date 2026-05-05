@@ -370,6 +370,8 @@ export interface ForkEvent {
 
 export interface ForkEventsResponse {
   count: number;
+  returned?: number;
+  truncated?: boolean;
   events: ForkEvent[];
   request_status?: string;
 }

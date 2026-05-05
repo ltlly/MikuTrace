@@ -10,11 +10,21 @@ use crate::state::AppState;
 pub struct ForkEventsQuery {
     pub status: Option<String>,
     pub is_fork_like: Option<bool>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
 }
+
+fn default_limit() -> usize {
+    1_000
+}
+
+const MAX_LIMIT: usize = 5_000;
 
 #[derive(Debug, Serialize)]
 pub struct ForkEventsResponse {
     pub count: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub events: Vec<serde_json::Value>,
 }
 
@@ -22,7 +32,10 @@ pub async fn fork_events_handler(
     State(state): State<AppState>,
     Query(q): Query<ForkEventsQuery>,
 ) -> Json<ForkEventsResponse> {
-    let events: Vec<serde_json::Value> = state
+    let limit = q.limit.min(MAX_LIMIT);
+    let mut count = 0usize;
+    let mut events = Vec::new();
+    for ev in state
         .inner
         .meta
         .fork_events
@@ -41,10 +54,17 @@ pub async fn fork_events_handler(
                 .is_some_and(|v| v == want),
             None => true,
         })
-        .cloned()
-        .collect();
+    {
+        count += 1;
+        if events.len() < limit {
+            events.push(ev.clone());
+        }
+    }
+    let returned = events.len();
     Json(ForkEventsResponse {
-        count: events.len(),
+        count,
+        returned,
+        truncated: returned < count,
         events,
     })
 }
