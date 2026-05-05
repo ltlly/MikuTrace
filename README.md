@@ -100,6 +100,8 @@ Current source-of-truth docs are:
 - `docs/PER_CALL_TRACE_DESIGN.md`: current per-call trace layout and record
   contract.
 - `docs/trace-decompiler-design.md`: current decompiler/BN/HLIL route design.
+- `docs/android-analysis-frontier-report.md`: Android analysis pain points,
+  product/UI direction, and current bug triage.
 - `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
   historical Rust/Solid cutover design and parity map.
 
