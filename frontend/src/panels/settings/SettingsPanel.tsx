@@ -1,9 +1,8 @@
-import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createResource, createSignal, onCleanup, Show } from "solid-js";
 
 import {
   fetchBgStatus,
   fetchDecompStatus,
-  fetchDecModels,
   fetchMeta,
   fetchOpenApi,
 } from "~/api/client";
@@ -36,7 +35,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const [dense, setDense] = createSignal(initialDense());
   const activeSource = () => (props.active ? "active" : undefined);
   const [meta] = createResource(activeSource, () => fetchMeta());
-  const [models] = createResource(activeSource, () => fetchDecModels());
   const [openapi] = createResource(activeSource, () => fetchOpenApi());
   const [statusTick, setStatusTick] = createSignal(0);
   const [bg] = createResource(
@@ -117,23 +115,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             </div>
           )}
         </Show>
-        <Show when={models()}>
-          {(r) => (
-            <div class="settings-section">
-              <h3>llm models</h3>
-              <ul class="settings-models">
-                <For each={r().models}>
-                  {(model) => (
-                    <li class={r().api_keys_configured[model] ? "ready" : "missing"}>
-                      <span>{model}</span>
-                      <span>{r().api_keys_configured[model] ? "ready" : "no key"}</span>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </div>
-          )}
-        </Show>
         <Show when={bg() || decomp()}>
           <div class="settings-section">
             <h3>backend</h3>
@@ -164,10 +145,10 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           </div>
         </Show>
       </div>
-      <Show when={meta.error || models.error || openapi.error || bg.error || decomp.error}>
+      <Show when={meta.error || openapi.error || bg.error || decomp.error}>
         <p class="err">
           settings load warning:{" "}
-          {String(meta.error || models.error || openapi.error || bg.error || decomp.error)}
+          {String(meta.error || openapi.error || bg.error || decomp.error)}
         </p>
       </Show>
     </section>

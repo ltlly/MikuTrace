@@ -4,7 +4,7 @@ import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
-type ViewMode = "flow" | "table";
+type ViewMode = "timeline" | "table";
 const TAINT_RETRY_MS = 500;
 const MAX_TAINT_ROWS = 5000;
 
@@ -38,7 +38,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [start, setStart] = createSignal(0);
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
-  const [viewMode, setViewMode] = createSignal<ViewMode>("flow");
+  const [viewMode, setViewMode] = createSignal<ViewMode>("timeline");
   const [maxCount, setMaxCount] = createSignal(200);
   const [throughMem, setThroughMem] = createSignal(false);
   const [dataOnly, setDataOnly] = createSignal(false);
@@ -224,12 +224,12 @@ export default function TaintPanel(props: TaintPanelProps) {
             checked={crossFnCall()}
             onChange={(e) => setCrossFnCall(e.currentTarget.checked)}
           />
-          {" "}call-depth flow
+          {" "}call-depth indent
         </label>
         <label>
           view
           <select value={viewMode()} onChange={(e) => setViewMode(e.currentTarget.value as ViewMode)}>
-            <option value="flow">flow</option>
+            <option value="timeline">timeline</option>
             <option value="table">table</option>
           </select>
         </label>
@@ -249,7 +249,7 @@ export default function TaintPanel(props: TaintPanelProps) {
                 {" "}· stopped at max
               </Show>
             </p>
-            <Show when={viewMode() === "flow"} fallback={
+            <Show when={viewMode() === "timeline"} fallback={
               <table class="taint-table">
                 <thead>
                   <tr>
@@ -286,10 +286,10 @@ export default function TaintPanel(props: TaintPanelProps) {
                       style={{ "padding-left": rowIndent(row) }}
                       onClick={() => props.onSelect(row.idx)}
                     >
-                      <span class="idx">#{row.idx}</span>
-                      <span class="dim small">{row.func ?? "?"}</span>
-                      <code>{row.asm}</code>
-                      <span class="dim small">{labelFor(row)}</span>
+                      <span class="taint-tree-idx">#{row.idx}</span>
+                      <span class="taint-tree-fn dim small">{row.func ?? "?"}</span>
+                      <code class="taint-tree-asm">{row.asm}</code>
+                      <span class="taint-tree-why dim small">{labelFor(row)}</span>
                     </button>
                   )}
                 </For>

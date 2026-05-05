@@ -5,7 +5,6 @@ import { fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/clien
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
-import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
@@ -31,7 +30,7 @@ type LeftTab =
   | "xref"
   | "sofilter"
   | "settings";
-type RightTab = "cfg" | "regs" | "hlil" | "dec";
+type RightTab = "cfg" | "regs" | "hlil";
 type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 type HelpState = { topic: HelpTopic; x: number; y: number };
@@ -606,7 +605,6 @@ export default function App() {
       cfg: "Graph",
       regs: "Registers",
       hlil: "HLIL",
-      dec: "Decompile",
     };
     return titles[rightTab()];
   });
@@ -678,7 +676,7 @@ export default function App() {
   const helpBody = createMemo(() => {
     const topic = helpTopic();
     if (topic === "overview") {
-      return "主界面按原版 Web 的调试器布局组织：左侧是函数、回溯、调用树、字符串、污点和交叉引用；中间是动态执行过的汇编 trace；下方是内存和当前 PC 的执行历史；右侧是 CFG、寄存器和反编译。全局 cursor 就是当前选中的 trace idx，所有窗口都围绕它联动。";
+      return "主界面按原版 Web 的调试器布局组织：左侧是函数、回溯、调用树、字符串、污点和交叉引用；中间是动态执行过的汇编 trace；下方是内存和当前 PC 的执行历史；右侧是 CFG、寄存器和 HLIL。全局 cursor 就是当前选中的 trace idx，所有窗口都围绕它联动。";
     }
     if (topic === "disasm") {
       return "每一行是一条实际执行过的 ARM64 指令快照，不是静态反汇编列表。列含义依次是执行序号、PC、函数+偏移和汇编文本。滚动条对应整个 trace；点击行会设置 cursor，并把该指令里第一个寄存器自动作为污点/寄存器窗口的当前寄存器。";
@@ -687,7 +685,7 @@ export default function App() {
       if (rightTab() === "cfg") return "CFG 显示当前函数的动态基本块图，默认跟随当前 trace 所在函数，避免直接渲染全 trace 导致 dot 超时。空白处拖动平移，按住 Ctrl 滚轮缩放；点击图中的指令或块头会跳到 trace 中离当前 cursor 最近的一次执行。";
       if (rightTab() === "regs") return "寄存器窗口显示当前 cursor 的寄存器状态，并像 pwndbg 一样自动高亮相对上一条 trace 发生变化的寄存器；note 会标出 zero、pc、sp/stack 和疑似指针。点击寄存器会把它设为污点追踪的当前寄存器。";
       if (rightTab() === "hlil") return "HLIL 窗口跟随 Functions 里选中的 FunctionIndex 条目；配置了 Binary Ninja sidecar 时可显示对应 BN HLIL。它用于静态结构理解，不替代中间 trace 的动态执行列表。";
-      return "Decompile 窗口显示当前函数的 TraceIR、LLIL 或 LLM 反编译结果。先在 Functions/CallTree/CFG 中定位函数，再在这里查看更高层的伪代码摘要。";
+      return "";
     }
     if (topic === "bottom") {
       if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。双击字节跳来源 idx，右键字节显示该地址前后的读写触碰分析。";
@@ -695,11 +693,11 @@ export default function App() {
       if (bottomTab() === "string-provenance") return "Provenance 显示 Strings 双击后选中字符串的逐字节来源：每个字符当前值、写入 idx 列表和读取 idx 列表。点击 w#/r# 会跳到对应 trace。";
       return "Navigation 记录本次页面会话里的 cursor 跳转历史，所有来自 Disassembly、CFG、CallTree、Strings、Refs 和 Trace for PC 的跳转都会进入这里。back/forward 只改变 cursor，不重新请求历史。";
     }
-    if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG、HLIL 和 Decompile；记录数、block 数和入口地址用来判断热函数和分析范围。";
+    if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG 和 HLIL；记录数、block 数和入口地址用来判断热函数和分析范围。";
     if (leftTab() === "back") return "Backtrace 在当前 cursor 处重建动态调用栈。点击 frame 会跳到对应 call site，用于从深层 JNI/Native 调用回到上游上下文。";
     if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
     if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。单击跳到第一次写入/触碰该字符串地址的 trace；双击会在底部 Provenance 展示每个字符是谁写入、谁读取。";
-    if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源。Flow 视图默认按调用深度缩进，关闭 call-depth flow 后只看平铺传播命中顺序。";
+    if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源。Timeline 视图按 trace 顺序显示命中项，可按调用深度缩进；它不是依赖树。";
     if (leftTab() === "xref") return "Refs 上半部分是当前 PC 在 trace 中的其它执行位置；下半部分是按解码后的汇编文本做正则搜索。它不是静态代码引用分析，ret 这类通用指令只有在提交文本搜索后才会列出匹配。";
     if (leftTab() === "settings") return "Settings 显示后端 API、MemShadow 状态、密度和调试开关。API debug log 可在需要定位前端/后端交互时打开。";
     return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
@@ -972,9 +970,6 @@ export default function App() {
                 active={rightTab() === "hlil"}
               />
             </div>
-            <div class="rbody" classList={{ active: rightTab() === "dec" }}>
-              <DecompilerPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} active={rightTab() === "dec"} />
-            </div>
           </div>
         </section>
 
@@ -982,7 +977,6 @@ export default function App() {
           {rtab("cfg", "Graph", "Trace CFG")}
           {rtab("regs", "Registers", "当前 cursor 寄存器")}
           {rtab("hlil", "HLIL", "BN HLIL")}
-          {rtab("dec", "Decompile", "TraceIR / LLIL / LLM")}
         </aside>
 
         <footer id="cmdbar">

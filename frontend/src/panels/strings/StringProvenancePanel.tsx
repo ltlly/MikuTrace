@@ -113,8 +113,8 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
       <Show when={props.request}>
         {(req) => (
           <>
-            <p class="dim small">
-              string @ <code>{req().addr}</code> · len {req().len} · <code>{req().text}</code>
+            <p class="dim small string-prov-summary">
+              string @ <code>{req().addr}</code> · len {req().len} · <code class="string-prov-text">{req().text}</code>
             </p>
             <Show when={!resp.loading && resp.error}>
               <p class="err">provenance failed: {String(resp.error)}</p>
@@ -123,32 +123,34 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
               <p class="dim">memory index loading…</p>
             </Show>
             <Show when={readyResp()}>
-              <table class="string-prov-table">
-                <thead>
-                  <tr>
-                    <th>addr</th>
-                    <th>hex</th>
-                    <th>char</th>
-                    <th>state</th>
-                    <th>writers</th>
-                    <th>readers</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={shownBytes()}>
-                    {(b) => (
-                      <tr>
-                        <td><code>{b.addr}</code></td>
-                        <td>{hexByte(b.byte)}</td>
-                        <td>{printable(b.byte)}</td>
-                        <td>{kindLabel(b.kind)}</td>
-                        <td class="idx-links">{idxButtons(b, "w")}</td>
-                        <td class="idx-links">{idxButtons(b, "r")}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
+              <div class="string-prov-scroll">
+                <table class="string-prov-table">
+                  <thead>
+                    <tr>
+                      <th>addr</th>
+                      <th>hex</th>
+                      <th>char</th>
+                      <th>state</th>
+                      <th>writers</th>
+                      <th>readers</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={shownBytes()}>
+                      {(b) => (
+                        <tr>
+                          <td><code>{b.addr}</code></td>
+                          <td>{hexByte(b.byte)}</td>
+                          <td>{printable(b.byte)}</td>
+                          <td>{kindLabel(b.kind)}</td>
+                          <td class="idx-links">{idxButtons(b, "w")}</td>
+                          <td class="idx-links">{idxButtons(b, "r")}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
             </Show>
           </>
         )}
