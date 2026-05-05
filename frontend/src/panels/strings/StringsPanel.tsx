@@ -20,6 +20,7 @@ interface StringsSource {
 }
 
 const STRINGS_RETRY_MS = 500;
+const MAX_STRING_LIMIT = 5000;
 
 export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
@@ -36,7 +37,7 @@ export default function StringsPanel(props: StringsPanelProps) {
     const next = {
       minLen: minLen(),
       q: query(),
-      limit: Math.max(1, Math.min(5000, limit())),
+      limit: Math.max(1, Math.min(MAX_STRING_LIMIT, limit())),
       cursor: atCursor() ? props.idx : -1,
       retry: retry(),
     };
@@ -167,7 +168,7 @@ export default function StringsPanel(props: StringsPanelProps) {
           <input
             type="number"
             min="1"
-            max="5000"
+            max={MAX_STRING_LIMIT}
             value={limit()}
             onInput={(e) => setLimit(Number(e.currentTarget.value) || 500)}
           />
@@ -195,11 +196,26 @@ export default function StringsPanel(props: StringsPanelProps) {
           <>
             <p class="dim small">
               {r().returned ?? r().strings.length}/{r().count} string{r().count === 1 ? "" : "s"}
-              {r().truncated ? " · truncated" : ""}
+              {r().truncated ? " · partial result" : ""}
               <Show when={r().cursor >= 0}>
                 {" "}@ cursor={r().cursor}
               </Show>
             </p>
+            <Show when={r().truncated}>
+              <div class="cap-notice" role="status">
+                <span>
+                  String list stopped at {(r().request_limit ?? limit()).toLocaleString()} row cap; more matches may exist.
+                </span>
+                <Show
+                  when={(r().request_limit ?? limit()) < MAX_STRING_LIMIT}
+                  fallback={<span class="dim">UI/server cap is {MAX_STRING_LIMIT.toLocaleString()} rows; narrow the filter or enable at-cursor.</span>}
+                >
+                  <button type="button" onClick={() => setLimit(MAX_STRING_LIMIT)}>
+                    show {MAX_STRING_LIMIT.toLocaleString()}
+                  </button>
+                </Show>
+              </div>
+            </Show>
             <ul class="strings-list">
               <For each={r().strings}>
                 {(s) => (
