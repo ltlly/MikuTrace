@@ -125,6 +125,20 @@ JNI objects, and value length. Use the instruction immediately before
 `value_idx` as the `NewStringUTF` callsite seed; on ARM64 this is commonly a
 `blr` with `x1` holding the C string pointer.
 
+For an AI agent, the report-oriented shortcut is:
+
+```bash
+rust/target/debug/tracemiku-cli output-backtrace <call_dir> --key x-sign
+```
+
+It starts at the observed JNI output, adds the percent-decoded byte pattern when
+the value is URL-encoded, searches trace memory for both byte patterns, reports
+the current writer provenance for matching bytes, resolves those writer
+instructions back to source registers, and runs bounded backward taint from the
+JNI callsite plus discovered writer registers. This captures the manual strategy
+that worked before traceMiku existed: begin at the generated x-sign and walk
+upward.
+
 Use `string-provenance` when a string table entry or discovered byte sequence
 looks like the x-sign, an input token, timestamp, app key, device id, or encoded
 intermediate.

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
@@ -564,6 +564,40 @@ enum Cmd {
         contains: Option<String>,
         #[arg(long, default_value_t = 2000)]
         limit: usize,
+    },
+    /// Build an output-to-input backward trace report for a known output.
+    OutputBacktrace {
+        trace_dir: PathBuf,
+        /// Start from a JNI NewStringUTF key/value pair, for example x-sign.
+        #[arg(long)]
+        key: Option<String>,
+        /// Start from an observed UTF-8 output string directly.
+        #[arg(long)]
+        value: Option<String>,
+        /// Start from raw bytes as hex instead of a UTF-8 string.
+        #[arg(long = "bytes-hex")]
+        bytes_hex: Option<String>,
+        /// Max NewStringUTF events to scan when --key is used.
+        #[arg(long, default_value_t = 2000)]
+        jni_limit: usize,
+        /// Max memory locations to report for each byte pattern.
+        #[arg(long, default_value_t = 20)]
+        max_mem_hits: usize,
+        /// Max memory writes to report for each memory hit.
+        #[arg(long, default_value_t = 20)]
+        writes_per_hit: usize,
+        /// Max backward-taint seeds to run from discovered writers.
+        #[arg(long, default_value_t = 8)]
+        taint_seeds: usize,
+        /// Max rows per backward-taint seed.
+        #[arg(long, default_value_t = 1000)]
+        taint_max_count: usize,
+        /// Skip backward-taint expansion and only report output/memory writers.
+        #[arg(long)]
+        skip_taint: bool,
+        /// Do not add a percent-decoded pattern for URL-encoded strings.
+        #[arg(long = "no-url-decode")]
+        no_url_decode: bool,
     },
     /// GET /api/jobj-history.
     JobjHistory {
@@ -1235,6 +1269,33 @@ async fn main() -> anyhow::Result<()> {
             contains,
             limit,
         }) => cmd_jni_output_strings(trace_dir, key, contains, limit).await,
+        Some(Cmd::OutputBacktrace {
+            trace_dir,
+            key,
+            value,
+            bytes_hex,
+            jni_limit,
+            max_mem_hits,
+            writes_per_hit,
+            taint_seeds,
+            taint_max_count,
+            skip_taint,
+            no_url_decode,
+        }) => {
+            let opts = OutputBacktraceOpts {
+                key,
+                value,
+                bytes_hex,
+                jni_limit,
+                max_mem_hits,
+                writes_per_hit,
+                taint_seeds,
+                taint_max_count,
+                skip_taint,
+                url_decode: !no_url_decode,
+            };
+            cmd_output_backtrace(trace_dir, opts).await
+        }
         Some(Cmd::JobjHistory {
             trace_dir,
             jobject,
@@ -1416,6 +1477,16 @@ async fn cmd_jni_output_strings(
     contains: Option<String>,
     limit: usize,
 ) -> anyhow::Result<()> {
+    let report = jni_output_string_pairs(trace_dir, key, contains, limit).await?;
+    print_pretty(&report)
+}
+
+async fn jni_output_string_pairs(
+    trace_dir: PathBuf,
+    key: Option<String>,
+    contains: Option<String>,
+    limit: usize,
+) -> anyhow::Result<serde_json::Value> {
     let params = vec![
         ("limit", limit.to_string()),
         ("id", "NewStringUTF".to_string()),
@@ -1477,13 +1548,448 @@ async fn cmd_jni_output_strings(
         .first()
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    print_pretty(&serde_json::json!({
+    Ok(serde_json::json!({
         "count": pairs.len(),
         "pairs": pairs,
         "source_events": strings.len(),
         "source_truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Bool(false)),
         "unpaired": unpaired,
     }))
+}
+
+#[derive(Debug)]
+struct OutputBacktraceOpts {
+    key: Option<String>,
+    value: Option<String>,
+    bytes_hex: Option<String>,
+    jni_limit: usize,
+    max_mem_hits: usize,
+    writes_per_hit: usize,
+    taint_seeds: usize,
+    taint_max_count: usize,
+    skip_taint: bool,
+    url_decode: bool,
+}
+
+#[derive(Debug)]
+struct OutputSource {
+    json: serde_json::Value,
+    primary_bytes: Vec<u8>,
+    text: Option<String>,
+    value_idx: Option<usize>,
+}
+
+async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> anyhow::Result<()> {
+    let source = resolve_output_source(trace_dir.clone(), &opts).await?;
+    let mut patterns: Vec<(&'static str, Vec<u8>)> =
+        vec![("observed", source.primary_bytes.clone())];
+    if opts.url_decode {
+        if let Some(text) = source.text.as_deref() {
+            let decoded = percent_decode_bytes(text.as_bytes());
+            if decoded != source.primary_bytes {
+                patterns.push(("percent_decoded", decoded));
+            }
+        }
+    }
+
+    let mut seen_patterns = HashSet::new();
+    let mut pattern_reports = Vec::new();
+    let mut taint_seed_seen = HashSet::new();
+    let mut taint_seed_queue: Vec<serde_json::Value> = Vec::new();
+
+    if let Some(value_idx) = source.value_idx {
+        if value_idx > 0 {
+            push_taint_seed(
+                &mut taint_seed_seen,
+                &mut taint_seed_queue,
+                serde_json::json!({
+                    "kind": "jni_new_string_utf_callsite",
+                    "start": value_idx - 1,
+                    "reg": "x1",
+                    "reason": "NewStringUTF callsite; x1 normally points at the C string bytes on ARM64",
+                }),
+            );
+        }
+    }
+
+    for (kind, bytes) in patterns {
+        if bytes.is_empty() {
+            continue;
+        }
+        let hex = bytes_to_hex(&bytes);
+        if !seen_patterns.insert(hex.clone()) {
+            continue;
+        }
+        let mut hit_reports = Vec::new();
+        let find = if opts.max_mem_hits > 0 {
+            let params = vec![
+                ("bytes_hex", hex.clone()),
+                ("max", opts.max_mem_hits.to_string()),
+            ];
+            route_get_json_value(
+                trace_dir.clone(),
+                route_path("/api/find-mem-pattern", &params),
+            )
+            .await?
+        } else {
+            serde_json::json!({
+                "status": "skipped",
+                "pattern": hex,
+                "count": 0,
+                "returned": 0,
+                "truncated": false,
+                "hits": [],
+            })
+        };
+
+        if opts.writes_per_hit > 0 {
+            if let Some(hits) = find.get("hits").and_then(|v| v.as_array()) {
+                for hit in hits {
+                    let Some(addr) = hit
+                        .get("addr")
+                        .and_then(|v| v.as_str())
+                        .and_then(parse_u64_str)
+                    else {
+                        continue;
+                    };
+                    let addr_hi = addr.saturating_add(bytes.len() as u64);
+                    let provenance_params = vec![
+                        ("addr", format!("{addr:#x}")),
+                        ("length", bytes.len().to_string()),
+                    ];
+                    let provenance = route_get_json_value(
+                        trace_dir.clone(),
+                        route_path("/api/string-provenance", &provenance_params),
+                    )
+                    .await?;
+                    let top_writers = provenance_writer_counts(&provenance, opts.writes_per_hit);
+                    let mut writer_details = Vec::new();
+                    for writer in &top_writers {
+                        let Some(idx) = writer.get("idx").and_then(|v| v.as_u64()) else {
+                            continue;
+                        };
+                        let params = vec![
+                            ("idx_lo", idx.to_string()),
+                            ("idx_hi", (idx + 1).to_string()),
+                            ("addr_lo", format!("{addr:#x}")),
+                            ("addr_hi", format!("{addr_hi:#x}")),
+                            ("max", "20".to_string()),
+                        ];
+                        let writes = route_get_json_value(
+                            trace_dir.clone(),
+                            route_path("/api/mem-writes-in-range", &params),
+                        )
+                        .await?;
+                        let writer_seeds = writer_taint_seeds(&writes);
+                        for seed in &writer_seeds {
+                            push_taint_seed(
+                                &mut taint_seed_seen,
+                                &mut taint_seed_queue,
+                                seed.clone(),
+                            );
+                        }
+                        writer_details.push(serde_json::json!({
+                            "writer": writer,
+                            "writes": writes,
+                            "writer_seeds": writer_seeds,
+                        }));
+                    }
+                    hit_reports.push(serde_json::json!({
+                        "hit": hit,
+                        "range": {
+                            "addr_lo": format!("{addr:#x}"),
+                            "addr_hi": format!("{addr_hi:#x}"),
+                            "length": bytes.len(),
+                        },
+                        "provenance": provenance,
+                        "top_provenance_writers": top_writers,
+                        "writer_details": writer_details,
+                    }));
+                }
+            }
+        }
+
+        pattern_reports.push(serde_json::json!({
+            "kind": kind,
+            "length": bytes.len(),
+            "bytes_hex": hex,
+            "text_preview": utf8_preview(&bytes, 160),
+            "find_mem_pattern": find,
+            "hit_reports": hit_reports,
+        }));
+    }
+
+    let taint_reports = if opts.skip_taint {
+        serde_json::json!({
+            "skipped": true,
+            "reason": "--skip-taint was set",
+            "queued": taint_seed_queue,
+        })
+    } else {
+        run_backward_taint_summaries(
+            trace_dir,
+            &taint_seed_queue,
+            opts.taint_seeds,
+            opts.taint_max_count,
+        )
+        .await?
+    };
+
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "strategy": "output_to_input_backward_trace",
+        "source": source.json,
+        "patterns": pattern_reports,
+        "taint": taint_reports,
+        "notes": [
+            "This report intentionally starts at the observed output and walks upward through memory writers and register taint.",
+            "For JNI NewStringUTF outputs, the hooked bytes are treated as ground truth; memory dumps can show object/runtime layout noise.",
+            "Continue with patterns[].hit_reports[].writer_seeds or taint.runs[].summary.function_counts to choose the next function to decompile."
+        ],
+    }))
+}
+
+async fn resolve_output_source(
+    trace_dir: PathBuf,
+    opts: &OutputBacktraceOpts,
+) -> anyhow::Result<OutputSource> {
+    let source_count = opts.key.is_some() as usize
+        + opts.value.is_some() as usize
+        + opts.bytes_hex.is_some() as usize;
+    if source_count != 1 {
+        bail!("choose exactly one of --key, --value, or --bytes-hex");
+    }
+
+    if let Some(raw) = opts.bytes_hex.as_deref() {
+        let bytes = parse_hex_bytes_cli(raw)?;
+        return Ok(OutputSource {
+            json: serde_json::json!({
+                "kind": "bytes_hex",
+                "bytes_hex": bytes_to_hex(&bytes),
+                "length": bytes.len(),
+            }),
+            primary_bytes: bytes,
+            text: None,
+            value_idx: None,
+        });
+    }
+
+    if let Some(value) = opts.value.as_deref() {
+        return Ok(OutputSource {
+            json: serde_json::json!({
+                "kind": "value",
+                "value": value,
+                "value_len": value.len(),
+            }),
+            primary_bytes: value.as_bytes().to_vec(),
+            text: Some(value.to_string()),
+            value_idx: None,
+        });
+    }
+
+    let key = opts.key.as_deref().unwrap_or_default();
+    let pairs =
+        jni_output_string_pairs(trace_dir, Some(key.to_string()), None, opts.jni_limit).await?;
+    let pair = pairs
+        .get("pairs")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .cloned()
+        .with_context(|| format!("no NewStringUTF key/value pair matched key {key:?}"))?;
+    let value = pair
+        .get("value")
+        .and_then(|v| v.as_str())
+        .context("matched pair missing value")?;
+    let value_idx = pair
+        .get("value_idx")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
+    Ok(OutputSource {
+        json: serde_json::json!({
+            "kind": "jni_output_string_pair",
+            "key": key,
+            "pair": pair,
+            "source_events": pairs.get("source_events").cloned().unwrap_or(serde_json::Value::Null),
+            "source_truncated": pairs.get("source_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        }),
+        primary_bytes: value.as_bytes().to_vec(),
+        text: Some(value.to_string()),
+        value_idx,
+    })
+}
+
+fn writer_taint_seeds(writes: &serde_json::Value) -> Vec<serde_json::Value> {
+    writes
+        .get("writes")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|write| {
+            let idx = write.get("idx").and_then(|v| v.as_u64())? as usize;
+            let reg = write.get("src_reg").and_then(|v| v.as_str())?;
+            Some(serde_json::json!({
+                "kind": "memory_writer_src_reg",
+                "start": idx,
+                "reg": reg,
+                "writer": write,
+            }))
+        })
+        .collect()
+}
+
+fn provenance_writer_counts(
+    provenance: &serde_json::Value,
+    limit: usize,
+) -> Vec<serde_json::Value> {
+    let mut counts: BTreeMap<usize, usize> = BTreeMap::new();
+    if let Some(bytes) = provenance.get("bytes").and_then(|v| v.as_array()) {
+        for byte in bytes {
+            if let Some(idx) = byte.get("current_writer_idx").and_then(|v| v.as_u64()) {
+                *counts.entry(idx as usize).or_default() += 1;
+            }
+        }
+    }
+    if counts.is_empty() {
+        if let Some(bytes) = provenance.get("bytes").and_then(|v| v.as_array()) {
+            for byte in bytes {
+                if let Some(writers) = byte.get("writers").and_then(|v| v.as_array()) {
+                    for writer in writers {
+                        if let Some(idx) = writer.as_u64() {
+                            *counts.entry(idx as usize).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut rows: Vec<_> = counts
+        .into_iter()
+        .map(|(idx, byte_count)| serde_json::json!({ "idx": idx, "byte_count": byte_count }))
+        .collect();
+    rows.sort_by(|a, b| {
+        let ac = a.get("byte_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let bc = b.get("byte_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        bc.cmp(&ac).then_with(|| {
+            a.get("idx")
+                .and_then(|v| v.as_u64())
+                .cmp(&b.get("idx").and_then(|v| v.as_u64()))
+        })
+    });
+    rows.into_iter().take(limit).collect()
+}
+
+fn push_taint_seed(
+    seen: &mut HashSet<String>,
+    queue: &mut Vec<serde_json::Value>,
+    seed: serde_json::Value,
+) {
+    let Some(start) = seed.get("start").and_then(|v| v.as_u64()) else {
+        return;
+    };
+    let Some(reg) = seed.get("reg").and_then(|v| v.as_str()) else {
+        return;
+    };
+    if seen.insert(format!("{start}:{reg}")) {
+        queue.push(seed);
+    }
+}
+
+async fn run_backward_taint_summaries(
+    trace_dir: PathBuf,
+    seeds: &[serde_json::Value],
+    max_seeds: usize,
+    max_count: usize,
+) -> anyhow::Result<serde_json::Value> {
+    let mut runs = Vec::new();
+    for seed in seeds.iter().take(max_seeds) {
+        let Some(start) = seed.get("start").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let Some(reg) = seed.get("reg").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let params = vec![
+            ("start", start.to_string()),
+            ("reg", reg.to_string()),
+            ("through_mem", "true".to_string()),
+            ("data_only", "false".to_string()),
+            ("cross_fn_call", "true".to_string()),
+            ("max_count", max_count.to_string()),
+        ];
+        let response = route_get_json_value(
+            trace_dir.clone(),
+            route_path("/api/backward-taint", &params),
+        )
+        .await?;
+        runs.push(serde_json::json!({
+            "seed": seed,
+            "summary": summarize_backward_taint(&response),
+        }));
+    }
+    Ok(serde_json::json!({
+        "skipped": false,
+        "queued": seeds.len(),
+        "returned": runs.len(),
+        "truncated_seed_list": seeds.len() > runs.len(),
+        "runs": runs,
+    }))
+}
+
+fn summarize_backward_taint(response: &serde_json::Value) -> serde_json::Value {
+    let rows = response
+        .get("chain")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for row in &rows {
+        let func = row
+            .get("func")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown>");
+        *counts.entry(func.to_string()).or_default() += 1;
+    }
+    let mut function_counts: Vec<_> = counts
+        .into_iter()
+        .map(|(func, count)| serde_json::json!({ "func": func, "count": count }))
+        .collect();
+    function_counts.sort_by(|a, b| {
+        let ac = a.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let bc = b.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        bc.cmp(&ac).then_with(|| {
+            a.get("func")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .cmp(b.get("func").and_then(|v| v.as_str()).unwrap_or(""))
+        })
+    });
+
+    let sample_chain: Vec<_> = rows
+        .iter()
+        .take(40)
+        .map(|row| {
+            serde_json::json!({
+                "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "pc": row.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+                "func": row.get("func").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "via": row.get("via").cloned().unwrap_or(serde_json::Value::Null),
+                "taint_depth": row.get("taint_depth").cloned().unwrap_or(serde_json::Value::Null),
+                "parent_idxs": row.get("parent_idxs").cloned().unwrap_or(serde_json::json!([])),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "status": response.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "from": response.get("from").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": response.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "count": response.get("count").cloned().unwrap_or(serde_json::Value::Null),
+        "stopped_at_max": response.get("stopped_at_max").cloned().unwrap_or(serde_json::Value::Null),
+        "max_count_used": response.get("max_count_used").cloned().unwrap_or(serde_json::Value::Null),
+        "function_counts": function_counts.into_iter().take(30).collect::<Vec<_>>(),
+        "sample_chain": sample_chain,
+    })
 }
 
 async fn route_post_json(
@@ -1837,6 +2343,76 @@ fn pct_encode(s: &str) -> String {
         }
     }
     out
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn parse_hex_bytes_cli(raw: &str) -> anyhow::Result<Vec<u8>> {
+    let mut s = raw.trim().to_string();
+    if s.starts_with("0x") || s.starts_with("0X") {
+        s = s[2..].to_string();
+    }
+    s.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
+    if s.is_empty() {
+        bail!("empty hex byte string");
+    }
+    if s.len() % 2 != 0 {
+        bail!("hex byte string must contain an even number of nybbles");
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for i in (0..s.len()).step_by(2) {
+        out.push(
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .with_context(|| format!("invalid hex byte {:?}", &s[i..i + 2]))?,
+        );
+    }
+    Ok(out)
+}
+
+fn parse_u64_str(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
+    }
+}
+
+fn percent_decode_bytes(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0usize;
+    while i < input.len() {
+        if input[i] == b'%' && i + 2 < input.len() {
+            if let (Some(hi), Some(lo)) = (hex_nybble(input[i + 1]), hex_nybble(input[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+    out
+}
+
+fn hex_nybble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn utf8_preview(bytes: &[u8], max: usize) -> String {
+    let take = bytes.len().min(max);
+    let mut s = String::from_utf8_lossy(&bytes[..take]).into_owned();
+    if bytes.len() > take {
+        s.push_str("...");
+    }
+    s
 }
 
 fn print_pretty(value: &serde_json::Value) -> anyhow::Result<()> {

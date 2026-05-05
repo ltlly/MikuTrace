@@ -549,6 +549,37 @@ fn jni_strings_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn output_backtrace_starts_from_jni_output_pair() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let v = run_json(&[
+        "output-backtrace".into(),
+        cd.display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--max-mem-hits".into(),
+        "1".into(),
+        "--writes-per-hit".into(),
+        "0".into(),
+        "--skip-taint".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["strategy"], "output_to_input_backward_trace");
+    assert_eq!(v["source"]["kind"], "jni_output_string_pair");
+    assert_eq!(v["source"]["pair"]["key"], "x-sign");
+    assert_eq!(
+        v["source"]["pair"]["value"],
+        STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
+    );
+    assert_eq!(v["patterns"][0]["kind"], "observed");
+    assert_eq!(v["taint"]["skipped"], true);
+    assert_eq!(
+        v["taint"]["queued"][0]["kind"],
+        "jni_new_string_utf_callsite"
+    );
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
