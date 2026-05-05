@@ -126,24 +126,37 @@ export default function App() {
   // the cursorRecord resource below.
   const rowHintCache = new Map<number, CursorRecordHint>();
   const [rowHintCacheSize, setRowHintCacheSize] = createSignal(0);
+  const [rowHintCacheVersion, setRowHintCacheVersion] = createSignal(0);
   function rememberRows(rows: RecordRow[]) {
+    let changed = false;
     for (const row of rows) {
-      rowHintCache.set(row.idx, { idx: row.idx, pc: row.pc, func: row.func });
+      const next = { idx: row.idx, pc: row.pc, func: row.func };
+      const old = rowHintCache.get(row.idx);
+      if (!old || old.pc !== next.pc || old.func !== next.func) {
+        rowHintCache.set(row.idx, next);
+        changed = true;
+      }
     }
     while (rowHintCache.size > 5000) {
       const k = rowHintCache.keys().next().value as number | undefined;
       if (k === undefined) break;
       rowHintCache.delete(k);
+      changed = true;
     }
-    setRowHintCacheSize(rowHintCache.size);
+    if (changed) {
+      setRowHintCacheSize(rowHintCache.size);
+      setRowHintCacheVersion((v) => v + 1);
+    }
   }
   const cursorRecordSource = createMemo(() => {
     const idx = selectedIdx();
+    rowHintCacheVersion();
     return rowHintCache.has(idx) ? undefined : idx;
   });
   const [cursorRecord] = createResource(cursorRecordSource, fetchRecord);
   createEffect(() => {
     const idx = selectedIdx();
+    rowHintCacheVersion();
     const cached = rowHintCache.get(idx);
     if (cached) {
       const cur = cursorHint();
@@ -157,6 +170,7 @@ export default function App() {
       const hint: CursorRecordHint = { idx: r.idx, pc: r.pc, func: r.func };
       rowHintCache.set(idx, hint);
       setRowHintCacheSize(rowHintCache.size);
+      setRowHintCacheVersion((v) => v + 1);
       setCursorHint(hint);
     }
   });
