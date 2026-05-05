@@ -6,7 +6,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::disasm::decode;
+use tracemiku_core::disasm::{decode, normalize_disasm_reg};
 use tracemiku_core::prelude::{backward_taint, default_frame_reg_set};
 
 use crate::state::AppState;
@@ -83,6 +83,7 @@ fn backward_taint_response(
     q: BackwardTaintQuery,
 ) -> BackwardTaintResponse {
     let eff = effective_max_count(q.max_count);
+    let reg = normalize_disasm_reg(&q.reg);
     let exclude: HashSet<String> = if q.data_only {
         default_frame_reg_set()
     } else {
@@ -96,7 +97,7 @@ fn backward_taint_response(
                     status,
                     count: 0,
                     from: q.start,
-                    reg: q.reg,
+                    reg,
                     chain: Vec::new(),
                     stopped_at_max: false,
                     max_count_used: eff,
@@ -110,7 +111,7 @@ fn backward_taint_response(
         &inner.trace,
         &inner.index,
         q.start,
-        &q.reg,
+        &reg,
         eff,
         &exclude,
         q.through_mem,
@@ -157,7 +158,7 @@ fn backward_taint_response(
         status: "ready",
         count: rows.len(),
         from: q.start,
-        reg: q.reg,
+        reg,
         chain: rows,
         stopped_at_max: stopped,
         max_count_used: eff,

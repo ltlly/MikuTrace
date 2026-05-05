@@ -107,6 +107,54 @@ async fn forward_taint_accepts_trace_idx_alias() {
 }
 
 #[tokio::test]
+async fn taint_routes_normalize_register_aliases() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+
+    let forward = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=w0&max_count=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(forward.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(forward.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["reg"], "x0");
+    assert!(
+        v["hits"].as_array().unwrap().len() >= 1,
+        "w0 should resolve through the x0 index: {v}"
+    );
+
+    let backward = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/backward-taint?start=4&reg=w0&max_count=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(backward.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(backward.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["reg"], "x0");
+    assert!(
+        v["chain"].as_array().unwrap().len() >= 1,
+        "w0 should resolve through the x0 index: {v}"
+    );
+}
+
+#[tokio::test]
 async fn backward_taint_basic() {
     let dir = synth_x0_chain();
     let cd = call_dir(&dir);
