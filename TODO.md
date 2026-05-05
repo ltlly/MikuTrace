@@ -107,14 +107,19 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   大 trace 默认跑 visible UI probe, 必要时加 `SMOKE_ARGS='--all-surfaces'`
   覆盖隐藏/冷路径。`make test-v2` / `make test-fast` 会先 py_compile
   所有 Python gate/helper 脚本。
+- ✅ 真实浏览器事件 smoke 脚本已补: `make smoke-ui BASE=<url>` 会通过
+  Playwright 覆盖键盘移动、row click、CFG 跨函数同步、寄存器/内存右键菜单取消、
+  内存范围选择、面板和 ASM 列拖拽。该脚本需要可用的 Chromium/Chrome/Playwright
+  browser。
 - ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
   会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
   当前 1542 万 records trace + v3 sidecar 下约 6.80s ready, ready 后 auto phase
   约 167ms, health max 约 1.9ms。
 - ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
-  Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
-  `playwright install chrome` 需要 sudo 交互。现有保障是静态 UI audit +
-  最大 trace HTTP smoke, 尚不能替代快速点击/右键/拖拽的真实浏览器验证。
+  Chromium / Xvfb; Playwright 的 Chromium/Firefox 下载器不支持
+  ubuntu26.04-x64, system snap Firefox headless 会卡住。现有保障是静态
+  UI audit + 最大 trace HTTP smoke + 可移植事件 smoke 脚本, 但本机尚未完成
+  真实浏览器执行。
 
 ## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
 

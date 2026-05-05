@@ -1,0 +1,283 @@
+"""Browser-level frontend event smoke for a running traceMiku web server.
+
+This complements the static frontend audits by exercising the actual DOM event
+paths that previously regressed: keyboard cursor movement, row clicks, CFG sync,
+context-menu cancellation, range selection, and column/panel drag resizing.
+
+It requires a working Playwright browser. The current CI/container may only be
+able to py_compile this file; run it manually on a machine with Chromium/Chrome:
+
+    uv run python scripts/frontend_event_smoke.py http://127.0.0.1:18900
+    uv run python scripts/frontend_event_smoke.py http://127.0.0.1:18900 --browser chromium
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from typing import Any
+
+
+DEFAULT_TIMEOUT_MS = 30_000
+
+
+@dataclass(frozen=True)
+class TracePoint:
+    idx: int
+    func: str | None
+
+
+def q(path: str, **params: Any) -> str:
+    clean = {k: str(v) for k, v in params.items() if v is not None}
+    if not clean:
+        return path
+    return f"{path}?{urllib.parse.urlencode(clean)}"
+
+
+def get_json(base_url: str, path: str, timeout_s: float = 30.0) -> Any:
+    with urllib.request.urlopen(base_url.rstrip("/") + path, timeout=timeout_s) as resp:
+        body = resp.read()
+        return json.loads(body.decode("utf-8"))
+
+
+def pick_cross_function_points(base_url: str) -> tuple[TracePoint, TracePoint] | None:
+    meta = get_json(base_url, "/api/meta")
+    total = int(meta.get("records") or 0)
+    if total <= 1:
+        return None
+
+    starts = [
+        0,
+        max(0, total // 8),
+        max(0, total // 4),
+        max(0, total // 2),
+        max(0, (total * 3) // 4),
+        max(0, total - 1000),
+    ]
+    first: TracePoint | None = None
+    by_func: dict[str, TracePoint] = {}
+    for start in starts:
+        resp = get_json(base_url, q("/api/records", start=start, count=1000))
+        for row in resp.get("records", []):
+            idx = int(row.get("idx") or 0)
+            func = row.get("func")
+            if first is None:
+                first = TracePoint(idx=idx, func=func if isinstance(func, str) else None)
+            if isinstance(func, str) and func:
+                by_func.setdefault(func, TracePoint(idx=idx, func=func))
+            if len(by_func) >= 2:
+                points = list(by_func.values())
+                return points[0], points[1]
+    if first is None:
+        return None
+    return first, TracePoint(idx=min(total - 1, first.idx + 1), func=first.func)
+
+
+def debug_values(page: Any) -> dict[str, str]:
+    return page.evaluate(
+        """() => {
+            const out = {};
+            for (const row of document.querySelectorAll('.debug-overlay .debug-row')) {
+                const key = row.querySelector('span')?.textContent?.trim();
+                const value = row.querySelector('code')?.textContent?.trim();
+                if (key) out[key] = value ?? '';
+            }
+            return out;
+        }"""
+    )
+
+
+def debug_value(page: Any, key: str) -> str:
+    return str(debug_values(page).get(key, ""))
+
+
+def wait_debug_value(page: Any, key: str, expected: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
+    page.wait_for_function(
+        """({ key, expected }) => {
+            for (const row of document.querySelectorAll('.debug-overlay .debug-row')) {
+                const label = row.querySelector('span')?.textContent?.trim();
+                const value = row.querySelector('code')?.textContent?.trim();
+                if (label === key) return value === expected;
+            }
+            return false;
+        }""",
+        {"key": key, "expected": expected},
+        timeout=timeout_ms,
+    )
+
+
+def selected_idx(page: Any) -> int:
+    text = page.locator(".records-row.selected .idx").first.text_content(timeout=DEFAULT_TIMEOUT_MS)
+    return int(str(text).strip())
+
+
+def wait_selected_idx(page: Any, idx: int, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
+    wait_debug_value(page, "selectedIdx", str(idx), timeout_ms=timeout_ms)
+
+
+def jump_to_idx(page: Any, idx: int) -> None:
+    page.keyboard.press(":")
+    cmd = page.locator("#cmd-input")
+    cmd.fill(str(idx))
+    page.keyboard.press("Enter")
+    wait_selected_idx(page, idx)
+
+
+def css_number(page: Any, selector: str, prop: str) -> float:
+    raw = page.eval_on_selector(selector, "(el, prop) => getComputedStyle(el).getPropertyValue(prop)", prop)
+    return float(str(raw).strip().removesuffix("px"))
+
+
+def drag_by(page: Any, selector: str, dx: int, dy: int = 0) -> None:
+    box = page.locator(selector).first.bounding_box(timeout=DEFAULT_TIMEOUT_MS)
+    if box is None:
+        raise RuntimeError(f"{selector} has no bounding box")
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + dx, y + dy, steps=8)
+    page.mouse.up()
+
+
+def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
+    checks: list[str] = []
+    points = pick_cross_function_points(base_url)
+
+    page.add_init_script(
+        """() => {
+            localStorage.setItem('tracemiku-debug', '1');
+            localStorage.removeItem('tracemiku-layout-v3');
+        }"""
+    )
+    page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
+    page.wait_for_selector(".records-row", timeout=timeout_ms)
+    page.wait_for_selector(".debug-overlay", timeout=timeout_ms)
+    checks.append("loaded rows and debug overlay")
+
+    start = int(debug_value(page, "selectedIdx") or "0")
+    page.keyboard.press("ArrowDown")
+    wait_selected_idx(page, start + 1, timeout_ms)
+    page.keyboard.press("PageDown")
+    wait_selected_idx(page, start + 21, timeout_ms)
+    page.keyboard.press("Home")
+    wait_selected_idx(page, 0, timeout_ms)
+    checks.append("keyboard ArrowDown/PageDown/Home moves cursor")
+
+    row = page.locator(".records-row").nth(5)
+    target_idx = int(str(row.locator(".idx").text_content(timeout=timeout_ms)).strip())
+    row.click(timeout=timeout_ms)
+    wait_selected_idx(page, target_idx, timeout_ms)
+    checks.append("records row click selects target idx")
+
+    left_before = css_number(page, "#layout", "--left-w")
+    drag_by(page, ".layout-splitter-left", 36)
+    left_after = css_number(page, "#layout", "--left-w")
+    if left_after <= left_before:
+        raise RuntimeError(f"left splitter did not grow: before={left_before} after={left_after}")
+
+    asm_before = css_number(page, "#asm-col", "--col-asm")
+    drag_by(page, "#stream-header .hd-asm .col-resize", 36)
+    asm_after = css_number(page, "#asm-col", "--col-asm")
+    if asm_after <= asm_before:
+        raise RuntimeError(f"asm column did not grow: before={asm_before} after={asm_after}")
+    checks.append("panel and asm column drag resize updates CSS variables")
+
+    reg = page.locator(".records-row.selected .op-reg").first
+    if reg.count() == 0:
+        reg = page.locator(".op-reg").first
+    reg.click(button="right", timeout=timeout_ms)
+    page.wait_for_selector(".reg-context-menu", timeout=timeout_ms)
+    page.keyboard.press("Escape")
+    page.wait_for_selector(".reg-context-menu", state="hidden", timeout=timeout_ms)
+    checks.append("register context menu opens and Escape cancels it")
+
+    page.wait_for_selector(".memory-hex-table .mem-byte", timeout=timeout_ms)
+    cell0 = page.locator(".memory-hex-table .mem-byte").nth(0)
+    cell3 = page.locator(".memory-hex-table .mem-byte").nth(3)
+    b0 = cell0.bounding_box(timeout=timeout_ms)
+    b3 = cell3.bounding_box(timeout=timeout_ms)
+    if b0 is None or b3 is None:
+        raise RuntimeError("memory byte cells have no bounding boxes")
+    page.mouse.move(b0["x"] + b0["width"] / 2, b0["y"] + b0["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(b3["x"] + b3["width"] / 2, b3["y"] + b3["height"] / 2, steps=4)
+    page.mouse.up()
+    page.wait_for_function("() => document.querySelectorAll('.mem-byte.selected').length >= 2", timeout=timeout_ms)
+    cell3.click(button="right", timeout=timeout_ms)
+    page.wait_for_selector(".memory-context-menu", timeout=timeout_ms)
+    page.locator(".memory-context-menu h3", has_text="writers").wait_for(timeout=timeout_ms)
+    page.locator(".memory-context-menu h3", has_text="readers").wait_for(timeout=timeout_ms)
+    page.keyboard.press("Escape")
+    page.wait_for_selector(".memory-context-menu", state="hidden", timeout=timeout_ms)
+    checks.append("memory range selection opens provenance menu and Escape cancels it")
+
+    if points and points[0].func and points[1].func and points[0].func != points[1].func:
+        jump_to_idx(page, points[0].idx)
+        wait_debug_value(page, "cursorHint.func", points[0].func, timeout_ms)
+        wait_debug_value(page, "cfg.fnName", points[0].func, timeout_ms)
+        jump_to_idx(page, points[1].idx)
+        wait_debug_value(page, "cursorHint.func", points[1].func, timeout_ms)
+        wait_debug_value(page, "cfg.fnName", points[1].func, timeout_ms)
+        checks.append(f"CFG sync follows cross-function cursor jump {points[0].func}->{points[1].func}")
+    else:
+        checks.append("CFG sync cross-function check skipped: no two named funcs in sampled records")
+
+    return checks
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run browser event smoke against a running traceMiku web URL.")
+    parser.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
+    parser.add_argument("--browser", choices=["chromium", "firefox", "webkit"], default="chromium")
+    parser.add_argument("--executable", help="optional browser executable path")
+    parser.add_argument("--headful", action="store_true", help="show browser window")
+    parser.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # noqa: BLE001 - print actionable environment error.
+        print(f"FAIL playwright is not importable: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        with sync_playwright() as p:
+            browser_type = getattr(p, args.browser)
+            launch_kwargs: dict[str, Any] = {"headless": not args.headful}
+            if args.executable:
+                launch_kwargs["executable_path"] = args.executable
+            browser = browser_type.launch(**launch_kwargs)
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                checks = run_smoke(page, args.base_url.rstrip("/"), args.timeout_ms)
+            finally:
+                browser.close()
+    except PlaywrightError as exc:
+        print(
+            "FAIL browser event smoke could not launch or drive Playwright browser. "
+            "Install a supported browser, or pass --executable /path/to/chrome. "
+            f"Original error: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001 - smoke failure should be concise.
+        print(f"FAIL frontend event smoke: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"OK frontend event smoke base={args.base_url.rstrip('/')} checks={len(checks)}")
+    for check in checks:
+        print(f"  - {check}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

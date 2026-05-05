@@ -2,9 +2,9 @@ PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
-PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/build_smoke_trace.py examples/llm_cookbook.py
+PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py examples/llm_cookbook.py
 
-.PHONY: help fmt test test-v2 test-fast test-slow smoke-web webui clean
+.PHONY: help fmt test test-v2 test-fast test-slow smoke-web smoke-ui webui clean
 
 help:
 	@echo "make fmt       - rust cargo fmt"
@@ -12,6 +12,7 @@ help:
 	@echo "make test-v2   - fmt check + Python wrapper compile + Rust tests + frontend build + CLI/web parity"
 	@echo "make test-fast - Python wrapper compile + Rust core/cli tests"
 	@echo "make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"
+	@echo "make smoke-ui BASE=<url> [UI_SMOKE_ARGS='--browser chromium']"
 	@echo "make webui RUN=<trace_dir> [PORT=18900]"
 	@echo "make clean     - rm local caches/build outputs"
 
@@ -50,6 +51,10 @@ test-slow:
 smoke-web:
 	@if [ -z "$(RUN)" ]; then echo "usage: make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"; exit 2; fi
 	$(PYTHON) scripts/rust_web_smoke.py "$(RUN)" $(SMOKE_ARGS)
+
+smoke-ui:
+	@if [ -z "$(BASE)" ]; then echo "usage: make smoke-ui BASE=<url> [UI_SMOKE_ARGS='--browser chromium']"; exit 2; fi
+	$(PYTHON) scripts/frontend_event_smoke.py "$(BASE)" $(UI_SMOKE_ARGS)
 
 webui:
 	@if [ -z "$(RUN)" ]; then echo "usage: make webui RUN=<trace_dir>"; exit 2; fi
