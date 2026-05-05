@@ -400,6 +400,7 @@ export interface TaintRow {
   asm: string;
   why?: string;     // forward
   via?: string;     // backward
+  edge_kind?: string;
   parent_idxs?: number[];
   taint_depth?: number;
   frame_depth?: number;   // present iff cross_fn_call=true was passed

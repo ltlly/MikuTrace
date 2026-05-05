@@ -64,6 +64,7 @@ enum BwdItem {
         want_reg: String,
         parent_idx: Option<usize>,
         depth: u32,
+        edge_kind: &'static str,
     },
     /// Chase the writer of memory `[addr, addr+size)` strictly before
     /// `before_idx` (exact-addr fast path; M3-γ Task 2 adds byte-overlap).
@@ -73,6 +74,7 @@ enum BwdItem {
         size: u32,
         parent_idx: Option<usize>,
         depth: u32,
+        edge_kind: &'static str,
     },
 }
 
@@ -83,6 +85,17 @@ pub struct TaintHit {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parent_idxs: Vec<usize>,
     pub taint_depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_kind: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RawBwdHit {
+    idx: usize,
+    why: String,
+    parent_idxs: Vec<usize>,
+    taint_depth: u32,
+    edge_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,6 +326,13 @@ pub fn forward_taint(
             why,
             parent_idxs,
             taint_depth,
+            edge_kind: if load_tainted && !used.is_empty() {
+                Some("reg+mem".to_string())
+            } else if load_tainted {
+                Some("mem".to_string())
+            } else {
+                Some("reg".to_string())
+            },
         });
         seen.insert(i);
         let next_provenance = TaintProvenance::from_hit(i, taint_depth);
@@ -396,7 +416,7 @@ pub fn backward_taint(
 ) -> (Vec<TaintHit>, bool) {
     let mut pending: VecDeque<BwdItem> = VecDeque::new();
     let mut visited: HashSet<(usize, String)> = HashSet::new();
-    let mut raw_out: Vec<(usize, String, Vec<usize>, u32)> = Vec::new();
+    let mut raw_out: Vec<RawBwdHit> = Vec::new();
     let cap = if max_count == 0 {
         usize::MAX
     } else {
@@ -410,12 +430,14 @@ pub fn backward_taint(
     let starts_with_def = d0.regs_def.iter().any(|r| r == taint_reg);
 
     if starts_with_def && !exclude_regs.contains(taint_reg) {
-        raw_out.push((idx, taint_reg.to_string(), Vec::new(), 0));
-        let addr_regs0 = if data_only {
-            addressing_regs(&d0.mem_op)
-        } else {
-            HashSet::new()
-        };
+        raw_out.push(RawBwdHit {
+            idx,
+            why: taint_reg.to_string(),
+            parent_idxs: Vec::new(),
+            taint_depth: 0,
+            edge_kind: Some("seed".to_string()),
+        });
+        let addr_regs0 = addressing_regs(&d0.mem_op);
         for u in &d0.regs_use {
             if exclude_regs.contains(u) {
                 continue;
@@ -428,6 +450,11 @@ pub fn backward_taint(
                 want_reg: u.clone(),
                 parent_idx: Some(idx),
                 depth: 1,
+                edge_kind: if addr_regs0.contains(u) {
+                    "addr"
+                } else {
+                    "reg"
+                },
             });
         }
         for op in &d0.mem_op {
@@ -441,6 +468,7 @@ pub fn backward_taint(
                 size: op.size,
                 parent_idx: Some(idx),
                 depth: 1,
+                edge_kind: "mem",
             });
         }
     } else if !exclude_regs.contains(taint_reg) {
@@ -449,6 +477,7 @@ pub fn backward_taint(
             want_reg: taint_reg.to_string(),
             parent_idx: None,
             depth: 0,
+            edge_kind: "reg",
         });
     }
 
@@ -464,12 +493,21 @@ pub fn backward_taint(
                 size,
                 parent_idx,
                 depth,
+                edge_kind,
             } => {
                 let writers =
                     mem_writers_overlapping(index, mem, addr, size, before_idx, through_mem);
                 for j in writers {
                     let r = trace.record(j);
                     let d = decode(r.pc, r.inst);
+                    let parent_idxs = parent_idx.into_iter().collect::<Vec<_>>();
+                    raw_out.push(RawBwdHit {
+                        idx: j,
+                        why: "mem".to_string(),
+                        parent_idxs: parent_idxs.clone(),
+                        taint_depth: depth,
+                        edge_kind: Some(edge_kind.to_string()),
+                    });
                     let (base_w, idx_w) = if let Some(op) = d.mem_op.first() {
                         (op.base.clone(), op.idx.clone())
                     } else {
@@ -483,8 +521,9 @@ pub fn backward_taint(
                         pending.push_back(BwdItem::Reg {
                             cur_idx: j,
                             want_reg: src.clone(),
-                            parent_idx,
-                            depth,
+                            parent_idx: Some(j),
+                            depth: depth.saturating_add(1),
+                            edge_kind: "store-src",
                         });
                     }
                 }
@@ -494,6 +533,7 @@ pub fn backward_taint(
                 want_reg,
                 parent_idx,
                 depth,
+                edge_kind,
             } => {
                 if exclude_regs.contains(&want_reg) {
                     continue;
@@ -512,15 +552,17 @@ pub fn backward_taint(
                 }
                 let j = defs[pos - 1];
                 let parent_idxs = parent_idx.into_iter().collect::<Vec<_>>();
-                raw_out.push((j, want_reg.clone(), parent_idxs, depth));
+                raw_out.push(RawBwdHit {
+                    idx: j,
+                    why: want_reg.clone(),
+                    parent_idxs,
+                    taint_depth: depth,
+                    edge_kind: Some(edge_kind.to_string()),
+                });
 
                 let r = trace.record(j);
                 let d = decode(r.pc, r.inst);
-                let addr_regs = if data_only {
-                    addressing_regs(&d.mem_op)
-                } else {
-                    HashSet::new()
-                };
+                let addr_regs = addressing_regs(&d.mem_op);
                 for u in &d.regs_use {
                     if exclude_regs.contains(u) {
                         continue;
@@ -533,6 +575,7 @@ pub fn backward_taint(
                         want_reg: u.clone(),
                         parent_idx: Some(j),
                         depth: depth.saturating_add(1),
+                        edge_kind: if addr_regs.contains(u) { "addr" } else { "reg" },
                     });
                 }
                 for op in &d.mem_op {
@@ -546,6 +589,7 @@ pub fn backward_taint(
                         size: op.size,
                         parent_idx: Some(j),
                         depth: depth.saturating_add(1),
+                        edge_kind: "mem",
                     });
                 }
             }
@@ -553,19 +597,20 @@ pub fn backward_taint(
     }
 
     // Dedup by sorted idx (Python lines 358-361).
-    raw_out.sort_by(|(ai, ar, _, _), (bi, br, _, _)| ai.cmp(bi).then_with(|| ar.cmp(br)));
+    raw_out.sort_by(|a, b| a.idx.cmp(&b.idx).then_with(|| a.why.cmp(&b.why)));
     let mut seen_idx: HashSet<usize> = HashSet::new();
     let mut out: Vec<TaintHit> = Vec::new();
-    for (i, reg, parent_idxs, taint_depth) in raw_out {
-        if seen_idx.contains(&i) {
+    for hit in raw_out {
+        if seen_idx.contains(&hit.idx) {
             continue;
         }
-        seen_idx.insert(i);
+        seen_idx.insert(hit.idx);
         out.push(TaintHit {
-            idx: i,
-            why: reg,
-            parent_idxs,
-            taint_depth,
+            idx: hit.idx,
+            why: hit.why,
+            parent_idxs: hit.parent_idxs,
+            taint_depth: hit.taint_depth,
+            edge_kind: hit.edge_kind,
         });
     }
     (out, stopped)
@@ -774,10 +819,11 @@ mod tests {
         //     pre-emit (3, "x1"); push regs_use of d0 (sp); push MEM(3, 0x7000, 8).
         //   pop Reg(3, sp): no defs of sp → continue.
         //   pop MEM(3, 0x7000, 8): writers of 0x7000 < 3 → idx 1.
-        //     j=1; first non-addressing reg in d.regs_use → x0; push Reg(1, "x0").
+        //     emit idx 1 as the memory writer; first non-addressing reg in
+        //     d.regs_use → x0; push Reg(1, "x0") with parent idx 1.
         //   pop Reg(1, "x0"): defs of x0 before 1 → idx 0; emit (0, "x0").
         //
-        // Expected: hits idxs include 0 AND 3.
+        // Expected: hits idxs include 0, 1, and 3.
         let dir = tempfile::tempdir().unwrap();
         let cd = dir
             .path()
@@ -826,9 +872,20 @@ mod tests {
             "MEM-chasing should reach idx 0 via mov→str→ldr at sp=0x7000; got {idxs:?}"
         );
         assert!(
+            idxs.contains(&1),
+            "MEM-chasing should expose idx 1 as the memory writer; got {idxs:?}"
+        );
+        assert!(
             idxs.contains(&3),
             "should pre-emit (idx=3, want_reg=x1) when start defines x1; got {idxs:?}"
         );
+        let row1 = hits.iter().find(|h| h.idx == 1).unwrap();
+        assert_eq!(row1.why, "mem");
+        assert_eq!(row1.parent_idxs, vec![3]);
+        assert_eq!(row1.edge_kind.as_deref(), Some("mem"));
+        let row0 = hits.iter().find(|h| h.idx == 0).unwrap();
+        assert_eq!(row0.parent_idxs, vec![1]);
+        assert_eq!(row0.edge_kind.as_deref(), Some("store-src"));
     }
 
     #[test]

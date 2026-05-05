@@ -161,9 +161,29 @@ export default function TaintPanel(props: TaintPanelProps) {
   const taintDepthIndent = (row: TaintRow): string =>
     `${Math.min(14, Math.max(0, row.taint_depth ?? 0)) * 18}px`;
 
+  const edgeLabel = (row: TaintRow): string => {
+    switch (row.edge_kind) {
+      case "addr":
+        return "addr";
+      case "mem":
+        return "mem value";
+      case "store-src":
+        return "store src";
+      case "reg+mem":
+        return "reg+mem";
+      case "reg":
+        return "reg";
+      default:
+        return "";
+    }
+  };
+
   const parentLabel = (row: TaintRow): string => {
     const parents = row.parent_idxs ?? [];
-    return parents.length ? `from ${parents.map((idx) => `#${idx}`).join(",")}` : "seed";
+    if (!parents.length) return "seed";
+    const edge = edgeLabel(row);
+    const prefix = edge ? `${edge} from` : "from";
+    return `${prefix} ${parents.map((idx) => `#${idx}`).join(",")}`;
   };
 
   function rerunAtUiCap(r: RunResult) {
@@ -291,6 +311,7 @@ export default function TaintPanel(props: TaintPanelProps) {
                     <th>func</th>
                     <th>asm</th>
                     <th>{r().direction === "forward" ? "why" : "via"}</th>
+                    <th>edge</th>
                     <th>parents</th>
                     <th>taint depth</th>
                     {r().showDepth ? <th>call depth</th> : null}
@@ -305,6 +326,7 @@ export default function TaintPanel(props: TaintPanelProps) {
                         <td>{row.func ?? "?"}</td>
                         <td>{row.asm}</td>
                         <td>{labelFor(row)}</td>
+                        <td>{edgeLabel(row)}</td>
                         <td>{parentLabel(row)}</td>
                         <td>{row.taint_depth ?? ""}</td>
                         {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}

@@ -280,7 +280,14 @@ def main() -> int:
     )
 
     require("Taint default view is tree", 'createSignal<ViewMode>("tree")' in taint, failures)
-    require("Taint tree exposes dependency parents", "parentLabel(row)" in taint and "taint_depth" in taint, failures)
+    require(
+        "Taint tree exposes typed dependency parents",
+        "parentLabel(row)" in taint
+        and "edgeLabel(row)" in taint
+        and "edge_kind" in taint
+        and "taint_depth" in taint,
+        failures,
+    )
     require(
         "Taint uses traceIdx wording instead of ambiguous start label",
         "traceIdx" in taint and "from traceIdx" in taint and "narrow traceIdx/reg/options" in taint,

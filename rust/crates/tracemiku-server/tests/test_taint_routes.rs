@@ -80,6 +80,10 @@ async fn forward_taint_basic() {
             h.get("taint_depth").and_then(|v| v.as_u64()).is_some(),
             "taint_depth must be present for tree view: {h}"
         );
+        assert!(
+            h.get("edge_kind").and_then(|v| v.as_str()).is_some(),
+            "edge_kind must be present for tree view labels: {h}"
+        );
     }
 }
 
@@ -187,6 +191,10 @@ async fn backward_taint_basic() {
         assert!(
             h.get("taint_depth").and_then(|v| v.as_u64()).is_some(),
             "taint_depth must be present for tree view: {h}"
+        );
+        assert!(
+            h.get("edge_kind").and_then(|v| v.as_str()).is_some(),
+            "edge_kind must be present for tree view labels: {h}"
         );
     }
 }

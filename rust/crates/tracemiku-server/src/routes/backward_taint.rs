@@ -36,6 +36,8 @@ pub struct TaintChainRow {
     pub func: Option<String>,
     pub asm: String,
     pub via: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_kind: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub parent_idxs: Vec<usize>,
     pub taint_depth: u32,
@@ -143,6 +145,7 @@ fn backward_taint_response(
                 func: if fname == "?" { None } else { Some(fname) },
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 via: h.why, // Task 1's backward_taint puts the bare reg name in `why`
+                edge_kind: h.edge_kind,
                 parent_idxs: h.parent_idxs,
                 taint_depth: h.taint_depth,
                 frame_depth: if q.cross_fn_call {
