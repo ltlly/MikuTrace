@@ -154,6 +154,33 @@ rust/target/debug/tracemiku-cli vm-backstep <call_dir> \
   --lookback 300000
 ```
 
+As of 2026-05-06, `vm-backchain --follow-frontier` automates this common manual
+branch. A trace-backed smoke run from a later output store:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx 14748757 \
+  --reg w1 \
+  --steps 16 \
+  --lookback 500000 \
+  --follow-frontier
+```
+
+showed the expected result-to-input walk:
+
+```text
+str w1, [x19, x6]                    writes "piYQ" group
+<- VM slot 2 value 0x59697041         earlier "ApiY" word
+<- output scratch byte 0x59           byte 'Y'
+<- Base64 table lookup                alphabet byte has no writer
+<- frontier x20 = 0x18                table index for 'Y'
+<- VM slot / memory byte 0x61         underlying byte feeding that index
+```
+
+The chain later reaches bytecode constants such as `ldr x19, [x21, #8]`; those
+are VM program constants and need opcode-level interpretation rather than a
+memory-writer hop.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

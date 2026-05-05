@@ -628,6 +628,9 @@ enum Cmd {
         /// Lookback window for each VM backchain step.
         #[arg(long, default_value_t = 200000)]
         vm_chain_lookback: usize,
+        /// Let attached VM chains continue through frontier source regs when a table/ALU step has no upstream writer.
+        #[arg(long)]
+        vm_chain_follow_frontier: bool,
         /// Skip backward-taint expansion and only report output/memory writers.
         #[arg(long)]
         skip_taint: bool,
@@ -706,6 +709,9 @@ enum Cmd {
         /// Max memory writes to collect while looking for the last one.
         #[arg(long, default_value_t = 5000)]
         max_writes: usize,
+        /// Continue through a chosen frontier source reg when upstream.next is unavailable.
+        #[arg(long)]
+        follow_frontier: bool,
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
@@ -1413,6 +1419,7 @@ async fn main() -> anyhow::Result<()> {
             vm_chain_steps,
             vm_chain_runs,
             vm_chain_lookback,
+            vm_chain_follow_frontier,
             skip_taint,
             no_url_decode,
         }) => {
@@ -1428,6 +1435,7 @@ async fn main() -> anyhow::Result<()> {
                 vm_chain_steps,
                 vm_chain_runs,
                 vm_chain_lookback,
+                vm_chain_follow_frontier,
                 skip_taint,
                 url_decode: !no_url_decode,
             };
@@ -1459,10 +1467,19 @@ async fn main() -> anyhow::Result<()> {
             context,
             lookback,
             max_writes,
+            follow_frontier,
             regs,
         }) => {
             cmd_vm_backchain(
-                trace_dir, idx, reg, steps, context, lookback, max_writes, regs,
+                trace_dir,
+                idx,
+                reg,
+                steps,
+                context,
+                lookback,
+                max_writes,
+                follow_frontier,
+                regs,
             )
             .await
         }
@@ -1974,6 +1991,7 @@ struct OutputBacktraceOpts {
     vm_chain_steps: usize,
     vm_chain_runs: usize,
     vm_chain_lookback: usize,
+    vm_chain_follow_frontier: bool,
     skip_taint: bool,
     url_decode: bool,
 }
@@ -2517,6 +2535,7 @@ async fn vm_chains_for_writer_runs(
             120,
             opts.vm_chain_lookback,
             5000,
+            opts.vm_chain_follow_frontier,
             regs.to_string(),
         )
         .await?;
@@ -2714,11 +2733,22 @@ async fn cmd_vm_backchain(
     context: usize,
     lookback: usize,
     max_writes: usize,
+    follow_frontier: bool,
     regs: String,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
-    let value =
-        vm_backchain_value_on(&app, idx, reg, steps, context, lookback, max_writes, regs).await?;
+    let value = vm_backchain_value_on(
+        &app,
+        idx,
+        reg,
+        steps,
+        context,
+        lookback,
+        max_writes,
+        follow_frontier,
+        regs,
+    )
+    .await?;
     print_pretty(&value)
 }
 
@@ -2730,6 +2760,7 @@ async fn vm_backchain_value_on(
     context: usize,
     lookback: usize,
     max_writes: usize,
+    follow_frontier: bool,
     regs: String,
 ) -> anyhow::Result<serde_json::Value> {
     let mut current_idx = idx;
@@ -2765,22 +2796,60 @@ async fn vm_backchain_value_on(
             .and_then(|v| v.get("next"))
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        current_idx = match next.get("idx").and_then(|v| v.as_u64()) {
+        let (chosen_next, decision) = if next.get("idx").and_then(|v| v.as_u64()).is_some() {
+            (
+                next,
+                serde_json::json!({
+                    "kind": "upstream_next",
+                }),
+            )
+        } else if follow_frontier {
+            match choose_frontier_next(&step) {
+                Some(frontier_next) => (
+                    frontier_next.clone(),
+                    serde_json::json!({
+                        "kind": "frontier_auto",
+                        "next": frontier_next,
+                    }),
+                ),
+                None => (
+                    serde_json::Value::Null,
+                    serde_json::json!({
+                        "kind": "stop",
+                        "reason": "no_upstream_next_or_frontier",
+                    }),
+                ),
+            }
+        } else {
+            (
+                serde_json::Value::Null,
+                serde_json::json!({
+                    "kind": "stop",
+                    "reason": "no_upstream_next",
+                }),
+            )
+        };
+        current_idx = match chosen_next.get("idx").and_then(|v| v.as_u64()) {
             Some(idx) => idx as usize,
             None => {
                 rows.push(serde_json::json!({
                     "step": step_idx,
                     "backstep": step,
                     "next": serde_json::Value::Null,
+                    "decision": decision,
                 }));
                 break;
             }
         };
-        current_reg = next.get("reg").and_then(|v| v.as_str()).map(str::to_string);
+        current_reg = chosen_next
+            .get("reg")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         rows.push(serde_json::json!({
             "step": step_idx,
             "backstep": step,
-            "next": next,
+            "next": chosen_next,
+            "decision": decision,
         }));
         if current_reg.is_none() {
             break;
@@ -2792,10 +2861,61 @@ async fn vm_backchain_value_on(
             "idx": idx,
             "reg": reg,
         },
+        "follow_frontier": follow_frontier,
         "steps_requested": steps,
         "steps_returned": rows.len(),
         "chain": rows,
     }))
+}
+
+fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
+    let mut candidates = step
+        .get("frontier")?
+        .as_array()?
+        .iter()
+        .filter_map(|frontier| {
+            let reg = frontier.get("reg")?.as_str()?;
+            if is_vm_infrastructure_reg(reg) {
+                return None;
+            }
+            let value = frontier
+                .get("value")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let score = frontier_value_score(&value);
+            Some((score, frontier))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(score, _)| *score);
+    let (_, frontier) = candidates.first()?;
+    Some(serde_json::json!({
+        "idx": frontier.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": frontier.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "src_value": frontier.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "reason": "frontier_auto",
+        "frontier": (*frontier).clone(),
+    }))
+}
+
+fn frontier_value_score(value: &serde_json::Value) -> u8 {
+    let parsed = value
+        .as_str()
+        .and_then(parse_u64_str)
+        .or_else(|| value.as_u64());
+    match parsed {
+        Some(v) if v <= 0xff => 0,
+        Some(v) if v <= 0xffff => 1,
+        Some(v) if v <= 0xffff_ffff => 2,
+        Some(_) => 3,
+        None => 4,
+    }
+}
+
+fn is_vm_infrastructure_reg(reg: &str) -> bool {
+    matches!(
+        register_value_key(reg).as_str(),
+        "sp" | "fp" | "lr" | "x21" | "x23" | "x25" | "x27"
+    )
 }
 
 async fn vm_backstep_value_on(
@@ -3737,8 +3857,8 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_vm_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
-        store_source_regs_from_asm, vm_slot_from_asm,
+        choose_frontier_next, classify_vm_asm, def_source_regs_from_asm, mem_addr_from_asm,
+        memory_access_width, store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -3800,6 +3920,21 @@ mod tests {
             vec!["x0", "x4"]
         );
         assert_eq!(def_source_regs_from_asm("lsl x5, x3, #3"), vec!["x3"]);
+    }
+
+    #[test]
+    fn frontier_auto_prefers_small_non_infrastructure_registers() {
+        let step = serde_json::json!({
+            "frontier": [
+                {"idx": 10, "reg": "x25", "value": "0x70000000"},
+                {"idx": 10, "reg": "x4", "value": "0x74fbf29990"},
+                {"idx": 10, "reg": "x20", "value": "0x18"}
+            ]
+        });
+        let next = choose_frontier_next(&step).unwrap();
+        assert_eq!(next["idx"], serde_json::json!(10));
+        assert_eq!(next["reg"], serde_json::json!("x20"));
+        assert_eq!(next["src_value"], serde_json::json!("0x18"));
     }
 }
 

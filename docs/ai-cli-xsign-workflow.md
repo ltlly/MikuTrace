@@ -244,6 +244,34 @@ This emits an ordered `chain[]` of `vm-backstep` results. It is intentionally
 linear: for multi-byte memory loads, inspect `writes_tail` and branch manually
 when different output bytes have different writers.
 
+When following a final encoded output backward, enable frontier following:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx <writer_idx> \
+  --reg <source_reg> \
+  --steps 16 \
+  --follow-frontier
+```
+
+With `--follow-frontier`, the chain still prefers `upstream.next`. If a step
+stops at a table lookup or ALU row with no direct writer, it chooses a
+non-infrastructure `frontier[]` source register, preferring small values. This
+is useful for Base64-style table lookups: the alphabet byte has no writer, but
+the table index register is usually the dataflow branch to keep chasing. Each
+row records `decision.kind` as `upstream_next`, `frontier_auto`, or `stop`.
+
+The same behavior can be attached to `output-backtrace` reports:
+
+```bash
+rust/target/debug/tracemiku-cli output-backtrace <call_dir> \
+  --key x-sign \
+  --skip-taint \
+  --writes-per-hit 12 \
+  --vm-chain-steps 8 \
+  --vm-chain-follow-frontier
+```
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash
