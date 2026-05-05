@@ -33,6 +33,7 @@ def main() -> int:
     memory = read("panels/memory/MemoryPanel.tsx")
     registers = read("panels/registers/RegistersPanel.tsx")
     settings = read("panels/settings/SettingsPanel.tsx")
+    string_prov = read("panels/strings/StringProvenancePanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
 
     failures: list[str] = []
@@ -132,6 +133,17 @@ def main() -> int:
     require("CFG loading uses themed spinner", ".cfg-loading" in css and ".cfg-spinner" in css and "@keyframes cfg-spin" in css, failures)
     require("String provenance long text wraps", ".string-prov-summary code" in css and "word-break: break-all" in css, failures)
     require("String provenance table scrolls horizontally", ".string-prov-scroll" in css and "overflow-x: auto" in css, failures)
+    require(
+        "String provenance separates writer and reader columns",
+        "<th>writers</th>" in string_prov
+        and "<th>readers</th>" in string_prov
+        and 'idxButtons(b, "w")' in string_prov
+        and 'idxButtons(b, "r")' in string_prov
+        and ".string-prov-table th:nth-child(5)" in css
+        and ".string-prov-table th:nth-child(6)" in css
+        and "table-layout: fixed" in css,
+        failures,
+    )
     require(
         "Taint tree grid avoids overlapping columns",
         ".taint-tree-row" in css
