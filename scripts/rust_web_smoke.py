@@ -61,8 +61,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mem-ready-timeout",
         type=float,
-        default=DEFAULT_TIMEOUT,
-        help="timeout for --wait-mem-ready; defaults to --timeout baseline",
+        default=None,
+        help="timeout for --wait-mem-ready; defaults to --timeout",
     )
     return parser.parse_args()
 
@@ -298,7 +298,11 @@ def main() -> int:
         bg_status = fetch_bg_status(base, args.timeout)
         mem_ready_ms: float | None = None
         if args.wait_mem_ready:
-            bg_status, mem_ready_ms = wait_mem_ready(base, args.mem_ready_timeout, server_started)
+            bg_status, mem_ready_ms = wait_mem_ready(
+                base,
+                args.mem_ready_timeout if args.mem_ready_timeout is not None else args.timeout,
+                server_started,
+            )
         verify_frontend(base, args.timeout)
         verify_taint_tree(base, args.timeout)
         probe = run_probe(base, args.timeout, visible_only=not args.all_surfaces)
