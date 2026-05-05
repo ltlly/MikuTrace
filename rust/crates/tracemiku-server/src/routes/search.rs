@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
+const MAX_SEARCH_RESULTS: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub pattern: String,
@@ -24,6 +26,10 @@ pub struct SearchQuery {
 
 fn default_max_results() -> usize {
     2000
+}
+
+fn effective_max_results(raw: usize) -> usize {
+    raw.clamp(1, MAX_SEARCH_RESULTS)
 }
 
 #[derive(Debug, Serialize)]
@@ -66,7 +72,7 @@ pub async fn search_handler(
 }
 
 fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> SearchResponse {
-    let max_results = q.max_results.max(1);
+    let max_results = effective_max_results(q.max_results);
     let re = compile_pattern(&q.pattern);
     let base = inner
         .meta
@@ -247,5 +253,17 @@ fn matches_pattern(re: &Option<Regex>, pattern: &str, asm: &str) -> bool {
         re.is_match(asm)
     } else {
         asm.to_lowercase().contains(&pattern.to_lowercase())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_results, MAX_SEARCH_RESULTS};
+
+    #[test]
+    fn effective_max_results_clamps_extreme_requests() {
+        assert_eq!(effective_max_results(0), 1);
+        assert_eq!(effective_max_results(120), 120);
+        assert_eq!(effective_max_results(usize::MAX), MAX_SEARCH_RESULTS);
     }
 }
