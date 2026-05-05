@@ -299,24 +299,30 @@ fn idxs_touching_range_response(
 ) -> TouchingRangeResponse {
     let start = parse_int(&q.addr).unwrap_or(0);
     let size = q.size.max(1);
-    let writers = touching_range_idxs(
-        inner
-            .index
-            .mem_writes
-            .iter()
-            .map(|m| (m.idx, m.addr, m.size)),
-        start,
-        size,
-    );
-    let readers = touching_range_idxs(
-        inner
-            .index
-            .mem_reads
-            .iter()
-            .map(|m| (m.idx, m.addr, m.size)),
-        start,
-        size,
-    );
+    let (writers, readers) = if let Some(mem) = inner.memshadow_if_ready() {
+        touching_range_idxs_from_memshadow(mem, start, size)
+    } else {
+        (
+            touching_range_idxs(
+                inner
+                    .index
+                    .mem_writes
+                    .iter()
+                    .map(|m| (m.idx, m.addr, m.size)),
+                start,
+                size,
+            ),
+            touching_range_idxs(
+                inner
+                    .index
+                    .mem_reads
+                    .iter()
+                    .map(|m| (m.idx, m.addr, m.size)),
+                start,
+                size,
+            ),
+        )
+    };
     let (writers_before, writers_after) = split_around_cursor(&writers, q.cursor, q.limit);
     let (readers_before, readers_after) = split_around_cursor(&readers, q.cursor, q.limit);
     TouchingRangeResponse {
@@ -620,6 +626,33 @@ where
     out.sort_unstable();
     out.dedup();
     out
+}
+
+fn touching_range_idxs_from_memshadow(
+    mem: &tracemiku_core::memshadow::MemShadow,
+    start: u64,
+    size: u64,
+) -> (Vec<usize>, Vec<usize>) {
+    let mut writers = Vec::new();
+    let mut readers = Vec::new();
+    let end = start.saturating_add(size);
+    for addr in start..end {
+        let Some(events) = mem.bytes.get(&addr) else {
+            continue;
+        };
+        for ev in events {
+            if ev.kind == "r" {
+                readers.push(ev.idx);
+            } else if ev.kind == "w" || ev.kind == "x" {
+                writers.push(ev.idx);
+            }
+        }
+    }
+    writers.sort_unstable();
+    writers.dedup();
+    readers.sort_unstable();
+    readers.dedup();
+    (writers, readers)
 }
 
 fn split_around_cursor(idxs: &[usize], cursor: usize, limit: usize) -> (Vec<usize>, Vec<usize>) {

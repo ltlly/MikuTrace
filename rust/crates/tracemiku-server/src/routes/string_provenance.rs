@@ -70,8 +70,22 @@ fn string_provenance_response(
             });
         }
     };
-    let (writers, writers_total) = covering_idxs_by_byte(&inner.index.mem_writes, start, length);
-    let (readers, readers_total) = covering_idxs_by_byte(&inner.index.mem_reads, start, length);
+    let (mut writers, mut writers_total) =
+        idxs_by_byte_from_memshadow(memshadow, start, length, true);
+    fill_missing_idxs_by_byte(
+        &inner.index.mem_writes,
+        start,
+        &mut writers,
+        &mut writers_total,
+    );
+    let (mut readers, mut readers_total) =
+        idxs_by_byte_from_memshadow(memshadow, start, length, false);
+    fill_missing_idxs_by_byte(
+        &inner.index.mem_reads,
+        start,
+        &mut readers,
+        &mut readers_total,
+    );
     let mut bytes = Vec::with_capacity(length);
     for offset in 0..length {
         let addr = start + offset as u64;
@@ -94,13 +108,47 @@ fn string_provenance_response(
     })
 }
 
-fn covering_idxs_by_byte(
-    recs: &[MemRec],
+fn idxs_by_byte_from_memshadow(
+    memshadow: &tracemiku_core::memshadow::MemShadow,
     start: u64,
     length: usize,
+    want_writers: bool,
 ) -> (Vec<Vec<usize>>, Vec<usize>) {
     let mut idxs = vec![Vec::new(); length];
     let mut totals = vec![0usize; length];
+    for offset in 0..length {
+        let Some(events) = memshadow.bytes.get(&(start + offset as u64)) else {
+            continue;
+        };
+        for ev in events {
+            let matches_kind = if want_writers {
+                ev.kind == "w" || ev.kind == "x"
+            } else {
+                ev.kind == "r"
+            };
+            if !matches_kind {
+                continue;
+            }
+            totals[offset] += 1;
+            if idxs[offset].len() < WRITERS_CAP {
+                idxs[offset].push(ev.idx);
+            }
+        }
+    }
+    (idxs, totals)
+}
+
+fn fill_missing_idxs_by_byte(
+    recs: &[MemRec],
+    start: u64,
+    idxs: &mut [Vec<usize>],
+    totals: &mut [usize],
+) {
+    let missing = totals.iter().map(|&total| total == 0).collect::<Vec<_>>();
+    if !missing.iter().any(|&is_missing| is_missing) {
+        return;
+    }
+    let length = totals.len();
     let end = start.saturating_add(length as u64);
     for rec in recs {
         let rec_end = rec.addr.saturating_add(rec.size as u64);
@@ -111,13 +159,15 @@ fn covering_idxs_by_byte(
         }
         for addr in lo..hi {
             let offset = (addr - start) as usize;
+            if !missing[offset] {
+                continue;
+            }
             totals[offset] += 1;
             if idxs[offset].len() < WRITERS_CAP {
                 idxs[offset].push(rec.idx);
             }
         }
     }
-    (idxs, totals)
 }
 
 fn parse_int(s: &str) -> Option<u64> {
