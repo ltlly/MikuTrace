@@ -21,6 +21,7 @@ const REG_ORDER = [
   "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
   "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
   "x24", "x25", "x26", "x27", "x28", "fp", "lr", "sp", "pc",
+  "nzcv",
 ];
 const REG_ADDR_RE = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)$/i;
 
@@ -112,7 +113,6 @@ function normalizeRegName(raw: string): string {
 function sortedRegNames(regs: Record<string, string>): string[] {
   const rank = new Map(REG_ORDER.map((reg, i) => [reg, i]));
   return Object.keys(regs)
-    .filter((reg) => reg !== "nzcv")
     .sort((a, b) => {
       const ar = rank.get(a) ?? Number.MAX_SAFE_INTEGER;
       const br = rank.get(b) ?? Number.MAX_SAFE_INTEGER;
