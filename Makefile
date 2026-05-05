@@ -2,7 +2,7 @@ PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
-PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/build_smoke_trace.py examples/llm_cookbook.py
+PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/build_smoke_trace.py examples/llm_cookbook.py
 
 .PHONY: help fmt test test-v2 test-fast test-slow smoke-web webui clean
 
@@ -24,6 +24,7 @@ test-v2:
 	$(PYTHON) -m py_compile $(PY_CHECKS)
 	$(PYTHON) scripts/frontend_resource_audit.py
 	$(PYTHON) scripts/frontend_ui_audit.py
+	$(PYTHON) scripts/frontend_cap_audit.py
 	cd rust && $(CARGO) fmt --check
 	cd rust && $(CARGO) test -p tracemiku-core -- --nocapture
 	cd rust && $(CARGO) test -p tracemiku-server -- --nocapture
@@ -35,6 +36,7 @@ test-fast:
 	$(PYTHON) -m py_compile $(PY_CHECKS)
 	$(PYTHON) scripts/frontend_resource_audit.py
 	$(PYTHON) scripts/frontend_ui_audit.py
+	$(PYTHON) scripts/frontend_cap_audit.py
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd rust && $(CARGO) test -p tracemiku-cli
 

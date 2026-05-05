@@ -27,7 +27,8 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ Decompile / LLM Web UI 临时隐藏: 先避免冷路径影响主交互; 恢复前需要
   单独做 latency/cancellation/cache 审计。
 - ✅ Taint / string list / ASM search refs 的截断结果已在 UI 明确标注 partial
-  result, 并提供 5k cap 重跑入口或 cap 解释, 避免用户误判为完整链路。
+  result, 并提供 5k cap 重跑入口或 cap 解释; `scripts/frontend_cap_audit.py`
+  会钉住这些 capped/truncated surface, 避免用户误判为完整链路。
 - ✅ Trace-for-PC / Xref same-PC / Backtrace / Forks / Memory context 等剩余
   visible cap surface 已补齐 partial result 说明, 能升到服务器上限的面板提供
   "show cap" 重跑入口。
