@@ -45,6 +45,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
   列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
   默认视图、String Provenance 长文本滚动/换行、全局主题滚动条和统一字体。
+- ✅ CFG stale/loading 交互守卫已纳入前端静态审计: 钉住 seq+Abort、
+  loading 时清旧图并显示 spinner、requestFn 绑定、以及高亮前的 current graph
+  校验，防止快速跨函数点击时旧 CFG/旧异步结果覆盖新 cursor。
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
