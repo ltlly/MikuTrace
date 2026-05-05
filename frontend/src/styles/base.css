@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0e1117;
   --bg2: #161b22;
   --bg3: #1f2630;
@@ -71,6 +72,22 @@ input,
 select,
 textarea {
   font: inherit;
+  color: var(--fg);
+  font-family: var(--font-mono);
+}
+
+button,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--accent);
 }
 
 table {
