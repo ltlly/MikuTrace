@@ -61,14 +61,14 @@ class Session:
             "vars": [],
         }
 
-    def cfg_for(self, pc: int) -> dict[str, Any]:
+    def cfg_for(self, pc: int, mode: str = "asm", timeout: int | None = None) -> dict[str, Any]:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
         fn = self._function_for_pc(pc)
         if fn is None:
             return {"ok": False, "ready": True, "error": f"no function contains 0x{pc:x}"}
         blocks = [{"id": i, "start": int(bb.start), "end": int(bb.end)} for i, bb in enumerate(fn.basic_blocks)]
-        return {"ok": True, "ready": True, "blocks": blocks, "edges": [], "svg": ""}
+        return {"ok": True, "ready": True, "mode": mode, "timeout": timeout, "blocks": blocks, "edges": [], "svg": ""}
 
     def _function_for_pc(self, pc: int) -> Any | None:
         fn = self.bv.get_function_at(pc)
@@ -88,7 +88,12 @@ def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
     if method == "hlil_for":
         return session.hlil_for(int(params.get("pc") or 0))
     if method == "cfg_for":
-        return session.cfg_for(int(params.get("pc") or 0))
+        timeout = params.get("timeout")
+        return session.cfg_for(
+            int(params.get("pc") or 0),
+            mode=str(params.get("mode") or "asm"),
+            timeout=int(timeout) if timeout is not None else None,
+        )
     return {"ok": False, "ready": session.ready, "error": f"unknown method {method!r}"}
 
 

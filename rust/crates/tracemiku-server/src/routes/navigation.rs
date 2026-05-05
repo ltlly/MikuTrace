@@ -371,12 +371,7 @@ fn backtrace_frame(
 }
 
 fn find_block_for_pc(state: &AppState, pc: u64) -> Option<&tracemiku_core::cfg::Block> {
-    state
-        .inner
-        .cfg
-        .blocks()
-        .into_iter()
-        .find(|block| pc >= block.start_pc && pc <= block.end_pc)
+    state.inner.cfg.block_containing(pc)
 }
 
 fn last_pc_before(

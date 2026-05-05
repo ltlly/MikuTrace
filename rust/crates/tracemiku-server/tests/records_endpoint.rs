@@ -91,7 +91,7 @@ async fn records_default_window() {
     assert!(r0["func"].is_null());
     assert!(r0["off"].is_null());
     assert!(r0["annotation"].is_null());
-    assert!(r0["exec_count"].is_null());
+    assert_eq!(r0["exec_count"], 1);
     assert!(r0.get("regs").is_none_or(|v| v.is_null()));
 
     let r1 = &v["records"][1];
@@ -291,6 +291,8 @@ async fn records_with_symbols_populates_func_off() {
 
     assert_eq!(v["records"][1]["func"], "f");
     assert_eq!(v["records"][1]["off"], "0x4");
+    assert_eq!(v["records"][1]["annotation"], "→ f_alpha+0x0");
+    assert_eq!(v["records"][1]["exec_count"], 1);
 
     // f_alpha (0x100100) and f_beta (0x100200) are not the hooked fn; their
     // names come straight from known_offsets.

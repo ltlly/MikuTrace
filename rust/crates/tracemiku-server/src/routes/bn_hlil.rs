@@ -15,6 +15,19 @@ pub struct PcQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct BnCfgForPcQuery {
+    pub pc: String,
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BnCfgSvgForPcQuery {
+    pub pc: String,
+    pub mode: Option<String>,
+    pub timeout: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct FnQuery {
     pub fn_id: String,
 }
@@ -66,7 +79,7 @@ pub async fn hlil_for_fn_handler(
 
 pub async fn bn_cfg_for_pc_handler(
     State(state): State<AppState>,
-    Query(q): Query<PcQuery>,
+    Query(q): Query<BnCfgForPcQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let pc = parse_u64(&q.pc).ok_or_else(|| {
         (
@@ -74,14 +87,15 @@ pub async fn bn_cfg_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
+    let mode = q.mode.unwrap_or_else(|| "asm".to_string());
     Ok(Json(
-        request_sidecar_blocking(state, "cfg_for", json!({"pc": pc})).await?,
+        request_sidecar_blocking(state, "cfg_for", json!({"pc": pc, "mode": mode})).await?,
     ))
 }
 
 pub async fn bn_cfg_svg_for_pc_handler(
     State(state): State<AppState>,
-    Query(q): Query<PcQuery>,
+    Query(q): Query<BnCfgSvgForPcQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let pc = parse_u64(&q.pc).ok_or_else(|| {
         (
@@ -89,7 +103,11 @@ pub async fn bn_cfg_svg_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    let cfg = request_sidecar_blocking(state, "cfg_for", json!({"pc": pc})).await?;
+    let mut params = json!({"pc": pc, "mode": q.mode.unwrap_or_else(|| "asm".to_string())});
+    if let Some(timeout) = q.timeout {
+        params["timeout"] = json!(timeout);
+    }
+    let cfg = request_sidecar_blocking(state, "cfg_for", params).await?;
     Ok(Json(json!({
         "ok": cfg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
         "ready": cfg.get("ready").and_then(|v| v.as_bool()).unwrap_or(false),

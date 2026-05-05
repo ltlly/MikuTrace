@@ -9,6 +9,7 @@
 //! Tarjan SCC marks loop members for the `--scc` UI affordance and feeds
 //! into M2-ε's loop detection.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::thread;
@@ -63,6 +64,8 @@ pub struct CFG {
     pub graph: DiGraph<Block, EdgeMeta>,
     /// start_pc → NodeIndex for fast lookup.
     pub by_pc: HashMap<u64, NodeIndex>,
+    /// start_pc → NodeIndex in address order for containing-block lookup.
+    pub by_start: BTreeMap<u64, NodeIndex>,
 }
 
 impl CFG {
@@ -81,6 +84,16 @@ impl CFG {
     pub fn block(&self, start_pc: u64) -> Option<&Block> {
         let n = *self.by_pc.get(&start_pc)?;
         self.graph.node_weight(n)
+    }
+
+    pub fn block_containing(&self, pc: u64) -> Option<&Block> {
+        let (_, n) = self.by_start.range(..=pc).next_back()?;
+        let block = self.graph.node_weight(*n)?;
+        if pc <= block.end_pc {
+            Some(block)
+        } else {
+            None
+        }
     }
 
     pub fn blocks(&self) -> Vec<&Block> {
@@ -269,6 +282,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
         };
         let node = cfg.graph.add_node(block);
         cfg.by_pc.insert(start, node);
+        cfg.by_start.insert(start, node);
     }
 
     // Add edges (skip if either endpoint isn't a known block start).

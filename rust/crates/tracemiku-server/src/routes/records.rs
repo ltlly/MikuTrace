@@ -1,9 +1,7 @@
 //! GET /api/records?start=&count=&regs=
 //!
 //! Returns a window of decoded trace records. Wire-compatible subset of
-//! Python `webui/server.py` /api/records — symbol-dependent fields
-//! (func/off/annotation/exec_count) are emitted as `null` for M2-β;
-//! M2-γ populates them after SymbolMap + CFG land.
+//! Python `webui/server.py` /api/records.
 
 use axum::extract::{Query, State};
 use axum::Json;
@@ -37,14 +35,10 @@ pub struct RecordRow {
     pub pc: String,
     pub rel: Option<String>,
     pub module: Option<String>,
-    /// M2-β: always None. M2-γ: function name from SymbolMap.
     pub func: Option<String>,
-    /// M2-β: always None. M2-γ: hex offset from func base.
     pub off: Option<String>,
     pub asm: String,
-    /// M2-β: always None. M2-γ: derived from CFG + SymbolMap.
     pub annotation: Option<String>,
-    /// M2-β: always None. M2-γ: from CFG block.executions.
     pub exec_count: Option<u64>,
     pub is_branch: bool,
     pub is_call: bool,
@@ -114,6 +108,21 @@ pub async fn records_handler(
         // Symbol resolution (M2-γ): per-record func + off + module.
         let module = inner.modules.resolve_name(r.pc);
         let (func_name, func_off) = inner.symbols.lookup(r.pc);
+        let annotation = if (d.is_call || d.is_branch) && i + 1 < n {
+            let next_pc = inner.trace.pc(i + 1);
+            let (target_name, target_off) = inner.symbols.lookup(next_pc);
+            if target_name != "?" && target_name != func_name {
+                Some(format!("→ {target_name}+{target_off:#x}"))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let exec_count = inner
+            .cfg
+            .block_containing(r.pc)
+            .map(|block| block.executions);
         let (func, off) = if func_name == "?" {
             (None, None)
         } else {
@@ -128,8 +137,8 @@ pub async fn records_handler(
             func,
             off,
             asm: format!("{} {}", d.mnemonic, d.op_str).trim().to_string(),
-            annotation: None,
-            exec_count: None,
+            annotation,
+            exec_count,
             is_branch: d.is_branch,
             is_call: d.is_call,
             is_ret: d.is_ret,
