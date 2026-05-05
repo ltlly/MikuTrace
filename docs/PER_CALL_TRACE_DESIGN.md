@@ -80,7 +80,7 @@ COLD=$(ls -d traces/run1/calls/call_* | sort -t_ -k4 -n -r | head -1)
 ./tracemiku web "$COLD" --port 18900 --no-browser
 ```
 
-`tracemiku web` 会启动 Rust server 并加载 Solid frontend。旧 Python viewer/TUI 不再是
+`tracemiku web` 会启动 Rust server 并加载 Solid frontend。旧 Python viewer/terminal UI 不再是
 维护目标。
 
 ## Constraints

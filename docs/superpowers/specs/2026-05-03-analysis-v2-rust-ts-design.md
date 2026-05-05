@@ -35,7 +35,7 @@ Single-user prototype, no compatibility constraints, AI doing all implementation
 - Sidecar formats (`.memshadow.v2.npz`) — analysis-side, may need migration; bumped to `.memshadow.v3.bin` (Rust-native binary); old sidecars regenerable, no migration needed in prototype phase
 
 ### What is consciously deleted
-- `viewer/app.py` (TUI) — already frozen, drop entirely
+- `viewer/app.py` (legacy terminal UI) — already frozen, drop entirely
 - Old `webui/` directory after M7 cutover
 - Old `tests/test_*.py` after M7 cutover (cargo test + frontend tests cover v2)
 - `viewer/__init__.py` SDK Python re-exports (replaced by Rust public API; Python still callable via PyO3 binding if a future need arises)
@@ -395,7 +395,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `disasm.py` (capstone wrapper, decode, def/use) | `tracemiku-core::disasm` | ✅ M2-γ | capstone-rs 0.13 detail=true; thread-local FIFO cache (200k); regs_def/regs_use via two-pass operand walk + cmp-style fix |
 | `index.py` (def-use chains, mem ops) | `tracemiku-core::index` | ✅ M2-ζ | sequential build; reg + mem sides both populated in single trace-walk; mem_addr_to_writes holds trace record indices |
 | `cfg.py` (build_cfg, CFG, Block, Tarjan SCC) | `tracemiku-core::cfg` | ✅ M2-δ | petgraph 0.6; tarjan_scc; 6 unit/integration tests |
-| `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | TUI legacy, dropped |
+| `cfg.py::write_dot` / `textual_summary` | n/a | ❌ | legacy terminal UI, dropped |
 | `taint.py` (forward/backward, basic) | `tracemiku-core::taint` | ✅ M3-γ | index-accelerated forward + backward (BFS via VecDeque, MEM-chasing). Parity HARD-gated: forward 0.90 / backward 0.81 jaccard on real trace. Sequential — rayon-parallel only if profiling justifies it. |
 | `taint.py` (`--through-mem`, `--data-only`) | `tracemiku-core::taint` | ✅ M3-γ | through_mem byte-overlap via MemShadow.latest_write_idx_strict_before. data_only filters addressing-only regs; default exclude={sp,fp,lr} when caller doesn't override. 2 colocated tests pin both flags. |
 | `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | ✅ M3-γ | `build_frame_depth_map` shipped (M3-β); cross_fn_call query param now wired through both endpoints → `frame_depth: Option<u32>` row field with skip_serializing_if. 2 integration tests pin presence/absence. |
@@ -409,7 +409,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `calltree.py` (build_call_tree, bl/ret pair-walking) | `tracemiku-core::calltree` | ✅ M3-α | direct port; cap-balance counter for max_depth; 3 unit tests + parity gate |
 | `hashfin.py` (hash-finalize-detect) | `tracemiku-core::hashfin` | ✅ M3-hash-finalize | window-based scan |
 | `ollvmdet.py` (ollvm-detect-vm heuristic) | `tracemiku-core::ollvmdet` | ✅ M3-ι2b | 1:1 port; ollvm_detect_vm + OllvmFinding. Heuristic scoring 0.4+0.3+0.2+0.1 (parity with Python). 3 unit tests. |
-| `app.py` (TUI) | n/a | ❌ | Frozen long ago, deleted at M7 |
+| `app.py` (legacy terminal UI) | n/a | ❌ | Frozen long ago, deleted at M7 |
 | `__main__.py` (Python CLI, ~31 subcommands) | `tracemiku-cli` (Rust bin) | ✅ M7-β | old Python viewer CLI deleted; top-level legacy `query` facade delegates to Rust CLI |
 | `__init__.py` (Python SDK re-exports) | n/a | ✅ M7-β | deleted; PyO3 binding only if future need |
 

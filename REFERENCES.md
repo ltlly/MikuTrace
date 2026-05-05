@@ -1,7 +1,7 @@
 # References
 
 traceMiku 的当前实现是 Rust/Solid analysis v2。Python `viewer/`、旧
-FastAPI `webui/`、TUI 和 Python parity 测试已经从运行时架构里移除。本文件只保留
+FastAPI `webui/`、legacy terminal UI 和 Python parity 测试已经从运行时架构里移除。本文件只保留
 仍然有工程参考价值的外部资料和本项目当前测试入口。
 
 ## Dynamic Taint

@@ -85,7 +85,7 @@ COLD=$(ls -d traces/cold_full/calls/call_* | sort -t_ -k4 -n -r | head -1)
 ./tracemiku web  "$COLD" --port 18900 --no-browser
 ```
 
-`tracemiku web` now serves the Rust/Solid analysis v2 UI. Old Python FastAPI/TUI
+`tracemiku web` now serves the Rust/Solid analysis v2 UI. Old Python FastAPI/terminal UI
 paths are not part of the benchmark surface.
 
 ## 6. 已知反例 / 限制

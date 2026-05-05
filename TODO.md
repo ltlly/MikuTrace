@@ -6,7 +6,7 @@ deleted instead of kept as parallel TODO lists.
 ## Current Focus
 
 Rust/Solid analysis v2 is the active stack. Python `viewer/`, old FastAPI
-`webui/`, the TUI, and old Python-vs-Rust parity scripts are gone from the
+`webui/`, the legacy terminal UI, and old Python-vs-Rust parity scripts are gone from the
 tracked runtime path.
 
 The current branch focus is interaction latency and parity hardening:

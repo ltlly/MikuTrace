@@ -27,7 +27,7 @@ Current layers:
 ## Hard Rules
 
 - Web is the only active UI. Do not reintroduce or extend the deleted Python
-  TUI/FastAPI paths.
+  terminal/FastAPI paths.
 - Do not add a traceMiku MCP server or project MCP wrappers. LLM-friendly
   surfaces are Rust CLI JSON output, REST `/openapi.json`, and documented API
   routes.

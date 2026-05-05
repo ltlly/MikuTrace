@@ -18,14 +18,14 @@ The current runtime architecture is the Rust/Solid analysis v2 stack.
   commands used by the top-level `./tracemiku` convenience wrapper.
 - `frontend/`: Solid + Vite SPA. This is the only active UI.
 
-Old Python `viewer/`, old FastAPI `webui/`, the Python TUI, and old
-Python-vs-Rust parity scripts have been removed from the tracked v2 code path.
-`tracemiku-view` is only a deprecated shim to `./tracemiku view`.
+Old Python `viewer/`, old FastAPI `webui/`, the legacy terminal interface, and
+old Python-vs-Rust parity scripts have been removed from the tracked v2 code
+path. The old compatibility launcher has also been deleted.
 
 ## Hard Rules
 
 - Web is the only active UI. Do not reintroduce or extend deleted Python
-  TUI/FastAPI paths.
+  terminal/FastAPI paths.
 - Do not add a traceMiku MCP server or project MCP wrappers. LLM-friendly
   surfaces are Rust CLI JSON output, REST `/openapi.json`, and documented API
   routes.
