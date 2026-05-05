@@ -65,7 +65,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `api_infra_tests::server_runtime_does_not_probe_deleted_python_dirs` 防止
   server runtime 再 `join("viewer")` / `join("webui")`。
 - ✅ 恢复 Decompile/LLIL/LLM 可见 UI 前的性能证明: 最大 trace all-surfaces
-  smoke 中 dec summary 约 392ms, 期间 health max 约 1.9ms, 没有阻塞当前
+  smoke 中 dec summary 约 400ms, 期间 health max 约 1.9ms, 没有阻塞当前
   trace cursor/CFG/Records 热路径; smoke 现在打印 `/api/bg-status.parallelism`,
   1542 万 records trace 上 index/symbols/CFG/MemShadow/frame-depth/reg-timeline/JNI
   scan 均规划为 16 workers。

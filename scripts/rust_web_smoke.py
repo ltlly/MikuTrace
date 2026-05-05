@@ -31,6 +31,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TIMEOUT = 180.0
+LARGE_TRACE_PARALLEL_MIN_RECORDS = 1_000_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -242,6 +243,19 @@ def fetch_bg_status(base: str, timeout: float) -> dict[str, Any]:
     workers = parallelism.get("workers")
     if not isinstance(workers, dict) or not workers:
         raise RuntimeError(f"/api/bg-status parallelism missing workers: {parallelism!r}")
+    available = int(parallelism.get("available") or 1)
+    records = int(parallelism.get("records") or 0)
+    if available > 1 and records >= LARGE_TRACE_PARALLEL_MIN_RECORDS:
+        single_worker = {
+            str(name): count
+            for name, count in workers.items()
+            if int(count or 0) < 2
+        }
+        if single_worker:
+            raise RuntimeError(
+                "/api/bg-status parallelism planned single-worker large-trace scans "
+                f"records={records:,} available={available} workers={single_worker!r}"
+            )
     return status
 
 
