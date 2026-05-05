@@ -57,6 +57,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
   列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
   默认视图、String Provenance 长文本滚动/换行、全局主题滚动条和统一字体。
+- ✅ Memory provenance 交互门禁: `scripts/frontend_ui_audit.py` 钉住
+  内存字节拖选范围、右键按选区查询 `idxs-touching-range` 和
+  `mem-writes-in-range`, 以及 writers/readers/write details 分区和 partial
+  result 提示。
 - ✅ Records 虚拟列表稳定复用门禁: `scripts/frontend_ui_audit.py` 钉住
   `rowObjectCache + sameRecordRow`, 要求相同 `idx` 且语义字段不变时复用行对象,
   并保持缓存有界, 防止真实 fetch/滚动时 Solid `<For>` 整屏拆 DOM 导致
