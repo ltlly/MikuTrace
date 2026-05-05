@@ -219,6 +219,19 @@ little-endian order. The raw 76-byte payload still has not appeared as a
 contiguous buffer; the likely route is to lift these VM templates back to the
 table-index calculations that produce each Base64 character.
 
+`vm-backtree` is now the preferred inspection command for this stage because it
+does not collapse ALU merges to one heuristic branch. For `idx 14748746 --reg
+x4`, it returns both:
+
+```text
+x14 = 0x51000000 <- lsl w16, w1, #0x18
+x17 = 0x596970   <- lsr w12, w7, #0x8
+```
+
+and then continues the data branches back to earlier intermediate words such as
+`0x4b565851` and `0x59697041`, while keeping shift amounts as separate
+frontier leaves.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

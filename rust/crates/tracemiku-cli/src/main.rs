@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
@@ -715,6 +715,40 @@ enum Cmd {
         /// Continue through a chosen frontier source reg when upstream.next is unavailable.
         #[arg(long)]
         follow_frontier: bool,
+        /// Comma-separated registers to request from /api/records.
+        #[arg(
+            long,
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+        )]
+        regs: String,
+    },
+    /// Branching backward tree through dynamic VM upstream/frontier links.
+    VmBacktree {
+        trace_dir: PathBuf,
+        /// Initial writer/load trace index.
+        #[arg(long)]
+        idx: usize,
+        /// Initial source register. Defaults to the first store source reg.
+        #[arg(long)]
+        reg: Option<String>,
+        /// Max tree depth.
+        #[arg(long, default_value_t = 6)]
+        depth: usize,
+        /// Max returned tree nodes.
+        #[arg(long, default_value_t = 64)]
+        max_nodes: usize,
+        /// Local records to inspect before each idx.
+        #[arg(long, default_value_t = 120)]
+        context: usize,
+        /// How far back to scan memory writers for each discovered source.
+        #[arg(long, default_value_t = 200000)]
+        lookback: usize,
+        /// Max memory writes to collect while looking for the last one.
+        #[arg(long, default_value_t = 5000)]
+        max_writes: usize,
+        /// Also enqueue frontier branches when upstream.next exists.
+        #[arg(long)]
+        frontier_with_next: bool,
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
@@ -1484,6 +1518,32 @@ async fn main() -> anyhow::Result<()> {
                 lookback,
                 max_writes,
                 follow_frontier,
+                regs,
+            )
+            .await
+        }
+        Some(Cmd::VmBacktree {
+            trace_dir,
+            idx,
+            reg,
+            depth,
+            max_nodes,
+            context,
+            lookback,
+            max_writes,
+            frontier_with_next,
+            regs,
+        }) => {
+            cmd_vm_backtree(
+                trace_dir,
+                idx,
+                reg,
+                depth,
+                max_nodes,
+                context,
+                lookback,
+                max_writes,
+                frontier_with_next,
                 regs,
             )
             .await
@@ -2779,6 +2839,36 @@ async fn cmd_vm_backchain(
     print_pretty(&value)
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn cmd_vm_backtree(
+    trace_dir: PathBuf,
+    idx: usize,
+    reg: Option<String>,
+    depth: usize,
+    max_nodes: usize,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    frontier_with_next: bool,
+    regs: String,
+) -> anyhow::Result<()> {
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let value = vm_backtree_value_on(
+        &app,
+        idx,
+        reg,
+        depth,
+        max_nodes,
+        context,
+        lookback,
+        max_writes,
+        frontier_with_next,
+        regs,
+    )
+    .await?;
+    print_pretty(&value)
+}
+
 async fn vm_backchain_value_on(
     app: &axum::Router,
     idx: usize,
@@ -2943,6 +3033,210 @@ fn is_vm_infrastructure_reg(reg: &str) -> bool {
         register_value_key(reg).as_str(),
         "sp" | "fp" | "lr" | "x21" | "x23" | "x25" | "x27"
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn vm_backtree_value_on(
+    app: &axum::Router,
+    idx: usize,
+    reg: Option<String>,
+    depth: usize,
+    max_nodes: usize,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    frontier_with_next: bool,
+    regs: String,
+) -> anyhow::Result<serde_json::Value> {
+    let mut queue = VecDeque::new();
+    queue.push_back(TreeSeed {
+        parent: None,
+        depth: 0,
+        idx,
+        reg: reg.clone(),
+        via: serde_json::json!({"kind": "root"}),
+    });
+    let mut seen = HashSet::new();
+    let mut nodes = Vec::new();
+    let mut truncated = false;
+    while let Some(seed) = queue.pop_front() {
+        if nodes.len() >= max_nodes {
+            truncated = true;
+            break;
+        }
+        let key = format!("{}:{}", seed.idx, seed.reg.as_deref().unwrap_or(""));
+        if !seen.insert(key) {
+            nodes.push(serde_json::json!({
+                "id": nodes.len(),
+                "parent": seed.parent,
+                "depth": seed.depth,
+                "idx": seed.idx,
+                "reg": seed.reg,
+                "via": seed.via,
+                "status": "cycle",
+            }));
+            continue;
+        }
+        let backstep = vm_backstep_value_on(
+            app,
+            seed.idx,
+            seed.reg.clone(),
+            context,
+            lookback,
+            max_writes,
+            regs.clone(),
+        )
+        .await?;
+        let node_id = nodes.len();
+        let upstream_next = backstep
+            .get("upstream")
+            .and_then(|v| v.get("next"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let frontier_nexts = frontier_nexts_from_step(&backstep);
+        let enqueue_frontiers =
+            frontier_with_next || upstream_next.get("idx").and_then(|v| v.as_u64()).is_none();
+        nodes.push(compact_backtree_node(
+            node_id,
+            seed.parent,
+            seed.depth,
+            &seed.via,
+            &backstep,
+            &upstream_next,
+            &frontier_nexts,
+        ));
+        if seed.depth >= depth {
+            continue;
+        }
+        if let Some(next_seed) = tree_seed_from_next(
+            node_id,
+            seed.depth + 1,
+            upstream_next,
+            serde_json::json!({"kind": "upstream_next"}),
+        ) {
+            queue.push_back(next_seed);
+        }
+        if enqueue_frontiers {
+            for frontier_next in frontier_nexts {
+                if let Some(next_seed) = tree_seed_from_next(
+                    node_id,
+                    seed.depth + 1,
+                    frontier_next.clone(),
+                    serde_json::json!({
+                        "kind": "frontier",
+                        "frontier": frontier_next.get("frontier").cloned().unwrap_or(serde_json::Value::Null),
+                    }),
+                ) {
+                    queue.push_back(next_seed);
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "status": "ready",
+        "start": {
+            "idx": idx,
+            "reg": reg,
+        },
+        "depth_requested": depth,
+        "max_nodes": max_nodes,
+        "frontier_with_next": frontier_with_next,
+        "nodes_returned": nodes.len(),
+        "truncated": truncated || !queue.is_empty(),
+        "nodes": nodes,
+    }))
+}
+
+struct TreeSeed {
+    parent: Option<usize>,
+    depth: usize,
+    idx: usize,
+    reg: Option<String>,
+    via: serde_json::Value,
+}
+
+fn tree_seed_from_next(
+    parent: usize,
+    depth: usize,
+    next: serde_json::Value,
+    via: serde_json::Value,
+) -> Option<TreeSeed> {
+    Some(TreeSeed {
+        parent: Some(parent),
+        depth,
+        idx: next.get("idx")?.as_u64()? as usize,
+        reg: next.get("reg").and_then(|v| v.as_str()).map(str::to_string),
+        via,
+    })
+}
+
+fn frontier_nexts_from_step(step: &serde_json::Value) -> Vec<serde_json::Value> {
+    step.get("frontier")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|frontier| {
+            let reg = frontier.get("reg")?.as_str()?;
+            if is_vm_infrastructure_reg(reg) {
+                return None;
+            }
+            Some(serde_json::json!({
+                "idx": frontier.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": frontier.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                "src_value": frontier.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "reason": "frontier",
+                "frontier": frontier,
+            }))
+        })
+        .collect()
+}
+
+fn compact_backtree_node(
+    id: usize,
+    parent: Option<usize>,
+    depth: usize,
+    via: &serde_json::Value,
+    backstep: &serde_json::Value,
+    upstream_next: &serde_json::Value,
+    frontier_nexts: &[serde_json::Value],
+) -> serde_json::Value {
+    let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "id": id,
+        "parent": parent,
+        "depth": depth,
+        "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": backstep.get("source_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": backstep.get("source_value").cloned().unwrap_or(serde_json::Value::Null),
+        "via": via,
+        "target": compact_vm_row(backstep.get("target")),
+        "local_def": compact_vm_row(backstep.get("local_def")),
+        "upstream": {
+            "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
+            "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+            "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+            "next": upstream_next,
+            "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
+        },
+        "frontier_nexts": frontier_nexts,
+    })
+}
+
+fn compact_vm_row(row: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(row) = row else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "pc": row.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+        "func": row.get("func").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "class": row.get("class").cloned().unwrap_or(serde_json::Value::Null),
+        "def": row.get("def").cloned().unwrap_or(serde_json::Value::Null),
+        "store_src": row.get("store_src").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
+    })
 }
 
 async fn vm_backstep_value_on(

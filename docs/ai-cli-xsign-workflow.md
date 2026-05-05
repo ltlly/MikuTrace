@@ -263,6 +263,23 @@ is useful for Base64-style table lookups: the alphabet byte has no writer, but
 the table index register is usually the dataflow branch to keep chasing. Each
 row records `decision.kind` as `upstream_next`, `frontier_auto`, or `stop`.
 
+For ALU merge/split rows, use `vm-backtree` instead of a linear chain:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backtree <call_dir> \
+  --idx <writer_idx> \
+  --reg <source_reg> \
+  --depth 6 \
+  --max-nodes 64
+```
+
+`vm-backtree` expands `upstream.next` and, when a row has no direct upstream
+writer, all non-infrastructure `frontier[]` source registers. The output is a
+flat tree (`nodes[]` with `id`/`parent`) so an AI can follow both sides of
+operations such as `orr x4, x14, x17`, `lsl`, `lsr`, and `ubfx`. Use
+`--frontier-with-next` when address/index branches are also worth exploring,
+but keep `--max-nodes` bounded on large traces.
+
 The same behavior can be attached to `output-backtrace` reports:
 
 ```bash
