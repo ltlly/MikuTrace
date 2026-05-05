@@ -84,6 +84,40 @@ def main() -> int:
     require("Memory context closes on Escape", 'e.key === "Escape"' in memory, failures)
     for col in ("addr", "hex", "ascii"):
         require(f"Memory column resize {col}", f'startResize("{col}"' in memory, failures)
+    require(
+        "Memory supports byte range selection",
+        'createSignal<{ anchor: string; head: string } | null>(null)' in memory
+        and 'createSignal<string | null>(null)' in memory
+        and "function selectedBounds" in memory
+        and "function startSelect" in memory
+        and "function extendSelect" in memory
+        and "isSelected(b.addr)" in memory
+        and "setSelection({ anchor, head: addr })" in memory,
+        failures,
+    )
+    require(
+        "Memory context queries selected range provenance",
+        "fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx" in memory
+        and "fetchMemWritesInRange({" in memory
+        and "idxLo: 0" in memory
+        and "idxHi: props.idx" in memory
+        and "addrLo: bounds.lo" in memory
+        and "addrHi: addToAddr(bounds.hi, 1)" in memory,
+        failures,
+    )
+    require(
+        "Memory context separates readers writers and write details",
+        "<h3>writers</h3>" in memory
+        and "<h3>readers</h3>" in memory
+        and "<h3>write details</h3>" in memory
+        and "writers_before" in memory
+        and "writers_after" in memory
+        and "readers_before" in memory
+        and "readers_after" in memory
+        and "ctx().writes?.truncated" in memory
+        and "partial result" in memory,
+        failures,
+    )
 
     for col in ("name", "value", "delta", "note"):
         require(f"Registers column resize {col}", f'startResize("{col}"' in registers, failures)
