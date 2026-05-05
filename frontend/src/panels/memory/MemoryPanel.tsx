@@ -8,6 +8,7 @@ import {
   fetchRecord,
 } from "~/api/client";
 import type { MemDumpByte, MemWritesInRangeResponse, TouchingRangeResponse } from "~/api/types";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 interface MemoryPanelProps {
   idx: number;
@@ -252,13 +253,11 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       ? prev
       : next;
   });
-  const [dump] = createResource(dumpSource, (s) => fetchMemDump(s.addr, s.count));
-  const currentDump = createMemo(() => {
-    const s = dumpSource();
-    const r = dump();
-    if (!s || !r) return undefined;
-    return r.request_addr === s.addr && r.request_count === s.count ? r : undefined;
-  });
+  const [dump, currentDump] = createGuardedResource<DumpSource, Awaited<ReturnType<typeof fetchMemDump>>>(
+    dumpSource,
+    (s) => fetchMemDump(s.addr, s.count),
+    (r, s) => r.request_addr === s.addr && r.request_count === s.count,
+  );
   const diffSource = createMemo<DiffSource | undefined>((prev) => {
     if (!props.active) return undefined;
     if (currentDump()?.status !== "ready") return undefined;
@@ -278,17 +277,14 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       ? prev
       : next;
   });
-  const [diff] = createResource(diffSource, (s) => fetchMemDiff(s.idx, s.addr, s.size));
-  const currentDiff = createMemo(() => {
-    const s = diffSource();
-    const r = diff();
-    if (!s || !r) return undefined;
-    return r.request_idx === s.idx &&
+  const [diff, currentDiff] = createGuardedResource<DiffSource, Awaited<ReturnType<typeof fetchMemDiff>>>(
+    diffSource,
+    (s) => fetchMemDiff(s.idx, s.addr, s.size),
+    (r, s) =>
+      r.request_idx === s.idx &&
       r.request_addr === s.addr &&
-      r.request_size === s.size
-      ? r
-      : undefined;
-  });
+      r.request_size === s.size,
+  );
   const readyDump = createMemo(() => {
     const r = currentDump();
     return r?.status === "ready" ? r : undefined;

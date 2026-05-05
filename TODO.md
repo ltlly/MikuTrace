@@ -35,7 +35,8 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
   入口或解释。
 - ☐ 继续迁移 Solid stale-frame / latest-selection guard: 已新增
-  `createGuardedResource` 并接入 Backtrace / Trace-for-PC / Xref / Forks,
+  `createGuardedResource` 并接入 Backtrace / Trace-for-PC / Xref / Forks /
+  Strings / String Provenance / CallTree / HLIL / Memory dump+diff,
   剩余 panel 仍需逐步迁移, 避免新面板复发 "旧请求覆盖新 cursor"。
 - ☐ 扩大 Rust web↔CLI parity gate: 对 records/cfg/taint/memory/string
   provenance/dec-summary 建立小 fixture baseline, 作为 `make test-v2` 之外的

@@ -1,7 +1,8 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
+import { createGuardedResource } from "~/utils/resourceGuards";
 import type { StringProvenanceRequest } from "./StringProvenancePanel";
 
 interface StringsPanelProps {
@@ -50,20 +51,15 @@ export default function StringsPanel(props: StringsPanelProps) {
       ? prev
       : next;
   });
-  const [resp] = createResource(source, async ({ minLen, q, limit, cursor }) =>
-    fetchStrings(minLen, q, limit, cursor),
-  );
-  const currentResp = createMemo(() => {
-    const r = resp();
-    const s = source();
-    if (!r || !s) return undefined;
-    return r.request_min_len === s.minLen &&
+  const [resp, currentResp] = createGuardedResource<StringsSource, Awaited<ReturnType<typeof fetchStrings>>>(
+    source,
+    ({ minLen, q, limit, cursor }) => fetchStrings(minLen, q, limit, cursor),
+    (r, s) =>
+      r.request_min_len === s.minLen &&
       r.request_q === s.q &&
       r.request_limit === s.limit &&
-      r.request_cursor === s.cursor
-      ? r
-      : undefined;
-  });
+      r.request_cursor === s.cursor,
+  );
   const readyResp = createMemo(() => {
     const r = currentResp();
     return r?.status === "ready" ? r : undefined;

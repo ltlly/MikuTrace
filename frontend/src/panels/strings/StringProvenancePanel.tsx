@@ -1,7 +1,8 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchStringProvenance } from "~/api/client";
 import type { StringProvByte } from "~/api/types";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 export interface StringProvenanceRequest {
   token: number;
@@ -61,13 +62,11 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
       ? prev
       : next;
   });
-  const [resp] = createResource(source, (s) => fetchStringProvenance(s.addr, s.len));
-  const currentResp = createMemo(() => {
-    const r = resp();
-    const s = source();
-    if (!r || !s) return undefined;
-    return r.addr === s.addr && r.length === s.len ? r : undefined;
-  });
+  const [resp, currentResp] = createGuardedResource<Source, Awaited<ReturnType<typeof fetchStringProvenance>>>(
+    source,
+    (s) => fetchStringProvenance(s.addr, s.len),
+    (r, s) => r.addr === s.addr && r.length === s.len,
+  );
   const readyResp = createMemo(() => {
     const r = currentResp();
     return r?.status === "ready" ? r : undefined;

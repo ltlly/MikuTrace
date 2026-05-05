@@ -1,7 +1,8 @@
-import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchCallTree } from "~/api/client";
 import type { CallNode } from "~/api/types";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 const DEFAULT_DEPTH = 10;
 const MIN_DEPTH = 1;
@@ -101,15 +102,16 @@ function CallTreeRow(props: RowProps) {
 
 export default function CallTreePanel(props: CallTreePanelProps) {
   const [depth, setDepth] = createSignal(DEFAULT_DEPTH);
-  const [resp] = createResource(
-    () => (props.active ? depth() : undefined),
-    (maxDepth) => fetchCallTree(maxDepth),
-  );
-  const currentResp = createMemo(() => {
-    const r = resp();
-    if (!r || !props.active) return undefined;
-    return r.request_max_depth === depth() ? r : undefined;
+  const source = createMemo((prev?: { depth: number }) => {
+    if (!props.active) return undefined;
+    const next = { depth: depth() };
+    return prev && prev.depth === next.depth ? prev : next;
   });
+  const [resp, currentResp] = createGuardedResource(
+    source,
+    (s) => fetchCallTree(s.depth),
+    (r, s) => r.request_max_depth === s.depth,
+  );
   const [openKeys, setOpenKeys] = createSignal<Set<string>>(new Set());
   const [locatedKey, setLocatedKey] = createSignal("");
   let locateSeq = 0;

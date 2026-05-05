@@ -2,6 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import type { Accessor, Setter } from "solid-js";
 
 import { fetchFunctions, fetchHlilForFn, fetchIdxsForPc } from "~/api/client";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 const SOURCE_TAGS: Record<string, string> = {
   "trace-ir": "TR",
@@ -53,13 +54,11 @@ export default function HlilPanel(props: HlilPanelProps) {
     const next = { fnId, reload: reload() };
     return prev && prev.fnId === next.fnId && prev.reload === next.reload ? prev : next;
   });
-  const [hlil] = createResource(source, (s) => (s ? fetchHlilForFn(s.fnId) : undefined));
-  const currentHlil = createMemo(() => {
-    const r = hlil();
-    const s = source();
-    if (!r || !s) return undefined;
-    return r.request_fn_id === s.fnId ? r : undefined;
-  });
+  const [hlil, currentHlil] = createGuardedResource<HlilSource, Awaited<ReturnType<typeof fetchHlilForFn>>>(
+    source,
+    (s) => fetchHlilForFn(s.fnId),
+    (r, s) => r.request_fn_id === s.fnId,
+  );
 
   async function jumpLine(pc: string) {
     cancelJump();
