@@ -408,20 +408,12 @@ fn scan_branch_range(trace: &crate::trace::Trace, start: usize, end: usize) -> B
 
 /// Planned worker count for CFG branch scanning at `n` records.
 pub fn cfg_worker_count(n: usize) -> usize {
-    let requested = std::env::var("TRACEMIKU_CFG_THREADS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&v| v > 0);
-    let available = requested.unwrap_or_else(|| {
-        thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-    if available <= 1 || (requested.is_none() && n < CFG_PARALLEL_MIN_RECORDS) {
-        return 1;
-    }
-    let chunk_cap = n.div_ceil(CFG_MIN_CHUNK_RECORDS).max(1);
-    available.min(chunk_cap).max(1)
+    crate::parallel::worker_count(
+        n,
+        "TRACEMIKU_CFG_THREADS",
+        CFG_PARALLEL_MIN_RECORDS,
+        CFG_MIN_CHUNK_RECORDS,
+    )
 }
 
 #[cfg(test)]

@@ -94,6 +94,7 @@ fn parallelism_status_value(state: &AppState) -> Value {
             "memshadow": tracemiku_core::memshadow::memshadow_worker_count(records),
         },
         "env": {
+            "TRACEMIKU_ANALYSIS_THREADS": std::env::var("TRACEMIKU_ANALYSIS_THREADS").ok(),
             "TRACEMIKU_INDEX_THREADS": std::env::var("TRACEMIKU_INDEX_THREADS").ok(),
             "TRACEMIKU_SYMBOL_THREADS": std::env::var("TRACEMIKU_SYMBOL_THREADS").ok(),
             "TRACEMIKU_CFG_THREADS": std::env::var("TRACEMIKU_CFG_THREADS").ok(),

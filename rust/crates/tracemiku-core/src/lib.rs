@@ -19,6 +19,7 @@ pub mod index;
 pub mod llil;
 pub mod memshadow;
 pub mod ollvmdet;
+pub mod parallel;
 pub mod prelude;
 pub mod symbols;
 pub mod taint;

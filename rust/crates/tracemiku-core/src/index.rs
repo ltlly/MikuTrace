@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::thread;
 
 use crate::disasm::{addr_of, decode};
+use crate::parallel;
 use crate::trace::Trace;
 
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -111,20 +112,12 @@ impl Index {
 
 /// Planned worker count for [`Index::build`] at `n` records.
 pub fn index_worker_count(n: usize) -> usize {
-    let requested = std::env::var("TRACEMIKU_INDEX_THREADS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&v| v > 0);
-    let available = requested.unwrap_or_else(|| {
-        thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-    if available <= 1 || (requested.is_none() && n < PARALLEL_MIN_RECORDS) {
-        return 1;
-    }
-    let chunk_cap = n.div_ceil(MIN_CHUNK_RECORDS).max(1);
-    available.min(chunk_cap).max(1)
+    parallel::worker_count(
+        n,
+        "TRACEMIKU_INDEX_THREADS",
+        PARALLEL_MIN_RECORDS,
+        MIN_CHUNK_RECORDS,
+    )
 }
 
 fn build_range(trace: &Trace, start: usize, end: usize) -> Index {

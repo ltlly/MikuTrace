@@ -358,20 +358,12 @@ impl MemShadow {
 
 /// Planned worker count for [`MemShadow::build_from_trace`] at `n` records.
 pub fn memshadow_worker_count(n: usize) -> usize {
-    let requested = std::env::var("TRACEMIKU_MEMSHADOW_THREADS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&v| v > 0);
-    let available = requested.unwrap_or_else(|| {
-        thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
-    if available <= 1 || (requested.is_none() && n < PARALLEL_MIN_RECORDS) {
-        return 1;
-    }
-    let chunk_cap = n.div_ceil(MIN_CHUNK_RECORDS).max(1);
-    available.min(chunk_cap).max(1)
+    crate::parallel::worker_count(
+        n,
+        "TRACEMIKU_MEMSHADOW_THREADS",
+        PARALLEL_MIN_RECORDS,
+        MIN_CHUNK_RECORDS,
+    )
 }
 
 fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
