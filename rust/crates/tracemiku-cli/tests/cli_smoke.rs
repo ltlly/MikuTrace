@@ -134,8 +134,27 @@ fn records_wrapper_uses_server_wire_shape() {
     ]);
     assert_eq!(v["status"], serde_json::Value::Null);
     assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["records"][0]["idx"], 0);
     assert_eq!(v["records"][0]["pc"], "0x100000");
+}
+
+#[test]
+fn string_provenance_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "string-provenance".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--length".into(),
+        "4".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["addr"], "0x7000");
+    assert_eq!(v["length"], 4);
+    assert_eq!(v["bytes"].as_array().unwrap().len(), 4);
 }
 
 #[test]

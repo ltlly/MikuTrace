@@ -1,4 +1,4 @@
-PYTHON ?= /usr/bin/python3
+PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
@@ -8,7 +8,7 @@ PORT   ?= 18900
 help:
 	@echo "make fmt       - rust cargo fmt"
 	@echo "make test      - full v2 validation"
-	@echo "make test-v2   - fmt check + Python wrapper compile + Rust tests + frontend build"
+	@echo "make test-v2   - fmt check + Python wrapper compile + Rust tests + frontend build + CLI/web parity"
 	@echo "make test-fast - Python wrapper compile + Rust core/cli tests"
 	@echo "make webui RUN=<trace_dir> [PORT=18900]"
 	@echo "make clean     - rm local caches/build outputs"
@@ -25,6 +25,7 @@ test-v2:
 	cd rust && $(CARGO) test -p tracemiku-server -- --nocapture
 	cd rust && $(CARGO) test -p tracemiku-cli -- --nocapture
 	cd frontend && $(NPM) run build
+	$(PYTHON) scripts/rust_cli_web_parity.py --debug-bin
 
 test-fast:
 	$(PYTHON) -m py_compile tracemiku

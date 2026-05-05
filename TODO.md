@@ -38,9 +38,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `createGuardedResource` 并接入 Backtrace / Trace-for-PC / Xref / Forks /
   Strings / String Provenance / CallTree / HLIL / Memory dump+diff,
   剩余 panel 仍需逐步迁移, 避免新面板复发 "旧请求覆盖新 cursor"。
-- ☐ 扩大 Rust web↔CLI parity gate: 对 records/cfg/taint/memory/string
-  provenance/dec-summary 建立小 fixture baseline, 作为 `make test-v2` 之外的
-  PR-ready smoke。
+- ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
+  fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
+  live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
 - ☐ 恢复 Decompile/LLIL/LLM 可见 UI 前, 先证明它们不会阻塞当前 trace
   cursor/CFG/Records 热路径。
 - ☐ 将 `scripts/rust_web_smoke.py` 固化到发布前检查清单; 大 trace 至少跑

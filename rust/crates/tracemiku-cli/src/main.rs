@@ -162,6 +162,14 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// GET /api/string-provenance.
+    StringProvenance {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 32)]
+        length: usize,
+    },
     /// GET /api/mem-dump.
     MemDump {
         trace_dir: PathBuf,
@@ -555,6 +563,14 @@ async fn main() -> anyhow::Result<()> {
                 ("limit", limit.to_string()),
             ];
             route_get_json(trace_dir, route_path("/api/strings", &params)).await
+        }
+        Some(Cmd::StringProvenance {
+            trace_dir,
+            addr,
+            length,
+        }) => {
+            let params = vec![("addr", addr), ("length", length.to_string())];
+            route_get_json(trace_dir, route_path("/api/string-provenance", &params)).await
         }
         Some(Cmd::MemDump {
             trace_dir,
