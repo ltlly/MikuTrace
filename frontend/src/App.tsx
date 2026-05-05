@@ -578,7 +578,7 @@ export default function App() {
       forks: "Forks",
       strings: "Strings",
       taint: "Taint",
-      xref: "Cross Ref",
+      xref: "Refs",
       sofilter: "SO Filter",
       settings: "Settings",
     };
@@ -676,14 +676,14 @@ export default function App() {
       if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。双击字节跳来源 idx，右键字节显示该地址前后的读写触碰分析。";
       if (bottomTab() === "trace-for-pc") return "Trace for PC 显示当前 PC 在 trace 中其它执行位置，分为 cursor 之前和之后。它用来分析循环、调度器、热点指令和同一静态指令在不同时间的状态差异。点击任意行会跳转到对应 idx。";
       if (bottomTab() === "string-provenance") return "Provenance 显示 Strings 双击后选中字符串的逐字节来源：每个字符当前值、写入 idx 列表和读取 idx 列表。点击 w#/r# 会跳到对应 trace。";
-      return "Navigation 记录本次页面会话里的 cursor 跳转历史，所有来自 Disassembly、CFG、CallTree、Strings、Cross Ref 和 Trace for PC 的跳转都会进入这里。back/forward 只改变 cursor，不重新请求历史。";
+      return "Navigation 记录本次页面会话里的 cursor 跳转历史，所有来自 Disassembly、CFG、CallTree、Strings、Refs 和 Trace for PC 的跳转都会进入这里。back/forward 只改变 cursor，不重新请求历史。";
     }
     if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG、HLIL 和 Decompile；记录数、block 数和入口地址用来判断热函数和分析范围。";
     if (leftTab() === "back") return "Backtrace 在当前 cursor 处重建动态调用栈。点击 frame 会跳到对应 call site，用于从深层 JNI/Native 调用回到上游上下文。";
     if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
     if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。单击跳到第一次写入/触碰该字符串地址的 trace；双击会在底部 Provenance 展示每个字符是谁写入、谁读取。";
     if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源，选项控制是否穿过内存和是否标注函数调用深度。";
-    if (leftTab() === "xref") return "Cross Ref 上半部分是当前 PC 在 trace 中的执行历史；下半部分是 ASM 文本搜索。点击 current insn 会用当前指令文本做精确正则搜索；手动输入时按 mnemonic/op_str 正则搜索。";
+    if (leftTab() === "xref") return "Refs 上半部分是当前 PC 在 trace 中的其它执行位置；下半部分是按解码后的汇编文本做正则搜索。它不是静态代码引用分析，ret 这类通用指令只有在提交文本搜索后才会列出匹配。";
     if (leftTab() === "settings") return "Settings 显示后端 API、MemShadow 状态、密度和调试开关。API debug log 可在需要定位前端/后端交互时打开。";
     return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
   });
@@ -734,7 +734,7 @@ export default function App() {
           {vtab("forks", "Forks", "fork/clone 事件")}
           {vtab("strings", "Strings", "MemShadow 字符串")}
           {vtab("taint", "Taint", "寄存器/内存污点追踪")}
-          {vtab("xref", "Cross Ref", "当前 PC 执行历史和汇编搜索")}
+          {vtab("xref", "Refs", "当前 PC 执行历史和汇编文本搜索")}
           {vtab("sofilter", "SO Filter", "multi-SO 过滤状态")}
           {vtab("settings", "Settings", "显示和 API 状态")}
         </aside>

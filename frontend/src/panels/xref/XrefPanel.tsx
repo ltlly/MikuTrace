@@ -87,10 +87,10 @@ export default function XrefPanel(props: XrefPanelProps) {
 
   return (
     <section class="panel">
-      <h2>Cross Ref</h2>
+      <h2>Refs</h2>
       <div class="xref-controls">
         <label>
-          instruction text regex
+          instruction regex
           <input
             type="text"
             value={pattern()}
@@ -106,7 +106,7 @@ export default function XrefPanel(props: XrefPanelProps) {
             search
           </button>
           <button type="button" onClick={searchCurrentInstruction} disabled={!defaultAsmPattern()}>
-            current insn
+            match current text
           </button>
           <button type="button" onClick={() => setSubmittedSearch(undefined)} disabled={!submittedSearch()}>
             clear
@@ -124,7 +124,7 @@ export default function XrefPanel(props: XrefPanelProps) {
       </Show>
       <div class="xref-grid">
         <div>
-          <h3>executions at current PC</h3>
+          <h3>same PC executions</h3>
           <Show when={pcRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
@@ -178,12 +178,12 @@ export default function XrefPanel(props: XrefPanelProps) {
           </Show>
         </div>
         <div>
-          <h3>instruction text search</h3>
+          <h3>same instruction text</h3>
           <Show when={asmRefs.loading}>
             <p class="dim">loading…</p>
           </Show>
           <Show when={!submittedSearch()}>
-            <p class="dim small">enter a regex, or search exact current instruction.</p>
+            <p class="dim small">regex search over decoded assembly text</p>
           </Show>
           <Show when={currentAsmRefs()}>
             {(r) => (
