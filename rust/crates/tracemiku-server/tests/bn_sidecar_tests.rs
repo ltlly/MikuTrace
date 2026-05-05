@@ -195,6 +195,106 @@ for line in sys.stdin:
 }
 
 #[tokio::test]
+async fn bn_sidecar_response_cache_survives_router_reload() {
+    let dir = synth_trace();
+    let sidecar = dir.path().join("fake_hlil_cache_sidecar.py");
+    let count_file = dir.path().join("bn_request_count.txt");
+    fs::write(
+        &sidecar,
+        r#"#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+count_path = pathlib.Path(sys.argv[1])
+
+for line in sys.stdin:
+    req = json.loads(line)
+    old = int(count_path.read_text() or "0") if count_path.exists() else 0
+    count_path.write_text(str(old + 1))
+    result = {
+        "ok": True,
+        "ready": True,
+        "created_function": True,
+        "fn": {"name": "bn_root", "start": 1048576, "end": 1048588},
+        "lines": [{"pc": "0x100000", "text": "root", "tokens": []}],
+        "vars": [],
+    }
+    print(json.dumps({"id": req.get("id"), "result": result}), flush=True)
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&sidecar).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sidecar, perms).unwrap();
+    }
+
+    let sidecar_cmd = format!("{} {}", sidecar.display(), count_file.display());
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", sidecar_cmd);
+    let app1 = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app1
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/hlil-for-pc?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["cache_hit"], false);
+    assert_eq!(v["created_function"], true);
+    assert_eq!(fs::read_to_string(&count_file).unwrap(), "1");
+    assert!(call_dir(&dir)
+        .join("trace.bin.bn-sidecar-cache.v1.json")
+        .exists());
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var(
+        "TRACEMIKU_BN_SIDECAR",
+        format!("{} {}", sidecar.display(), count_file.display()),
+    );
+    let app2 = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app2
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/hlil-for-pc?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["cache_hit"], true);
+    assert_eq!(v["created_function"], true);
+    assert_eq!(fs::read_to_string(&count_file).unwrap(), "1");
+}
+
+#[tokio::test]
 async fn functions_merges_bn_entries_when_sidecar_is_ready() {
     let dir = synth_trace();
     let sidecar = dir.path().join("fake_bn_sidecar.py");

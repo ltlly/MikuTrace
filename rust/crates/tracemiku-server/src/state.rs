@@ -27,6 +27,8 @@ const MEMSHADOW_NOT_STARTED: u8 = 0;
 const MEMSHADOW_LOADING: u8 = 1;
 const MEMSHADOW_READY: u8 = 2;
 const INTERACTIVE_WARM_DELAY_MS: u64 = 250;
+const BN_RESPONSE_CACHE_VERSION: u64 = 1;
+const BN_RESPONSE_CACHE_FILE: &str = "trace.bin.bn-sidecar-cache.v1.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraceIrBuildOptions {
@@ -86,6 +88,7 @@ pub struct AppStateInner {
     trace_ir_cache: Mutex<HashMap<TraceIrBuildOptions, Arc<TopIR>>>,
     pub(crate) reg_timeline_cache: Mutex<HashMap<String, Arc<Vec<(usize, u64)>>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
+    pub(crate) bn_response_cache: Mutex<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +188,7 @@ impl AppState {
         } else {
             Vec::new()
         };
+        let bn_response_cache = load_bn_response_cache(&trace);
         let memshadow = OnceLock::new();
         let memshadow_status = AtomicU8::new(MEMSHADOW_NOT_STARTED);
         if trace.len() <= EAGER_MEMSHADOW_MAX_RECORDS {
@@ -229,6 +233,7 @@ impl AppState {
             bn_sidecar: Mutex::new(BnSidecarManager::from_env_with_default_base(
                 (primary_base != 0).then_some(primary_base),
             )),
+            bn_response_cache: Mutex::new(bn_response_cache),
         });
 
         if background_interactive_warm_enabled() {
@@ -273,6 +278,39 @@ impl AppState {
         }
         Ok(Self { inner })
     }
+}
+
+pub(crate) fn bn_response_cache_path(trace: &Trace) -> PathBuf {
+    trace.call_dir().join(BN_RESPONSE_CACHE_FILE)
+}
+
+fn load_bn_response_cache(trace: &Trace) -> HashMap<String, serde_json::Value> {
+    let path = bn_response_cache_path(trace);
+    let Ok(raw) = std::fs::read(&path) else {
+        return HashMap::new();
+    };
+    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+        tracing::warn!(
+            target: "tracemiku-server",
+            path = %path.display(),
+            "ignoring corrupt BN sidecar cache"
+        );
+        return HashMap::new();
+    };
+    let version = doc.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+    let trace_bytes = doc.get("trace_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+    if version != BN_RESPONSE_CACHE_VERSION || trace_bytes != trace.raw().len() as u64 {
+        return HashMap::new();
+    }
+    doc.get("entries")
+        .and_then(|v| v.as_object())
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 impl AppStateInner {

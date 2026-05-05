@@ -9,12 +9,15 @@ import {
 } from "~/api/client";
 import type { MemDumpByte, MemWritesInRangeResponse, TouchingRangeResponse } from "~/api/types";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import type { UiTaskReporter } from "~/utils/taskCenter";
+import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
 
 interface MemoryPanelProps {
   idx: number;
   onSelect: (idx: number) => void;
-  addrRequest?: { token: number; addr: string };
+  addrRequest?: { token: number; addr: string; count?: number };
   active: boolean;
+  onTaskUpdate?: UiTaskReporter;
 }
 
 const REG_ORDER = [
@@ -123,6 +126,32 @@ function sortedRegNames(regs: Record<string, string>): string[] {
     });
 }
 
+function memoryProvNodes(ctx: MemContext, onSelect: (idx: number) => void): ProvNode[] {
+  const nodes: ProvNode[] = [{ id: "range", label: `${ctx.addr} len ${ctx.size}`, kind: "memory" }];
+  const hits = ctx.hits;
+  if (!hits) return nodes;
+  for (const idx of [...hits.writers_before, ...hits.writers_after].slice(0, 12)) {
+    nodes.push({ id: `w:${idx}`, label: `w#${idx}`, kind: "writer", onClick: () => onSelect(idx) });
+  }
+  for (const idx of [...hits.readers_before, ...hits.readers_after].slice(0, 12)) {
+    nodes.push({ id: `r:${idx}`, label: `r#${idx}`, kind: "reader", onClick: () => onSelect(idx) });
+  }
+  return nodes;
+}
+
+function memoryProvEdges(ctx: MemContext): ProvEdge[] {
+  const hits = ctx.hits;
+  if (!hits) return [];
+  return [
+    ...[...hits.writers_before, ...hits.writers_after]
+      .slice(0, 12)
+      .map((idx) => ({ from: `w:${idx}`, to: "range", label: "writes" })),
+    ...[...hits.readers_before, ...hits.readers_after]
+      .slice(0, 12)
+      .map((idx) => ({ from: "range", to: `r:${idx}`, label: "read by" })),
+  ];
+}
+
 export default function MemoryPanel(props: MemoryPanelProps) {
   const initialCols = initialMemCols();
   const [addr, setAddr] = createSignal("0x0");
@@ -217,6 +246,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     lastAddrRequest = req.token;
     autoAddr = req.addr;
     setAddr(req.addr);
+    if (req.count !== undefined) setCount(clamp(req.count, 1, 512));
   });
   createEffect(() => {
     const r = currentRecord();
@@ -288,6 +318,32 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   const readyDump = createMemo(() => {
     const r = currentDump();
     return r?.status === "ready" ? r : undefined;
+  });
+
+  createEffect(() => {
+    const s = dumpSource();
+    if (!props.active || !s) return;
+    if (dump.loading || currentDump()?.status === "loading") {
+      props.onTaskUpdate?.({
+        id: "memory-dump",
+        surface: "Memory",
+        label: `${s.addr} len ${s.count}`,
+        status: "running",
+        detail: currentDump()?.status === "loading" ? "memory index loading" : "dump",
+      });
+    }
+  });
+
+  createEffect(() => {
+    const d = readyDump();
+    if (!props.active || !d) return;
+    props.onTaskUpdate?.({
+      id: "memory-dump",
+      surface: "Memory",
+      label: `${d.addr} len ${d.count}`,
+      status: "ready",
+      detail: `${d.bytes.length} bytes`,
+    });
   });
   const changedAddrs = createMemo(() => {
     const set = new Set<string>();
@@ -365,6 +421,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     const token = ++memContextSeq;
     const abort = new AbortController();
     memContextAbort = abort;
+    const taskStartedAt = performance.now();
     const base: MemContext = {
       token,
       x: Math.min(e.clientX, window.innerWidth - 320),
@@ -374,6 +431,14 @@ export default function MemoryPanel(props: MemoryPanelProps) {
       srcIdx: bounds.size === 1 ? b.src_idx : null,
     };
     setMemContext(base);
+    props.onTaskUpdate?.({
+      id: "memory-provenance",
+      surface: "Memory Provenance",
+      label: `${bounds.lo} len ${bounds.size}`,
+      status: "running",
+      startedAt: taskStartedAt,
+      detail: `cursor #${props.idx}`,
+    });
     try {
       const hits = await fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, MEMORY_CONTEXT_LIMIT, abort.signal);
       let writes: MemWritesInRangeResponse | undefined;
@@ -396,6 +461,19 @@ export default function MemoryPanel(props: MemoryPanelProps) {
           ? { ...current, hits, writes, writeErr }
           : current,
       );
+      props.onTaskUpdate?.({
+        id: "memory-provenance",
+        surface: "Memory Provenance",
+        label: `${bounds.lo} len ${bounds.size}`,
+        status:
+          hits.writers_total > hits.writers_before.length + hits.writers_after.length ||
+          hits.readers_total > hits.readers_before.length + hits.readers_after.length ||
+          writes?.truncated
+            ? "partial"
+            : "ready",
+        startedAt: taskStartedAt,
+        detail: `${hits.writers_total} writers · ${hits.readers_total} readers`,
+      });
     } catch (err) {
       if (abort.signal.aborted) return;
       setMemContext((current) =>
@@ -403,6 +481,14 @@ export default function MemoryPanel(props: MemoryPanelProps) {
           ? { ...current, err: String(err) }
           : current,
       );
+      props.onTaskUpdate?.({
+        id: "memory-provenance",
+        surface: "Memory Provenance",
+        label: `${bounds.lo} len ${bounds.size}`,
+        status: "error",
+        startedAt: taskStartedAt,
+        detail: String(err),
+      });
     } finally {
       if (memContextAbort === abort) memContextAbort = undefined;
     }
@@ -555,6 +641,12 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                   <Show when={ctx().hits}>
                     {(hits) => (
                       <>
+                        <ProvenanceGraph
+                          title="Memory Range Provenance"
+                          nodes={memoryProvNodes(ctx(), props.onSelect)}
+                          edges={memoryProvEdges(ctx())}
+                          empty="no memory readers/writers"
+                        />
                         <div class="memory-context-grid">
                           <div>
                             <h3>writers</h3>

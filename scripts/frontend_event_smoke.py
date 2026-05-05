@@ -253,6 +253,22 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     page.locator(".decompiler-panel button", has_text="render LLIL").wait_for(timeout=timeout_ms)
     checks.append("Decompile tab is visible without LLM controls")
 
+    page.keyboard.press("g")
+    cmd = page.locator("#cmd-input")
+    cmd.fill("query records ret")
+    page.keyboard.press("Enter")
+    page.wait_for_selector(".query-panel", timeout=timeout_ms)
+    page.locator(".query-panel", has_text="Trace Query").wait_for(timeout=timeout_ms)
+    page.locator(".query-table").wait_for(timeout=timeout_ms)
+    checks.append("command palette routes query records ret into Trace Query panel")
+
+    page.locator(".task-toggle").click(timeout=timeout_ms)
+    page.wait_for_selector(".task-center", timeout=timeout_ms)
+    page.locator(".task-center", has_text="Task Center").wait_for(timeout=timeout_ms)
+    checks.append("Task Center opens and surfaces recent analysis tasks")
+    page.locator(".task-center-head button", has_text="close").click(timeout=timeout_ms)
+    page.wait_for_selector(".task-center", state="hidden", timeout=timeout_ms)
+
     page.locator('.vtab[data-rtab="cfg"]').click(timeout=timeout_ms)
     page.wait_for_selector(".cfg-panel", timeout=timeout_ms)
     cfg_source = page.locator(".cfg-controls select").first
@@ -268,22 +284,37 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     checks.append("CFG source selector switches to BN ASM CFG and back")
 
     page.wait_for_selector(".cfg-svg-frame", timeout=timeout_ms)
+    page.wait_for_selector('.cfg-svg-canvas > svg g[data-tracemiku-panzoom]', state="attached", timeout=timeout_ms)
     zoom_anchor = page.evaluate(
-        """() => {
+        """async () => {
             const frame = document.querySelector('.cfg-svg-frame');
             const canvas = document.querySelector('.cfg-svg-canvas');
-            if (!frame || !canvas) throw new Error('CFG frame/canvas missing');
+            const svg = document.querySelector('.cfg-svg-canvas > svg');
+            const group = document.querySelector('.cfg-svg-canvas > svg g[data-tracemiku-panzoom]');
+            if (!frame || !canvas || !svg || !group) throw new Error('CFG frame/canvas/svg missing');
+            const viewBoxRaw = svg.getAttribute('viewBox');
+            const viewBox = viewBoxRaw
+                ? viewBoxRaw.trim().split(/[\\s,]+/).map(Number)
+                : [0, 0, Number.parseFloat(svg.getAttribute('width') || '0'), Number.parseFloat(svg.getAttribute('height') || '0')];
+            if (viewBox.length !== 4 || viewBox.some((part) => !Number.isFinite(part)) || viewBox[2] <= 0 || viewBox[3] <= 0) {
+                throw new Error(`bad CFG viewBox: ${viewBoxRaw}`);
+            }
             const parse = () => {
-                const t = canvas.style.transform;
-                const m = t.match(/translate\\((-?[0-9.]+)px, (-?[0-9.]+)px\\) scale\\(([0-9.]+)\\)/);
+                const t = group.getAttribute('transform') || '';
+                const m = t.match(/translate\\((-?[0-9.eE+-]+)\\s+(-?[0-9.eE+-]+)\\) scale\\(([0-9.eE+-]+)\\)/);
                 if (!m) throw new Error(`bad CFG transform: ${t}`);
                 return { x: Number(m[1]), y: Number(m[2]), scale: Number(m[3]) };
             };
             const rect = frame.getBoundingClientRect();
+            const svgRect = svg.getBoundingClientRect();
+            const svgCssWidth = Number(svg.getAttribute('data-tracemiku-css-width')) || svgRect.width;
+            const svgCssHeight = Number(svg.getAttribute('data-tracemiku-css-height')) || svgRect.height;
+            const userUnitsPerCssX = viewBox[2] / svgCssWidth;
+            const userUnitsPerCssY = viewBox[3] / svgCssHeight;
             const clientX = rect.left + rect.width * 0.63;
             const clientY = rect.top + rect.height * 0.37;
-            const mx = clientX - rect.left;
-            const my = clientY - rect.top;
+            const mx = (clientX - svgRect.left) * userUnitsPerCssX;
+            const my = (clientY - svgRect.top) * userUnitsPerCssY;
             const before = parse();
             const beforeContent = { x: (mx - before.x) / before.scale, y: (my - before.y) / before.scale };
             frame.dispatchEvent(new WheelEvent('wheel', {
@@ -294,18 +325,22 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
                 clientX,
                 clientY,
             }));
+            await new Promise((resolve) => requestAnimationFrame(resolve));
             const after = parse();
             const afterContent = { x: (mx - after.x) / after.scale, y: (my - after.y) / after.scale };
             return {
+                cssTransform: getComputedStyle(canvas).transform,
                 scaled: after.scale > before.scale,
                 dx: afterContent.x - beforeContent.x,
                 dy: afterContent.y - beforeContent.y,
             };
         }"""
     )
+    if zoom_anchor["cssTransform"] != "none":
+        raise RuntimeError(f"CFG canvas still uses CSS transform: {zoom_anchor}")
     if not zoom_anchor["scaled"] or abs(zoom_anchor["dx"]) > 0.05 or abs(zoom_anchor["dy"]) > 0.05:
         raise RuntimeError(f"CFG ctrl-wheel zoom did not keep cursor anchor stable: {zoom_anchor}")
-    checks.append("CFG ctrl-wheel zoom is anchored at the cursor")
+    checks.append("CFG ctrl-wheel zoom is vector-rendered and anchored at the cursor")
 
     if points and points[0].func and points[1].func and points[0].func != points[1].func:
         jump_to_idx(page, points[0].idx)

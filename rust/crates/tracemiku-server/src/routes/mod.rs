@@ -36,6 +36,7 @@ pub mod memory_query;
 pub mod meta;
 pub mod navigation;
 pub mod ollvm_detect_vm;
+pub mod query;
 pub mod record;
 pub mod records;
 pub mod reg_value_at;
@@ -62,6 +63,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/search", get(search::search_handler))
+        .route("/api/query", get(query::query_handler))
         .route("/api/search-pc", get(search_pc::search_pc_handler))
         .route("/api/crypto-scan", get(crypto_scan::crypto_scan_handler))
         .route(

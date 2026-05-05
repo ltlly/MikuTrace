@@ -278,6 +278,43 @@ async fn cfg_svg_large_fn_returns_overview_without_dot() {
 }
 
 #[tokio::test]
+async fn cfg_svg_large_fn_returns_local_cfg_for_focus_pc() {
+    let _guard = dot_env_lock().lock().await;
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_large_cfg_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_big&pc=0x100250&local_depth=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "large");
+    assert_eq!(v["layout_mode"], "local");
+    assert_eq!(v["focus_pc"], "0x100250");
+    assert_eq!(v["selected_block"], "0x100250");
+    assert_eq!(v["neighborhood_depth"].as_u64(), Some(2));
+    assert!(
+        v["shown_block_count"].as_u64().unwrap_or(usize::MAX as u64)
+            < v["block_count"].as_u64().unwrap_or(0),
+        "local CFG should not include every block in a large function: {v}"
+    );
+    let svg = v["svg"].as_str().expect("local svg");
+    assert!(svg.contains("data-layout=\"local-cfg\""), "{svg}");
+    assert!(svg.contains("#insn_100250"), "{svg}");
+    assert!(svg.contains("local CFG around 0x100250"), "{svg}");
+}
+
+#[tokio::test]
 async fn cfg_svg_edge_heavy_fn_returns_overview_without_dot() {
     let _guard = dot_env_lock().lock().await;
     std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");

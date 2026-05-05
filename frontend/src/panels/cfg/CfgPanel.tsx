@@ -2,12 +2,16 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 
 import { fetchBnCfgSvgForPc, fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
 import type { BnCfgSvgForPcResponse, CfgSvgResponse } from "~/api/types";
+import type { UiTaskReporter } from "~/utils/taskCenter";
 
 const AUTO_RENDER_MAX_BLOCKS = 120;
 const AUTO_RENDER_MAX_SVG_BYTES = 900_000;
 const FORCE_DOT_MAX_BLOCKS = 400;
 const FORCE_DOT_MAX_EDGES = 1_000;
 const CFG_FETCH_DEBOUNCE_MS = 80;
+const SVG_PANZOOM_ATTR = "data-tracemiku-panzoom";
+const SVG_CSS_WIDTH_ATTR = "data-tracemiku-css-width";
+const SVG_CSS_HEIGHT_ATTR = "data-tracemiku-css-height";
 
 function clampTimeout(raw: number): number {
   if (!Number.isFinite(raw)) return 60;
@@ -16,6 +20,66 @@ function clampTimeout(raw: number): number {
 
 function clampScale(scale: number): number {
   return Math.min(5, Math.max(0.25, scale));
+}
+
+function parseSvgNumber(raw: string | null): number | undefined {
+  const match = raw?.trim().match(/^[-+]?(?:\d+\.?\d*|\.\d+)/);
+  if (!match) return undefined;
+  const n = Number(match[0]);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function svgViewBoxSize(svg: SVGSVGElement): { width: number; height: number } | undefined {
+  const raw = svg.getAttribute("viewBox");
+  if (raw) {
+    const parts = raw
+      .trim()
+      .split(/[\s,]+/)
+      .map((part) => Number(part));
+    if (parts.length === 4 && parts.every((part) => Number.isFinite(part))) {
+      const [, , width, height] = parts;
+      if (width > 0 && height > 0) return { width, height };
+    }
+  }
+
+  const width = parseSvgNumber(svg.getAttribute("width"));
+  const height = parseSvgNumber(svg.getAttribute("height"));
+  if (width && height) return { width, height };
+
+  const rect = svg.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height };
+  return undefined;
+}
+
+function rememberSvgCssSize(svg: SVGSVGElement): { width: number; height: number } | undefined {
+  const storedWidth = Number(svg.getAttribute(SVG_CSS_WIDTH_ATTR));
+  const storedHeight = Number(svg.getAttribute(SVG_CSS_HEIGHT_ATTR));
+  if (storedWidth > 0 && storedHeight > 0) return { width: storedWidth, height: storedHeight };
+
+  const rect = svg.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return undefined;
+  svg.setAttribute(SVG_CSS_WIDTH_ATTR, String(rect.width));
+  svg.setAttribute(SVG_CSS_HEIGHT_ATTR, String(rect.height));
+  return { width: rect.width, height: rect.height };
+}
+
+function ensureSvgPanZoomGroup(svg: SVGSVGElement): SVGGElement {
+  rememberSvgCssSize(svg);
+  const existing = svg.querySelector<SVGGElement>(`g[${SVG_PANZOOM_ATTR}]`);
+  if (existing) return existing;
+
+  const group = svg.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g");
+  group.setAttribute(SVG_PANZOOM_ATTR, "1");
+  const keepDirect = new Set(["defs", "desc", "metadata", "style", "title"]);
+  for (const child of Array.from(svg.childNodes)) {
+    if (child.nodeType === 1) {
+      const tag = (child as Element).tagName.toLowerCase();
+      if (keepDirect.has(tag)) continue;
+    }
+    group.appendChild(child);
+  }
+  svg.appendChild(group);
+  return group;
 }
 
 interface CfgPanelProps {
@@ -27,6 +91,7 @@ interface CfgPanelProps {
   syncEnabled: boolean;
   onDisplayFnChange: (fn: string) => void;
   onDebugChange?: (state: CfgDebugState) => void;
+  onTaskUpdate?: UiTaskReporter;
 }
 
 export interface CursorRecordHint {
@@ -65,6 +130,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   const [graph, setGraph] = createSignal<CfgGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = createSignal(false);
   const [graphError, setGraphError] = createSignal<unknown>(null);
+  const [traceLocalFollow, setTraceLocalFollow] = createSignal(false);
   const [lastGraphFn, setLastGraphFn] = createSignal("");
   const [debugSeq, setDebugSeq] = createSignal(0);
   const [pan, setPan] = createSignal({ x: 0, y: 0, scale: 1 });
@@ -73,12 +139,16 @@ export default function CfgPanel(props: CfgPanelProps) {
   );
   const [jumpErr, setJumpErr] = createSignal("");
   let frame: HTMLDivElement | undefined;
+  let canvas: HTMLDivElement | undefined;
   let suppressNextClick = false;
   let lastCenteredIdx = -1;
   let lastPanFn = "";
   let graphSeq = 0;
   let graphTimer: number | undefined;
   let graphAbort: AbortController | undefined;
+  let graphTask:
+    | { id: string; surface: string; label: string; startedAt: number }
+    | undefined;
   let jumpSeq = 0;
   let jumpAbort: AbortController | undefined;
 
@@ -114,6 +184,11 @@ export default function CfgPanel(props: CfgPanelProps) {
     }
     return [...names].sort((a, b) => a.localeCompare(b));
   });
+  const fnBlockCount = createMemo(() => {
+    const name = fnName();
+    if (!name) return 0;
+    return (functions()?.functions ?? []).find((fn) => fn.name === name)?.blocks ?? 0;
+  });
   createEffect(() => {
     if (!props.active || props.syncEnabled || cfgSource() !== "trace") return;
     const selected = selectedFnName();
@@ -122,6 +197,17 @@ export default function CfgPanel(props: CfgPanelProps) {
       setFnName(selected);
     }
   });
+
+  function cancelGraphTask(detail = "superseded") {
+    if (graphTask && (graphLoading() || graphTimer !== undefined || graphAbort)) {
+      props.onTaskUpdate?.({
+        ...graphTask,
+        status: "cancelled",
+        detail,
+      });
+    }
+    graphTask = undefined;
+  }
 
   createEffect(() => {
     if (!props.active) return;
@@ -142,9 +228,11 @@ export default function CfgPanel(props: CfgPanelProps) {
         window.clearTimeout(graphTimer);
         graphTimer = undefined;
       }
+      cancelGraphTask("inactive");
       graphAbort?.abort();
       graphAbort = undefined;
       frame = undefined;
+      canvas = undefined;
       setGraph(null);
       setGraphLoading(false);
       setGraphError(null);
@@ -153,12 +241,33 @@ export default function CfgPanel(props: CfgPanelProps) {
 
     const requestFn = sourceKind === "trace" ? fnName() : bn?.func ?? "";
     const requestPc = bn?.pc ?? "";
+    const hint = currentRecord();
+    const requestLocalFocus = traceLocalFollow() || fnBlockCount() > AUTO_RENDER_MAX_BLOCKS;
+    const requestTracePc =
+      sourceKind === "trace" && props.syncEnabled && requestLocalFocus && hint?.func === requestFn
+        ? hint.pc
+        : "";
     const requestTimeout = timeout();
     const requestAuto = autoGraph();
     const requestForce = forceGraph();
     reload();
 
     const seq = ++graphSeq;
+    const taskId = sourceKind === "trace" ? "cfg-trace" : "cfg-bn-asm";
+    const taskLabel = sourceKind === "trace" ? requestFn : requestFn || requestPc;
+    const taskStartedAt = performance.now();
+    cancelGraphTask("superseded");
+    graphTask = {
+      id: taskId,
+      surface: sourceKind === "trace" ? "CFG" : "BN CFG",
+      label: taskLabel || "current cursor",
+      startedAt: taskStartedAt,
+    };
+    props.onTaskUpdate?.({
+      ...graphTask,
+      status: "running",
+      detail: requestTracePc ? `local focus ${requestTracePc}` : "loading",
+    });
     setDebugSeq(seq);
     if (graphTimer !== undefined) {
       window.clearTimeout(graphTimer);
@@ -166,6 +275,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     }
     graphAbort?.abort();
     frame = undefined;
+    canvas = undefined;
     setGraph(null);
     setGraphLoading(true);
     setGraphError(null);
@@ -176,23 +286,65 @@ export default function CfgPanel(props: CfgPanelProps) {
       graphAbort = abort;
       const promise =
         sourceKind === "trace"
-          ? fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, force: requestForce, signal: abort.signal })
+          ? fetchCfgSvg({
+              fnName: requestFn,
+              pc: requestTracePc,
+              localDepth: 2,
+              timeout: requestTimeout,
+              force: requestForce,
+              signal: abort.signal,
+            })
           : fetchBnCfgSvgForPc(requestPc, "asm", requestTimeout, abort.signal);
       void promise
         .then((resp) => {
           if (seq !== graphSeq || abort.signal.aborted) return;
-          if (sourceKind === "trace") {
-            const traceResp = resp as CfgSvgResponse;
-            setGraph({ ...traceResp, source: "trace", requestFn, auto: requestAuto });
+            if (sourceKind === "trace") {
+              const traceResp = resp as CfgSvgResponse;
+              setGraph({ ...traceResp, source: "trace", requestFn, auto: requestAuto });
+              setTraceLocalFollow(traceResp.status === "large");
+              graphTask = undefined;
+              props.onTaskUpdate?.({
+              id: taskId,
+              surface: "CFG",
+              label: taskLabel || "trace",
+              status:
+                traceResp.status === "large"
+                  ? "partial"
+                  : traceResp.status === "ready" && traceResp.cached
+                    ? "cached"
+                    : traceResp.status === "error"
+                      ? "error"
+                      : "ready",
+              startedAt: taskStartedAt,
+              detail:
+                traceResp.status === "large"
+                  ? `${traceResp.layout_mode ?? "large"} ${traceResp.shown_block_count ?? 0}/${traceResp.block_count} blocks`
+                  : traceResp.status === "ready"
+                    ? `${traceResp.block_count}/${traceResp.total_block_count} blocks`
+                    : traceResp.status,
+            });
             if (traceResp.status === "ready") setLastGraphFn(requestFn);
-          } else {
-            const bnResp = resp as BnCfgSvgForPcResponse;
-            setGraph({
+            } else {
+              const bnResp = resp as BnCfgSvgForPcResponse;
+              setGraph({
               ...bnResp,
               source: "bn-asm",
               requestFn,
               requestPc,
-              auto: requestAuto,
+                auto: requestAuto,
+              });
+              graphTask = undefined;
+              props.onTaskUpdate?.({
+              id: taskId,
+              surface: "BN CFG",
+              label: taskLabel || requestPc,
+              status: bnResp.ok && bnResp.ready ? "ready" : "error",
+              startedAt: taskStartedAt,
+              detail: bnResp.cache_hit
+                ? "cache hit"
+                : bnResp.created_function
+                  ? "created BN function"
+                  : String(bnResp.status ?? ""),
             });
             if (bnResp.ready && bnResp.ok) setLastGraphFn(requestFn || requestPc);
           }
@@ -200,6 +352,15 @@ export default function CfgPanel(props: CfgPanelProps) {
         .catch((err) => {
           if (seq !== graphSeq || abort.signal.aborted) return;
           setGraphError(err);
+          graphTask = undefined;
+          props.onTaskUpdate?.({
+            id: taskId,
+            surface: sourceKind === "trace" ? "CFG" : "BN CFG",
+            label: taskLabel || requestPc,
+            status: "error",
+            startedAt: taskStartedAt,
+            detail: String(err),
+          });
         })
         .finally(() => {
           if (seq === graphSeq && !abort.signal.aborted) {
@@ -231,6 +392,7 @@ export default function CfgPanel(props: CfgPanelProps) {
       window.clearTimeout(graphTimer);
       graphTimer = undefined;
     }
+    cancelGraphTask("unmounted");
     graphAbort?.abort();
     cancelJump();
   });
@@ -276,6 +438,12 @@ export default function CfgPanel(props: CfgPanelProps) {
       highlightAndCenterPc(r.pc, idx);
     });
     onCleanup(() => window.cancelAnimationFrame(raf));
+  });
+
+  createEffect(() => {
+    graph();
+    pan();
+    applySvgPanZoom();
   });
 
   function shouldRenderGraph(resp: { status: string; svg?: string; block_count?: number; auto?: boolean }): boolean {
@@ -379,7 +547,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   function onWheel(e: WheelEvent) {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    const rect = frame?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect() ?? frame?.getBoundingClientRect();
     setPan((current) => {
       const nextScale = clampScale(current.scale * (e.deltaY < 0 ? 1.12 : 0.89));
       if (!rect || nextScale === current.scale) return current;
@@ -424,11 +592,29 @@ export default function CfgPanel(props: CfgPanelProps) {
     frame?.releasePointerCapture(e.pointerId);
   }
 
+  function applySvgPanZoom() {
+    const svg = canvas?.querySelector<SVGSVGElement>("svg") ?? frame?.querySelector<SVGSVGElement>(".cfg-svg-canvas > svg");
+    if (!svg) return;
+    const group = ensureSvgPanZoomGroup(svg);
+    const viewBox = svgViewBoxSize(svg);
+    const cssSize = rememberSvgCssSize(svg);
+    if (!viewBox || !cssSize) return;
+
+    const current = pan();
+    const userUnitsPerCssX = viewBox.width / cssSize.width;
+    const userUnitsPerCssY = viewBox.height / cssSize.height;
+    group.setAttribute(
+      "transform",
+      `translate(${current.x * userUnitsPerCssX} ${current.y * userUnitsPerCssY}) scale(${current.scale})`,
+    );
+  }
+
   function graphFrame(svg: string, overview = false) {
     return (
       <div
         ref={(el) => {
           frame = el;
+          queueMicrotask(applySvgPanZoom);
         }}
         class="cfg-svg-frame"
         classList={{ dragging: !!drag(), "cfg-overview-frame": overview }}
@@ -439,10 +625,11 @@ export default function CfgPanel(props: CfgPanelProps) {
         onPointerCancel={onPointerUp}
       >
         <div
-          class="cfg-svg-canvas"
-          style={{
-            transform: `translate(${pan().x}px, ${pan().y}px) scale(${pan().scale})`,
+          ref={(el) => {
+            canvas = el;
+            queueMicrotask(applySvgPanZoom);
           }}
+          class="cfg-svg-canvas"
           onClick={onSvgClick}
           innerHTML={svg}
         />
@@ -565,7 +752,9 @@ export default function CfgPanel(props: CfgPanelProps) {
                   <p class="dim">
                     {r.fn ?? fnName()} CFG is large ({r.block_count} blocks, {r.edge_count} edges,{" "}
                     ~{Math.round(r.dot_bytes / 1024).toLocaleString()} KiB dot).{" "}
-                    {r.svg
+                    {r.svg && r.layout_mode === "local"
+                      ? `Local CFG shows ${r.shown_block_count ?? 0}/${r.block_count} blocks around ${r.focus_pc ?? r.selected_block ?? "cursor"} at depth ${r.neighborhood_depth ?? 0}; ${r.hidden_edge_count} edges hidden.`
+                      : r.svg
                       ? `Overview shows ${r.drawn_edge_count}/${r.edge_count} representative edges; ${r.hidden_edge_count} hidden to avoid a hairball.`
                       : "Overview SVG skipped to keep the UI responsive."}
                   </p>

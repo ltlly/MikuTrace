@@ -3,6 +3,8 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { fetchStringProvenance } from "~/api/client";
 import type { StringProvByte } from "~/api/types";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import type { UiTaskReporter } from "~/utils/taskCenter";
+import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
 
 export interface StringProvenanceRequest {
   token: number;
@@ -15,6 +17,7 @@ interface StringProvenancePanelProps {
   request?: StringProvenanceRequest;
   onSelect: (idx: number) => void;
   active: boolean;
+  onTaskUpdate?: UiTaskReporter;
 }
 
 interface Source {
@@ -25,6 +28,8 @@ interface Source {
 }
 
 const PROVENANCE_RETRY_MS = 500;
+const GRAPH_BYTE_LIMIT = 32;
+const GRAPH_EVENT_LIMIT = 2;
 
 function printable(byte: number | null): string {
   if (byte === null) return ".";
@@ -77,11 +82,87 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
     const nul = bytes.findIndex((b) => b.byte === 0);
     return nul >= 0 ? bytes.slice(0, nul + 1) : bytes;
   });
+  const graphNodes = createMemo<ProvNode[]>(() => {
+    const nodes: ProvNode[] = [];
+    for (const b of shownBytes().slice(0, GRAPH_BYTE_LIMIT)) {
+      nodes.push({
+        id: `byte:${b.addr}`,
+        label: `byte ${printable(b.byte)}`,
+        sub: `${hexByte(b.byte)} · ${kindLabel(b.kind)}`,
+        kind: "string",
+      });
+      for (const idx of b.writers.slice(0, GRAPH_EVENT_LIMIT)) {
+        nodes.push({
+          id: `w:${b.addr}:${idx}`,
+          label: `writer #${idx}`,
+          sub: `writes ${b.addr}`,
+          kind: "writer",
+          onClick: () => props.onSelect(idx),
+        });
+      }
+      for (const idx of b.readers.slice(0, GRAPH_EVENT_LIMIT)) {
+        nodes.push({
+          id: `r:${b.addr}:${idx}`,
+          label: `reader #${idx}`,
+          sub: `reads ${b.addr}`,
+          kind: "reader",
+          onClick: () => props.onSelect(idx),
+        });
+      }
+    }
+    return nodes;
+  });
+  const graphEdges = createMemo<ProvEdge[]>(() => {
+    const edges: ProvEdge[] = [];
+    for (const b of shownBytes().slice(0, GRAPH_BYTE_LIMIT)) {
+      for (const idx of b.writers.slice(0, GRAPH_EVENT_LIMIT)) {
+        edges.push({ from: `w:${b.addr}:${idx}`, to: `byte:${b.addr}`, label: "produces byte" });
+      }
+      for (const idx of b.readers.slice(0, GRAPH_EVENT_LIMIT)) {
+        edges.push({ from: `byte:${b.addr}`, to: `r:${b.addr}:${idx}`, label: "consumed by" });
+      }
+    }
+    return edges;
+  });
+  const graphSummary = createMemo(() => {
+    const bytes = shownBytes().slice(0, GRAPH_BYTE_LIMIT);
+    const writerCount = bytes.reduce((n, b) => n + Math.min(b.writers.length, GRAPH_EVENT_LIMIT), 0);
+    const readerCount = bytes.reduce((n, b) => n + Math.min(b.readers.length, GRAPH_EVENT_LIMIT), 0);
+    const suffix = shownBytes().length > GRAPH_BYTE_LIMIT ? ` · first ${GRAPH_BYTE_LIMIT} bytes shown` : "";
+    return `${bytes.length} bytes · ${writerCount} shown writes · ${readerCount} shown reads${suffix}`;
+  });
 
   createEffect(() => {
     if (!props.active || resp.loading || currentResp()?.status !== "loading") return;
     const timer = window.setTimeout(() => setRetry((n) => n + 1), PROVENANCE_RETRY_MS);
     onCleanup(() => window.clearTimeout(timer));
+  });
+
+  createEffect(() => {
+    const s = source();
+    if (!props.active || !s) return;
+    if (resp.loading || currentResp()?.status === "loading") {
+      props.onTaskUpdate?.({
+        id: "string-provenance",
+        surface: "String Provenance",
+        label: `${s.addr} len ${s.len}`,
+        status: "running",
+        detail: currentResp()?.status === "loading" ? "memory index loading" : "loading",
+      });
+    }
+  });
+
+  createEffect(() => {
+    const r = readyResp();
+    if (!props.active || !r) return;
+    const truncated = r.bytes.some((b) => b.writers_total > b.writers.length || b.readers_total > b.readers.length);
+    props.onTaskUpdate?.({
+      id: "string-provenance",
+      surface: "String Provenance",
+      label: `${r.addr} len ${r.length}`,
+      status: truncated ? "partial" : "ready",
+      detail: `${shownBytes().length} bytes`,
+    });
   });
 
   function idxButtons(byte: StringProvByte, kind: "w" | "r") {
@@ -123,6 +204,14 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
             </Show>
             <Show when={readyResp()}>
               <div class="string-prov-scroll">
+                <ProvenanceGraph
+                  title="String Byte Flow"
+                  nodes={graphNodes()}
+                  edges={graphEdges()}
+                  summary={graphSummary()}
+                  note="每条链路表示：writer trace 写出某个字符字节 → 该字节当前值 → reader trace 读取这个字节。完整 writer/reader 列表仍在下方表格。"
+                  empty="no string provenance"
+                />
                 <table class="string-prov-table">
                   <thead>
                     <tr>

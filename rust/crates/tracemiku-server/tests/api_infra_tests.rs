@@ -138,6 +138,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "memory_query.rs",
     "navigation.rs",
     "ollvm_detect_vm.rs",
+    "query.rs",
     "records.rs",
     "search.rs",
     "so_stats.rs",
@@ -166,6 +167,7 @@ const HEAVY_ROUTE_HANDLERS: &[(&str, &str)] = &[
     ("navigation.rs", "block_handler"),
     ("navigation.rs", "loops_handler"),
     ("navigation.rs", "call_chain_handler"),
+    ("query.rs", "query_handler"),
     ("records.rs", "records_handler"),
 ];
 

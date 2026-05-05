@@ -1,5 +1,7 @@
 //! Binary Ninja sidecar-backed HLIL and static CFG endpoints.
 
+use std::collections::HashMap;
+
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -7,9 +9,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracemiku_core::function_index::parse_id;
 
-use crate::state::AppState;
+use crate::state::{bn_response_cache_path, AppState};
 
 const MAX_TRACE_FN_HINT_SPAN: u64 = 16 * 1024 * 1024;
+const MAX_PERSISTED_BN_RESPONSES: usize = 256;
 
 #[derive(Debug, Deserialize)]
 pub struct PcQuery {
@@ -132,6 +135,7 @@ pub async fn bn_cfg_svg_for_pc_handler(
         "fn_total_exec",
         "current_bb",
         "created_function",
+        "cache_hit",
     ] {
         if let Some(value) = cfg.get(key) {
             out[key] = value.clone();
@@ -157,10 +161,93 @@ async fn request_sidecar_blocking(
 }
 
 fn request_sidecar(state: &AppState, method: &str, params: Value) -> Value {
+    let cache_key = bn_cache_key(method, &params);
+    if let Some(mut cached) = state
+        .inner
+        .bn_response_cache
+        .lock()
+        .expect("bn response cache poisoned")
+        .get(&cache_key)
+        .cloned()
+    {
+        if let Some(obj) = cached.as_object_mut() {
+            obj.insert("cache_hit".to_string(), json!(true));
+        }
+        return cached;
+    }
+
     match state.inner.bn_sidecar.lock() {
-        Ok(mut sidecar) => sidecar.request(method, params),
+        Ok(mut sidecar) => {
+            let mut response = sidecar.request(method, params);
+            if should_cache_bn_response(&response) {
+                if let Some(obj) = response.as_object_mut() {
+                    obj.insert("cache_hit".to_string(), json!(false));
+                }
+                let entries = {
+                    let mut cache = state
+                        .inner
+                        .bn_response_cache
+                        .lock()
+                        .expect("bn response cache poisoned");
+                    if cache.len() >= MAX_PERSISTED_BN_RESPONSES {
+                        if let Some(oldest_key) = cache.keys().next().cloned() {
+                            cache.remove(&oldest_key);
+                        }
+                    }
+                    cache.insert(cache_key, response.clone());
+                    cache.clone()
+                };
+                persist_bn_response_cache(state, &entries);
+            }
+            response
+        }
         Err(e) => json!({"ok": false, "ready": false, "error": e.to_string()}),
     }
+}
+
+fn persist_bn_response_cache(state: &AppState, entries: &HashMap<String, Value>) {
+    let path = bn_response_cache_path(&state.inner.trace);
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp.{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("trace.bin.bn-sidecar-cache.v1.json"),
+        std::process::id()
+    ));
+    let doc = json!({
+        "version": 1,
+        "trace_bytes": state.inner.trace.raw().len() as u64,
+        "entries": entries,
+    });
+    let write_result = (|| -> std::io::Result<()> {
+        let raw = serde_json::to_vec(&doc).map_err(std::io::Error::other)?;
+        std::fs::write(&tmp_path, raw)?;
+        std::fs::rename(&tmp_path, &path)?;
+        Ok(())
+    })();
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        tracing::warn!(
+            target: "tracemiku-server",
+            path = %path.display(),
+            "failed to persist BN sidecar cache: {err}"
+        );
+    }
+}
+
+fn bn_cache_key(method: &str, params: &Value) -> String {
+    format!("{method}:{params}")
+}
+
+fn should_cache_bn_response(response: &Value) -> bool {
+    response
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        && response
+            .get("ready")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
 }
 
 fn params_for_pc(state: &AppState, pc: u64) -> Value {

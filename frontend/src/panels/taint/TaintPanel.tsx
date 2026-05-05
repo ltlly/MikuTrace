@@ -1,7 +1,9 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
+import type { UiTaskReporter } from "~/utils/taskCenter";
+import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
 
 type Direction = "forward" | "backward";
 type ViewMode = "tree" | "timeline" | "table";
@@ -33,6 +35,7 @@ interface TaintPanelProps {
   onSelect: (idx: number) => void;
   runRequest?: RunRequest;
   active: boolean;
+  onTaskUpdate?: UiTaskReporter;
 }
 
 export default function TaintPanel(props: TaintPanelProps) {
@@ -50,8 +53,18 @@ export default function TaintPanel(props: TaintPanelProps) {
   let runSeq = 0;
   let runAbort: AbortController | undefined;
   let retryTimer: number | undefined;
+  let currentTask:
+    | { id: string; surface: string; label: string; startedAt: number }
+    | undefined;
 
   function cancelRun() {
+    if (running() && currentTask) {
+      props.onTaskUpdate?.({
+        ...currentTask,
+        status: "cancelled",
+        detail: "superseded",
+      });
+    }
     runSeq += 1;
     if (retryTimer !== undefined) {
       window.clearTimeout(retryTimer);
@@ -59,6 +72,7 @@ export default function TaintPanel(props: TaintPanelProps) {
     }
     runAbort?.abort();
     runAbort = undefined;
+    currentTask = undefined;
     setRunning(false);
   }
 
@@ -112,9 +126,21 @@ export default function TaintPanel(props: TaintPanelProps) {
     const abort = new AbortController();
     runAbort = abort;
     const limit = maxCount();
+    const taskStartedAt = performance.now();
+    currentTask = {
+      id: "taint",
+      surface: "Taint",
+      label: `${dirArg} ${regArg} @${startArg}`,
+      startedAt: taskStartedAt,
+    };
     setRunning(true);
     setError(null);
     setResult(null);
+    props.onTaskUpdate?.({
+      ...currentTask,
+      status: "running",
+      detail: `limit ${limit}`,
+    });
     try {
       const dir = dirArg;
       const flags = {
@@ -139,6 +165,15 @@ export default function TaintPanel(props: TaintPanelProps) {
           limit,
           showDepth: flags.cross_fn_call,
         });
+        currentTask = undefined;
+        props.onTaskUpdate?.({
+          id: "taint",
+          surface: "Taint",
+          label: `forward ${resp.reg} @${resp.from}`,
+          status: resp.stopped_at_max ? "partial" : "ready",
+          startedAt: taskStartedAt,
+          detail: `${resp.count} rows`,
+        });
       } else {
         const resp = await fetchBackwardTaint(startArg, regArg, limit, flags, abort.signal);
         if (seq !== runSeq || abort.signal.aborted) return;
@@ -156,14 +191,33 @@ export default function TaintPanel(props: TaintPanelProps) {
           limit,
           showDepth: flags.cross_fn_call,
         });
+        currentTask = undefined;
+        props.onTaskUpdate?.({
+          id: "taint",
+          surface: "Taint",
+          label: `backward ${resp.reg} @${resp.from}`,
+          status: resp.stopped_at_max ? "partial" : "ready",
+          startedAt: taskStartedAt,
+          detail: `${resp.count} rows`,
+        });
       }
     } catch (e: unknown) {
       if (abort.signal.aborted) return;
       if (seq !== runSeq) return;
       setError(String(e instanceof Error ? e.message : e));
+      currentTask = undefined;
+      props.onTaskUpdate?.({
+        id: "taint",
+        surface: "Taint",
+        label: `${dirArg} ${regArg} @${startArg}`,
+        status: "error",
+        startedAt: taskStartedAt,
+        detail: String(e instanceof Error ? e.message : e),
+      });
     } finally {
       if (seq === runSeq && !abort.signal.aborted) {
         if (runAbort === abort) runAbort = undefined;
+        currentTask = undefined;
         setRunning(false);
       }
     }
@@ -194,6 +248,32 @@ export default function TaintPanel(props: TaintPanelProps) {
         return "";
     }
   };
+
+  const graphNodes = createMemo<ProvNode[]>(() => {
+    const r = result();
+    if (!r) return [];
+    return r.rows.slice(0, 160).map((row, i) => ({
+      id: String(row.idx),
+      label: `#${row.idx}`,
+      sub: `${row.func ?? "?"} · ${labelFor(row) || row.asm}`,
+      kind: i === 0 ? "seed" : "record",
+      onClick: () => props.onSelect(row.idx),
+    }));
+  });
+
+  const graphEdges = createMemo<ProvEdge[]>(() => {
+    const shown = new Set(graphNodes().map((node) => node.id));
+    const edges: ProvEdge[] = [];
+    for (const row of result()?.rows ?? []) {
+      if (!shown.has(String(row.idx))) continue;
+      for (const parent of row.parent_idxs ?? []) {
+        if (shown.has(String(parent))) {
+          edges.push({ from: String(parent), to: String(row.idx), label: edgeLabel(row) || undefined });
+        }
+      }
+    }
+    return edges.slice(0, 240);
+  });
 
   const parentLabel = (row: TaintRow): string => {
     const parents = row.parent_idxs ?? [];
@@ -348,33 +428,43 @@ export default function TaintPanel(props: TaintPanelProps) {
                 </tbody>
               </table>
             }>
-              <div class="taint-tree">
-                <For each={r().rows}>
-                  {(row) => (
-                    <button
-                      type="button"
-                      class="taint-tree-row"
-                      classList={{ dependency: viewMode() === "tree" }}
-                      style={{
-                        "padding-left": viewMode() === "tree"
-                          ? taintDepthIndent(row)
-                          : callDepthIndent(row),
-                      }}
-                      onClick={() => props.onSelect(row.idx)}
-                    >
-                      <span class="taint-tree-idx">#{row.idx}</span>
-                      <span class="taint-tree-fn dim small">{row.func ?? "?"}</span>
-                      <code class="taint-tree-asm">{row.asm}</code>
-                      <span class="taint-tree-why dim small">
-                        {labelFor(row)}
-                        <Show when={viewMode() === "tree"}>
-                          {" · "}{parentLabel(row)}
-                        </Show>
-                      </span>
-                    </button>
-                  )}
-                </For>
-              </div>
+              <>
+                <Show when={viewMode() === "tree"}>
+                  <ProvenanceGraph
+                    title="Taint Provenance"
+                    nodes={graphNodes()}
+                    edges={graphEdges()}
+                    empty="no taint dependency edges"
+                  />
+                </Show>
+                <div class="taint-tree">
+                  <For each={r().rows}>
+                    {(row) => (
+                      <button
+                        type="button"
+                        class="taint-tree-row"
+                        classList={{ dependency: viewMode() === "tree" }}
+                        style={{
+                          "padding-left": viewMode() === "tree"
+                            ? taintDepthIndent(row)
+                            : callDepthIndent(row),
+                        }}
+                        onClick={() => props.onSelect(row.idx)}
+                      >
+                        <span class="taint-tree-idx">#{row.idx}</span>
+                        <span class="taint-tree-fn dim small">{row.func ?? "?"}</span>
+                        <code class="taint-tree-asm">{row.asm}</code>
+                        <span class="taint-tree-why dim small">
+                          {labelFor(row)}
+                          <Show when={viewMode() === "tree"}>
+                            {" · "}{parentLabel(row)}
+                          </Show>
+                        </span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </>
             </Show>
           </>
         )}

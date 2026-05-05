@@ -138,6 +138,12 @@ export interface CfgSvgLargeResponse {
   status: "large";
   fn: string | null;
   svg: string | null;
+  layout_mode?: "local" | "overview" | "none" | string;
+  focus_pc?: string | null;
+  selected_block?: string | null;
+  shown_block_count?: number;
+  hidden_block_count?: number;
+  neighborhood_depth?: number;
   block_count: number;
   edge_count: number;
   drawn_edge_count: number;
@@ -192,6 +198,7 @@ export interface BnCfgSvgForPcResponse {
   fn_total_exec?: number;
   request_pc?: string;
   request_mode?: string;
+  cache_hit?: boolean;
 }
 
 // ── /api/strings ─────────────────────────────────────────────────────────
@@ -355,6 +362,38 @@ export interface SearchPcResponse {
   idxs: number[];
   truncated: boolean;
   request_pc?: string;
+  request_limit?: number;
+}
+
+// ── /api/query ───────────────────────────────────────────────────────────
+
+export type TraceQueryKind =
+  | "records"
+  | "regs"
+  | "mem"
+  | "reads"
+  | "writes"
+  | "functions"
+  | "strings"
+  | "jni"
+  | "provenance";
+
+export interface TraceQueryResponse {
+  status: string;
+  kind: string;
+  q: string;
+  count: number;
+  returned: number;
+  truncated: boolean;
+  max_used: number;
+  rows: Record<string, unknown>[];
+  note?: string | null;
+  request_kind?: TraceQueryKind;
+  request_q?: string;
+  request_idx?: number;
+  request_reg?: string;
+  request_addr?: string;
+  request_len?: number;
   request_limit?: number;
 }
 
@@ -721,6 +760,7 @@ export interface HlilForFnResponse {
   hlil_lines?: HlilLine[];
   vars?: HlilVar[];
   created_function?: boolean;
+  cache_hit?: boolean;
   error?: string;
   request_fn_id?: string;
 }

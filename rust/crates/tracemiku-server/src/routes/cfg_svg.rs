@@ -3,7 +3,7 @@
 //! Render the trace-derived CFG as Graphviz SVG. This is the Rust/Solid v2
 //! replacement for Python webui/server.py::cfg_svg.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -18,6 +18,10 @@ use crate::state::{AppState, AppStateInner, CfgSvgCached};
 pub struct CfgSvgQuery {
     #[serde(default, rename = "fn")]
     pub fn_name: String,
+    #[serde(default)]
+    pub pc: String,
+    #[serde(default = "default_local_depth")]
+    pub local_depth: usize,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     #[serde(default)]
@@ -26,6 +30,10 @@ pub struct CfgSvgQuery {
 
 fn default_timeout() -> u64 {
     60
+}
+
+fn default_local_depth() -> usize {
+    2
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +56,12 @@ pub enum CfgSvgResponse {
         #[serde(rename = "fn")]
         fn_name: Option<String>,
         svg: Option<String>,
+        layout_mode: &'static str,
+        focus_pc: Option<String>,
+        selected_block: Option<String>,
+        shown_block_count: usize,
+        hidden_block_count: usize,
+        neighborhood_depth: usize,
         block_count: usize,
         edge_count: usize,
         drawn_edge_count: usize,
@@ -68,6 +82,10 @@ const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
 const LARGE_OVERVIEW_MAX_BLOCKS: usize = 2_000;
 const LARGE_OVERVIEW_MAX_EDGES: usize = 6_000;
 const LARGE_OVERVIEW_MAX_DRAWN_EDGES: usize = 320;
+const LOCAL_CFG_MAX_BLOCKS: usize = 180;
+const LOCAL_CFG_MAX_EDGES: usize = 520;
+const LOCAL_CFG_MAX_DEPTH: usize = 5;
+const LOCAL_CFG_SCC_MAX_BLOCKS: usize = 64;
 
 fn estimate_dot_bytes(block_count: usize, edge_count: usize) -> usize {
     // Large auto-skip responses should not build the full Graphviz dot just to
@@ -82,6 +100,8 @@ pub async fn cfg_svg_handler(
     Query(q): Query<CfgSvgQuery>,
 ) -> Json<CfgSvgResponse> {
     let filter_fn = normalize_fn_filter(&q.fn_name);
+    let focus_pc = normalize_pc_filter(&q.pc);
+    let local_depth = q.local_depth.clamp(1, LOCAL_CFG_MAX_DEPTH);
     let cache_key = filter_fn.as_deref().unwrap_or("<all>").to_string();
 
     if let Some(cached) = state
@@ -111,7 +131,14 @@ pub async fn cfg_svg_handler(
     let prepare_filter = filter_fn.clone();
     let prepare_cache_key = cache_key.clone();
     let prepared = tokio::task::spawn_blocking(move || {
-        prepare_cfg_svg(inner, prepare_filter, prepare_cache_key, force)
+        prepare_cfg_svg(
+            inner,
+            prepare_filter,
+            focus_pc,
+            local_depth,
+            prepare_cache_key,
+            force,
+        )
     })
     .await
     .unwrap_or_else(|err| {
@@ -172,6 +199,8 @@ enum CfgSvgPrepared {
 fn prepare_cfg_svg(
     inner: std::sync::Arc<AppStateInner>,
     filter_fn: Option<String>,
+    focus_pc: Option<u64>,
+    local_depth: usize,
     cache_key: String,
     force: bool,
 ) -> CfgSvgPrepared {
@@ -188,25 +217,52 @@ fn prepare_cfg_svg(
     let auto_too_large = included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES;
     let force_too_large = included.len() > FORCE_DOT_MAX_BLOCKS || edge_count > FORCE_DOT_MAX_EDGES;
     if (!force && auto_too_large) || (force && force_too_large) {
-        let overview = if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
-            && edge_count <= LARGE_OVERVIEW_MAX_EDGES
-        {
-            Some(build_large_overview_svg(
-                &inner,
-                &included,
-                &included_starts,
-                edge_count,
-            ))
-        } else {
-            None
-        };
-        let drawn_edge_count = overview.as_ref().map_or(0, |o| o.drawn_edge_count);
-        let hidden_edge_count = overview
+        let fallback = focus_pc
+            .and_then(|pc| {
+                build_local_cfg_svg(
+                    &inner,
+                    &included,
+                    &included_starts,
+                    pc,
+                    local_depth,
+                    edge_count,
+                )
+            })
+            .or_else(|| {
+                if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
+                    && edge_count <= LARGE_OVERVIEW_MAX_EDGES
+                {
+                    Some(build_large_overview_svg(
+                        &inner,
+                        &included,
+                        &included_starts,
+                        edge_count,
+                    ))
+                } else {
+                    None
+                }
+            });
+        let drawn_edge_count = fallback.as_ref().map_or(0, |o| o.drawn_edge_count);
+        let hidden_edge_count = fallback
             .as_ref()
             .map_or(edge_count, |o| o.hidden_edge_count);
+        let shown_block_count = fallback.as_ref().map_or(0, |o| o.shown_block_count);
+        let hidden_block_count = fallback
+            .as_ref()
+            .map_or(included.len(), |o| o.hidden_block_count);
+        let layout_mode = fallback.as_ref().map_or("none", |o| o.layout_mode);
+        let focus_pc_out = fallback.as_ref().and_then(|o| o.focus_pc);
+        let selected_block = fallback.as_ref().and_then(|o| o.selected_block);
+        let neighborhood_depth = fallback.as_ref().map_or(0, |o| o.neighborhood_depth);
         return CfgSvgPrepared::Response(CfgSvgResponse::Large {
             fn_name: filter_fn,
-            svg: overview.map(|o| o.svg),
+            svg: fallback.map(|o| o.svg),
+            layout_mode,
+            focus_pc: focus_pc_out.map(|pc| format!("{pc:#x}")),
+            selected_block: selected_block.map(|pc| format!("{pc:#x}")),
+            shown_block_count,
+            hidden_block_count,
+            neighborhood_depth,
             block_count: included.len(),
             edge_count,
             drawn_edge_count,
@@ -227,6 +283,12 @@ fn prepare_cfg_svg(
 
 struct LargeOverviewSvg {
     svg: String,
+    layout_mode: &'static str,
+    focus_pc: Option<u64>,
+    selected_block: Option<u64>,
+    shown_block_count: usize,
+    hidden_block_count: usize,
+    neighborhood_depth: usize,
     drawn_edge_count: usize,
     hidden_edge_count: usize,
 }
@@ -363,6 +425,12 @@ fn build_large_overview_svg(
     out.push_str("</g></svg>");
     LargeOverviewSvg {
         svg: out,
+        layout_mode: "overview",
+        focus_pc: None,
+        selected_block: None,
+        shown_block_count: included.len(),
+        hidden_block_count: 0,
+        neighborhood_depth: 0,
         drawn_edge_count,
         hidden_edge_count,
     }
@@ -441,6 +509,416 @@ fn large_overview_edges(
     selected
 }
 
+#[derive(Debug, Clone)]
+struct LocalEdge {
+    src: u64,
+    dst: u64,
+    kind: String,
+    count: u64,
+    class: &'static str,
+}
+
+fn build_local_cfg_svg(
+    inner: &crate::state::AppStateInner,
+    included: &[&tracemiku_core::cfg::Block],
+    included_starts: &HashSet<u64>,
+    focus_pc: u64,
+    requested_depth: usize,
+    total_edge_count: usize,
+) -> Option<LargeOverviewSvg> {
+    let focus_block = inner.cfg.block_containing(focus_pc)?;
+    if !included_starts.contains(&focus_block.start_pc) {
+        return None;
+    }
+
+    let depth = requested_depth.clamp(1, LOCAL_CFG_MAX_DEPTH);
+    let mut blocks_by_pc: HashMap<u64, &tracemiku_core::cfg::Block> = HashMap::new();
+    let mut scc_groups: HashMap<u32, Vec<u64>> = HashMap::new();
+    for block in included {
+        blocks_by_pc.insert(block.start_pc, *block);
+        scc_groups
+            .entry(block.scc_id)
+            .or_default()
+            .push(block.start_pc);
+    }
+
+    let (incoming, outgoing) = local_edge_maps(inner, included_starts);
+    let mut selected: HashSet<u64> = HashSet::new();
+    let mut dist: HashMap<u64, i32> = HashMap::new();
+    let mut queue: VecDeque<(u64, i32)> = VecDeque::new();
+    let focus_start = focus_block.start_pc;
+    selected.insert(focus_start);
+    dist.insert(focus_start, 0);
+    queue.push_back((focus_start, 0));
+
+    while let Some((pc, d)) = queue.pop_front() {
+        if d.unsigned_abs() as usize >= depth {
+            continue;
+        }
+        for (dst, _meta) in outgoing.get(&pc).into_iter().flatten() {
+            local_maybe_push(*dst, d + 1, &mut selected, &mut dist, &mut queue);
+        }
+        for (src, _meta) in incoming.get(&pc).into_iter().flatten() {
+            local_maybe_push(*src, d - 1, &mut selected, &mut dist, &mut queue);
+        }
+    }
+
+    // Keep small loops intact around the focus block. Very large SCCs are the
+    // exact case where full expansion turns into unreadable dispatcher noise,
+    // so they remain represented through nearby incoming/outgoing edges.
+    if let Some(scc) = scc_groups.get(&focus_block.scc_id) {
+        if scc.len() > 1 && scc.len() <= LOCAL_CFG_SCC_MAX_BLOCKS {
+            for pc in scc {
+                if included_starts.contains(pc) {
+                    selected.insert(*pc);
+                    dist.entry(*pc).or_insert(0);
+                }
+            }
+        }
+    }
+
+    if selected.len() > LOCAL_CFG_MAX_BLOCKS {
+        let mut ranked: Vec<u64> = selected.iter().copied().collect();
+        ranked.sort_by(|a, b| {
+            let da = dist.get(a).copied().unwrap_or(0).unsigned_abs();
+            let db = dist.get(b).copied().unwrap_or(0).unsigned_abs();
+            let ea = blocks_by_pc.get(a).map_or(0, |b| b.executions);
+            let eb = blocks_by_pc.get(b).map_or(0, |b| b.executions);
+            da.cmp(&db).then_with(|| eb.cmp(&ea)).then_with(|| a.cmp(b))
+        });
+        ranked.truncate(LOCAL_CFG_MAX_BLOCKS);
+        ranked.push(focus_start);
+        selected = ranked.into_iter().collect();
+    }
+
+    let mut edges = local_edges(&outgoing, &selected, &dist, focus_start);
+    let raw_edge_count = edges.len();
+    if edges.len() > LOCAL_CFG_MAX_EDGES {
+        edges.sort_by(|a, b| {
+            let a_focus = a.src == focus_start || a.dst == focus_start;
+            let b_focus = b.src == focus_start || b.dst == focus_start;
+            let a_near = edge_distance(a, &dist);
+            let b_near = edge_distance(b, &dist);
+            b_focus
+                .cmp(&a_focus)
+                .then_with(|| b.count.cmp(&a.count))
+                .then_with(|| a_near.cmp(&b_near))
+                .then_with(|| a.src.cmp(&b.src))
+                .then_with(|| a.dst.cmp(&b.dst))
+        });
+        edges.truncate(LOCAL_CFG_MAX_EDGES);
+    }
+
+    let base = inner
+        .meta
+        .module
+        .as_ref()
+        .and_then(|m| parse_hex_u64(&m.base))
+        .unwrap_or(0);
+    let svg = render_local_cfg_svg(
+        included.len(),
+        total_edge_count,
+        focus_pc,
+        focus_start,
+        &selected,
+        &dist,
+        &edges,
+        &blocks_by_pc,
+        base,
+        depth,
+        raw_edge_count,
+    );
+    Some(LargeOverviewSvg {
+        svg,
+        layout_mode: "local",
+        focus_pc: Some(focus_pc),
+        selected_block: Some(focus_start),
+        shown_block_count: selected.len(),
+        hidden_block_count: included.len().saturating_sub(selected.len()),
+        neighborhood_depth: depth,
+        drawn_edge_count: edges.len(),
+        hidden_edge_count: total_edge_count.saturating_sub(edges.len()),
+    })
+}
+
+type LocalEdgeMap = HashMap<u64, Vec<(u64, tracemiku_core::cfg::EdgeMeta)>>;
+
+fn local_edge_maps(
+    inner: &crate::state::AppStateInner,
+    included_starts: &HashSet<u64>,
+) -> (LocalEdgeMap, LocalEdgeMap) {
+    let mut incoming: LocalEdgeMap = HashMap::new();
+    let mut outgoing: LocalEdgeMap = HashMap::new();
+    for edge in inner.cfg.graph.edge_indices() {
+        let Some((src_node, dst_node)) = inner.cfg.graph.edge_endpoints(edge) else {
+            continue;
+        };
+        let Some(src) = inner.cfg.graph.node_weight(src_node) else {
+            continue;
+        };
+        let Some(dst) = inner.cfg.graph.node_weight(dst_node) else {
+            continue;
+        };
+        if !included_starts.contains(&src.start_pc) || !included_starts.contains(&dst.start_pc) {
+            continue;
+        }
+        let Some(meta) = inner.cfg.graph.edge_weight(edge).cloned() else {
+            continue;
+        };
+        outgoing
+            .entry(src.start_pc)
+            .or_default()
+            .push((dst.start_pc, meta.clone()));
+        incoming
+            .entry(dst.start_pc)
+            .or_default()
+            .push((src.start_pc, meta));
+    }
+    for edges in outgoing.values_mut() {
+        edges.sort_by_key(|(pc, _)| *pc);
+    }
+    for edges in incoming.values_mut() {
+        edges.sort_by_key(|(pc, _)| *pc);
+    }
+    (incoming, outgoing)
+}
+
+fn local_maybe_push(
+    pc: u64,
+    next_dist: i32,
+    selected: &mut HashSet<u64>,
+    dist: &mut HashMap<u64, i32>,
+    queue: &mut VecDeque<(u64, i32)>,
+) {
+    let should_update = dist.get(&pc).is_none_or(|old| next_dist.abs() < old.abs());
+    if should_update {
+        dist.insert(pc, next_dist);
+        queue.push_back((pc, next_dist));
+    }
+    selected.insert(pc);
+}
+
+fn local_edges(
+    outgoing: &LocalEdgeMap,
+    selected: &HashSet<u64>,
+    dist: &HashMap<u64, i32>,
+    focus_start: u64,
+) -> Vec<LocalEdge> {
+    let mut out = Vec::new();
+    for src in selected {
+        for (dst, meta) in outgoing.get(src).into_iter().flatten() {
+            if !selected.contains(dst) {
+                continue;
+            }
+            let class = if *src == focus_start || *dst == focus_start {
+                "tm-local-edge tm-local-edge-focus"
+            } else if meta.kind == "call-return" {
+                "tm-local-edge tm-local-edge-call"
+            } else if dist.get(dst).copied().unwrap_or(0) <= dist.get(src).copied().unwrap_or(0) {
+                "tm-local-edge tm-local-edge-back"
+            } else if meta.count >= 10 {
+                "tm-local-edge tm-local-edge-hot"
+            } else {
+                "tm-local-edge"
+            };
+            out.push(LocalEdge {
+                src: *src,
+                dst: *dst,
+                kind: meta.kind.clone(),
+                count: meta.count,
+                class,
+            });
+        }
+    }
+    out.sort_by_key(|e| (e.src, e.dst, e.kind.clone()));
+    out
+}
+
+fn edge_distance(edge: &LocalEdge, dist: &HashMap<u64, i32>) -> u32 {
+    dist.get(&edge.src)
+        .copied()
+        .unwrap_or(0)
+        .unsigned_abs()
+        .saturating_add(dist.get(&edge.dst).copied().unwrap_or(0).unsigned_abs())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_local_cfg_svg(
+    total_blocks: usize,
+    total_edges: usize,
+    focus_pc: u64,
+    focus_start: u64,
+    selected: &HashSet<u64>,
+    dist: &HashMap<u64, i32>,
+    edges: &[LocalEdge],
+    blocks_by_pc: &HashMap<u64, &tracemiku_core::cfg::Block>,
+    base: u64,
+    depth: usize,
+    raw_edge_count: usize,
+) -> String {
+    let mut layers: Vec<(i32, Vec<u64>)> = Vec::new();
+    let mut by_layer: HashMap<i32, Vec<u64>> = HashMap::new();
+    for pc in selected {
+        by_layer
+            .entry(dist.get(pc).copied().unwrap_or(0))
+            .or_default()
+            .push(*pc);
+    }
+    for (layer, mut pcs) in by_layer {
+        pcs.sort_by(|a, b| {
+            let ea = blocks_by_pc.get(a).map_or(0, |b| b.executions);
+            let eb = blocks_by_pc.get(b).map_or(0, |b| b.executions);
+            eb.cmp(&ea).then_with(|| a.cmp(b))
+        });
+        layers.push((layer, pcs));
+    }
+    layers.sort_by_key(|(layer, _)| *layer);
+
+    let node_w = 184.0f64;
+    let node_h = 54.0f64;
+    let gap_x = 28.0f64;
+    let gap_y = 48.0f64;
+    let margin = 28.0f64;
+    let max_cols = layers.iter().map(|(_, pcs)| pcs.len()).max().unwrap_or(1);
+    let width =
+        (margin * 2.0 + max_cols as f64 * node_w + max_cols.saturating_sub(1) as f64 * gap_x)
+            .max(820.0);
+    let height = margin * 2.0
+        + layers.len() as f64 * node_h
+        + layers.len().saturating_sub(1) as f64 * gap_y
+        + 26.0;
+    let mut pos: HashMap<u64, (f64, f64)> = HashMap::new();
+    for (row, (_layer, pcs)) in layers.iter().enumerate() {
+        let row_w = pcs.len() as f64 * node_w + pcs.len().saturating_sub(1) as f64 * gap_x;
+        let x0 = (width - row_w) / 2.0;
+        let y = margin + row as f64 * (node_h + gap_y);
+        for (col, pc) in pcs.iter().enumerate() {
+            let x = x0 + col as f64 * (node_w + gap_x);
+            pos.insert(*pc, (x, y));
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\" \
+         viewBox=\"0 0 {width:.0} {height:.0}\" data-layout=\"local-cfg\">"
+    ));
+    out.push_str(
+        "<style>\
+         .tm-bg{fill:#0e1117}.tm-local-edge{fill:none;stroke:#58a6ff;stroke-opacity:.32;stroke-width:1.15}\
+         .tm-local-edge-focus{stroke:#f7b32b;stroke-opacity:.72;stroke-width:1.9}\
+         .tm-local-edge-hot{stroke:#3fb950;stroke-opacity:.62;stroke-width:1.55}\
+         .tm-local-edge-back{stroke:#ff7b72;stroke-opacity:.55;stroke-width:1.35}\
+         .tm-local-edge-call{stroke:#bc8cff;stroke-opacity:.62;stroke-dasharray:5 3}\
+         .tm-local-node rect{fill:#161b22;stroke:#30363d;stroke-width:1.1;rx:3}\
+         .tm-local-node:hover rect{stroke:#58a6ff;stroke-width:2}.tm-local-current rect{stroke:#f7b32b;stroke-width:2.2}\
+         .tm-title{fill:#d0d7de;font:11px JetBrainsMono,monospace}.tm-sub{fill:#8b949e;font:9px JetBrainsMono,monospace}\
+         .tm-note{fill:#8b949e;font:10px JetBrainsMono,monospace}\
+         </style><defs><marker id=\"tm-arrow\" viewBox=\"0 0 10 10\" refX=\"8\" refY=\"5\" markerWidth=\"5\" markerHeight=\"5\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#58a6ff\" opacity=\".45\"/></marker></defs>",
+    );
+    out.push_str(&format!(
+        "<rect class=\"tm-bg\" x=\"0\" y=\"0\" width=\"{width:.0}\" height=\"{height:.0}\"/>"
+    ));
+    out.push_str("<g class=\"tm-edges\">");
+    for edge in edges {
+        let (Some((sx, sy)), Some((dx, dy))) = (pos.get(&edge.src), pos.get(&edge.dst)) else {
+            continue;
+        };
+        let start_x = sx + node_w / 2.0;
+        let start_y = sy + node_h;
+        let end_x = dx + node_w / 2.0;
+        let end_y = *dy;
+        let mid_y = (start_y + end_y) / 2.0;
+        let title = html_esc(&format!(
+            "{:#x} -> {:#x} · {} x{}",
+            edge.src, edge.dst, edge.kind, edge.count
+        ));
+        let path = if (end_y - start_y).abs() < 8.0 {
+            let loop_y = start_y + 20.0;
+            format!(
+                "M {start_x:.1} {start_y:.1} C {start_x:.1} {loop_y:.1}, {end_x:.1} {loop_y:.1}, {end_x:.1} {end_y:.1}"
+            )
+        } else {
+            format!(
+                "M {start_x:.1} {start_y:.1} C {start_x:.1} {mid_y:.1}, {end_x:.1} {mid_y:.1}, {end_x:.1} {end_y:.1}"
+            )
+        };
+        out.push_str(&format!(
+            "<path class=\"{}\" marker-end=\"url(#tm-arrow)\" d=\"{}\"><title>{}</title></path>",
+            edge.class, path, title
+        ));
+    }
+    out.push_str("</g><g class=\"tm-nodes\">");
+    for (layer, pcs) in &layers {
+        for pc in pcs {
+            let Some(block) = blocks_by_pc.get(pc) else {
+                continue;
+            };
+            let Some((x, y)) = pos.get(pc) else {
+                continue;
+            };
+            let current = *pc == focus_start;
+            let class = if current {
+                "tm-local-node tm-local-current"
+            } else {
+                "tm-local-node"
+            };
+            let href = if current {
+                format!("#insn_{focus_pc:x}")
+            } else {
+                format!("#hdr_b{pc:x}")
+            };
+            let title = html_esc(&format!(
+                "block {:#x}..{:#x}, layer {}, {} executions",
+                block.start_pc, block.end_pc, layer, block.executions
+            ));
+            let label = if current {
+                format!("{}  CURRENT", rel_pc(*pc, base))
+            } else {
+                rel_pc(*pc, base)
+            };
+            let sub = format!(
+                "x{} · scc {} · end {}",
+                block.executions,
+                block.scc_id,
+                rel_pc(block.end_pc, base)
+            );
+            out.push_str(&format!(
+                "<a href=\"{}\"><g class=\"{}\"><title>{}</title>\
+                 <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{node_w:.1}\" height=\"{node_h:.1}\"/>\
+                 <text class=\"tm-title\" x=\"{:.1}\" y=\"{:.1}\">{}</text>\
+                 <text class=\"tm-sub\" x=\"{:.1}\" y=\"{:.1}\">{}</text>\
+                 </g></a>",
+                href,
+                class,
+                title,
+                x,
+                y,
+                x + 9.0,
+                y + 19.0,
+                html_esc(&label),
+                x + 9.0,
+                y + 38.0,
+                html_esc(&sub)
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "<text class=\"tm-note\" x=\"{:.1}\" y=\"{:.1}\">local CFG around {:#x} · depth {} · blocks {}/{} · edges {}/{}{} </text>",
+        margin,
+        height - 10.0,
+        focus_pc,
+        depth,
+        selected.len(),
+        total_blocks,
+        edges.len(),
+        total_edges,
+        if raw_edge_count > edges.len() { " · capped" } else { "" },
+    ));
+    out.push_str("</g></svg>");
+    out
+}
+
 fn normalize_fn_filter(raw: &str) -> Option<String> {
     let s = raw.trim();
     if s.is_empty() {
@@ -448,6 +926,14 @@ fn normalize_fn_filter(raw: &str) -> Option<String> {
     } else {
         Some(s.to_string())
     }
+}
+
+fn normalize_pc_filter(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    parse_hex_u64(s).or_else(|| s.parse::<u64>().ok())
 }
 
 fn included_blocks<'a>(

@@ -176,6 +176,7 @@ fn openapi_paths() -> Value {
         ("/api/idxs-for-pc", "get"),
         ("/api/idxs-for-block", "get"),
         ("/api/search", "get"),
+        ("/api/query", "get"),
         ("/api/search-pc", "get"),
         ("/api/so-stats", "get"),
         ("/api/reg-value-at", "get"),

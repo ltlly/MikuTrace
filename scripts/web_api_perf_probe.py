@@ -219,6 +219,18 @@ def pick_largest_cfg_function(functions: Any, exclude: str | None) -> str | None
     return best[2] if best else None
 
 
+def function_entry_pc(functions: Any, name: str | None) -> str | None:
+    if not name:
+        return None
+    for fn in (functions or {}).get("functions", []):
+        if fn.get("name") != name:
+            continue
+        entry_pc = fn.get("entry_pc")
+        if isinstance(entry_pc, int) and entry_pc > 0:
+            return f"0x{entry_pc:x}"
+    return None
+
+
 def pick_string_provenance_target(strings_resp: Any) -> tuple[str, int] | None:
     for entry in (strings_resp or {}).get("strings", []):
         addr = entry.get("addr")
@@ -265,6 +277,7 @@ def main() -> int:
     fn = pick_function(funcs, fn_hint)
     fn_id = pick_function_id(funcs)
     largest_cfg_fn = pick_largest_cfg_function(funcs, fn)
+    largest_cfg_pc = function_entry_pc(funcs, largest_cfg_fn)
     strings_seed = get_json(base, q("/api/strings", min_len=4, limit=1, cursor=-1), args.timeout)[0]
     string_provenance_target = pick_string_provenance_target(strings_seed)
 
@@ -275,6 +288,9 @@ def main() -> int:
         Probe("records mid 1k", q("/api/records", start=max(0, mid - 500), count=1000)),
         Probe("record mid", f"/api/record/{mid}"),
         Probe("search ret cursor", q("/api/search", pattern="^ret\\b", max_results=5000, cursor=mid)),
+        Probe("query records ret", q("/api/query", kind="records", q="ret", idx=mid, limit=500)),
+        Probe("query regs x0", q("/api/query", kind="regs", reg="x0", idx=mid, limit=500)),
+        Probe("query jni events", q("/api/query", kind="jni", q="", idx=mid, limit=500)),
         Probe("idxs current pc", q("/api/idxs-for-pc", pc=rec_mid.get("pc"), cursor=mid, limit=80)),
         Probe("backtrace mid", q("/api/backtrace", idx=mid, limit=256)),
         Probe("calltree depth50", q("/api/call-tree", max_depth=50)),
@@ -301,6 +317,13 @@ def main() -> int:
         )
     if largest_cfg_fn:
         probes.append(Probe("cfg svg largest fn", q("/api/cfg-svg", fn=largest_cfg_fn, mode="auto")))
+        if largest_cfg_pc:
+            probes.append(
+                Probe(
+                    "cfg svg largest local",
+                    q("/api/cfg-svg", fn=largest_cfg_fn, pc=largest_cfg_pc, local_depth=2, mode="auto"),
+                )
+            )
     if not args.visible_ui_only:
         probes.extend(
             [
@@ -342,6 +365,8 @@ def main() -> int:
                 Probe("mem diff sp 128", q("/api/mem-diff", idx=mid, addr=sp, size=128)),
                 Probe("touch range sp", q("/api/idxs-touching-range", addr=sp, size=128, cursor=mid, limit=80)),
                 Probe("mem writes sp", q("/api/mem-writes-in-range", addr_lo=sp, addr_hi=sp, idx_lo=0, idx_hi=records, max=200)),
+                Probe("query mem sp", q("/api/query", kind="mem", addr=sp, len=128, idx=mid, limit=500)),
+                Probe("query writes sp", q("/api/query", kind="writes", q=sp, len=128, idx=mid, limit=500)),
             ]
         )
 
@@ -371,6 +396,7 @@ def main() -> int:
         "mid_func": fn_hint,
         "function_id": fn_id,
         "largest_cfg_fn": largest_cfg_fn,
+        "largest_cfg_pc": largest_cfg_pc,
         "string_provenance_target": string_provenance_target,
         "runtime_blocking_check": {
             "enabled": args.runtime_blocking_check,

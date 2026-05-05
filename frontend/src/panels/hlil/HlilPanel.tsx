@@ -4,6 +4,7 @@ import { fetchHlilForPc, fetchIdxsForPc } from "~/api/client";
 import type { AsmToken, HlilForPcResponse, HlilLine, HlilVar } from "~/api/types";
 import { tokenAddr, tokenClass, tokenReg, tokenText } from "~/utils/bnTokens";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import type { UiTaskReporter } from "~/utils/taskCenter";
 
 export interface HlilCursorHint {
   idx: number;
@@ -16,6 +17,7 @@ export interface HlilPanelProps {
   currentHint?: HlilCursorHint;
   onSelect: (idx: number) => void;
   active: boolean;
+  onTaskUpdate?: UiTaskReporter;
 }
 
 interface HlilSource {
@@ -65,6 +67,40 @@ function linesForMode(r: HlilForPcResponse | undefined, mode: HlilViewMode): Hli
   return r.pseudo_lines ?? r.lines ?? [];
 }
 
+function rawIndent(line: HlilLine): number {
+  if (Number.isFinite(line.indent)) return Math.max(0, Math.trunc(line.indent ?? 0));
+  const m = line.text.match(/^[ \t]*/);
+  return [...(m?.[0] ?? "")].reduce((n, ch) => n + (ch === "\t" ? 4 : 1), 0);
+}
+
+function indentBaseline(lines: HlilLine[]): number {
+  const values = lines.map(rawIndent).filter((n) => n > 0);
+  if (!values.length) return 0;
+  const min = Math.min(...values);
+  return min >= 8 ? min : 0;
+}
+
+function visualIndent(line: HlilLine, baseline: number): number {
+  return Math.min(48, Math.max(0, rawIndent(line) - baseline));
+}
+
+function trimLeadingTokens(tokens: AsmToken[]): AsmToken[] {
+  const out: AsmToken[] = [];
+  let trimming = true;
+  for (const token of tokens) {
+    if (!trimming) {
+      out.push(token);
+      continue;
+    }
+    const text = tokenText(token);
+    const trimmed = text.replace(/^\s+/, "");
+    if (!trimmed) continue;
+    out.push({ ...token, t: trimmed });
+    trimming = false;
+  }
+  return out;
+}
+
 export default function HlilPanel(props: HlilPanelProps) {
   let body: HTMLDivElement | undefined;
   let jumpSeq = 0;
@@ -94,7 +130,52 @@ export default function HlilPanel(props: HlilPanelProps) {
   );
 
   const displayLines = createMemo(() => linesForMode(currentHlil(), mode()));
+  const displayIndentBaseline = createMemo(() => indentBaseline(displayLines()));
   const currentDisplayLine = createMemo(() => currentLineIndex(displayLines(), props.currentHint?.pc));
+  let lastTaskPc = "";
+
+  createEffect(() => {
+    const s = source();
+    if (!props.active || !s) return;
+    if (hlil.loading) {
+      lastTaskPc = s.pc;
+      props.onTaskUpdate?.({
+        id: "hlil",
+        surface: "HLIL",
+        label: s.pc,
+        status: "running",
+        detail: `cursor #${s.idx}`,
+      });
+    }
+  });
+
+  createEffect(() => {
+    const r = currentHlil();
+    if (!props.active || !r) return;
+    const pc = r.request_pc ?? lastTaskPc;
+    props.onTaskUpdate?.({
+      id: "hlil",
+      surface: "HLIL",
+      label: pc || "current cursor",
+      status: r.ready && r.ok ? "ready" : "error",
+      detail: r.cache_hit
+        ? "cache hit"
+        : r.created_function
+          ? "created BN function"
+          : r.error ?? r.status ?? `${displayLines().length} lines`,
+    });
+  });
+
+  createEffect(() => {
+    if (!props.active || !hlil.error) return;
+    props.onTaskUpdate?.({
+      id: "hlil",
+      surface: "HLIL",
+      label: lastTaskPc || "current cursor",
+      status: "error",
+      detail: String(hlil.error),
+    });
+  });
 
   async function jumpPc(pc: string | null | undefined) {
     if (!pc) return;
@@ -140,9 +221,9 @@ export default function HlilPanel(props: HlilPanelProps) {
   function lineText(line: HlilLine) {
     const tokens = line.tokens ?? [];
     if (tokens.length) {
-      return <For each={tokens}>{(token) => tokenSpan(token)}</For>;
+      return <For each={trimLeadingTokens(tokens)}>{(token) => tokenSpan(token)}</For>;
     }
-    return line.text;
+    return line.text.replace(/^\s+/, "");
   }
 
   createEffect(() => {
@@ -249,7 +330,12 @@ export default function HlilPanel(props: HlilPanelProps) {
                     title="jump to nearest trace execution"
                   >
                     <span class="hlil-pc">{line.pc}</span>
-                    <span class="hlil-code">{lineText(line)}</span>
+                    <span
+                      class="hlil-code"
+                      style={{ "padding-left": `${visualIndent(line, displayIndentBaseline())}ch` }}
+                    >
+                      {lineText(line)}
+                    </span>
                   </div>
                 )}
               </For>

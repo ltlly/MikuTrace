@@ -284,9 +284,11 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                       type="checkbox"
                       checked={llilDce()}
                       onChange={(e) => setLlilDce(e.currentTarget.checked)}
+                      title="Dead Code Elimination: remove LLIL statements whose computed value is never used."
                     />
-                    dce
+                    DCE
                   </label>
+                  <span class="dim small dec-option-note">dead-code elimination</span>
                   <button type="button" disabled={llilLoading() || !props.selectedFn()} onClick={runLlil}>
                     {llilLoading() ? "rendering…" : "render LLIL"}
                   </button>

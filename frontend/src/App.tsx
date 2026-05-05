@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/client";
+import { fetchFunctions, fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
@@ -10,6 +10,7 @@ import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
+import QueryPanel, { type QueryRunRequest } from "./panels/query/QueryPanel";
 import RecordsPanel from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
 import SettingsPanel from "./panels/settings/SettingsPanel";
@@ -20,6 +21,7 @@ import TaintPanel from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
 import type { FunctionEntry, RecordRow } from "./api/types";
+import type { UiTaskEntry, UiTaskReporter, UiTaskUpdate } from "./utils/taskCenter";
 
 type LeftTab =
   | "funcs"
@@ -32,12 +34,12 @@ type LeftTab =
   | "sofilter"
   | "settings";
 type RightTab = "cfg" | "regs" | "hlil" | "dec";
-type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance";
+type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance" | "query";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 type HelpState = { topic: HelpTopic; x: number; y: number };
 type CmdMode = "" | "/" | ":";
 type TaintRunDirection = "forward" | "backward";
-type MemoryRequest = { token: number; addr: string };
+type MemoryRequest = { token: number; addr: string; count?: number };
 type TaintRunRequest = { token: number; idx: number; reg: string; direction: TaintRunDirection };
 
 const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
@@ -193,6 +195,7 @@ export default function App() {
   const [searchPattern, setSearchPattern] = createSignal("");
   const [memoryRequest, setMemoryRequest] = createSignal<MemoryRequest | undefined>();
   const [taintRequest, setTaintRequest] = createSignal<TaintRunRequest | undefined>();
+  const [queryRequest, setQueryRequest] = createSignal<QueryRunRequest | undefined>();
   const [stringProvenanceRequest, setStringProvenanceRequest] = createSignal<StringProvenanceRequest | undefined>();
   const [leftW, setLeftW] = createSignal(initial.leftW);
   const [rightW, setRightW] = createSignal(initial.rightW);
@@ -207,6 +210,32 @@ export default function App() {
   const [debugVisible, setDebugVisibleSignal] = createSignal(false);
   const [apiDebug, setApiDebugSignal] = createSignal(false);
   const [cfgDebugState, setCfgDebugState] = createSignal<CfgDebugState | null>(null);
+  const [taskCenterOpen, setTaskCenterOpen] = createSignal(false);
+  const [tasks, setTasks] = createSignal<Record<string, UiTaskEntry>>({});
+  const taskEntries = createMemo(() =>
+    Object.values(tasks()).sort((a, b) => b.updatedAt - a.updatedAt),
+  );
+  const activeTaskCount = createMemo(() =>
+    taskEntries().filter((task) => task.status === "running").length,
+  );
+  const reportTask: UiTaskReporter = (update: UiTaskUpdate) => {
+    const now = performance.now();
+    setTasks((current) => {
+      const prev = current[update.id];
+      const startedAt = update.startedAt ?? prev?.startedAt ?? now;
+      const endedAt = update.endedAt ?? (update.status === "running" ? undefined : now);
+      return {
+        ...current,
+        [update.id]: {
+          ...prev,
+          ...update,
+          startedAt,
+          endedAt,
+          updatedAt: now,
+        },
+      };
+    });
+  };
   function setApiDebug(next: boolean) {
     setApiDebugSignal(next);
     try {
@@ -397,6 +426,62 @@ export default function App() {
     setCmdStatus(`unknown jump target: ${text}`);
   }
 
+  async function selectFunctionByCommand(raw: string) {
+    const needle = raw.trim();
+    if (!needle) return;
+    setCmdStatus(`resolving function ${needle}...`);
+    try {
+      const resp = await fetchFunctions();
+      const lower = needle.toLowerCase();
+      const fn = resp.functions.find((f) => f.name === needle || f.id === needle)
+        ?? resp.functions.find((f) => f.name.toLowerCase().includes(lower) || f.id.toLowerCase().includes(lower));
+      if (!fn) {
+        setCmdStatus(`func ${needle}: not found`);
+        return;
+      }
+      selectFunction(fn, false);
+      setCmdStatus(`func ${fn.name}: selected`);
+    } catch (err) {
+      setCmdStatus(`func ${needle}: failed: ${String(err)}`);
+    }
+  }
+
+  function runCommand(raw: string) {
+    const text = raw.trim();
+    if (!text) return;
+    const pcCmd = text.match(/^pc\s+(0x[0-9a-f]+)$/i);
+    if (pcCmd) {
+      void jumpToFirstPc(pcCmd[1]);
+      return;
+    }
+    const funcCmd = text.match(/^(?:func|fn)\s+(.+)$/i);
+    if (funcCmd) {
+      void selectFunctionByCommand(funcCmd[1]);
+      return;
+    }
+    const memCmd = text.match(/^mem(?:ory)?\s+(\S+)(?:\s+(?:len|size)\s+(\d+))?$/i);
+    if (memCmd) {
+      const count = memCmd[2] ? Number.parseInt(memCmd[2], 10) : undefined;
+      openMemoryAt(memCmd[1], count);
+      setCmdStatus(`memory ${memCmd[1]}${count ? ` len ${count}` : ""}`);
+      return;
+    }
+    const taintCmd = text.match(/^taint\s+(bwd|back|backward|fwd|forward)\s+(\S+)(?:\s+@?#?(\d+))?$/i);
+    if (taintCmd) {
+      const direction = taintCmd[1].toLowerCase().startsWith("b") ? "backward" : "forward";
+      const idx = taintCmd[3] ? Number.parseInt(taintCmd[3], 10) : selectedIdx();
+      runTaintFrom(idx, taintCmd[2], direction);
+      setCmdStatus(`taint ${direction} ${taintCmd[2]} @${idx}`);
+      return;
+    }
+    const queryCmd = text.match(/^query\s+(.+)$/i);
+    if (queryCmd) {
+      runQueryText(queryCmd[1]);
+      return;
+    }
+    runGoto(text);
+  }
+
   function selectFunction(fn: FunctionEntry, jumpEntry = false) {
     setSelectedFn(fn.id);
     setSyncCfg(false);
@@ -513,9 +598,9 @@ export default function App() {
     "--col-asm": `${colAsm()}px`,
   }));
 
-  function openMemoryAt(addr: string) {
+  function openMemoryAt(addr: string, count?: number) {
     setBottomTab("memory");
-    setMemoryRequest({ token: Date.now(), addr });
+    setMemoryRequest({ token: Date.now(), addr, count });
   }
 
   function runTaintFrom(idx: number, reg: string, direction: TaintRunDirection) {
@@ -528,6 +613,12 @@ export default function App() {
   function showStringProvenance(req: Omit<StringProvenanceRequest, "token">) {
     setStringProvenanceRequest({ ...req, token: Date.now() });
     setBottomTab("string-provenance");
+  }
+
+  function runQueryText(text: string) {
+    setBottomTab("query");
+    setQueryRequest({ token: Date.now(), text });
+    setCmdStatus(`query: ${text}`);
   }
 
   function openCmd(mode: CmdMode) {
@@ -602,7 +693,7 @@ export default function App() {
       return;
     }
     if (mode === ":") {
-      runGoto(value);
+      runCommand(value);
     }
   }
 
@@ -747,6 +838,7 @@ export default function App() {
       if (bottomTab() === "memory") return "Memory";
       if (bottomTab() === "trace-for-pc") return "Trace for PC";
       if (bottomTab() === "string-provenance") return "String Provenance";
+      if (bottomTab() === "query") return "Trace Query";
       return "Navigation";
     }
     return leftTitle();
@@ -762,14 +854,15 @@ export default function App() {
     if (topic === "right") {
       if (rightTab() === "cfg") return "CFG 显示当前函数的动态基本块图，默认跟随当前 trace 所在函数，避免直接渲染全 trace 导致 dot 超时。空白处拖动平移，按住 Ctrl 滚轮缩放；点击图中的指令或块头会跳到 trace 中离当前 cursor 最近的一次执行。";
       if (rightTab() === "regs") return "寄存器窗口显示当前 cursor 的寄存器状态，并像 pwndbg 一样自动高亮相对上一条 trace 发生变化的寄存器；note 会标出 zero、pc、sp/stack 和疑似指针。点击寄存器会把它设为污点追踪的当前寄存器。";
-      if (rightTab() === "hlil") return "HLIL 窗口跟随当前汇编 cursor 的 PC；配置了 Binary Ninja sidecar 时显示对应函数的 HLIL，并高亮当前 PC 对应的行。点击 HLIL 行会跳到该 PC 在 trace 中离当前 cursor 最近的一次执行。";
-      if (rightTab() === "dec") return "Decompile 显示 traceMiku 本地 Trace IR markdown 和 LLIL render。这里不调用任何 LLM；模型选择和 LLM 输出暂时不在 UI 中开放。";
+      if (rightTab() === "hlil") return "HLIL 窗口跟随当前汇编 cursor 的 PC；配置了 Binary Ninja sidecar 时显示 Pseudo C 和 HLIL 两种结构化文本，并高亮当前 PC 对应的行。缩进来自 BN 返回的结构化 indent，不再依赖原始字符串里的空格。点击 HLIL 行会跳到该 PC 在 trace 中离当前 cursor 最近的一次执行。";
+      if (rightTab() === "dec") return "Decompile 显示 traceMiku 本地 Trace IR markdown 和 LLIL render。LLIL records 限制参与渲染的 trace 记录数；DCE 是 Dead Code Elimination，会移除计算结果没有被后续使用的临时语句，适合看更短的伪代码，但排查 lift 细节时可以关闭。这里不调用任何 LLM；模型选择和 LLM 输出暂时不在 UI 中开放。";
       return "";
     }
     if (topic === "bottom") {
       if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。双击字节跳来源 idx，右键字节显示该地址前后的读写触碰分析。";
       if (bottomTab() === "trace-for-pc") return "Trace for PC 显示当前 PC 在 trace 中其它执行位置，分为 cursor 之前和之后。它用来分析循环、调度器、热点指令和同一静态指令在不同时间的状态差异。点击任意行会跳转到对应 idx。";
-      if (bottomTab() === "string-provenance") return "Provenance 显示 Strings 双击后选中字符串的逐字节来源：每个字符当前值、写入 idx 列表和读取 idx 列表。点击 w#/r# 会跳到对应 trace。";
+      if (bottomTab() === "string-provenance") return "String Provenance 显示 Strings 双击后选中字符串的逐字节来源。上方 String Byte Flow 的含义是 writer trace 写出某个字符字节 → 该字节当前值 → reader trace 读取该字节；为了避免图过密，只展示前 32 个字节和每字节最多 2 个写/读事件。下方表格保留完整 writer/reader 列表，点击 writer#/reader# 会跳到对应 trace。";
+      if (bottomTab() === "query") return "Trace Query 是统一的结构化查询入口，可查询 records、regs、mem/reads/writes、functions、strings、JNI 和 provenance。命令栏里输入 query writes 0x... len 32、query mem addr 0x... len 32 或 query regs x9 会直接打开这里。";
       return "Navigation 记录本次页面会话里的 cursor 跳转历史，所有来自 Disassembly、CFG、CallTree、Strings、Refs 和 Trace for PC 的跳转都会进入这里。back/forward 只改变 cursor，不重新请求历史。";
     }
     if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG 和 HLIL；记录数、block 数和入口地址用来判断热函数和分析范围。";
@@ -807,6 +900,14 @@ export default function App() {
           dbg
         </button>
         <span class="hint">↑/↓ 单步 · PgUp/PgDn 翻页 · Home/End 头尾 · / 搜索 · g 跳 #idx/0xPC</span>
+        <button
+          class="task-toggle"
+          classList={{ active: taskCenterOpen() || activeTaskCount() > 0 }}
+          title="Task Center: running/cached/partial/error analysis jobs"
+          onClick={() => setTaskCenterOpen(!taskCenterOpen())}
+        >
+          tasks {activeTaskCount()}
+        </button>
         {helpButton("overview")}
       </header>
 
@@ -874,6 +975,7 @@ export default function App() {
                 onSelect={setSelectedIdx}
                 runRequest={taintRequest()}
                 active={leftTab() === "taint"}
+                onTaskUpdate={reportTask}
               />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>
@@ -949,6 +1051,7 @@ export default function App() {
             {btab("navigation", "Navigation")}
             {btab("trace-for-pc", "Trace for PC")}
             {btab("string-provenance", "Provenance")}
+            {btab("query", "Query")}
             <span class="grow" />
             {helpButton("bottom")}
           </div>
@@ -959,6 +1062,7 @@ export default function App() {
                 onSelect={setSelectedIdx}
                 addrRequest={memoryRequest()}
                 active={bottomTab() === "memory"}
+                onTaskUpdate={reportTask}
               />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "navigation" }}>
@@ -1009,6 +1113,17 @@ export default function App() {
                 request={stringProvenanceRequest()}
                 onSelect={setSelectedIdx}
                 active={bottomTab() === "string-provenance"}
+                onTaskUpdate={reportTask}
+              />
+            </div>
+            <div class="bbody" classList={{ active: bottomTab() === "query" }}>
+              <QueryPanel
+                idx={selectedIdx()}
+                selectedReg={selectedReg()}
+                onSelect={setSelectedIdx}
+                active={bottomTab() === "query"}
+                runRequest={queryRequest()}
+                onTaskUpdate={reportTask}
               />
             </div>
           </div>
@@ -1038,6 +1153,7 @@ export default function App() {
                 syncEnabled={syncCfg()}
                 onDisplayFnChange={setCfgDisplayFn}
                 onDebugChange={setCfgDebugState}
+                onTaskUpdate={reportTask}
               />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
@@ -1055,6 +1171,7 @@ export default function App() {
                 currentIdx={selectedIdx()}
                 onSelect={setSelectedIdx}
                 active={rightTab() === "hlil"}
+                onTaskUpdate={reportTask}
               />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "dec" }}>
@@ -1085,7 +1202,7 @@ export default function App() {
             class="inp"
             value={cmdValue()}
             readOnly={!cmdMode()}
-            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "jump #240 or 0x12345..." : "press / or g"}
+            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "#240, 0xPC, pc 0x..., func name, mem addr len 128, taint bwd x9 @93, query ..." : "press / or g"}
             onInput={(e) => setCmdValue(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") closeCmd();
@@ -1111,6 +1228,33 @@ export default function App() {
           </div>
         </div>
         )}
+      </Show>
+      <Show when={taskCenterOpen() || activeTaskCount() > 0}>
+        <div class="task-center">
+          <div class="task-center-head">
+            <b>Task Center</b>
+            <span class="dim small">{activeTaskCount()} running · {taskEntries().length} recent</span>
+            <button type="button" onClick={() => setTaskCenterOpen(false)}>close</button>
+          </div>
+          <For each={taskEntries().slice(0, 12)}>
+            {(task) => {
+              const elapsed = Math.max(0, Math.round(((task.endedAt ?? performance.now()) - task.startedAt)));
+              return (
+                <div class="task-row" classList={{ running: task.status === "running", error: task.status === "error", partial: task.status === "partial" }}>
+                  <span class="task-status">{task.status}</span>
+                  <span class="task-main">
+                    <b>{task.surface}</b>
+                    <span>{task.label}</span>
+                    <Show when={task.detail}>
+                      <small>{task.detail}</small>
+                    </Show>
+                  </span>
+                  <code>{elapsed}ms</code>
+                </div>
+              );
+            }}
+          </For>
+        </div>
       </Show>
       <Show when={debugVisible()}>
         <div class="debug-overlay">

@@ -38,6 +38,9 @@ def main() -> int:
     taint = read("panels/taint/TaintPanel.tsx")
     xref = read("panels/xref/XrefPanel.tsx")
     decompiler = read("panels/decompiler/DecompilerPanel.tsx")
+    query = read("panels/query/QueryPanel.tsx")
+    prov_graph = read("utils/provenanceGraph.tsx")
+    task_center = read("utils/taskCenter.ts")
 
     failures: list[str] = []
 
@@ -89,10 +92,15 @@ def main() -> int:
         and "jumpToIdx(selectedIdx() + 20)" in app
         and 'e.key === "PageUp"' in app
         and "jumpToIdx(selectedIdx() - 20)" in app
-        and 'e.key === "Home" || e.key === "g"' in app
+        and 'e.key === "Home"' in app
         and "jumpToIdx(0)" in app
         and 'e.key === "End" || e.key === "G"' in app
         and "jumpToIdx(Math.max(0, totalRecords() - 1))" in app,
+        failures,
+    )
+    require(
+        "ASM g opens jump command palette",
+        'e.key === "g"' in app and 'openCmd(":")' in app,
         failures,
     )
     require(
@@ -132,6 +140,14 @@ def main() -> int:
     require("CFG loading clears stale graph", "setGraph(null)" in cfg and "setGraphLoading(true)" in cfg, failures)
     require("CFG cleanup aborts in-flight graph", "onCleanup(() =>" in cfg and "graphAbort?.abort()" in cfg, failures)
     require(
+        "CFG large functions request local focus by default",
+        "fnBlockCount() > AUTO_RENDER_MAX_BLOCKS" in cfg
+        and "requestLocalFocus" in cfg
+        and "pc: requestTracePc" in cfg
+        and "localDepth: 2" in cfg,
+        failures,
+    )
+    require(
         "CFG response records request function/source",
         "requestFn: string" in cfg
         and 'source: "trace"' in cfg
@@ -140,6 +156,15 @@ def main() -> int:
     )
     require("CFG highlight rejects stale graph", "g.requestFn !== fnName()" in cfg and "graph() !== g" in cfg, failures)
     require("CFG loading spinner is rendered", 'class="cfg-loading"' in cfg and 'class="cfg-spinner"' in cfg, failures)
+    require(
+        "CFG reports task states including cancelled cached partial",
+        "cancelGraphTask" in cfg
+        and 'status: "cancelled"' in cfg
+        and '"partial"' in cfg
+        and '"cached"' in cfg
+        and "bnResp.cache_hit" in cfg,
+        failures,
+    )
 
     require("Memory defaults to 128 bytes", "createSignal(128)" in memory, failures)
     require("Memory register picker is data-driven", "<select" in memory and "sortedRegNames(r().regs)" in memory, failures)
@@ -180,6 +205,14 @@ def main() -> int:
         and "readers_after" in memory
         and "ctx().writes?.truncated" in memory
         and "partial result" in memory,
+        failures,
+    )
+    require(
+        "Memory provenance is graph-backed",
+        "ProvenanceGraph" in memory
+        and "memoryProvNodes" in memory
+        and "memoryProvEdges" in memory
+        and "onTaskUpdate" in memory,
         failures,
     )
 
@@ -303,6 +336,15 @@ def main() -> int:
         failures,
     )
     require(
+        "Taint graph/tree provenance remains default while table is retained",
+        "ProvenanceGraph" in taint
+        and "graphNodes" in taint
+        and "graphEdges" in taint
+        and 'value="table"' in taint
+        and 'status: "cancelled"' in taint,
+        failures,
+    )
+    require(
         "Taint uses traceIdx wording instead of ambiguous start label",
         "traceIdx" in taint and "from traceIdx" in taint and "narrow traceIdx/reg/options" in taint,
         failures,
@@ -332,6 +374,14 @@ def main() -> int:
         failures,
     )
     require(
+        "String provenance is graph-backed and task-reported",
+        "ProvenanceGraph" in string_prov
+        and "graphNodes" in string_prov
+        and "graphEdges" in string_prov
+        and "onTaskUpdate" in string_prov,
+        failures,
+    )
+    require(
         "Taint tree grid avoids overlapping columns",
         ".taint-tree-row" in css
         and "grid-template-areas:" in css
@@ -342,6 +392,59 @@ def main() -> int:
         failures,
     )
     require("Taint tree wraps long asm", ".taint-tree-asm" in css and "overflow-wrap: anywhere" in css, failures)
+
+    require(
+        "Task Center tracks running cached cancelled partial elapsed states",
+        '"running" | "ready" | "partial" | "cached" | "cancelled" | "error"' in task_center
+        and "taskCenterOpen" in app
+        and "activeTaskCount" in app
+        and "reportTask" in app
+        and "task-toggle" in app
+        and "task-center" in app
+        and "elapsed" in app,
+        failures,
+    )
+    require(
+        "Task Center is wired into heavy analysis panels",
+        "onTaskUpdate={reportTask}" in app
+        and "CfgPanel" in app
+        and "HlilPanel" in app
+        and "TaintPanel" in app
+        and "MemoryPanel" in app
+        and "StringProvenancePanel" in app
+        and "QueryPanel" in app,
+        failures,
+    )
+    require(
+        "Command palette supports unified analysis commands",
+        "runCommand" in app
+        and "selectFunctionByCommand" in app
+        and "openMemoryAt(memCmd[1], count)" in app
+        and "runTaintFrom(idx, taintCmd[2], direction)" in app
+        and "runQueryText(queryCmd[1])" in app
+        and 'openCmd(":")' in app,
+        failures,
+    )
+    require(
+        "Trace Query UI supports memory reads writes JNI provenance",
+        "TraceQueryKind" in query
+        and '"reads"' in query
+        and '"writes"' in query
+        and '"jni"' in query
+        and '"provenance"' in query
+        and "fetchTraceQuery" in query
+        and 'status: "cancelled"' in query,
+        failures,
+    )
+    require(
+        "ProvenanceGraph shared renderer exposes nodes and edges",
+        "export interface ProvNode" in prov_graph
+        and "export interface ProvEdge" in prov_graph
+        and "prov-node-list" in prov_graph
+        and "prov-edge-list" in prov_graph
+        and ".prov-graph" in css,
+        failures,
+    )
 
     if failures:
         print("Frontend UI static audit failed:", file=sys.stderr)

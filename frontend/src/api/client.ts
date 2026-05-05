@@ -18,6 +18,8 @@ import type {
   BlockForPcResponse,
   IdxsForBlockResponse,
   SearchPcResponse,
+  TraceQueryKind,
+  TraceQueryResponse,
   SearchResponse,
   RegValueAtResponse,
   LastWriteOfRegResponse,
@@ -140,6 +142,8 @@ export async function fetchFunctions(): Promise<FunctionsResponse> {
 
 export interface FetchCfgSvgOpts {
   fnName?: string;
+  pc?: string;
+  localDepth?: number;
   timeout?: number;
   force?: boolean;
   signal?: AbortSignal;
@@ -148,6 +152,8 @@ export interface FetchCfgSvgOpts {
 export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgResponse> {
   const params = new URLSearchParams();
   if (opts.fnName) params.set("fn", opts.fnName);
+  if (opts.pc) params.set("pc", opts.pc);
+  if (opts.localDepth !== undefined) params.set("local_depth", String(opts.localDepth));
   if (opts.timeout !== undefined) params.set("timeout", String(opts.timeout));
   if (opts.force) params.set("force", "true");
   const qs = params.toString();
@@ -335,6 +341,38 @@ export async function fetchSearchPc(
   const out = (await r.json()) as SearchPcResponse;
   out.request_pc = pc;
   out.request_limit = limit;
+  return out;
+}
+
+export interface FetchTraceQueryOpts {
+  kind: TraceQueryKind;
+  q?: string;
+  idx?: number;
+  reg?: string;
+  addr?: string;
+  len?: number;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export async function fetchTraceQuery(opts: FetchTraceQueryOpts): Promise<TraceQueryResponse> {
+  const params = new URLSearchParams({ kind: opts.kind });
+  if (opts.q) params.set("q", opts.q);
+  if (opts.idx !== undefined) params.set("idx", String(opts.idx));
+  if (opts.reg) params.set("reg", opts.reg);
+  if (opts.addr) params.set("addr", opts.addr);
+  if (opts.len !== undefined) params.set("len", String(opts.len));
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const r = await fx(`/api/query?${params}`, { signal: opts.signal });
+  if (!r.ok) throw new Error(`/api/query ${r.status}: ${await r.text()}`);
+  const out = (await r.json()) as TraceQueryResponse;
+  out.request_kind = opts.kind;
+  out.request_q = opts.q ?? "";
+  out.request_idx = opts.idx;
+  out.request_reg = opts.reg;
+  out.request_addr = opts.addr;
+  out.request_len = opts.len;
+  out.request_limit = opts.limit;
   return out;
 }
 
