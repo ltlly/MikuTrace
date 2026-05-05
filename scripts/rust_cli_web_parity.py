@@ -111,8 +111,39 @@ def normalize_case(case: Case, value: Any) -> Any:
 
 def cases() -> list[Case]:
     return [
+        Case("meta", "/api/meta", ("meta",)),
         Case("records", "/api/records?start=0&count=9", ("records", "--start", "0", "--count", "9")),
+        Case(
+            "api-records",
+            "/api/records?start=0&count=2",
+            ("api", "/api/records", "-p", "start=0", "-p", "count=2"),
+        ),
         Case("cfg", "/api/cfg", ("cfg",)),
+        Case(
+            "query-records",
+            "/api/query?kind=records&q=ret&idx=0&limit=10",
+            ("query", "--kind", "records", "--q", "ret", "--idx", "0", "--limit", "10"),
+        ),
+        Case(
+            "search-cursor",
+            "/api/search?pattern=ret&max_results=4&cursor=4",
+            ("search", "ret", "--max-results", "4", "--cursor", "4"),
+        ),
+        Case(
+            "backtrace",
+            "/api/backtrace?idx=4&limit=10",
+            ("backtrace", "--idx", "4", "--limit", "10"),
+        ),
+        Case(
+            "block-for-pc",
+            "/api/block-for-pc?pc=0x100000",
+            ("block-for-pc", "--pc", "0x100000"),
+        ),
+        Case(
+            "idxs-for-block",
+            "/api/idxs-for-block?pc=0x100000&max_count=10&near=4",
+            ("idxs-for-block", "--pc", "0x100000", "--max-count", "10", "--near", "4"),
+        ),
         Case(
             "strings",
             "/api/strings?min_len=4&q=&cursor=-1&limit=20",
@@ -129,9 +160,36 @@ def cases() -> list[Case]:
             ("mem-dump", "--addr", "0x7000", "--count", "8"),
         ),
         Case(
+            "mem-writes-in-range",
+            "/api/mem-writes-in-range?idx_lo=0&idx_hi=9&addr_lo=0x7000&addr_hi=0x7008&max=5",
+            (
+                "mem-writes-in-range",
+                "--idx-lo",
+                "0",
+                "--idx-hi",
+                "9",
+                "--addr-lo",
+                "0x7000",
+                "--addr-hi",
+                "0x7008",
+                "--max",
+                "5",
+            ),
+        ),
+        Case(
+            "last-write-of-reg",
+            "/api/last-write-of-reg?reg=x0&before=4",
+            ("last-write-of-reg", "--reg", "x0", "--before", "4"),
+        ),
+        Case(
             "forward-taint",
             "/api/forward-taint?trace_idx=0&reg=x0&max_count=10&cross_fn_call=true",
             ("taint-fwd", "--start", "0", "--reg", "x0", "--max-count", "10", "--cross-fn-call"),
+        ),
+        Case(
+            "jni-events",
+            "/api/jni-events?limit=10",
+            ("jni-events", "--limit", "10"),
         ),
         Case("dec-summary", "/api/dec/summary", ("dec-summary",)),
     ]

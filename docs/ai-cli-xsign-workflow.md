@@ -1,0 +1,190 @@
+# AI CLI workflow for reconstructing x-sign-style algorithms
+
+This note describes how an AI agent should use traceMiku CLI surfaces to work
+backward from an observed signature/output buffer toward the generating
+algorithm. The workflow is target-agnostic; `libsgmainso` and `x-sign` are
+examples of the analysis shape, not hardcoded assumptions.
+
+## Principle
+
+Prefer result-to-input analysis:
+
+1. Start from a known output byte sequence, string, return pointer, or JNI
+   return object.
+2. Locate where those bytes existed in trace memory.
+3. Identify the stores that produced them.
+4. Backward-taint the source register of each store.
+5. Repeatedly expand through memory, call context, string/JNI provenance, and
+   decompiled function summaries until the dataflow reaches inputs, constants,
+   tables, or recognizable crypto/hash/finalize structure.
+
+This is the same strategy that worked manually with text traces: begin at the
+generated x-sign and walk upward.
+
+## CLI surfaces
+
+Use the typed wrappers for common routes:
+
+```bash
+./tracemiku info <call_dir> --json
+./tracemiku api <call_dir> /api/meta
+./tracemiku api <call_dir> /api/query -p kind=records -p q=ret -p limit=50
+```
+
+For every Rust web API, use the generic escape hatch:
+
+```bash
+./tracemiku api <call_dir> /api/backtrace -p idx=443 -p limit=64
+./tracemiku api <call_dir> /api/llil/render --method POST \
+  --json-body '{"fn_id":"trace:F0","max_records":600}'
+```
+
+If a typed wrapper exists, prefer it because its help text is discoverable:
+
+```bash
+rust/target/debug/tracemiku-cli --help
+rust/target/debug/tracemiku-cli taint-bwd --help
+```
+
+## Output-to-writer path
+
+Convert the known signature or byte sequence to hex, then search memory:
+
+```bash
+./tracemiku api <call_dir> /api/find-mem-pattern \
+  -p bytes_hex=<hex_bytes> \
+  -p max=100
+```
+
+For each candidate address range, list writes that produced bytes there:
+
+```bash
+./tracemiku api <call_dir> /api/mem-writes-in-range \
+  -p idx_lo=0 \
+  -p idx_hi=-1 \
+  -p addr_lo=<addr> \
+  -p addr_hi=<addr_plus_len> \
+  -p max=500
+```
+
+The `writes[]` rows include `idx`, `asm`, `src_reg`, `src_value`, `dst_addr`,
+and `func`. Use `src_reg` and `idx` as the seed for backward taint.
+
+## Backward dataflow path
+
+Trace register provenance from a writer or suspicious finalizer instruction:
+
+```bash
+rust/target/debug/tracemiku-cli taint-bwd <call_dir> \
+  --start <writer_idx> \
+  --reg <src_reg> \
+  --through-mem \
+  --cross-fn-call \
+  --max-count 5000
+```
+
+When taint becomes too broad, narrow with local context:
+
+```bash
+rust/target/debug/tracemiku-cli records <call_dir> --start <lo> --count <n> --regs x0,x1,x2,x3,x8,x9,sp,lr
+rust/target/debug/tracemiku-cli backtrace <call_dir> --idx <idx> --limit 128
+rust/target/debug/tracemiku-cli call-chain <call_dir> --idx <idx> --depth 16
+rust/target/debug/tracemiku-cli block <call_dir> --pc <pc>
+rust/target/debug/tracemiku-cli idxs-for-block <call_dir> --pc <block_pc> --near <idx> --max-count 200
+```
+
+Use `data-chase` when a register points through stack/heap memory and plain
+register taint does not explain the value:
+
+```bash
+rust/target/debug/tracemiku-cli data-chase <call_dir> \
+  --start <idx> \
+  --reg <reg> \
+  --max-steps 80
+```
+
+## JNI and string provenance
+
+Inputs and outputs often cross JNI boundaries as strings, byte arrays, or
+objects:
+
+```bash
+rust/target/debug/tracemiku-cli jni-output-strings <call_dir> --key x-sign
+rust/target/debug/tracemiku-cli jni-events <call_dir> --kind NewStringUTF --limit 5000
+rust/target/debug/tracemiku-cli jni-events <call_dir> --limit 5000
+rust/target/debug/tracemiku-cli jni-calls <call_dir> --max 5000
+rust/target/debug/tracemiku-cli jni-strings <call_dir> --max 5000 --max-len 256
+rust/target/debug/tracemiku-cli jobj-history <call_dir> --jobject <0x...> --max 500
+rust/target/debug/tracemiku-cli string-provenance <call_dir> --addr <0x...> --length <n>
+```
+
+For x-sign-like outputs, `jni-output-strings --key x-sign` is usually the best
+first command. It pairs `NewStringUTF("x-sign")` with the following
+`NewStringUTF(<value>)` and returns the exact `key_idx`, `value_idx`, returned
+JNI objects, and value length. Use the instruction immediately before
+`value_idx` as the `NewStringUTF` callsite seed; on ARM64 this is commonly a
+`blr` with `x1` holding the C string pointer.
+
+Use `string-provenance` when a string table entry or discovered byte sequence
+looks like the x-sign, an input token, timestamp, app key, device id, or encoded
+intermediate.
+
+Be careful with memory dumps around output strings: libc `memcpy`/`memset`,
+inline C++ string storage, and untraced runtime writes can make final MemShadow
+bytes look like an object layout instead of the real transient C string. JNI
+hook bytes are the ground truth for `NewStringUTF`; use memory write ranges and
+taint to locate who prepared the backing buffer.
+
+## Algorithm structure
+
+Once hot functions and key instructions are identified, summarize and decompile:
+
+```bash
+rust/target/debug/tracemiku-cli functions <call_dir>
+rust/target/debug/tracemiku-cli fn-summary <call_dir> --fn <function_name> --top-blocks 12
+rust/target/debug/tracemiku-cli dec-summary <call_dir>
+rust/target/debug/tracemiku-cli dec-fn <call_dir> <fn_id> --tier hot
+rust/target/debug/tracemiku-cli llil-render <call_dir> --fn-id <fn_id> --max-records 1000
+```
+
+If Binary Ninja sidecar is configured, static HLIL/CFG can enrich dynamic trace
+context:
+
+```bash
+rust/target/debug/tracemiku-cli bn-sidecar-status <call_dir>
+rust/target/debug/tracemiku-cli hlil-for-pc <call_dir> --pc <pc>
+rust/target/debug/tracemiku-cli bn-cfg-for-pc <call_dir> --pc <pc> --mode asm
+```
+
+## Hypothesis checks
+
+Use these routes to test whether the recovered structure is a known hash,
+HMAC, crypto primitive, or finalization pattern:
+
+```bash
+rust/target/debug/tracemiku-cli crypto-scan <call_dir>
+rust/target/debug/tracemiku-cli hash-finalize-detect <call_dir> --window 500 --min-size 16 --limit 1000
+rust/target/debug/tracemiku-cli hash-input-search <call_dir> \
+  --target-bytes <hex_output> \
+  --inputs <csv_or_known_inputs> \
+  --keys <csv_or_empty> \
+  --search-in-mem
+```
+
+For differential analysis, collect multiple calls with controlled input changes
+and compare traces:
+
+```bash
+rust/target/debug/tracemiku-cli diff-traces <call_dir_a> <call_dir_b> --show-offsets --show-per-byte
+```
+
+## Success criterion
+
+The CLI workflow is sufficient when an AI agent can produce:
+
+1. The final output writer(s) for the observed x-sign bytes.
+2. The backward taint/data-chase chain from those writer(s) to inputs,
+   constants, or prior memory state.
+3. The hot functions and decompiled/LLIL snippets that implement the transform.
+4. A Python simulation that reproduces the observed x-sign on at least one
+   captured call, then generalizes across differential traces.

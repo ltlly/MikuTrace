@@ -22,3 +22,9 @@ pub fn build_router(call_dir: PathBuf) -> anyhow::Result<Router> {
     let state = AppState::load(call_dir).context("load AppState")?;
     Ok(routes::router(state))
 }
+
+pub fn build_router_with_memshadow(call_dir: PathBuf) -> anyhow::Result<Router> {
+    let state = AppState::load(call_dir).context("load AppState")?;
+    let _ = state.inner.memshadow();
+    Ok(routes::router(state))
+}
