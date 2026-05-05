@@ -219,6 +219,15 @@ def pick_largest_cfg_function(functions: Any, exclude: str | None) -> str | None
     return best[2] if best else None
 
 
+def pick_string_provenance_target(strings_resp: Any) -> tuple[str, int] | None:
+    for entry in (strings_resp or {}).get("strings", []):
+        addr = entry.get("addr")
+        length = int(entry.get("len") or 0)
+        if isinstance(addr, str) and addr and length > 0:
+            return addr, min(length, 128)
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
@@ -256,6 +265,8 @@ def main() -> int:
     fn = pick_function(funcs, fn_hint)
     fn_id = pick_function_id(funcs)
     largest_cfg_fn = pick_largest_cfg_function(funcs, fn)
+    strings_seed = get_json(base, q("/api/strings", min_len=4, limit=1, cursor=-1), args.timeout)[0]
+    string_provenance_target = pick_string_provenance_target(strings_seed)
 
     probes: list[Probe] = [
         Probe("meta", "/api/meta"),
@@ -273,6 +284,14 @@ def main() -> int:
         Probe("hash finalize", q("/api/hash-finalize-detect", window=500, min_size=16, limit=500)),
         Probe("auto phase", q("/api/auto-phase-detect", max_phases=5000, detect_byte_streams="true")),
     ]
+    if string_provenance_target:
+        string_addr, string_len = string_provenance_target
+        probes.append(
+            Probe(
+                "string provenance first",
+                q("/api/string-provenance", addr=string_addr, length=string_len),
+            )
+        )
     if fn:
         probes.extend(
             [
@@ -347,6 +366,7 @@ def main() -> int:
         "mid_func": fn_hint,
         "function_id": fn_id,
         "largest_cfg_fn": largest_cfg_fn,
+        "string_provenance_target": string_provenance_target,
         "runtime_blocking_check": {
             "enabled": args.runtime_blocking_check,
             "health_path": args.health_path,
