@@ -2,12 +2,17 @@
 
 Usage:
     uv run python scripts/web_api_perf_probe.py http://127.0.0.1:18900
+    uv run python scripts/web_api_perf_probe.py http://127.0.0.1:18900 --visible-ui-only
     uv run python scripts/web_api_perf_probe.py http://127.0.0.1:18900 --json
 
 The probe is intentionally target-agnostic: it derives a middle trace idx,
 current SP, and current function from the server responses instead of
 hardcoding SO names or offsets. It is meant for large-trace regression checks
 after frontend/backend interaction changes.
+
+By default it includes backend surfaces that may be temporarily hidden in the
+UI, so regressions do not disappear silently. Use --visible-ui-only when the
+goal is to measure the currently exposed frontend interaction path.
 """
 
 from __future__ import annotations
@@ -103,6 +108,11 @@ def main() -> int:
     ap.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON only")
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    ap.add_argument(
+        "--visible-ui-only",
+        action="store_true",
+        help="skip endpoints for UI panels that are currently hidden, such as Decompile",
+    )
     args = ap.parse_args()
 
     base = args.base_url.rstrip("/")
@@ -141,9 +151,10 @@ def main() -> int:
             [
                 ("cfg svg current fn", q("/api/cfg-svg", fn=fn, mode="auto")),
                 ("cfg current fn", q("/api/cfg", fn=fn)),
-                ("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)),
             ]
         )
+        if not args.visible_ui_only:
+            probes.append(("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)))
     if sp:
         probes.extend(
             [
