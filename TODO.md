@@ -49,10 +49,18 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ API client fetch discipline 门禁: `scripts/frontend_api_client_audit.py`
   要求所有 API wrapper 走 `fx`, 且 `fx` 内只有一处 raw `fetch(input, init)`,
   防止 debug logger 被绕过或 wrapper 自递归。
+- ✅ Python web API surface 兼容门禁:
+  `api_infra_tests::rust_router_preserves_python_web_api_surface` 固化
+  `main:webui/server.py` 的 `/api/*` method/path 清单, 防止
+  `/api/mem-writes-in-range` 这类 Python 已有端点在 Rust router 漏注册。
 - ✅ 前端交互 affordance 静态审计: `scripts/frontend_ui_audit.py` 钉住
   Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
   列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
   默认视图、String Provenance 长文本滚动/换行、全局主题滚动条和统一字体。
+- ✅ Records 虚拟列表稳定复用门禁: `scripts/frontend_ui_audit.py` 钉住
+  `rowObjectCache + sameRecordRow`, 要求相同 `idx` 且语义字段不变时复用行对象,
+  并保持缓存有界, 防止真实 fetch/滚动时 Solid `<For>` 整屏拆 DOM 导致
+  click 丢失回归。
 - ✅ CFG stale/loading 交互守卫已纳入前端静态审计: 钉住 seq+Abort、
   loading 时清旧图并显示 spinner、requestFn 绑定、以及高亮前的 current graph
   校验，防止快速跨函数点击时旧 CFG/旧异步结果覆盖新 cursor。
@@ -68,7 +76,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `api_infra_tests::server_runtime_does_not_probe_deleted_python_dirs` 防止
   server runtime 再 `join("viewer")` / `join("webui")`。
 - ✅ 恢复 Decompile/LLIL/LLM 可见 UI 前的性能证明: 最大 trace all-surfaces
-  smoke 中 dec summary 约 400ms, 期间 health max 约 1.9ms, 没有阻塞当前
+  smoke 中 dec summary 约 475ms, 期间 health max 约 2.0ms, 没有阻塞当前
   trace cursor/CFG/Records 热路径; smoke 现在打印 `/api/bg-status.parallelism`,
   1542 万 records trace 上 index/symbols/CFG/MemShadow/frame-depth/reg-timeline/JNI
   scan 均规划为 16 workers。
@@ -78,8 +86,8 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   所有 Python gate/helper 脚本。
 - ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
   会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
-  当前 1542 万 records trace + v3 sidecar 下约 6.04s ready, ready 后 auto phase
-  约 115ms, health max 约 1.9ms。
+  当前 1542 万 records trace + v3 sidecar 下约 7.05s ready, ready 后 auto phase
+  约 173ms, health max 约 2.0ms。
 - ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
   Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
   `playwright install chrome` 需要 sudo 交互。现有保障是静态 UI audit +
