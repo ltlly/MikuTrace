@@ -221,6 +221,27 @@ def verify_taint_tree(base: str, timeout: float) -> None:
             raise RuntimeError("taint tree smoke found hits but no parent_idxs edge")
 
 
+def fetch_bg_status(base: str, timeout: float) -> dict[str, Any]:
+    status = fetch_json(base, "/api/bg-status", timeout)
+    if not isinstance(status, dict):
+        raise RuntimeError(f"/api/bg-status returned non-object: {status!r}")
+    parallelism = status.get("parallelism")
+    if not isinstance(parallelism, dict):
+        raise RuntimeError(f"/api/bg-status missing parallelism object: {status!r}")
+    workers = parallelism.get("workers")
+    if not isinstance(workers, dict) or not workers:
+        raise RuntimeError(f"/api/bg-status parallelism missing workers: {parallelism!r}")
+    return status
+
+
+def format_parallelism(bg_status: dict[str, Any]) -> str:
+    parallelism = bg_status.get("parallelism") or {}
+    workers = parallelism.get("workers") or {}
+    worker_text = " ".join(f"{k}={v}" for k, v in sorted(workers.items()))
+    mem = (bg_status.get("mem") or {}).get("status", "?")
+    return f"available={parallelism.get('available', '?')} mem={mem} workers: {worker_text}"
+
+
 def main() -> int:
     args = parse_args()
     trace = Path(args.trace)
@@ -249,6 +270,7 @@ def main() -> int:
     )
     try:
         wait_ready(base, proc, args.timeout)
+        bg_status = fetch_bg_status(base, args.timeout)
         verify_frontend(base, args.timeout)
         verify_taint_tree(base, args.timeout)
         probe = run_probe(base, args.timeout, visible_only=not args.all_surfaces)
@@ -260,6 +282,7 @@ def main() -> int:
             f"OK rust web smoke base={base} records={probe['records']:,} "
             f"measurements={len(probe['measurements'])}"
         )
+        print(f"  parallelism {format_parallelism(bg_status)}")
         slow = sorted(probe["measurements"], key=lambda m: float(m["ms"]), reverse=True)[:5]
         for m in slow:
             print(f"  {m['ms']:8.1f} ms {m['label']}")
