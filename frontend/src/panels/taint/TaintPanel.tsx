@@ -22,6 +22,7 @@ interface RunResult {
   direction: Direction;
   from: number;
   reg: string;
+  limit: number;
   showDepth: boolean;
 }
 
@@ -93,6 +94,7 @@ export default function TaintPanel(props: TaintPanelProps) {
     const seq = ++runSeq;
     const abort = new AbortController();
     runAbort = abort;
+    const limit = maxCount();
     setRunning(true);
     setError(null);
     setResult(null);
@@ -104,7 +106,7 @@ export default function TaintPanel(props: TaintPanelProps) {
         cross_fn_call: crossFnCall(),
       };
       if (dir === "forward") {
-        const resp = await fetchForwardTaint(startArg, regArg, maxCount(), flags, abort.signal);
+        const resp = await fetchForwardTaint(startArg, regArg, limit, flags, abort.signal);
         if (seq !== runSeq || abort.signal.aborted) return;
         if (resp.status === "loading") {
           scheduleMemoryRetry(seq, dir, startArg, regArg);
@@ -117,10 +119,11 @@ export default function TaintPanel(props: TaintPanelProps) {
           direction: "forward",
           from: resp.from,
           reg: resp.reg,
+          limit,
           showDepth: flags.cross_fn_call,
         });
       } else {
-        const resp = await fetchBackwardTaint(startArg, regArg, maxCount(), flags, abort.signal);
+        const resp = await fetchBackwardTaint(startArg, regArg, limit, flags, abort.signal);
         if (seq !== runSeq || abort.signal.aborted) return;
         if (resp.status === "loading") {
           scheduleMemoryRetry(seq, dir, startArg, regArg);
@@ -133,6 +136,7 @@ export default function TaintPanel(props: TaintPanelProps) {
           direction: "backward",
           from: resp.from,
           reg: resp.reg,
+          limit,
           showDepth: flags.cross_fn_call,
         });
       }
@@ -161,6 +165,11 @@ export default function TaintPanel(props: TaintPanelProps) {
     const parents = row.parent_idxs ?? [];
     return parents.length ? `from ${parents.map((idx) => `#${idx}`).join(",")}` : "seed";
   };
+
+  function rerunAtUiCap(r: RunResult) {
+    setMaxCount(MAX_TAINT_ROWS);
+    queueMicrotask(() => void run(r.direction, r.from, r.reg));
+  }
 
   return (
     <section class="panel">
@@ -255,9 +264,24 @@ export default function TaintPanel(props: TaintPanelProps) {
             <p class="dim small">
               {r().direction} from traceIdx {r().from} reg {r().reg} · {r().count} row{r().count === 1 ? "" : "s"}
               <Show when={r().stopped}>
-                {" "}· stopped at max
+                {" "}· partial result
               </Show>
             </p>
+            <Show when={r().stopped}>
+              <div class="cap-notice" role="status">
+                <span>
+                  Taint result stopped at {r().limit.toLocaleString()} row cap; the full dependency chain may continue.
+                </span>
+                <Show
+                  when={r().limit < MAX_TAINT_ROWS}
+                  fallback={<span class="dim">UI/server cap is {MAX_TAINT_ROWS.toLocaleString()} rows; narrow traceIdx/reg/options to inspect a smaller slice.</span>}
+                >
+                  <button type="button" onClick={() => rerunAtUiCap(r())} disabled={running()}>
+                    rerun with {MAX_TAINT_ROWS.toLocaleString()}
+                  </button>
+                </Show>
+              </div>
+            </Show>
             <Show when={viewMode() !== "table"} fallback={
               <table class="taint-table">
                 <thead>
