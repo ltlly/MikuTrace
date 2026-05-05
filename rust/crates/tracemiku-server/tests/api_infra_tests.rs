@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -45,6 +46,19 @@ fn normalize_api_path(path: &str) -> String {
     dynamic.split('?').next().unwrap_or("").to_string()
 }
 
+fn normalize_route_path(path: &str) -> String {
+    let dynamic_segment = Regex::new(r#":[A-Za-z_][A-Za-z0-9_]*"#).unwrap();
+    dynamic_segment
+        .replace_all(path, "{}")
+        .replace("*path", "{}")
+        .to_string()
+}
+
+fn normalize_openapi_path(path: &str) -> String {
+    let dynamic_segment = Regex::new(r#"\{[^}/]+\}"#).unwrap();
+    dynamic_segment.replace_all(path, "{}").to_string()
+}
+
 fn frontend_api_paths() -> Vec<String> {
     let client = fs::read_to_string(repo_root().join("frontend/src/api/client.ts")).unwrap();
     let mut paths = Vec::new();
@@ -65,27 +79,34 @@ fn frontend_api_paths() -> Vec<String> {
 }
 
 fn rust_router_paths() -> Vec<String> {
-    let routes =
-        fs::read_to_string(repo_root().join("rust/crates/tracemiku-server/src/routes/mod.rs"))
-            .unwrap();
-    let route_call = Regex::new(r#"\.route\(\s*"([^"]*)"\s*,\s*(get|post|any)\("#).unwrap();
-    let dynamic_segment = Regex::new(r#":[A-Za-z_][A-Za-z0-9_]*"#).unwrap();
-    let mut paths = route_call
-        .captures_iter(&routes)
-        .filter_map(|cap| {
-            let raw = cap.get(1)?.as_str();
-            if !(raw.starts_with("/api/") || raw == "/openapi.json") {
-                return None;
-            }
-            let normalized = dynamic_segment
-                .replace_all(raw, "{}")
-                .replace("*path", "{}");
-            Some(normalized.to_string())
-        })
+    let mut paths = rust_router_methods()
+        .into_iter()
+        .map(|(path, _method)| path)
         .collect::<Vec<_>>();
     paths.sort();
     paths.dedup();
     paths
+}
+
+fn rust_router_methods() -> BTreeSet<(String, String)> {
+    let routes =
+        fs::read_to_string(repo_root().join("rust/crates/tracemiku-server/src/routes/mod.rs"))
+            .unwrap();
+    let route_call = Regex::new(r#"\.route\(\s*"([^"]*)"\s*,\s*(get|post|any)\("#).unwrap();
+    route_call
+        .captures_iter(&routes)
+        .filter_map(|cap| {
+            let raw = cap.get(1)?.as_str();
+            if !(raw.starts_with("/api/") || raw == "/openapi.json" || raw == "/ws/jobs") {
+                return None;
+            }
+            let method = cap.get(2)?.as_str();
+            if method == "any" {
+                return None;
+            }
+            Some((normalize_route_path(raw), method.to_string()))
+        })
+        .collect()
 }
 
 #[test]
@@ -123,6 +144,38 @@ async fn openapi_json_lists_current_paths() {
     assert!(v["paths"]["/api/mem-writes-in-range"]["get"].is_object());
     assert!(v["paths"]["/api/hash-input-search"]["post"].is_object());
     assert!(v["paths"]["/ws/jobs"]["get"].is_object());
+
+    let openapi_methods = v["paths"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .flat_map(|(path, methods)| {
+            methods
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(move |method| (normalize_openapi_path(path), method.to_string()))
+        })
+        .collect::<BTreeSet<_>>();
+    let router_methods = rust_router_methods();
+
+    let missing = router_methods
+        .difference(&openapi_methods)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "Rust router paths missing from OpenAPI: {missing:?}"
+    );
+
+    let stale = openapi_methods
+        .difference(&router_methods)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        stale.is_empty(),
+        "OpenAPI paths missing from Rust router: {stale:?}"
+    );
 }
 
 #[tokio::test]

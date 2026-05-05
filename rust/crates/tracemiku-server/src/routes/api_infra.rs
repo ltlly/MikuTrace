@@ -171,6 +171,7 @@ fn openapi_paths() -> Value {
         ("/api/loops", "get"),
         ("/api/backtrace", "get"),
         ("/api/call-chain", "get"),
+        ("/api/call-tree", "get"),
         ("/api/idxs-for-pc", "get"),
         ("/api/idxs-for-block", "get"),
         ("/api/search", "get"),
