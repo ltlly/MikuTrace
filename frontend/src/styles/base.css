@@ -687,6 +687,7 @@ body.is-resizing {
 .reg-diff-table {
   display: block;
   width: 100%;
+  overflow-x: auto;
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
@@ -695,13 +696,16 @@ body.is-resizing {
 .reg-diff-table thead,
 .reg-diff-table tbody {
   display: block;
+  width: max-content;
+  min-width: 100%;
 }
 
 .reg-diff-table tr {
   display: grid;
   grid-template-columns: var(--reg-col-name, 52px) var(--reg-col-value, 150px) var(--reg-col-delta, 76px) minmax(var(--reg-col-note, 220px), 1fr);
   align-items: center;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -1208,6 +1212,7 @@ ul {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .xref-controls input,
@@ -1221,13 +1226,34 @@ ul {
   padding: 2px 6px;
 }
 
-.xref-controls input { width: 18em; }
+.xref-controls input {
+  width: 18em;
+  max-width: 100%;
+}
 
 .xref-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 0.45fr) minmax(420px, 1fr);
+  grid-template-columns: minmax(min(220px, 100%), 0.45fr) minmax(min(420px, 100%), 1fr);
   gap: 16px;
   align-items: start;
+}
+
+.lp-tab .xref-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.lp-tab .xref-grid > * {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.lp-tab .xref-controls label {
+  flex-wrap: wrap;
+}
+
+.lp-tab .xref-controls input {
+  width: 100%;
 }
 
 .xref-grid h3,
@@ -1293,7 +1319,7 @@ ul {
 
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -1307,7 +1333,7 @@ ul {
 .settings-toggles {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
   gap: 6px 10px;
 }
 
@@ -1318,6 +1344,7 @@ ul {
   color: var(--dim);
   font-size: 12px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .settings-kv {
@@ -1385,7 +1412,9 @@ html[data-density="dense"] .xref-table td {
 .functions-list li {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
   padding: 1px 0;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
@@ -1409,6 +1438,10 @@ html[data-density="dense"] .xref-table td {
 .fn-name {
   color: var(--fg);
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cfg-panel {
@@ -1514,6 +1547,7 @@ html[data-density="dense"] .xref-table td {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .hlil-controls select,
@@ -1526,7 +1560,7 @@ html[data-density="dense"] .xref-table td {
   padding: 2px 6px;
 }
 
-.hlil-controls select { max-width: 360px; }
+.hlil-controls select { max-width: 100%; min-width: 0; }
 .hlil-controls button { cursor: pointer; }
 .hlil-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -1609,6 +1643,7 @@ html[data-density="dense"] .xref-table td {
 
 .strings-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 6px;
   font-size: 12px;
@@ -1619,10 +1654,22 @@ html[data-density="dense"] .xref-table td {
   display: flex;
   gap: 4px;
   align-items: center;
+  min-width: 0;
+}
+
+.lp-tab .strings-controls label {
+  flex-wrap: wrap;
 }
 
 .strings-controls input[type="number"] { width: 4em; }
-.strings-controls input[type="text"] { width: 14em; }
+.strings-controls input[type="text"] {
+  width: 14em;
+  max-width: 100%;
+}
+
+.lp-tab .strings-controls input[type="text"] {
+  width: 100%;
+}
 
 .strings-list {
   list-style: none;
@@ -1646,6 +1693,11 @@ html[data-density="dense"] .xref-table td {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   align-items: start;
+}
+
+.lp-tab .strings-list li {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
 }
 
 .strings-list li:hover {
@@ -1717,6 +1769,7 @@ html[data-density="dense"] .xref-table td {
 }
 .ct-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 .ct-wrap { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+.lp-tab .ct-wrap { overflow-x: auto; }
 .ct-row { white-space: nowrap; }
 .ct-line { display: flex; gap: 0.6em; cursor: pointer; padding: 1px 0; }
 .ct-line:hover { background: rgba(255, 255, 255, 0.04); }
@@ -1742,6 +1795,12 @@ html[data-density="dense"] .xref-table td {
   border-collapse: collapse;
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.lp-tab .bt-table,
+.lp-tab .fork-table {
+  display: block;
+  overflow-x: auto;
 }
 
 .bt-table th,
@@ -1772,8 +1831,9 @@ html[data-density="dense"] .xref-table td {
 .bt-table button { cursor: pointer; }
 .bt-table tbody tr { cursor: pointer; }
 .bt-table tbody tr:hover { background: var(--bg3); }
-.fork-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; font-size: 12px; color: var(--dim); }
-.fork-controls label { display: flex; gap: 6px; align-items: center; }
+.fork-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 12px; color: var(--dim); }
+.fork-controls label { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.fork-controls select { max-width: 100%; min-width: 0; }
 .fork-warn { color: var(--warn); }
 .fork-table tr.failed { background: rgba(227, 90, 90, 0.12); }
 .fork-table code {
@@ -1821,7 +1881,9 @@ html[data-density="dense"] .xref-table td {
   white-space: nowrap;
 }
 
-.dec-grid { display: grid; grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr); gap: 16px; align-items: start; }
+.dec-grid { display: grid; grid-template-columns: minmax(min(360px, 100%), 0.9fr) minmax(min(420px, 100%), 1.1fr); gap: 16px; align-items: start; }
+#right-col .dec-grid { grid-template-columns: minmax(0, 1fr); }
+.dec-grid > * { min-width: 0; }
 .dec-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; font-size: 12px; color: var(--dim); }
 .dec-controls label { display: flex; align-items: center; gap: 6px; }
 .dec-controls select,
@@ -1834,11 +1896,11 @@ html[data-density="dense"] .xref-table td {
   font-size: 12px;
   padding: 2px 6px;
 }
-.dec-controls select { max-width: 300px; }
+.dec-controls select { max-width: 100%; }
 .dec-controls input[type="number"] { width: 7em; }
 .dec-controls button { cursor: pointer; }
 .dec-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-.dec-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+.dec-table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
 .dec-table th, .dec-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .dec-table th { color: var(--dim, #888); font-weight: normal; }
 .dec-table tbody tr { cursor: pointer; }
