@@ -66,6 +66,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `rowObjectCache + sameRecordRow`, 要求相同 `idx` 且语义字段不变时复用行对象,
   并保持缓存有界, 防止真实 fetch/滚动时 Solid `<For>` 整屏拆 DOM 导致
   click 丢失回归。
+- ✅ 汇编寄存器右键菜单取消门禁: `scripts/frontend_ui_audit.py` 钉住
+  `.reg-context-menu` outside click / Escape 关闭、AbortController 取消旧请求、
+  token 比对防 stale 结果覆盖。
 - ✅ CFG stale/loading 交互守卫已纳入前端静态审计: 钉住 seq+Abort、
   loading 时清旧图并显示 spinner、requestFn 绑定、以及高亮前的 current graph
   校验，防止快速跨函数点击时旧 CFG/旧异步结果覆盖新 cursor。
