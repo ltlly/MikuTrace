@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchCallTree } from "~/api/client";
 import type { CallNode } from "~/api/types";
@@ -112,18 +112,34 @@ export default function CallTreePanel(props: CallTreePanelProps) {
   });
   const [openKeys, setOpenKeys] = createSignal<Set<string>>(new Set());
   const [locatedKey, setLocatedKey] = createSignal("");
+  let locateSeq = 0;
+  let locateRaf: number | undefined;
+
+  function cancelLocateFrame() {
+    locateSeq += 1;
+    if (locateRaf !== undefined) {
+      window.cancelAnimationFrame(locateRaf);
+      locateRaf = undefined;
+    }
+  }
+
+  onCleanup(() => cancelLocateFrame());
 
   function locateCurrent() {
+    cancelLocateFrame();
     const tree = currentResp()?.tree;
     if (!tree || props.currentIdx === undefined) return;
     const path = findPath(tree, props.currentIdx);
     if (!path?.length) return;
+    const seq = ++locateSeq;
     const next = new Set(openKeys());
     for (const node of path) next.add(keyOf(node));
     const key = keyOf(path[path.length - 1]);
     setOpenKeys(next);
     setLocatedKey(key);
-    requestAnimationFrame(() => {
+    locateRaf = window.requestAnimationFrame(() => {
+      locateRaf = undefined;
+      if (seq !== locateSeq || locatedKey() !== key) return;
       document.querySelector(`[data-ct-key="${CSS.escape(key)}"]`)?.scrollIntoView({
         block: "center",
         inline: "nearest",
