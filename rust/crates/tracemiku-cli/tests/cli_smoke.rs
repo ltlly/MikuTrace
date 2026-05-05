@@ -146,6 +146,36 @@ fn make_output_map_hit_order_trace(root: &std::path::Path, name: &str) -> PathBu
     dir
 }
 
+fn make_word_load_byte_branch_trace(root: &std::path::Path, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut buf = vec![0u8; 272 * 6];
+    for i in 0..4 {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&(0x100000u64 + (i as u64 * 4)).to_le_bytes());
+        buf[off + 8..off + 16].copy_from_slice(&((b'A' + i as u8) as u64).to_le_bytes()); // x0
+        buf[off + 16..off + 24].copy_from_slice(&(0x7000u64 + i as u64).to_le_bytes()); // x1
+        let strb_w0_x1 = 0x39000020u32;
+        buf[off + 268..off + 272].copy_from_slice(&strb_w0_x1.to_le_bytes());
+    }
+    let ldr_off = 4 * 272;
+    buf[ldr_off..ldr_off + 8].copy_from_slice(&0x100010u64.to_le_bytes());
+    buf[ldr_off + 16..ldr_off + 24].copy_from_slice(&0x7000u64.to_le_bytes()); // x1
+    let ldr_w2_x1 = 0xb9400022u32;
+    buf[ldr_off + 268..ldr_off + 272].copy_from_slice(&ldr_w2_x1.to_le_bytes());
+
+    let str_off = 5 * 272;
+    buf[str_off..str_off + 8].copy_from_slice(&0x100014u64.to_le_bytes());
+    buf[str_off + 24..str_off + 32].copy_from_slice(&0x44434241u64.to_le_bytes()); // x2
+    buf[str_off + 32..str_off + 40].copy_from_slice(&0x8000u64.to_le_bytes()); // x3
+    let str_x2_x3 = 0xf9000062u32;
+    buf[str_off + 268..str_off + 272].copy_from_slice(&str_x2_x3.to_le_bytes());
+
+    std::fs::write(dir.join("trace.bin"), &buf).unwrap();
+    std::fs::write(dir.join("meta.json"), r#"{"records":6}"#).unwrap();
+    dir
+}
+
 #[test]
 fn info_json_reports_call_shape() {
     let (_tmp, cd) = synth_call_dir();
@@ -646,6 +676,32 @@ fn output_map_defaults_to_earliest_generation_hit() {
     assert_eq!(v["tree_frontier_with_next"], true);
     assert_eq!(v["selected_hit"]["addr"], "0x7000");
     assert_eq!(v["selected_hit"]["first_idx"], 1);
+}
+
+#[test]
+fn vm_backtree_branches_word_load_to_byte_writers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
+    let v = run_json(&[
+        "vm-backtree".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "5".into(),
+        "--reg".into(),
+        "x2".into(),
+        "--depth".into(),
+        "1".into(),
+        "--max-nodes".into(),
+        "8".into(),
+    ]);
+    let byte_nexts = v["nodes"][0]["upstream"]["byte_nexts"].as_array().unwrap();
+    assert_eq!(byte_nexts.len(), 4);
+    assert_eq!(byte_nexts[0]["idx"], 0);
+    assert_eq!(byte_nexts[0]["src_value"], "0x41");
+    assert_eq!(byte_nexts[0]["offsets"], serde_json::json!([0]));
+    assert_eq!(byte_nexts[3]["idx"], 3);
+    assert_eq!(byte_nexts[3]["src_value"], "0x44");
+    assert_eq!(byte_nexts[3]["offsets"], serde_json::json!([3]));
 }
 
 #[test]

@@ -255,6 +255,12 @@ tree root   0x51596970 -> orr x4, x14, x17
 branches    x14=0x51000000, x17=0x596970
 ```
 
+`vm-backtree` also reports `upstream.byte_nexts` for word loads. On the
+`piYQ` group, the load that produces `0x4b565851` now expands to the four
+byte writers for `Q/X/V/K`, and the load that produces `0x59697041` expands to
+`A/p/i/Y`. This is the level needed to keep walking from generated Base64 text
+back toward payload bit indexes.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

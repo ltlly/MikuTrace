@@ -317,6 +317,12 @@ add `--tree-frontier-with-next`. Without it the tree follows the table memory
 edge; with it the report also keeps the `index` register branch, which is the
 branch that usually leads back to the payload bits.
 
+For word loads from generated buffers, inspect `upstream.byte_nexts`. A row
+such as `ldr w19, [buf, off]` can have four byte writers; these are the four
+independent character sources that make up the loaded word. This matters for
+the x-sign Base64 stage because the VM often builds overlapping 4-character
+windows and then combines them with `lsl`/`lsr`/`orr`.
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash

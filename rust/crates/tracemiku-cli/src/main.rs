@@ -3440,6 +3440,7 @@ async fn vm_backtree_value_on(
             .and_then(|v| v.get("next"))
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+        let upstream_byte_nexts = upstream_byte_nexts_from_step(&backstep);
         let frontier_nexts = frontier_nexts_from_step(&backstep);
         let enqueue_frontiers =
             frontier_with_next || upstream_next.get("idx").and_then(|v| v.as_u64()).is_none();
@@ -3450,6 +3451,7 @@ async fn vm_backtree_value_on(
             &seed.via,
             &backstep,
             &upstream_next,
+            &upstream_byte_nexts,
             &frontier_nexts,
         ));
         if seed.depth >= depth {
@@ -3458,10 +3460,26 @@ async fn vm_backtree_value_on(
         if let Some(next_seed) = tree_seed_from_next(
             node_id,
             seed.depth + 1,
-            upstream_next,
+            upstream_next.clone(),
             serde_json::json!({"kind": "upstream_next"}),
         ) {
             queue.push_back(next_seed);
+        }
+        for byte_next in upstream_byte_nexts {
+            if same_tree_next(&upstream_next, &byte_next) {
+                continue;
+            }
+            if let Some(next_seed) = tree_seed_from_next(
+                node_id,
+                seed.depth + 1,
+                byte_next.clone(),
+                serde_json::json!({
+                    "kind": "upstream_byte",
+                    "byte": byte_next,
+                }),
+            ) {
+                queue.push_back(next_seed);
+            }
         }
         if enqueue_frontiers {
             for frontier_next in frontier_nexts {
@@ -3538,6 +3556,19 @@ fn frontier_nexts_from_step(step: &serde_json::Value) -> Vec<serde_json::Value> 
         .collect()
 }
 
+fn upstream_byte_nexts_from_step(step: &serde_json::Value) -> Vec<serde_json::Value> {
+    step.get("upstream")
+        .and_then(|v| v.get("byte_nexts"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn same_tree_next(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    a.get("idx").and_then(|v| v.as_u64()) == b.get("idx").and_then(|v| v.as_u64())
+        && a.get("reg").and_then(|v| v.as_str()) == b.get("reg").and_then(|v| v.as_str())
+}
+
 fn compact_backtree_node(
     id: usize,
     parent: Option<usize>,
@@ -3545,6 +3576,7 @@ fn compact_backtree_node(
     via: &serde_json::Value,
     backstep: &serde_json::Value,
     upstream_next: &serde_json::Value,
+    upstream_byte_nexts: &[serde_json::Value],
     frontier_nexts: &[serde_json::Value],
 ) -> serde_json::Value {
     let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
@@ -3563,6 +3595,8 @@ fn compact_backtree_node(
             "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
             "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
             "next": upstream_next,
+            "byte_nexts": upstream_byte_nexts,
+            "byte_writers": upstream.get("byte_writers").cloned().unwrap_or_else(|| serde_json::json!([])),
             "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
         },
         "frontier_nexts": frontier_nexts,
@@ -3786,7 +3820,7 @@ async fn upstream_writer_for_def_on(
         }));
     };
     let idx_lo = idx.saturating_sub(lookback);
-    let idx_hi = idx.saturating_sub(1);
+    let idx_hi = idx;
     let addr_hi = addr.saturating_add(size);
     let params = vec![
         ("idx_lo", idx_lo.to_string()),
@@ -3802,7 +3836,23 @@ async fn upstream_writer_for_def_on(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let last_write = writes.last().cloned();
+    let range_truncated = response
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(writes.len() >= max_writes);
+    let byte_writers = if range_truncated {
+        exact_byte_writers_for_load_on(app, addr, size, idx).await?
+    } else {
+        byte_writers_from_range_writes(addr, size, &writes)
+    };
+    let byte_nexts = dedupe_byte_nexts(&byte_writers);
+    let last_write = if range_truncated {
+        byte_writers
+            .first()
+            .and_then(|writer| writer.get("last_write").cloned())
+    } else {
+        writes.last().cloned()
+    };
     let writes_tail = writes
         .iter()
         .rev()
@@ -3820,9 +3870,11 @@ async fn upstream_writer_for_def_on(
         "idx_lo": idx_lo,
         "idx_hi": idx_hi,
         "returned": writes.len(),
-        "maybe_truncated": writes.len() >= max_writes,
+        "maybe_truncated": range_truncated,
         "last_write": last_write,
         "writes_tail": writes_tail,
+        "byte_writers": byte_writers,
+        "byte_nexts": byte_nexts,
         "next": last_write.as_ref().and_then(|write| {
             Some(serde_json::json!({
                 "idx": write.get("idx")?,
@@ -3831,6 +3883,137 @@ async fn upstream_writer_for_def_on(
             }))
         }),
     }))
+}
+
+async fn exact_byte_writers_for_load_on(
+    app: &axum::Router,
+    addr: u64,
+    size: u64,
+    before_idx: usize,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut out = Vec::new();
+    for offset in 0..size {
+        let byte_addr = addr.saturating_add(offset);
+        let params = vec![
+            ("addr", format!("{byte_addr:#x}")),
+            ("before_idx", before_idx.to_string()),
+        ];
+        let response =
+            route_get_json_value_on(app, route_path("/api/last-write-of-addr", &params)).await?;
+        let last_write = if response.get("status").and_then(|v| v.as_str()) == Some("found") {
+            Some(serde_json::json!({
+                "idx": response.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+                "pc": response.get("writer_pc").cloned().unwrap_or(serde_json::Value::Null),
+                "rel": response.get("rel").cloned().unwrap_or(serde_json::Value::Null),
+                "func": response.get("func").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": response.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "dst_addr": format!("{byte_addr:#x}"),
+                "size": 1,
+                "src_reg": response.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+                "src_value": response.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+            }))
+        } else {
+            None
+        };
+        out.push(byte_writer_entry(offset, byte_addr, last_write));
+    }
+    Ok(out)
+}
+
+fn byte_writers_from_range_writes(
+    addr: u64,
+    size: u64,
+    writes: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    for offset in 0..size {
+        let byte_addr = addr.saturating_add(offset);
+        let last_write = writes
+            .iter()
+            .filter(|write| mem_write_touches_addr(write, byte_addr))
+            .last()
+            .cloned();
+        out.push(byte_writer_entry(offset, byte_addr, last_write));
+    }
+    out
+}
+
+fn byte_writer_entry(
+    offset: u64,
+    byte_addr: u64,
+    last_write: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let next = last_write.as_ref().and_then(|write| {
+        Some(serde_json::json!({
+            "idx": write.get("idx")?,
+            "reg": write.get("src_reg")?,
+            "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+            "reason": "memory_load_byte",
+            "offset": offset,
+            "addr": format!("{byte_addr:#x}"),
+        }))
+    });
+    serde_json::json!({
+        "offset": offset,
+        "addr": format!("{byte_addr:#x}"),
+        "status": if last_write.is_some() { "ready" } else { "not_found" },
+        "last_write": last_write,
+        "next": next,
+    })
+}
+
+fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for writer in byte_writers {
+        let Some(next) = writer.get("next") else {
+            continue;
+        };
+        let Some(idx) = next.get("idx").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let Some(reg) = next.get("reg").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let offset = writer
+            .get("offset")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let addr = writer
+            .get("addr")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        if let Some(existing) = out.iter_mut().find(|item| {
+            item.get("idx").and_then(|v| v.as_u64()) == Some(idx)
+                && item.get("reg").and_then(|v| v.as_str()) == Some(reg)
+        }) {
+            if let Some(offsets) = existing.get_mut("offsets").and_then(|v| v.as_array_mut()) {
+                offsets.push(offset);
+            }
+            if let Some(addrs) = existing.get_mut("addrs").and_then(|v| v.as_array_mut()) {
+                addrs.push(addr);
+            }
+            continue;
+        }
+        let mut item = next.clone();
+        if let Some(obj) = item.as_object_mut() {
+            obj.insert("offsets".to_string(), serde_json::json!([offset]));
+            obj.insert("addrs".to_string(), serde_json::json!([addr]));
+        }
+        out.push(item);
+    }
+    out
+}
+
+fn mem_write_touches_addr(write: &serde_json::Value, addr: u64) -> bool {
+    let Some(start) = write
+        .get("dst_addr")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+    else {
+        return false;
+    };
+    let size = write.get("size").and_then(|v| v.as_u64()).unwrap_or(1);
+    addr >= start && addr < start.saturating_add(size)
 }
 
 fn classify_vm_asm(asm: &str) -> &'static str {
