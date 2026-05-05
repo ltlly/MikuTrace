@@ -104,8 +104,8 @@ function byteCellClass(kind: string): string {
 
 function normalizeRegName(raw: string): string {
   const reg = raw.trim().toLowerCase();
-  if (reg === "fp") return "x29";
-  if (reg === "lr") return "x30";
+  if (reg === "fp" || reg === "x29" || reg === "w29") return "fp";
+  if (reg === "lr" || reg === "x30" || reg === "w30") return "lr";
   if (reg.startsWith("w")) return `x${reg.slice(1)}`;
   return reg;
 }
