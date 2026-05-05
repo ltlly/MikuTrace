@@ -44,6 +44,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
+- ✅ 旧 Python-vs-Rust parity 脚本已移除: v2 cutover 后 `./tracemiku web`
+  已经启动 Rust server, 继续保留旧 `scripts/m2_*_parity.py` /
+  `scripts/m3_*_parity.py` 只会变成 Rust-vs-Rust 的假 parity。当前有效 gate
+  是 `make test-v2`, `scripts/rust_cli_web_parity.py`, `make smoke-web`。
 - ✅ 恢复 Decompile/LLIL/LLM 可见 UI 前的性能证明: 最大 trace all-surfaces
   smoke 中 dec summary 约 413ms, 期间 health max 约 1.9ms, 没有阻塞当前
   trace cursor/CFG/Records 热路径。
@@ -65,7 +69,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - M1 frontend Vite + Solid + TS skeleton + MetaPanel: ✅
 - M1 e2e smoke (cargo run + npm run dev + browser /api/meta): ✅
 - M2-α `tracemiku-core::trace::{Record, Trace}` + mmap parser: ✅ 2026-05-03
-- M2-α `tracemiku-cli stats` parity vs `python -m viewer stats`: ✅ (scripts/m2_alpha_parity.py)
+- M2-α `tracemiku-cli stats` parity vs the Python baseline: ✅ 2026-05-03
 - M2-β `tracemiku-core::disasm` (capstone wrapper + thread-local FIFO cache 200k): ✅ 2026-05-04
 - M2-β `/api/records` + `/api/record/{idx}` (subset wire shape; symbol-fields null): ✅ 2026-05-04
 - M2-β frontend `RecordsPanel` (paginated 50-record windows): ✅ 2026-05-04
@@ -83,15 +87,15 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - M2-ζ disasm mem_op extraction + Index mem ops: ✅ 2026-05-04
 - M2-ζ tracemiku-core::memshadow port: ✅ 2026-05-04 (eager build; sidecar deferred)
 - M2-ζ /api/strings + /api/mem-dump + StringsPanel: ✅ 2026-05-04
-- M2-ζ scripts/m2_zeta_parity.py: ✅ 2026-05-04
-- M3-α `tracemiku-core::calltree` port + `/api/call-tree` + CallTreePanel + parity script: ✅ 2026-05-04
-- M3-α auto_known_offsets naming fix (`f_<0xhex>` → `sub_<hex>`, Python parity, caught by parity gate): ✅ 2026-05-04
+- M2-ζ `/api/strings` parity baseline: ✅ 2026-05-04
+- M3-α `tracemiku-core::calltree` port + `/api/call-tree` + CallTreePanel: ✅ 2026-05-04
+- M3-α auto_known_offsets naming fix (`f_<0xhex>` → `sub_<hex>`): ✅ 2026-05-04
 - M3-β `tracemiku-core::taint` (forward/backward index-accelerated, BFS via VecDeque, frame_depth_map): ✅ 2026-05-04
 - M3-β /api/forward-taint + /api/backward-taint + TaintPanel: ✅ 2026-05-04
-- M3-β scripts/m3_beta_parity.py: ✅ 2026-05-04 (both endpoints HARD-gated; forward 0.90 / backward 0.81)
+- M3-β taint parity baseline: ✅ 2026-05-04 (both endpoints HARD-gated; forward 0.90 / backward 0.81)
 - M3-disasm-followup ARM64 pre/post-indexed writeback in decoder.rs: ✅ 2026-05-04 (closed M3-γ backward parity gap)
 - M3-δ tracemiku-core::decompiler::{ir,backend,builder}: ✅ 2026-05-04 (skeleton — root F0 only; advanced features in M3-ε)
-- M3-δ /api/dec/summary + DecompilerPanel + scripts/m3_delta_parity.py: ✅ 2026-05-04 (parity soft-gated 0.01 jaccard pending M3-ε symbol fallback)
+- M3-δ /api/dec/summary + DecompilerPanel: ✅ 2026-05-04 (parity soft-gated 0.01 jaccard pending M3-ε symbol fallback)
 - M3-ε split_top_k_callees in build_trace_ir (metadata only, no BlockIR yet): ✅ 2026-05-04
 - M3-ε /api/dec/summary symbol-source fallback + parity HARD-gate (0.99 jaccard on real trace): ✅ 2026-05-04
 - M3-ζ BlockIR construction skeleton (id/pc/end_pc/insns/exec_count for F0 + split FuncIRs; stable B0..Bn ids; build_trace_ir gains &CFG): ✅ 2026-05-04
@@ -101,7 +105,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - M3-ι BlockIR.exits + cfg EdgeMeta (kind/count) + render_summary_md fidelity: ✅ 2026-05-04
 - M3-ι2a type_anchor.py port + auto-discovery + render section: ✅ 2026-05-04
 - M3-ι2b ollvmdet.py + vm_candidate.py port + summary VM-candidates body fidelity: ✅ 2026-05-04
-- M3-ι2c `/api/dec/fn/{id}` sym:* / cfg:* source support + scripts/m3_iota_parity.py real-trace HARD gate: ✅ 2026-05-04 (summary fns 0.978 / summary_md 0.943 / F0 md 0.969 / VM candidate exact)
+- M3-ι2c `/api/dec/fn/{id}` sym:* / cfg:* source support + real-trace HARD gate: ✅ 2026-05-04 (summary fns 0.978 / summary_md 0.943 / F0 md 0.969 / VM candidate exact)
 - M3-ι2d `/api/dec/llm-call` + `/api/dec/models` Rust port: ✅ 2026-05-04 (prompt bundle + claude/deepseek/qwen/mimo reqwest adapters + success cache; mock-provider tests, no real API calls)
 - M3-γ backward MEM-chasing + d0.regs_def initial seed: ✅ 2026-05-04 (algorithm correct; parity tightening pending disasm follow-up)
 - M3-γ through_mem byte-overlap (forward + backward) + MemShadow.latest_write_idx_strict_before: ✅ 2026-05-04
@@ -167,7 +171,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - M6-α: BN Python sidecar + Rust lifecycle + HLIL/BN-CFG endpoints + `/api/functions` BN merge ✅ 2026-05-04
 - M6-β: frontend HLIL panel follows selected FunctionIndex id (`/api/hlil-for-fn`) ✅ 2026-05-04
 - M7-α: `tracemiku web` / `tracemiku view` route to Rust `tracemiku-server`, which serves `frontend/dist` ✅ 2026-05-04
-- M7-β: removed remaining top-level Python `viewer.*` / `webui.*` runtime imports; deleted old `viewer/`, `webui/`, and Python pytest suite ✅ 2026-05-04
+- M7-β: removed remaining top-level Python `viewer.*` / `webui.*` runtime imports; deleted old `viewer/`, `webui/`, old Python-vs-Rust parity scripts, and Python pytest suite ✅ 2026-05-04
 - Post-cutover cleanup: `cargo fmt` baseline, v2 Makefile test target, and top-level `dec` legacy parameter removal ✅ 2026-05-04
 - Analysis v2 refactor: ✅ M0-M7 cutover complete; future work belongs in new TODO items only
 - M3-M7: 见 spec §9 milestones
@@ -179,7 +183,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 3. Rust `forward_taint` + `backward_taint`: add `data_only: bool` flag (filter addressing-reg propagation; DEFAULT_FRAME_REGS exclusion when data_only=True).
 4. Wire `cross_fn_call: bool` flag through endpoints; route handler annotates each row with `frame_depth: Option<u32>` from `state.frame_depths`.
 5. Frontend: add 3 toggle checkboxes to TaintPanel (through_mem, data_only, cross_fn_call) + frame_depth column.
-6. Re-run `scripts/m3_beta_parity.py` to confirm backward jaccard ≥ 0.6 (forward should remain ≥ 0.6 too).
+6. ✅ Backward jaccard ≥ 0.6 confirmed before v2 cutover; active coverage now lives in Rust taint route tests plus `scripts/rust_cli_web_parity.py`.
 
 ## ✅ 已完成 (2026-05-03 — FunctionIndex / Web Refactor)
 
@@ -262,9 +266,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 | T7 | test(web) pin dec/fn sync-CFG fallback — sym:* must not block on BG | 456aaa0 |
 | T8 | feat(web) /api/hlil-for-fn — FunctionIndex-keyed HLIL lookup | 62af3ec |
 
-新增模块: `viewer/function_index.py` (FunctionEntry / FunctionIndex / parse_id).
-新增 endpoint: `GET /api/functions`, `GET /api/hlil-for-fn`.
-SDK exports: `from viewer import FunctionIndex, FunctionEntry, parse_id, make_*_id`.
+Legacy Python module at the time: `viewer/function_index.py` (FunctionEntry /
+FunctionIndex / parse_id). v2 cutover moved the active implementation to
+`tracemiku-core::function_index` and the Rust server endpoints
+`GET /api/functions`, `GET /api/hlil-for-fn`.
 
 ## ✅ 已完成 (2026-05-02 single session)
 

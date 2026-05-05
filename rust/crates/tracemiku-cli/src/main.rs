@@ -20,7 +20,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Print trace metadata as JSON. Mirrors `python -m viewer stats`.
+    /// Print trace metadata as JSON.
     Stats {
         /// Per-call trace directory.
         trace_dir: PathBuf,

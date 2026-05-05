@@ -8,25 +8,40 @@ import shutil
 import struct
 from pathlib import Path
 
-from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
-
 ROOT = Path("/tmp/tracemiku_smoke")
 if ROOT.exists():
     shutil.rmtree(ROOT)
 ROOT.mkdir()
 
-ks = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
 base = 0x100000
 rec_pcs = [base + 0x000, base + 0x004,
            base + 0x100, base + 0x104,
            base + 0x008,
            base + 0x200, base + 0x204, base + 0x208,
            base + 0x00c]
-rec_asm = ["nop", f"bl 0x{base + 0x100:x}",
-           "nop", "ret",
-           f"bl 0x{base + 0x200:x}",
-           "nop", "nop", "ret",
-           "ret"]
+
+
+def encode_bl(pc: int, target: int) -> int:
+    delta = target - pc
+    if delta % 4:
+        raise ValueError(f"unaligned BL target: pc=0x{pc:x} target=0x{target:x}")
+    imm26 = delta // 4
+    if not -(1 << 25) <= imm26 < (1 << 25):
+        raise ValueError(f"BL target out of range: pc=0x{pc:x} target=0x{target:x}")
+    return 0x94000000 | (imm26 & 0x03ff_ffff)
+
+
+rec_inst = [
+    0xd503201f,                         # nop
+    encode_bl(base + 0x004, base + 0x100),
+    0xd503201f,                         # nop
+    0xd65f03c0,                         # ret
+    encode_bl(base + 0x008, base + 0x200),
+    0xd503201f,                         # nop
+    0xd503201f,                         # nop
+    0xd65f03c0,                         # ret
+    0xd65f03c0,                         # ret
+]
 
 run = ROOT / "run"
 run.mkdir()
@@ -35,14 +50,13 @@ cd = run / "calls" / "call_001_tid100_9r_2ms"
 cd.mkdir()
 
 with open(cd / "trace.bin", "wb") as bf:
-    for pc, asm in zip(rec_pcs, rec_asm):
-        inst, _ = ks.asm(asm, addr=pc)
+    for pc, inst in zip(rec_pcs, rec_inst):
         bf.write(struct.pack("<Q", pc))
         for r_idx in range(31):
             bf.write(struct.pack("<Q", 0))
         bf.write(struct.pack("<Q", 0x7000))
         bf.write(struct.pack("<I", 0))
-        bf.write(struct.pack("<I", int.from_bytes(bytes(inst), "little")))
+        bf.write(struct.pack("<I", inst))
 
 json.dump({"callIdx": 1, "tid": 100, "records": 9, "ms": 2,
            "retval": "0x0", "truncated": False,

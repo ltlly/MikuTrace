@@ -5,7 +5,7 @@ import os, sys
 
 子命令:
   trace    采集 trace (任意 app 任意 SO 任意函数)
-  view     启动 TUI 查看器
+  view     启动 Rust v2 Web 查看器
   query    AI 友好的 JSON 查询接口 (供 Claude Code 等调用)
   list     列出已有 trace
   info     trace 元信息
@@ -439,8 +439,8 @@ def cmd_trace(args):
                         wlog(f"[{tag}] {t} call#{ci} +{len(evs)} (total={len(m_jni)})")
                     elif t == "fork-events":
                         # P1-C M1: agent 端 fork/clone hook 抓到的 fork-event Tier 1.
-                        # 写入 per-call meta.json `fork_events` 数组, viewer 通过
-                        # /api/fork-events + viewer fork-events CLI 暴露.
+                        # 写入 per-call meta.json `fork_events` 数组, Rust API 通过
+                        # /api/fork-events + CLI wrapper 暴露.
                         ci = p.get("callIdx") or 0
                         if ci not in sess_files:
                             open_call(ci, p.get("tid", 0), pid)
