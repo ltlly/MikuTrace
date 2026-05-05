@@ -55,8 +55,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `/api/mem-writes-in-range` 这类 Python 已有端点在 Rust router 漏注册。
 - ✅ 前端交互 affordance 静态审计: `scripts/frontend_ui_audit.py` 钉住
   Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
-  列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
-  默认视图、String Provenance 长文本滚动/换行、全局主题滚动条和统一字体。
+  列宽拖拽、ASM ↑/↓/PgUp/PgDn/Home/End 键盘导航、Memory 默认 128 字节+
+  寄存器下拉、右键内存菜单取消、Taint tree 默认视图、String Provenance
+  长文本滚动/换行、全局主题滚动条和统一字体。
 - ✅ Memory provenance 交互门禁: `scripts/frontend_ui_audit.py` 钉住
   内存字节拖选范围、右键按选区查询 `idxs-touching-range` 和
   `mem-writes-in-range`, 以及 writers/readers/write details 分区和 partial
