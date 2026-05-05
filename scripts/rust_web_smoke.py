@@ -8,7 +8,9 @@ Usage:
 This is an end-to-end-ish Rust web gate: it starts the real tracemiku-server
 binary, serves the current frontend/dist, waits for /api/meta, verifies the SPA
 index route is not an API HTML fallback, runs scripts/web_api_perf_probe.py, and
-checks taint tree metadata used by the Taint panel.
+checks taint tree metadata used by the Taint panel. The perf probe also polls a
+light health endpoint while each measured request is running, so CPU-heavy
+routes cannot silently block the async runtime.
 """
 
 from __future__ import annotations
@@ -169,6 +171,9 @@ def run_probe(base: str, timeout: float, visible_only: bool) -> dict[str, Any]:
         "--json",
         "--timeout",
         str(timeout),
+        "--runtime-blocking-check",
+        "--health-interval",
+        "0.01",
     ]
     if visible_only:
         cmd.append("--visible-ui-only")
@@ -258,6 +263,16 @@ def main() -> int:
         slow = sorted(probe["measurements"], key=lambda m: float(m["ms"]), reverse=True)[:5]
         for m in slow:
             print(f"  {m['ms']:8.1f} ms {m['label']}")
+        health = sorted(
+            [m for m in probe["measurements"] if int(m.get("health_polls") or 0) > 0],
+            key=lambda m: float(m.get("health_max_ms") or 0.0),
+            reverse=True,
+        )[:3]
+        for m in health:
+            print(
+                f"  health {float(m.get('health_max_ms') or 0.0):6.1f} ms "
+                f"polls={int(m.get('health_polls') or 0)} during {m['label']}"
+            )
         return 0
     finally:
         stop_proc(proc)

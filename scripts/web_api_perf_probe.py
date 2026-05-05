@@ -18,6 +18,7 @@ goal is to measure the currently exposed frontend interaction path.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import sys
 import time
@@ -40,6 +41,9 @@ class Measurement:
     bytes: int
     ok: bool
     note: str = ""
+    health_polls: int = 0
+    health_max_ms: float = 0.0
+    health_failures: int = 0
 
 
 def get_json(base_url: str, path: str, timeout: float = DEFAULT_TIMEOUT) -> tuple[Any, int, int, float]:
@@ -83,6 +87,53 @@ def timed_get(
         )
 
 
+def timed_get_with_runtime_probe(
+    base_url: str,
+    label: str,
+    path: str,
+    timeout: float,
+    *,
+    enabled: bool,
+    health_path: str,
+    health_interval: float,
+    health_timeout: float,
+    max_health_ms: float,
+    executor: concurrent.futures.Executor,
+) -> tuple[Measurement, Any | None]:
+    if not enabled:
+        return timed_get(base_url, label, path, timeout)
+
+    future = executor.submit(timed_get, base_url, label, path, timeout)
+    polls = 0
+    max_ms = 0.0
+    failures: list[str] = []
+
+    while not future.done():
+        time.sleep(max(0.01, health_interval))
+        if future.done():
+            break
+        health, _ = timed_get(base_url, "runtime health", health_path, health_timeout)
+        polls += 1
+        max_ms = max(max_ms, health.ms)
+        if not health.ok or health.ms > max_health_ms:
+            detail = f"{health.ms:.1f}ms status={health.status}"
+            if health.note:
+                detail += f" {health.note[:80]}"
+            failures.append(detail)
+
+    measurement, value = future.result()
+    measurement.health_polls = polls
+    measurement.health_max_ms = max_ms
+    measurement.health_failures = len(failures)
+    if failures:
+        measurement.ok = False
+        suffix = f"runtime health blocked: {failures[0]}"
+        if len(failures) > 1:
+            suffix += f" (+{len(failures) - 1} more)"
+        measurement.note = f"{measurement.note}; {suffix}" if measurement.note else suffix
+    return measurement, value
+
+
 def q(path: str, **params: Any) -> str:
     clean = {k: str(v) for k, v in params.items() if v is not None}
     if not clean:
@@ -113,6 +164,15 @@ def main() -> int:
         action="store_true",
         help="skip endpoints for UI panels that are currently hidden, such as Decompile",
     )
+    ap.add_argument(
+        "--runtime-blocking-check",
+        action="store_true",
+        help="while each probe is running, poll /api/bg-status to catch async runtime blockage",
+    )
+    ap.add_argument("--health-path", default="/api/bg-status")
+    ap.add_argument("--health-interval", type=float, default=0.05)
+    ap.add_argument("--health-timeout", type=float, default=2.0)
+    ap.add_argument("--max-health-ms", type=float, default=1000.0)
     args = ap.parse_args()
 
     base = args.base_url.rstrip("/")
@@ -165,9 +225,21 @@ def main() -> int:
             ]
         )
 
-    for label, path in probes:
-        m, _ = timed_get(base, label, path, args.timeout)
-        measurements.append(m)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        for label, path in probes:
+            m, _ = timed_get_with_runtime_probe(
+                base,
+                label,
+                path,
+                args.timeout,
+                enabled=args.runtime_blocking_check,
+                health_path=args.health_path,
+                health_interval=args.health_interval,
+                health_timeout=args.health_timeout,
+                max_health_ms=args.max_health_ms,
+                executor=executor,
+            )
+            measurements.append(m)
 
     out = {
         "base_url": base,
@@ -175,6 +247,13 @@ def main() -> int:
         "mid_idx": mid,
         "mid_pc": rec_mid.get("pc"),
         "mid_func": fn_hint,
+        "runtime_blocking_check": {
+            "enabled": args.runtime_blocking_check,
+            "health_path": args.health_path,
+            "health_interval_ms": args.health_interval * 1000.0,
+            "health_timeout_ms": args.health_timeout * 1000.0,
+            "max_health_ms": args.max_health_ms,
+        },
         "measurements": [asdict(m) for m in measurements],
     }
     if args.json:
@@ -185,7 +264,12 @@ def main() -> int:
             status = m.status if m.status is not None else "ERR"
             ok = "OK" if m.ok else "FAIL"
             note = f" {m.note}" if m.note else ""
-            print(f"{ok:4s} {m.ms:8.1f} ms {m.bytes:9d} B {status!s:>4s} {m.label}{note}")
+            health = (
+                f" health_max={m.health_max_ms:.1f}ms/{m.health_polls}"
+                if m.health_polls
+                else ""
+            )
+            print(f"{ok:4s} {m.ms:8.1f} ms {m.bytes:9d} B {status!s:>4s} {m.label}{health}{note}")
     return 0 if all(m.ok for m in measurements) else 1
 
 
