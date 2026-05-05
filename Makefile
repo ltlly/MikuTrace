@@ -20,7 +20,8 @@ fmt:
 test: test-v2
 
 test-v2:
-	$(PYTHON) -m py_compile tracemiku
+	$(PYTHON) -m py_compile tracemiku scripts/frontend_resource_audit.py
+	$(PYTHON) scripts/frontend_resource_audit.py
 	cd rust && $(CARGO) fmt --check
 	cd rust && $(CARGO) test -p tracemiku-core -- --nocapture
 	cd rust && $(CARGO) test -p tracemiku-server -- --nocapture
@@ -29,7 +30,8 @@ test-v2:
 	$(PYTHON) scripts/rust_cli_web_parity.py --debug-bin
 
 test-fast:
-	$(PYTHON) -m py_compile tracemiku
+	$(PYTHON) -m py_compile tracemiku scripts/frontend_resource_audit.py
+	$(PYTHON) scripts/frontend_resource_audit.py
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd rust && $(CARGO) test -p tracemiku-cli
 
