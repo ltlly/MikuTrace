@@ -32,6 +32,7 @@ def main() -> int:
     cfg = read("panels/cfg/CfgPanel.tsx")
     memory = read("panels/memory/MemoryPanel.tsx")
     registers = read("panels/registers/RegistersPanel.tsx")
+    settings = read("panels/settings/SettingsPanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
 
     failures: list[str] = []
@@ -85,6 +86,35 @@ def main() -> int:
         and ".reg-diff-table tbody tr.changed" in css
         and ".reg-diff-table tbody tr.def" in css
         and ".reg-diff-table tbody tr.use" in css,
+        failures,
+    )
+
+    require(
+        "Settings exposes debug log controls",
+        "debugVisible: boolean" in settings
+        and "apiDebug: boolean" in settings
+        and "debug overlay" in settings
+        and "API debug log" in settings
+        and "onApiDebugChange" in settings,
+        failures,
+    )
+    require(
+        "Settings displays backend parallelism",
+        "workerSummary" in settings
+        and "p().available" in settings
+        and "p().workers" in settings
+        and "frame_depths" in settings
+        and "memshadow" in settings,
+        failures,
+    )
+    require(
+        "Settings layout is responsive and wraps long values",
+        ".settings-grid" in css
+        and "repeat(auto-fit" in css
+        and ".settings-toggles" in css
+        and "grid-column: 1 / -1" in css
+        and ".settings-kv dd" in css
+        and "overflow-wrap: anywhere" in css,
         failures,
     )
 
