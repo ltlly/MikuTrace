@@ -1,6 +1,7 @@
 import { createResource, Show, For } from "solid-js";
 import { fetchFunctions } from "~/api/client";
-import type { Accessor, Setter } from "solid-js";
+import type { Accessor } from "solid-js";
+import type { FunctionEntry } from "~/api/types";
 
 const SOURCE_LABELS: Record<string, string> = {
   "trace-ir": "trace",
@@ -16,7 +17,8 @@ const SOURCE_TITLES: Record<string, string> = {
 
 export interface FunctionsPanelProps {
   selectedFn: Accessor<string>;
-  onSelectFn: Setter<string>;
+  onSelectFn: (fn: FunctionEntry) => void;
+  onJumpFn?: (fn: FunctionEntry) => void;
   active: boolean;
 }
 
@@ -56,8 +58,8 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                 {(fn) => (
                   <li
                     class={props.selectedFn() === fn.id ? "selected" : ""}
-                    onClick={() => props.onSelectFn(fn.id)}
-                    onDblClick={() => props.onSelectFn(fn.id)}
+                    onClick={() => props.onSelectFn(fn)}
+                    onDblClick={() => props.onJumpFn?.(fn)}
                   >
                     <span class="fn-source-tag" title={SOURCE_TITLES[fn.source] ?? fn.source}>
                       {SOURCE_LABELS[fn.source] ?? fn.source}

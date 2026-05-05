@@ -4,7 +4,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -18,6 +18,7 @@ class Session:
     bn: Any = None
     ready: bool = False
     error: str | None = None
+    created_functions: set[int] = field(default_factory=set)
 
     def open_so(self, path: str) -> dict[str, Any]:
         self.so_path = path
@@ -67,19 +68,26 @@ class Session:
                 break
         return {"ok": True, "ready": True, "status": "ok", "tokens": out}
 
-    def hlil_for(self, pc: int) -> dict[str, Any]:
+    def hlil_for(self, pc: int, fn_start: int | None = None) -> dict[str, Any]:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
         bn_pc = self._to_bn_addr(pc)
         fn = self._function_for_pc(bn_pc)
+        created = False
+        if fn is None:
+            fn = self._create_function_for_pc(bn_pc, self._to_bn_addr(fn_start) if fn_start else None)
+            created = fn is not None
         if fn is None:
             return {
                 "ok": False,
                 "ready": True,
                 "error": f"no function contains trace 0x{pc:x} (bn 0x{bn_pc:x})",
+                "created_function": False,
             }
         pseudo_lines = self._pseudo_hlil_lines(fn)
         hlil_lines = self._linear_hlil_lines(fn)
+        if pseudo_lines:
+            _copy_structured_indents(hlil_lines, pseudo_lines)
         lines = pseudo_lines or hlil_lines
         return {
             "ok": True,
@@ -89,28 +97,49 @@ class Session:
                 "start": self._to_trace_addr(int(fn.start)),
                 "end": self._to_trace_addr(int(fn.highest_address)),
             },
+            "created_function": created,
             "lines": lines,
             "pseudo_lines": pseudo_lines,
             "hlil_lines": hlil_lines,
             "vars": [],
         }
 
-    def cfg_for(self, pc: int, mode: str = "asm", timeout: int | None = None) -> dict[str, Any]:
+    def cfg_for(
+        self,
+        pc: int,
+        mode: str = "asm",
+        timeout: int | None = None,
+        fn_start: int | None = None,
+    ) -> dict[str, Any]:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
         bn_pc = self._to_bn_addr(pc)
         fn = self._function_for_pc(bn_pc)
+        created = False
+        if fn is None:
+            fn = self._create_function_for_pc(bn_pc, self._to_bn_addr(fn_start) if fn_start else None)
+            created = fn is not None
         if fn is None:
             return {
                 "ok": False,
                 "ready": True,
                 "error": f"no function contains trace 0x{pc:x} (bn 0x{bn_pc:x})",
+                "created_function": False,
             }
         blocks = [
             {"id": i, "start": self._to_trace_addr(int(bb.start)), "end": self._to_trace_addr(int(bb.end))}
             for i, bb in enumerate(fn.basic_blocks)
         ]
-        return {"ok": True, "ready": True, "mode": mode, "timeout": timeout, "blocks": blocks, "edges": [], "svg": ""}
+        return {
+            "ok": True,
+            "ready": True,
+            "mode": mode,
+            "timeout": timeout,
+            "created_function": created,
+            "blocks": blocks,
+            "edges": [],
+            "svg": "",
+        }
 
     def _function_for_pc(self, pc: int) -> Any | None:
         fn = self.bv.get_function_at(pc)
@@ -118,6 +147,44 @@ class Session:
             return fn
         containing = list(self.bv.get_functions_containing(pc))
         return containing[0] if containing else None
+
+    def _create_function_for_pc(self, bn_pc: int, bn_fn_start: int | None = None) -> Any | None:
+        candidates: list[int] = []
+        if bn_fn_start is not None and self._addr_in_image(bn_fn_start):
+            candidates.append(bn_fn_start)
+        if self._addr_in_image(bn_pc) and bn_pc not in candidates:
+            candidates.append(bn_pc)
+        for start in candidates:
+            fn = self._try_create_function(start, bn_pc)
+            if fn is not None:
+                return fn
+        return None
+
+    def _try_create_function(self, start: int, want_pc: int) -> Any | None:
+        existing = self._function_for_pc(start)
+        if existing is not None:
+            return existing
+        try:
+            created = self.bv.create_user_function(start)
+            self.created_functions.add(start)
+        except Exception:
+            created = None
+        try:
+            self.bv.update_analysis_and_wait()
+        except Exception:
+            pass
+        fn = self._function_for_pc(want_pc)
+        if fn is not None:
+            return fn
+        fn = self._function_for_pc(start)
+        if fn is not None:
+            return fn
+        return created
+
+    def _addr_in_image(self, addr: int) -> bool:
+        if self.image_base and self.image_end:
+            return self.image_base <= addr < self.image_end
+        return addr > 0
 
     def _asm_tokens_at(self, pc: int) -> list[dict[str, Any]]:
         bn_pc = self._to_bn_addr(pc)
@@ -303,13 +370,19 @@ def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
                 continue
         return session.asm_tokens(pcs)
     if method == "hlil_for":
-        return session.hlil_for(int(params.get("pc") or 0))
+        fn_start = params.get("fn_start")
+        return session.hlil_for(
+            int(params.get("pc") or 0),
+            fn_start=int(fn_start) if fn_start is not None else None,
+        )
     if method == "cfg_for":
         timeout = params.get("timeout")
+        fn_start = params.get("fn_start")
         return session.cfg_for(
             int(params.get("pc") or 0),
             mode=str(params.get("mode") or "asm"),
             timeout=int(timeout) if timeout is not None else None,
+            fn_start=int(fn_start) if fn_start is not None else None,
         )
     return {"ok": False, "ready": session.ready, "error": f"unknown method {method!r}"}
 
@@ -490,6 +563,36 @@ def _fallback_code_tokens(text: str) -> list[dict[str, Any]]:
     if pos < len(text):
         out.append({"t": text[pos:], "c": "txt"})
     return out or [{"t": text, "c": "txt"}]
+
+
+def _copy_structured_indents(
+    linear_lines: list[dict[str, Any]],
+    structured_lines: list[dict[str, Any]],
+) -> None:
+    indent_by_key: dict[tuple[str, str], int] = {}
+    for line in structured_lines:
+        key = (str(line.get("pc") or ""), str(line.get("text") or "").strip())
+        indent = int(line.get("indent") or 0)
+        if not key[0] or not key[1] or indent <= 0:
+            continue
+        old = indent_by_key.get(key)
+        if old is None or indent > old:
+            indent_by_key[key] = indent
+    for line in linear_lines:
+        text = str(line.get("text") or "")
+        stripped = text.strip()
+        if not stripped or int(line.get("indent") or 0) > 0:
+            continue
+        indent = indent_by_key.get((str(line.get("pc") or ""), stripped))
+        if not indent:
+            continue
+        line["indent"] = indent
+        line["text"] = (" " * indent) + stripped
+        tokens = line.get("tokens")
+        if isinstance(tokens, list):
+            line["tokens"] = [{"t": " " * indent, "c": "indent"}, *tokens]
+        else:
+            line["tokens"] = _fallback_code_tokens(str(line["text"]))
 
 
 def _image_bounds(bv: Any) -> tuple[int, int]:

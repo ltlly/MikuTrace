@@ -136,6 +136,8 @@ export interface CfgSvgLargeResponse {
   svg: string | null;
   block_count: number;
   edge_count: number;
+  drawn_edge_count: number;
+  hidden_edge_count: number;
   total_block_count: number;
   dot_bytes: number;
 }
@@ -179,6 +181,7 @@ export interface BnCfgSvgForPcResponse {
   pc?: string;
   mode?: string;
   fn?: BnCfgFunctionInfo | null;
+  created_function?: boolean;
   block_count?: number;
   edge_count?: number;
   dyn_only_count?: number;
@@ -713,6 +716,7 @@ export interface HlilForFnResponse {
   pseudo_lines?: HlilLine[];
   hlil_lines?: HlilLine[];
   vars?: HlilVar[];
+  created_function?: boolean;
   error?: string;
   request_fn_id?: string;
 }

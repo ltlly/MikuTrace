@@ -314,6 +314,20 @@ async fn cfg_svg_edge_heavy_fn_returns_overview_without_dot() {
             .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100004")),
         "expected lightweight overview SVG with block anchors: {v}"
     );
+    assert!(
+        v["drawn_edge_count"].as_u64().unwrap_or(u64::MAX) < v["edge_count"].as_u64().unwrap_or(0),
+        "edge-heavy overview should cap representative edges: {v}"
+    );
+    assert!(
+        v["hidden_edge_count"].as_u64().unwrap_or(0) > 0,
+        "edge-heavy overview should report hidden edges: {v}"
+    );
+    assert!(
+        v["svg"]
+            .as_str()
+            .is_some_and(|s| s.contains("drawn /") && s.contains("hidden edges")),
+        "overview should explain edge elision in the SVG itself: {v}"
+    );
 }
 
 #[tokio::test]

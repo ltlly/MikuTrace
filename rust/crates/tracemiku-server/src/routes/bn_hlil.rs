@@ -52,7 +52,8 @@ pub async fn hlil_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    let response = request_sidecar_blocking(state.clone(), "hlil_for", json!({"pc": pc})).await?;
+    let response =
+        request_sidecar_blocking(state.clone(), "hlil_for", params_for_pc(&state, pc)).await?;
     Ok(Json(enrich_hlil_for_pc_response(&state, pc, response)))
 }
 
@@ -87,8 +88,10 @@ pub async fn bn_cfg_for_pc_handler(
         )
     })?;
     let mode = q.mode.unwrap_or_else(|| "asm".to_string());
+    let mut params = params_for_pc(&state, pc);
+    params["mode"] = json!(mode);
     Ok(Json(
-        request_sidecar_blocking(state, "cfg_for", json!({"pc": pc, "mode": mode})).await?,
+        request_sidecar_blocking(state, "cfg_for", params).await?,
     ))
 }
 
@@ -102,7 +105,8 @@ pub async fn bn_cfg_svg_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    let mut params = json!({"pc": pc, "mode": q.mode.unwrap_or_else(|| "asm".to_string())});
+    let mut params = params_for_pc(&state, pc);
+    params["mode"] = json!(q.mode.unwrap_or_else(|| "asm".to_string()));
     if let Some(timeout) = q.timeout {
         params["timeout"] = json!(timeout);
     }
@@ -125,6 +129,7 @@ pub async fn bn_cfg_svg_for_pc_handler(
         "dyn_only_count",
         "fn_total_exec",
         "current_bb",
+        "created_function",
     ] {
         if let Some(value) = cfg.get(key) {
             out[key] = value.clone();
@@ -154,6 +159,22 @@ fn request_sidecar(state: &AppState, method: &str, params: Value) -> Value {
         Ok(mut sidecar) => sidecar.request(method, params),
         Err(e) => json!({"ok": false, "ready": false, "error": e.to_string()}),
     }
+}
+
+fn params_for_pc(state: &AppState, pc: u64) -> Value {
+    let mut params = json!({"pc": pc});
+    if let Some(fn_start) = trace_fn_start(state, pc) {
+        params["fn_start"] = json!(fn_start);
+    }
+    params
+}
+
+fn trace_fn_start(state: &AppState, pc: u64) -> Option<u64> {
+    let (name, off) = state.inner.symbols.lookup(pc);
+    if name == "?" || off > pc {
+        return None;
+    }
+    Some(pc - off)
 }
 
 fn resolve_fn_pc(state: &AppState, fn_id: &str) -> Result<u64, (StatusCode, String)> {

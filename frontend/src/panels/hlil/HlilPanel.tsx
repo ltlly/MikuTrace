@@ -220,6 +220,9 @@ export default function HlilPanel(props: HlilPanelProps) {
               <Show when={r().in_range === false}>
                 <div class="dim small warn-text">PC is outside the returned BN function range.</div>
               </Show>
+              <Show when={r().created_function}>
+                <div class="dim small">BN function was created on demand for this trace PC.</div>
+              </Show>
               <Show when={(r().vars ?? []).length > 0}>
                 <details class="hlil-vars">
                   <summary>vars ({r().vars?.length ?? 0})</summary>

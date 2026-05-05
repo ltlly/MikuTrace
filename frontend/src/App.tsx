@@ -19,7 +19,7 @@ import StringProvenancePanel, { type StringProvenanceRequest } from "./panels/st
 import TaintPanel from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
-import type { RecordRow } from "./api/types";
+import type { FunctionEntry, RecordRow } from "./api/types";
 
 type LeftTab =
   | "funcs"
@@ -226,6 +226,8 @@ export default function App() {
   let hashJumpAbort: AbortController | undefined;
   let searchSeq = 0;
   let searchAbort: AbortController | undefined;
+  let gotoSeq = 0;
+  let gotoAbort: AbortController | undefined;
   let applyingNavHistory = false;
 
   function cancelHashJump() {
@@ -240,9 +242,16 @@ export default function App() {
     searchAbort = undefined;
   }
 
+  function cancelGoto() {
+    gotoSeq += 1;
+    gotoAbort?.abort();
+    gotoAbort = undefined;
+  }
+
   onCleanup(() => {
     cancelHashJump();
     cancelSearch();
+    cancelGoto();
   });
 
   function totalRecords(): number {
@@ -331,6 +340,63 @@ export default function App() {
       setCmdStatus(`hash jump ${pc} failed: ${String(err)}`);
     } finally {
       if (hashJumpAbort === abort) hashJumpAbort = undefined;
+    }
+  }
+
+  function normalizePcInput(raw: string): string | null {
+    const text = raw.trim();
+    const m = text.match(/^0x([0-9a-f]+)$/i);
+    return m ? `0x${m[1].toLowerCase()}` : null;
+  }
+
+  async function jumpToFirstPc(pc: string, label = pc) {
+    cancelGoto();
+    const seq = ++gotoSeq;
+    const abort = new AbortController();
+    gotoAbort = abort;
+    setCmdStatus(`resolving ${label}...`);
+    try {
+      const r = await fetchIdxsForPc(pc, 0, 1, abort.signal);
+      if (seq !== gotoSeq || abort.signal.aborted) return;
+      const first = r.after[0];
+      if (first === undefined) {
+        setCmdStatus(`${label}: not executed in trace`);
+        return;
+      }
+      jumpToIdx(first);
+      setCmdStatus(`${label}: jumped to #${first}`);
+    } catch (err) {
+      if (abort.signal.aborted || seq !== gotoSeq) return;
+      setCmdStatus(`${label}: jump failed: ${String(err)}`);
+    } finally {
+      if (gotoAbort === abort) gotoAbort = undefined;
+    }
+  }
+
+  function runGoto(raw: string) {
+    const text = raw.trim();
+    if (!text) return;
+    const idxMatch = text.match(/^#?(\d+)$/);
+    if (idxMatch) {
+      const idx = Number.parseInt(idxMatch[1], 10);
+      jumpToIdx(idx);
+      setCmdStatus(`#${idx}: jumped to #${clampIdx(idx)}`);
+      return;
+    }
+    const pc = normalizePcInput(text);
+    if (pc) {
+      void jumpToFirstPc(pc);
+      return;
+    }
+    setCmdStatus(`unknown jump target: ${text}`);
+  }
+
+  function selectFunction(fn: FunctionEntry, jumpEntry = false) {
+    setSelectedFn(fn.id);
+    setSyncCfg(false);
+    setRightTab("cfg");
+    if (jumpEntry && fn.entry_pc !== null) {
+      void jumpToFirstPc(`0x${fn.entry_pc.toString(16)}`, fn.name);
     }
   }
 
@@ -528,11 +594,7 @@ export default function App() {
       return;
     }
     if (mode === ":") {
-      const idx = Number.parseInt(value.trim(), 10);
-      if (Number.isFinite(idx)) {
-        jumpToIdx(idx);
-        setCmdStatus(`idx ${clampIdx(idx)}`);
-      }
+      runGoto(value);
     }
   }
 
@@ -567,7 +629,7 @@ export default function App() {
       } else if (e.key === "PageUp") {
         e.preventDefault();
         jumpToIdx(selectedIdx() - 20);
-      } else if (e.key === "Home" || e.key === "g") {
+      } else if (e.key === "Home") {
         e.preventDefault();
         jumpToIdx(0);
       } else if (e.key === "End" || e.key === "G") {
@@ -577,6 +639,9 @@ export default function App() {
       else if (e.key === "/") {
         e.preventDefault();
         openCmd("/");
+      } else if (e.key === "g") {
+        e.preventDefault();
+        openCmd(":");
       } else if (e.key === ":") {
         e.preventDefault();
         openCmd(":");
@@ -733,7 +798,7 @@ export default function App() {
         >
           dbg
         </button>
-        <span class="hint">↑/↓ 单步 · PgUp/PgDn 翻页 · Home/End 头尾 · / 搜索 · :N 跳转</span>
+        <span class="hint">↑/↓ 单步 · PgUp/PgDn 翻页 · Home/End 头尾 · / 搜索 · g 跳 #idx/0xPC</span>
         {helpButton("overview")}
       </header>
 
@@ -769,7 +834,12 @@ export default function App() {
           </div>
           <div id="left-panel-body">
             <div class="lp-tab" classList={{ active: leftTab() === "funcs" }}>
-              <FunctionsPanel selectedFn={selectedFn} onSelectFn={setSelectedFn} active={leftTab() === "funcs"} />
+              <FunctionsPanel
+                selectedFn={selectedFn}
+                onSelectFn={(fn) => selectFunction(fn, false)}
+                onJumpFn={(fn) => selectFunction(fn, true)}
+                active={leftTab() === "funcs"}
+              />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "back" }}>
               <BacktracePanel idx={selectedIdx()} onSelect={setSelectedIdx} active={leftTab() === "back"} />
@@ -1007,7 +1077,7 @@ export default function App() {
             class="inp"
             value={cmdValue()}
             readOnly={!cmdMode()}
-            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "jump to idx..." : "press / or :"}
+            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "jump #240 or 0x12345..." : "press / or g"}
             onInput={(e) => setCmdValue(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") closeCmd();

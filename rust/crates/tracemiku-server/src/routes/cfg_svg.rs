@@ -50,6 +50,8 @@ pub enum CfgSvgResponse {
         svg: Option<String>,
         block_count: usize,
         edge_count: usize,
+        drawn_edge_count: usize,
+        hidden_edge_count: usize,
         total_block_count: usize,
         dot_bytes: usize,
     },
@@ -65,6 +67,7 @@ const FORCE_DOT_MAX_EDGES: usize = 1_000;
 const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
 const LARGE_OVERVIEW_MAX_BLOCKS: usize = 2_000;
 const LARGE_OVERVIEW_MAX_EDGES: usize = 6_000;
+const LARGE_OVERVIEW_MAX_DRAWN_EDGES: usize = 320;
 
 fn estimate_dot_bytes(block_count: usize, edge_count: usize) -> usize {
     // Large auto-skip responses should not build the full Graphviz dot just to
@@ -185,22 +188,29 @@ fn prepare_cfg_svg(
     let auto_too_large = included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES;
     let force_too_large = included.len() > FORCE_DOT_MAX_BLOCKS || edge_count > FORCE_DOT_MAX_EDGES;
     if (!force && auto_too_large) || (force && force_too_large) {
-        let overview_svg = if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
+        let overview = if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
             && edge_count <= LARGE_OVERVIEW_MAX_EDGES
         {
             Some(build_large_overview_svg(
                 &inner,
                 &included,
                 &included_starts,
+                edge_count,
             ))
         } else {
             None
         };
+        let drawn_edge_count = overview.as_ref().map_or(0, |o| o.drawn_edge_count);
+        let hidden_edge_count = overview
+            .as_ref()
+            .map_or(edge_count, |o| o.hidden_edge_count);
         return CfgSvgPrepared::Response(CfgSvgResponse::Large {
             fn_name: filter_fn,
-            svg: overview_svg,
+            svg: overview.map(|o| o.svg),
             block_count: included.len(),
             edge_count,
+            drawn_edge_count,
+            hidden_edge_count,
             total_block_count: inner.cfg.block_count(),
             dot_bytes: estimate_dot_bytes(included.len(), edge_count),
         });
@@ -215,11 +225,27 @@ fn prepare_cfg_svg(
     }
 }
 
+struct LargeOverviewSvg {
+    svg: String,
+    drawn_edge_count: usize,
+    hidden_edge_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct OverviewEdge {
+    src: u64,
+    dst: u64,
+    count: u64,
+    distance: usize,
+    class: &'static str,
+}
+
 fn build_large_overview_svg(
     inner: &crate::state::AppStateInner,
     included: &[&tracemiku_core::cfg::Block],
     included_starts: &HashSet<u64>,
-) -> String {
+    total_edge_count: usize,
+) -> LargeOverviewSvg {
     let base = inner
         .meta
         .module
@@ -238,13 +264,18 @@ fn build_large_overview_svg(
     let height = margin * 2.0 + rows as f64 * node_h + rows.saturating_sub(1) as f64 * gap_y;
 
     let mut positions: HashMap<u64, (f64, f64)> = HashMap::new();
+    let mut order: HashMap<u64, usize> = HashMap::new();
     for (i, block) in included.iter().enumerate() {
         let col = i % cols;
         let row = i / cols;
         let x = margin + col as f64 * (node_w + gap_x);
         let y = margin + row as f64 * (node_h + gap_y);
         positions.insert(block.start_pc, (x, y));
+        order.insert(block.start_pc, i);
     }
+    let edges = large_overview_edges(inner, included_starts, &order);
+    let drawn_edge_count = edges.len();
+    let hidden_edge_count = total_edge_count.saturating_sub(drawn_edge_count);
 
     let mut out = String::new();
     out.push_str(&format!(
@@ -253,7 +284,8 @@ fn build_large_overview_svg(
     ));
     out.push_str(
         "<style>\
-         .tm-bg{fill:#0e1117}.tm-edge{stroke:#58a6ff;stroke-opacity:.22;stroke-width:1.1}\
+         .tm-bg{fill:#0e1117}.tm-edge{stroke:#58a6ff;stroke-opacity:.24;stroke-width:1.1}\
+         .tm-edge-hot{stroke:#f7b32b;stroke-opacity:.42;stroke-width:1.35}.tm-edge-self{stroke:#bc8cff;stroke-opacity:.5}\
          .tm-node rect{fill:#161b22;stroke:#30363d;stroke-width:1.2;rx:3}\
          .tm-node:hover rect{stroke:#58a6ff;stroke-width:2}.tm-hot rect{stroke:#f7b32b}\
          .tm-title{fill:#d0d7de;font:11px JetBrainsMono,monospace}.tm-sub{fill:#8b949e;font:9px JetBrainsMono,monospace}\
@@ -263,31 +295,25 @@ fn build_large_overview_svg(
         "<rect class=\"tm-bg\" x=\"0\" y=\"0\" width=\"{width:.0}\" height=\"{height:.0}\"/>"
     ));
     out.push_str("<g class=\"tm-edges\">");
-    for edge in inner.cfg.graph.edge_indices() {
-        let Some((src_node, dst_node)) = inner.cfg.graph.edge_endpoints(edge) else {
+    for edge in &edges {
+        let Some((sx, sy)) = positions.get(&edge.src) else {
             continue;
         };
-        let Some(src) = inner.cfg.graph.node_weight(src_node) else {
+        let Some((dx, dy)) = positions.get(&edge.dst) else {
             continue;
         };
-        let Some(dst) = inner.cfg.graph.node_weight(dst_node) else {
-            continue;
-        };
-        if !included_starts.contains(&src.start_pc) || !included_starts.contains(&dst.start_pc) {
-            continue;
-        }
-        let Some((sx, sy)) = positions.get(&src.start_pc) else {
-            continue;
-        };
-        let Some((dx, dy)) = positions.get(&dst.start_pc) else {
-            continue;
-        };
+        let title = html_esc(&format!(
+            "{:#x} -> {:#x} · x{} · distance {}",
+            edge.src, edge.dst, edge.count, edge.distance
+        ));
         out.push_str(&format!(
-            "<line class=\"tm-edge\" x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\"/>",
+            "<line class=\"{}\" x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\"><title>{}</title></line>",
+            edge.class,
             sx + node_w / 2.0,
             sy + node_h / 2.0,
             dx + node_w / 2.0,
-            dy + node_h / 2.0
+            dy + node_h / 2.0,
+            title
         ));
     }
     out.push_str("</g><g class=\"tm-nodes\">");
@@ -325,8 +351,94 @@ fn build_large_overview_svg(
             html_esc(&rel_pc(block.end_pc, base))
         ));
     }
+    if hidden_edge_count > 0 {
+        out.push_str(&format!(
+            "<text class=\"tm-sub\" x=\"{:.1}\" y=\"{:.1}\">overview: {} drawn / {} hidden edges</text>",
+            margin,
+            height - 8.0,
+            drawn_edge_count,
+            hidden_edge_count
+        ));
+    }
     out.push_str("</g></svg>");
-    out
+    LargeOverviewSvg {
+        svg: out,
+        drawn_edge_count,
+        hidden_edge_count,
+    }
+}
+
+fn large_overview_edges(
+    inner: &crate::state::AppStateInner,
+    included_starts: &HashSet<u64>,
+    order: &HashMap<u64, usize>,
+) -> Vec<OverviewEdge> {
+    let mut candidates = Vec::new();
+    for edge in inner.cfg.graph.edge_indices() {
+        let Some((src_node, dst_node)) = inner.cfg.graph.edge_endpoints(edge) else {
+            continue;
+        };
+        let Some(src) = inner.cfg.graph.node_weight(src_node) else {
+            continue;
+        };
+        let Some(dst) = inner.cfg.graph.node_weight(dst_node) else {
+            continue;
+        };
+        if !included_starts.contains(&src.start_pc) || !included_starts.contains(&dst.start_pc) {
+            continue;
+        }
+        let Some(src_i) = order.get(&src.start_pc).copied() else {
+            continue;
+        };
+        let Some(dst_i) = order.get(&dst.start_pc).copied() else {
+            continue;
+        };
+        let Some(meta) = inner.cfg.graph.edge_weight(edge) else {
+            continue;
+        };
+        let distance = src_i.abs_diff(dst_i);
+        let class = if src.start_pc == dst.start_pc {
+            "tm-edge tm-edge-self"
+        } else if meta.count >= 10 {
+            "tm-edge tm-edge-hot"
+        } else {
+            "tm-edge"
+        };
+        candidates.push(OverviewEdge {
+            src: src.start_pc,
+            dst: dst.start_pc,
+            count: meta.count,
+            distance,
+            class,
+        });
+    }
+
+    if candidates.len() <= LARGE_OVERVIEW_MAX_DRAWN_EDGES {
+        return candidates;
+    }
+
+    candidates.sort_by(|a, b| {
+        let a_required = a.src == a.dst || a.distance <= 2;
+        let b_required = b.src == b.dst || b.distance <= 2;
+        b_required
+            .cmp(&a_required)
+            .then_with(|| b.count.cmp(&a.count))
+            .then_with(|| a.distance.cmp(&b.distance))
+            .then_with(|| a.src.cmp(&b.src))
+            .then_with(|| a.dst.cmp(&b.dst))
+    });
+
+    let mut selected = Vec::with_capacity(LARGE_OVERVIEW_MAX_DRAWN_EDGES);
+    let mut seen = HashSet::new();
+    for edge in candidates {
+        if selected.len() >= LARGE_OVERVIEW_MAX_DRAWN_EDGES {
+            break;
+        }
+        if seen.insert((edge.src, edge.dst)) {
+            selected.push(edge);
+        }
+    }
+    selected
 }
 
 fn normalize_fn_filter(raw: &str) -> Option<String> {
