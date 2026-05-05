@@ -120,7 +120,7 @@ export default function XrefPanel(props: XrefPanelProps) {
         <p class="err">pc refs failed: {String(pcRefs.error)}</p>
       </Show>
       <Show when={!asmRefs.loading && asmRefs.error}>
-        <p class="err">asm refs failed: {String(asmRefs.error)}</p>
+        <p class="err">instruction text search failed: {String(asmRefs.error)}</p>
       </Show>
       <div class="xref-grid">
         <div>

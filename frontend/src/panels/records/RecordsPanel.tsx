@@ -140,7 +140,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const fullHeight = createMemo(() => totalRecords() * ROW_HEIGHT);
   const innerHeight = createMemo(() => Math.min(SAFE_SCROLL_HEIGHT, Math.max(ROW_HEIGHT, fullHeight())));
   const compressed = createMemo(() => fullHeight() > SAFE_SCROLL_HEIGHT);
-  const visibleRows = createMemo(() => Math.max(1, Math.ceil((viewHeight() || 480) / ROW_HEIGHT)));
+  // Rounded viewport rows avoid 1px layout jitter flipping fetch count at an
+  // exact ROW_HEIGHT boundary. Overscan below still covers the partial row.
+  const visibleRows = createMemo(() => Math.max(1, Math.round((viewHeight() || 480) / ROW_HEIGHT)));
   const activeIdx = createMemo(() => optimisticIdx());
 
   const range = createMemo<{ start: number; count: number; end: number }>(
@@ -167,7 +169,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         // node. The rebuild can land between mouseDown and mouseUp on a
         // clicked row -> browser drops the click event entirely.
         const sTopRow = Math.floor(scrollTop() / ROW_HEIGHT);
-        const vRows = Math.ceil((viewHeight() || 480) / ROW_HEIGHT);
+        const vRows = visibleRows();
         const start = clamp(sTopRow - OVERSCAN, 0, total);
         const end = Math.min(total, sTopRow + vRows + OVERSCAN);
         next = { start, count: Math.max(0, end - start), end };
