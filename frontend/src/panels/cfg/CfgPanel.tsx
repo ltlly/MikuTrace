@@ -3,8 +3,8 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
 import type { CfgSvgResponse } from "~/api/types";
 
-const AUTO_RENDER_MAX_BLOCKS = 140;
-const AUTO_RENDER_MAX_SVG_BYTES = 1_500_000;
+const AUTO_RENDER_MAX_BLOCKS = 120;
+const AUTO_RENDER_MAX_SVG_BYTES = 900_000;
 const CFG_FETCH_DEBOUNCE_MS = 80;
 
 function clampTimeout(raw: number): number {
