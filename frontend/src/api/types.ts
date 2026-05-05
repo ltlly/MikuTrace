@@ -710,6 +710,8 @@ export interface HlilForFnResponse {
   ready: boolean;
   fn?: HlilFunctionInfo;
   lines?: HlilLine[];
+  pseudo_lines?: HlilLine[];
+  hlil_lines?: HlilLine[];
   vars?: HlilVar[];
   error?: string;
   request_fn_id?: string;

@@ -78,10 +78,9 @@ class Session:
                 "ready": True,
                 "error": f"no function contains trace 0x{pc:x} (bn 0x{bn_pc:x})",
             }
-        lines = []
-        for insn in fn.hlil.instructions:
-            addr = int(getattr(insn, "address", 0) or 0)
-            lines.append({"pc": f"0x{self._to_trace_addr(addr):x}", "text": str(insn), "tokens": []})
+        pseudo_lines = self._pseudo_hlil_lines(fn)
+        hlil_lines = self._linear_hlil_lines(fn)
+        lines = pseudo_lines or hlil_lines
         return {
             "ok": True,
             "ready": True,
@@ -91,6 +90,8 @@ class Session:
                 "end": self._to_trace_addr(int(fn.highest_address)),
             },
             "lines": lines,
+            "pseudo_lines": pseudo_lines,
+            "hlil_lines": hlil_lines,
             "vars": [],
         }
 
@@ -193,6 +194,81 @@ class Session:
             out.append({"t": rest[last:], "c": "txt"})
         return out
 
+    def _pseudo_hlil_lines(self, fn: Any) -> list[dict[str, Any]]:
+        root = getattr(getattr(fn, "hlil", None), "root", None)
+        if root is None:
+            return []
+        return self._lines_from_hlil(root, None)
+
+    def _linear_hlil_lines(self, fn: Any) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        try:
+            instructions = list(fn.hlil.instructions)
+        except Exception:
+            instructions = []
+        for insn in instructions:
+            addr = int(getattr(insn, "address", 0) or 0)
+            rendered = self._lines_from_hlil(insn, addr)
+            if rendered:
+                out.extend(rendered)
+            else:
+                text = str(insn)
+                out.append(
+                    {
+                        "pc": f"0x{self._to_trace_addr(addr) or 0:x}",
+                        "text": text,
+                        "indent": _leading_indent(text),
+                        "tokens": _fallback_code_tokens(text),
+                    }
+                )
+        return out
+
+    def _lines_from_hlil(self, instr: Any, fallback_addr: int | None) -> list[dict[str, Any]]:
+        try:
+            raw_lines = list(instr.lines)
+        except Exception:
+            try:
+                raw_lines = list(instr.get_lines())
+            except Exception:
+                raw_lines = []
+        return [self._line_to_wire(line, fallback_addr) for line in raw_lines]
+
+    def _line_to_wire(self, line: Any, fallback_addr: int | None) -> dict[str, Any]:
+        raw_addr = getattr(line, "address", None)
+        if raw_addr in (None, 0):
+            il_instr = getattr(line, "il_instruction", None)
+            raw_addr = getattr(il_instr, "address", None)
+        if raw_addr in (None, 0):
+            raw_addr = fallback_addr
+        trace_addr = self._to_trace_addr(int(raw_addr or 0)) or 0
+        tokens = []
+        for token in getattr(line, "tokens", []) or []:
+            if _is_hidden_line_token(token):
+                continue
+            wire = self._token_to_wire(token)
+            if wire["t"]:
+                tokens.append(wire)
+        text = "".join(token["t"] for token in tokens)
+        indent = _leading_indent(text)
+        if indent == 0:
+            try:
+                indent = int(getattr(line, "address_and_indentation_width", 0) or 0)
+            except Exception:
+                indent = 0
+            if indent > 0 and text and not text[0].isspace():
+                tokens.insert(0, {"t": " " * indent, "c": "indent"})
+                text = (" " * indent) + text
+        if not tokens:
+            text = str(line)
+            indent = _leading_indent(text)
+            tokens = _fallback_code_tokens(text)
+        return {
+            "pc": f"0x{trace_addr:x}",
+            "text": text,
+            "indent": indent,
+            "tokens": tokens,
+        }
+
     def _to_bn_addr(self, pc: int) -> int:
         if self.runtime_base is None:
             return pc
@@ -240,6 +316,9 @@ def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
 
 def _classify_token(type_name: str, text: str) -> str:
     name = type_name.lower()
+    stripped = text.strip()
+    if not stripped:
+        return "indent" if "indent" in name else "txt"
     if "instruction" in name:
         return "mnem"
     if "register" in name:
@@ -260,6 +339,8 @@ def _classify_token(type_name: str, text: str) -> str:
         return "key"
     if "typename" in name:
         return "type"
+    if "type" in name and "token" in name:
+        return "type"
     if "field" in name:
         return "field"
     if "comment" in name:
@@ -270,20 +351,145 @@ def _classify_token(type_name: str, text: str) -> str:
         return "sep"
     if "brace" in name or "memoryoperand" in name:
         return "brace"
-    if text.strip() in {"+", "-", "*", "/", "<<", ">>", "&", "|", "^", "=", "==", "!=", "<", ">"}:
+    if stripped in _CODE_KEYWORDS:
+        return "key"
+    if stripped in _CODE_TYPES:
+        return "type"
+    if _NUMBER_RE.match(stripped):
+        return "num"
+    if stripped.startswith('"') or stripped.startswith("'"):
+        return "str"
+    if stripped in {"(", ")", "[", "]", "{", "}"}:
+        return "brace"
+    if stripped in _CODE_OPERATORS:
         return "op"
+    if _IDENT_RE.match(stripped):
+        return "var"
     return "txt"
+
+
+def _token_type_name(token: Any) -> str:
+    return str(getattr(token, "type", "")).split(".")[-1]
 
 
 def _token_addr(token: Any, type_name: str) -> int | None:
     name = type_name.lower()
-    if not any(s in name for s in ("symbol", "address", "integer")):
+    if not any(s in name for s in ("symbol", "address")):
         return None
     for attr in ("address", "value"):
         value = getattr(token, attr, None)
         if isinstance(value, int) and value > 0:
             return value
     return None
+
+
+def _is_hidden_line_token(token: Any) -> bool:
+    name = _token_type_name(token).lower()
+    return "addressdisplay" in name or "addressseparator" in name
+
+
+def _leading_indent(text: str) -> int:
+    width = 0
+    for ch in text:
+        if ch == " ":
+            width += 1
+        elif ch == "\t":
+            width += 4
+        else:
+            break
+    return width
+
+
+_CODE_KEYWORDS = {
+    "break",
+    "case",
+    "continue",
+    "default",
+    "do",
+    "else",
+    "false",
+    "for",
+    "goto",
+    "if",
+    "return",
+    "switch",
+    "true",
+    "while",
+}
+
+_CODE_TYPES = {
+    "bool",
+    "char",
+    "const",
+    "double",
+    "float",
+    "int",
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    "long",
+    "short",
+    "size_t",
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    "void",
+}
+
+_CODE_OPERATORS = {
+    "!",
+    "!=",
+    "%",
+    "&",
+    "&&",
+    "*",
+    "*=",
+    "+",
+    "++",
+    "+=",
+    "-",
+    "--",
+    "-=",
+    "->",
+    "/",
+    "/=",
+    "<",
+    "<<",
+    "<=",
+    "=",
+    "==",
+    ">",
+    ">=",
+    ">>",
+    "^",
+    "|",
+    "|=",
+    "||",
+    "~",
+}
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_NUMBER_RE = re.compile(r"^(?:0x[0-9a-fA-F]+|\d+)(?:[uUlL]*)$")
+_CODE_TOKEN_RE = re.compile(
+    r'(\s+|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|0x[0-9a-fA-F]+|\d+|'
+    r'[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|<<|>>|&&|\|\||->|\+\+|--|[{}()\[\],;:.*&=<>+\-/|!~^%])'
+)
+
+
+def _fallback_code_tokens(text: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    pos = 0
+    for match in _CODE_TOKEN_RE.finditer(text):
+        if match.start() > pos:
+            out.append({"t": text[pos:match.start()], "c": "txt"})
+        token = match.group(0)
+        out.append({"t": token, "c": _classify_token("", token)})
+        pos = match.end()
+    if pos < len(text):
+        out.append({"t": text[pos:], "c": "txt"})
+    return out or [{"t": text, "c": "txt"}]
 
 
 def _image_bounds(bv: Any) -> tuple[int, int]:

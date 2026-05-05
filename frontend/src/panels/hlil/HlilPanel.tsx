@@ -1,4 +1,4 @@
-import { createEffect, createMemo, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchHlilForPc, fetchIdxsForPc } from "~/api/client";
 import type { AsmToken, HlilForPcResponse, HlilLine, HlilVar } from "~/api/types";
@@ -23,6 +23,8 @@ interface HlilSource {
   idx: number;
 }
 
+type HlilViewMode = "pseudo" | "hlil";
+
 function parsePc(pc: string | undefined): number | null {
   if (!pc) return null;
   const text = pc.trim();
@@ -33,14 +35,13 @@ function parsePc(pc: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function currentLineIndex(r: HlilForPcResponse, pc: string | undefined): number {
-  if (typeof r.current_line_idx === "number" && r.current_line_idx >= 0) return r.current_line_idx;
+function currentLineIndex(lines: HlilLine[], pc: string | undefined): number {
   const want = parsePc(pc);
   if (want === null) return -1;
   let best = -1;
   let bestPc = -1;
-  for (let i = 0; i < (r.lines ?? []).length; i += 1) {
-    const got = parsePc(r.lines?.[i]?.pc);
+  for (let i = 0; i < lines.length; i += 1) {
+    const got = parsePc(lines[i]?.pc);
     if (got === null) continue;
     if (got === want) return i;
     if (got <= want && got > bestPc) {
@@ -58,10 +59,17 @@ function varLabel(v: HlilVar): string {
   return `${name}: ${ty}${storage}`;
 }
 
+function linesForMode(r: HlilForPcResponse | undefined, mode: HlilViewMode): HlilLine[] {
+  if (!r) return [];
+  if (mode === "hlil") return r.hlil_lines ?? r.lines ?? [];
+  return r.pseudo_lines ?? r.lines ?? [];
+}
+
 export default function HlilPanel(props: HlilPanelProps) {
   let body: HTMLDivElement | undefined;
   let jumpSeq = 0;
   let jumpAbort: AbortController | undefined;
+  const [mode, setMode] = createSignal<HlilViewMode>("pseudo");
 
   function cancelJump() {
     jumpSeq += 1;
@@ -84,6 +92,9 @@ export default function HlilPanel(props: HlilPanelProps) {
     (s) => fetchHlilForPc(s.pc),
     (r, s) => r.request_pc === s.pc,
   );
+
+  const displayLines = createMemo(() => linesForMode(currentHlil(), mode()));
+  const currentDisplayLine = createMemo(() => currentLineIndex(displayLines(), props.currentHint?.pc));
 
   async function jumpPc(pc: string | null | undefined) {
     if (!pc) return;
@@ -137,7 +148,7 @@ export default function HlilPanel(props: HlilPanelProps) {
   createEffect(() => {
     const r = currentHlil();
     if (!props.active || !r?.ready || !r.ok) return;
-    const idx = currentLineIndex(r, props.currentHint?.pc);
+    const idx = currentDisplayLine();
     if (idx < 0) return;
     queueMicrotask(() => {
       const el = body?.querySelector<HTMLElement>(`.hlil-line[data-i="${idx}"]`);
@@ -154,6 +165,24 @@ export default function HlilPanel(props: HlilPanelProps) {
     <section class="panel hlil-panel">
       <h2>HLIL</h2>
       <div class="hlil-controls">
+        <div class="hlil-view-toggle" role="tablist" aria-label="HLIL view mode">
+          <button
+            type="button"
+            classList={{ active: mode() === "pseudo" }}
+            aria-selected={mode() === "pseudo"}
+            onClick={() => setMode("pseudo")}
+          >
+            Pseudo C
+          </button>
+          <button
+            type="button"
+            classList={{ active: mode() === "hlil" }}
+            aria-selected={mode() === "hlil"}
+            onClick={() => setMode("hlil")}
+          >
+            HLIL
+          </button>
+        </div>
         <span class="dim small">
           cursor #{props.currentIdx} · {props.currentHint?.pc ?? "resolving cursor"} ·{" "}
           {props.currentHint?.func ?? "unknown trace fn"}
@@ -178,7 +207,7 @@ export default function HlilPanel(props: HlilPanelProps) {
               <div>
                 <b>{r().fn?.name ?? props.currentHint?.func ?? "unknown"}</b>{" "}
                 <span class="dim">
-                  [{String(r().fn?.start ?? "?")}..{String(r().fn?.end ?? "?")}) · {r().lines?.length ?? 0} lines
+                  [{String(r().fn?.start ?? "?")}..{String(r().fn?.end ?? "?")}) · {displayLines().length} lines
                 </span>
               </div>
               <Show when={r().trace_fn && r().trace_fn?.name !== r().fn?.name ? r().trace_fn : null}>
@@ -206,18 +235,18 @@ export default function HlilPanel(props: HlilPanelProps) {
               }}
               class="hlil-body"
             >
-              <For each={r().lines ?? []}>
+              <For each={displayLines()}>
                 {(line, i) => (
                   <div
                     class="hlil-line"
-                    classList={{ cur: i() === currentLineIndex(r(), props.currentHint?.pc) }}
+                    classList={{ cur: i() === currentDisplayLine() }}
                     data-i={i()}
                     data-pc={line.pc}
                     onClick={() => void jumpPc(line.pc)}
                     title="jump to nearest trace execution"
                   >
                     <span class="hlil-pc">{line.pc}</span>
-                    <span class="hlil-text">{lineText(line)}</span>
+                    <span class="hlil-code">{lineText(line)}</span>
                   </div>
                 )}
               </For>

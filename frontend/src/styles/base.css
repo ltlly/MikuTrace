@@ -1628,6 +1628,30 @@ html[data-density="dense"] .xref-table td {
 .hlil-controls button { cursor: pointer; }
 .hlil-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.hlil-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.hlil-view-toggle button {
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--dim);
+  min-width: 72px;
+}
+
+.hlil-view-toggle button:last-child {
+  border-right: 0;
+}
+
+.hlil-view-toggle button.active {
+  color: var(--fg);
+  background: var(--bg3);
+}
+
 .hlil-head {
   flex: 0 0 auto;
   padding: 6px 8px;
@@ -1664,6 +1688,10 @@ html[data-density="dense"] .xref-table td {
   padding: 2px 8px;
   border-left: 2px solid transparent;
   cursor: pointer;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .hlil-line:hover {
@@ -1685,10 +1713,16 @@ html[data-density="dense"] .xref-table td {
   white-space: nowrap;
 }
 
-.hlil-text {
+.hlil-code {
   min-width: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  tab-size: 4;
+}
+
+.hlil-code .tok-indent {
+  color: transparent;
 }
 
 .hlil-table {
