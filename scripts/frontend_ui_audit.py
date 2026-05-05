@@ -50,6 +50,24 @@ def main() -> int:
     for col in ("dot", "idx", "pc", "func", "asm"):
         require(f"asm column resize {col}", f'startAsmColResize("{col}"' in app, failures)
     require(
+        "ASM keyboard navigation keys are wired",
+        'window.addEventListener("keydown", onKey)' in app
+        and 'if (isEditableTarget(e.target)) return' in app
+        and 'e.key === "j" || e.key === "ArrowDown"' in app
+        and "jumpToIdx(selectedIdx() + 1)" in app
+        and 'e.key === "k" || e.key === "ArrowUp"' in app
+        and "jumpToIdx(selectedIdx() - 1)" in app
+        and 'e.key === "PageDown"' in app
+        and "jumpToIdx(selectedIdx() + 20)" in app
+        and 'e.key === "PageUp"' in app
+        and "jumpToIdx(selectedIdx() - 20)" in app
+        and 'e.key === "Home" || e.key === "g"' in app
+        and "jumpToIdx(0)" in app
+        and 'e.key === "End" || e.key === "G"' in app
+        and "jumpToIdx(Math.max(0, totalRecords() - 1))" in app,
+        failures,
+    )
+    require(
         "Records keep stable row object references",
         "function sameRecordRow" in records
         and "const rowObjectCache = new Map<number, RecordRow>()" in records
