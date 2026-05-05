@@ -83,6 +83,18 @@ def main() -> int:
         and "rowObjectCache.delete(k)" in records,
         failures,
     )
+    require(
+        "Records register context menu closes and aborts stale fetches",
+        "function cancelRegContext" in records
+        and "regContextAbort?.abort()" in records
+        and "function closeRegContext" in records
+        and "closest(\".reg-context-menu\")" in records
+        and 'e.key === "Escape"' in records
+        and 'document.addEventListener("pointerdown", closeOnPointer)' in records
+        and 'document.addEventListener("keydown", closeOnKey)' in records
+        and "current?.token === token" in records,
+        failures,
+    )
 
     require("CFG header avoids stale no-fn label", 'cfgDisplayFn() || "select function"' in app, failures)
     require("CFG fetch has debounce", "CFG_FETCH_DEBOUNCE_MS" in cfg and "window.setTimeout" in cfg, failures)
