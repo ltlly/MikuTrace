@@ -5,6 +5,7 @@ import type { CfgSvgResponse } from "~/api/types";
 
 const AUTO_RENDER_MAX_BLOCKS = 140;
 const AUTO_RENDER_MAX_SVG_BYTES = 1_500_000;
+const CFG_FETCH_DEBOUNCE_MS = 80;
 
 function clampTimeout(raw: number): number {
   if (!Number.isFinite(raw)) return 60;
@@ -65,6 +66,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   let lastCenteredIdx = -1;
   let lastPanFn = "";
   let graphSeq = 0;
+  let graphTimer: number | undefined;
   let graphAbort: AbortController | undefined;
   let jumpSeq = 0;
   let jumpAbort: AbortController | undefined;
@@ -111,6 +113,10 @@ export default function CfgPanel(props: CfgPanelProps) {
   createEffect(() => {
     if (!props.active || !fnName()) {
       graphSeq += 1;
+      if (graphTimer !== undefined) {
+        window.clearTimeout(graphTimer);
+        graphTimer = undefined;
+      }
       graphAbort?.abort();
       graphAbort = undefined;
       frame = undefined;
@@ -128,29 +134,37 @@ export default function CfgPanel(props: CfgPanelProps) {
 
     const seq = ++graphSeq;
     setDebugSeq(seq);
+    if (graphTimer !== undefined) {
+      window.clearTimeout(graphTimer);
+      graphTimer = undefined;
+    }
     graphAbort?.abort();
-    const abort = new AbortController();
-    graphAbort = abort;
     frame = undefined;
     setGraph(null);
     setGraphLoading(true);
     setGraphError(null);
-    void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, force: requestForce, signal: abort.signal })
-      .then((resp) => {
-        if (seq !== graphSeq || abort.signal.aborted) return;
-        setGraph({ ...resp, requestFn, auto: requestAuto });
-        if (resp.status === "ready") setLastGraphFn(requestFn);
-      })
-      .catch((err) => {
-        if (seq !== graphSeq || abort.signal.aborted) return;
-        setGraphError(err);
-      })
-      .finally(() => {
-        if (seq === graphSeq && !abort.signal.aborted) {
-          if (graphAbort === abort) graphAbort = undefined;
-          setGraphLoading(false);
-        }
-      });
+    graphTimer = window.setTimeout(() => {
+      graphTimer = undefined;
+      if (seq !== graphSeq) return;
+      const abort = new AbortController();
+      graphAbort = abort;
+      void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, force: requestForce, signal: abort.signal })
+        .then((resp) => {
+          if (seq !== graphSeq || abort.signal.aborted) return;
+          setGraph({ ...resp, requestFn, auto: requestAuto });
+          if (resp.status === "ready") setLastGraphFn(requestFn);
+        })
+        .catch((err) => {
+          if (seq !== graphSeq || abort.signal.aborted) return;
+          setGraphError(err);
+        })
+        .finally(() => {
+          if (seq === graphSeq && !abort.signal.aborted) {
+            if (graphAbort === abort) graphAbort = undefined;
+            setGraphLoading(false);
+          }
+        });
+    }, CFG_FETCH_DEBOUNCE_MS);
   });
 
   createEffect(() => {
@@ -170,6 +184,10 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   onCleanup(() => {
     graphSeq += 1;
+    if (graphTimer !== undefined) {
+      window.clearTimeout(graphTimer);
+      graphTimer = undefined;
+    }
     graphAbort?.abort();
     cancelJump();
   });
