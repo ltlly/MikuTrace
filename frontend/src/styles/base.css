@@ -253,7 +253,7 @@ body.is-resizing {
   --col-idx: 60px;
   --col-pc: 112px;
   --col-func: 96px;
-  --col-asm: 360px;
+  --col-asm: 200px;
 }
 
 #right-col {
@@ -390,7 +390,7 @@ body.is-resizing {
 #stream-header .col-resize {
   position: absolute;
   top: 0;
-  right: -4px;
+  right: 0;
   bottom: 0;
   z-index: 2;
   width: 8px;

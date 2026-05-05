@@ -105,7 +105,7 @@ def wait_debug_value(page: Any, key: str, expected: str, timeout_ms: int = DEFAU
             }
             return false;
         }""",
-        {"key": key, "expected": expected},
+        arg={"key": key, "expected": expected},
         timeout=timeout_ms,
     )
 
@@ -149,9 +149,11 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     points = pick_cross_function_points(base_url)
 
     page.add_init_script(
-        """() => {
+        """{
             localStorage.setItem('tracemiku-debug', '1');
+            localStorage.removeItem('tracemiku-layout-v4');
             localStorage.removeItem('tracemiku-layout-v3');
+            localStorage.removeItem('tracemiku-layout-v2');
         }"""
     )
     page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
@@ -255,20 +257,24 @@ def main() -> int:
             launch_kwargs: dict[str, Any] = {"headless": not args.headful}
             if args.executable:
                 launch_kwargs["executable_path"] = args.executable
-            browser = browser_type.launch(**launch_kwargs)
+            try:
+                browser = browser_type.launch(**launch_kwargs)
+            except PlaywrightError as exc:
+                print(
+                    "FAIL browser event smoke could not launch Playwright browser. "
+                    "Install a supported browser, or pass --executable /path/to/chrome. "
+                    f"Original error: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
             try:
                 page = browser.new_page(viewport={"width": 1440, "height": 900})
                 checks = run_smoke(page, args.base_url.rstrip("/"), args.timeout_ms)
+            except PlaywrightError as exc:
+                print(f"FAIL frontend event smoke Playwright error: {exc}", file=sys.stderr)
+                return 1
             finally:
                 browser.close()
-    except PlaywrightError as exc:
-        print(
-            "FAIL browser event smoke could not launch or drive Playwright browser. "
-            "Install a supported browser, or pass --executable /path/to/chrome. "
-            f"Original error: {exc}",
-            file=sys.stderr,
-        )
-        return 2
     except Exception as exc:  # noqa: BLE001 - smoke failure should be concise.
         print(f"FAIL frontend event smoke: {exc}", file=sys.stderr)
         return 1

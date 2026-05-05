@@ -75,6 +75,7 @@ make test-v2
 make test-fast
 make smoke-web RUN=traces/debug_minimal/calls/call_001_tid22371_15426904r_11325ms
 make smoke-web RUN=<trace_dir> SMOKE_ARGS='--all-surfaces --timeout 300'
+make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --executable /path/to/chrome'
 make webui RUN=<trace_dir> PORT=18900
 
 ./tracemiku web <call_dir> --port 18900 --no-browser
@@ -112,6 +113,9 @@ browser automation, or a real adb device.
 - `rust/crates/tracemiku-server/src/routes/`: JSON API route handlers.
 - `rust/crates/tracemiku-cli/src/`: Rust CLI command implementations.
 - `scripts/rust_web_smoke.py`: real server smoke/perf gate.
+- `scripts/frontend_event_smoke.py`: Playwright browser event smoke for row
+  clicks, keyboard navigation, context menus, resizing, memory selection, and
+  CFG sync.
 - `scripts/rust_cli_web_parity.py`: Rust CLI vs live Rust web API parity gate.
 - `scripts/web_api_perf_probe.py`: large-trace API latency and runtime-blocking probe.
 - `tools/hooks/`: JSON-driven specs.

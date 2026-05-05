@@ -111,15 +111,18 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   Playwright 覆盖键盘移动、row click、CFG 跨函数同步、寄存器/内存右键菜单取消、
   内存范围选择、面板和 ASM 列拖拽。该脚本需要可用的 Chromium/Chrome/Playwright
   browser。
+- ✅ 真实浏览器 smoke 已捕获并修复 ASM 列宽手柄遮挡: 默认 `colAsm=360px`
+  会让 asm resize handle 溢出到右侧 Graph 面板下方, 真实鼠标拖拽无法触发。
+  现已切到 layout v4 并把默认 ASM 列宽降到 200px, `frontend_ui_audit.py`
+  固化该默认布局。
+- ✅ 最大 trace 真实浏览器事件 smoke 已跑通: 使用用户目录下 Chrome for Testing
+  对 1542 万 records trace 临时 server 执行 `make smoke-ui`, 覆盖键盘移动、
+  row click、面板/ASM 列拖拽、寄存器/内存右键菜单取消、内存范围选择、
+  CFG 跨函数同步。
 - ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
   会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
   当前 1542 万 records trace + v3 sidecar 下约 6.80s ready, ready 后 auto phase
   约 167ms, health max 约 1.9ms。
-- ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
-  Chromium / Xvfb; Playwright 的 Chromium/Firefox 下载器不支持
-  ubuntu26.04-x64, system snap Firefox headless 会卡住。现有保障是静态
-  UI audit + 最大 trace HTTP smoke + 可移植事件 smoke 脚本, 但本机尚未完成
-  真实浏览器执行。
 
 ## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
 

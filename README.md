@@ -57,10 +57,14 @@ cargo run -p tracemiku-cli -- dec-fn <call_dir> trace:F0 --tier hot
 ```bash
 make fmt
 make test-v2
+make smoke-web RUN=traces/debug_minimal/calls/call_001_tid22371_15426904r_11325ms SMOKE_ARGS='--all-surfaces'
+make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --executable /path/to/chrome'
 ```
 
 `make test-v2` runs the Python wrapper syntax check, Rust fmt check, Rust
 core/server/CLI tests, and the Solid frontend production build.
+`make smoke-web` runs the live Rust server API/perf gate. `make smoke-ui` runs
+the Playwright browser event smoke against an already running web server.
 
 The Rust server serves API routes under `/api/*`, `/openapi.json`, `/ws/jobs`,
 and falls back to the built SPA in `frontend/dist`.

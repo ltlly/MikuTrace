@@ -50,6 +50,18 @@ def main() -> int:
     for col in ("dot", "idx", "pc", "func", "asm"):
         require(f"asm column resize {col}", f'startAsmColResize("{col}"' in app, failures)
     require(
+        "ASM default columns keep resize handle inside default center pane",
+        'const LAYOUT_KEY = "tracemiku-layout-v4"' in app
+        and "colAsm: 200" in app
+        and "--col-asm: 200px" in css,
+        failures,
+    )
+    require(
+        "ASM resize handles stay fully clickable inside clipped header cells",
+        re.search(r"#stream-header \.col-resize\s*\{[^}]*right:\s*0;", css, re.S) is not None,
+        failures,
+    )
+    require(
         "ASM keyboard navigation keys are wired",
         'window.addEventListener("keydown", onKey)' in app
         and 'if (isEditableTarget(e.target)) return' in app

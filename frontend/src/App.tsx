@@ -41,7 +41,7 @@ type TaintRunRequest = { token: number; idx: number; reg: string; direction: Tai
 
 const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
 const LEGACY_LAYOUT_KEY = "tracemiku-layout-v2";
-const LAYOUT_KEY = "tracemiku-layout-v3";
+const LAYOUT_KEY = "tracemiku-layout-v4";
 
 interface LayoutState {
   leftW: number;
@@ -63,7 +63,7 @@ const DEFAULT_LAYOUT: LayoutState = {
   colIdx: 60,
   colPc: 112,
   colFunc: 96,
-  colAsm: 360,
+  colAsm: 200,
   syncCfg: true,
 };
 
