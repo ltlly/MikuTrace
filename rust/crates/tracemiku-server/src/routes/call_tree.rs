@@ -26,22 +26,16 @@ pub async fn call_tree_handler(
 ) -> Json<CallTreeResponse> {
     let inner = state.inner.clone();
     let depth = q.max_depth.unwrap_or(DEFAULT_MAX_DEPTH);
-    let tree = tokio::task::spawn_blocking(move || {
-        if depth == DEFAULT_MAX_DEPTH {
-            inner.call_tree().clone()
-        } else {
-            build_call_tree_indexed(&inner.trace, &inner.symbols, &inner.index, depth)
-        }
-    })
-    .await
-    .unwrap_or_else(|err| {
-        tracing::warn!(target: "tracemiku-server", "call tree worker failed: {err}");
-        build_call_tree_indexed(
-            &state.inner.trace,
-            &state.inner.symbols,
-            &state.inner.index,
-            0,
-        )
-    });
+    let tree = tokio::task::spawn_blocking(move || inner.call_tree_for_depth(depth))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "call tree worker failed: {err}");
+            build_call_tree_indexed(
+                &state.inner.trace,
+                &state.inner.symbols,
+                &state.inner.index,
+                0,
+            )
+        });
     Json(CallTreeResponse { tree })
 }

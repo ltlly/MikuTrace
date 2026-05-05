@@ -69,6 +69,7 @@ pub struct AppStateInner {
     memshadow: OnceLock<MemShadow>,
     memshadow_status: AtomicU8,
     call_tree: OnceLock<CallNode>,
+    call_tree_depth_cache: Mutex<HashMap<usize, CallNode>>,
     frame_depths: OnceLock<Vec<u32>>,
     backtrace_events: OnceLock<Vec<BacktraceEvent>>,
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
@@ -216,6 +217,7 @@ impl AppState {
             memshadow,
             memshadow_status,
             call_tree: OnceLock::new(),
+            call_tree_depth_cache: Mutex::new(HashMap::new()),
             frame_depths: OnceLock::new(),
             backtrace_events: OnceLock::new(),
             asm_groups: OnceLock::new(),
@@ -407,6 +409,26 @@ impl AppStateInner {
     pub fn call_tree(&self) -> &CallNode {
         self.call_tree
             .get_or_init(|| build_call_tree_indexed(&self.trace, &self.symbols, &self.index, 50))
+    }
+
+    pub fn call_tree_for_depth(&self, max_depth: usize) -> CallNode {
+        if max_depth == 50 {
+            return self.call_tree().clone();
+        }
+        if let Ok(cache) = self.call_tree_depth_cache.lock() {
+            if let Some(tree) = cache.get(&max_depth) {
+                return tree.clone();
+            }
+        }
+
+        let tree = build_call_tree_indexed(&self.trace, &self.symbols, &self.index, max_depth);
+        if let Ok(mut cache) = self.call_tree_depth_cache.lock() {
+            return cache
+                .entry(max_depth)
+                .or_insert_with(|| tree.clone())
+                .clone();
+        }
+        tree
     }
 
     pub fn frame_depths(&self) -> &[u32] {
