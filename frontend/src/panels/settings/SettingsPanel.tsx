@@ -63,33 +63,35 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     <section class="panel">
       <h2>Settings</h2>
       <div class="settings-grid">
-        <label class="settings-toggle">
-          <input
-            type="checkbox"
-            checked={dense()}
-            onChange={(e) => setDense(e.currentTarget.checked)}
-          />
-          dense tables
-        </label>
-        <label class="settings-toggle">
-          <input
-            type="checkbox"
-            checked={props.debugVisible}
-            onChange={(e) => props.onDebugVisibleChange(e.currentTarget.checked)}
-          />
-          debug overlay
-        </label>
-        <label class="settings-toggle">
-          <input
-            type="checkbox"
-            checked={props.apiDebug}
-            onChange={(e) => props.onApiDebugChange(e.currentTarget.checked)}
-          />
-          API debug log
-        </label>
+        <div class="settings-section settings-toggles">
+          <label class="settings-toggle">
+            <input
+              type="checkbox"
+              checked={dense()}
+              onChange={(e) => setDense(e.currentTarget.checked)}
+            />
+            dense tables
+          </label>
+          <label class="settings-toggle">
+            <input
+              type="checkbox"
+              checked={props.debugVisible}
+              onChange={(e) => props.onDebugVisibleChange(e.currentTarget.checked)}
+            />
+            debug overlay
+          </label>
+          <label class="settings-toggle">
+            <input
+              type="checkbox"
+              checked={props.apiDebug}
+              onChange={(e) => props.onApiDebugChange(e.currentTarget.checked)}
+            />
+            API debug log
+          </label>
+        </div>
         <Show when={meta()}>
           {(m) => (
-            <div>
+            <div class="settings-section">
               <h3>trace</h3>
               <dl class="kv settings-kv">
                 <dt>records</dt>
@@ -104,7 +106,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         </Show>
         <Show when={openapi()}>
           {(api) => (
-            <div>
+            <div class="settings-section">
               <h3>api</h3>
               <dl class="kv settings-kv">
                 <dt>version</dt>
@@ -117,7 +119,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         </Show>
         <Show when={models()}>
           {(r) => (
-            <div>
+            <div class="settings-section">
               <h3>llm models</h3>
               <ul class="settings-models">
                 <For each={r().models}>
@@ -133,7 +135,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           )}
         </Show>
         <Show when={bg() || decomp()}>
-          <div>
+          <div class="settings-section">
             <h3>backend</h3>
             <dl class="kv settings-kv">
               <dt>cfg</dt>
@@ -151,6 +153,8 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                   <>
                     <dt>cores</dt>
                     <dd>{p().available}</dd>
+                    <dt>records</dt>
+                    <dd>{p().records.toLocaleString()}</dd>
                     <dt>workers</dt>
                     <dd>{workerSummary(p().workers)}</dd>
                   </>

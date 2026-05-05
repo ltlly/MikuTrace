@@ -1273,14 +1273,20 @@ ul {
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 12px;
   align-items: start;
 }
 
-.settings-grid > * {
+.settings-section {
   min-width: 0;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+}
+
+.settings-toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 6px 10px;
 }
 
 .settings-toggle {
@@ -1289,10 +1295,16 @@ ul {
   align-items: center;
   color: var(--dim);
   font-size: 12px;
+  min-width: 0;
 }
 
 .settings-kv {
-  grid-template-columns: 76px 1fr;
+  grid-template-columns: minmax(68px, max-content) minmax(0, 1fr);
+}
+
+.settings-kv dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .settings-models {
@@ -1302,8 +1314,8 @@ ul {
 }
 
 .settings-models li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 12px;
   padding: 2px 0;
   border-bottom: 1px solid var(--border);
