@@ -11,6 +11,8 @@ use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
 
+const MAX_RECORD_COUNT: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct RecordsQuery {
     #[serde(default = "default_start")]
@@ -70,7 +72,8 @@ pub async fn records_handler(
             records: vec![],
         });
     }
-    let end = (q.start + q.count).min(n);
+    let count = q.count.min(MAX_RECORD_COUNT);
+    let end = q.start.saturating_add(count).min(n);
 
     let regs_filter: Option<Vec<String>> = if q.regs.is_empty() {
         None

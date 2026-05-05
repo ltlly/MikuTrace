@@ -56,6 +56,33 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd_owned)
 }
 
+fn synth_large_call_dir(records: usize) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join(format!("call_001_tid100_{records}r_2ms"));
+    fs::create_dir_all(&cd).unwrap();
+
+    let mut buf = vec![0u8; 272 * records];
+    for i in 0..records {
+        let off = i * 272;
+        let pc = 0x100000u64 + i as u64 * 4;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&0xd503201fu32.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(cd.join("meta.json"), format!(r#"{{"records":{records}}}"#)).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 #[tokio::test]
 async fn records_default_window() {
     let (_tmp, call_dir) = synth_call_dir();
@@ -127,6 +154,27 @@ async fn records_start_count_window() {
     assert_eq!(v["records"].as_array().unwrap().len(), 3);
     assert_eq!(v["records"][0]["idx"], 2);
     assert_eq!(v["records"][2]["idx"], 4);
+}
+
+#[tokio::test]
+async fn records_count_is_capped_for_large_windows() {
+    let (_tmp, call_dir) = synth_large_call_dir(5_100);
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/records?start=0&count=100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["start"], 0);
+    assert_eq!(v["end"], 5000);
+    assert_eq!(v["count"], 5000);
+    assert_eq!(v["records"].as_array().unwrap().len(), 5000);
 }
 
 #[tokio::test]
