@@ -52,6 +52,7 @@ interface DiffSource {
 }
 
 const MEMORY_RETRY_MS = 350;
+const MEMORY_CONTEXT_LIMIT = 30;
 const MEM_COLS_KEY = "tracemiku-memory-cols";
 
 interface MemCols {
@@ -378,7 +379,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     };
     setMemContext(base);
     try {
-      const hits = await fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, 30, abort.signal);
+      const hits = await fetchIdxsTouchingRange(bounds.lo, bounds.size, props.idx, MEMORY_CONTEXT_LIMIT, abort.signal);
       let writes: MemWritesInRangeResponse | undefined;
       let writeErr: string | undefined;
       try {
@@ -387,7 +388,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
           idxHi: props.idx,
           addrLo: bounds.lo,
           addrHi: addToAddr(bounds.hi, 1),
-          max: 30,
+          max: MEMORY_CONTEXT_LIMIT,
           signal: abort.signal,
         });
       } catch (err) {
@@ -582,13 +583,32 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                             <p class="dim small">total {hits().readers_total}</p>
                           </div>
                         </div>
+                        <Show
+                          when={
+                            hits().writers_total > hits().writers_before.length + hits().writers_after.length ||
+                            hits().readers_total > hits().readers_before.length + hits().readers_after.length
+                          }
+                        >
+                          <div class="cap-notice" role="status">
+                            <span>
+                              Memory refs show the nearest {MEMORY_CONTEXT_LIMIT.toLocaleString()} before and after rows around the current cursor.
+                            </span>
+                          </div>
+                        </Show>
                         <Show when={ctx().writes?.writes.length}>
                           <div class="memory-context-writes">
                             <h3>write details</h3>
                             <p class="dim small">
                               {ctx().writes?.returned}/{ctx().writes?.matched} writes
-                              {ctx().writes?.truncated ? " · truncated" : ""}
+                              {ctx().writes?.truncated ? " · partial result" : ""}
                             </p>
+                            <Show when={ctx().writes?.truncated}>
+                              <div class="cap-notice" role="status">
+                                <span>
+                                  Write details stopped at {MEMORY_CONTEXT_LIMIT.toLocaleString()} rows; narrow the selected byte range or cursor window.
+                                </span>
+                              </div>
+                            </Show>
                             <For each={ctx().writes?.writes ?? []}>
                               {(w) => (
                                 <button type="button" onClick={() => props.onSelect(w.idx)}>

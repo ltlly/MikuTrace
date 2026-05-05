@@ -28,7 +28,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   单独做 latency/cancellation/cache 审计。
 - ✅ Taint / string list / ASM search refs 的截断结果已在 UI 明确标注 partial
   result, 并提供 5k cap 重跑入口或 cap 解释, 避免用户误判为完整链路。
-- ☐ 继续补齐 records / trace refs / memory provenance / backtrace 等 cap surface:
+- ✅ Trace-for-PC / Xref same-PC / Backtrace / Forks / Memory context 等剩余
+  visible cap surface 已补齐 partial result 说明, 能升到服务器上限的面板提供
+  "show cap" 重跑入口。
+- ☐ 继续补齐 records / 隐藏冷路径分析面等 cap surface:
   被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
   入口或解释。
 - ☐ 抽出 Solid stale-frame / latest-selection guard: 当前 guard 散在多个

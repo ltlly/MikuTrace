@@ -1,4 +1,4 @@
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchIdxsForPc, fetchRecord } from "~/api/client";
 import type { IdxsForPcResponse } from "~/api/types";
@@ -12,9 +12,19 @@ interface TraceForPcPanelProps {
 interface IpcSource {
   pc: string;
   idx: number;
+  limit: number;
 }
 
+const DEFAULT_TRACE_PC_LIMIT = 20;
+const MAX_TRACE_PC_LIMIT = 5000;
+
 export default function TraceForPcPanel(props: TraceForPcPanelProps) {
+  const [limit, setLimit] = createSignal(DEFAULT_TRACE_PC_LIMIT);
+  createEffect(() => {
+    props.idx;
+    setLimit(DEFAULT_TRACE_PC_LIMIT);
+  });
+
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
@@ -27,14 +37,14 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     if (!props.active) return undefined;
     const r = currentRecord();
     if (!r) return undefined;
-    const next = { pc: r.pc, idx: props.idx };
-    return prev && prev.pc === next.pc && prev.idx === next.idx ? prev : next;
+    const next = { pc: r.pc, idx: props.idx, limit: limit() };
+    return prev && prev.pc === next.pc && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
   });
   const [idxs] = createResource<IdxsForPcResponse, IpcSource | undefined>(
     source,
     (source) => {
       if (!source) throw new Error("missing selected record");
-      return fetchIdxsForPc(source.pc, source.idx, 20);
+      return fetchIdxsForPc(source.pc, source.idx, source.limit);
     },
   );
   const currentHistory = createMemo(() => {
@@ -43,7 +53,7 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     if (!s || !r) return undefined;
     return r.request_pc === s.pc &&
       r.request_cursor === s.idx &&
-      r.request_limit === 20
+      r.request_limit === s.limit
       ? r
       : undefined;
   });
@@ -83,7 +93,7 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
                 </table>
                 <p class="dim small">
                   total {history().total_before}
-                  {history().before_capped ? " · capped" : ""}
+                  {history().before_capped ? " · partial result" : ""}
                 </p>
               </div>
               <div>
@@ -102,10 +112,25 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
                 </table>
                 <p class="dim small">
                   total {history().total_after}
-                  {history().after_capped ? " · capped" : ""}
+                  {history().after_capped ? " · partial result" : ""}
                 </p>
               </div>
             </div>
+            <Show when={history().before_capped || history().after_capped}>
+              <div class="cap-notice" role="status">
+                <span>
+                  PC history shows at most {(history().request_limit ?? limit()).toLocaleString()} before and after rows near the cursor.
+                </span>
+                <Show
+                  when={(history().request_limit ?? limit()) < MAX_TRACE_PC_LIMIT}
+                  fallback={<span class="dim">UI/server cap is {MAX_TRACE_PC_LIMIT.toLocaleString()} rows per side.</span>}
+                >
+                  <button type="button" onClick={() => setLimit(MAX_TRACE_PC_LIMIT)}>
+                    show {MAX_TRACE_PC_LIMIT.toLocaleString()}
+                  </button>
+                </Show>
+              </div>
+            </Show>
           </>
         )}
       </Show>

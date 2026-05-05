@@ -8,9 +8,18 @@ interface BacktracePanelProps {
   active: boolean;
 }
 
+const DEFAULT_BACKTRACE_LIMIT = 256;
+const MAX_BACKTRACE_LIMIT = 2048;
+
 export default function BacktracePanel(props: BacktracePanelProps) {
   const [queryIdx, setQueryIdx] = createSignal<number | undefined>();
+  const [limit, setLimit] = createSignal(DEFAULT_BACKTRACE_LIMIT);
   let queryTimer: number | undefined;
+
+  createEffect(() => {
+    props.idx;
+    setLimit(DEFAULT_BACKTRACE_LIMIT);
+  });
 
   createEffect(() => {
     if (queryTimer !== undefined) {
@@ -31,13 +40,17 @@ export default function BacktracePanel(props: BacktracePanelProps) {
     if (queryTimer !== undefined) window.clearTimeout(queryTimer);
   });
 
-  const [resp] = createResource(
-    queryIdx,
-    (idx) => fetchBacktrace(idx),
-  );
+  const source = createMemo((prev?: { idx: number; limit: number }) => {
+    const idx = queryIdx();
+    if (idx === undefined) return undefined;
+    const next = { idx, limit: limit() };
+    return prev && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
+  });
+  const [resp] = createResource(source, (s) => fetchBacktrace(s.idx, s.limit));
   const currentResp = createMemo(() => {
+    const s = source();
     const r = resp();
-    return r && r.idx === props.idx ? r : undefined;
+    return r && s && s.idx === props.idx && r.idx === s.idx && r.request_limit === s.limit ? r : undefined;
   });
 
   return (
@@ -58,6 +71,21 @@ export default function BacktracePanel(props: BacktracePanelProps) {
                 {" "}· showing last {r().returned ?? r().stack.length}
               </Show>
             </p>
+            <Show when={r().truncated}>
+              <div class="cap-notice" role="status">
+                <span>
+                  Backtrace depth is {r().depth.toLocaleString()}; showing the last {(r().request_limit ?? limit()).toLocaleString()} frames.
+                </span>
+                <Show
+                  when={(r().request_limit ?? limit()) < MAX_BACKTRACE_LIMIT}
+                  fallback={<span class="dim">UI/server cap is {MAX_BACKTRACE_LIMIT.toLocaleString()} frames.</span>}
+                >
+                  <button type="button" onClick={() => setLimit(MAX_BACKTRACE_LIMIT)}>
+                    show {MAX_BACKTRACE_LIMIT.toLocaleString()}
+                  </button>
+                </Show>
+              </div>
+            </Show>
             <table class="bt-table">
               <thead>
                 <tr>

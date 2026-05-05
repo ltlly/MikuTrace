@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchIdxsForPc, fetchRecord, fetchSearch } from "~/api/client";
 
@@ -14,6 +14,14 @@ interface AsmSearchSource {
   limit: number;
 }
 
+interface PcRefSource {
+  pc: string;
+  idx: number;
+  limit: number;
+}
+
+const DEFAULT_PC_REF_LIMIT = 60;
+const MAX_PC_REF_LIMIT = 5000;
 const DEFAULT_ASM_REF_LIMIT = 120;
 const MAX_ASM_REF_LIMIT = 5000;
 
@@ -29,6 +37,12 @@ function escapeRegex(text: string | undefined): string {
 export default function XrefPanel(props: XrefPanelProps) {
   const [pattern, setPattern] = createSignal("");
   const [submittedSearch, setSubmittedSearch] = createSignal<AsmSearchSource | undefined>();
+  const [pcRefLimit, setPcRefLimit] = createSignal(DEFAULT_PC_REF_LIMIT);
+  createEffect(() => {
+    props.idx;
+    setPcRefLimit(DEFAULT_PC_REF_LIMIT);
+  });
+
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
     (idx) => fetchRecord(idx),
@@ -37,14 +51,14 @@ export default function XrefPanel(props: XrefPanelProps) {
     const r = record();
     return r && r.idx === props.idx ? r : undefined;
   });
-  const pcSource = createMemo((prev?: { pc: string; idx: number }) => {
+  const pcSource = createMemo<PcRefSource | undefined>((prev) => {
     if (!props.active) return undefined;
     const pc = refPattern(currentRecord()?.pc);
     if (!pc) return undefined;
-    const next = { pc, idx: props.idx };
-    return prev && prev.pc === next.pc && prev.idx === next.idx ? prev : next;
+    const next = { pc, idx: props.idx, limit: pcRefLimit() };
+    return prev && prev.pc === next.pc && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
   });
-  const [pcRefs] = createResource(pcSource, (s) => (s ? fetchIdxsForPc(s.pc, s.idx, 60) : undefined));
+  const [pcRefs] = createResource(pcSource, (s) => (s ? fetchIdxsForPc(s.pc, s.idx, s.limit) : undefined));
   const defaultAsmPattern = createMemo(() => {
     if (!props.active || !currentRecord()?.asm) return "";
     return `^${escapeRegex(currentRecord()?.asm)}$`;
@@ -69,7 +83,7 @@ export default function XrefPanel(props: XrefPanelProps) {
     if (!s || !r) return undefined;
     return r.request_pc === s.pc &&
       r.request_cursor === s.idx &&
-      r.request_limit === 60
+      r.request_limit === s.limit
       ? r
       : undefined;
   });
@@ -149,8 +163,23 @@ export default function XrefPanel(props: XrefPanelProps) {
               <>
                 <p class="dim small">
                   {r().pc} · before {r().total_before} · after {r().total_after}
-                  {r().before_capped || r().after_capped ? " · capped" : ""}
+                  {r().before_capped || r().after_capped ? " · partial result" : ""}
                 </p>
+                <Show when={r().before_capped || r().after_capped}>
+                  <div class="cap-notice" role="status">
+                    <span>
+                      Same-PC refs show at most {(r().request_limit ?? pcRefLimit()).toLocaleString()} before and after rows near the cursor.
+                    </span>
+                    <Show
+                      when={(r().request_limit ?? pcRefLimit()) < MAX_PC_REF_LIMIT}
+                      fallback={<span class="dim">UI/server cap is {MAX_PC_REF_LIMIT.toLocaleString()} rows per side.</span>}
+                    >
+                      <button type="button" onClick={() => setPcRefLimit(MAX_PC_REF_LIMIT)}>
+                        show {MAX_PC_REF_LIMIT.toLocaleString()}
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
                 <table class="xref-table xref-exec-table">
                   <thead>
                     <tr>

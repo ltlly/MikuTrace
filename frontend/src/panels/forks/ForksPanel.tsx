@@ -3,6 +3,8 @@ import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { fetchForkEvents } from "~/api/client";
 
 const STATUS_OPTIONS = ["", "success", "failed_ptrace_conflict", "not_attempted"];
+const DEFAULT_FORK_LIMIT = 1000;
+const MAX_FORK_LIMIT = 5000;
 
 function statusOf(event: Record<string, unknown>): string {
   const status = event.attach_status;
@@ -20,14 +22,15 @@ interface ForksPanelProps {
 
 export default function ForksPanel(props: ForksPanelProps) {
   const [status, setStatus] = createSignal("");
+  const [limit, setLimit] = createSignal(DEFAULT_FORK_LIMIT);
   const [resp] = createResource(
-    () => (props.active ? status() : undefined),
-    (s) => fetchForkEvents(s),
+    () => (props.active ? { status: status(), limit: limit() } : undefined),
+    (s) => fetchForkEvents(s.status, s.limit),
   );
   const currentResp = createMemo(() => {
     const r = resp();
     if (!r || !props.active) return undefined;
-    return r.request_status === status() ? r : undefined;
+    return r.request_status === status() && r.request_limit === limit() ? r : undefined;
   });
   const failedCount = createMemo(
     () => currentResp()?.events.filter((e) => statusOf(e).startsWith("failed")).length ?? 0,
@@ -60,8 +63,23 @@ export default function ForksPanel(props: ForksPanelProps) {
           <>
             <p class="dim small">
               {r().returned ?? r().events.length}/{r().count} event{r().count === 1 ? "" : "s"}
-              {r().truncated ? " · truncated" : ""}
+              {r().truncated ? " · partial result" : ""}
             </p>
+            <Show when={r().truncated}>
+              <div class="cap-notice" role="status">
+                <span>
+                  Fork events stopped at {(r().request_limit ?? limit()).toLocaleString()} row cap.
+                </span>
+                <Show
+                  when={(r().request_limit ?? limit()) < MAX_FORK_LIMIT}
+                  fallback={<span class="dim">UI/server cap is {MAX_FORK_LIMIT.toLocaleString()} rows; filter by status.</span>}
+                >
+                  <button type="button" onClick={() => setLimit(MAX_FORK_LIMIT)}>
+                    show {MAX_FORK_LIMIT.toLocaleString()}
+                  </button>
+                </Show>
+              </div>
+            </Show>
             <table class="fork-table">
               <thead>
                 <tr>

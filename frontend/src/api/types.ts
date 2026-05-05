@@ -381,6 +381,7 @@ export interface ForkEventsResponse {
   truncated?: boolean;
   events: ForkEvent[];
   request_status?: string;
+  request_limit?: number;
 }
 
 // ── /api/forward-taint, /api/backward-taint ───────────────────────────────

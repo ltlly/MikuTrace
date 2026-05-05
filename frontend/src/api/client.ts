@@ -343,14 +343,16 @@ export async function fetchBacktrace(idx: number, limit = 256): Promise<Backtrac
   return out;
 }
 
-export async function fetchForkEvents(status = ""): Promise<ForkEventsResponse> {
+export async function fetchForkEvents(status = "", limit = 1000): Promise<ForkEventsResponse> {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
+  params.set("limit", String(limit));
   const qs = params.toString();
   const r = await fx(`/api/fork-events${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/fork-events ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as ForkEventsResponse;
   out.request_status = status;
+  out.request_limit = limit;
   return out;
 }
 
