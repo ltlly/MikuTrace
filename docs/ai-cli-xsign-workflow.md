@@ -181,6 +181,34 @@ taint and manual reasoning: use it to see which VM slot holds an input byte,
 which VM slot is copied into an output buffer, and where the bytecode IP moves
 between those events.
 
+For iterative backward walking, use `vm-backstep` on a concrete writer row:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backstep <call_dir> \
+  --idx <writer_idx> \
+  --reg <source_reg>
+```
+
+If `--reg` is omitted, the first store source register is used. The command
+finds the register's nearest local definition, then:
+
+- if the definition came from a VM slot load, finds the last write to that VM
+  slot within `--lookback`;
+- if the definition came from a normal memory load, finds the last write to
+  that memory range within `--lookback`;
+- returns `upstream.next.idx` and `upstream.next.reg` so the agent can run the
+  next `vm-backstep`.
+- returns `upstream.writes_tail` for multi-byte loads, because a 32-bit or
+  64-bit value may have been assembled by several byte stores and the final
+  chronological writer may explain only the last byte.
+
+This mirrors the manual trace workflow:
+
+```text
+final output store -> source VM slot -> previous slot writer -> source memory
+load -> previous memory writer -> ...
+```
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash
