@@ -302,7 +302,12 @@ def main() -> int:
     if largest_cfg_fn:
         probes.append(Probe("cfg svg largest fn", q("/api/cfg-svg", fn=largest_cfg_fn, mode="auto")))
     if not args.visible_ui_only:
-        probes.append(Probe("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)))
+        probes.extend(
+            [
+                Probe("reg timeline x0", q("/api/reg-timeline", reg="x0", start=0, end=-1, max_points=5000)),
+                Probe("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)),
+            ]
+        )
         if fn_id:
             probes.append(
                 Probe(

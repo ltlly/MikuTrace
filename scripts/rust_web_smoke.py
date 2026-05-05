@@ -332,6 +332,11 @@ def main() -> int:
         slow = sorted(probe["measurements"], key=lambda m: float(m["ms"]), reverse=True)[:5]
         for m in slow:
             print(f"  {m['ms']:8.1f} ms {m['label']}")
+        watched = {"cfg svg largest fn", "string provenance first", "reg timeline x0"}
+        printed_labels = {m["label"] for m in slow}
+        for m in probe["measurements"]:
+            if m["label"] in watched and m["label"] not in printed_labels:
+                print(f"  watch {float(m['ms']):6.1f} ms {m['label']}")
         health = sorted(
             [m for m in probe["measurements"] if int(m.get("health_polls") or 0) > 0],
             key=lambda m: float(m.get("health_max_ms") or 0.0),

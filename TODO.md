@@ -84,6 +84,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `scripts/web_api_perf_probe.py` 会从 `/api/strings` 选择一个字符串, 再测
   `/api/string-provenance` 前 128 字节以内的 per-byte writers/readers 来源,
   防止双击字符串来源面板的冷路径延迟回归。
+- ✅ Register timeline 纳入大 trace 性能 smoke:
+  `scripts/web_api_perf_probe.py` 的 all-surfaces 模式会测 `/api/reg-timeline`
+  冷路径, 并通过 runtime health polling 捕获是否堵塞 async runtime。
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
