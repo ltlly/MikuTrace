@@ -619,6 +619,15 @@ enum Cmd {
         /// Max rows per backward-taint seed.
         #[arg(long, default_value_t = 1000)]
         taint_max_count: usize,
+        /// Attach VM backchains for this many steps per selected writer run. 0 disables.
+        #[arg(long, default_value_t = 0)]
+        vm_chain_steps: usize,
+        /// Max writer runs per memory hit to expand with VM backchains.
+        #[arg(long, default_value_t = 6)]
+        vm_chain_runs: usize,
+        /// Lookback window for each VM backchain step.
+        #[arg(long, default_value_t = 200000)]
+        vm_chain_lookback: usize,
         /// Skip backward-taint expansion and only report output/memory writers.
         #[arg(long)]
         skip_taint: bool,
@@ -1401,6 +1410,9 @@ async fn main() -> anyhow::Result<()> {
             writes_per_hit,
             taint_seeds,
             taint_max_count,
+            vm_chain_steps,
+            vm_chain_runs,
+            vm_chain_lookback,
             skip_taint,
             no_url_decode,
         }) => {
@@ -1413,6 +1425,9 @@ async fn main() -> anyhow::Result<()> {
                 writes_per_hit,
                 taint_seeds,
                 taint_max_count,
+                vm_chain_steps,
+                vm_chain_runs,
+                vm_chain_lookback,
                 skip_taint,
                 url_decode: !no_url_decode,
             };
@@ -1956,6 +1971,9 @@ struct OutputBacktraceOpts {
     writes_per_hit: usize,
     taint_seeds: usize,
     taint_max_count: usize,
+    vm_chain_steps: usize,
+    vm_chain_runs: usize,
+    vm_chain_lookback: usize,
     skip_taint: bool,
     url_decode: bool,
 }
@@ -2072,6 +2090,11 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                         }));
                     }
                     let writer_runs = provenance_writer_runs(&provenance, &writer_details);
+                    let vm_chains = if opts.vm_chain_steps > 0 && opts.vm_chain_runs > 0 {
+                        vm_chains_for_writer_runs(&app, &writer_runs, &opts).await?
+                    } else {
+                        Vec::new()
+                    };
                     hit_reports.push(serde_json::json!({
                         "hit": hit,
                         "distance_to_value_idx": source.value_idx.and_then(|idx| {
@@ -2088,6 +2111,7 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                         "top_provenance_writers": top_writers,
                         "writer_details": writer_details,
                         "writer_runs": writer_runs,
+                        "vm_chains": vm_chains,
                     }));
                 }
             }
@@ -2443,6 +2467,83 @@ fn provenance_writer_runs(
         .collect()
 }
 
+async fn vm_chains_for_writer_runs(
+    app: &axum::Router,
+    writer_runs: &[serde_json::Value],
+    opts: &OutputBacktraceOpts,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let regs =
+        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27";
+    let mut out = Vec::new();
+    for run in writer_runs.iter().take(opts.vm_chain_runs) {
+        let mut seed_value = run
+            .get("writer_seeds")
+            .and_then(|v| v.as_array())
+            .and_then(|seeds| {
+                seeds.iter().find(|seed| {
+                    seed.get("kind").and_then(|v| v.as_str()) == Some("memory_writer_src_reg")
+                })
+            })
+            .cloned();
+        let fetched_record = if seed_value.is_none() {
+            if let Some(idx) = run.get("writer_idx").and_then(|v| v.as_u64()) {
+                let record = route_get_json_value_on(app, format!("/api/record/{idx}")).await?;
+                let seeds = writer_taint_seeds_from_record(&record);
+                seed_value = seeds
+                    .iter()
+                    .find(|seed| {
+                        seed.get("kind").and_then(|v| v.as_str()) == Some("memory_writer_src_reg")
+                    })
+                    .cloned();
+                Some(serde_json::json!({
+                    "record": record,
+                    "writer_seeds": seeds,
+                }))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let Some(seed_value) = seed_value else {
+            out.push(serde_json::json!({
+                "offset": run.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+                "length": run.get("length").cloned().unwrap_or(serde_json::Value::Null),
+                "writer_idx": run.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+                "fetched_record": fetched_record,
+                "status": "no_writer_seed",
+            }));
+            continue;
+        };
+        let Some(start) = seed_value.get("start").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let Some(reg) = seed_value.get("reg").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let chain = vm_backchain_value_on(
+            app,
+            start as usize,
+            Some(reg.to_string()),
+            opts.vm_chain_steps,
+            120,
+            opts.vm_chain_lookback,
+            5000,
+            regs.to_string(),
+        )
+        .await?;
+        out.push(serde_json::json!({
+            "offset": run.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+            "length": run.get("length").cloned().unwrap_or(serde_json::Value::Null),
+            "text": run.get("text").cloned().unwrap_or(serde_json::Value::Null),
+            "writer_idx": run.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+            "seed": seed_value,
+            "chain": chain,
+        }));
+    }
+    Ok(out)
+}
+
 fn push_taint_seed(
     seen: &mut HashSet<String>,
     queue: &mut Vec<serde_json::Value>,
@@ -2628,6 +2729,21 @@ async fn cmd_vm_backchain(
     regs: String,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let value =
+        vm_backchain_value_on(&app, idx, reg, steps, context, lookback, max_writes, regs).await?;
+    print_pretty(&value)
+}
+
+async fn vm_backchain_value_on(
+    app: &axum::Router,
+    idx: usize,
+    reg: Option<String>,
+    steps: usize,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    regs: String,
+) -> anyhow::Result<serde_json::Value> {
     let mut current_idx = idx;
     let mut current_reg = reg.clone();
     let mut seen = HashSet::new();
@@ -2682,7 +2798,7 @@ async fn cmd_vm_backchain(
             break;
         }
     }
-    print_pretty(&serde_json::json!({
+    Ok(serde_json::json!({
         "status": "ready",
         "start": {
             "idx": idx,

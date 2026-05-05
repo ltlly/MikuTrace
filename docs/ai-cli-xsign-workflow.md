@@ -144,6 +144,22 @@ offsets, writer idxs, source registers, source values, and text fragments. This
 is the preferred representation when asking an AI to reason about how the final
 string is assembled.
 
+When the target is VM-heavy, attach bounded VM chains directly to the output
+report:
+
+```bash
+rust/target/debug/tracemiku-cli output-backtrace <call_dir> \
+  --key x-sign \
+  --skip-taint \
+  --writes-per-hit 12 \
+  --vm-chain-steps 5 \
+  --vm-chain-runs 6
+```
+
+The resulting `patterns[].hit_reports[].vm_chains[]` entries start from
+selected `writer_runs[]` seeds and contain the same ordered chain produced by
+`vm-backchain`.
+
 When the output is produced by an OLLVM-style bytecode VM, `writer_runs[]` is
 also the best place to choose concrete trace windows. Start from the closest
 ranked raw output hit, pick a writer idx near the first output bytes, then slice
