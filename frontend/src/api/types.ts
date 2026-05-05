@@ -59,6 +59,12 @@ export interface RecordsResponse {
   start: number;
   end: number;
   count: number;
+  returned?: number;
+  requested_count?: number;
+  max_count_used?: number;
+  truncated?: boolean;
+  request_start?: number;
+  request_count?: number;
   records: RecordRow[];
 }
 

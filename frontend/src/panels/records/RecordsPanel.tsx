@@ -18,7 +18,8 @@ import {
   fetchRecords,
   fetchRegValueAt,
 } from "~/api/client";
-import type { RecordRow } from "~/api/types";
+import type { RecordRow, RecordsResponse } from "~/api/types";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 const ROW_HEIGHT = 18;
 const OVERSCAN = 18;
@@ -189,9 +190,16 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     },
   );
 
-  const [resp] = createResource(range, (r) => fetchRecords({ start: r.start, count: r.count }));
+  const [resp, currentResp] = createGuardedResource<
+    { start: number; count: number; end: number },
+    RecordsResponse
+  >(
+    range,
+    (r) => fetchRecords({ start: r.start, count: r.count }),
+    (r, s) => r.request_start === s.start && r.request_count === s.count,
+  );
   const displayRows = createMemo(() => {
-    const rows = resp()?.records ?? [];
+    const rows = currentResp()?.records ?? [];
     if (!rows.length) return rows;
     const visible = new Set<number>();
     const stable = rows.map((row) => {
@@ -394,6 +402,11 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         <div class="records-inner" style={{ height: `${innerHeight()}px` }}>
           <Show when={meta.loading || resp.loading}>
             <p class="dim records-loading">loading…</p>
+          </Show>
+          <Show when={currentResp()?.truncated}>
+            <div class="cap-notice records-cap-notice" role="status">
+              Records window stopped at {(currentResp()?.max_count_used ?? currentResp()?.count ?? 0).toLocaleString()} rows.
+            </div>
           </Show>
           <For each={displayRows()}>
             {(row) => (

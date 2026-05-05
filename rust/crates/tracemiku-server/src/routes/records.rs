@@ -55,6 +55,10 @@ pub struct RecordsResponse {
     pub start: usize,
     pub end: usize,
     pub count: usize,
+    pub returned: usize,
+    pub requested_count: usize,
+    pub max_count_used: usize,
+    pub truncated: bool,
     pub records: Vec<RecordRow>,
 }
 
@@ -69,11 +73,16 @@ pub async fn records_handler(
             start: q.start,
             end: q.start,
             count: 0,
+            returned: 0,
+            requested_count: q.count,
+            max_count_used: q.count.min(MAX_RECORD_COUNT),
+            truncated: false,
             records: vec![],
         });
     }
     let count = q.count.min(MAX_RECORD_COUNT);
     let end = q.start.saturating_add(count).min(n);
+    let truncated = q.count > count && end < n;
 
     let regs_filter: Option<Vec<String>> = if q.regs.is_empty() {
         None
@@ -153,6 +162,10 @@ pub async fn records_handler(
         start: q.start,
         end,
         count: end - q.start,
+        returned: rows.len(),
+        requested_count: q.count,
+        max_count_used: count,
+        truncated,
         records: rows,
     })
 }

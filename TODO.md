@@ -31,7 +31,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ Trace-for-PC / Xref same-PC / Backtrace / Forks / Memory context 等剩余
   visible cap surface 已补齐 partial result 说明, 能升到服务器上限的面板提供
   "show cap" 重跑入口。
-- ☐ 继续补齐 records / 隐藏冷路径分析面等 cap surface:
+- ☐ 继续补齐隐藏冷路径分析面等 cap surface:
   被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
   入口或解释。
 - ☐ 继续迁移 Solid stale-frame / latest-selection guard: 已新增

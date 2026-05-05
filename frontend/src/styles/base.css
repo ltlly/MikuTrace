@@ -634,6 +634,15 @@ body.is-resizing {
   z-index: 1;
 }
 
+.records-cap-notice {
+  position: sticky;
+  top: 28px;
+  z-index: 2;
+  margin: 8px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+}
+
 #stream .records-table,
 #stream .records-table tbody {
   display: block;

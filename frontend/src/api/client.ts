@@ -117,7 +117,10 @@ export async function fetchRecords(opts: FetchRecordsOpts = {}): Promise<Records
   const qs = params.toString();
   const r = await fx(`/api/records${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/records returned ${r.status}: ${await r.text()}`);
-  return (await r.json()) as RecordsResponse;
+  const out = (await r.json()) as RecordsResponse;
+  out.request_start = opts.start ?? 0;
+  out.request_count = opts.count ?? 100;
+  return out;
 }
 
 export async function fetchRecord(idx: number): Promise<RecordDetail> {

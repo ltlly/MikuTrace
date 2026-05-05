@@ -151,6 +151,10 @@ async fn records_start_count_window() {
     assert_eq!(v["start"], 2);
     assert_eq!(v["end"], 5);
     assert_eq!(v["count"], 3);
+    assert_eq!(v["returned"], 3);
+    assert_eq!(v["requested_count"], 3);
+    assert_eq!(v["max_count_used"], 3);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["records"].as_array().unwrap().len(), 3);
     assert_eq!(v["records"][0]["idx"], 2);
     assert_eq!(v["records"][2]["idx"], 4);
@@ -174,6 +178,10 @@ async fn records_count_is_capped_for_large_windows() {
     assert_eq!(v["start"], 0);
     assert_eq!(v["end"], 1000);
     assert_eq!(v["count"], 1000);
+    assert_eq!(v["returned"], 1000);
+    assert_eq!(v["requested_count"], 100000);
+    assert_eq!(v["max_count_used"], 1000);
+    assert_eq!(v["truncated"], true);
     assert_eq!(v["records"].as_array().unwrap().len(), 1000);
 }
 
@@ -195,6 +203,10 @@ async fn records_start_out_of_range_empty() {
     assert_eq!(v["start"], 999);
     assert_eq!(v["end"], 999);
     assert_eq!(v["count"], 0);
+    assert_eq!(v["returned"], 0);
+    assert_eq!(v["requested_count"], 10);
+    assert_eq!(v["max_count_used"], 10);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["records"].as_array().unwrap().len(), 0);
 }
 
