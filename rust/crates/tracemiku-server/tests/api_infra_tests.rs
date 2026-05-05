@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use regex::Regex;
 use tower::ServiceExt;
 
 fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
@@ -25,6 +26,79 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     )
     .unwrap();
     (tmp, cd)
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+}
+
+fn normalize_api_path(path: &str) -> String {
+    let without_qs_template = Regex::new(r#"\$\{\s*qs\s*\?[^}]+\}"#)
+        .unwrap()
+        .replace_all(path, "");
+    let dynamic = Regex::new(r#"\$\{[^}]+\}"#)
+        .unwrap()
+        .replace_all(&without_qs_template, "{}");
+    dynamic.split('?').next().unwrap_or("").to_string()
+}
+
+fn frontend_api_paths() -> Vec<String> {
+    let client = fs::read_to_string(repo_root().join("frontend/src/api/client.ts")).unwrap();
+    let mut paths = Vec::new();
+    for pattern in [
+        r#"fx\(\s*`([^`]*)`"#,
+        r#"fx\(\s*"([^"]*)""#,
+        r#"fx\(\s*'([^']*)'"#,
+    ] {
+        let fx_call = Regex::new(pattern).unwrap();
+        paths.extend(fx_call.captures_iter(&client).filter_map(|cap| {
+            let raw = cap.get(1)?.as_str();
+            (raw.starts_with("/api/") || raw == "/openapi.json").then(|| normalize_api_path(raw))
+        }));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn rust_router_paths() -> Vec<String> {
+    let routes =
+        fs::read_to_string(repo_root().join("rust/crates/tracemiku-server/src/routes/mod.rs"))
+            .unwrap();
+    let route_call = Regex::new(r#"\.route\(\s*"([^"]*)"\s*,\s*(get|post|any)\("#).unwrap();
+    let dynamic_segment = Regex::new(r#":[A-Za-z_][A-Za-z0-9_]*"#).unwrap();
+    let mut paths = route_call
+        .captures_iter(&routes)
+        .filter_map(|cap| {
+            let raw = cap.get(1)?.as_str();
+            if !(raw.starts_with("/api/") || raw == "/openapi.json") {
+                return None;
+            }
+            let normalized = dynamic_segment
+                .replace_all(raw, "{}")
+                .replace("*path", "{}");
+            Some(normalized.to_string())
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[test]
+fn frontend_api_calls_are_registered_in_rust_router() {
+    let router_paths = rust_router_paths();
+    let missing = frontend_api_paths()
+        .into_iter()
+        .filter(|path| !router_paths.contains(path))
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "frontend API paths missing from Rust router: {missing:?}"
+    );
 }
 
 #[tokio::test]
