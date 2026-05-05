@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 use axum::body::Body;
+use base64::alphabet::STANDARD as BASE64_STANDARD_ALPHABET;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -564,6 +567,27 @@ enum Cmd {
         contains: Option<String>,
         #[arg(long, default_value_t = 2000)]
         limit: usize,
+    },
+    /// Recursively scan jni_hooks.jsonl files for NewStringUTF key/value pairs.
+    ScanJniOutputStrings {
+        /// Trace root, run dir, or call dir. Defaults to ./traces.
+        #[arg(default_value = "traces")]
+        path: PathBuf,
+        /// Keep only pairs with this key, for example x-sign.
+        #[arg(long)]
+        key: Option<String>,
+        /// Keep pairs whose key or value contains this text.
+        #[arg(long)]
+        contains: Option<String>,
+        /// Stop after this many returned pairs. 0 means no cap.
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+        /// Include percent-decoded value fields when the value is URL-encoded.
+        #[arg(long)]
+        decode_url: bool,
+        /// Include best-effort base64 decoded length and prefix/suffix hex.
+        #[arg(long)]
+        decode_base64: bool,
     },
     /// Build an output-to-input backward trace report for a known output.
     OutputBacktrace {
@@ -1269,6 +1293,14 @@ async fn main() -> anyhow::Result<()> {
             contains,
             limit,
         }) => cmd_jni_output_strings(trace_dir, key, contains, limit).await,
+        Some(Cmd::ScanJniOutputStrings {
+            path,
+            key,
+            contains,
+            limit,
+            decode_url,
+            decode_base64,
+        }) => cmd_scan_jni_output_strings(path, key, contains, limit, decode_url, decode_base64),
         Some(Cmd::OutputBacktrace {
             trace_dir,
             key,
@@ -1424,7 +1456,15 @@ async fn route_get_json_value(
     path: String,
 ) -> anyhow::Result<serde_json::Value> {
     let app = build_cli_router(trace_dir, &path, None)?;
+    route_get_json_value_on(&app, path).await
+}
+
+async fn route_get_json_value_on(
+    app: &axum::Router,
+    path: String,
+) -> anyhow::Result<serde_json::Value> {
     let resp = app
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .uri(&path)
@@ -1491,7 +1531,22 @@ async fn jni_output_string_pairs(
         ("limit", limit.to_string()),
         ("id", "NewStringUTF".to_string()),
     ];
-    let value = route_get_json_value(trace_dir, route_path("/api/jni-events", &params)).await?;
+    let path = route_path("/api/jni-events", &params);
+    let app = build_cli_router(trace_dir, &path, None)?;
+    jni_output_string_pairs_on(&app, key, contains, limit).await
+}
+
+async fn jni_output_string_pairs_on(
+    app: &axum::Router,
+    key: Option<String>,
+    contains: Option<String>,
+    limit: usize,
+) -> anyhow::Result<serde_json::Value> {
+    let params = vec![
+        ("limit", limit.to_string()),
+        ("id", "NewStringUTF".to_string()),
+    ];
+    let value = route_get_json_value_on(app, route_path("/api/jni-events", &params)).await?;
     let events = value
         .get("events")
         .and_then(|v| v.as_array())
@@ -1557,6 +1612,162 @@ async fn jni_output_string_pairs(
     }))
 }
 
+fn cmd_scan_jni_output_strings(
+    path: PathBuf,
+    key: Option<String>,
+    contains: Option<String>,
+    limit: usize,
+    decode_url: bool,
+    decode_base64: bool,
+) -> anyhow::Result<()> {
+    let hook_files = find_jni_hook_files(&path)?;
+    let mut pairs = Vec::new();
+    let mut scanned_events = 0usize;
+    for file in &hook_files {
+        let events = read_new_string_utf_events(file)?;
+        scanned_events += events.len();
+        let mut iter = events.chunks_exact(2);
+        for pair in &mut iter {
+            let key_text = pair[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let value_text = pair[1].get("text").and_then(|v| v.as_str()).unwrap_or("");
+            if key.as_deref().is_some_and(|needle| key_text != needle) {
+                continue;
+            }
+            if contains
+                .as_deref()
+                .is_some_and(|needle| !key_text.contains(needle) && !value_text.contains(needle))
+            {
+                continue;
+            }
+            let mut row = serde_json::json!({
+                "call_dir": file.parent().map(|p| p.display().to_string()).unwrap_or_default(),
+                "hook_file": file.display().to_string(),
+                "key_idx": pair[0].get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "key_ret": pair[0].get("ret").cloned().unwrap_or(serde_json::Value::Null),
+                "key": key_text,
+                "value_idx": pair[1].get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "value_ret": pair[1].get("ret").cloned().unwrap_or(serde_json::Value::Null),
+                "value": value_text,
+                "value_len": value_text.len(),
+            });
+            if decode_url {
+                let decoded = percent_decode_bytes(value_text.as_bytes());
+                if decoded != value_text.as_bytes() {
+                    row["url_decoded"] =
+                        serde_json::Value::String(String::from_utf8_lossy(&decoded).into_owned());
+                    row["url_decoded_len"] = serde_json::json!(decoded.len());
+                }
+            }
+            if decode_base64 {
+                let base64_text = row
+                    .get("url_decoded")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(value_text);
+                row["base64"] = base64_summary(base64_text);
+            }
+            pairs.push(row);
+            if limit != 0 && pairs.len() >= limit {
+                break;
+            }
+        }
+        if limit != 0 && pairs.len() >= limit {
+            break;
+        }
+    }
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "path": path.display().to_string(),
+        "hook_files": hook_files.len(),
+        "source_events": scanned_events,
+        "count": pairs.len(),
+        "truncated": limit != 0 && pairs.len() >= limit,
+        "pairs": pairs,
+    }))
+}
+
+fn find_jni_hook_files(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    if path.is_file() {
+        if path.file_name().and_then(|v| v.to_str()) == Some("jni_hooks.jsonl") {
+            out.push(path.to_path_buf());
+        }
+        return Ok(out);
+    }
+    if !path.exists() {
+        bail!("path does not exist: {}", path.display());
+    }
+    collect_jni_hook_files(path, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn collect_jni_hook_files(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jni_hook_files(&path, out)?;
+        } else if path.file_name().and_then(|v| v.to_str()) == Some("jni_hooks.jsonl") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn read_new_string_utf_events(path: &Path) -> anyhow::Result<Vec<serde_json::Value>> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut events = Vec::new();
+    for line in raw.lines() {
+        if !line.contains("NewStringUTF") {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if event.get("id").and_then(|v| v.as_str()) != Some("NewStringUTF") {
+            continue;
+        }
+        let Some(text) = event
+            .get("args")
+            .and_then(|v| v.get("bytes"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        events.push(serde_json::json!({
+            "idx": event.get("trace_idx").cloned().unwrap_or(serde_json::Value::Null),
+            "ret": event.get("ret").cloned().unwrap_or(serde_json::Value::Null),
+            "text": text,
+            "text_len": text.len(),
+        }));
+    }
+    Ok(events)
+}
+
+fn base64_summary(raw: &str) -> serde_json::Value {
+    let mut padded = raw.trim().to_string();
+    let rem = padded.len() % 4;
+    if rem != 0 {
+        padded.push_str(&"=".repeat(4 - rem));
+    }
+    let engine = GeneralPurpose::new(
+        &BASE64_STANDARD_ALPHABET,
+        GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+    );
+    match engine.decode(padded.as_bytes()) {
+        Ok(bytes) => serde_json::json!({
+            "ok": true,
+            "decoded_len": bytes.len(),
+            "prefix_hex": bytes_to_hex(&bytes[..bytes.len().min(16)]),
+            "suffix_hex": bytes_to_hex(&bytes[bytes.len().saturating_sub(16)..]),
+        }),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "error": err.to_string(),
+        }),
+    }
+}
+
 #[derive(Debug)]
 struct OutputBacktraceOpts {
     key: Option<String>,
@@ -1580,7 +1791,8 @@ struct OutputSource {
 }
 
 async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> anyhow::Result<()> {
-    let source = resolve_output_source(trace_dir.clone(), &opts).await?;
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let source = resolve_output_source(&app, &opts).await?;
     let mut patterns: Vec<(&'static str, Vec<u8>)> =
         vec![("observed", source.primary_bytes.clone())];
     if opts.url_decode {
@@ -1626,11 +1838,7 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                 ("bytes_hex", hex.clone()),
                 ("max", opts.max_mem_hits.to_string()),
             ];
-            route_get_json_value(
-                trace_dir.clone(),
-                route_path("/api/find-mem-pattern", &params),
-            )
-            .await?
+            route_get_json_value_on(&app, route_path("/api/find-mem-pattern", &params)).await?
         } else {
             serde_json::json!({
                 "status": "skipped",
@@ -1657,8 +1865,8 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                         ("addr", format!("{addr:#x}")),
                         ("length", bytes.len().to_string()),
                     ];
-                    let provenance = route_get_json_value(
-                        trace_dir.clone(),
+                    let provenance = route_get_json_value_on(
+                        &app,
                         route_path("/api/string-provenance", &provenance_params),
                     )
                     .await?;
@@ -1668,19 +1876,9 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                         let Some(idx) = writer.get("idx").and_then(|v| v.as_u64()) else {
                             continue;
                         };
-                        let params = vec![
-                            ("idx_lo", idx.to_string()),
-                            ("idx_hi", (idx + 1).to_string()),
-                            ("addr_lo", format!("{addr:#x}")),
-                            ("addr_hi", format!("{addr_hi:#x}")),
-                            ("max", "20".to_string()),
-                        ];
-                        let writes = route_get_json_value(
-                            trace_dir.clone(),
-                            route_path("/api/mem-writes-in-range", &params),
-                        )
-                        .await?;
-                        let writer_seeds = writer_taint_seeds(&writes);
+                        let record =
+                            route_get_json_value_on(&app, format!("/api/record/{idx}")).await?;
+                        let writer_seeds = writer_taint_seeds_from_record(&record);
                         for seed in &writer_seeds {
                             push_taint_seed(
                                 &mut taint_seed_seen,
@@ -1690,10 +1888,11 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                         }
                         writer_details.push(serde_json::json!({
                             "writer": writer,
-                            "writes": writes,
+                            "record": record,
                             "writer_seeds": writer_seeds,
                         }));
                     }
+                    let writer_runs = provenance_writer_runs(&provenance, &writer_details);
                     hit_reports.push(serde_json::json!({
                         "hit": hit,
                         "range": {
@@ -1704,6 +1903,7 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                         "provenance": provenance,
                         "top_provenance_writers": top_writers,
                         "writer_details": writer_details,
+                        "writer_runs": writer_runs,
                     }));
                 }
             }
@@ -1727,7 +1927,7 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
         })
     } else {
         run_backward_taint_summaries(
-            trace_dir,
+            &app,
             &taint_seed_queue,
             opts.taint_seeds,
             opts.taint_max_count,
@@ -1750,7 +1950,7 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
 }
 
 async fn resolve_output_source(
-    trace_dir: PathBuf,
+    app: &axum::Router,
     opts: &OutputBacktraceOpts,
 ) -> anyhow::Result<OutputSource> {
     let source_count = opts.key.is_some() as usize
@@ -1789,7 +1989,7 @@ async fn resolve_output_source(
 
     let key = opts.key.as_deref().unwrap_or_default();
     let pairs =
-        jni_output_string_pairs(trace_dir, Some(key.to_string()), None, opts.jni_limit).await?;
+        jni_output_string_pairs_on(app, Some(key.to_string()), None, opts.jni_limit).await?;
     let pair = pairs
         .get("pairs")
         .and_then(|v| v.as_array())
@@ -1818,23 +2018,127 @@ async fn resolve_output_source(
     })
 }
 
-fn writer_taint_seeds(writes: &serde_json::Value) -> Vec<serde_json::Value> {
-    writes
-        .get("writes")
-        .and_then(|v| v.as_array())
+fn writer_taint_seeds_from_record(record: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(idx) = record.get("idx").and_then(|v| v.as_u64()) else {
+        return Vec::new();
+    };
+    let Some(asm) = record.get("asm").and_then(|v| v.as_str()) else {
+        return Vec::new();
+    };
+    store_source_regs_from_asm(asm)
         .into_iter()
-        .flatten()
-        .filter_map(|write| {
-            let idx = write.get("idx").and_then(|v| v.as_u64())? as usize;
-            let reg = write.get("src_reg").and_then(|v| v.as_str())?;
-            Some(serde_json::json!({
+        .map(|reg| {
+            let reg_key = register_value_key(&reg);
+            let src_value = record
+                .get("regs")
+                .and_then(|v| v.get(&reg_key))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            serde_json::json!({
                 "kind": "memory_writer_src_reg",
                 "start": idx,
                 "reg": reg,
-                "writer": write,
-            }))
+                "src_value": src_value,
+                "writer": {
+                    "idx": record.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "pc": record.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+                    "rel": record.get("rel").cloned().unwrap_or(serde_json::Value::Null),
+                    "func": record.get("func").cloned().unwrap_or(serde_json::Value::Null),
+                    "asm": record.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                },
+            })
         })
         .collect()
+}
+
+fn store_source_regs_from_asm(asm: &str) -> Vec<String> {
+    let asm = asm.trim();
+    let mut parts = asm.splitn(2, char::is_whitespace);
+    let Some(mnemonic) = parts.next() else {
+        return Vec::new();
+    };
+    let Some(operands) = parts.next() else {
+        return Vec::new();
+    };
+    let mnemonic = mnemonic.to_ascii_lowercase();
+    let operands = split_operands(operands);
+    let source_ops: Vec<String> = if matches!(mnemonic.as_str(), "stp" | "stnp") {
+        operands.into_iter().take(2).collect()
+    } else if matches!(mnemonic.as_str(), "stxp" | "stlxp") {
+        operands.into_iter().skip(1).take(2).collect()
+    } else if matches!(mnemonic.as_str(), "stxr" | "stlxr") {
+        operands.into_iter().skip(1).take(1).collect()
+    } else if mnemonic.starts_with("str")
+        || mnemonic.starts_with("stur")
+        || mnemonic.starts_with("sttr")
+        || mnemonic.starts_with("stlr")
+    {
+        operands.into_iter().take(1).collect()
+    } else {
+        Vec::new()
+    };
+    source_ops
+        .into_iter()
+        .filter_map(|op| first_register_token(&op))
+        .collect()
+}
+
+fn split_operands(operands: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut bracket_depth = 0i32;
+    for (idx, ch) in operands.char_indices() {
+        match ch {
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth -= 1,
+            ',' if bracket_depth == 0 => {
+                out.push(operands[start..idx].trim().to_string());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < operands.len() {
+        out.push(operands[start..].trim().to_string());
+    }
+    out
+}
+
+fn first_register_token(op: &str) -> Option<String> {
+    let token = op
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == '[' || ch == ']')
+        .find(|part| !part.is_empty())?;
+    let token = token.trim_end_matches('!').to_ascii_lowercase();
+    let is_gp = token == "sp"
+        || token == "wsp"
+        || token == "fp"
+        || token == "lr"
+        || token == "xzr"
+        || token == "wzr"
+        || token
+            .strip_prefix('x')
+            .is_some_and(|rest| rest.parse::<u8>().is_ok())
+        || token
+            .strip_prefix('w')
+            .is_some_and(|rest| rest.parse::<u8>().is_ok());
+    is_gp.then_some(token)
+}
+
+fn register_value_key(reg: &str) -> String {
+    let reg = reg.to_ascii_lowercase();
+    if let Some(rest) = reg.strip_prefix('w') {
+        if rest.parse::<u8>().is_ok() {
+            return format!("x{rest}");
+        }
+    }
+    match reg.as_str() {
+        "wsp" => "sp".to_string(),
+        "wzr" => "xzr".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn provenance_writer_counts(
@@ -1878,6 +2182,63 @@ fn provenance_writer_counts(
     rows.into_iter().take(limit).collect()
 }
 
+fn provenance_writer_runs(
+    provenance: &serde_json::Value,
+    writer_details: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let mut details_by_idx = BTreeMap::new();
+    for detail in writer_details {
+        if let Some(idx) = detail
+            .get("writer")
+            .and_then(|v| v.get("idx"))
+            .and_then(|v| v.as_u64())
+        {
+            details_by_idx.insert(idx, detail);
+        }
+    }
+
+    let mut runs: Vec<(Option<u64>, usize, Vec<u8>)> = Vec::new();
+    let Some(bytes) = provenance.get("bytes").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut current_idx: Option<u64> = None;
+    for byte in bytes {
+        let idx = byte.get("current_writer_idx").and_then(|v| v.as_u64());
+        let offset = byte.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let b = byte.get("byte").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+        if runs.last().is_none_or(|(run_idx, _, _)| *run_idx != idx) {
+            runs.push((idx, offset, Vec::new()));
+            current_idx = idx;
+        }
+        if current_idx == idx {
+            if let Some((_, _, data)) = runs.last_mut() {
+                data.push(b);
+            }
+        }
+    }
+
+    runs.into_iter()
+        .map(|(writer_idx, offset, data)| {
+            let detail = writer_idx.and_then(|idx| details_by_idx.get(&idx));
+            serde_json::json!({
+                "offset": offset,
+                "length": data.len(),
+                "writer_idx": writer_idx,
+                "bytes_hex": bytes_to_hex(&data),
+                "text": utf8_preview(&data, 80),
+                "record": detail
+                    .and_then(|v| v.get("record"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                "writer_seeds": detail
+                    .and_then(|v| v.get("writer_seeds"))
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            })
+        })
+        .collect()
+}
+
 fn push_taint_seed(
     seen: &mut HashSet<String>,
     queue: &mut Vec<serde_json::Value>,
@@ -1895,7 +2256,7 @@ fn push_taint_seed(
 }
 
 async fn run_backward_taint_summaries(
-    trace_dir: PathBuf,
+    app: &axum::Router,
     seeds: &[serde_json::Value],
     max_seeds: usize,
     max_count: usize,
@@ -1916,11 +2277,8 @@ async fn run_backward_taint_summaries(
             ("cross_fn_call", "true".to_string()),
             ("max_count", max_count.to_string()),
         ];
-        let response = route_get_json_value(
-            trace_dir.clone(),
-            route_path("/api/backward-taint", &params),
-        )
-        .await?;
+        let response =
+            route_get_json_value_on(app, route_path("/api/backward-taint", &params)).await?;
         runs.push(serde_json::json!({
             "seed": seed,
             "summary": summarize_backward_taint(&response),
@@ -2413,6 +2771,26 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
         s.push_str("...");
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::store_source_regs_from_asm;
+
+    #[test]
+    fn parses_store_source_registers() {
+        assert_eq!(store_source_regs_from_asm("str w1, [x19, x6]"), vec!["w1"]);
+        assert_eq!(
+            store_source_regs_from_asm("stp x9, x10, [x11, #0x10]"),
+            vec!["x9", "x10"]
+        );
+        assert_eq!(
+            store_source_regs_from_asm("stxp w0, x1, x2, [x3]"),
+            vec!["x1", "x2"]
+        );
+        assert_eq!(store_source_regs_from_asm("stxr w0, x1, [x2]"), vec!["x1"]);
+        assert!(store_source_regs_from_asm("ldr x0, [x1]").is_empty());
+    }
 }
 
 fn print_pretty(value: &serde_json::Value) -> anyhow::Result<()> {

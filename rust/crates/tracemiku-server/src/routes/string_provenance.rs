@@ -25,6 +25,7 @@ fn default_length() -> usize {
 
 #[derive(Debug, Serialize)]
 pub struct StringProvByte {
+    pub offset: usize,
     pub addr: String,
     pub byte: Option<u8>,
     pub kind: &'static str,
@@ -94,6 +95,7 @@ fn string_provenance_response(
         let (byte, kind, current_idx) = memshadow.byte_at(addr, u64::MAX);
         let current_writer_idx = memshadow.latest_write_idx_strict_before(addr, usize::MAX);
         bytes.push(StringProvByte {
+            offset,
             addr: format!("{addr:#x}"),
             byte,
             kind,

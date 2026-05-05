@@ -60,6 +60,7 @@ async fn string_provenance_reports_writers_and_readers() {
     assert_eq!(v["status"], "ready");
     assert_eq!(v["addr"], "0x7000");
     assert_eq!(v["length"], 2);
+    assert_eq!(v["bytes"][0]["offset"], 0);
     assert_eq!(v["bytes"][0]["addr"], "0x7000");
     assert_eq!(v["bytes"][0]["byte"], 65);
     assert_eq!(v["bytes"][0]["current_idx"], 0);

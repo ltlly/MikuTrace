@@ -580,6 +580,27 @@ fn output_backtrace_starts_from_jni_output_pair() {
 }
 
 #[test]
+fn scan_jni_output_strings_reads_hooks_without_trace_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _cd = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let v = run_json(&[
+        "scan-jni-output-strings".into(),
+        tmp.path().display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--decode-base64".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["pairs"][0]["key"], "x-sign");
+    assert_eq!(
+        v["pairs"][0]["value"],
+        STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
+    );
+    assert_eq!(v["pairs"][0]["base64"]["decoded_len"], 4);
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
