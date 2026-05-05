@@ -398,7 +398,50 @@ fn idxs_touching_addr_response(
     q: TouchingAddrQuery,
 ) -> TouchingAddrResponse {
     let addr = parse_int(&q.addr).unwrap_or(0);
-    let mut entries: Vec<TouchingAddrEntry> = inner
+    let mut entries: Vec<TouchingAddrEntry> = if let Some(mem) = inner.memshadow_if_ready() {
+        mem.bytes
+            .get(&addr)
+            .map(|events| {
+                events
+                    .iter()
+                    .filter_map(|ev| {
+                        let kind = if ev.kind == "r" {
+                            "r"
+                        } else if ev.kind == "w" || ev.kind == "x" {
+                            "w"
+                        } else {
+                            return None;
+                        };
+                        Some(TouchingAddrEntry { idx: ev.idx, kind })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    } else {
+        touching_addr_entries_from_index(inner, addr)
+    };
+    entries.sort_by_key(|e| e.idx);
+    let cut = entries.partition_point(|e| e.idx < q.cursor);
+    let before_start = cut.saturating_sub(q.limit);
+    let mut before = entries[before_start..cut].to_vec();
+    before.reverse();
+    let after = entries[cut..entries.len().min(cut + q.limit)].to_vec();
+    TouchingAddrResponse {
+        status: "ready",
+        addr: q.addr,
+        cursor: Some(q.cursor),
+        before,
+        after,
+        total_before: cut,
+        total_after: entries.len().saturating_sub(cut),
+    }
+}
+
+fn touching_addr_entries_from_index(
+    inner: &crate::state::AppStateInner,
+    addr: u64,
+) -> Vec<TouchingAddrEntry> {
+    inner
         .index
         .mem_writes
         .iter()
@@ -418,22 +461,7 @@ fn idxs_touching_addr_response(
                     kind: "r",
                 }),
         )
-        .collect();
-    entries.sort_by_key(|e| e.idx);
-    let cut = entries.partition_point(|e| e.idx < q.cursor);
-    let before_start = cut.saturating_sub(q.limit);
-    let mut before = entries[before_start..cut].to_vec();
-    before.reverse();
-    let after = entries[cut..entries.len().min(cut + q.limit)].to_vec();
-    TouchingAddrResponse {
-        status: "ready",
-        addr: q.addr,
-        cursor: Some(q.cursor),
-        before,
-        after,
-        total_before: cut,
-        total_after: entries.len().saturating_sub(cut),
-    }
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
