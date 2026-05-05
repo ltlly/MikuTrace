@@ -60,6 +60,8 @@ pub enum CfgSvgResponse {
 
 const AUTO_DOT_MAX_BLOCKS: usize = 120;
 const AUTO_DOT_MAX_EDGES: usize = 250;
+const FORCE_DOT_MAX_BLOCKS: usize = 400;
+const FORCE_DOT_MAX_EDGES: usize = 1_000;
 const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
 const LARGE_OVERVIEW_MAX_BLOCKS: usize = 2_000;
 const LARGE_OVERVIEW_MAX_EDGES: usize = 6_000;
@@ -180,7 +182,9 @@ fn prepare_cfg_svg(
 
     let included_starts: HashSet<u64> = included.iter().map(|b| b.start_pc).collect();
     let edge_count = included_edge_count(&inner, &included_starts);
-    if !force && (included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES) {
+    let auto_too_large = included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES;
+    let force_too_large = included.len() > FORCE_DOT_MAX_BLOCKS || edge_count > FORCE_DOT_MAX_EDGES;
+    if (!force && auto_too_large) || (force && force_too_large) {
         let overview_svg = if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
             && edge_count <= LARGE_OVERVIEW_MAX_EDGES
         {

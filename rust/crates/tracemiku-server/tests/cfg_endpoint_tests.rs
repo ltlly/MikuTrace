@@ -68,8 +68,8 @@ fn synth_edge_heavy_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let block_count = 80usize;
     let mut pc_indexes = Vec::new();
-    for src in 0..20usize {
-        for dst in 20..40usize {
+    for src in 0..35usize {
+        for dst in 35..70usize {
             pc_indexes.push(src);
             pc_indexes.push(dst);
         }
@@ -313,6 +313,35 @@ async fn cfg_svg_edge_heavy_fn_returns_overview_without_dot() {
             .as_str()
             .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100004")),
         "expected lightweight overview SVG with block anchors: {v}"
+    );
+}
+
+#[tokio::test]
+async fn cfg_svg_force_keeps_edge_heavy_fn_on_overview() {
+    let _guard = dot_env_lock().lock().await;
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_edge_heavy_cfg_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_edge&force=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "large");
+    assert_eq!(v["fn"], "f_edge");
+    assert!(
+        v["edge_count"].as_u64().unwrap_or(0) > 1000,
+        "fixture should trip the force edge threshold: {v}"
     );
 }
 

@@ -5,6 +5,8 @@ import type { CfgSvgResponse } from "~/api/types";
 
 const AUTO_RENDER_MAX_BLOCKS = 120;
 const AUTO_RENDER_MAX_SVG_BYTES = 900_000;
+const FORCE_DOT_MAX_BLOCKS = 400;
+const FORCE_DOT_MAX_EDGES = 1_000;
 const CFG_FETCH_DEBOUNCE_MS = 80;
 
 function clampTimeout(raw: number): number {
@@ -233,6 +235,10 @@ export default function CfgPanel(props: CfgPanelProps) {
     const svgBytes = resp.svg?.length ?? 0;
     const blocks = resp.block_count ?? 0;
     return blocks <= AUTO_RENDER_MAX_BLOCKS && svgBytes <= AUTO_RENDER_MAX_SVG_BYTES;
+  }
+
+  function forceDotDisabled(resp: { block_count: number; edge_count: number }): boolean {
+    return resp.block_count > FORCE_DOT_MAX_BLOCKS || resp.edge_count > FORCE_DOT_MAX_EDGES;
   }
 
   function selectFunction(name: string) {
@@ -478,7 +484,12 @@ export default function CfgPanel(props: CfgPanelProps) {
                       </div>
                     )}
                   </Show>
-                  <button type="button" onClick={reloadGraph}>force dot render</button>
+                  <Show
+                    when={!forceDotDisabled(r)}
+                    fallback={<p class="dim small">dot render disabled for this CFG size.</p>}
+                  >
+                    <button type="button" onClick={reloadGraph}>force dot render</button>
+                  </Show>
                 </div>
               )}
               {r.status === "empty" && (
