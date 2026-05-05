@@ -35,6 +35,7 @@ def main() -> int:
     settings = read("panels/settings/SettingsPanel.tsx")
     string_prov = read("panels/strings/StringProvenancePanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
+    xref = read("panels/xref/XrefPanel.tsx")
 
     failures: list[str] = []
 
@@ -116,6 +117,23 @@ def main() -> int:
         and "grid-column: 1 / -1" in css
         and ".settings-kv dd" in css
         and "overflow-wrap: anywhere" in css,
+        failures,
+    )
+
+    require(
+        "Refs panel uses explicit instruction-text wording",
+        "same PC executions" in xref
+        and "same instruction text" in xref
+        and "regex search over decoded assembly text" in xref
+        and "instruction text search failed" in xref
+        and "asm refs" not in xref.lower(),
+        failures,
+    )
+    require(
+        "Refs help clarifies it is not static xref analysis",
+        "不是静态代码引用分析" in app
+        and "按解码后的汇编文本做正则搜索" in app
+        and "ret 这类通用指令" in app,
         failures,
     )
 
