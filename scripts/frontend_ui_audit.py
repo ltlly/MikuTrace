@@ -67,6 +67,26 @@ def main() -> int:
 
     for col in ("name", "value", "delta", "note"):
         require(f"Registers column resize {col}", f'startResize("{col}"' in registers, failures)
+    require(
+        "Registers expose selected/changed/def/use row states",
+        "selected: sameSelected(reg, props.selectedReg)" in registers
+        and "changed: changed()" in registers
+        and "def: regListHas(r().regs_def, reg)" in registers
+        and "use: regListHas(r().regs_use, reg)" in registers,
+        failures,
+    )
+    require(
+        "Registers rows use aligned grid columns",
+        ".reg-diff-table tr" in css
+        and "display: grid" in css
+        and "grid-template-columns: var(--reg-col-name" in css
+        and ".reg-diff-table th:not(:last-child)" in css
+        and ".reg-diff-table tbody tr.selected" in css
+        and ".reg-diff-table tbody tr.changed" in css
+        and ".reg-diff-table tbody tr.def" in css
+        and ".reg-diff-table tbody tr.use" in css,
+        failures,
+    )
 
     require("Taint default view is tree", 'createSignal<ViewMode>("tree")' in taint, failures)
     require("Taint tree exposes dependency parents", "parentLabel(row)" in taint and "taint_depth" in taint, failures)
