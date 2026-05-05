@@ -14,6 +14,8 @@ use tracemiku_core::prelude::{
 
 use crate::state::AppState;
 
+const MAX_LLIL_RENDER_RECORDS: usize = 2_000;
+
 #[derive(Debug, Deserialize)]
 pub struct LlilRenderPayload {
     #[serde(default = "default_fn_id")]
@@ -40,6 +42,10 @@ fn default_max_records() -> usize {
 
 fn default_true() -> bool {
     true
+}
+
+fn effective_max_records(raw: usize) -> usize {
+    raw.clamp(1, MAX_LLIL_RENDER_RECORDS)
 }
 
 #[derive(Debug, Serialize)]
@@ -83,7 +89,7 @@ pub fn render_llil_response(
 ) -> Result<LlilRenderResponse, (StatusCode, String)> {
     let fn_ = resolve_fn(state, &payload.fn_id)?;
     let inner = &state.inner;
-    let max_records = payload.max_records.clamp(1, 10_000);
+    let max_records = effective_max_records(payload.max_records);
     let start = fn_.entry_idx.min(inner.trace.len());
     let end = fn_.exit_idx.min(inner.trace.len().saturating_sub(1));
 
@@ -162,6 +168,18 @@ pub fn render_llil_response(
         removed_pcs,
         pseudocode,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_records, MAX_LLIL_RENDER_RECORDS};
+
+    #[test]
+    fn effective_max_records_caps_extreme_requests() {
+        assert_eq!(effective_max_records(0), 1);
+        assert_eq!(effective_max_records(300), 300);
+        assert_eq!(effective_max_records(usize::MAX), MAX_LLIL_RENDER_RECORDS);
+    }
 }
 
 fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, String)> {

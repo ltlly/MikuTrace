@@ -11,7 +11,7 @@ use crate::state::AppState;
 
 const MAX_MEM_FLOW_BYTES: usize = 4_096;
 const MAX_MEM_FLOW_EVENTS_PER_BYTE: usize = 500;
-const MAX_MEM_FLOW_RETURNED_EVENTS: usize = 10_000;
+const MAX_MEM_FLOW_RETURNED_EVENTS: usize = 3_000;
 
 #[derive(Debug, Deserialize)]
 pub struct MemFlowQuery {

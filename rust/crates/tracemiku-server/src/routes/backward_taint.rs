@@ -11,7 +11,7 @@ use tracemiku_core::prelude::{backward_taint, default_frame_reg_set};
 
 use crate::state::AppState;
 
-const MAX_COUNT_CEILING: usize = 50_000;
+const MAX_COUNT_CEILING: usize = 5_000;
 const DEFAULT_MAX_COUNT: usize = 5_000;
 
 #[derive(Debug, Deserialize)]
@@ -79,8 +79,7 @@ fn backward_taint_response(
     inner: &crate::state::AppStateInner,
     q: BackwardTaintQuery,
 ) -> BackwardTaintResponse {
-    let raw = q.max_count.unwrap_or(DEFAULT_MAX_COUNT);
-    let eff = raw.min(MAX_COUNT_CEILING);
+    let eff = effective_max_count(q.max_count);
     let exclude: HashSet<String> = if q.data_only {
         default_frame_reg_set()
     } else {
@@ -157,5 +156,21 @@ fn backward_taint_response(
         chain: rows,
         stopped_at_max: stopped,
         max_count_used: eff,
+    }
+}
+
+fn effective_max_count(raw: Option<usize>) -> usize {
+    raw.unwrap_or(DEFAULT_MAX_COUNT).min(MAX_COUNT_CEILING)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_count, DEFAULT_MAX_COUNT, MAX_COUNT_CEILING};
+
+    #[test]
+    fn effective_max_count_caps_extreme_requests() {
+        assert_eq!(effective_max_count(None), DEFAULT_MAX_COUNT);
+        assert_eq!(effective_max_count(Some(10)), 10);
+        assert_eq!(effective_max_count(Some(usize::MAX)), MAX_COUNT_CEILING);
     }
 }

@@ -128,7 +128,7 @@ async fn mem_flow_caps_total_returned_events() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(v["events_returned"], 10_000);
+    assert_eq!(v["events_returned"], 3_000);
     assert_eq!(v["truncated"], true);
     let returned: usize = v["bytes"]
         .as_array()
@@ -136,7 +136,7 @@ async fn mem_flow_caps_total_returned_events() {
         .iter()
         .map(|b| b["events"].as_array().unwrap().len())
         .sum();
-    assert_eq!(returned, 10_000);
+    assert_eq!(returned, 3_000);
 }
 
 #[tokio::test]

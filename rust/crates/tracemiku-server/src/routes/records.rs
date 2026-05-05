@@ -11,7 +11,7 @@ use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
 
-const MAX_RECORD_COUNT: usize = 5_000;
+const MAX_RECORD_COUNT: usize = 1_000;
 
 #[derive(Debug, Deserialize)]
 pub struct RecordsQuery {

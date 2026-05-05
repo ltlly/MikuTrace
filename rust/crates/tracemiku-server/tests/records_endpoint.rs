@@ -172,9 +172,9 @@ async fn records_count_is_capped_for_large_windows() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["start"], 0);
-    assert_eq!(v["end"], 5000);
-    assert_eq!(v["count"], 5000);
-    assert_eq!(v["records"].as_array().unwrap().len(), 5000);
+    assert_eq!(v["end"], 1000);
+    assert_eq!(v["count"], 1000);
+    assert_eq!(v["records"].as_array().unwrap().len(), 1000);
 }
 
 #[tokio::test]
