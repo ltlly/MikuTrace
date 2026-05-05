@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -177,6 +177,18 @@ fn route_rs_files() -> Vec<String> {
     files
 }
 
+fn collect_rs_files(root: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files(&path, out);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
 #[test]
 fn route_files_are_classified_for_runtime_blocking() {
     let mut classified = HEAVY_ROUTE_FILES
@@ -218,6 +230,26 @@ fn heavy_route_handlers_stay_off_async_runtime() {
     assert!(
         missing.is_empty(),
         "heavy route handlers must move CPU-bound work off the async runtime: {missing:?}"
+    );
+}
+
+#[test]
+fn server_runtime_does_not_probe_deleted_python_dirs() {
+    let server_src = repo_root().join("rust/crates/tracemiku-server/src");
+    let mut files = Vec::new();
+    collect_rs_files(&server_src, &mut files);
+    let mut offenders = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path).unwrap();
+        for forbidden in [r#"join("viewer")"#, r#"join("webui")"#] {
+            if src.contains(forbidden) {
+                offenders.push(format!("{} contains {forbidden}", path.display()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "Rust server runtime must not probe deleted Python viewer/webui directories: {offenders:?}"
     );
 }
 
