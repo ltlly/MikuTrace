@@ -62,29 +62,58 @@ pub async fn last_write_of_addr_handler(
             writes_total: 0,
         });
     };
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || last_write_of_addr_response(&inner, q, addr))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "last write of addr worker failed: {err}");
+                LastWriteOfAddrResponse::NotFound {
+                    status: "error",
+                    addr: String::new(),
+                    before_idx: 0,
+                    writes_total: 0,
+                }
+            }),
+    )
+}
+
+fn last_write_of_addr_response(
+    inner: &crate::state::AppStateInner,
+    q: LastWriteOfAddrQuery,
+    addr: u64,
+) -> LastWriteOfAddrResponse {
     let before = if q.before_idx >= 0 {
         (q.before_idx as usize).min(inner.trace.len())
     } else {
         inner.trace.len()
     };
-    let mut writes: Vec<usize> = inner
-        .index
-        .mem_writes
-        .iter()
-        .filter(|w| touches_addr(w.addr, w.size, addr))
-        .map(|w| w.idx)
-        .collect();
-    writes.sort_unstable();
-    writes.dedup();
-    let cut = writes.partition_point(|&idx| idx < before);
-    let Some(&writer_idx) = cut.checked_sub(1).and_then(|i| writes.get(i)) else {
-        return Json(LastWriteOfAddrResponse::NotFound {
+    let mut last_seen_idx: Option<usize> = None;
+    let mut writes_before = 0usize;
+    let mut writes_after = 0usize;
+    let mut writer_idx: Option<usize> = None;
+    for write in &inner.index.mem_writes {
+        if !touches_addr(write.addr, write.size, addr) {
+            continue;
+        }
+        if last_seen_idx == Some(write.idx) {
+            continue;
+        }
+        last_seen_idx = Some(write.idx);
+        if write.idx < before {
+            writes_before += 1;
+            writer_idx = Some(write.idx);
+        } else {
+            writes_after += 1;
+        }
+    }
+    let Some(writer_idx) = writer_idx else {
+        return LastWriteOfAddrResponse::NotFound {
             status: "not-found",
             addr: q.addr,
             before_idx: before,
-            writes_total: writes.len(),
-        });
+            writes_total: writes_before + writes_after,
+        };
     };
     let record = inner.trace.record(writer_idx);
     let decoded = decode(record.pc, record.inst);
@@ -97,7 +126,7 @@ pub async fn last_write_of_addr_handler(
         .and_then(|reg| record.reg_by_name(reg))
         .map(|v| format!("{v:#x}"));
 
-    Json(LastWriteOfAddrResponse::Found {
+    LastWriteOfAddrResponse::Found {
         status: "found",
         addr: q.addr,
         before_idx: before,
@@ -110,9 +139,9 @@ pub async fn last_write_of_addr_handler(
             .to_string(),
         src_reg,
         src_value,
-        writes_before: cut,
-        writes_after: writes.len().saturating_sub(cut),
-    })
+        writes_before,
+        writes_after,
+    }
 }
 
 #[derive(Debug, Deserialize)]
