@@ -48,12 +48,19 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   已经启动 Rust server, 继续保留旧 `scripts/m2_*_parity.py` /
   `scripts/m3_*_parity.py` 只会变成 Rust-vs-Rust 的假 parity。当前有效 gate
   是 `make test-v2`, `scripts/rust_cli_web_parity.py`, `make smoke-web`。
+- ✅ Rust runtime 不再探测已删除 Python 目录: JNI vtable offset 只查
+  `tools/jni_offsets.json`, 然后回退解析 `vendor/jni/jni_bn.h`; 新增
+  `api_infra_tests::server_runtime_does_not_probe_deleted_python_dirs` 防止
+  server runtime 再 `join("viewer")` / `join("webui")`。
 - ✅ 恢复 Decompile/LLIL/LLM 可见 UI 前的性能证明: 最大 trace all-surfaces
-  smoke 中 dec summary 约 413ms, 期间 health max 约 1.9ms, 没有阻塞当前
-  trace cursor/CFG/Records 热路径。
+  smoke 中 dec summary 约 411ms, 期间 health max 约 1.8ms, 没有阻塞当前
+  trace cursor/CFG/Records 热路径; smoke 现在打印 `/api/bg-status.parallelism`,
+  1542 万 records trace 上 index/symbols/CFG/MemShadow/frame-depth/reg-timeline/JNI
+  scan 均规划为 16 workers。
 - ✅ `scripts/rust_web_smoke.py` 已固化为 `make smoke-web RUN=<trace>`;
   大 trace 默认跑 visible UI probe, 必要时加 `SMOKE_ARGS='--all-surfaces'`
-  覆盖隐藏/冷路径。
+  覆盖隐藏/冷路径。`make test-v2` / `make test-fast` 会先 py_compile
+  所有 Python gate/helper 脚本。
 
 ## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
 
