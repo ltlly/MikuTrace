@@ -203,6 +203,22 @@ def pick_function_id(functions: Any) -> str | None:
     return None
 
 
+def pick_largest_cfg_function(functions: Any, exclude: str | None) -> str | None:
+    best: tuple[int, int, str] | None = None
+    for fn in (functions or {}).get("functions", []):
+        name = fn.get("name")
+        if not isinstance(name, str) or not name or name == "?" or name == exclude:
+            continue
+        blocks = int(fn.get("blocks") or 0)
+        records = int(fn.get("records") or 0)
+        if blocks <= 0:
+            continue
+        candidate = (blocks, records, name)
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+    return best[2] if best else None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
@@ -239,6 +255,7 @@ def main() -> int:
     measurements.append(funcs_measure)
     fn = pick_function(funcs, fn_hint)
     fn_id = pick_function_id(funcs)
+    largest_cfg_fn = pick_largest_cfg_function(funcs, fn)
 
     probes: list[Probe] = [
         Probe("meta", "/api/meta"),
@@ -263,6 +280,8 @@ def main() -> int:
                 Probe("cfg current fn", q("/api/cfg", fn=fn)),
             ]
         )
+    if largest_cfg_fn:
+        probes.append(Probe("cfg svg largest fn", q("/api/cfg-svg", fn=largest_cfg_fn, mode="auto")))
     if not args.visible_ui_only:
         probes.append(Probe("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)))
         if fn_id:
@@ -327,6 +346,7 @@ def main() -> int:
         "mid_pc": rec_mid.get("pc"),
         "mid_func": fn_hint,
         "function_id": fn_id,
+        "largest_cfg_fn": largest_cfg_fn,
         "runtime_blocking_check": {
             "enabled": args.runtime_blocking_check,
             "health_path": args.health_path,
