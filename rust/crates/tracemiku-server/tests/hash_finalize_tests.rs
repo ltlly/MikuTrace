@@ -54,7 +54,10 @@ async fn hash_finalize_detects_contiguous_digest_region() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["window"], 10);
     assert_eq!(v["min_size"], 16);
+    assert_eq!(v["limit"], 500);
     assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["candidates"][0]["addr"], "0x7000");
     assert_eq!(v["candidates"][0]["size"], 32);
     assert_eq!(v["candidates"][0]["enter_idx"], 0);
@@ -69,4 +72,16 @@ async fn hash_finalize_ignores_non_contiguous_writes() {
     let (status, v) = get(cd, "/api/hash-finalize-detect?window=10&min_size=16").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 0);
+}
+
+#[tokio::test]
+async fn hash_finalize_limits_returned_candidates_without_losing_total() {
+    let (_tmp, cd) = synth_call_dir(16);
+    let (status, v) = get(cd, "/api/hash-finalize-detect?window=10&min_size=4&limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["count"], 4);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["limit"], 2);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["candidates"].as_array().unwrap().len(), 2);
 }

@@ -81,7 +81,6 @@ pub struct AppStateInner {
     pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
     ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
-    hash_finalize_cache: Mutex<HashMap<HashFinalizeCacheKey, Vec<HashFinalizeCandidate>>>,
     auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
     trace_ir_cache: Mutex<HashMap<TraceIrBuildOptions, Arc<TopIR>>>,
     pub(crate) reg_timeline_cache: Mutex<HashMap<String, Arc<Vec<(usize, u64)>>>>,
@@ -105,12 +104,6 @@ pub struct BacktraceEvent {
 struct OllvmCacheKey {
     min_entries: usize,
     threshold_bits: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct HashFinalizeCacheKey {
-    window: usize,
-    min_size: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -229,7 +222,6 @@ impl AppState {
             llm_cache: Mutex::new(HashMap::new()),
             cfg_svg_cache: Mutex::new(HashMap::new()),
             ollvm_cache: Mutex::new(HashMap::new()),
-            hash_finalize_cache: Mutex::new(HashMap::new()),
             auto_phase_cache: Mutex::new(HashMap::new()),
             trace_ir_cache: Mutex::new(HashMap::new()),
             reg_timeline_cache: Mutex::new(HashMap::new()),
@@ -510,22 +502,11 @@ impl AppStateInner {
         mem: &MemShadow,
         window: usize,
         min_size: u64,
-    ) -> Vec<HashFinalizeCandidate> {
-        let key = HashFinalizeCacheKey { window, min_size };
-        if let Ok(cache) = self.hash_finalize_cache.lock() {
-            if let Some(candidates) = cache.get(&key) {
-                return candidates.clone();
-            }
-        }
-
-        let candidates = self
-            .hash_finalize_index
+        limit: usize,
+    ) -> (usize, Vec<HashFinalizeCandidate>) {
+        self.hash_finalize_index
             .get_or_init(|| HashFinalizeIndex::build(mem))
-            .detect(window, min_size);
-        if let Ok(mut cache) = self.hash_finalize_cache.lock() {
-            cache.entry(key).or_insert_with(|| candidates.clone());
-        }
-        candidates
+            .detect_limited(window, min_size, limit)
     }
 
     pub fn auto_phases(&self, mem: &MemShadow, detect_byte_streams: bool) -> Vec<PhaseEntry> {

@@ -89,20 +89,28 @@ impl HashFinalizeIndex {
     }
 
     pub fn detect(&self, window: usize, min_size: u64) -> Vec<HashFinalizeCandidate> {
-        self.runs
+        self.detect_limited(window, min_size, usize::MAX).1
+    }
+
+    pub fn detect_limited(
+        &self,
+        window: usize,
+        min_size: u64,
+        limit: usize,
+    ) -> (usize, Vec<HashFinalizeCandidate>) {
+        let mut count = 0usize;
+        let mut candidates = Vec::with_capacity(limit.min(1024));
+        for run in self
+            .runs
             .iter()
-            .filter(|run| {
-                run.size >= min_size && run.exit_idx.saturating_sub(run.enter_idx) <= window
-            })
-            .map(|run| HashFinalizeCandidate {
-                addr: format!("{:#x}", run.addr),
-                size: run.size,
-                enter_idx: run.enter_idx,
-                exit_idx: run.exit_idx,
-                kind: run.kind,
-                guess: run.guess,
-            })
-            .collect()
+            .filter(|run| hash_run_matches(run, window, min_size))
+        {
+            count += 1;
+            if candidates.len() < limit {
+                candidates.push(hash_run_to_candidate(run));
+            }
+        }
+        (count, candidates)
     }
 }
 
@@ -122,6 +130,21 @@ fn digest_size_to_guess(size: u64) -> Option<&'static str> {
         32 => Some("sha256"),
         64 => Some("sha512"),
         _ => None,
+    }
+}
+
+fn hash_run_matches(run: &HashFinalizeRun, window: usize, min_size: u64) -> bool {
+    run.size >= min_size && run.exit_idx.saturating_sub(run.enter_idx) <= window
+}
+
+fn hash_run_to_candidate(run: &HashFinalizeRun) -> HashFinalizeCandidate {
+    HashFinalizeCandidate {
+        addr: format!("{:#x}", run.addr),
+        size: run.size,
+        enter_idx: run.enter_idx,
+        exit_idx: run.exit_idx,
+        kind: run.kind,
+        guess: run.guess,
     }
 }
 
@@ -165,6 +188,15 @@ mod tests {
         assert_eq!(index.detect(10, 16).len(), 1);
         assert_eq!(index.detect(2, 16).len(), 0);
         assert_eq!(index.detect(10, 64).len(), 0);
+    }
+
+    #[test]
+    fn hash_finalize_detect_limited_counts_all_matches() {
+        let mem = memshadow_with_writes(16);
+        let index = HashFinalizeIndex::build(&mem);
+        let (count, candidates) = index.detect_limited(10, 4, 2);
+        assert_eq!(count, 4);
+        assert_eq!(candidates.len(), 2);
     }
 
     #[test]
