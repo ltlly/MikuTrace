@@ -400,14 +400,34 @@ export async function fetchBackwardTaint(
   return (await r.json()) as BackwardTaintResponse;
 }
 
-export async function fetchDecSummary(): Promise<DecSummaryResponse> {
-  const r = await fx("/api/dec/summary");
+export interface DecIrOptions {
+  withMemshadow?: boolean;
+  splitTopK?: number;
+  splitMinRecords?: number;
+}
+
+function appendDecIrOptions(params: URLSearchParams, opts: DecIrOptions = {}) {
+  if (opts.withMemshadow) params.set("with_memshadow", "true");
+  if (opts.splitTopK !== undefined) params.set("split_top_k", String(opts.splitTopK));
+  if (opts.splitMinRecords !== undefined) params.set("split_min_records", String(opts.splitMinRecords));
+}
+
+export async function fetchDecSummary(opts: DecIrOptions = {}): Promise<DecSummaryResponse> {
+  const params = new URLSearchParams();
+  appendDecIrOptions(params, opts);
+  const qs = params.toString();
+  const r = await fx(`/api/dec/summary${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecSummaryResponse;
 }
 
-export async function fetchDecFn(fnId: string, tier = "hot"): Promise<DecFnResponse> {
+export async function fetchDecFn(
+  fnId: string,
+  tier = "hot",
+  opts: DecIrOptions = {},
+): Promise<DecFnResponse> {
   const params = new URLSearchParams({ tier });
+  appendDecIrOptions(params, opts);
   const r = await fx(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`);
   if (!r.ok) throw new Error(`/api/dec/fn/${fnId} ${r.status}: ${await r.text()}`);
   return (await r.json()) as DecFnResponse;

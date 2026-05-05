@@ -535,6 +535,9 @@ export interface DecLlmCallPayload {
   max_tokens: number;
   lang: string;
   tier: string;
+  with_memshadow?: boolean;
+  split_top_k?: number;
+  split_min_records?: number;
 }
 
 export interface DecLlmCallResponse {

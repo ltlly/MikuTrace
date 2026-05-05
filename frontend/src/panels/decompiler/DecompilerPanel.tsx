@@ -3,6 +3,7 @@ import { createEffect, createMemo, createResource, createSignal, For, Show } fro
 import {
   callDecLlm,
   callLlilLlm,
+  type DecIrOptions,
   fetchDecFn,
   fetchDecModels,
   fetchDecSummary,
@@ -19,11 +20,28 @@ export interface DecompilerPanelProps {
 interface FnSource {
   fnId: string;
   tier: string;
+  splitTopK: number;
+  splitMinRecords: number;
+  withMemshadow: boolean;
+}
+
+interface SummarySource {
+  splitTopK: number;
+  splitMinRecords: number;
+  withMemshadow: boolean;
 }
 
 export default function DecompilerPanel(props: DecompilerPanelProps) {
+  const [splitTopK, setSplitTopK] = createSignal(40);
+  const [splitMinRecords, setSplitMinRecords] = createSignal(10);
+  const [withMemshadow, setWithMemshadow] = createSignal(false);
+  const summarySource = createMemo<SummarySource | undefined>((prev) => {
+    if (!props.active) return undefined;
+    const next = decIrSource();
+    return sameDecIrSource(prev, next) ? prev : next;
+  });
+  const [summary] = createResource(summarySource, (s) => fetchDecSummary(decIrOptions(s)));
   const activeSource = () => (props.active ? "active" : undefined);
-  const [summary] = createResource(activeSource, () => fetchDecSummary());
   const [models] = createResource(activeSource, () => fetchDecModels());
   const [tier, setTier] = createSignal("hot");
   const [model, setModel] = createSignal("mimo");
@@ -44,6 +62,31 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   let llilSeq = 0;
   let llilLlmSeq = 0;
 
+  function decIrSource(): SummarySource {
+    return {
+      splitTopK: Math.max(0, Math.min(200, Math.trunc(splitTopK()) || 0)),
+      splitMinRecords: Math.max(1, Math.min(100000, Math.trunc(splitMinRecords()) || 1)),
+      withMemshadow: withMemshadow(),
+    };
+  }
+
+  function decIrOptions(s: SummarySource): DecIrOptions {
+    return {
+      splitTopK: s.splitTopK,
+      splitMinRecords: s.splitMinRecords,
+      withMemshadow: s.withMemshadow,
+    };
+  }
+
+  function sameDecIrSource(a: SummarySource | undefined, b: SummarySource): boolean {
+    return (
+      !!a &&
+      a.splitTopK === b.splitTopK &&
+      a.splitMinRecords === b.splitMinRecords &&
+      a.withMemshadow === b.withMemshadow
+    );
+  }
+
   createEffect(() => {
     if (!props.active) return;
     const first = summary()?.fns[0]?.id;
@@ -60,11 +103,20 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
     if (!props.active) return undefined;
     const fnId = props.selectedFn();
     if (!fnId) return null;
-    const next = { fnId, tier: tier() };
-    return prev && prev.fnId === next.fnId && prev.tier === next.tier ? prev : next;
+    const ir = decIrSource();
+    const next = { fnId, tier: tier(), ...ir };
+    return prev &&
+      prev.fnId === next.fnId &&
+      prev.tier === next.tier &&
+      sameDecIrSource(prev, next)
+      ? prev
+      : next;
   });
-  const [fnResp] = createResource(fnSource, (s) => (s ? fetchDecFn(s.fnId, s.tier) : undefined));
+  const [fnResp] = createResource(fnSource, (s) =>
+    s ? fetchDecFn(s.fnId, s.tier, decIrOptions(s)) : undefined,
+  );
   const currentFnResp = createMemo(() => {
+    if (fnResp.loading) return undefined;
     const r = fnResp();
     const s = fnSource();
     if (!r || !s) return undefined;
@@ -72,7 +124,8 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   });
 
   createEffect((prev?: string) => {
-    const sig = `${props.selectedFn()}\0${tier()}\0${model()}\0${lang()}\0${maxTokens()}`;
+    const ir = decIrSource();
+    const sig = `${props.selectedFn()}\0${tier()}\0${model()}\0${lang()}\0${maxTokens()}\0${ir.splitTopK}\0${ir.splitMinRecords}\0${ir.withMemshadow}`;
     if (prev !== undefined && prev !== sig) {
       llmSeq += 1;
       setLlmLoading(false);
@@ -109,6 +162,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
     if (!fnId) return;
     const seq = ++llmSeq;
     const tierAtStart = tier();
+    const irAtStart = decIrSource();
     setLlmLoading(true);
     setLlmError("");
     setLlmOutput("");
@@ -119,8 +173,16 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         max_tokens: Math.max(256, Math.min(32768, maxTokens())),
         lang: lang(),
         tier: tierAtStart,
+        with_memshadow: irAtStart.withMemshadow,
+        split_top_k: irAtStart.splitTopK,
+        split_min_records: irAtStart.splitMinRecords,
       });
-      if (seq !== llmSeq || props.selectedFn() !== fnId || tier() !== tierAtStart) return;
+      if (
+        seq !== llmSeq ||
+        props.selectedFn() !== fnId ||
+        tier() !== tierAtStart ||
+        !sameDecIrSource(irAtStart, decIrSource())
+      ) return;
       if (r.error) setLlmError(r.error);
       setLlmOutput([
         `model: ${r.model}`,
@@ -248,6 +310,36 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                       <option value="hot">hot</option>
                       <option value="all">all</option>
                     </select>
+                  </label>
+                  <label>
+                    split top
+                    <input
+                      type="number"
+                      min="0"
+                      max="200"
+                      step="1"
+                      value={splitTopK()}
+                      onInput={(e) => setSplitTopK(Number(e.currentTarget.value) || 0)}
+                    />
+                  </label>
+                  <label>
+                    min records
+                    <input
+                      type="number"
+                      min="1"
+                      max="100000"
+                      step="1"
+                      value={splitMinRecords()}
+                      onInput={(e) => setSplitMinRecords(Number(e.currentTarget.value) || 1)}
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={withMemshadow()}
+                      onChange={(e) => setWithMemshadow(e.currentTarget.checked)}
+                    />
+                    memshadow
                   </label>
                 </div>
                 <table class="dec-table">
