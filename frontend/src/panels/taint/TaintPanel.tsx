@@ -6,6 +6,7 @@ import type { TaintRow } from "~/api/types";
 type Direction = "forward" | "backward";
 type ViewMode = "flow" | "table";
 const TAINT_RETRY_MS = 500;
+const MAX_TAINT_ROWS = 5000;
 
 interface RunRequest {
   token: number;
@@ -41,7 +42,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [maxCount, setMaxCount] = createSignal(200);
   const [throughMem, setThroughMem] = createSignal(false);
   const [dataOnly, setDataOnly] = createSignal(false);
-  const [crossFnCall, setCrossFnCall] = createSignal(false);
+  const [crossFnCall, setCrossFnCall] = createSignal(true);
   const [running, setRunning] = createSignal(false);
   const [result, setResult] = createSignal<RunResult | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -194,10 +195,10 @@ export default function TaintPanel(props: TaintPanelProps) {
           <input
             type="number"
             min="1"
-            max="50000"
+            max={MAX_TAINT_ROWS}
             value={maxCount()}
             onInput={(e) =>
-              setMaxCount(Number(e.currentTarget.value) || 200)
+              setMaxCount(Math.max(1, Math.min(MAX_TAINT_ROWS, Number(e.currentTarget.value) || 200)))
             }
           />
         </label>
@@ -223,7 +224,7 @@ export default function TaintPanel(props: TaintPanelProps) {
             checked={crossFnCall()}
             onChange={(e) => setCrossFnCall(e.currentTarget.checked)}
           />
-          {" "}show call depth
+          {" "}call-depth flow
         </label>
         <label>
           view
