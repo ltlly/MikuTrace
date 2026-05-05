@@ -92,6 +92,7 @@ fn parallelism_status_value(state: &AppState) -> Value {
             "symbols": tracemiku_core::symbols::symbol_worker_count(records),
             "cfg": tracemiku_core::cfg::cfg_worker_count(records),
             "memshadow": tracemiku_core::memshadow::memshadow_worker_count(records),
+            "reg_timeline": crate::routes::timeline_diff::reg_timeline_worker_count(records),
         },
         "env": {
             "TRACEMIKU_ANALYSIS_THREADS": std::env::var("TRACEMIKU_ANALYSIS_THREADS").ok(),
@@ -99,6 +100,7 @@ fn parallelism_status_value(state: &AppState) -> Value {
             "TRACEMIKU_SYMBOL_THREADS": std::env::var("TRACEMIKU_SYMBOL_THREADS").ok(),
             "TRACEMIKU_CFG_THREADS": std::env::var("TRACEMIKU_CFG_THREADS").ok(),
             "TRACEMIKU_MEMSHADOW_THREADS": std::env::var("TRACEMIKU_MEMSHADOW_THREADS").ok(),
+            "TRACEMIKU_REG_TIMELINE_THREADS": std::env::var("TRACEMIKU_REG_TIMELINE_THREADS").ok(),
         }
     })
 }

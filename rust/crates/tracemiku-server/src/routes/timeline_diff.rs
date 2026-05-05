@@ -4,8 +4,24 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::thread;
 
 use crate::state::AppState;
+
+const REG_TIMELINE_PARALLEL_MIN_RECORDS: usize = 250_000;
+const REG_TIMELINE_MIN_CHUNK_RECORDS: usize = 200_000;
+const REG_TIMELINE_DIRECT_SCAN_RECORDS: usize = 250_000;
+const REG_TIMELINE_CACHE_MAX_POINTS: usize = 500_000;
+
+pub(crate) fn reg_timeline_worker_count(records: usize) -> usize {
+    tracemiku_core::parallel::worker_count(
+        records,
+        "TRACEMIKU_REG_TIMELINE_THREADS",
+        REG_TIMELINE_PARALLEL_MIN_RECORDS,
+        REG_TIMELINE_MIN_CHUNK_RECORDS,
+    )
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RegTimelineQuery {
@@ -49,41 +65,271 @@ pub async fn reg_timeline_handler(
     if q.reg == "xzr" || q.reg == "wzr" {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let n = state.inner.trace.len();
+    let inner = state.inner.clone();
+    let response = tokio::task::spawn_blocking(move || reg_timeline_response(&inner, q))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "reg timeline worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })??;
+    Ok(Json(response))
+}
+
+fn reg_timeline_response(
+    inner: &crate::state::AppStateInner,
+    q: RegTimelineQuery,
+) -> Result<RegTimelineResponse, StatusCode> {
+    let n = inner.trace.len();
     let end = if q.end < 0 || q.end as usize > n {
         n
     } else {
         q.end as usize
     };
     let start = q.start.min(end);
+    if let Some(timeline) = lookup_cached_reg_timeline(inner, &q.reg) {
+        return reg_timeline_response_from_timeline(inner, q, start, end, &timeline);
+    }
+
+    if let Some((points, truncated)) =
+        try_direct_reg_timeline(inner, &q.reg, start, end, q.max_points)?
+    {
+        return Ok(RegTimelineResponse {
+            reg: q.reg,
+            start,
+            end,
+            count: points.len(),
+            points,
+            truncated,
+        });
+    }
+
+    let timeline = cached_reg_timeline(inner, &q.reg)?;
+    reg_timeline_response_from_timeline(inner, q, start, end, &timeline)
+}
+
+fn reg_timeline_response_from_timeline(
+    inner: &crate::state::AppStateInner,
+    q: RegTimelineQuery,
+    start: usize,
+    end: usize,
+    timeline: &[(usize, u64)],
+) -> Result<RegTimelineResponse, StatusCode> {
     let mut points = Vec::new();
-    let mut prev: Option<u64> = None;
     let mut truncated = false;
-    for i in start..end {
-        let record = state.inner.trace.record(i);
-        let Some(value) = record.reg_by_name(&q.reg) else {
-            return Err(StatusCode::BAD_REQUEST);
-        };
-        if prev != Some(value) {
-            if points.len() >= q.max_points {
-                truncated = true;
-                break;
+
+    if start < end {
+        let start_value = inner
+            .trace
+            .record(start)
+            .reg_by_name(&q.reg)
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        push_reg_timeline_point(
+            &mut points,
+            start,
+            start_value,
+            q.max_points,
+            &mut truncated,
+        );
+        if !truncated {
+            for &(idx, value) in timeline.iter() {
+                if idx <= start {
+                    continue;
+                }
+                if idx >= end {
+                    break;
+                }
+                if !push_reg_timeline_point(&mut points, idx, value, q.max_points, &mut truncated) {
+                    break;
+                }
             }
-            points.push(RegTimelinePoint {
-                idx: i,
-                value: format!("{value:#x}"),
-            });
-            prev = Some(value);
         }
     }
-    Ok(Json(RegTimelineResponse {
+
+    Ok(RegTimelineResponse {
         reg: q.reg,
         start,
         end,
         count: points.len(),
         points,
         truncated,
-    }))
+    })
+}
+
+fn push_reg_timeline_point(
+    points: &mut Vec<RegTimelinePoint>,
+    idx: usize,
+    value: u64,
+    max_points: usize,
+    truncated: &mut bool,
+) -> bool {
+    if points.len() >= max_points {
+        *truncated = true;
+        return false;
+    }
+    points.push(RegTimelinePoint {
+        idx,
+        value: format!("{value:#x}"),
+    });
+    true
+}
+
+fn try_direct_reg_timeline(
+    inner: &crate::state::AppStateInner,
+    reg: &str,
+    start: usize,
+    end: usize,
+    max_points: usize,
+) -> Result<Option<(Vec<RegTimelinePoint>, bool)>, StatusCode> {
+    let mut points = Vec::new();
+    let mut prev: Option<u64> = None;
+    let mut truncated = false;
+    let budget_end = start
+        .saturating_add(REG_TIMELINE_DIRECT_SCAN_RECORDS)
+        .min(end);
+
+    for i in start..budget_end {
+        let value = inner
+            .trace
+            .record(i)
+            .reg_by_name(reg)
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        if prev != Some(value) {
+            if !push_reg_timeline_point(&mut points, i, value, max_points, &mut truncated) {
+                return Ok(Some((points, true)));
+            }
+            prev = Some(value);
+        }
+    }
+
+    if budget_end == end {
+        Ok(Some((points, false)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn cached_reg_timeline(
+    inner: &crate::state::AppStateInner,
+    reg: &str,
+) -> Result<Arc<Vec<(usize, u64)>>, StatusCode> {
+    if let Some(cached) = lookup_cached_reg_timeline(inner, reg) {
+        return Ok(cached);
+    }
+
+    let timeline = Arc::new(build_reg_timeline(inner, reg)?);
+    if timeline.len() > REG_TIMELINE_CACHE_MAX_POINTS {
+        tracing::info!(
+            target: "tracemiku-server",
+            reg,
+            points = timeline.len(),
+            max_points = REG_TIMELINE_CACHE_MAX_POINTS,
+            "register timeline too large to cache"
+        );
+        return Ok(timeline);
+    }
+
+    Ok(inner
+        .reg_timeline_cache
+        .lock()
+        .expect("reg timeline cache poisoned")
+        .entry(reg.to_string())
+        .or_insert_with(|| timeline.clone())
+        .clone())
+}
+
+fn lookup_cached_reg_timeline(
+    inner: &crate::state::AppStateInner,
+    reg: &str,
+) -> Option<Arc<Vec<(usize, u64)>>> {
+    inner
+        .reg_timeline_cache
+        .lock()
+        .expect("reg timeline cache poisoned")
+        .get(reg)
+        .cloned()
+}
+
+fn build_reg_timeline(
+    inner: &crate::state::AppStateInner,
+    reg: &str,
+) -> Result<Vec<(usize, u64)>, StatusCode> {
+    let n = inner.trace.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    // Validate before spawning workers so bad register names fail quickly.
+    inner
+        .trace
+        .record(0)
+        .reg_by_name(reg)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let workers = reg_timeline_worker_count(n);
+    if workers <= 1 {
+        return build_reg_timeline_range(inner, reg, 0, n);
+    }
+
+    tracing::info!(
+        target: "tracemiku-server",
+        records = n,
+        workers,
+        reg,
+        "building register timeline in parallel"
+    );
+    let chunk_size = n.div_ceil(workers);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let start = worker * chunk_size;
+            let end = (start + chunk_size).min(n);
+            if start >= end {
+                continue;
+            }
+            handles.push(scope.spawn(move || build_reg_timeline_range(inner, reg, start, end)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            })
+            .collect::<Result<Vec<_>, StatusCode>>()
+    })?;
+
+    let mut merged = Vec::new();
+    let mut prev: Option<u64> = None;
+    for partial in partials {
+        for (idx, value) in partial {
+            if prev != Some(value) {
+                merged.push((idx, value));
+                prev = Some(value);
+            }
+        }
+    }
+    Ok(merged)
+}
+
+fn build_reg_timeline_range(
+    inner: &crate::state::AppStateInner,
+    reg: &str,
+    start: usize,
+    end: usize,
+) -> Result<Vec<(usize, u64)>, StatusCode> {
+    let mut points = Vec::new();
+    let mut prev: Option<u64> = None;
+    for i in start..end {
+        let value = inner
+            .trace
+            .record(i)
+            .reg_by_name(reg)
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        if prev != Some(value) {
+            points.push((i, value));
+            prev = Some(value);
+        }
+    }
+    Ok(points)
 }
 
 #[derive(Debug, Deserialize)]

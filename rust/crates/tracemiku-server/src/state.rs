@@ -83,6 +83,7 @@ pub struct AppStateInner {
     hash_finalize_cache: Mutex<HashMap<HashFinalizeCacheKey, Vec<HashFinalizeCandidate>>>,
     auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
     trace_ir_cache: Mutex<HashMap<TraceIrBuildOptions, Arc<TopIR>>>,
+    pub(crate) reg_timeline_cache: Mutex<HashMap<String, Arc<Vec<(usize, u64)>>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
 }
 
@@ -229,6 +230,7 @@ impl AppState {
             hash_finalize_cache: Mutex::new(HashMap::new()),
             auto_phase_cache: Mutex::new(HashMap::new()),
             trace_ir_cache: Mutex::new(HashMap::new()),
+            reg_timeline_cache: Mutex::new(HashMap::new()),
             bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
         });
 

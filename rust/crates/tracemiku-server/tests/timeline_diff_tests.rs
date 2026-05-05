@@ -64,6 +64,16 @@ async fn reg_timeline_reports_distinct_values() {
 }
 
 #[tokio::test]
+async fn reg_timeline_respects_range_start() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/reg-timeline?reg=x0&start=1&end=3").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["points"][0]["idx"], 1);
+    assert_eq!(v["points"][0]["value"], "0x42");
+}
+
+#[tokio::test]
 async fn reg_timeline_unknown_reg_is_400() {
     let (_tmp, cd) = synth_call_dir();
     let (status, _v) = get(cd, "/api/reg-timeline?reg=bogus").await;
