@@ -39,6 +39,33 @@ ALLOWED_RAW_RESOURCES = {
     ("panels/xref/XrefPanel.tsx", "record"),
 }
 
+REQUIRED_RAW_RESOURCE_MARKERS = {
+    ("App.tsx", "cursorRecord"): [
+        "rowHintCache.has(idx) ? undefined : idx",
+        "const r = cursorRecord()",
+        "if (r && r.idx === idx)",
+        "setCursorHint(hint)",
+    ],
+    ("panels/memory/MemoryPanel.tsx", "record"): [
+        "const currentRecord = createMemo(() =>",
+        "return r && r.idx === props.idx ? r : undefined",
+    ],
+    ("panels/registers/RegistersPanel.tsx", "record"): [
+        "const currentRecord = createMemo(() =>",
+        "return r && r.idx === props.idx ? r : undefined",
+    ],
+    ("panels/tracepc/TraceForPcPanel.tsx", "record"): [
+        "const currentRecord = createMemo(() =>",
+        "return r && r.idx === props.idx ? r : undefined",
+        "const [idxs, currentHistory] = createGuardedResource",
+    ],
+    ("panels/xref/XrefPanel.tsx", "record"): [
+        "const currentRecord = createMemo(() =>",
+        "return r && r.idx === props.idx ? r : undefined",
+        "const [pcRefs, currentPcRefs] = createGuardedResource",
+    ],
+}
+
 RESOURCE_RE = re.compile(
     r"const\s+\[\s*([A-Za-z_][A-Za-z0-9_]*)[^\]]*\]\s*=\s*createResource\b",
     re.MULTILINE,
@@ -55,7 +82,17 @@ def main() -> int:
 
     missing = sorted(found - ALLOWED_RAW_RESOURCES)
     stale = sorted(ALLOWED_RAW_RESOURCES - found)
-    if missing or stale:
+    marker_failures: list[str] = []
+    for key, markers in REQUIRED_RAW_RESOURCE_MARKERS.items():
+        rel, name = key
+        if key not in found:
+            continue
+        text = (SRC / rel).read_text()
+        absent = [marker for marker in markers if marker not in text]
+        if absent:
+            marker_failures.append(f"{rel}: {name} missing markers {absent!r}")
+
+    if missing or stale or marker_failures:
         if missing:
             print("Raw createResource instances need explicit classification:", file=sys.stderr)
             for rel, name in missing:
@@ -64,6 +101,10 @@ def main() -> int:
             print("Stale frontend resource allowlist entries:", file=sys.stderr)
             for rel, name in stale:
                 print(f"  - {rel}: {name}", file=sys.stderr)
+        if marker_failures:
+            print("Allowed raw createResource guards regressed:", file=sys.stderr)
+            for failure in marker_failures:
+                print(f"  - {failure}", file=sys.stderr)
         return 1
 
     print(f"OK frontend resource audit raw_createResource={len(found)}")
