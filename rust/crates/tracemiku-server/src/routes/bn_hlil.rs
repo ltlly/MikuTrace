@@ -52,9 +52,8 @@ pub async fn hlil_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    Ok(Json(
-        request_sidecar_blocking(state, "hlil_for", json!({"pc": pc})).await?,
-    ))
+    let response = request_sidecar_blocking(state.clone(), "hlil_for", json!({"pc": pc})).await?;
+    Ok(Json(enrich_hlil_for_pc_response(&state, pc, response)))
 }
 
 pub async fn hlil_for_fn_handler(
@@ -108,12 +107,30 @@ pub async fn bn_cfg_svg_for_pc_handler(
         params["timeout"] = json!(timeout);
     }
     let cfg = request_sidecar_blocking(state, "cfg_for", params).await?;
-    Ok(Json(json!({
+    let ok = cfg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let ready = cfg.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut out = json!({
         "ok": cfg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
         "ready": cfg.get("ready").and_then(|v| v.as_bool()).unwrap_or(false),
         "svg": cfg.get("svg").and_then(|v| v.as_str()).unwrap_or(""),
         "error": cfg.get("error").cloned().unwrap_or(Value::Null),
-    })))
+        "status": cfg.get("status").and_then(|v| v.as_str()).unwrap_or(if ok && ready { "ok" } else { "not-ready" }),
+    });
+    for key in [
+        "pc",
+        "mode",
+        "fn",
+        "block_count",
+        "edge_count",
+        "dyn_only_count",
+        "fn_total_exec",
+        "current_bb",
+    ] {
+        if let Some(value) = cfg.get(key) {
+            out[key] = value.clone();
+        }
+    }
+    Ok(Json(out))
 }
 
 async fn request_sidecar_blocking(
@@ -174,4 +191,45 @@ fn parse_u64(s: &str) -> Option<u64> {
     } else {
         t.parse::<u64>().ok()
     }
+}
+
+fn enrich_hlil_for_pc_response(state: &AppState, pc: u64, mut response: Value) -> Value {
+    let Some(obj) = response.as_object_mut() else {
+        return response;
+    };
+    obj.entry("pc".to_string())
+        .or_insert_with(|| json!(format!("{pc:#x}")));
+    let ready = obj.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+    let ok = obj.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    obj.entry("status".to_string())
+        .or_insert_with(|| json!(if ok && ready { "ok" } else { "not-ready" }));
+
+    let (trace_name, trace_off) = state.inner.symbols.lookup(pc);
+    if trace_name != "?" {
+        obj.insert(
+            "trace_fn".to_string(),
+            json!({"name": trace_name, "off": format!("{trace_off:#x}")}),
+        );
+    }
+
+    if let Some(lines) = obj.get("lines").and_then(|v| v.as_array()) {
+        let mut best: Option<(usize, u64)> = None;
+        for (i, line) in lines.iter().enumerate() {
+            let Some(line_pc) = line.get("pc").and_then(|v| v.as_str()).and_then(parse_u64) else {
+                continue;
+            };
+            if line_pc == pc {
+                best = Some((i, line_pc));
+                break;
+            }
+            if line_pc <= pc && best.map(|(_, old)| line_pc > old).unwrap_or(true) {
+                best = Some((i, line_pc));
+            }
+        }
+        obj.insert(
+            "current_line_idx".to_string(),
+            json!(best.map(|(i, _)| i as i64).unwrap_or(-1)),
+        );
+    }
+    response
 }

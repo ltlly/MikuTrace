@@ -36,7 +36,10 @@ import type {
   LlilLlmPayload,
   LlilLlmResponse,
   HlilForFnResponse,
+  HlilForPcResponse,
+  AsmTokensResponse,
   CfgSvgResponse,
+  BnCfgSvgForPcResponse,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -151,6 +154,34 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
   const r = await fx(`/api/cfg-svg${qs ? "?" + qs : ""}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/cfg-svg returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as CfgSvgResponse;
+}
+
+export async function fetchBnCfgSvgForPc(
+  pc: string,
+  mode = "asm",
+  timeout = 30,
+  signal?: AbortSignal,
+): Promise<BnCfgSvgForPcResponse> {
+  const params = new URLSearchParams({ pc, mode, timeout: String(timeout) });
+  const r = await fx(`/api/bn-cfg-svg-for-pc?${params}`, { signal });
+  if (!r.ok) throw new Error(`/api/bn-cfg-svg-for-pc ${r.status}: ${await r.text()}`);
+  const out = (await r.json()) as BnCfgSvgForPcResponse;
+  out.request_pc = pc;
+  out.request_mode = mode;
+  return out;
+}
+
+export async function fetchAsmTokensForPcs(
+  pcs: string[],
+  signal?: AbortSignal,
+): Promise<AsmTokensResponse> {
+  const unique = [...new Set(pcs.filter(Boolean))];
+  const params = new URLSearchParams({ pcs: unique.join(",") });
+  const r = await fx(`/api/asm-tokens-for-pcs?${params}`, { signal });
+  if (!r.ok) throw new Error(`/api/asm-tokens-for-pcs ${r.status}: ${await r.text()}`);
+  const out = (await r.json()) as AsmTokensResponse;
+  out.request_pcs = unique;
+  return out;
 }
 
 export async function fetchStrings(
@@ -551,5 +582,17 @@ export async function fetchHlilForFn(fnId: string): Promise<HlilForFnResponse> {
   if (!r.ok) throw new Error(`/api/hlil-for-fn ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as HlilForFnResponse;
   out.request_fn_id = fnId;
+  return out;
+}
+
+export async function fetchHlilForPc(
+  pc: string,
+  signal?: AbortSignal,
+): Promise<HlilForPcResponse> {
+  const params = new URLSearchParams({ pc });
+  const r = await fx(`/api/hlil-for-pc?${params}`, { signal });
+  if (!r.ok) throw new Error(`/api/hlil-for-pc ${r.status}: ${await r.text()}`);
+  const out = (await r.json()) as HlilForPcResponse;
+  out.request_pc = pc;
   return out;
 }

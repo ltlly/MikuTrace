@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 
-import { fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
-import type { CfgSvgResponse } from "~/api/types";
+import { fetchBnCfgSvgForPc, fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
+import type { BnCfgSvgForPcResponse, CfgSvgResponse } from "~/api/types";
 
 const AUTO_RENDER_MAX_BLOCKS = 120;
 const AUTO_RENDER_MAX_SVG_BYTES = 900_000;
@@ -43,12 +43,21 @@ export interface CfgDebugState {
 }
 
 type CfgGraphResponse = CfgSvgResponse & {
+  source: "trace";
   requestFn: string;
   auto: boolean;
-};
+} | (BnCfgSvgForPcResponse & {
+  source: "bn-asm";
+  requestFn: string;
+  requestPc: string;
+  auto: boolean;
+});
+
+type CfgSource = "trace" | "bn-asm";
 
 export default function CfgPanel(props: CfgPanelProps) {
   const [fnName, setFnName] = createSignal("");
+  const [cfgSource, setCfgSource] = createSignal<CfgSource>("trace");
   const [autoGraph, setAutoGraph] = createSignal(true);
   const [timeout, setDotTimeout] = createSignal(60);
   const [reload, setReload] = createSignal(0);
@@ -90,6 +99,13 @@ export default function CfgPanel(props: CfgPanelProps) {
     const fn = (functions()?.functions ?? []).find((f) => f.id === want);
     return fn?.source === "bn" ? "" : fn?.name ?? "";
   });
+  const bnTarget = createMemo<{ key: string; pc: string; func: string | null } | undefined>((prev) => {
+    const r = currentRecord();
+    if (!r?.pc) return undefined;
+    const key = r.func ?? r.pc;
+    if (prev && prev.key === key) return prev;
+    return { key, pc: r.pc, func: r.func };
+  });
   const fnNames = createMemo(() => {
     const names = new Set<string>();
     for (const fn of functions()?.functions ?? []) {
@@ -99,7 +115,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     return [...names].sort((a, b) => a.localeCompare(b));
   });
   createEffect(() => {
-    if (!props.active || props.syncEnabled) return;
+    if (!props.active || props.syncEnabled || cfgSource() !== "trace") return;
     const selected = selectedFnName();
     if (selected && selected !== fnName()) {
       setAutoGraph(false);
@@ -109,11 +125,18 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   createEffect(() => {
     if (!props.active) return;
-    props.onDisplayFnChange(fnName());
+    if (cfgSource() === "bn-asm") {
+      const r = currentRecord();
+      props.onDisplayFnChange(r?.func ? `BN ${r.func}` : "BN ASM CFG");
+    } else {
+      props.onDisplayFnChange(fnName());
+    }
   });
 
   createEffect(() => {
-    if (!props.active || !fnName()) {
+    const sourceKind = cfgSource();
+    const bn = bnTarget();
+    if (!props.active || (sourceKind === "trace" && !fnName()) || (sourceKind === "bn-asm" && !bn?.pc)) {
       graphSeq += 1;
       if (graphTimer !== undefined) {
         window.clearTimeout(graphTimer);
@@ -128,7 +151,8 @@ export default function CfgPanel(props: CfgPanelProps) {
       return;
     }
 
-    const requestFn = fnName();
+    const requestFn = sourceKind === "trace" ? fnName() : bn?.func ?? "";
+    const requestPc = bn?.pc ?? "";
     const requestTimeout = timeout();
     const requestAuto = autoGraph();
     const requestForce = forceGraph();
@@ -150,11 +174,28 @@ export default function CfgPanel(props: CfgPanelProps) {
       if (seq !== graphSeq) return;
       const abort = new AbortController();
       graphAbort = abort;
-      void fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, force: requestForce, signal: abort.signal })
+      const promise =
+        sourceKind === "trace"
+          ? fetchCfgSvg({ fnName: requestFn, timeout: requestTimeout, force: requestForce, signal: abort.signal })
+          : fetchBnCfgSvgForPc(requestPc, "asm", requestTimeout, abort.signal);
+      void promise
         .then((resp) => {
           if (seq !== graphSeq || abort.signal.aborted) return;
-          setGraph({ ...resp, requestFn, auto: requestAuto });
-          if (resp.status === "ready") setLastGraphFn(requestFn);
+          if (sourceKind === "trace") {
+            const traceResp = resp as CfgSvgResponse;
+            setGraph({ ...traceResp, source: "trace", requestFn, auto: requestAuto });
+            if (traceResp.status === "ready") setLastGraphFn(requestFn);
+          } else {
+            const bnResp = resp as BnCfgSvgForPcResponse;
+            setGraph({
+              ...bnResp,
+              source: "bn-asm",
+              requestFn,
+              requestPc,
+              auto: requestAuto,
+            });
+            if (bnResp.ready && bnResp.ok) setLastGraphFn(requestFn || requestPc);
+          }
         })
         .catch((err) => {
           if (seq !== graphSeq || abort.signal.aborted) return;
@@ -195,7 +236,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   });
 
   createEffect(() => {
-    if (!props.active || !props.syncEnabled) return;
+    if (!props.active || !props.syncEnabled || cfgSource() !== "trace") return;
     const idx = props.currentIdx;
     const r = currentRecord();
     if (!r || r.idx !== idx || !r.func || r.func === fnName()) return;
@@ -206,8 +247,9 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   createEffect(() => {
     const name = fnName();
-    if (!props.active || !name || name === lastPanFn) return;
-    lastPanFn = name;
+    const key = cfgSource() === "trace" ? name : bnTarget()?.key ?? "";
+    if (!props.active || !key || key === lastPanFn) return;
+    lastPanFn = key;
     lastCenteredIdx = -1;
     setPan({ x: 0, y: 0, scale: 1 });
   });
@@ -218,12 +260,19 @@ export default function CfgPanel(props: CfgPanelProps) {
     const r = currentRecord();
     if (!r || r.idx !== idx) return;
     const g = graph();
-    if (!g || g.status !== "ready" || !shouldRenderGraph(g)) return;
-    if (g.requestFn !== fnName()) return;
-    if (r.func && g.fn && r.func !== g.fn) return;
+    if (!g) return;
+    if (g.source === "trace") {
+      if (g.status !== "ready" || !shouldRenderGraph(g)) return;
+      if (g.requestFn !== fnName()) return;
+      if (r.func && g.fn && r.func !== g.fn) return;
+    } else {
+      if (!g.ok || !g.ready || !g.svg) return;
+      if (g.requestPc !== r.pc && g.requestFn !== r.func) return;
+    }
     const raf = window.requestAnimationFrame(() => {
       if (!props.active || !props.syncEnabled) return;
-      if (idx !== props.currentIdx || graph() !== g || fnName() !== g.requestFn) return;
+      if (idx !== props.currentIdx || graph() !== g) return;
+      if (g.source === "trace" && fnName() !== g.requestFn) return;
       highlightAndCenterPc(r.pc, idx);
     });
     onCleanup(() => window.cancelAnimationFrame(raf));
@@ -244,6 +293,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   function selectFunction(name: string) {
     setAutoGraph(false);
     setForceGraph(false);
+    setCfgSource("trace");
     setFnName(name);
   }
 
@@ -363,13 +413,50 @@ export default function CfgPanel(props: CfgPanelProps) {
     frame?.releasePointerCapture(e.pointerId);
   }
 
+  function graphFrame(svg: string, overview = false) {
+    return (
+      <div
+        ref={(el) => {
+          frame = el;
+        }}
+        class="cfg-svg-frame"
+        classList={{ dragging: !!drag(), "cfg-overview-frame": overview }}
+        onWheel={onWheel}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <div
+          class="cfg-svg-canvas"
+          style={{
+            transform: `translate(${pan().x}px, ${pan().y}px) scale(${pan().scale})`,
+          }}
+          onClick={onSvgClick}
+          innerHTML={svg}
+        />
+      </div>
+    );
+  }
+
   return (
     <section class="panel cfg-panel">
       <h2>Graph</h2>
       <div class="cfg-controls">
         <label>
+          source
+          <select value={cfgSource()} onInput={(e) => setCfgSource(e.currentTarget.value as CfgSource)}>
+            <option value="trace">trace CFG</option>
+            <option value="bn-asm">BN ASM CFG</option>
+          </select>
+        </label>
+        <label>
           function
-          <select value={fnName()} onInput={(e) => selectFunction(e.currentTarget.value)}>
+          <select
+            value={fnName()}
+            disabled={cfgSource() !== "trace"}
+            onInput={(e) => selectFunction(e.currentTarget.value)}
+          >
             <option value="" disabled>select function</option>
             <For each={fnNames()}>{(name) => <option value={name}>{name}</option>}</For>
           </select>
@@ -392,8 +479,11 @@ export default function CfgPanel(props: CfgPanelProps) {
       <Show when={functions.error}>
         <p class="err">function list failed: {String(functions.error)}</p>
       </Show>
-      <Show when={!fnName() && !functions.loading}>
-        <p class="dim">select a function to render CFG. Full-trace CFG is not rendered by default.</p>
+      <Show when={cfgSource() === "trace" && !fnName() && !functions.loading}>
+        <p class="dim">select a function to render trace CFG. Full-trace CFG is not rendered by default.</p>
+      </Show>
+      <Show when={cfgSource() === "bn-asm" && !currentRecord()}>
+        <p class="dim">resolving current trace record before loading BN CFG…</p>
       </Show>
       <Show when={graphError()}>
         {(err) => <p class="err">graph load failed: {String(err())}</p>}
@@ -411,6 +501,32 @@ export default function CfgPanel(props: CfgPanelProps) {
       <Show when={!graphLoading() && graph()}>
         {(resp) => {
           const r = resp();
+          if (r.source === "bn-asm") {
+            return (
+              <>
+                <Show
+                  when={r.ok && r.ready && r.svg}
+                  fallback={
+                    <div class="cfg-large-graph">
+                      <p class="dim">
+                        BN ASM CFG unavailable for {r.requestPc}:{" "}
+                        {String(r.error ?? r.status ?? "sidecar returned no SVG")}
+                      </p>
+                    </div>
+                  }
+                >
+                  {(svg) => (
+                    <>
+                      <p class="dim small">
+                        BN ASM CFG · {r.fn?.name ?? (r.requestFn || r.requestPc)} · drag to pan · Ctrl+wheel zoom
+                      </p>
+                      {graphFrame(svg())}
+                    </>
+                  )}
+                </Show>
+              </>
+            );
+          }
           return (
             <>
               {r.status === "ready" && shouldRenderGraph(r) && (
@@ -419,27 +535,7 @@ export default function CfgPanel(props: CfgPanelProps) {
                     {r.block_count}/{r.total_block_count} blocks · {r.fn ?? "all"} · cache{" "}
                     {r.cached ? "hit" : "miss"} · drag to pan · Ctrl+wheel zoom
                   </p>
-                  <div
-                    ref={(el) => {
-                      frame = el;
-                    }}
-                    class="cfg-svg-frame"
-                    classList={{ dragging: !!drag() }}
-                    onWheel={onWheel}
-                    onPointerDown={onPointerDown}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                    onPointerCancel={onPointerUp}
-                  >
-                    <div
-                      class="cfg-svg-canvas"
-                      style={{
-                        transform: `translate(${pan().x}px, ${pan().y}px) scale(${pan().scale})`,
-                      }}
-                      onClick={onSvgClick}
-                      innerHTML={r.svg}
-                    />
-                  </div>
+                  {graphFrame(r.svg)}
                 </>
               )}
               {r.status === "ready" && !shouldRenderGraph(r) && (
@@ -460,29 +556,7 @@ export default function CfgPanel(props: CfgPanelProps) {
                     {r.svg ? "Lightweight overview shown without Graphviz." : "Overview SVG skipped to keep the UI responsive."}
                   </p>
                   <Show when={r.svg}>
-                    {(svg) => (
-                      <div
-                        ref={(el) => {
-                          frame = el;
-                        }}
-                        class="cfg-svg-frame cfg-overview-frame"
-                        classList={{ dragging: !!drag() }}
-                        onWheel={onWheel}
-                        onPointerDown={onPointerDown}
-                        onPointerMove={onPointerMove}
-                        onPointerUp={onPointerUp}
-                        onPointerCancel={onPointerUp}
-                      >
-                        <div
-                          class="cfg-svg-canvas"
-                          style={{
-                            transform: `translate(${pan().x}px, ${pan().y}px) scale(${pan().scale})`,
-                          }}
-                          onClick={onSvgClick}
-                          innerHTML={svg()}
-                        />
-                      </div>
-                    )}
+                    {(svg) => graphFrame(svg(), true)}
                   </Show>
                   <Show
                     when={!forceDotDisabled(r)}

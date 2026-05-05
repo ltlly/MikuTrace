@@ -128,6 +128,73 @@ async fn hlil_for_fn_rejects_unknown_trace_fn() {
 }
 
 #[tokio::test]
+async fn hlil_for_pc_adds_current_line_index() {
+    let dir = synth_trace();
+    let sidecar = dir.path().join("fake_hlil_sidecar.py");
+    fs::write(
+        &sidecar,
+        r#"#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get("method")
+    if method == "hlil_for":
+        result = {
+            "ok": True,
+            "ready": True,
+            "fn": {"name": "bn_root", "start": 1048576, "end": 1048588},
+            "lines": [
+                {"pc": "0x100000", "text": "a", "tokens": []},
+                {"pc": "0x100004", "text": "b", "tokens": []},
+                {"pc": "0x100008", "text": "c", "tokens": []},
+            ],
+            "vars": [],
+        }
+    else:
+        result = {"ok": False, "ready": True, "error": f"unexpected method {method}"}
+    print(json.dumps({"id": req.get("id"), "result": result}), flush=True)
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&sidecar).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sidecar, perms).unwrap();
+    }
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", &sidecar);
+    let app = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/hlil-for-pc?pc=0x100004")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["current_line_idx"], 1);
+    assert_eq!(v["pc"], "0x100004");
+    assert_eq!(v["status"], "ok");
+}
+
+#[tokio::test]
 async fn functions_merges_bn_entries_when_sidecar_is_ready() {
     let dir = synth_trace();
     let sidecar = dir.path().join("fake_bn_sidecar.py");

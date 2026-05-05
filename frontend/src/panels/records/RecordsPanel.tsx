@@ -11,6 +11,7 @@ import {
 
 import {
   fetchBlockForPc,
+  fetchAsmTokensForPcs,
   fetchIdxsForBlock,
   fetchIdxsForPc,
   fetchLastWriteOfReg,
@@ -18,7 +19,8 @@ import {
   fetchRecords,
   fetchRegValueAt,
 } from "~/api/client";
-import type { RecordRow, RecordsResponse } from "~/api/types";
+import type { AsmToken, RecordRow, RecordsResponse } from "~/api/types";
+import { normalizeReg, tokenAddr, tokenClass, tokenReg, tokenText } from "~/utils/bnTokens";
 import { createGuardedResource } from "~/utils/resourceGuards";
 
 const ROW_HEIGHT = 18;
@@ -50,14 +52,6 @@ interface RegContext {
   reg: string;
   value?: string | null;
   err?: string;
-}
-
-function normalizeReg(reg: string): string {
-  const r = reg.toLowerCase();
-  if (r === "fp") return "x29";
-  if (r === "lr") return "x30";
-  if (r.startsWith("w")) return `x${r.slice(1)}`;
-  return r;
 }
 
 function firstAsmReg(asm: string): string | null {
@@ -120,10 +114,17 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [meta] = createResource(fetchMeta);
   const regValueTitleCache = new Map<string, string>();
   const rowObjectCache = new Map<number, RecordRow>();
+  const bnTokenCache = new Map<string, AsmToken[] | null>();
+  const bnTokenInflight = new Set<string>();
+  const [bnTokenVersion, setBnTokenVersion] = createSignal(0);
+  const [bnTokenStatus, setBnTokenStatus] = createSignal("");
+  const [bnTokensDisabled, setBnTokensDisabled] = createSignal(false);
   let viewport: HTMLDivElement | undefined;
   let regContextSeq = 0;
   let regNavSeq = 0;
   let regContextAbort: AbortController | undefined;
+  let bnTokenTimer: number | undefined;
+  let bnTokenAbort: AbortController | undefined;
 
   function cancelRegContext() {
     regContextSeq += 1;
@@ -266,6 +267,86 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     });
   });
   onCleanup(() => cancelRegContext());
+  onCleanup(() => {
+    if (bnTokenTimer !== undefined) window.clearTimeout(bnTokenTimer);
+    bnTokenAbort?.abort();
+  });
+
+  function pcKey(pc: string): string {
+    return pc.trim().toLowerCase();
+  }
+
+  function tokensForPc(pc: string): AsmToken[] | null {
+    bnTokenVersion();
+    const cached = bnTokenCache.get(pcKey(pc));
+    return cached && cached.length ? cached : null;
+  }
+
+  function scheduleBnAsmFetch() {
+    if (bnTokensDisabled()) return;
+    if (bnTokenAbort) return;
+    if (bnTokenTimer !== undefined) return;
+    bnTokenTimer = window.setTimeout(() => {
+      bnTokenTimer = undefined;
+      void fetchBnAsmTokensForVisibleRows();
+    }, 60);
+  }
+
+  async function fetchBnAsmTokensForVisibleRows() {
+    if (bnTokensDisabled()) return;
+    if (bnTokenAbort) return;
+    const need: string[] = [];
+    for (const row of displayRows()) {
+      const key = pcKey(row.pc);
+      if (!key || bnTokenCache.has(key) || bnTokenInflight.has(key)) continue;
+      bnTokenInflight.add(key);
+      need.push(row.pc);
+      if (need.length >= 256) break;
+    }
+    if (!need.length) return;
+    const abort = new AbortController();
+    bnTokenAbort = abort;
+    try {
+      const r = await fetchAsmTokensForPcs(need, abort.signal);
+      if (abort.signal.aborted) return;
+      if (!r.ready) {
+        setBnTokenStatus(r.status || r.error || "not ready");
+        setBnTokensDisabled(true);
+        return;
+      }
+      if (r.status !== "ok") {
+        setBnTokenStatus(r.status);
+        return;
+      }
+      const got = r.tokens ?? {};
+      for (const pc of need) {
+        const key = pcKey(pc);
+        const tokens = got[key] ?? got[pc] ?? got[pc.toLowerCase()];
+        bnTokenCache.set(key, tokens && tokens.length ? tokens : null);
+      }
+      while (bnTokenCache.size > 50_000) {
+        const k = bnTokenCache.keys().next().value as string | undefined;
+        if (!k) break;
+        bnTokenCache.delete(k);
+      }
+      setBnTokenStatus("ok");
+      setBnTokenVersion((v) => v + 1);
+    } catch (err) {
+      if (abort.signal.aborted) return;
+      setBnTokenStatus(String(err));
+    } finally {
+      for (const pc of need) bnTokenInflight.delete(pcKey(pc));
+      if (bnTokenAbort === abort) bnTokenAbort = undefined;
+      if (!abort.signal.aborted && !bnTokensDisabled() && displayRows().some((row) => !bnTokenCache.has(pcKey(row.pc)))) {
+        scheduleBnAsmFetch();
+      }
+    }
+  }
+
+  createEffect(() => {
+    displayRows();
+    scheduleBnAsmFetch();
+  });
 
   createEffect(() => {
     const selected = props.selectedIdx;
@@ -402,6 +483,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         <span class="grow" />
         <span>selected idx {props.selectedIdx}</span>
         <span>reg {props.selectedReg}</span>
+        <Show when={bnTokenStatus() && bnTokenStatus() !== "ok"}>
+          <span title="BN asm token overlay status">bn tokens {bnTokenStatus()}</span>
+        </Show>
       </div>
       <div
         ref={(el) => {
@@ -451,30 +535,78 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                 </span>
                 <span class="asm" title={row.asm}>
                   <code>
-                    <For each={asmParts(row.asm)}>
-                      {(part) => (
-                        <Show
-                          when={part.reg}
-                          fallback={<span>{part.text}</span>}
-                        >
-                          {(reg) => (
-                            <span
-                              class="op-reg"
-                              classList={{ selected: reg() === normalizeReg(props.selectedReg) }}
-                              title={`${reg()} · double-click last write · right-click actions`}
-                              onDblClick={(e) => {
-                                e.stopPropagation();
-                                void jumpLastWrite(row.idx, reg());
-                              }}
-                              onMouseEnter={(e) => void loadRegTitle(e.currentTarget, row.idx, reg())}
-                              onContextMenu={(e) => void openRegContext(e, row, reg())}
+                    <Show
+                      when={tokensForPc(row.pc)}
+                      fallback={
+                        <For each={asmParts(row.asm)}>
+                          {(part) => (
+                            <Show
+                              when={part.reg}
+                              fallback={<span>{part.text}</span>}
                             >
-                              {part.text}
-                            </span>
+                              {(reg) => (
+                                <span
+                                  class="op-reg"
+                                  classList={{ selected: reg() === normalizeReg(props.selectedReg) }}
+                                  title={`${reg()} · double-click last write · right-click actions`}
+                                  onDblClick={(e) => {
+                                    e.stopPropagation();
+                                    void jumpLastWrite(row.idx, reg());
+                                  }}
+                                  onMouseEnter={(e) => void loadRegTitle(e.currentTarget, row.idx, reg())}
+                                  onContextMenu={(e) => void openRegContext(e, row, reg())}
+                                >
+                                  {part.text}
+                                </span>
+                              )}
+                            </Show>
                           )}
-                        </Show>
+                        </For>
+                      }
+                    >
+                      {(tokens) => (
+                        <For each={tokens()}>
+                          {(token) => {
+                            const reg = tokenReg(token);
+                            const addr = tokenAddr(token);
+                            return (
+                              <span
+                                class={`${tokenClass(token)}${reg ? " op-reg" : ""}`}
+                                classList={{
+                                  selected: !!reg && reg === normalizeReg(props.selectedReg),
+                                }}
+                                data-a={addr ?? undefined}
+                                data-reg={reg ?? undefined}
+                                title={
+                                  reg
+                                    ? `${reg} · double-click last write · right-click actions`
+                                    : addr
+                                      ? `${addr} · double-click jump to nearest trace PC`
+                                      : undefined
+                                }
+                                onDblClick={(e) => {
+                                  if (reg) {
+                                    e.stopPropagation();
+                                    void jumpLastWrite(row.idx, reg);
+                                  } else if (addr) {
+                                    e.stopPropagation();
+                                    void jumpPcValue(addr, row.idx);
+                                  }
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (reg) void loadRegTitle(e.currentTarget, row.idx, reg);
+                                }}
+                                onContextMenu={(e) => {
+                                  if (reg) void openRegContext(e, row, reg);
+                                }}
+                              >
+                                {tokenText(token)}
+                              </span>
+                            );
+                          }}
+                        </For>
                       )}
-                    </For>
+                    </Show>
                   </code>
                 </span>
               </div>

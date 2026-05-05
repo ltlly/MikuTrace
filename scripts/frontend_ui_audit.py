@@ -2,7 +2,7 @@
 
 This is intentionally not a browser replacement. It pins UI affordances that
 were previously reported as regressions and are cheap to verify from source:
-hidden Decompile/LLM entry points, draggable columns/panels, themed scrollbars,
+Decompile without LLM entry points, draggable columns/panels, themed scrollbars,
 Memory defaults, CFG loading guards, and long-output wrapping.
 """
 
@@ -37,12 +37,20 @@ def main() -> int:
     string_prov = read("panels/strings/StringProvenancePanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
     xref = read("panels/xref/XrefPanel.tsx")
+    decompiler = read("panels/decompiler/DecompilerPanel.tsx")
 
     failures: list[str] = []
 
-    require("App does not import visible DecompilerPanel", "DecompilerPanel" not in app, failures)
-    require("App has no visible LLM controls", "call LLM" not in app and "LLIL → LLM" not in app, failures)
-    require("right tabs are cfg/regs/hlil only", re.search(r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"', app) is not None, failures)
+    require("App exposes DecompilerPanel", "DecompilerPanel" in app and '"dec"' in app, failures)
+    require(
+        "Decompile UI has no visible LLM controls",
+        "call LLM" not in decompiler
+        and "LLIL → LLM" not in decompiler
+        and "callDecLlm" not in decompiler
+        and "callLlilLlm" not in decompiler,
+        failures,
+    )
+    require("right tabs include cfg/regs/hlil/dec", re.search(r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"\s*\|\s*"dec"', app) is not None, failures)
 
     require("left panel splitter exists", "layout-splitter-left" in app and 'startPanelResize("left"' in app, failures)
     require("right panel splitter exists", "layout-splitter-right" in app and 'startPanelResize("right"' in app, failures)
@@ -123,7 +131,13 @@ def main() -> int:
     require("CFG fetch passes abort signal", "fetchCfgSvg({" in cfg and "signal: abort.signal" in cfg, failures)
     require("CFG loading clears stale graph", "setGraph(null)" in cfg and "setGraphLoading(true)" in cfg, failures)
     require("CFG cleanup aborts in-flight graph", "onCleanup(() =>" in cfg and "graphAbort?.abort()" in cfg, failures)
-    require("CFG response records request function", "requestFn: string" in cfg and "setGraph({ ...resp, requestFn" in cfg, failures)
+    require(
+        "CFG response records request function/source",
+        "requestFn: string" in cfg
+        and 'source: "trace"' in cfg
+        and "setGraph({ ...traceResp" in cfg,
+        failures,
+    )
     require("CFG highlight rejects stale graph", "g.requestFn !== fnName()" in cfg and "graph() !== g" in cfg, failures)
     require("CFG loading spinner is rendered", 'class="cfg-loading"' in cfg and 'class="cfg-spinner"' in cfg, failures)
 

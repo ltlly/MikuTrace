@@ -59,8 +59,8 @@ STABILITY_TOKENS = {
     ],
     ("panels/hlil/HlilPanel.tsx", "source"): [
         "createMemo<HlilSource | undefined>((prev)",
-        "prev.fnId === next.fnId",
-        "prev.reload === next.reload",
+        "prev.pc === next.pc",
+        "prev.idx === next.idx",
         "? prev : next",
     ],
     ("panels/memory/MemoryPanel.tsx", "dumpSource"): [

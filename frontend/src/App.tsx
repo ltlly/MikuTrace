@@ -5,6 +5,7 @@ import { fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/clien
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
+import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
@@ -30,7 +31,7 @@ type LeftTab =
   | "xref"
   | "sofilter"
   | "settings";
-type RightTab = "cfg" | "regs" | "hlil";
+type RightTab = "cfg" | "regs" | "hlil" | "dec";
 type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 type HelpState = { topic: HelpTopic; x: number; y: number };
@@ -608,6 +609,7 @@ export default function App() {
       cfg: "Graph",
       regs: "Registers",
       hlil: "HLIL",
+      dec: "Decompile",
     };
     return titles[rightTab()];
   });
@@ -687,7 +689,8 @@ export default function App() {
     if (topic === "right") {
       if (rightTab() === "cfg") return "CFG 显示当前函数的动态基本块图，默认跟随当前 trace 所在函数，避免直接渲染全 trace 导致 dot 超时。空白处拖动平移，按住 Ctrl 滚轮缩放；点击图中的指令或块头会跳到 trace 中离当前 cursor 最近的一次执行。";
       if (rightTab() === "regs") return "寄存器窗口显示当前 cursor 的寄存器状态，并像 pwndbg 一样自动高亮相对上一条 trace 发生变化的寄存器；note 会标出 zero、pc、sp/stack 和疑似指针。点击寄存器会把它设为污点追踪的当前寄存器。";
-      if (rightTab() === "hlil") return "HLIL 窗口跟随 Functions 里选中的 FunctionIndex 条目；配置了 Binary Ninja sidecar 时可显示对应 BN HLIL。它用于静态结构理解，不替代中间 trace 的动态执行列表。";
+      if (rightTab() === "hlil") return "HLIL 窗口跟随当前汇编 cursor 的 PC；配置了 Binary Ninja sidecar 时显示对应函数的 HLIL，并高亮当前 PC 对应的行。点击 HLIL 行会跳到该 PC 在 trace 中离当前 cursor 最近的一次执行。";
+      if (rightTab() === "dec") return "Decompile 显示 traceMiku 本地 Trace IR markdown 和 LLIL render。这里不调用任何 LLM；模型选择和 LLM 输出暂时不在 UI 中开放。";
       return "";
     }
     if (topic === "bottom") {
@@ -938,7 +941,11 @@ export default function App() {
             <span>{rightTitle()}</span>
             <span class="grow" />
             <span class="dim">
-              {rightTab() === "cfg" ? cfgDisplayFn() || "select function" : selectedFn() || "no fn selected"}
+              {rightTab() === "cfg"
+                ? cfgDisplayFn() || "select function"
+                : rightTab() === "hlil"
+                  ? cursorHint()?.func ?? cursorHint()?.pc ?? "resolving cursor"
+                  : selectedFn() || "no fn selected"}
             </span>
             {helpButton("right")}
           </div>
@@ -966,11 +973,17 @@ export default function App() {
             </div>
             <div class="rbody" classList={{ active: rightTab() === "hlil" }}>
               <HlilPanel
-                selectedFn={selectedFn}
-                onSelectFn={setSelectedFn}
+                currentHint={cursorHint()}
                 currentIdx={selectedIdx()}
                 onSelect={setSelectedIdx}
                 active={rightTab() === "hlil"}
+              />
+            </div>
+            <div class="rbody" classList={{ active: rightTab() === "dec" }}>
+              <DecompilerPanel
+                selectedFn={selectedFn}
+                onSelectFn={setSelectedFn}
+                active={rightTab() === "dec"}
               />
             </div>
           </div>
@@ -980,6 +993,7 @@ export default function App() {
           {rtab("cfg", "Graph", "Trace CFG")}
           {rtab("regs", "Registers", "当前 cursor 寄存器")}
           {rtab("hlil", "HLIL", "BN HLIL")}
+          {rtab("dec", "Decompile", "Trace IR / LLIL decompile")}
         </aside>
 
         <footer id="cmdbar">

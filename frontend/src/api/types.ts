@@ -146,6 +146,47 @@ export type CfgSvgResponse =
   | CfgSvgErrorResponse
   | CfgSvgLargeResponse;
 
+// ── /api/asm-tokens-for-pcs ──────────────────────────────────────────────
+
+export interface AsmToken {
+  t: string;
+  c: string;
+  a?: string | null;
+}
+
+export interface AsmTokensResponse {
+  ready: boolean;
+  status: string;
+  tokens: Record<string, AsmToken[]>;
+  error?: string | null;
+  request_pcs?: string[];
+}
+
+// ── /api/bn-cfg-svg-for-pc ───────────────────────────────────────────────
+
+export interface BnCfgFunctionInfo {
+  name: string;
+  start: number | string;
+  end: number | string;
+}
+
+export interface BnCfgSvgForPcResponse {
+  ok: boolean;
+  ready: boolean;
+  svg: string;
+  error?: unknown;
+  status?: string;
+  pc?: string;
+  mode?: string;
+  fn?: BnCfgFunctionInfo | null;
+  block_count?: number;
+  edge_count?: number;
+  dyn_only_count?: number;
+  fn_total_exec?: number;
+  request_pc?: string;
+  request_mode?: string;
+}
+
 // ── /api/strings ─────────────────────────────────────────────────────────
 
 export interface StringEntry {
@@ -640,14 +681,28 @@ export interface LlilLlmResponse {
 
 export interface HlilFunctionInfo {
   name: string;
-  start: number;
-  end: number;
+  start: number | string;
+  end: number | string;
 }
 
 export interface HlilLine {
   pc: string;
   text: string;
-  tokens: unknown[];
+  indent?: number;
+  tokens?: AsmToken[] | null;
+}
+
+export interface HlilVar {
+  name?: string;
+  type?: string;
+  type_name?: string;
+  storage?: string;
+  [key: string]: unknown;
+}
+
+export interface HlilTraceFnInfo {
+  name: string;
+  off?: string;
 }
 
 export interface HlilForFnResponse {
@@ -655,7 +710,17 @@ export interface HlilForFnResponse {
   ready: boolean;
   fn?: HlilFunctionInfo;
   lines?: HlilLine[];
-  vars?: unknown[];
+  vars?: HlilVar[];
   error?: string;
   request_fn_id?: string;
+}
+
+export interface HlilForPcResponse extends HlilForFnResponse {
+  pc?: string;
+  status?: string;
+  backend?: string;
+  in_range?: boolean;
+  current_line_idx?: number;
+  trace_fn?: HlilTraceFnInfo | null;
+  request_pc?: string;
 }

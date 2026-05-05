@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -43,6 +44,22 @@ class Session:
         ]
         return {"ok": True, "ready": True, "functions": fns}
 
+    def asm_tokens(self, pcs: list[int]) -> dict[str, Any]:
+        if not self.ready or self.bv is None:
+            return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
+        out: dict[str, list[dict[str, Any]]] = {}
+        seen: set[int] = set()
+        for pc in pcs:
+            if pc in seen:
+                continue
+            seen.add(pc)
+            tokens = self._asm_tokens_at(pc)
+            if tokens:
+                out[f"0x{pc:x}"] = tokens
+            if len(seen) >= 512:
+                break
+        return {"ok": True, "ready": True, "status": "ok", "tokens": out}
+
     def hlil_for(self, pc: int) -> dict[str, Any]:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
@@ -77,6 +94,80 @@ class Session:
         containing = list(self.bv.get_functions_containing(pc))
         return containing[0] if containing else None
 
+    def _asm_tokens_at(self, pc: int) -> list[dict[str, Any]]:
+        fn = self._function_for_pc(pc)
+        raw_tokens = None
+        if fn is not None:
+            raw_tokens = self._call_instruction_text(fn, pc)
+        if raw_tokens is None:
+            raw_tokens = self._call_instruction_text(self.bv, pc)
+        if raw_tokens:
+            return [self._token_to_wire(t) for t in raw_tokens if getattr(t, "text", "")]
+        try:
+            text = str(self.bv.get_disassembly(pc))
+        except Exception:
+            return []
+        return self._fallback_asm_tokens(text)
+
+    def _call_instruction_text(self, provider: Any, pc: int) -> Any | None:
+        method = getattr(provider, "get_instruction_text", None)
+        if method is None:
+            return None
+        try:
+            result = method(pc)
+        except TypeError:
+            try:
+                result = method(self.bv.arch, pc)
+            except Exception:
+                return None
+        except Exception:
+            return None
+        if result is None:
+            return None
+        if hasattr(result, "tokens"):
+            return list(result.tokens)
+        if isinstance(result, tuple):
+            for item in result:
+                if hasattr(item, "tokens"):
+                    return list(item.tokens)
+                if isinstance(item, list):
+                    return item
+        if isinstance(result, list):
+            return result
+        return None
+
+    def _token_to_wire(self, token: Any) -> dict[str, Any]:
+        text = str(getattr(token, "text", "") or "")
+        type_name = str(getattr(token, "type", "")).split(".")[-1]
+        cls = _classify_token(type_name, text)
+        addr = _token_addr(token, type_name)
+        out: dict[str, Any] = {"t": text, "c": cls}
+        if addr is not None:
+            out["a"] = f"0x{addr:x}"
+        return out
+
+    def _fallback_asm_tokens(self, text: str) -> list[dict[str, Any]]:
+        if not text:
+            return []
+        m = re.match(r"^(\s*)(\S+)(.*)$", text)
+        if not m:
+            return [{"t": text, "c": "txt"}]
+        out: list[dict[str, Any]] = []
+        if m.group(1):
+            out.append({"t": m.group(1), "c": "txt"})
+        out.append({"t": m.group(2), "c": "mnem"})
+        rest = m.group(3)
+        reg_re = re.compile(r"\b(?:x(?:[0-9]|1[0-9]|2[0-9]|3[01])|w(?:[0-9]|1[0-9]|2[0-9]|3[01])|sp|fp|lr|xzr|wzr|pc)\b", re.I)
+        last = 0
+        for rm in reg_re.finditer(rest):
+            if rm.start() > last:
+                out.append({"t": rest[last:rm.start()], "c": "txt"})
+            out.append({"t": rm.group(0), "c": "reg"})
+            last = rm.end()
+        if last < len(rest):
+            out.append({"t": rest[last:], "c": "txt"})
+        return out
+
 
 def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
     method = req.get("method")
@@ -85,6 +176,15 @@ def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
         return session.open_so(str(params.get("path") or ""))
     if method == "functions":
         return session.functions()
+    if method == "asm_tokens":
+        raw_pcs = params.get("pcs") or []
+        pcs: list[int] = []
+        for pc in raw_pcs:
+            try:
+                pcs.append(int(pc))
+            except Exception:
+                continue
+        return session.asm_tokens(pcs)
     if method == "hlil_for":
         return session.hlil_for(int(params.get("pc") or 0))
     if method == "cfg_for":
@@ -95,6 +195,54 @@ def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
             timeout=int(timeout) if timeout is not None else None,
         )
     return {"ok": False, "ready": session.ready, "error": f"unknown method {method!r}"}
+
+
+def _classify_token(type_name: str, text: str) -> str:
+    name = type_name.lower()
+    if "instruction" in name:
+        return "mnem"
+    if "register" in name:
+        return "reg"
+    if "codesymbol" in name or "imports" in name:
+        return "fn"
+    if "datasymbol" in name or "address" in name:
+        return "data"
+    if "possibleaddress" in name:
+        return "hex"
+    if "integer" in name or "float" in name:
+        return "num"
+    if "string" in name:
+        return "str"
+    if "localvariable" in name or "argumentname" in name:
+        return "var"
+    if "keyword" in name:
+        return "key"
+    if "typename" in name:
+        return "type"
+    if "field" in name:
+        return "field"
+    if "comment" in name:
+        return "cmt"
+    if "label" in name:
+        return "label"
+    if "operandseparator" in name:
+        return "sep"
+    if "brace" in name or "memoryoperand" in name:
+        return "brace"
+    if text.strip() in {"+", "-", "*", "/", "<<", ">>", "&", "|", "^", "=", "==", "!=", "<", ">"}:
+        return "op"
+    return "txt"
+
+
+def _token_addr(token: Any, type_name: str) -> int | None:
+    name = type_name.lower()
+    if not any(s in name for s in ("symbol", "address", "integer")):
+        return None
+    for attr in ("address", "value"):
+        value = getattr(token, attr, None)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
 
 
 def main() -> int:

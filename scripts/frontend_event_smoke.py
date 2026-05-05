@@ -238,6 +238,35 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     page.wait_for_selector(".memory-context-menu", state="hidden", timeout=timeout_ms)
     checks.append("memory range selection opens provenance menu and Escape cancels it")
 
+    page.locator('.vtab[data-rtab="hlil"]').click(timeout=timeout_ms)
+    page.wait_for_selector(".hlil-panel", timeout=timeout_ms)
+    if page.locator(".hlil-panel select").count() != 0:
+        raise RuntimeError("HLIL panel should follow cursor without a function selector")
+    page.locator(".hlil-controls", has_text="cursor #").wait_for(timeout=timeout_ms)
+    checks.append("HLIL tab follows current cursor without reselecting a function")
+
+    page.locator('.vtab[data-rtab="dec"]').click(timeout=timeout_ms)
+    page.wait_for_selector(".decompiler-panel", timeout=timeout_ms)
+    dec_text = page.locator(".decompiler-panel").inner_text(timeout=timeout_ms)
+    if "call LLM" in dec_text or "LLIL → LLM" in dec_text:
+        raise RuntimeError("Decompile panel exposed LLM controls")
+    page.locator(".decompiler-panel button", has_text="render LLIL").wait_for(timeout=timeout_ms)
+    checks.append("Decompile tab is visible without LLM controls")
+
+    page.locator('.vtab[data-rtab="cfg"]').click(timeout=timeout_ms)
+    page.wait_for_selector(".cfg-panel", timeout=timeout_ms)
+    cfg_source = page.locator(".cfg-controls select").first
+    cfg_source.select_option("bn-asm", timeout=timeout_ms)
+    page.wait_for_function(
+        """() => {
+            const panel = document.querySelector('.cfg-panel');
+            return panel && panel.textContent && panel.textContent.includes('BN ASM CFG');
+        }""",
+        timeout=timeout_ms,
+    )
+    cfg_source.select_option("trace", timeout=timeout_ms)
+    checks.append("CFG source selector switches to BN ASM CFG and back")
+
     if points and points[0].func and points[1].func and points[0].func != points[1].func:
         jump_to_idx(page, points[0].idx)
         wait_debug_value(page, "cursorHint.func", points[0].func, timeout_ms)
