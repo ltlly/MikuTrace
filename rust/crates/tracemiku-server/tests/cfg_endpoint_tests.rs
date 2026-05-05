@@ -441,9 +441,39 @@ async fn idxs_for_block_returns_record_indices() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["status"], "ready");
+    assert_eq!(v["block"], "0x100000");
+    assert_eq!(v["total"], 2);
+    assert_eq!(v["truncated"], false);
     let idxs = v["idxs"].as_array().expect("idxs array");
     assert!(!idxs.is_empty(), "expected ≥1 record in block 0x100000");
     assert_eq!(idxs[0].as_u64(), Some(0));
+}
+
+#[tokio::test]
+async fn idxs_for_block_near_prioritizes_closest_record() {
+    let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/idxs-for-block?pc=0x100000&max_count=1&near=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["block"], "0x100000");
+    assert_eq!(v["total"], 2);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(
+        v["idxs"].as_array().expect("idxs array")[0].as_u64(),
+        Some(1)
+    );
 }
 
 #[tokio::test]

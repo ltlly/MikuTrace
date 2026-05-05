@@ -1,8 +1,8 @@
-//! GET /api/idxs-for-block?pc=&max_count=
+//! GET /api/idxs-for-block?pc=&max_count=&near=
 //!
 //! Returns record indices whose PC falls within the block whose start_pc
-//! equals the input. Linear pc-scan; precomputed pc→block map deferred to
-//! M2-ε.
+//! equals the input. Uses the global pc→idxs index and walks only instruction
+//! PCs inside the block, avoiding an O(trace records) scan on large traces.
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -16,45 +16,82 @@ pub struct IdxsForBlockQuery {
     pub pc: String,
     #[serde(default = "default_max")]
     pub max_count: usize,
+    #[serde(default = "default_near")]
+    pub near: isize,
 }
 
 fn default_max() -> usize {
     200
 }
+fn default_near() -> isize {
+    -1
+}
 
 #[derive(Debug, Serialize)]
 pub struct IdxsForBlockResponse {
     pub status: &'static str,
+    pub block: String,
     pub idxs: Vec<usize>,
+    pub truncated: bool,
+    pub total: usize,
 }
 
 pub async fn idxs_for_block_handler(
     State(state): State<AppState>,
     Query(q): Query<IdxsForBlockQuery>,
 ) -> Result<Json<IdxsForBlockResponse>, StatusCode> {
+    let inner = state.inner.clone();
+    let response = tokio::task::spawn_blocking(move || idxs_for_block_response(&inner, q))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "idxs-for-block worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })??;
+    Ok(Json(response))
+}
+
+fn idxs_for_block_response(
+    inner: &crate::state::AppStateInner,
+    q: IdxsForBlockQuery,
+) -> Result<IdxsForBlockResponse, StatusCode> {
     let target = u64::from_str_radix(q.pc.trim_start_matches("0x"), 16).unwrap_or(0);
-    let inner = &state.inner;
     let cfg = &inner.cfg;
-    let trace = &inner.trace;
 
     let block = cfg.block(target).ok_or(StatusCode::NOT_FOUND)?;
     let start = block.start_pc;
     let end = block.end_pc;
 
-    let n = trace.len();
     let mut idxs = Vec::new();
-    for i in 0..n {
-        if idxs.len() >= q.max_count {
+    let mut pc = start;
+    loop {
+        if let Some(hit_idxs) = inner.index.pc_to_idxs.get(&pc) {
+            idxs.extend(hit_idxs.iter().copied());
+        }
+        if end.saturating_sub(pc) < 4 {
             break;
         }
-        let pc = trace.pc(i);
-        if pc >= start && pc <= end {
-            idxs.push(i);
+        pc = pc.saturating_add(4);
+    }
+    idxs.sort_unstable();
+
+    let total = idxs.len();
+    let truncated = total > q.max_count;
+    if truncated {
+        if q.near >= 0 {
+            let near = q.near as usize;
+            idxs.sort_unstable_by_key(|idx| idx.abs_diff(near));
+            idxs.truncate(q.max_count);
+            idxs.sort_unstable();
+        } else {
+            idxs.truncate(q.max_count);
         }
     }
 
-    Ok(Json(IdxsForBlockResponse {
+    Ok(IdxsForBlockResponse {
         status: "ready",
+        block: format!("{start:#x}"),
         idxs,
-    }))
+        truncated,
+        total,
+    })
 }
