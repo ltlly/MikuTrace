@@ -389,6 +389,8 @@ export interface TaintRow {
   asm: string;
   why?: string;     // forward
   via?: string;     // backward
+  parent_idxs?: number[];
+  taint_depth?: number;
   frame_depth?: number;   // present iff cross_fn_call=true was passed
 }
 

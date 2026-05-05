@@ -4,7 +4,7 @@ import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
-type ViewMode = "timeline" | "table";
+type ViewMode = "tree" | "timeline" | "table";
 const TAINT_RETRY_MS = 500;
 const MAX_TAINT_ROWS = 5000;
 
@@ -38,7 +38,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [start, setStart] = createSignal(0);
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
-  const [viewMode, setViewMode] = createSignal<ViewMode>("timeline");
+  const [viewMode, setViewMode] = createSignal<ViewMode>("tree");
   const [maxCount, setMaxCount] = createSignal(200);
   const [throughMem, setThroughMem] = createSignal(false);
   const [dataOnly, setDataOnly] = createSignal(false);
@@ -151,8 +151,16 @@ export default function TaintPanel(props: TaintPanelProps) {
   const labelFor = (row: TaintRow): string =>
     row.why ?? row.via ?? "";
 
-  const rowIndent = (row: TaintRow): string =>
+  const callDepthIndent = (row: TaintRow): string =>
     `${Math.min(10, Math.max(0, row.frame_depth ?? 0)) * 14}px`;
+
+  const taintDepthIndent = (row: TaintRow): string =>
+    `${Math.min(14, Math.max(0, row.taint_depth ?? 0)) * 18}px`;
+
+  const parentLabel = (row: TaintRow): string => {
+    const parents = row.parent_idxs ?? [];
+    return parents.length ? `from ${parents.map((idx) => `#${idx}`).join(",")}` : "seed";
+  };
 
   return (
     <section class="panel">
@@ -224,11 +232,12 @@ export default function TaintPanel(props: TaintPanelProps) {
             checked={crossFnCall()}
             onChange={(e) => setCrossFnCall(e.currentTarget.checked)}
           />
-          {" "}call-depth indent
+          {" "}include call depth
         </label>
         <label>
           view
           <select value={viewMode()} onChange={(e) => setViewMode(e.currentTarget.value as ViewMode)}>
+            <option value="tree">tree</option>
             <option value="timeline">timeline</option>
             <option value="table">table</option>
           </select>
@@ -249,7 +258,7 @@ export default function TaintPanel(props: TaintPanelProps) {
                 {" "}· stopped at max
               </Show>
             </p>
-            <Show when={viewMode() === "timeline"} fallback={
+            <Show when={viewMode() !== "table"} fallback={
               <table class="taint-table">
                 <thead>
                   <tr>
@@ -258,7 +267,9 @@ export default function TaintPanel(props: TaintPanelProps) {
                     <th>func</th>
                     <th>asm</th>
                     <th>{r().direction === "forward" ? "why" : "via"}</th>
-                    {r().showDepth ? <th>depth</th> : null}
+                    <th>parents</th>
+                    <th>taint depth</th>
+                    {r().showDepth ? <th>call depth</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -270,6 +281,8 @@ export default function TaintPanel(props: TaintPanelProps) {
                         <td>{row.func ?? "?"}</td>
                         <td>{row.asm}</td>
                         <td>{labelFor(row)}</td>
+                        <td>{parentLabel(row)}</td>
+                        <td>{row.taint_depth ?? ""}</td>
                         {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}
                       </tr>
                     )}
@@ -283,13 +296,23 @@ export default function TaintPanel(props: TaintPanelProps) {
                     <button
                       type="button"
                       class="taint-tree-row"
-                      style={{ "padding-left": rowIndent(row) }}
+                      classList={{ dependency: viewMode() === "tree" }}
+                      style={{
+                        "padding-left": viewMode() === "tree"
+                          ? taintDepthIndent(row)
+                          : callDepthIndent(row),
+                      }}
                       onClick={() => props.onSelect(row.idx)}
                     >
                       <span class="taint-tree-idx">#{row.idx}</span>
                       <span class="taint-tree-fn dim small">{row.func ?? "?"}</span>
                       <code class="taint-tree-asm">{row.asm}</code>
-                      <span class="taint-tree-why dim small">{labelFor(row)}</span>
+                      <span class="taint-tree-why dim small">
+                        {labelFor(row)}
+                        <Show when={viewMode() === "tree"}>
+                          {" · "}{parentLabel(row)}
+                        </Show>
+                      </span>
                     </button>
                   )}
                 </For>

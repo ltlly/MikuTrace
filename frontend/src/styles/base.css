@@ -1928,6 +1928,9 @@ html[data-density="dense"] .xref-table td {
   background: var(--bg3);
   border-left-color: var(--accent);
 }
+.taint-tree-row.dependency {
+  border-left-color: rgba(88, 166, 255, 0.42);
+}
 .taint-tree-idx { grid-area: idx; }
 .taint-tree-fn {
   grid-area: fn;

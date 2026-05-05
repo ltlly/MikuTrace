@@ -36,6 +36,9 @@ pub struct TaintRow {
     pub func: Option<String>,
     pub asm: String,
     pub why: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parent_idxs: Vec<usize>,
+    pub taint_depth: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_depth: Option<u32>,
 }
@@ -139,6 +142,8 @@ fn forward_taint_response(
                 func: if fname == "?" { None } else { Some(fname) },
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 why: h.why,
+                parent_idxs: h.parent_idxs,
+                taint_depth: h.taint_depth,
                 frame_depth: if q.cross_fn_call {
                     inner.frame_depths().get(h.idx).copied()
                 } else {

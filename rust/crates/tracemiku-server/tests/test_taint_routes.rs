@@ -76,6 +76,10 @@ async fn forward_taint_basic() {
             h["why"].as_str().unwrap().contains("x0"),
             "why must reference x0: {h}"
         );
+        assert!(
+            h.get("taint_depth").and_then(|v| v.as_u64()).is_some(),
+            "taint_depth must be present for tree view: {h}"
+        );
     }
 }
 
@@ -131,6 +135,10 @@ async fn backward_taint_basic() {
             h["via"].as_str().unwrap(),
             "x0",
             "via must be bare reg name: {h}"
+        );
+        assert!(
+            h.get("taint_depth").and_then(|v| v.as_u64()).is_some(),
+            "taint_depth must be present for tree view: {h}"
         );
     }
 }

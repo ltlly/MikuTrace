@@ -13,7 +13,7 @@
 
 use serde::Serialize;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::thread;
 
 use crate::disasm::{addr_of, decode, MemOp};
@@ -59,16 +59,52 @@ fn addressing_regs(mem_ops: &[MemOp]) -> HashSet<String> {
 #[derive(Debug)]
 enum BwdItem {
     /// Chase the latest def of `want_reg` strictly before `cur_idx`.
-    Reg(usize, String),
+    Reg {
+        cur_idx: usize,
+        want_reg: String,
+        parent_idx: Option<usize>,
+        depth: u32,
+    },
     /// Chase the writer of memory `[addr, addr+size)` strictly before
     /// `before_idx` (exact-addr fast path; M3-γ Task 2 adds byte-overlap).
-    Mem(usize, u64, u32),
+    Mem {
+        before_idx: usize,
+        addr: u64,
+        size: u32,
+        parent_idx: Option<usize>,
+        depth: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TaintHit {
     pub idx: usize,
     pub why: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_idxs: Vec<usize>,
+    pub taint_depth: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaintProvenance {
+    idx: Option<usize>,
+    depth: u32,
+}
+
+impl TaintProvenance {
+    fn seed() -> Self {
+        Self {
+            idx: None,
+            depth: 0,
+        }
+    }
+
+    fn from_hit(idx: usize, depth: u32) -> Self {
+        Self {
+            idx: Some(idx),
+            depth,
+        }
+    }
 }
 
 pub fn build_frame_depth_map(trace: &Trace) -> Vec<u32> {
@@ -167,9 +203,9 @@ pub fn forward_taint(
 ) -> (Vec<TaintHit>, bool) {
     // _mem is unused on the forward side because tagging is index-only —
     // Python also doesn't use MemShadow on the forward path (only on backward).
-    let mut tainted_regs: HashSet<String> = HashSet::new();
-    tainted_regs.insert(taint_reg.to_string());
-    let mut tainted_mem: HashSet<u64> = HashSet::new();
+    let mut tainted_regs: HashMap<String, TaintProvenance> = HashMap::new();
+    tainted_regs.insert(taint_reg.to_string(), TaintProvenance::seed());
+    let mut tainted_mem: HashMap<u64, TaintProvenance> = HashMap::new();
     let mut heap: BinaryHeap<Reverse<(usize, String, usize)>> = BinaryHeap::new();
 
     let push_reg =
@@ -220,12 +256,14 @@ pub fn forward_taint(
         // In data_only mode, an insn only counts as "used" if the tainted
         // use is NOT purely an addressing reg (Python:155-156).
         let mut used: Vec<String> = Vec::new();
+        let mut sources: Vec<TaintProvenance> = Vec::new();
         for u in &d.regs_use {
             if data_only && addr_regs.contains(u) {
                 continue;
             }
-            if tainted_regs.contains(u) {
+            if let Some(src) = tainted_regs.get(u) {
                 used.push(u.clone());
+                sources.push(*src);
             }
         }
 
@@ -237,8 +275,9 @@ pub fn forward_taint(
             }
             let base = addr_of(&r, op);
             for o in 0..op.size as u64 {
-                if tainted_mem.contains(&(base + o)) {
+                if let Some(src) = tainted_mem.get(&(base + o)) {
                     load_tainted = true;
+                    sources.push(*src);
                     break;
                 }
             }
@@ -260,16 +299,31 @@ pub fn forward_taint(
             why_parts.push("mem".to_string());
         }
         let why = why_parts.join(" ");
-        out.push(TaintHit { idx: i, why });
+        let taint_depth = sources
+            .iter()
+            .filter(|src| src.idx.is_some())
+            .map(|src| src.depth.saturating_add(1))
+            .max()
+            .unwrap_or(0);
+        let mut parent_idxs: Vec<usize> = sources.iter().filter_map(|src| src.idx).collect();
+        parent_idxs.sort_unstable();
+        parent_idxs.dedup();
+        out.push(TaintHit {
+            idx: i,
+            why,
+            parent_idxs,
+            taint_depth,
+        });
         seen.insert(i);
+        let next_provenance = TaintProvenance::from_hit(i, taint_depth);
 
         // Propagate: regs_def → push next-use.
         for nr in &d.regs_def {
             if exclude_regs.contains(nr) {
                 continue;
             }
-            if !tainted_regs.contains(nr) {
-                tainted_regs.insert(nr.clone());
+            if !tainted_regs.contains_key(nr) {
+                tainted_regs.insert(nr.clone(), next_provenance);
                 push_reg(&mut heap, nr, i);
             }
         }
@@ -281,10 +335,10 @@ pub fn forward_taint(
             let base = addr_of(&r, op);
             if through_mem {
                 for o in 0..op.size as u64 {
-                    tainted_mem.insert(base + o);
+                    tainted_mem.insert(base + o, next_provenance);
                 }
             } else {
-                tainted_mem.insert(base);
+                tainted_mem.insert(base, next_provenance);
             }
         }
     }
@@ -341,7 +395,7 @@ pub fn backward_taint(
 ) -> (Vec<TaintHit>, bool) {
     let mut pending: VecDeque<BwdItem> = VecDeque::new();
     let mut visited: HashSet<(usize, String)> = HashSet::new();
-    let mut raw_out: Vec<(usize, String)> = Vec::new();
+    let mut raw_out: Vec<(usize, String, Vec<usize>, u32)> = Vec::new();
     let cap = if max_count == 0 {
         usize::MAX
     } else {
@@ -355,7 +409,7 @@ pub fn backward_taint(
     let starts_with_def = d0.regs_def.iter().any(|r| r == taint_reg);
 
     if starts_with_def && !exclude_regs.contains(taint_reg) {
-        raw_out.push((idx, taint_reg.to_string()));
+        raw_out.push((idx, taint_reg.to_string(), Vec::new(), 0));
         visited.insert((idx, taint_reg.to_string()));
         let addr_regs0 = if data_only {
             addressing_regs(&d0.mem_op)
@@ -369,17 +423,33 @@ pub fn backward_taint(
             if data_only && addr_regs0.contains(u) {
                 continue;
             }
-            pending.push_back(BwdItem::Reg(idx, u.clone()));
+            pending.push_back(BwdItem::Reg {
+                cur_idx: idx,
+                want_reg: u.clone(),
+                parent_idx: Some(idx),
+                depth: 1,
+            });
         }
         for op in &d0.mem_op {
             if op.is_write {
                 continue;
             }
             let addr = addr_of(&r0, op);
-            pending.push_back(BwdItem::Mem(idx, addr, op.size));
+            pending.push_back(BwdItem::Mem {
+                before_idx: idx,
+                addr,
+                size: op.size,
+                parent_idx: Some(idx),
+                depth: 1,
+            });
         }
     } else if !exclude_regs.contains(taint_reg) {
-        pending.push_back(BwdItem::Reg(idx, taint_reg.to_string()));
+        pending.push_back(BwdItem::Reg {
+            cur_idx: idx,
+            want_reg: taint_reg.to_string(),
+            parent_idx: None,
+            depth: 0,
+        });
     }
 
     while let Some(item) = pending.pop_front() {
@@ -388,7 +458,13 @@ pub fn backward_taint(
             break;
         }
         match item {
-            BwdItem::Mem(before_idx, addr, size) => {
+            BwdItem::Mem {
+                before_idx,
+                addr,
+                size,
+                parent_idx,
+                depth,
+            } => {
                 let writers =
                     mem_writers_overlapping(index, mem, addr, size, before_idx, through_mem);
                 for j in writers {
@@ -404,11 +480,21 @@ pub fn backward_taint(
                         .iter()
                         .find(|u| !exclude_regs.contains(*u) && **u != base_w && **u != idx_w)
                     {
-                        pending.push_back(BwdItem::Reg(j, src.clone()));
+                        pending.push_back(BwdItem::Reg {
+                            cur_idx: j,
+                            want_reg: src.clone(),
+                            parent_idx,
+                            depth,
+                        });
                     }
                 }
             }
-            BwdItem::Reg(cur_idx, want_reg) => {
+            BwdItem::Reg {
+                cur_idx,
+                want_reg,
+                parent_idx,
+                depth,
+            } => {
                 if exclude_regs.contains(&want_reg) {
                     continue;
                 }
@@ -425,7 +511,8 @@ pub fn backward_taint(
                     continue;
                 }
                 let j = defs[pos - 1];
-                raw_out.push((j, want_reg.clone()));
+                let parent_idxs = parent_idx.into_iter().collect::<Vec<_>>();
+                raw_out.push((j, want_reg.clone(), parent_idxs, depth));
 
                 let r = trace.record(j);
                 let d = decode(r.pc, r.inst);
@@ -441,29 +528,45 @@ pub fn backward_taint(
                     if data_only && addr_regs.contains(u) {
                         continue;
                     }
-                    pending.push_back(BwdItem::Reg(j, u.clone()));
+                    pending.push_back(BwdItem::Reg {
+                        cur_idx: j,
+                        want_reg: u.clone(),
+                        parent_idx: Some(j),
+                        depth: depth.saturating_add(1),
+                    });
                 }
                 for op in &d.mem_op {
                     if op.is_write {
                         continue;
                     }
                     let addr = addr_of(&r, op);
-                    pending.push_back(BwdItem::Mem(j, addr, op.size));
+                    pending.push_back(BwdItem::Mem {
+                        before_idx: j,
+                        addr,
+                        size: op.size,
+                        parent_idx: Some(j),
+                        depth: depth.saturating_add(1),
+                    });
                 }
             }
         }
     }
 
     // Dedup by sorted idx (Python lines 358-361).
-    raw_out.sort_by(|(ai, ar), (bi, br)| ai.cmp(bi).then_with(|| ar.cmp(br)));
+    raw_out.sort_by(|(ai, ar, _, _), (bi, br, _, _)| ai.cmp(bi).then_with(|| ar.cmp(br)));
     let mut seen_idx: HashSet<usize> = HashSet::new();
     let mut out: Vec<TaintHit> = Vec::new();
-    for (i, reg) in raw_out {
+    for (i, reg, parent_idxs, taint_depth) in raw_out {
         if seen_idx.contains(&i) {
             continue;
         }
         seen_idx.insert(i);
-        out.push(TaintHit { idx: i, why: reg });
+        out.push(TaintHit {
+            idx: i,
+            why: reg,
+            parent_idxs,
+            taint_depth,
+        });
     }
     (out, stopped)
 }
@@ -775,6 +878,24 @@ mod tests {
         assert!(
             row2_on.why.contains("mem"),
             "through_mem=true: idx 2 why should contain 'mem'; got {row2_on:?}"
+        );
+        let row1_on = hits_on.iter().find(|h| h.idx == 1).unwrap();
+        assert_eq!(
+            row1_on.taint_depth, 0,
+            "seed-driven first store should be a root tree node: {row1_on:?}"
+        );
+        assert!(
+            row1_on.parent_idxs.is_empty(),
+            "seed-driven first store should not have parents: {row1_on:?}"
+        );
+        assert_eq!(
+            row2_on.parent_idxs,
+            vec![1],
+            "load should depend on the store that tainted memory: {row2_on:?}"
+        );
+        assert_eq!(
+            row2_on.taint_depth, 1,
+            "load depending on row 1 should be one level below it: {row2_on:?}"
         );
 
         // through_mem=false: idx 2 still emits (regs:x0 use), but NO "mem" —
