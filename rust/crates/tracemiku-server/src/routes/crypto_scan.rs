@@ -35,13 +35,13 @@ const CRYPTO_PATTERNS: &[(&str, &str)] = &[
     ("CRC32_table[1]", "96300777"),
 ];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CryptoHit {
     pub addr: String,
     pub first_idx: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CryptoPrimitive {
     pub name: &'static str,
     pub pattern: &'static str,
@@ -49,7 +49,7 @@ pub struct CryptoPrimitive {
     pub hits: Vec<CryptoHit>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CryptoScanResponse {
     pub status: &'static str,
     pub scanned: usize,
@@ -94,6 +94,9 @@ fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanRespon
             any_hit: false,
         };
     }
+    if let Some(cached) = inner.crypto_scan.get() {
+        return cached.clone();
+    }
     let parsed = CRYPTO_PATTERNS
         .iter()
         .filter_map(|(name, hex_str)| {
@@ -113,12 +116,14 @@ fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanRespon
         })
         .collect::<Vec<_>>();
     let any_hit = primitives.iter().any(|p| p.hit_count > 0);
-    CryptoScanResponse {
+    let response = CryptoScanResponse {
         status: "ready",
         scanned: mem.bytes.len(),
         primitives,
         any_hit,
-    }
+    };
+    let _ = inner.crypto_scan.set(response.clone());
+    response
 }
 
 fn scan_patterns_by_first_byte(
