@@ -109,44 +109,107 @@ fn rust_router_methods() -> BTreeSet<(String, String)> {
         .collect()
 }
 
+const HEAVY_ROUTE_FILES: &[&str] = &[
+    "auto_phase.rs",
+    "backward_taint.rs",
+    "bn_hlil.rs",
+    "call_tree.rs",
+    "cfg.rs",
+    "cfg_svg.rs",
+    "crypto_scan.rs",
+    "data_chase.rs",
+    "dec_fn.rs",
+    "dec_llm_call.rs",
+    "dec_summary.rs",
+    "diff_traces.rs",
+    "fn_summary.rs",
+    "forward_taint.rs",
+    "functions.rs",
+    "hash_finalize.rs",
+    "hash_input_search.rs",
+    "jni_calls.rs",
+    "jni_events.rs",
+    "jni_strings.rs",
+    "jobj_history.rs",
+    "llil_llm.rs",
+    "llil_render.rs",
+    "mem_dump.rs",
+    "mem_flow.rs",
+    "memory_query.rs",
+    "navigation.rs",
+    "ollvm_detect_vm.rs",
+    "search.rs",
+    "so_stats.rs",
+    "string_provenance.rs",
+    "strings.rs",
+    "timeline_diff.rs",
+];
+
+const LIGHT_ROUTE_FILES: &[&str] = &[
+    "api_infra.rs",
+    "asm_tokens.rs",
+    "dec_models.rs",
+    "dec_options.rs",
+    "field_at.rs",
+    "fork_events.rs",
+    "idxs_for_block.rs",
+    "idxs_for_pc.rs",
+    "last_write_of_reg.rs",
+    "meta.rs",
+    "record.rs",
+    "records.rs",
+    "reg_value_at.rs",
+    "search_pc.rs",
+];
+
+fn route_rs_files() -> Vec<String> {
+    let routes_dir = repo_root().join("rust/crates/tracemiku-server/src/routes");
+    let mut files = fs::read_dir(routes_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?.to_string();
+            (name.ends_with(".rs") && name != "mod.rs").then_some(name)
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+#[test]
+fn route_files_are_classified_for_runtime_blocking() {
+    let mut classified = HEAVY_ROUTE_FILES
+        .iter()
+        .chain(LIGHT_ROUTE_FILES.iter())
+        .map(|s| (*s).to_string())
+        .collect::<Vec<_>>();
+    classified.sort();
+    classified.dedup();
+
+    let files = route_rs_files();
+    let missing = files
+        .iter()
+        .filter(|file| !classified.contains(file))
+        .cloned()
+        .collect::<Vec<_>>();
+    let stale = classified
+        .iter()
+        .filter(|file| !files.contains(file))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty() && stale.is_empty(),
+        "route files must be explicitly classified as heavy or light; missing={missing:?} stale={stale:?}"
+    );
+}
+
 #[test]
 fn heavy_route_handlers_stay_off_async_runtime() {
-    let heavy_route_files = [
-        "auto_phase.rs",
-        "backward_taint.rs",
-        "bn_hlil.rs",
-        "call_tree.rs",
-        "cfg.rs",
-        "cfg_svg.rs",
-        "crypto_scan.rs",
-        "data_chase.rs",
-        "dec_fn.rs",
-        "dec_llm_call.rs",
-        "dec_summary.rs",
-        "diff_traces.rs",
-        "fn_summary.rs",
-        "functions.rs",
-        "hash_finalize.rs",
-        "hash_input_search.rs",
-        "jni_calls.rs",
-        "jni_events.rs",
-        "jni_strings.rs",
-        "jobj_history.rs",
-        "llil_llm.rs",
-        "llil_render.rs",
-        "mem_dump.rs",
-        "mem_flow.rs",
-        "memory_query.rs",
-        "ollvm_detect_vm.rs",
-        "search.rs",
-        "so_stats.rs",
-        "string_provenance.rs",
-        "strings.rs",
-        "timeline_diff.rs",
-    ];
     let routes_dir = repo_root().join("rust/crates/tracemiku-server/src/routes");
-    let missing = heavy_route_files
-        .into_iter()
+    let missing = HEAVY_ROUTE_FILES
+        .iter()
         .filter(|file| {
             let src = fs::read_to_string(routes_dir.join(file)).unwrap();
             !src.contains("tokio::task::spawn_blocking")
