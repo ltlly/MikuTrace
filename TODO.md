@@ -65,6 +65,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   大 trace 默认跑 visible UI probe, 必要时加 `SMOKE_ARGS='--all-surfaces'`
   覆盖隐藏/冷路径。`make test-v2` / `make test-fast` 会先 py_compile
   所有 Python gate/helper 脚本。
+- ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
+  Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
+  `playwright install chrome` 需要 sudo 交互。现有保障是静态 UI audit +
+  最大 trace HTTP smoke, 尚不能替代快速点击/右键/拖拽的真实浏览器验证。
 
 ## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
 
