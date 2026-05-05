@@ -107,10 +107,10 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
     if (first && !models()?.models.includes(model())) setModel(first);
   });
 
-  const fnSource = createMemo<FnSource | null | undefined>((prev) => {
+  const fnSource = createMemo<FnSource | undefined>((prev) => {
     if (!props.active) return undefined;
     const fnId = props.selectedFn();
-    if (!fnId) return null;
+    if (!fnId) return undefined;
     const ir = decIrSource();
     const next = { fnId, tier: tier(), ...ir };
     return prev &&
@@ -121,7 +121,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
       : next;
   });
   const [fnResp, currentFnResp] = createGuardedResource<FnSource, Awaited<ReturnType<typeof fetchDecFn>>>(
-    () => fnSource() ?? undefined,
+    fnSource,
     (s) => fetchDecFn(s.fnId, s.tier, decIrOptions(s)),
     (r, s) =>
       r.request_fn_id === s.fnId &&

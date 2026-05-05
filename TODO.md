@@ -42,6 +42,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   Strings / String Provenance / CallTree / HLIL / Memory dump+diff /
   Decompiler / Records; 剩余 raw `createResource` 是静态/active-only 数据或
   已有 `currentRecord`/手写 seq+Abort guard。
+- ✅ Solid source 稳定引用门禁: `scripts/frontend_stability_audit.py` 会列出所有
+  `createGuardedResource` source, 要求 source memo 字段不变时复用 `prev`,
+  并钉住 Records range 的 ROW_HEIGHT snap + stable reference, 防止 fetch 振荡
+  和 click 丢失回归。
 - ✅ 前端交互 affordance 静态审计: `scripts/frontend_ui_audit.py` 钉住
   Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
   列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
