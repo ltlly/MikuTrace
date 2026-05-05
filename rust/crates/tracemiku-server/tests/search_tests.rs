@@ -59,6 +59,10 @@ async fn search_returns_hits_in_trace_order() {
     let (status, v) = get(cd, "/api/search?pattern=ret&max_results=10").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 3);
+    assert_eq!(v["returned"], 3);
+    assert_eq!(v["total_matches"], 3);
+    assert_eq!(v["truncated"], false);
+    assert_eq!(v["max_results_used"], 10);
     assert_eq!(
         v["hits"]
             .as_array()
@@ -77,6 +81,10 @@ async fn search_caps_returned_hits() {
     let (status, v) = get(cd, "/api/search?pattern=ret&max_results=2").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["total_matches"], 3);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["max_results_used"], 2);
     assert_eq!(
         v["hits"]
             .as_array()
@@ -94,6 +102,9 @@ async fn search_cursor_returns_hits_around_cursor() {
     let (status, v) = get(cd, "/api/search?pattern=ret&max_results=2&cursor=4").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["cursor"], 4);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["total_matches"], 3);
+    assert_eq!(v["truncated"], true);
     assert_eq!(
         v["hits"]
             .as_array()
@@ -111,5 +122,8 @@ async fn search_no_hit_returns_empty() {
     let (status, v) = get(cd, "/api/search?pattern=does_not_exist&max_results=10").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 0);
+    assert_eq!(v["returned"], 0);
+    assert_eq!(v["total_matches"], 0);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["hits"], serde_json::json!([]));
 }

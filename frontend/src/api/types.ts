@@ -283,6 +283,10 @@ export interface SearchHit {
 
 export interface SearchResponse {
   count: number;
+  returned?: number;
+  total_matches?: number;
+  truncated?: boolean;
+  max_results_used?: number;
   pattern: string;
   cursor?: number;
   hits: SearchHit[];

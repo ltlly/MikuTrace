@@ -491,7 +491,10 @@ export default function App() {
       if (pos < 0) pos = 0;
       setSearchPos(pos);
       jumpToIdx(hits[pos]);
-      setCmdStatus(`${q}: ${pos + 1}/${hits.length} hits`);
+      const partial = r.truncated
+        ? ` · partial ${r.returned ?? hits.length}/${r.total_matches ?? hits.length}`
+        : "";
+      setCmdStatus(`${q}: ${pos + 1}/${hits.length} hits${partial}`);
     } catch (err) {
       if (abort.signal.aborted) return;
       if (seq !== searchSeq) return;

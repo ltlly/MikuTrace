@@ -45,6 +45,10 @@ pub struct SearchHit {
 #[derive(Debug, Serialize)]
 pub struct SearchResponse {
     pub count: usize,
+    pub returned: usize,
+    pub total_matches: usize,
+    pub truncated: bool,
+    pub max_results_used: usize,
     pub pattern: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<usize>,
@@ -63,6 +67,10 @@ pub async fn search_handler(
                 tracing::warn!(target: "tracemiku-server", "search worker failed: {err}");
                 SearchResponse {
                     count: 0,
+                    returned: 0,
+                    total_matches: 0,
+                    truncated: false,
+                    max_results_used: 0,
                     pattern: String::new(),
                     cursor: None,
                     hits: Vec::new(),
@@ -93,6 +101,7 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
             idxs,
         });
     }
+    let total_matches = groups.iter().map(|group| group.idxs.len()).sum::<usize>();
 
     let hit_idxs = if let Some(cursor) = q.cursor {
         collect_cursor_window(&groups, cursor, max_results)
@@ -107,6 +116,10 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
 
     SearchResponse {
         count: hits.len(),
+        returned: hits.len(),
+        total_matches,
+        truncated: hits.len() < total_matches,
+        max_results_used: max_results,
         pattern: q.pattern,
         cursor: q.cursor,
         hits,
@@ -258,12 +271,31 @@ fn matches_pattern(re: &Option<Regex>, pattern: &str, asm: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_max_results, MAX_SEARCH_RESULTS};
+    use super::{effective_max_results, SearchResponse, MAX_SEARCH_RESULTS};
 
     #[test]
     fn effective_max_results_clamps_extreme_requests() {
         assert_eq!(effective_max_results(0), 1);
         assert_eq!(effective_max_results(120), 120);
         assert_eq!(effective_max_results(usize::MAX), MAX_SEARCH_RESULTS);
+    }
+
+    #[test]
+    fn search_response_reports_truncation_metadata() {
+        let response = SearchResponse {
+            count: 1,
+            returned: 1,
+            total_matches: 2,
+            truncated: true,
+            max_results_used: 1,
+            pattern: "ret".to_string(),
+            cursor: None,
+            hits: vec![],
+        };
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["returned"], 1);
+        assert_eq!(value["total_matches"], 2);
+        assert_eq!(value["truncated"], true);
+        assert_eq!(value["max_results_used"], 1);
     }
 }

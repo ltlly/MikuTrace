@@ -11,7 +11,11 @@ interface XrefPanelProps {
 interface AsmSearchSource {
   pattern: string;
   cursor: number;
+  limit: number;
 }
+
+const DEFAULT_ASM_REF_LIMIT = 120;
+const MAX_ASM_REF_LIMIT = 5000;
 
 function refPattern(pc: string | undefined): string {
   if (!pc) return "";
@@ -49,10 +53,15 @@ export default function XrefPanel(props: XrefPanelProps) {
     if (!props.active) return undefined;
     const next = submittedSearch();
     if (!next?.pattern) return undefined;
-    return prev && prev.pattern === next.pattern && prev.cursor === next.cursor ? prev : next;
+    return prev &&
+      prev.pattern === next.pattern &&
+      prev.cursor === next.cursor &&
+      prev.limit === next.limit
+      ? prev
+      : next;
   });
   const [asmRefs] = createResource(asmSource, (s) =>
-    s ? fetchSearch(s.pattern, 120, undefined, s.cursor) : undefined,
+    s ? fetchSearch(s.pattern, s.limit, undefined, s.cursor) : undefined,
   );
   const currentPcRefs = createMemo(() => {
     const s = pcSource();
@@ -69,20 +78,27 @@ export default function XrefPanel(props: XrefPanelProps) {
     const r = asmRefs();
     if (!s || !r) return undefined;
     return r.request_pattern === s.pattern &&
-      r.request_max_results === 120 &&
+      r.request_max_results === s.limit &&
       r.request_cursor === s.cursor
       ? r
       : undefined;
   });
 
-  function submitSearch() {
+  function submitSearch(limit = DEFAULT_ASM_REF_LIMIT) {
     const p = pattern().trim();
-    if (p) setSubmittedSearch({ pattern: p, cursor: props.idx });
+    if (p) setSubmittedSearch({ pattern: p, cursor: props.idx, limit });
   }
 
-  function searchCurrentInstruction() {
+  function searchCurrentInstruction(limit = DEFAULT_ASM_REF_LIMIT) {
     const p = defaultAsmPattern();
-    if (p) setSubmittedSearch({ pattern: p, cursor: props.idx });
+    if (p) setSubmittedSearch({ pattern: p, cursor: props.idx, limit });
+  }
+
+  function rerunAsmSearchAtCap() {
+    const current = asmSource();
+    if (current) {
+      setSubmittedSearch({ ...current, limit: MAX_ASM_REF_LIMIT });
+    }
   }
 
   return (
@@ -102,10 +118,10 @@ export default function XrefPanel(props: XrefPanelProps) {
           />
         </label>
         <div class="xref-buttons">
-          <button type="button" onClick={submitSearch} disabled={!pattern().trim()}>
+          <button type="button" onClick={() => submitSearch()} disabled={!pattern().trim()}>
             search
           </button>
-          <button type="button" onClick={searchCurrentInstruction} disabled={!defaultAsmPattern()}>
+          <button type="button" onClick={() => searchCurrentInstruction()} disabled={!defaultAsmPattern()}>
             match current text
           </button>
           <button type="button" onClick={() => setSubmittedSearch(undefined)} disabled={!submittedSearch()}>
@@ -189,8 +205,25 @@ export default function XrefPanel(props: XrefPanelProps) {
             {(r) => (
               <>
                 <p class="dim small">
-                  regex {r().pattern} · around #{r().request_cursor ?? r().cursor ?? 0} · {r().count} hit{r().count === 1 ? "" : "s"}
+                  regex {r().pattern} · around #{r().request_cursor ?? r().cursor ?? 0} ·{" "}
+                  {r().returned ?? r().count}/{r().total_matches ?? r().count} hit{(r().total_matches ?? r().count) === 1 ? "" : "s"}
+                  {r().truncated ? " · partial result" : ""}
                 </p>
+                <Show when={r().truncated}>
+                  <div class="cap-notice" role="status">
+                    <span>
+                      Instruction text refs stopped at {(r().request_max_results ?? r().max_results_used ?? r().count).toLocaleString()} row cap.
+                    </span>
+                    <Show
+                      when={(r().request_max_results ?? r().max_results_used ?? r().count) < MAX_ASM_REF_LIMIT}
+                      fallback={<span class="dim">UI/server cap is {MAX_ASM_REF_LIMIT.toLocaleString()} rows; narrow the regex.</span>}
+                    >
+                      <button type="button" onClick={rerunAsmSearchAtCap}>
+                        show {MAX_ASM_REF_LIMIT.toLocaleString()}
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
                 <table class="xref-table">
                   <thead>
                     <tr>
