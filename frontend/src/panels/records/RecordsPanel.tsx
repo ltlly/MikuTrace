@@ -232,7 +232,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     if (!regContext()) return;
     const closeOnPointer = (e: PointerEvent) => {
       const target = e.target as Element | null;
-      if (target?.closest(".reg-context-menu") || target?.closest(".op-reg")) return;
+      if (target?.closest(".reg-context-menu")) return;
       closeRegContext();
     };
     const closeOnKey = (e: KeyboardEvent) => {

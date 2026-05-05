@@ -193,7 +193,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     if (!memContext()) return;
     const closeOnPointer = (e: PointerEvent) => {
       const target = e.target as Element | null;
-      if (target?.closest(".memory-context-menu") || target?.closest(".mem-byte")) return;
+      if (target?.closest(".memory-context-menu")) return;
       closeMemContext();
     };
     const closeOnKey = (e: KeyboardEvent) => {
