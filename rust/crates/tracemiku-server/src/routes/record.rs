@@ -214,24 +214,46 @@ fn maybe_string_at(
     let mut bytes = Vec::new();
     for i in 0..max_len as u64 {
         let (byte, _, _) = mem.byte_at(addr.saturating_add(i), idx as u64);
-        let b = byte?;
-        if !(0x20..0x7f).contains(&b) {
-            break;
+        let Some(b) = byte else {
+            return ascii_preview(&bytes, false);
+        };
+        if b == 0 {
+            return ascii_preview(&bytes, false);
         }
         bytes.push(b);
     }
-    if bytes.len() >= 4 {
-        String::from_utf8(bytes).ok()
-    } else {
-        None
+    ascii_preview(&bytes, true)
+}
+
+fn ascii_preview(bytes: &[u8], truncated: bool) -> Option<String> {
+    if bytes.len() < 4 || !looks_like_ascii(bytes) {
+        return None;
     }
+    let mut s = String::from_utf8_lossy(bytes).into_owned();
+    if truncated {
+        s.push_str("...");
+    }
+    Some(s)
+}
+
+fn looks_like_ascii(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let printable = bytes
+        .iter()
+        .filter(|&&b| (0x20..0x7f).contains(&b) || matches!(b, b'\t' | b'\n' | b'\r'))
+        .count();
+    printable * 100 >= bytes.len() * 85
 }
 
 fn heuristic_region(value: u64) -> Option<&'static str> {
-    if (0x1000..0x1_0000_0000).contains(&value) {
-        Some("mapped/heap?")
-    } else if value >= 0x7000_0000_0000 {
-        Some("high user VA")
+    if (value >> 56) == 0xb4 {
+        Some("JavaHeap")
+    } else if (0x6d_0000_0000..0x6e_0000_0000).contains(&value) {
+        Some("libart?")
+    } else if (0x70_0000_0000..0x80_0000_0000).contains(&value) {
+        Some("libc?")
     } else {
         None
     }
@@ -239,4 +261,30 @@ fn heuristic_region(value: u64) -> Option<&'static str> {
 
 fn parse_hex(s: &str) -> Option<u64> {
     u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ascii_preview, heuristic_region, looks_like_ascii};
+
+    #[test]
+    fn heuristic_region_matches_python_web_labels() {
+        assert_eq!(heuristic_region(0xb400_0000_0000_0001), Some("JavaHeap"));
+        assert_eq!(heuristic_region(0x6d_1234_5678), Some("libart?"));
+        assert_eq!(heuristic_region(0x70_1234_5678), Some("libc?"));
+        assert_eq!(heuristic_region(0x5000), None);
+        assert_eq!(heuristic_region(0x123), None);
+    }
+
+    #[test]
+    fn ascii_preview_matches_python_web_string_rules() {
+        assert_eq!(ascii_preview(b"test", false).as_deref(), Some("test"));
+        assert_eq!(
+            ascii_preview(b"abcdefghijklmnopqrstuvwxyz", true).as_deref(),
+            Some("abcdefghijklmnopqrstuvwxyz...")
+        );
+        assert_eq!(ascii_preview(b"abc", false), None);
+        assert!(looks_like_ascii(b"line\tone\n"));
+        assert!(!looks_like_ascii(&[0, 1, 2, 3, b'A']));
+    }
 }
