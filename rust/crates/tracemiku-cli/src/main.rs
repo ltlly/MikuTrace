@@ -588,6 +588,9 @@ enum Cmd {
         /// Include best-effort base64 decoded length and prefix/suffix hex.
         #[arg(long)]
         decode_base64: bool,
+        /// Include this many recent GetStringUTFChars strings before each output.
+        #[arg(long, default_value_t = 0)]
+        prior_inputs: usize,
     },
     /// Build an output-to-input backward trace report for a known output.
     OutputBacktrace {
@@ -1300,7 +1303,16 @@ async fn main() -> anyhow::Result<()> {
             limit,
             decode_url,
             decode_base64,
-        }) => cmd_scan_jni_output_strings(path, key, contains, limit, decode_url, decode_base64),
+            prior_inputs,
+        }) => cmd_scan_jni_output_strings(
+            path,
+            key,
+            contains,
+            limit,
+            decode_url,
+            decode_base64,
+            prior_inputs,
+        ),
         Some(Cmd::OutputBacktrace {
             trace_dir,
             key,
@@ -1619,13 +1631,19 @@ fn cmd_scan_jni_output_strings(
     limit: usize,
     decode_url: bool,
     decode_base64: bool,
+    prior_inputs: usize,
 ) -> anyhow::Result<()> {
     let hook_files = find_jni_hook_files(&path)?;
     let mut pairs = Vec::new();
     let mut scanned_events = 0usize;
     for file in &hook_files {
-        let events = read_new_string_utf_events(file)?;
-        scanned_events += events.len();
+        let all_events = read_jni_string_events(file)?;
+        scanned_events += all_events.len();
+        let events = all_events
+            .iter()
+            .filter(|event| event.get("id").and_then(|v| v.as_str()) == Some("NewStringUTF"))
+            .cloned()
+            .collect::<Vec<_>>();
         let mut iter = events.chunks_exact(2);
         for pair in &mut iter {
             let key_text = pair[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -1664,6 +1682,14 @@ fn cmd_scan_jni_output_strings(
                     .and_then(|v| v.as_str())
                     .unwrap_or(value_text);
                 row["base64"] = base64_summary(base64_text);
+            }
+            if prior_inputs > 0 {
+                let value_idx = pair[1].get("idx").and_then(|v| v.as_u64());
+                row["prior_inputs"] = serde_json::Value::Array(prior_get_string_inputs(
+                    &all_events,
+                    value_idx,
+                    prior_inputs,
+                ));
             }
             pairs.push(row);
             if limit != 0 && pairs.len() >= limit {
@@ -1714,27 +1740,32 @@ fn collect_jni_hook_files(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<
     Ok(())
 }
 
-fn read_new_string_utf_events(path: &Path) -> anyhow::Result<Vec<serde_json::Value>> {
+fn read_jni_string_events(path: &Path) -> anyhow::Result<Vec<serde_json::Value>> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut events = Vec::new();
     for line in raw.lines() {
-        if !line.contains("NewStringUTF") {
+        if !line.contains("StringUTF") {
             continue;
         }
         let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if event.get("id").and_then(|v| v.as_str()) != Some("NewStringUTF") {
+        let Some(id) = event.get("id").and_then(|v| v.as_str()) else {
             continue;
-        }
-        let Some(text) = event
-            .get("args")
-            .and_then(|v| v.get("bytes"))
-            .and_then(|v| v.as_str())
-        else {
+        };
+        let text = match id {
+            "NewStringUTF" => event
+                .get("args")
+                .and_then(|v| v.get("bytes"))
+                .and_then(|v| v.as_str()),
+            "GetStringUTFChars" => event.get("ret").and_then(|v| v.as_str()),
+            _ => None,
+        };
+        let Some(text) = text else {
             continue;
         };
         events.push(serde_json::json!({
+            "id": id,
             "idx": event.get("trace_idx").cloned().unwrap_or(serde_json::Value::Null),
             "ret": event.get("ret").cloned().unwrap_or(serde_json::Value::Null),
             "text": text,
@@ -1742,6 +1773,42 @@ fn read_new_string_utf_events(path: &Path) -> anyhow::Result<Vec<serde_json::Val
         }));
     }
     Ok(events)
+}
+
+fn prior_get_string_inputs(
+    events: &[serde_json::Value],
+    before_idx: Option<u64>,
+    limit: usize,
+) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for event in events.iter().rev() {
+        if event.get("id").and_then(|v| v.as_str()) != Some("GetStringUTFChars") {
+            continue;
+        }
+        let idx = event.get("idx").and_then(|v| v.as_u64());
+        if let (Some(idx), Some(before_idx)) = (idx, before_idx) {
+            if idx >= before_idx {
+                continue;
+            }
+        }
+        let Some(text) = event.get("text").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !seen.insert(text.to_string()) {
+            continue;
+        }
+        out.push(serde_json::json!({
+            "idx": event.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "text": text,
+            "text_len": text.len(),
+        }));
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out.reverse();
+    out
 }
 
 fn base64_summary(raw: &str) -> serde_json::Value {
@@ -1851,7 +1918,8 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
         };
 
         if opts.writes_per_hit > 0 {
-            if let Some(hits) = find.get("hits").and_then(|v| v.as_array()) {
+            let hits = sorted_pattern_hits(&find, source.value_idx);
+            if !hits.is_empty() {
                 for hit in hits {
                     let Some(addr) = hit
                         .get("addr")
@@ -1895,6 +1963,11 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
                     let writer_runs = provenance_writer_runs(&provenance, &writer_details);
                     hit_reports.push(serde_json::json!({
                         "hit": hit,
+                        "distance_to_value_idx": source.value_idx.and_then(|idx| {
+                            hit.get("first_idx")
+                                .and_then(|v| v.as_u64())
+                                .map(|first| idx.abs_diff(first as usize))
+                        }),
                         "range": {
                             "addr_lo": format!("{addr:#x}"),
                             "addr_hi": format!("{addr_hi:#x}"),
@@ -2180,6 +2253,26 @@ fn provenance_writer_counts(
         })
     });
     rows.into_iter().take(limit).collect()
+}
+
+fn sorted_pattern_hits(
+    find_response: &serde_json::Value,
+    value_idx: Option<usize>,
+) -> Vec<serde_json::Value> {
+    let mut hits = find_response
+        .get("hits")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if let Some(value_idx) = value_idx {
+        hits.sort_by_key(|hit| {
+            hit.get("first_idx")
+                .and_then(|v| v.as_u64())
+                .map(|idx| value_idx.abs_diff(idx as usize))
+                .unwrap_or(usize::MAX)
+        });
+    }
+    hits
 }
 
 fn provenance_writer_runs(
