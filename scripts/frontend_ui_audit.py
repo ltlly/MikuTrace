@@ -32,6 +32,7 @@ def main() -> int:
     cfg = read("panels/cfg/CfgPanel.tsx")
     memory = read("panels/memory/MemoryPanel.tsx")
     registers = read("panels/registers/RegistersPanel.tsx")
+    records = read("panels/records/RecordsPanel.tsx")
     settings = read("panels/settings/SettingsPanel.tsx")
     string_prov = read("panels/strings/StringProvenancePanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
@@ -48,6 +49,22 @@ def main() -> int:
     require("bottom panel splitter exists", 'id="bottom-resize"' in app and 'startPanelResize("bottom"' in app, failures)
     for col in ("dot", "idx", "pc", "func", "asm"):
         require(f"asm column resize {col}", f'startAsmColResize("{col}"' in app, failures)
+    require(
+        "Records keep stable row object references",
+        "function sameRecordRow" in records
+        and "const rowObjectCache = new Map<number, RecordRow>()" in records
+        and "const cached = rowObjectCache.get(row.idx)" in records
+        and "sameRecordRow(cached, row)" in records
+        and "return cached" in records
+        and "rowObjectCache.set(row.idx, row)" in records,
+        failures,
+    )
+    require(
+        "Records row object cache is bounded",
+        "rowObjectCache.size > 5000" in records
+        and "rowObjectCache.delete(k)" in records,
+        failures,
+    )
 
     require("CFG header avoids stale no-fn label", 'cfgDisplayFn() || "select function"' in app, failures)
     require("CFG fetch has debounce", "CFG_FETCH_DEBOUNCE_MS" in cfg and "window.setTimeout" in cfg, failures)
