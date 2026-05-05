@@ -9,6 +9,8 @@ use tracemiku_core::function_index::parse_id;
 
 use crate::state::AppState;
 
+const MAX_TRACE_FN_HINT_SPAN: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct PcQuery {
     pub pc: String,
@@ -171,10 +173,17 @@ fn params_for_pc(state: &AppState, pc: u64) -> Value {
 
 fn trace_fn_start(state: &AppState, pc: u64) -> Option<u64> {
     let (name, off) = state.inner.symbols.lookup(pc);
-    if name == "?" || off > pc {
+    if name == "?" || off > pc || off > MAX_TRACE_FN_HINT_SPAN {
         return None;
     }
-    Some(pc - off)
+    let start = pc - off;
+    let has_index_entry = state.inner.function_index.entries.iter().any(|entry| {
+        entry.source == "symbol"
+            && entry.name == name
+            && entry.entry_pc == Some(start)
+            && entry.records > 0
+    });
+    has_index_entry.then_some(start)
 }
 
 fn resolve_fn_pc(state: &AppState, fn_id: &str) -> Result<u64, (StatusCode, String)> {

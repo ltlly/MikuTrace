@@ -59,6 +59,7 @@ export default function TaintPanel(props: TaintPanelProps) {
     }
     runAbort?.abort();
     runAbort = undefined;
+    setRunning(false);
   }
 
   onCleanup(() => cancelRun());
@@ -87,6 +88,22 @@ export default function TaintPanel(props: TaintPanelProps) {
       if (seq !== runSeq) return;
       void run(dir, startArg, regArg);
     }, TAINT_RETRY_MS);
+  }
+
+  function editStart(next: number) {
+    cancelRun();
+    setStart(next);
+  }
+
+  function editReg(next: string) {
+    cancelRun();
+    setReg(next);
+    props.onRegChange(next);
+  }
+
+  function editDirection(next: Direction) {
+    cancelRun();
+    setDirection(next);
   }
 
   async function run(dirArg = direction(), startArg = start(), regArg = reg()) {
@@ -201,7 +218,7 @@ export default function TaintPanel(props: TaintPanelProps) {
             type="number"
             min="0"
             value={start()}
-            onInput={(e) => setStart(Number(e.currentTarget.value) || 0)}
+            onInput={(e) => editStart(Number(e.currentTarget.value) || 0)}
           />
         </label>
         <label>
@@ -209,19 +226,14 @@ export default function TaintPanel(props: TaintPanelProps) {
           <input
             type="text"
             value={reg()}
-            onInput={(e) => {
-              setReg(e.currentTarget.value);
-              props.onRegChange(e.currentTarget.value);
-            }}
+            onInput={(e) => editReg(e.currentTarget.value)}
           />
         </label>
         <label>
           direction
           <select
             value={direction()}
-            onChange={(e) =>
-              setDirection(e.currentTarget.value as Direction)
-            }
+            onChange={(e) => editDirection(e.currentTarget.value as Direction)}
           >
             <option value="forward">forward</option>
             <option value="backward">backward</option>

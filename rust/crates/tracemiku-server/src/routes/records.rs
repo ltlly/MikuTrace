@@ -66,10 +66,30 @@ pub async fn records_handler(
     State(state): State<AppState>,
     Query(q): Query<RecordsQuery>,
 ) -> Json<RecordsResponse> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || records_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "records worker failed: {err}");
+                RecordsResponse {
+                    start: 0,
+                    end: 0,
+                    count: 0,
+                    returned: 0,
+                    requested_count: 0,
+                    max_count_used: 0,
+                    truncated: false,
+                    records: vec![],
+                }
+            }),
+    )
+}
+
+fn records_response(inner: &crate::state::AppStateInner, q: RecordsQuery) -> RecordsResponse {
     let n = inner.trace.len();
     if q.start >= n {
-        return Json(RecordsResponse {
+        return RecordsResponse {
             start: q.start,
             end: q.start,
             count: 0,
@@ -78,7 +98,7 @@ pub async fn records_handler(
             max_count_used: q.count.min(MAX_RECORD_COUNT),
             truncated: false,
             records: vec![],
-        });
+        };
     }
     let count = q.count.min(MAX_RECORD_COUNT);
     let end = q.start.saturating_add(count).min(n);
@@ -158,7 +178,7 @@ pub async fn records_handler(
         });
     }
 
-    Json(RecordsResponse {
+    RecordsResponse {
         start: q.start,
         end,
         count: end - q.start,
@@ -167,5 +187,5 @@ pub async fn records_handler(
         max_count_used: count,
         truncated,
         records: rows,
-    })
+    }
 }

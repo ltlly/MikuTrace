@@ -195,6 +195,66 @@ fn decode_w_alias_normalized_to_x() {
 }
 
 #[test]
+fn decode_w29_w30_aliases_to_fp_lr() {
+    // mov w29, w0 → 0x2a0003fd; mov w30, w1 → 0x2a0103fe.
+    let d_fp = raw_decode(0x100000, 0x2a0003fd);
+    assert!(
+        d_fp.regs_def.contains(&"fp".to_string()),
+        "w29 def must normalize to fp; got defs={:?}",
+        d_fp.regs_def
+    );
+    assert!(
+        !d_fp.regs_def.contains(&"x29".to_string()),
+        "x29 must not leak into defs; got defs={:?}",
+        d_fp.regs_def
+    );
+
+    let d_lr = raw_decode(0x100004, 0x2a0103fe);
+    assert!(
+        d_lr.regs_def.contains(&"lr".to_string()),
+        "w30 def must normalize to lr; got defs={:?}",
+        d_lr.regs_def
+    );
+    assert!(
+        !d_lr.regs_def.contains(&"x30".to_string()),
+        "x30 must not leak into defs; got defs={:?}",
+        d_lr.regs_def
+    );
+}
+
+#[test]
+fn decode_stnp_uses_pair_sources_not_defs() {
+    // stnp x0, x1, [sp, #16] = 0xa80107e0.
+    let d = raw_decode(0x100000, 0xa80107e0);
+    assert_eq!(d.mnemonic, "stnp");
+    assert!(
+        d.regs_def.is_empty(),
+        "stnp must not def source regs; got defs={:?}",
+        d.regs_def
+    );
+    assert!(d.regs_use.contains(&"x0".to_string()));
+    assert!(d.regs_use.contains(&"x1".to_string()));
+    assert!(d.regs_use.contains(&"sp".to_string()));
+}
+
+#[test]
+fn decode_exclusive_store_status_is_def_and_values_are_uses() {
+    // stxp w8, x0, x1, [sp] = 0xc82807e0; stlxr w8, x0, [sp] = 0xc808ffe0.
+    let pair = raw_decode(0x100000, 0xc82807e0);
+    assert_eq!(pair.mnemonic, "stxp");
+    assert!(pair.regs_def.contains(&"x8".to_string()));
+    assert!(pair.regs_use.contains(&"x0".to_string()));
+    assert!(pair.regs_use.contains(&"x1".to_string()));
+    assert!(pair.regs_use.contains(&"sp".to_string()));
+
+    let scalar = raw_decode(0x100004, 0xc808ffe0);
+    assert_eq!(scalar.mnemonic, "stlxr");
+    assert!(scalar.regs_def.contains(&"x8".to_string()));
+    assert!(scalar.regs_use.contains(&"x0".to_string()));
+    assert!(scalar.regs_use.contains(&"sp".to_string()));
+}
+
+#[test]
 fn decode_nop_has_empty_regs() {
     let d = raw_decode(0x100000, 0xd503201f);
     assert!(

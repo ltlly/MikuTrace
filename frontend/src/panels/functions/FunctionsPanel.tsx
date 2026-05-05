@@ -52,6 +52,9 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                   </span>
                 )}
               </For>
+              <Show when={r().truncated}>
+                {" "}· partial {r().returned_functions ?? r().functions.length}/{r().total_functions} shown
+              </Show>
             </p>
             <ul class="functions-list">
               <For each={r().functions}>

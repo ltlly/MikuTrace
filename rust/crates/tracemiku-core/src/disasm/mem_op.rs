@@ -36,7 +36,7 @@ pub struct MemOp {
 
 const STORE_BASES: &[&str] = &[
     "str", "strb", "strh", "stur", "sturb", "sturh", "stp", "stnp", "stxr", "stxrb", "stxrh",
-    "stlr", "stlrb", "stlrh", "stlxr", "stlxrb", "stlxrh",
+    "stxp", "stlr", "stlrb", "stlrh", "stlxr", "stlxrb", "stlxrh", "stlxp",
 ];
 
 fn is_store(mnem_base: &str) -> bool {
@@ -72,6 +72,14 @@ fn op_size(mnem_base: &str, ins: &capstone::Insn, cs: &Capstone) -> u32 {
         }
     }
     8
+}
+
+fn reg_access_size(name: &str) -> u32 {
+    if name.starts_with('w') {
+        4
+    } else {
+        8
+    }
 }
 
 /// Extract the list of MemOps from one capstone-decoded instruction.
@@ -141,13 +149,40 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
         && out.len() == 1
         && reg_operand_names.len() >= 2
     {
-        let pair_sz: u32 = if reg_operand_names[0].starts_with('w') {
-            4
-        } else {
-            8
-        };
+        let pair_sz: u32 = reg_access_size(&reg_operand_names[0]);
         let r0 = normalize_disasm_reg(&reg_operand_names[0]);
         let r1 = normalize_disasm_reg(&reg_operand_names[1]);
+        let base_op = out.remove(0);
+        out.push(MemOp {
+            size: pair_sz,
+            src_reg: r0,
+            ..base_op.clone()
+        });
+        out.push(MemOp {
+            disp: base_op.disp + pair_sz as i64,
+            size: pair_sz,
+            src_reg: r1,
+            ..base_op
+        });
+    }
+    // Exclusive stores have a status destination as operand 0 and one or two
+    // real store sources after it. Fill `src_reg` so MemShadow does not fall
+    // back to the status register.
+    if matches!(
+        mnem_base,
+        "stxr" | "stxrb" | "stxrh" | "stlxr" | "stlxrb" | "stlxrh"
+    ) && out.len() == 1
+        && reg_operand_names.len() >= 2
+    {
+        out[0].src_reg = normalize_disasm_reg(&reg_operand_names[1]);
+        if !matches!(mnem_base, "stxrb" | "stxrh" | "stlxrb" | "stlxrh") {
+            out[0].size = reg_access_size(&reg_operand_names[1]);
+        }
+    }
+    if matches!(mnem_base, "stxp" | "stlxp") && out.len() == 1 && reg_operand_names.len() >= 3 {
+        let pair_sz: u32 = reg_access_size(&reg_operand_names[1]);
+        let r0 = normalize_disasm_reg(&reg_operand_names[1]);
+        let r1 = normalize_disasm_reg(&reg_operand_names[2]);
         let base_op = out.remove(0);
         out.push(MemOp {
             size: pair_sz,

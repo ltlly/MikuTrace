@@ -12,10 +12,16 @@ use tracemiku_core::prelude::{make_bn_id, FunctionEntry};
 
 use crate::state::{AppState, AppStateInner};
 
+const MAX_FUNCTIONS: usize = 10_000;
+
 #[derive(Debug, Serialize)]
 pub struct FunctionsResponse {
     pub counts: HashMap<String, u64>,
     pub functions: Vec<FunctionEntry>,
+    pub total_functions: usize,
+    pub returned_functions: usize,
+    pub max_functions_used: usize,
+    pub truncated: bool,
 }
 
 pub async fn functions_handler(State(state): State<AppState>) -> Json<FunctionsResponse> {
@@ -76,8 +82,18 @@ fn functions_response_from_entries(fns: Vec<FunctionEntry>) -> FunctionsResponse
     for f in &fns {
         *counts.entry(f.source.clone()).or_insert(0) += 1;
     }
+    let total_functions = fns.len();
+    let mut functions = fns;
+    if functions.len() > MAX_FUNCTIONS {
+        functions.truncate(MAX_FUNCTIONS);
+    }
+    let returned_functions = functions.len();
     FunctionsResponse {
         counts,
-        functions: fns,
+        functions,
+        total_functions,
+        returned_functions,
+        max_functions_used: MAX_FUNCTIONS,
+        truncated: total_functions > returned_functions,
     }
 }

@@ -13,6 +13,8 @@ use tracemiku_core::prelude::*;
 use crate::state::AppState;
 
 const MAX_CALL_CHAIN_DEPTH: usize = 256;
+const MAX_BLOCK_INSNS: usize = 2_000;
+const MAX_BLOCK_EXITS: usize = 1_000;
 
 #[derive(Debug, Deserialize)]
 pub struct PcQuery {
@@ -65,6 +67,11 @@ pub struct BlockDetail {
     pub executions: u64,
     pub insns: Vec<BlockInsn>,
     pub exits: Vec<BlockExit>,
+    pub total_insns: usize,
+    pub total_exits: usize,
+    pub max_insns_used: usize,
+    pub max_exits_used: usize,
+    pub truncated: bool,
 }
 
 pub async fn block_handler(
@@ -72,8 +79,19 @@ pub async fn block_handler(
     Query(q): Query<PcQuery>,
 ) -> Result<Json<BlockDetail>, StatusCode> {
     let pc = parse_int(&q.pc).ok_or(StatusCode::BAD_REQUEST)?;
-    let block = find_block_for_pc(&state, pc).ok_or(StatusCode::NOT_FOUND)?;
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    let detail = tokio::task::spawn_blocking(move || block_detail_response(&inner, pc))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "block worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(detail))
+}
+
+fn block_detail_response(inner: &crate::state::AppStateInner, pc: u64) -> Option<BlockDetail> {
+    let block = inner.cfg.block_containing(pc)?;
     let base = primary_base(&inner.meta);
     let (func_name, off_u64) = inner.symbols.lookup(block.start_pc);
     let func = (func_name != "?").then_some(func_name);
@@ -87,8 +105,11 @@ pub async fn block_handler(
         .filter(|pc| *pc >= block.start_pc && *pc <= block.end_pc)
         .collect::<Vec<_>>();
     pcs.sort_unstable();
+    let total_insns = pcs.len();
+    let insns_truncated = total_insns > MAX_BLOCK_INSNS;
     let insns = pcs
         .into_iter()
+        .take(MAX_BLOCK_INSNS)
         .map(|pc| {
             let inst = inner
                 .index
@@ -108,16 +129,18 @@ pub async fn block_handler(
             }
         })
         .collect();
-    let exits = inner
-        .cfg
-        .edges_from(block.start_pc)
+    let all_exits = inner.cfg.edges_from(block.start_pc);
+    let total_exits = all_exits.len();
+    let exits_truncated = total_exits > MAX_BLOCK_EXITS;
+    let exits = all_exits
         .into_iter()
+        .take(MAX_BLOCK_EXITS)
         .map(|(to, meta)| BlockExit {
             to: format!("{to:#x}"),
             kind: meta.kind,
         })
         .collect();
-    Ok(Json(BlockDetail {
+    Some(BlockDetail {
         start: format!("{:#x}", block.start_pc),
         end: format!("{:#x}", block.end_pc),
         func,
@@ -125,7 +148,12 @@ pub async fn block_handler(
         executions: block.executions,
         insns,
         exits,
-    }))
+        total_insns,
+        total_exits,
+        max_insns_used: MAX_BLOCK_INSNS,
+        max_exits_used: MAX_BLOCK_EXITS,
+        truncated: insns_truncated || exits_truncated,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -142,19 +170,33 @@ pub struct LoopsResponse {
 }
 
 pub async fn loops_handler(State(state): State<AppState>) -> Json<LoopsResponse> {
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || loops_response(&inner))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "loops worker failed: {err}");
+                LoopsResponse {
+                    status: "error",
+                    loops: Vec::new(),
+                    count: 0,
+                }
+            }),
+    )
+}
+
+fn loops_response(inner: &crate::state::AppStateInner) -> LoopsResponse {
     let mut groups: BTreeMap<u32, Vec<u64>> = BTreeMap::new();
-    for block in state.inner.cfg.blocks() {
+    for block in inner.cfg.blocks() {
         groups.entry(block.scc_id).or_default().push(block.start_pc);
     }
-    let self_edges: BTreeSet<u64> = state
-        .inner
+    let self_edges: BTreeSet<u64> = inner
         .cfg
         .graph
         .edge_references()
         .filter_map(|edge| {
             (edge.source() == edge.target()).then(|| {
-                state
-                    .inner
+                inner
                     .cfg
                     .graph
                     .node_weight(edge.source())
@@ -172,11 +214,11 @@ pub async fn loops_handler(State(state): State<AppState>) -> Json<LoopsResponse>
             });
         }
     }
-    Json(LoopsResponse {
+    LoopsResponse {
         status: "ready",
         count: loops.len(),
         loops,
-    })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,20 +287,37 @@ pub struct CallChainResponse {
     pub start_idx: usize,
     pub depth: usize,
     pub chain: Vec<CallChainEntry>,
+    pub requested_depth: usize,
+    pub max_depth_used: usize,
+    pub truncated: bool,
 }
 
 pub async fn call_chain_handler(
     State(state): State<AppState>,
     Query(q): Query<CallChainQuery>,
 ) -> Result<Json<CallChainResponse>, StatusCode> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
     if q.idx >= inner.trace.len() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let response = tokio::task::spawn_blocking(move || call_chain_response(&inner, q))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "call chain worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(response))
+}
+
+fn call_chain_response(
+    inner: &crate::state::AppStateInner,
+    q: CallChainQuery,
+) -> CallChainResponse {
     let base = primary_base(&inner.meta);
     let mut chain = Vec::new();
     let mut cur_idx = q.idx;
-    for depth in 0..effective_call_chain_depth(q.depth) {
+    let max_depth = effective_call_chain_depth(q.depth);
+    for depth in 0..max_depth {
         let record = inner.trace.record(cur_idx);
         let pc = record.pc;
         let (func_name, off_u64) = inner.symbols.lookup(pc);
@@ -293,11 +352,15 @@ pub async fn call_chain_handler(
         };
         cur_idx = next_idx;
     }
-    Ok(Json(CallChainResponse {
+    let truncated = q.depth > max_depth || chain.len() == max_depth;
+    CallChainResponse {
         start_idx: q.idx,
         depth: chain.len(),
         chain,
-    }))
+        requested_depth: q.depth,
+        max_depth_used: max_depth,
+        truncated,
+    }
 }
 
 #[cfg(test)]

@@ -82,15 +82,26 @@ fn is_store_style(mnem: &str) -> bool {
             | "sturb"
             | "sturh"
             | "stp"
+            | "stnp"
+            | "stxp"
             | "stxr"
             | "stxrb"
             | "stxrh"
+            | "stlxp"
             | "stlr"
             | "stlrb"
             | "stlrh"
             | "stlxr"
             | "stlxrb"
             | "stlxrh"
+    )
+}
+
+fn is_exclusive_store_style(mnem: &str) -> bool {
+    let base = mnem.split('.').next().unwrap_or(mnem);
+    matches!(
+        base,
+        "stxr" | "stxrb" | "stxrh" | "stlxr" | "stlxrb" | "stlxrh" | "stxp" | "stlxp"
     )
 }
 
@@ -164,8 +175,11 @@ fn build_reg_accesses(
                         continue;
                     }
                     // First explicit Reg operand is the destination for most insns.
-                    // For store instructions, all explicit reg operands are reads.
-                    if reg_op_index == 0 && !store {
+                    // Normal stores read all explicit register operands.
+                    // Exclusive stores (`stxr`, `stxp`, `stlxr`, `stlxp`, ...)
+                    // are special: operand 0 is the status destination, while
+                    // later register operands are store sources.
+                    if reg_op_index == 0 && (!store || is_exclusive_store_style(mnem)) {
                         if !regs_def.contains(&normalized) {
                             regs_def.push(normalized);
                         }

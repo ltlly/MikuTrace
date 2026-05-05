@@ -115,6 +115,12 @@ export default function App() {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
   const [navHistory, setNavHistory] = createSignal<number[]>([0]);
   const [navPos, setNavPos] = createSignal(0);
+  const navHistoryEntries = createMemo(() =>
+    navHistory()
+      .map((idx, pos) => ({ idx, pos }))
+      .slice()
+      .reverse(),
+  );
   const [selectedReg, setSelectedReg] = createSignal("x0");
   const [selectedFn, setSelectedFn] = createSignal("");
   const [cursorHint, setCursorHint] = createSignal<CursorRecordHint | undefined>();
@@ -397,6 +403,8 @@ export default function App() {
     setRightTab("cfg");
     if (jumpEntry && fn.entry_pc !== null) {
       void jumpToFirstPc(`0x${fn.entry_pc.toString(16)}`, fn.name);
+    } else if (jumpEntry) {
+      setCmdStatus(`${fn.name}: no trace entry PC`);
     }
   }
 
@@ -974,7 +982,7 @@ export default function App() {
                   </span>
                 </div>
                 <div class="nav-history-list">
-                  <For each={navHistory().map((idx, pos) => ({ idx, pos })).slice().reverse()}>
+                  <For each={navHistoryEntries()}>
                     {(entry) => (
                       <button
                         type="button"

@@ -25,6 +25,10 @@ impl BnSidecarManager {
         Self::from_env_with_base(parse_u64_env("TRACEMIKU_BN_BASE"))
     }
 
+    pub fn from_env_with_default_base(default_base: Option<u64>) -> Self {
+        Self::from_env_with_base(parse_u64_env("TRACEMIKU_BN_BASE").or(default_base))
+    }
+
     pub fn from_env_with_base(runtime_base: Option<u64>) -> Self {
         Self {
             so_path: std::env::var("TRACEMIKU_BN_SO").ok(),
@@ -151,5 +155,38 @@ impl Drop for ChildSession {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BnSidecarManager;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn env_runtime_base_overrides_default_base() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("TRACEMIKU_BN_BASE", "0x12340000");
+        let mgr = BnSidecarManager::from_env_with_default_base(Some(0x7777));
+        let status = mgr.status();
+        assert_eq!(
+            status.get("runtime_base").and_then(|v| v.as_str()),
+            Some("0x12340000")
+        );
+        std::env::remove_var("TRACEMIKU_BN_BASE");
+    }
+
+    #[test]
+    fn default_base_used_when_env_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("TRACEMIKU_BN_BASE");
+        let mgr = BnSidecarManager::from_env_with_default_base(Some(0x7777));
+        let status = mgr.status();
+        assert_eq!(
+            status.get("runtime_base").and_then(|v| v.as_str()),
+            Some("0x7777")
+        );
     }
 }

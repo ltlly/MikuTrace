@@ -15,6 +15,9 @@ pub struct CfgQuery {
     pub fn_name: String,
 }
 
+const MAX_CFG_BLOCKS: usize = 5_000;
+const MAX_CFG_EDGES: usize = 10_000;
+
 #[derive(Debug, Serialize)]
 pub struct BlockJson {
     pub start_pc: String,
@@ -29,6 +32,13 @@ pub struct CfgResponse {
     pub status: &'static str,
     pub blocks: Vec<BlockJson>,
     pub edges: Vec<[String; 2]>,
+    pub total_blocks: usize,
+    pub total_edges: usize,
+    pub returned_blocks: usize,
+    pub returned_edges: usize,
+    pub max_blocks_used: usize,
+    pub max_edges_used: usize,
+    pub truncated: bool,
 }
 
 pub async fn cfg_handler(
@@ -45,6 +55,13 @@ pub async fn cfg_handler(
                     status: "error",
                     blocks: Vec::new(),
                     edges: Vec::new(),
+                    total_blocks: 0,
+                    total_edges: 0,
+                    returned_blocks: 0,
+                    returned_edges: 0,
+                    max_blocks_used: MAX_CFG_BLOCKS,
+                    max_edges_used: MAX_CFG_EDGES,
+                    truncated: false,
                 }
             }),
     )
@@ -60,7 +77,8 @@ fn cfg_response(inner: &crate::state::AppStateInner, q: CfgQuery) -> CfgResponse
         Some(q.fn_name.as_str())
     };
 
-    let mut blocks_out: Vec<BlockJson> = Vec::with_capacity(cfg.block_count());
+    let mut blocks_out: Vec<BlockJson> = Vec::with_capacity(cfg.block_count().min(MAX_CFG_BLOCKS));
+    let mut total_blocks = 0usize;
     for b in cfg.blocks() {
         let (fn_name_str, _off) = symbols.lookup(b.start_pc);
         let fn_name = if fn_name_str == "?" {
@@ -76,16 +94,24 @@ fn cfg_response(inner: &crate::state::AppStateInner, q: CfgQuery) -> CfgResponse
             }
         }
 
-        blocks_out.push(BlockJson {
-            start_pc: format!("{:#x}", b.start_pc),
-            end_pc: format!("{:#x}", b.end_pc),
-            executions: b.executions,
-            fn_name,
-            scc_id: b.scc_id,
-        });
+        total_blocks += 1;
+        if blocks_out.len() < MAX_CFG_BLOCKS {
+            blocks_out.push(BlockJson {
+                start_pc: format!("{:#x}", b.start_pc),
+                end_pc: format!("{:#x}", b.end_pc),
+                executions: b.executions,
+                fn_name,
+                scc_id: b.scc_id,
+            });
+        }
     }
 
-    let mut edges_out: Vec<[String; 2]> = Vec::with_capacity(cfg.edge_count());
+    let returned_block_set = blocks_out
+        .iter()
+        .filter_map(|b| parse_hex(&b.start_pc))
+        .collect::<std::collections::HashSet<_>>();
+    let mut edges_out: Vec<[String; 2]> = Vec::with_capacity(cfg.edge_count().min(MAX_CFG_EDGES));
+    let mut total_edges = 0usize;
     for edge in cfg.graph.edge_indices() {
         let Some((from_n, to_n)) = cfg.graph.edge_endpoints(edge) else {
             continue;
@@ -102,12 +128,33 @@ fn cfg_response(inner: &crate::state::AppStateInner, q: CfgQuery) -> CfgResponse
                 continue;
             }
         }
-        edges_out.push([format!("{:#x}", f.start_pc), format!("{:#x}", t.start_pc)]);
+        total_edges += 1;
+        if edges_out.len() < MAX_CFG_EDGES
+            && returned_block_set.contains(&f.start_pc)
+            && returned_block_set.contains(&t.start_pc)
+        {
+            edges_out.push([format!("{:#x}", f.start_pc), format!("{:#x}", t.start_pc)]);
+        }
     }
 
+    let returned_blocks = blocks_out.len();
+    let returned_edges = edges_out.len();
     CfgResponse {
         status: "ready",
         blocks: blocks_out,
         edges: edges_out,
+        total_blocks,
+        total_edges,
+        returned_blocks,
+        returned_edges,
+        max_blocks_used: MAX_CFG_BLOCKS,
+        max_edges_used: MAX_CFG_EDGES,
+        truncated: total_blocks > returned_blocks || total_edges > returned_edges,
     }
+}
+
+fn parse_hex(s: &str) -> Option<u64> {
+    let t = s.trim();
+    let hex = t.strip_prefix("0x").unwrap_or(t);
+    u64::from_str_radix(hex, 16).ok()
 }

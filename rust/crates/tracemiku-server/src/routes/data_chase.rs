@@ -51,6 +51,9 @@ pub struct DataChaseResponse {
     pub reg: String,
     pub count: usize,
     pub steps: Vec<DataChaseStep>,
+    pub requested_max_steps: usize,
+    pub max_steps_used: usize,
+    pub stopped_at_max: bool,
 }
 
 pub async fn data_chase_handler(
@@ -68,6 +71,9 @@ pub async fn data_chase_handler(
                     reg: String::new(),
                     count: 0,
                     steps: Vec::new(),
+                    requested_max_steps: 0,
+                    max_steps_used: 0,
+                    stopped_at_max: false,
                 }
             }),
     )
@@ -79,13 +85,8 @@ fn data_chase_response(
 ) -> DataChaseResponse {
     let exclude = parse_exclude_regs(&q.exclude_regs);
     let base = primary_base(&inner.meta);
-    let raw_steps = data_chase_core(
-        inner,
-        q.start,
-        &q.reg,
-        effective_max_steps(q.max_steps),
-        &exclude,
-    );
+    let max_steps_used = effective_max_steps(q.max_steps);
+    let raw_steps = data_chase_core(inner, q.start, &q.reg, max_steps_used, &exclude);
     let steps: Vec<DataChaseStep> = raw_steps
         .into_iter()
         .map(|raw| {
@@ -102,11 +103,16 @@ fn data_chase_response(
             }
         })
         .collect();
+    let count = steps.len();
+    let stopped_at_max = max_steps_used > 0 && count >= max_steps_used;
     DataChaseResponse {
         from_idx: q.start,
         reg: q.reg,
-        count: steps.len(),
+        count,
         steps,
+        requested_max_steps: q.max_steps,
+        max_steps_used,
+        stopped_at_max,
     }
 }
 

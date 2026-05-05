@@ -138,6 +138,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "memory_query.rs",
     "navigation.rs",
     "ollvm_detect_vm.rs",
+    "records.rs",
     "search.rs",
     "so_stats.rs",
     "string_provenance.rs",
@@ -157,9 +158,15 @@ const LIGHT_ROUTE_FILES: &[&str] = &[
     "last_write_of_reg.rs",
     "meta.rs",
     "record.rs",
-    "records.rs",
     "reg_value_at.rs",
     "search_pc.rs",
+];
+
+const HEAVY_ROUTE_HANDLERS: &[(&str, &str)] = &[
+    ("navigation.rs", "block_handler"),
+    ("navigation.rs", "loops_handler"),
+    ("navigation.rs", "call_chain_handler"),
+    ("records.rs", "records_handler"),
 ];
 
 // Endpoint surface from main:webui/server.py. Keep this list normalized with
@@ -292,6 +299,28 @@ fn heavy_route_handlers_stay_off_async_runtime() {
     assert!(
         missing.is_empty(),
         "heavy route handlers must move CPU-bound work off the async runtime: {missing:?}"
+    );
+}
+
+#[test]
+fn known_heavy_handlers_stay_off_async_runtime() {
+    let routes_dir = repo_root().join("rust/crates/tracemiku-server/src/routes");
+    let mut missing = Vec::new();
+    for (file, handler) in HEAVY_ROUTE_HANDLERS {
+        let src = fs::read_to_string(routes_dir.join(file)).unwrap();
+        let needle = format!("pub async fn {handler}");
+        let Some(start) = src.find(&needle) else {
+            missing.push(format!("{file}::{handler} missing handler"));
+            continue;
+        };
+        let body_prefix = &src[start..src.len().min(start + 1200)];
+        if !body_prefix.contains("tokio::task::spawn_blocking") {
+            missing.push(format!("{file}::{handler}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "known CPU-heavy async handlers must use spawn_blocking: {missing:?}"
     );
 }
 

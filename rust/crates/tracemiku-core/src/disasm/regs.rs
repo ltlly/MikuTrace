@@ -5,7 +5,8 @@
 
 /// Map capstone's reg name to the canonical name used in record reg slots.
 ///
-/// - `w0..w30` → `x0..x30` (32-bit alias of the 64-bit register)
+/// - `w0..w28` → `x0..x28` (32-bit alias of the 64-bit register)
+/// - `w29` → `fp`, `w30` → `lr`
 /// - `x29` → `fp` (frame pointer alias used by trace storage)
 /// - `x30` → `lr` (link register alias)
 /// - `wsp` → `sp` (stack pointer 32-bit alias)
@@ -17,10 +18,14 @@ pub fn normalize_disasm_reg(name: &str) -> String {
     }
     let n = name.to_ascii_lowercase();
 
-    // w0..w30 → x0..x30
+    // w0..w30 → x0..x30, then canonicalize frame/link aliases.
     if let Some(rest) = n.strip_prefix('w') {
         if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
-            return format!("x{rest}");
+            return match rest {
+                "29" => "fp".to_string(),
+                "30" => "lr".to_string(),
+                _ => format!("x{rest}"),
+            };
         }
     }
 
@@ -46,7 +51,8 @@ mod tests {
     fn normalize_w_to_x() {
         assert_eq!(normalize_disasm_reg("w0"), "x0");
         assert_eq!(normalize_disasm_reg("w28"), "x28");
-        assert_eq!(normalize_disasm_reg("W30"), "x30");
+        assert_eq!(normalize_disasm_reg("W29"), "fp");
+        assert_eq!(normalize_disasm_reg("W30"), "lr");
     }
 
     #[test]

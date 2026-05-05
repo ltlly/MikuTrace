@@ -530,6 +530,7 @@ export default function CfgPanel(props: CfgPanelProps) {
                     <>
                       <p class="dim small">
                         BN ASM CFG · {r.fn?.name ?? (r.requestFn || r.requestPc)} · drag to pan · Ctrl+wheel zoom
+                        <Show when={r.created_function}> · BN function created</Show>
                       </p>
                       {graphFrame(svg())}
                     </>

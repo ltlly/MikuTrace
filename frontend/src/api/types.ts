@@ -106,6 +106,10 @@ export interface FunctionEntry {
 export interface FunctionsResponse {
   counts: Record<string, number>;
   functions: FunctionEntry[];
+  total_functions?: number;
+  returned_functions?: number;
+  max_functions_used?: number;
+  truncated?: boolean;
 }
 
 // ── /api/cfg-svg ─────────────────────────────────────────────────────────
