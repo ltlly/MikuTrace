@@ -26,9 +26,11 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `scripts/web_api_perf_probe.py`。
 - ✅ Decompile / LLM Web UI 临时隐藏: 先避免冷路径影响主交互; 恢复前需要
   单独做 latency/cancellation/cache 审计。
-- ☐ 为 5k response cap 增加更清晰的 UI affordance: taint/search/records 等
+- ✅ Taint / string list / ASM search refs 的截断结果已在 UI 明确标注 partial
+  result, 并提供 5k cap 重跑入口或 cap 解释, 避免用户误判为完整链路。
+- ☐ 继续补齐 records / trace refs / memory provenance / backtrace 等 cap surface:
   被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
-  入口或解释, 避免用户误判为完整链路。
+  入口或解释。
 - ☐ 抽出 Solid stale-frame / latest-selection guard: 当前 guard 散在多个
   panel, 新面板容易复发 "旧请求覆盖新 cursor"。
 - ☐ 扩大 Rust web↔CLI parity gate: 对 records/cfg/taint/memory/string
