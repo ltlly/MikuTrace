@@ -703,7 +703,7 @@ body.is-resizing {
 .reg-diff-table tr {
   display: grid;
   grid-template-columns: var(--reg-col-name, 52px) var(--reg-col-value, 150px) var(--reg-col-delta, 76px) minmax(var(--reg-col-note, 220px), 1fr);
-  align-items: center;
+  align-items: stretch;
   width: max-content;
   min-width: 100%;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
@@ -719,6 +719,8 @@ body.is-resizing {
   white-space: nowrap;
   padding: 2px 8px;
   border-bottom: 0;
+  display: flex;
+  align-items: center;
 }
 
 .reg-diff-table th:not(:last-child),
