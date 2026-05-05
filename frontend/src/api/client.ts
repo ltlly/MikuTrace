@@ -471,8 +471,10 @@ export async function fetchBlockForPc(pc: string): Promise<BlockForPcResponse> {
 export async function fetchIdxsForBlock(
   pc: string,
   maxCount = 1,
+  near?: number,
 ): Promise<IdxsForBlockResponse> {
   const params = new URLSearchParams({ pc, max_count: String(maxCount) });
+  if (near !== undefined) params.set("near", String(near));
   const r = await fx(`/api/idxs-for-block?${params}`);
   if (!r.ok) throw new Error(`/api/idxs-for-block ${r.status}: ${await r.text()}`);
   return (await r.json()) as IdxsForBlockResponse;

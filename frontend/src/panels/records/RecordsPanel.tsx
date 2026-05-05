@@ -296,7 +296,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     props.onSelect(candidates[0]);
   }
 
-  async function jumpCfgAtValue(value: string | null | undefined) {
+  async function jumpCfgAtValue(value: string | null | undefined, idx: number) {
     if (!value) return;
     const navSeq = ++regNavSeq;
     const contextToken = regContext()?.token;
@@ -306,7 +306,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       setRegContext((current) => (current ? { ...current, err: "PC not in any tracked block" } : current));
       return;
     }
-    const idxs = await fetchIdxsForBlock(block.block, 1);
+    const idxs = await fetchIdxsForBlock(block.block, 1, idx);
     if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
     if (idxs.idxs.length > 0) props.onSelect(idxs.idxs[0]);
     else setRegContext((current) => (current ? { ...current, err: "block not executed in trace" } : current));
@@ -475,7 +475,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                       <button type="button" onClick={() => props.onOpenMemory(value())}>
                         open Memory at value
                       </button>
-                      <button type="button" onClick={() => void jumpCfgAtValue(value())}>
+                      <button type="button" onClick={() => void jumpCfgAtValue(value(), ctx().idx)}>
                         CFG view at value
                       </button>
                       <button type="button" onClick={() => void jumpPcValue(value(), ctx().idx)}>
