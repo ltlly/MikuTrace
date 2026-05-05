@@ -110,6 +110,55 @@ fn rust_router_methods() -> BTreeSet<(String, String)> {
 }
 
 #[test]
+fn heavy_route_handlers_stay_off_async_runtime() {
+    let heavy_route_files = [
+        "auto_phase.rs",
+        "backward_taint.rs",
+        "bn_hlil.rs",
+        "call_tree.rs",
+        "cfg.rs",
+        "cfg_svg.rs",
+        "crypto_scan.rs",
+        "data_chase.rs",
+        "dec_fn.rs",
+        "dec_llm_call.rs",
+        "dec_summary.rs",
+        "diff_traces.rs",
+        "fn_summary.rs",
+        "functions.rs",
+        "hash_finalize.rs",
+        "hash_input_search.rs",
+        "jni_calls.rs",
+        "jni_events.rs",
+        "jni_strings.rs",
+        "jobj_history.rs",
+        "llil_llm.rs",
+        "llil_render.rs",
+        "mem_dump.rs",
+        "mem_flow.rs",
+        "memory_query.rs",
+        "ollvm_detect_vm.rs",
+        "search.rs",
+        "so_stats.rs",
+        "string_provenance.rs",
+        "strings.rs",
+        "timeline_diff.rs",
+    ];
+    let routes_dir = repo_root().join("rust/crates/tracemiku-server/src/routes");
+    let missing = heavy_route_files
+        .into_iter()
+        .filter(|file| {
+            let src = fs::read_to_string(routes_dir.join(file)).unwrap();
+            !src.contains("tokio::task::spawn_blocking")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "heavy route handlers must move CPU-bound work off the async runtime: {missing:?}"
+    );
+}
+
+#[test]
 fn frontend_api_calls_are_registered_in_rust_router() {
     let router_paths = rust_router_paths();
     let missing = frontend_api_paths()
