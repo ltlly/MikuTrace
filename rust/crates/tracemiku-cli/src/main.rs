@@ -626,6 +626,31 @@ enum Cmd {
         #[arg(long = "no-url-decode")]
         no_url_decode: bool,
     },
+    /// Compact dynamic VM-oriented record slice.
+    VmSlice {
+        trace_dir: PathBuf,
+        /// First trace index to include.
+        #[arg(long)]
+        start: usize,
+        /// End trace index, exclusive. Overrides --count.
+        #[arg(long)]
+        end: Option<usize>,
+        /// Number of records when --end is not set.
+        #[arg(long, default_value_t = 300)]
+        count: usize,
+        /// Comma-separated registers to request from /api/records.
+        #[arg(
+            long,
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+        )]
+        regs: String,
+        /// Drop records that do not look VM-related.
+        #[arg(long)]
+        only_vm: bool,
+        /// Base VM IP for vm_off. Defaults to the first row's x21.
+        #[arg(long)]
+        base_ip: Option<String>,
+    },
     /// GET /api/jobj-history.
     JobjHistory {
         trace_dir: PathBuf,
@@ -1340,6 +1365,15 @@ async fn main() -> anyhow::Result<()> {
             };
             cmd_output_backtrace(trace_dir, opts).await
         }
+        Some(Cmd::VmSlice {
+            trace_dir,
+            start,
+            end,
+            count,
+            regs,
+            only_vm,
+            base_ip,
+        }) => cmd_vm_slice(trace_dir, start, end, count, regs, only_vm, base_ip).await,
         Some(Cmd::JobjHistory {
             trace_dir,
             jobject,
@@ -2443,6 +2477,293 @@ fn summarize_backward_taint(response: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+async fn cmd_vm_slice(
+    trace_dir: PathBuf,
+    start: usize,
+    end: Option<usize>,
+    count: usize,
+    regs: String,
+    only_vm: bool,
+    base_ip: Option<String>,
+) -> anyhow::Result<()> {
+    let end = end.unwrap_or_else(|| start.saturating_add(count));
+    let count = end.saturating_sub(start);
+    let params = vec![
+        ("start", start.to_string()),
+        ("count", count.to_string()),
+        ("regs", regs),
+    ];
+    let response = route_get_json_value(trace_dir, route_path("/api/records", &params)).await?;
+    let records = response
+        .get("records")
+        .and_then(|v| v.as_array())
+        .context("/api/records response missing records[]")?;
+    let inferred_base = base_ip
+        .as_deref()
+        .and_then(parse_u64_str)
+        .or_else(|| records.iter().find_map(|rec| record_reg_u64(rec, "x21")));
+
+    let mut rows = Vec::new();
+    for (pos, rec) in records.iter().enumerate() {
+        let asm = rec.get("asm").and_then(|v| v.as_str()).unwrap_or("");
+        let class = classify_vm_asm(asm);
+        if only_vm && class == "other" {
+            continue;
+        }
+        let next = records.get(pos + 1);
+        let vm_ip = record_reg_u64(rec, "x21");
+        let vm_off = vm_ip.and_then(|ip| inferred_base.map(|base| ip.wrapping_sub(base)));
+        let vm_slot = vm_slot_from_asm(asm, rec);
+        let mem_addr = mem_addr_from_asm(asm, rec);
+        let def = def_reg_from_asm(asm).map(|reg| {
+            serde_json::json!({
+                "reg": reg,
+                "value_after": next.and_then(|next| record_reg_value(next, &reg).cloned()).unwrap_or(serde_json::Value::Null),
+            })
+        });
+        let store_src = store_source_regs_from_asm(asm)
+            .into_iter()
+            .map(|reg| {
+                serde_json::json!({
+                    "reg": reg,
+                    "value": record_reg_value(rec, &reg).cloned().unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
+        rows.push(serde_json::json!({
+            "idx": rec.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "pc": rec.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+            "func": rec.get("func").cloned().unwrap_or(serde_json::Value::Null),
+            "asm": asm,
+            "class": class,
+            "def": def,
+            "store_src": store_src,
+            "vm_ip": vm_ip.map(|v| format!("{v:#x}")),
+            "vm_off": vm_off.map(|v| format!("{v:#x}")),
+            "vm_slot": vm_slot,
+            "mem_addr": mem_addr.map(|v| format!("{v:#x}")),
+            "regs": rec.get("regs").cloned().unwrap_or_else(|| serde_json::json!({})),
+        }));
+    }
+
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "start": start,
+        "end": end,
+        "returned": rows.len(),
+        "source_returned": records.len(),
+        "only_vm": only_vm,
+        "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
+        "records": rows,
+    }))
+}
+
+fn classify_vm_asm(asm: &str) -> &'static str {
+    let asm = asm.trim().to_ascii_lowercase();
+    if asm.starts_with("br ") {
+        return "dispatch-branch";
+    }
+    if asm.starts_with("blr ") {
+        return "call-indirect";
+    }
+    if asm.contains("[x23,") {
+        return "dispatch-table-load";
+    }
+    if asm.contains("[x21") {
+        return "bytecode-read";
+    }
+    if asm.contains("[x25,") {
+        if asm.starts_with("ldr") {
+            return "vm-reg-load";
+        }
+        if asm.starts_with("str") {
+            return "vm-reg-store";
+        }
+    }
+    if asm.starts_with("strb ") {
+        return "byte-store";
+    }
+    if asm.starts_with("ldrb ") {
+        return "byte-load";
+    }
+    if asm.starts_with("str ") || asm.starts_with("stp ") {
+        return "mem-store";
+    }
+    if asm.starts_with("ldr ") || asm.starts_with("ldrsw ") {
+        return "mem-load";
+    }
+    if is_alu_mnemonic(asm.split_whitespace().next().unwrap_or("")) {
+        return "alu";
+    }
+    if asm.starts_with("b.") || asm == "ret" {
+        return "control";
+    }
+    "other"
+}
+
+fn is_alu_mnemonic(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "adc"
+            | "adcs"
+            | "add"
+            | "adds"
+            | "adr"
+            | "adrp"
+            | "and"
+            | "ands"
+            | "asr"
+            | "bic"
+            | "bics"
+            | "cinc"
+            | "cinv"
+            | "cneg"
+            | "csel"
+            | "cset"
+            | "csetm"
+            | "csinc"
+            | "csinv"
+            | "csneg"
+            | "eon"
+            | "eor"
+            | "extr"
+            | "lsl"
+            | "lsr"
+            | "madd"
+            | "mov"
+            | "movk"
+            | "movn"
+            | "movz"
+            | "msub"
+            | "mul"
+            | "mvn"
+            | "neg"
+            | "negs"
+            | "orn"
+            | "orr"
+            | "ror"
+            | "sbc"
+            | "sbcs"
+            | "sbfiz"
+            | "sbfx"
+            | "sdiv"
+            | "smaddl"
+            | "smull"
+            | "smsubl"
+            | "sub"
+            | "subs"
+            | "sxtb"
+            | "sxth"
+            | "sxtw"
+            | "ubfiz"
+            | "ubfx"
+            | "udiv"
+            | "umaddl"
+            | "umull"
+            | "umsubl"
+            | "uxtb"
+            | "uxth"
+            | "uxtw"
+    )
+}
+
+fn record_reg_u64(record: &serde_json::Value, reg: &str) -> Option<u64> {
+    record_reg_value(record, reg)
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+}
+
+fn record_reg_value<'a>(record: &'a serde_json::Value, reg: &str) -> Option<&'a serde_json::Value> {
+    let regs = record.get("regs")?;
+    regs.get(reg)
+        .or_else(|| regs.get(register_value_key(reg).as_str()))
+}
+
+fn def_reg_from_asm(asm: &str) -> Option<String> {
+    let asm = asm.trim();
+    let mut parts = asm.splitn(2, char::is_whitespace);
+    let mnemonic = parts.next()?.to_ascii_lowercase();
+    if mnemonic.starts_with('b')
+        || matches!(mnemonic.as_str(), "ret" | "cmp" | "cmn" | "tst")
+        || !store_source_regs_from_asm(asm).is_empty()
+    {
+        return None;
+    }
+    let operands = parts.next()?;
+    split_operands(operands)
+        .first()
+        .and_then(|op| first_register_token(op))
+}
+
+fn vm_slot_from_asm(asm: &str, record: &serde_json::Value) -> Option<serde_json::Value> {
+    let lower = asm.to_ascii_lowercase();
+    if !lower.contains("[x25,") {
+        return None;
+    }
+    let regs = bracket_registers(&lower)?;
+    if regs.first().map(String::as_str) != Some("x25") {
+        return None;
+    }
+    let idx_reg = regs.get(1)?;
+    let idx_val = record_reg_u64(record, idx_reg)?;
+    let slot = if lower.contains("lsl #3") {
+        idx_val
+    } else {
+        idx_val / 8
+    };
+    Some(serde_json::json!({
+        "index_reg": idx_reg,
+        "index_value": format!("{idx_val:#x}"),
+        "slot": slot,
+    }))
+}
+
+fn mem_addr_from_asm(asm: &str, record: &serde_json::Value) -> Option<u64> {
+    let lower = asm.to_ascii_lowercase();
+    let regs = bracket_registers(&lower)?;
+    let base = regs.first().and_then(|reg| record_reg_u64(record, reg))?;
+    let index = regs
+        .get(1)
+        .and_then(|reg| record_reg_u64(record, reg))
+        .unwrap_or(0);
+    let index = index.checked_shl(bracket_index_shift(&lower).unwrap_or(0))?;
+    let imm = bracket_immediate(&lower).unwrap_or(0);
+    Some(base.wrapping_add(index).wrapping_add(imm))
+}
+
+fn bracket_registers(asm: &str) -> Option<Vec<String>> {
+    let start = asm.find('[')?;
+    let end = asm[start..].find(']')? + start;
+    let inside = &asm[start + 1..end];
+    let regs = split_operands(inside)
+        .into_iter()
+        .filter_map(|part| first_register_token(&part))
+        .collect::<Vec<_>>();
+    (!regs.is_empty()).then_some(regs)
+}
+
+fn bracket_immediate(asm: &str) -> Option<u64> {
+    let start = asm.find('[')?;
+    let end = asm[start..].find(']')? + start;
+    let inside = &asm[start + 1..end];
+    split_operands(inside).into_iter().find_map(|part| {
+        let trimmed = part.trim().trim_start_matches('#');
+        parse_u64_str(trimmed)
+    })
+}
+
+fn bracket_index_shift(asm: &str) -> Option<u32> {
+    let start = asm.find('[')?;
+    let end = asm[start..].find(']')? + start;
+    let inside = &asm[start + 1..end];
+    split_operands(inside).into_iter().find_map(|part| {
+        let part = part.trim();
+        let rest = part.strip_prefix("lsl")?.trim();
+        let shift = rest.trim_start_matches('#');
+        shift.parse::<u32>().ok().filter(|bits| *bits < 64)
+    })
+}
+
 async fn route_post_json(
     trace_dir: PathBuf,
     path: String,
@@ -2868,7 +3189,7 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::store_source_regs_from_asm;
+    use super::{classify_vm_asm, mem_addr_from_asm, store_source_regs_from_asm, vm_slot_from_asm};
 
     #[test]
     fn parses_store_source_registers() {
@@ -2883,6 +3204,30 @@ mod tests {
         );
         assert_eq!(store_source_regs_from_asm("stxr w0, x1, [x2]"), vec!["x1"]);
         assert!(store_source_regs_from_asm("ldr x0, [x1]").is_empty());
+    }
+
+    #[test]
+    fn classifies_vm_records_and_scaled_slots() {
+        let record = serde_json::json!({
+            "regs": {
+                "x25": "0x1000",
+                "x19": "0x19",
+                "x1": "0xe0",
+            }
+        });
+        assert_eq!(classify_vm_asm("ldr x4, [x25, x19, lsl #3]"), "vm-reg-load");
+        assert_eq!(
+            mem_addr_from_asm("ldr x4, [x25, x19, lsl #3]", &record),
+            Some(0x10c8)
+        );
+        let slot = vm_slot_from_asm("ldr x4, [x25, x19, lsl #3]", &record).unwrap();
+        assert_eq!(slot["slot"], serde_json::json!(25));
+        assert_eq!(
+            mem_addr_from_asm("str x3, [x25, x1]", &record),
+            Some(0x10e0)
+        );
+        let slot = vm_slot_from_asm("str x3, [x25, x1]", &record).unwrap();
+        assert_eq!(slot["slot"], serde_json::json!(28));
     }
 }
 

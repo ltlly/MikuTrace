@@ -144,6 +144,43 @@ offsets, writer idxs, source registers, source values, and text fragments. This
 is the preferred representation when asking an AI to reason about how the final
 string is assembled.
 
+When the output is produced by an OLLVM-style bytecode VM, `writer_runs[]` is
+also the best place to choose concrete trace windows. Start from the closest
+ranked raw output hit, pick a writer idx near the first output bytes, then slice
+the VM context around it:
+
+```bash
+rust/target/debug/tracemiku-cli vm-slice <call_dir> \
+  --start <writer_idx_minus_context> \
+  --count 300 \
+  --only-vm
+```
+
+`vm-slice` prints a compact dynamic VM view for AI consumption:
+
+- `class`: rough role, such as `bytecode-read`, `vm-reg-load`,
+  `vm-reg-store`, `byte-load`, `byte-store`, `dispatch-table-load`, or
+  `dispatch-branch`. Common arithmetic/bitwise rows are kept as `alu`, because
+  VM transforms often happen between slot loads and stores.
+- `def`: best-effort destination register plus the value observed in the next
+  trace row.
+- `store_src`: best-effort source register values for store-style
+  instructions.
+- `vm_ip`: current bytecode instruction pointer, usually `x21` in the detected
+  dispatcher shape.
+- `vm_off`: offset from the first observed `vm_ip` in the slice, useful for
+  aligning repeated opcode handlers.
+- `vm_slot`: decoded virtual register slot for `[x25, ...]` accesses. Both
+  byte-offset form (`[x25, x1]`) and scaled slot form
+  (`[x25, x19, lsl #3]`) are normalized.
+- `mem_addr`: effective memory address for simple ARM64 base/index/immediate
+  addressing, including scaled indexes.
+
+This is deliberately not a full VM lifter. It is the bridge between coarse
+taint and manual reasoning: use it to see which VM slot holds an input byte,
+which VM slot is copied into an output buffer, and where the bytecode IP moves
+between those events.
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash
