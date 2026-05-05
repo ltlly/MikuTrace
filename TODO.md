@@ -65,7 +65,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `api_infra_tests::server_runtime_does_not_probe_deleted_python_dirs` 防止
   server runtime 再 `join("viewer")` / `join("webui")`。
 - ✅ 恢复 Decompile/LLIL/LLM 可见 UI 前的性能证明: 最大 trace all-surfaces
-  smoke 中 dec summary 约 411ms, 期间 health max 约 1.8ms, 没有阻塞当前
+  smoke 中 dec summary 约 392ms, 期间 health max 约 1.9ms, 没有阻塞当前
   trace cursor/CFG/Records 热路径; smoke 现在打印 `/api/bg-status.parallelism`,
   1542 万 records trace 上 index/symbols/CFG/MemShadow/frame-depth/reg-timeline/JNI
   scan 均规划为 16 workers。
@@ -75,8 +75,8 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   所有 Python gate/helper 脚本。
 - ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
   会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
-  当前 1542 万 records trace + v3 sidecar 下约 6s ready, ready 后 auto phase
-  约 115ms, health max 约 1.8ms。
+  当前 1542 万 records trace + v3 sidecar 下约 6.04s ready, ready 后 auto phase
+  约 115ms, health max 约 1.9ms。
 - ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
   Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
   `playwright install chrome` 需要 sudo 交互。现有保障是静态 UI audit +
