@@ -46,6 +46,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `createGuardedResource` source, 要求 source memo 字段不变时复用 `prev`,
   并钉住 Records range 的 ROW_HEIGHT snap + stable reference, 防止 fetch 振荡
   和 click 丢失回归。
+- ✅ API client fetch discipline 门禁: `scripts/frontend_api_client_audit.py`
+  要求所有 API wrapper 走 `fx`, 且 `fx` 内只有一处 raw `fetch(input, init)`,
+  防止 debug logger 被绕过或 wrapper 自递归。
 - ✅ 前端交互 affordance 静态审计: `scripts/frontend_ui_audit.py` 钉住
   Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
   列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
