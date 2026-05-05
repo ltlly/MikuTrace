@@ -160,6 +160,47 @@ def main() -> int:
         failures,
     )
     require(
+        "Registers understand fp/lr aliases",
+        'if (reg === "fp") return "x29"' in registers
+        and 'if (reg === "lr") return "x30"' in registers
+        and 'if (reg === "x29") return "fp"' in registers
+        and 'if (reg === "x30") return "lr"' in registers
+        and "regs.includes(reg) || regs.includes(alias)" in registers
+        and "aliasReg(a) === b || aliasReg(b) === a" in registers,
+        failures,
+    )
+    require(
+        "Registers show pwndbg-style value annotations",
+        "function regNote" in registers
+        and 'return "zero"' in registers
+        and 'return "pc"' in registers
+        and 'return changed ? "stack changed" : "stack"' in registers
+        and 'return changed ? "stack ptr changed" : "stack ptr"' in registers
+        and 'return changed ? "ptr changed" : "ptr?"' in registers
+        and 'return changed ? "changed" : ""' in registers
+        and "r().regs_annotated?.[reg] || regNote(reg, value, r().regs, changed())" in registers,
+        failures,
+    )
+    require(
+        "Registers show previous-value deltas",
+        "function deltaNote" in registers
+        and 'const sign = now > prev ? "+" : "-"' in registers
+        and '<td class="reg-delta">{deltaNote(value, before())}</td>' in registers,
+        failures,
+    )
+    require(
+        "Registers double-click jumps to last write with stale guard",
+        "fetchLastWriteOfReg(idxAtStart, reg)" in registers
+        and "let lastWriteSeq = 0" in registers
+        and "const seq = ++lastWriteSeq" in registers
+        and "const idxAtStart = props.idx" in registers
+        and "seq !== lastWriteSeq || !props.active || props.idx !== idxAtStart" in registers
+        and "props.onSelect(r.idx)" in registers
+        and "onDblClick={() => void jumpLastWrite(reg)}" in registers
+        and 'title="double-click to jump to last write"' in registers,
+        failures,
+    )
+    require(
         "Registers rows use aligned grid columns",
         ".reg-diff-table tr" in css
         and "display: grid" in css

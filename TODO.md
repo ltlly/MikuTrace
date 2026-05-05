@@ -69,6 +69,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ 汇编寄存器右键菜单取消门禁: `scripts/frontend_ui_audit.py` 钉住
   `.reg-context-menu` outside click / Escape 关闭、AbortController 取消旧请求、
   token 比对防 stale 结果覆盖。
+- ✅ 寄存器智能信息门禁: `scripts/frontend_ui_audit.py` 钉住 fp/lr ↔ x29/x30
+  alias、selected/def/use/changed 状态、delta 列、zero/pc/stack ptr/ptr changed
+  等 pwndbg 风格标注、以及双击跳 last-write 的 stale guard。
 - ✅ CFG stale/loading 交互守卫已纳入前端静态审计: 钉住 seq+Abort、
   loading 时清旧图并显示 spinner、requestFn 绑定、以及高亮前的 current graph
   校验，防止快速跨函数点击时旧 CFG/旧异步结果覆盖新 cursor。
