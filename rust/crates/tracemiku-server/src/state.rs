@@ -27,7 +27,7 @@ const MEMSHADOW_NOT_STARTED: u8 = 0;
 const MEMSHADOW_LOADING: u8 = 1;
 const MEMSHADOW_READY: u8 = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraceIrBuildOptions {
     pub hook_paths: Vec<PathBuf>,
     pub with_memshadow: bool,
@@ -82,6 +82,7 @@ pub struct AppStateInner {
     ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
     hash_finalize_cache: Mutex<HashMap<HashFinalizeCacheKey, Vec<HashFinalizeCandidate>>>,
     auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
+    trace_ir_cache: Mutex<HashMap<TraceIrBuildOptions, Arc<TopIR>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
 }
 
@@ -227,6 +228,7 @@ impl AppState {
             ollvm_cache: Mutex::new(HashMap::new()),
             hash_finalize_cache: Mutex::new(HashMap::new()),
             auto_phase_cache: Mutex::new(HashMap::new()),
+            trace_ir_cache: Mutex::new(HashMap::new()),
             bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
         });
 
@@ -295,7 +297,26 @@ impl AppStateInner {
         })
     }
 
-    pub fn build_top_ir_with_options(&self, opts: &TraceIrBuildOptions) -> TopIR {
+    pub fn build_top_ir_with_options(&self, opts: &TraceIrBuildOptions) -> Arc<TopIR> {
+        if let Some(cached) = self
+            .trace_ir_cache
+            .lock()
+            .expect("trace-ir cache poisoned")
+            .get(opts)
+            .cloned()
+        {
+            return cached;
+        }
+        let top = Arc::new(self.build_top_ir_uncached(opts));
+        self.trace_ir_cache
+            .lock()
+            .expect("trace-ir cache poisoned")
+            .entry(opts.clone())
+            .or_insert_with(|| top.clone())
+            .clone()
+    }
+
+    fn build_top_ir_uncached(&self, opts: &TraceIrBuildOptions) -> TopIR {
         let spec_paths = if opts.hook_paths.is_empty() {
             self.type_spec_paths.as_slice()
         } else {

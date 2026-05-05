@@ -4,6 +4,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
@@ -152,7 +153,10 @@ fn prepare_dec_llm_call(
     } else {
         top_owned
     };
-    let top = prompt_top_owned.as_ref().unwrap_or_else(|| inner.top_ir());
+    let top = prompt_top_owned
+        .as_ref()
+        .map(|top| top.as_ref())
+        .unwrap_or_else(|| inner.top_ir());
     let bundle = build_fn_decompile_prompt(top, &fn_, &payload.tier, &payload.lang, 200_000);
     Ok(DecLlmPrepared::Ready { cache_key, bundle })
 }
@@ -161,7 +165,7 @@ fn resolve_fn(
     state: &AppState,
     fn_id: &str,
     opts: &TraceIrBuildOptions,
-) -> Result<(FuncIR, Option<TopIR>), (StatusCode, String)> {
+) -> Result<(FuncIR, Option<Arc<TopIR>>), (StatusCode, String)> {
     let inner = &state.inner;
     let (src, payload) =
         parse_id(fn_id).map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid fn_id: {e}")))?;
