@@ -20,6 +20,7 @@ use tracemiku_core::symbols::auto_known_offsets_with_base;
 
 use crate::bn_sidecar::BnSidecarManager;
 use crate::jni_scan::{parse_int, scan_jni_calls, JniCallScan};
+use crate::phase_scan::{build_auto_phases, PhaseEntry};
 
 const EAGER_MEMSHADOW_MAX_RECORDS: usize = 1_000_000;
 const MEMSHADOW_NOT_STARTED: u8 = 0;
@@ -53,6 +54,7 @@ pub struct AppStateInner {
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
     ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
     hash_finalize_cache: Mutex<HashMap<HashFinalizeCacheKey, Vec<HashFinalizeCandidate>>>,
+    auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
 }
 
@@ -189,6 +191,7 @@ impl AppState {
             cfg_svg_cache: Mutex::new(HashMap::new()),
             ollvm_cache: Mutex::new(HashMap::new()),
             hash_finalize_cache: Mutex::new(HashMap::new()),
+            auto_phase_cache: Mutex::new(HashMap::new()),
             bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
         });
 
@@ -396,6 +399,31 @@ impl AppStateInner {
             cache.entry(key).or_insert_with(|| candidates.clone());
         }
         candidates
+    }
+
+    pub fn auto_phases(&self, mem: &MemShadow, detect_byte_streams: bool) -> Vec<PhaseEntry> {
+        if let Ok(cache) = self.auto_phase_cache.lock() {
+            if let Some(phases) = cache.get(&detect_byte_streams) {
+                return phases.clone();
+            }
+            if !detect_byte_streams {
+                if let Some(full_phases) = cache.get(&true) {
+                    return full_phases
+                        .iter()
+                        .filter(|phase| phase.phase != "byte_stream_write")
+                        .cloned()
+                        .collect();
+                }
+            }
+        }
+
+        let phases = build_auto_phases(&self.trace_dir, mem, detect_byte_streams);
+        if let Ok(mut cache) = self.auto_phase_cache.lock() {
+            cache
+                .entry(detect_byte_streams)
+                .or_insert_with(|| phases.clone());
+        }
+        phases
     }
 }
 
