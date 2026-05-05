@@ -69,9 +69,13 @@ body {
 button,
 input,
 select,
-textarea,
+textarea {
+  font: inherit;
+}
+
 table {
   font-family: var(--font-mono);
+  font-size: inherit;
 }
 
 #topbar {
