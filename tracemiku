@@ -1046,6 +1046,8 @@ def cmd_web(args):
 def _run_rust_web(path, host, port, no_browser, so):
     """M7 cutover wrapper: serve the Solid frontend through tracemiku-server."""
     env = os.environ.copy()
+    if "TRACEMIKU_ANALYSIS_THREADS" not in env:
+        env["TRACEMIKU_ANALYSIS_THREADS"] = str(os.cpu_count() or 1)
     if so:
         env["TRACEMIKU_BN_SO"] = str(so)
     port = int(port or 18900)
