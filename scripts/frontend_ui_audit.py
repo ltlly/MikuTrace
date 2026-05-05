@@ -120,6 +120,11 @@ def main() -> int:
 
     require("Taint default view is tree", 'createSignal<ViewMode>("tree")' in taint, failures)
     require("Taint tree exposes dependency parents", "parentLabel(row)" in taint and "taint_depth" in taint, failures)
+    require(
+        "Taint uses traceIdx wording instead of ambiguous start label",
+        "traceIdx" in taint and "from traceIdx" in taint and "narrow traceIdx/reg/options" in taint,
+        failures,
+    )
 
     require("global themed scrollbar Firefox", "scrollbar-width: thin" in css and "scrollbar-color:" in css, failures)
     require("global themed scrollbar WebKit", "*::-webkit-scrollbar-thumb" in css and "*::-webkit-scrollbar-track" in css, failures)
@@ -127,6 +132,16 @@ def main() -> int:
     require("CFG loading uses themed spinner", ".cfg-loading" in css and ".cfg-spinner" in css and "@keyframes cfg-spin" in css, failures)
     require("String provenance long text wraps", ".string-prov-summary code" in css and "word-break: break-all" in css, failures)
     require("String provenance table scrolls horizontally", ".string-prov-scroll" in css and "overflow-x: auto" in css, failures)
+    require(
+        "Taint tree grid avoids overlapping columns",
+        ".taint-tree-row" in css
+        and "grid-template-areas:" in css
+        and '"idx fn why"' in css
+        and '"asm asm asm"' in css
+        and ".taint-tree-why" in css
+        and ".taint-tree-asm" in css,
+        failures,
+    )
     require("Taint tree wraps long asm", ".taint-tree-asm" in css and "overflow-wrap: anywhere" in css, failures)
 
     if failures:
