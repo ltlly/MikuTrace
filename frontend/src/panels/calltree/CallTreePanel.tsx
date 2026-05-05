@@ -32,6 +32,11 @@ function findPath(node: CallNode, idx: number, path: CallNode[] = []): CallNode[
   return nextPath;
 }
 
+function countTruncatedChildren(node: CallNode): number {
+  return (node.truncated_children ?? 0) +
+    (node.children ?? []).reduce((sum, child) => sum + countTruncatedChildren(child), 0);
+}
+
 interface RowProps {
   node: CallNode;
   openKeys: () => Set<string>;
@@ -112,6 +117,10 @@ export default function CallTreePanel(props: CallTreePanelProps) {
     (s) => fetchCallTree(s.depth),
     (r, s) => r.request_max_depth === s.depth,
   );
+  const truncatedChildren = createMemo(() => {
+    const tree = currentResp()?.tree;
+    return tree ? countTruncatedChildren(tree) : 0;
+  });
   const [openKeys, setOpenKeys] = createSignal<Set<string>>(new Set());
   const [locatedKey, setLocatedKey] = createSignal("");
   let locateSeq = 0;
@@ -177,6 +186,11 @@ export default function CallTreePanel(props: CallTreePanelProps) {
       <Show when={currentResp()}>
         {(r) => (
           <div class="ct-wrap">
+            <Show when={truncatedChildren() > 0}>
+              <div class="cap-notice" role="status">
+                Call tree is folded at depth {r().request_max_depth ?? depth()}; {truncatedChildren().toLocaleString()} deeper child nodes are hidden.
+              </div>
+            </Show>
             <CallTreeRow
               node={r().tree}
               openKeys={openKeys}
