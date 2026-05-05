@@ -10,6 +10,35 @@
 
 # 进度概览
 
+## 🚧 进行中 (2026-05-05 — Rust Web 交互延迟 / Parity Hardening)
+
+Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 Rust+Solid
+重构后的 UI 上压稳交互延迟, 而不是扩新功能。后续补丁优先把反复出现的
+问题类别沉淀成测试/守卫, 避免继续逐路由人工修。
+
+- ✅ Taint 默认改为依赖树视图: `TaintHit.parent_idxs` / `taint_depth`
+  已从 core 传到 API 和 Solid UI, timeline/table 保留为辅助视图。
+- ✅ 重路由 async-runtime 守卫: `api_infra_tests::heavy_route_handlers_stay_off_async_runtime`
+  钉住 CFG / memory / taint / decompile / BN / string provenance 等 CPU-heavy
+  handlers 必须走 `spawn_blocking`。
+- ✅ Rust web smoke gate: `scripts/rust_web_smoke.py` 启动真实
+  `tracemiku-server`, 校验 SPA cache/header/API fallback, 再跑
+  `scripts/web_api_perf_probe.py`。
+- ✅ Decompile / LLM Web UI 临时隐藏: 先避免冷路径影响主交互; 恢复前需要
+  单独做 latency/cancellation/cache 审计。
+- ☐ 为 5k response cap 增加更清晰的 UI affordance: taint/search/records 等
+  被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
+  入口或解释, 避免用户误判为完整链路。
+- ☐ 抽出 Solid stale-frame / latest-selection guard: 当前 guard 散在多个
+  panel, 新面板容易复发 "旧请求覆盖新 cursor"。
+- ☐ 扩大 Rust web↔CLI parity gate: 对 records/cfg/taint/memory/string
+  provenance/dec-summary 建立小 fixture baseline, 作为 `make test-v2` 之外的
+  PR-ready smoke。
+- ☐ 恢复 Decompile/LLIL/LLM 可见 UI 前, 先证明它们不会阻塞当前 trace
+  cursor/CFG/Records 热路径。
+- ☐ 将 `scripts/rust_web_smoke.py` 固化到发布前检查清单; 大 trace 至少跑
+  `--visible-ui-only`, 必要时再跑包含隐藏/冷路径的完整 probe。
+
 ## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
 
 - 设计 spec: `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`
