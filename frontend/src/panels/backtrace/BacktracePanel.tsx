@@ -74,7 +74,13 @@ export default function BacktracePanel(props: BacktracePanelProps) {
                     <tr onClick={() => props.onSelect(frame.call_site_idx)}>
                       <td>{r().depth - r().stack.length + i()}</td>
                       <td>
-                        <button type="button" onClick={() => props.onSelect(frame.call_site_idx)}>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            props.onSelect(frame.call_site_idx);
+                          }}
+                        >
                           {frame.call_site_idx}
                         </button>
                       </td>
