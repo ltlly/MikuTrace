@@ -48,7 +48,7 @@ pub struct AppStateInner {
     backtrace_events: OnceLock<Vec<BacktraceEvent>>,
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
-    pub(crate) crypto_scan: OnceLock<crate::routes::crypto_scan::CryptoScanResponse>,
+    pub(crate) crypto_scan: OnceLock<crate::crypto_scan::CryptoScanResponse>,
     hash_finalize_index: OnceLock<HashFinalizeIndex>,
     top_ir: OnceLock<TopIR>,
     type_spec_paths: Vec<PathBuf>,
