@@ -26,6 +26,7 @@ const EAGER_MEMSHADOW_MAX_RECORDS: usize = 1_000_000;
 const MEMSHADOW_NOT_STARTED: u8 = 0;
 const MEMSHADOW_LOADING: u8 = 1;
 const MEMSHADOW_READY: u8 = 2;
+const INTERACTIVE_WARM_DELAY_MS: u64 = 250;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraceIrBuildOptions {
@@ -228,6 +229,10 @@ impl AppState {
             bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
         });
 
+        if background_interactive_warm_enabled() {
+            spawn_interactive_cache_warmer(inner.clone());
+        }
+
         if inner.trace.len() > EAGER_MEMSHADOW_MAX_RECORDS && background_memshadow_enabled() {
             let warm_inner = inner.clone();
             let _ = inner.memshadow_status.compare_exchange(
@@ -245,13 +250,14 @@ impl AppState {
                         "warming MemShadow in background"
                     );
                     let start = Instant::now();
-                    let _ = warm_inner.memshadow();
+                    let mem = warm_inner.memshadow();
                     tracing::info!(
                         target: "tracemiku-server",
                         records = warm_inner.trace.len(),
                         elapsed_ms = start.elapsed().as_millis(),
                         "background MemShadow ready"
                     );
+                    warm_memshadow_caches(&warm_inner, mem);
                 })
             {
                 tracing::warn!(
@@ -546,6 +552,60 @@ fn background_memshadow_enabled() -> bool {
             !(v == "0" || v == "false" || v == "off" || v == "no")
         })
         .unwrap_or(true)
+}
+
+fn background_interactive_warm_enabled() -> bool {
+    std::env::var("TRACEMIKU_INTERACTIVE_WARM_BACKGROUND")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "0" || v == "false" || v == "off" || v == "no")
+        })
+        .unwrap_or(true)
+}
+
+fn spawn_interactive_cache_warmer(inner: Arc<AppStateInner>) {
+    if let Err(err) = thread::Builder::new()
+        .name("tracemiku-ui-warm".to_string())
+        .spawn(move || {
+            thread::sleep(std::time::Duration::from_millis(INTERACTIVE_WARM_DELAY_MS));
+            let start = Instant::now();
+            tracing::info!(
+                target: "tracemiku-server",
+                records = inner.trace.len(),
+                "warming interactive caches in background"
+            );
+            let _ = inner.asm_groups();
+            let _ = inner.call_tree();
+            let _ = inner.backtrace_events();
+            let _ = inner.frame_depths();
+            if let Some(mem) = inner.memshadow_if_ready() {
+                warm_memshadow_caches(&inner, mem);
+            }
+            tracing::info!(
+                target: "tracemiku-server",
+                records = inner.trace.len(),
+                elapsed_ms = start.elapsed().as_millis(),
+                "background interactive caches ready"
+            );
+        })
+    {
+        tracing::warn!(
+            target: "tracemiku-server",
+            "failed to spawn interactive cache warmer: {err}"
+        );
+    }
+}
+
+fn warm_memshadow_caches(inner: &AppStateInner, mem: &MemShadow) {
+    let start = Instant::now();
+    let _ = inner.hash_finalize_candidates(mem, 500, 16, 500);
+    let _ = inner.auto_phases(mem, true);
+    tracing::info!(
+        target: "tracemiku-server",
+        records = inner.trace.len(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "background MemShadow-derived caches ready"
+    );
 }
 
 /// Read `<call_dir>/meta.json::known_offsets` and parse into hex-keyed map.
