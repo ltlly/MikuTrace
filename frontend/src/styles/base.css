@@ -1276,7 +1276,7 @@ ul {
 
 .settings-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -1288,6 +1288,7 @@ ul {
 }
 
 .settings-toggles {
+  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 6px 10px;
