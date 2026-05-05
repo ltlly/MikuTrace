@@ -9,6 +9,10 @@ use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
 
+const MAX_MEM_FLOW_BYTES: usize = 4_096;
+const MAX_MEM_FLOW_EVENTS_PER_BYTE: usize = 500;
+const MAX_MEM_FLOW_RETURNED_EVENTS: usize = 10_000;
+
 #[derive(Debug, Deserialize)]
 pub struct MemFlowQuery {
     pub addr: String,
@@ -30,6 +34,18 @@ fn default_count() -> usize {
 
 fn default_events_per_byte() -> usize {
     10
+}
+
+fn effective_count(raw: usize) -> usize {
+    raw.clamp(1, MAX_MEM_FLOW_BYTES)
+}
+
+fn effective_events_per_byte(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_MEM_FLOW_EVENTS_PER_BYTE
+    } else {
+        raw.min(MAX_MEM_FLOW_EVENTS_PER_BYTE)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +71,8 @@ pub struct MemFlowResponse {
     pub status: &'static str,
     pub addr: String,
     pub count: usize,
+    pub events_returned: usize,
+    pub truncated: bool,
     pub bytes: Vec<MemFlowByte>,
 }
 
@@ -74,8 +92,8 @@ fn mem_flow_response(
     q: MemFlowQuery,
 ) -> Result<MemFlowResponse, StatusCode> {
     let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
-    let count = q.count.max(1);
-    let cap = q.events_per_byte;
+    let count = effective_count(q.count);
+    let cap = effective_events_per_byte(q.events_per_byte);
     let kind_filter = if q.writers_only {
         Some(("w", "x"))
     } else if q.readers_only {
@@ -91,25 +109,39 @@ fn mem_flow_response(
                 status,
                 addr: q.addr,
                 count,
+                events_returned: 0,
+                truncated: false,
                 bytes: Vec::new(),
             });
         }
     };
     let mut bytes = Vec::with_capacity(count);
+    let mut events_returned = 0;
+    let mut truncated = false;
     for offset in 0..count {
         let addr = start + offset as u64;
         let raw = mem.bytes.get(&addr).map(Vec::as_slice).unwrap_or(&[]);
-        let mut events = Vec::new();
-        for ev in raw {
-            if q.idx_lo.is_some_and(|lo| ev.idx < lo) {
-                continue;
+        let remaining_total = MAX_MEM_FLOW_RETURNED_EVENTS.saturating_sub(events_returned);
+        let per_byte_limit = cap.min(remaining_total);
+        let mut selected = Vec::new();
+        if per_byte_limit > 0 {
+            for ev in raw.iter().rev() {
+                if !event_matches(ev, q.idx_lo, q.idx_hi, kind_filter) {
+                    continue;
+                }
+                if selected.len() >= per_byte_limit {
+                    truncated = true;
+                    break;
+                }
+                selected.push(ev);
             }
-            if q.idx_hi.is_some_and(|hi| ev.idx >= hi) {
-                continue;
-            }
-            if kind_filter.is_some_and(|(a, b)| ev.kind != a && ev.kind != b) {
-                continue;
-            }
+        } else if !raw.is_empty() {
+            truncated = true;
+        }
+        selected.reverse();
+
+        let mut events = Vec::with_capacity(selected.len());
+        for ev in selected {
             let record = inner.trace.record(ev.idx);
             let decoded = decode(record.pc, record.inst);
             let (func_name, _) = inner.symbols.lookup(record.pc);
@@ -124,10 +156,7 @@ fn mem_flow_response(
                     .trim()
                     .to_string(),
             });
-        }
-        if cap > 0 && events.len() > cap {
-            let keep_from = events.len() - cap;
-            events = events.split_off(keep_from);
+            events_returned += 1;
         }
         bytes.push(MemFlowByte {
             addr: format!("{addr:#x}"),
@@ -139,8 +168,28 @@ fn mem_flow_response(
         status: "ready",
         addr: q.addr,
         count,
+        events_returned,
+        truncated,
         bytes,
     })
+}
+
+fn event_matches(
+    ev: &ByteEvent,
+    idx_lo: Option<usize>,
+    idx_hi: Option<usize>,
+    kind_filter: Option<(&'static str, &'static str)>,
+) -> bool {
+    if idx_lo.is_some_and(|lo| ev.idx < lo) {
+        return false;
+    }
+    if idx_hi.is_some_and(|hi| ev.idx >= hi) {
+        return false;
+    }
+    if kind_filter.is_some_and(|(a, b)| ev.kind != a && ev.kind != b) {
+        return false;
+    }
+    true
 }
 
 fn primary_base(meta: &TraceMeta) -> Option<u64> {
@@ -153,5 +202,30 @@ fn parse_int(s: &str) -> Option<u64> {
         u64::from_str_radix(hex, 16).ok()
     } else {
         t.parse::<u64>().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        effective_count, effective_events_per_byte, MAX_MEM_FLOW_BYTES,
+        MAX_MEM_FLOW_EVENTS_PER_BYTE,
+    };
+
+    #[test]
+    fn effective_count_caps_extreme_requests() {
+        assert_eq!(effective_count(0), 1);
+        assert_eq!(effective_count(128), 128);
+        assert_eq!(effective_count(usize::MAX), MAX_MEM_FLOW_BYTES);
+    }
+
+    #[test]
+    fn effective_events_per_byte_caps_extreme_requests() {
+        assert_eq!(effective_events_per_byte(0), MAX_MEM_FLOW_EVENTS_PER_BYTE);
+        assert_eq!(effective_events_per_byte(30), 30);
+        assert_eq!(
+            effective_events_per_byte(usize::MAX),
+            MAX_MEM_FLOW_EVENTS_PER_BYTE
+        );
     }
 }

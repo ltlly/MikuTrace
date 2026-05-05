@@ -38,6 +38,43 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_many_write_call_dir(
+    record_count: usize,
+    addr_groups: usize,
+) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join(format!("call_001_tid100_{record_count}r_1ms"));
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * record_count];
+    for i in 0..record_count {
+        let off = i * 272;
+        let pc = 0x100000u64 + (i as u64 * 4);
+        let x0 = (i & 0xff) as u64;
+        let x1 = 0x7000u64 + ((i % addr_groups) as u64 * 8);
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 8..off + 16].copy_from_slice(&x0.to_le_bytes());
+        buf[off + 16..off + 24].copy_from_slice(&x1.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x8000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&0xf9000020u32.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        format!(r#"{{"records":{record_count}}}"#),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 async fn get(call_dir: PathBuf, uri: &str) -> (StatusCode, serde_json::Value) {
     let app = tracemiku_server::build_router(call_dir).expect("build router");
     let resp = app
@@ -80,6 +117,26 @@ async fn mem_flow_filters_and_caps_newest_events() {
     assert_eq!(v["bytes"][0]["events"].as_array().unwrap().len(), 1);
     assert_eq!(v["bytes"][0]["events"][0]["idx"], 1);
     assert_eq!(v["bytes"][0]["events"][0]["byte"], 66);
+}
+
+#[tokio::test]
+async fn mem_flow_caps_total_returned_events() {
+    let (_tmp, cd) = synth_many_write_call_dir(10_080, 21);
+    let (status, v) = get(
+        cd,
+        "/api/mem-flow?addr=0x7000&count=168&events_per_byte=500",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["events_returned"], 10_000);
+    assert_eq!(v["truncated"], true);
+    let returned: usize = v["bytes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["events"].as_array().unwrap().len())
+        .sum();
+    assert_eq!(returned, 10_000);
 }
 
 #[tokio::test]

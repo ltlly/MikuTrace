@@ -12,6 +12,8 @@ use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
 
+const MAX_CALL_CHAIN_DEPTH: usize = 256;
+
 #[derive(Debug, Deserialize)]
 pub struct PcQuery {
     pub pc: String,
@@ -220,6 +222,10 @@ fn default_call_chain_depth() -> usize {
     5
 }
 
+fn effective_call_chain_depth(raw: usize) -> usize {
+    raw.min(MAX_CALL_CHAIN_DEPTH)
+}
+
 #[derive(Debug, Serialize)]
 pub struct CallChainEntry {
     pub depth: usize,
@@ -252,7 +258,7 @@ pub async fn call_chain_handler(
     let base = primary_base(&inner.meta);
     let mut chain = Vec::new();
     let mut cur_idx = q.idx;
-    for depth in 0..q.depth {
+    for depth in 0..effective_call_chain_depth(q.depth) {
         let record = inner.trace.record(cur_idx);
         let pc = record.pc;
         let (func_name, off_u64) = inner.symbols.lookup(pc);
@@ -292,6 +298,18 @@ pub async fn call_chain_handler(
         depth: chain.len(),
         chain,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_call_chain_depth, MAX_CALL_CHAIN_DEPTH};
+
+    #[test]
+    fn effective_call_chain_depth_caps_extreme_requests() {
+        assert_eq!(effective_call_chain_depth(0), 0);
+        assert_eq!(effective_call_chain_depth(5), 5);
+        assert_eq!(effective_call_chain_depth(usize::MAX), MAX_CALL_CHAIN_DEPTH);
+    }
 }
 
 pub async fn backtrace_handler(

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
+const MAX_IDXS_FOR_BLOCK_RETURNED: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct IdxsForBlockQuery {
     pub pc: String,
@@ -25,6 +27,10 @@ fn default_max() -> usize {
 }
 fn default_near() -> isize {
     -1
+}
+
+fn effective_max_count(raw: usize) -> usize {
+    raw.min(MAX_IDXS_FOR_BLOCK_RETURNED)
 }
 
 #[derive(Debug, Serialize)]
@@ -75,15 +81,16 @@ fn idxs_for_block_response(
     idxs.sort_unstable();
 
     let total = idxs.len();
-    let truncated = total > q.max_count;
+    let max_count = effective_max_count(q.max_count);
+    let truncated = total > max_count;
     if truncated {
         if q.near >= 0 {
             let near = q.near as usize;
             idxs.sort_unstable_by_key(|idx| idx.abs_diff(near));
-            idxs.truncate(q.max_count);
+            idxs.truncate(max_count);
             idxs.sort_unstable();
         } else {
-            idxs.truncate(q.max_count);
+            idxs.truncate(max_count);
         }
     }
 
@@ -94,4 +101,16 @@ fn idxs_for_block_response(
         truncated,
         total,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_count, MAX_IDXS_FOR_BLOCK_RETURNED};
+
+    #[test]
+    fn effective_max_count_caps_extreme_requests() {
+        assert_eq!(effective_max_count(0), 0);
+        assert_eq!(effective_max_count(200), 200);
+        assert_eq!(effective_max_count(usize::MAX), MAX_IDXS_FOR_BLOCK_RETURNED);
+    }
 }
