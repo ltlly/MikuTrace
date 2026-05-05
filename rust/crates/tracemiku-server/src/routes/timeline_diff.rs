@@ -13,6 +13,8 @@ const REG_TIMELINE_PARALLEL_MIN_RECORDS: usize = 250_000;
 const REG_TIMELINE_MIN_CHUNK_RECORDS: usize = 200_000;
 const REG_TIMELINE_DIRECT_SCAN_RECORDS: usize = 250_000;
 const REG_TIMELINE_CACHE_MAX_POINTS: usize = 500_000;
+const MAX_REG_TIMELINE_POINTS: usize = 10_000;
+const MAX_MEM_DIFF_SIZE: usize = 4_096;
 
 pub(crate) fn reg_timeline_worker_count(records: usize) -> usize {
     tracemiku_core::parallel::worker_count(
@@ -40,6 +42,10 @@ fn default_end() -> isize {
 
 fn default_max_points() -> usize {
     1000
+}
+
+fn effective_max_points(raw: usize) -> usize {
+    raw.min(MAX_REG_TIMELINE_POINTS)
 }
 
 #[derive(Debug, Serialize)]
@@ -77,8 +83,9 @@ pub async fn reg_timeline_handler(
 
 fn reg_timeline_response(
     inner: &crate::state::AppStateInner,
-    q: RegTimelineQuery,
+    mut q: RegTimelineQuery,
 ) -> Result<RegTimelineResponse, StatusCode> {
+    q.max_points = effective_max_points(q.max_points);
     let n = inner.trace.len();
     let end = if q.end < 0 || q.end as usize > n {
         n
@@ -344,6 +351,10 @@ fn default_mem_diff_size() -> usize {
     16
 }
 
+fn effective_mem_diff_size(raw: usize) -> usize {
+    raw.clamp(1, MAX_MEM_DIFF_SIZE)
+}
+
 #[derive(Debug, Serialize)]
 pub struct MemDiffByte {
     pub addr: String,
@@ -386,9 +397,10 @@ pub async fn mem_diff_handler(
 
 fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> MemDiffResponse {
     let start = parse_int(&q.addr).unwrap_or(0);
+    let size = effective_mem_diff_size(q.size);
     let before_t = q.idx.saturating_sub(1) as u64;
     let after_t = q.idx as u64;
-    let mut bytes = Vec::with_capacity(q.size);
+    let mut bytes = Vec::with_capacity(size);
     let mut changed_count = 0usize;
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
@@ -397,13 +409,13 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
                 status,
                 idx: q.idx,
                 addr: q.addr,
-                size: q.size,
+                size,
                 bytes,
                 changed_count,
             };
         }
     };
-    for offset in 0..q.size {
+    for offset in 0..size {
         let addr = start + offset as u64;
         let (before, _, _) = mem.byte_at(addr, before_t);
         let (after, _, _) = mem.byte_at(addr, after_t);
@@ -422,9 +434,30 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
         status: "ready",
         idx: q.idx,
         addr: q.addr,
-        size: q.size,
+        size,
         bytes,
         changed_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        effective_max_points, effective_mem_diff_size, MAX_MEM_DIFF_SIZE, MAX_REG_TIMELINE_POINTS,
+    };
+
+    #[test]
+    fn effective_max_points_caps_extreme_requests() {
+        assert_eq!(effective_max_points(0), 0);
+        assert_eq!(effective_max_points(1000), 1000);
+        assert_eq!(effective_max_points(usize::MAX), MAX_REG_TIMELINE_POINTS);
+    }
+
+    #[test]
+    fn effective_mem_diff_size_caps_extreme_requests() {
+        assert_eq!(effective_mem_diff_size(0), 1);
+        assert_eq!(effective_mem_diff_size(16), 16);
+        assert_eq!(effective_mem_diff_size(usize::MAX), MAX_MEM_DIFF_SIZE);
     }
 }
 

@@ -9,6 +9,8 @@ use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
 
+const MAX_DATA_CHASE_STEPS: usize = 1_000;
+
 #[derive(Debug, Deserialize)]
 pub struct DataChaseQuery {
     pub start: usize,
@@ -21,6 +23,10 @@ pub struct DataChaseQuery {
 
 fn default_max_steps() -> usize {
     50
+}
+
+fn effective_max_steps(raw: usize) -> usize {
+    raw.min(MAX_DATA_CHASE_STEPS)
 }
 
 fn default_exclude_regs() -> String {
@@ -73,7 +79,13 @@ fn data_chase_response(
 ) -> DataChaseResponse {
     let exclude = parse_exclude_regs(&q.exclude_regs);
     let base = primary_base(&inner.meta);
-    let raw_steps = data_chase_core(inner, q.start, &q.reg, q.max_steps, &exclude);
+    let raw_steps = data_chase_core(
+        inner,
+        q.start,
+        &q.reg,
+        effective_max_steps(q.max_steps),
+        &exclude,
+    );
     let steps: Vec<DataChaseStep> = raw_steps
         .into_iter()
         .map(|raw| {
@@ -95,6 +107,18 @@ fn data_chase_response(
         reg: q.reg,
         count: steps.len(),
         steps,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_steps, MAX_DATA_CHASE_STEPS};
+
+    #[test]
+    fn effective_max_steps_caps_extreme_requests() {
+        assert_eq!(effective_max_steps(0), 0);
+        assert_eq!(effective_max_steps(50), 50);
+        assert_eq!(effective_max_steps(usize::MAX), MAX_DATA_CHASE_STEPS);
     }
 }
 

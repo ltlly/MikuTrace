@@ -8,6 +8,7 @@ use crate::state::AppState;
 use tracemiku_core::prelude::MemShadow;
 
 const MAX_HITS: usize = 5_000;
+const MAX_STRING_LEN: usize = 4_096;
 
 #[derive(Debug, Deserialize)]
 pub struct JniStringsQuery {
@@ -23,6 +24,10 @@ fn default_max() -> usize {
 
 fn default_max_len() -> usize {
     128
+}
+
+fn effective_max_len(raw: usize) -> usize {
+    raw.clamp(1, MAX_STRING_LEN)
 }
 
 #[derive(Debug, Serialize)]
@@ -114,7 +119,7 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
             _ => (None, call.idx),
         };
         let (observed_bytes, string) = if let Some(addr) = buffer_addr {
-            let (s, seen) = read_string(mem, addr, cursor, q.max_len);
+            let (s, seen) = read_string(mem, addr, cursor, effective_max_len(q.max_len));
             (Some(seen), s)
         } else {
             (None, None)
@@ -153,6 +158,25 @@ fn effective_max(raw: usize) -> usize {
         MAX_HITS
     } else {
         raw.min(MAX_HITS)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max, effective_max_len, MAX_HITS, MAX_STRING_LEN};
+
+    #[test]
+    fn effective_max_caps_extreme_requests() {
+        assert_eq!(effective_max(0), MAX_HITS);
+        assert_eq!(effective_max(200), 200);
+        assert_eq!(effective_max(usize::MAX), MAX_HITS);
+    }
+
+    #[test]
+    fn effective_max_len_caps_extreme_requests() {
+        assert_eq!(effective_max_len(0), 1);
+        assert_eq!(effective_max_len(128), 128);
+        assert_eq!(effective_max_len(usize::MAX), MAX_STRING_LEN);
     }
 }
 

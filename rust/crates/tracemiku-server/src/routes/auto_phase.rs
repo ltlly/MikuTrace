@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::phase_scan::{jni_phases, PhaseEntry};
 use crate::state::AppState;
 
+const MAX_PHASES: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct AutoPhaseQuery {
     #[serde(default = "default_detect_byte_streams")]
@@ -21,6 +23,14 @@ fn default_detect_byte_streams() -> bool {
 
 fn default_max_phases() -> usize {
     2000
+}
+
+fn effective_max_phases(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_PHASES
+    } else {
+        raw.min(MAX_PHASES)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -55,25 +65,30 @@ pub async fn auto_phase_detect_handler(
 }
 
 fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse {
+    let max_phases = effective_max_phases(q.max_phases);
     let mem = match state.inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
             let mut phases = jni_phases(&state.inner.trace_dir);
             phases.sort_by_key(|p| p.idx);
+            let total = phases.len();
+            let truncated = total > max_phases;
+            if truncated {
+                phases.truncate(max_phases);
+            }
             return AutoPhaseResponse {
                 status,
                 trace_records: state.inner.trace.len(),
-                total: phases.len(),
+                total,
                 returned: phases.len(),
-                truncated: false,
+                truncated,
                 phases,
             };
         }
     };
     let mut dedup = state.inner.auto_phases(mem, q.detect_byte_streams);
     let total = dedup.len();
-    let max_phases = q.max_phases;
-    let truncated = max_phases > 0 && total > max_phases;
+    let truncated = total > max_phases;
     if truncated {
         dedup.truncate(max_phases);
     }
@@ -84,5 +99,17 @@ fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse
         returned: dedup.len(),
         truncated,
         phases: dedup,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_phases, MAX_PHASES};
+
+    #[test]
+    fn effective_max_phases_caps_extreme_requests() {
+        assert_eq!(effective_max_phases(0), MAX_PHASES);
+        assert_eq!(effective_max_phases(200), 200);
+        assert_eq!(effective_max_phases(usize::MAX), MAX_PHASES);
     }
 }
