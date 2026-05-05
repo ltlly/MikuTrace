@@ -41,6 +41,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   Strings / String Provenance / CallTree / HLIL / Memory dump+diff /
   Decompiler / Records; 剩余 raw `createResource` 是静态/active-only 数据或
   已有 `currentRecord`/手写 seq+Abort guard。
+- ✅ 前端交互 affordance 静态审计: `scripts/frontend_ui_audit.py` 钉住
+  Decompile/LLM 不在 App 可见入口、左右/底部 splitter、ASM/Memory/Register
+  列宽拖拽、Memory 默认 128 字节+寄存器下拉、右键内存菜单取消、Taint tree
+  默认视图、String Provenance 长文本滚动/换行、全局主题滚动条和统一字体。
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
