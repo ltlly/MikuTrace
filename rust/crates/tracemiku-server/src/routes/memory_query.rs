@@ -184,15 +184,25 @@ fn mem_writes_in_range_response(
     let addr_hi = parse_optional_int("addr_hi", &q.addr_hi)?;
     let src_byte = parse_optional_int("src_byte", &q.src_byte)?.map(|v| (v & 0xff) as u8);
     let base = primary_base(&inner.meta);
+    if let (Some(src_byte), Some(memshadow)) = (src_byte, inner.memshadow_if_ready()) {
+        return Ok(mem_writes_in_range_from_memshadow(
+            inner, &q, lo, hi, addr_lo, addr_hi, src_byte, base, memshadow,
+        ));
+    }
 
     let mut matched = 0usize;
     let mut rows = Vec::new();
-    for write in &inner.index.mem_writes {
-        if write.idx < lo || write.idx >= hi {
-            continue;
-        }
+    let writes_start = inner.index.mem_writes.partition_point(|w| w.idx < lo);
+    let writes_end = inner.index.mem_writes.partition_point(|w| w.idx < hi);
+    for write in &inner.index.mem_writes[writes_start..writes_end] {
         if !matches_addr_filter(write.addr, write.size, addr_lo, addr_hi) {
             continue;
+        }
+        if src_byte.is_none() {
+            matched += 1;
+            if q.max > 0 && rows.len() >= q.max {
+                continue;
+            }
         }
         let record = inner.trace.record(write.idx);
         let decoded = decode(record.pc, record.inst);
@@ -204,7 +214,9 @@ fn mem_writes_in_range_response(
         if src_byte.is_some_and(|b| (src_value & 0xff) as u8 != b) {
             continue;
         }
-        matched += 1;
+        if src_byte.is_some() {
+            matched += 1;
+        }
         if q.max > 0 && rows.len() >= q.max {
             continue;
         }
@@ -232,6 +244,62 @@ fn mem_writes_in_range_response(
         returned: rows.len(),
         writes: rows,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mem_writes_in_range_from_memshadow(
+    inner: &crate::state::AppStateInner,
+    q: &MemWritesInRangeQuery,
+    lo: usize,
+    hi: usize,
+    addr_lo: Option<u64>,
+    addr_hi: Option<u64>,
+    src_byte: u8,
+    base: Option<u64>,
+    memshadow: &tracemiku_core::prelude::MemShadow,
+) -> MemWritesInRangeResponse {
+    let mut matched = 0usize;
+    let mut rows = Vec::new();
+    let writes_start = memshadow.writes.partition_point(|w| w.idx < lo);
+    let writes_end = memshadow.writes.partition_point(|w| w.idx < hi);
+    for write in &memshadow.writes[writes_start..writes_end] {
+        if !matches_addr_filter(write.addr, write.size, addr_lo, addr_hi) {
+            continue;
+        }
+        if (write.value & 0xff) as u8 != src_byte {
+            continue;
+        }
+        matched += 1;
+        if q.max > 0 && rows.len() >= q.max {
+            continue;
+        }
+
+        let record = inner.trace.record(write.idx);
+        let decoded = decode(record.pc, record.inst);
+        let src_reg = source_reg_for_write_at(&decoded, &record, write.addr);
+        let (func_name, _) = inner.symbols.lookup(record.pc);
+        rows.push(MemWriteRow {
+            idx: write.idx,
+            pc: format!("{:#x}", record.pc),
+            rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+            func: (func_name != "?").then_some(func_name),
+            asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
+                .trim()
+                .to_string(),
+            dst_addr: format!("{:#x}", write.addr),
+            size: write.size,
+            src_reg,
+            src_value: format!("{:#x}", write.value),
+            byte0: (write.value & 0xff) as u8,
+        });
+    }
+
+    MemWritesInRangeResponse {
+        idx_range: vec![lo, hi],
+        matched,
+        returned: rows.len(),
+        writes: rows,
+    }
 }
 
 #[derive(Debug, Deserialize)]
