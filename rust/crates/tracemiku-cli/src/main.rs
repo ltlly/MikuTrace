@@ -2868,6 +2868,10 @@ async fn vm_backstep_value_on(
             "searched_context": context,
         })
     };
+    let frontier = local_def
+        .as_ref()
+        .map(backstep_frontier_from_def)
+        .unwrap_or_default();
     Ok(serde_json::json!({
         "status": "ready",
         "idx": idx,
@@ -2876,7 +2880,31 @@ async fn vm_backstep_value_on(
         "target": target_row,
         "local_def": local_def,
         "upstream": upstream,
+        "frontier": frontier,
     }))
+}
+
+fn backstep_frontier_from_def(def_row: &serde_json::Value) -> Vec<serde_json::Value> {
+    let idx = def_row
+        .get("idx")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    def_row
+        .get("def")
+        .and_then(|v| v.get("src"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|src| {
+            let reg = src.get("reg")?.clone();
+            Some(serde_json::json!({
+                "idx": idx,
+                "reg": reg,
+                "value": src.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "reason": "local_def_source_reg",
+            }))
+        })
+        .collect()
 }
 
 fn vm_row_from_record(

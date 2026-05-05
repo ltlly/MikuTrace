@@ -219,6 +219,10 @@ finds the register's nearest local definition, then:
 - returns `upstream.writes_tail` for multi-byte loads, because a 32-bit or
   64-bit value may have been assembled by several byte stores and the final
   chronological writer may explain only the last byte.
+- returns `frontier[]` with `{idx, reg, value}` candidates derived from
+  `local_def.def.src[]`. Use these when `upstream.next` is null, such as at an
+  ALU merge or a table lookup where the interesting branch is the index
+  register rather than the loaded table byte.
 
 This mirrors the manual trace workflow:
 
