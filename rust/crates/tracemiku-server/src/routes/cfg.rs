@@ -35,7 +35,22 @@ pub async fn cfg_handler(
     State(state): State<AppState>,
     Query(q): Query<CfgQuery>,
 ) -> Json<CfgResponse> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    Json(
+        tokio::task::spawn_blocking(move || cfg_response(&inner, q))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(target: "tracemiku-server", "cfg worker failed: {err}");
+                CfgResponse {
+                    status: "error",
+                    blocks: Vec::new(),
+                    edges: Vec::new(),
+                }
+            }),
+    )
+}
+
+fn cfg_response(inner: &crate::state::AppStateInner, q: CfgQuery) -> CfgResponse {
     let cfg = &inner.cfg;
     let symbols = &inner.symbols;
 
@@ -90,9 +105,9 @@ pub async fn cfg_handler(
         edges_out.push([format!("{:#x}", f.start_pc), format!("{:#x}", t.start_pc)]);
     }
 
-    Json(CfgResponse {
+    CfgResponse {
         status: "ready",
         blocks: blocks_out,
         edges: edges_out,
-    })
+    }
 }
