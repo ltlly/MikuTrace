@@ -11,6 +11,9 @@ from typing import Any
 @dataclass
 class Session:
     so_path: str | None = None
+    runtime_base: int | None = None
+    image_base: int = 0
+    image_end: int = 0
     bv: Any = None
     bn: Any = None
     ready: bool = False
@@ -24,11 +27,15 @@ class Session:
             self.bn = binaryninja
             self.bv = binaryninja.load(path)
             self.ready = self.bv is not None
+            if self.bv is not None:
+                self.image_base, self.image_end = _image_bounds(self.bv)
             return {
                 "ok": self.ready,
                 "ready": self.ready,
                 "version": getattr(binaryninja, "__version__", ""),
                 "fn_count": len(list(self.bv.functions)) if self.bv is not None else 0,
+                "runtime_base": _hex_or_none(self.runtime_base),
+                "image_base": f"0x{self.image_base:x}",
             }
         except Exception as exc:  # pragma: no cover - depends on local BN install
             self.ready = False
@@ -39,7 +46,7 @@ class Session:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
         fns = [
-            {"start": int(fn.start), "name": str(fn.name)}
+            {"start": self._to_trace_addr(int(fn.start)), "name": str(fn.name)}
             for fn in self.bv.functions
         ]
         return {"ok": True, "ready": True, "functions": fns}
@@ -63,17 +70,26 @@ class Session:
     def hlil_for(self, pc: int) -> dict[str, Any]:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
-        fn = self._function_for_pc(pc)
+        bn_pc = self._to_bn_addr(pc)
+        fn = self._function_for_pc(bn_pc)
         if fn is None:
-            return {"ok": False, "ready": True, "error": f"no function contains 0x{pc:x}"}
+            return {
+                "ok": False,
+                "ready": True,
+                "error": f"no function contains trace 0x{pc:x} (bn 0x{bn_pc:x})",
+            }
         lines = []
         for insn in fn.hlil.instructions:
             addr = int(getattr(insn, "address", 0) or 0)
-            lines.append({"pc": f"0x{addr:x}", "text": str(insn), "tokens": []})
+            lines.append({"pc": f"0x{self._to_trace_addr(addr):x}", "text": str(insn), "tokens": []})
         return {
             "ok": True,
             "ready": True,
-            "fn": {"name": str(fn.name), "start": int(fn.start), "end": int(fn.highest_address)},
+            "fn": {
+                "name": str(fn.name),
+                "start": self._to_trace_addr(int(fn.start)),
+                "end": self._to_trace_addr(int(fn.highest_address)),
+            },
             "lines": lines,
             "vars": [],
         }
@@ -81,10 +97,18 @@ class Session:
     def cfg_for(self, pc: int, mode: str = "asm", timeout: int | None = None) -> dict[str, Any]:
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
-        fn = self._function_for_pc(pc)
+        bn_pc = self._to_bn_addr(pc)
+        fn = self._function_for_pc(bn_pc)
         if fn is None:
-            return {"ok": False, "ready": True, "error": f"no function contains 0x{pc:x}"}
-        blocks = [{"id": i, "start": int(bb.start), "end": int(bb.end)} for i, bb in enumerate(fn.basic_blocks)]
+            return {
+                "ok": False,
+                "ready": True,
+                "error": f"no function contains trace 0x{pc:x} (bn 0x{bn_pc:x})",
+            }
+        blocks = [
+            {"id": i, "start": self._to_trace_addr(int(bb.start)), "end": self._to_trace_addr(int(bb.end))}
+            for i, bb in enumerate(fn.basic_blocks)
+        ]
         return {"ok": True, "ready": True, "mode": mode, "timeout": timeout, "blocks": blocks, "edges": [], "svg": ""}
 
     def _function_for_pc(self, pc: int) -> Any | None:
@@ -95,16 +119,17 @@ class Session:
         return containing[0] if containing else None
 
     def _asm_tokens_at(self, pc: int) -> list[dict[str, Any]]:
-        fn = self._function_for_pc(pc)
+        bn_pc = self._to_bn_addr(pc)
+        fn = self._function_for_pc(bn_pc)
         raw_tokens = None
         if fn is not None:
-            raw_tokens = self._call_instruction_text(fn, pc)
+            raw_tokens = self._call_instruction_text(fn, bn_pc)
         if raw_tokens is None:
-            raw_tokens = self._call_instruction_text(self.bv, pc)
+            raw_tokens = self._call_instruction_text(self.bv, bn_pc)
         if raw_tokens:
             return [self._token_to_wire(t) for t in raw_tokens if getattr(t, "text", "")]
         try:
-            text = str(self.bv.get_disassembly(pc))
+            text = str(self.bv.get_disassembly(bn_pc))
         except Exception:
             return []
         return self._fallback_asm_tokens(text)
@@ -140,7 +165,7 @@ class Session:
         text = str(getattr(token, "text", "") or "")
         type_name = str(getattr(token, "type", "")).split(".")[-1]
         cls = _classify_token(type_name, text)
-        addr = _token_addr(token, type_name)
+        addr = self._to_trace_addr(_token_addr(token, type_name))
         out: dict[str, Any] = {"t": text, "c": cls}
         if addr is not None:
             out["a"] = f"0x{addr:x}"
@@ -167,6 +192,22 @@ class Session:
         if last < len(rest):
             out.append({"t": rest[last:], "c": "txt"})
         return out
+
+    def _to_bn_addr(self, pc: int) -> int:
+        if self.runtime_base is None:
+            return pc
+        if pc < self.runtime_base:
+            return pc
+        return self.image_base + (pc - self.runtime_base)
+
+    def _to_trace_addr(self, addr: int | None) -> int | None:
+        if addr is None:
+            return None
+        if self.runtime_base is None:
+            return addr
+        if self.image_base <= addr < self.image_end:
+            return self.runtime_base + (addr - self.image_base)
+        return addr
 
 
 def handle(session: Session, req: dict[str, Any]) -> dict[str, Any]:
@@ -245,11 +286,57 @@ def _token_addr(token: Any, type_name: str) -> int | None:
     return None
 
 
+def _image_bounds(bv: Any) -> tuple[int, int]:
+    starts: list[int] = []
+    ends: list[int] = []
+    for attr in ("segments", "sections"):
+        try:
+            items = list(getattr(bv, attr))
+        except Exception:
+            items = []
+        for item in items:
+            start = getattr(item, "start", None)
+            end = getattr(item, "end", None)
+            if isinstance(start, int):
+                starts.append(start)
+            if isinstance(end, int):
+                ends.append(end)
+    if not starts:
+        try:
+            funcs = list(bv.functions)
+        except Exception:
+            funcs = []
+        starts.extend(int(getattr(fn, "start", 0) or 0) for fn in funcs)
+        ends.extend(int(getattr(fn, "highest_address", 0) or 0) for fn in funcs)
+    start = min(starts) if starts else 0
+    end = max(ends) if ends else start
+    return start, max(end, start + 1)
+
+
+def _parse_int(raw: str | int | None) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        return int(s, 0)
+    except Exception:
+        return None
+
+
+def _hex_or_none(value: int | None) -> str | None:
+    return None if value is None else f"0x{value:x}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--so", default="")
+    parser.add_argument("--base", default="")
     args = parser.parse_args()
-    session = Session()
+    session = Session(runtime_base=_parse_int(args.base))
     if args.so:
         session.open_so(args.so)
     for line in sys.stdin:

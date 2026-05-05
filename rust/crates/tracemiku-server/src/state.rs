@@ -226,7 +226,9 @@ impl AppState {
             auto_phase_cache: Mutex::new(HashMap::new()),
             trace_ir_cache: Mutex::new(HashMap::new()),
             reg_timeline_cache: Mutex::new(HashMap::new()),
-            bn_sidecar: Mutex::new(BnSidecarManager::from_env()),
+            bn_sidecar: Mutex::new(BnSidecarManager::from_env_with_base(
+                (primary_base != 0).then_some(primary_base),
+            )),
         });
 
         if background_interactive_warm_enabled() {
