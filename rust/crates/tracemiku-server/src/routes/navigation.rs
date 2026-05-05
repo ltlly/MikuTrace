@@ -317,25 +317,13 @@ fn backtrace_response(
     limit: usize,
 ) -> BacktraceResponse {
     let limit = limit.clamp(1, 2048);
-    let mut stack: Vec<BacktraceFrame> = Vec::new();
-    let mut events = Vec::<(usize, bool)>::new();
-    for (&pc, idxs) in &inner.index.pc_to_idxs {
-        let Some(&first_idx) = idxs.first() else {
-            continue;
-        };
-        let d = decode(pc, inner.trace.inst(first_idx));
-        if !d.is_call && !d.is_ret {
-            continue;
-        }
-        let take = idxs.partition_point(|&i| i <= idx);
-        events.extend(idxs[..take].iter().copied().map(|i| (i, d.is_call)));
-    }
-    events.sort_unstable_by_key(|(i, _)| *i);
+    let events = inner.backtrace_events();
+    let take = events.partition_point(|event| event.idx <= idx);
+    let mut stack: Vec<usize> = Vec::new();
 
-    for (i, is_call) in events {
-        let record = inner.trace.record(i);
-        if is_call {
-            stack.push(backtrace_frame(inner, i, record.pc));
+    for event in &events[..take] {
+        if event.is_call {
+            stack.push(event.idx);
         } else {
             stack.pop();
         }
@@ -346,13 +334,20 @@ fn backtrace_response(
     if truncated {
         stack = stack.split_off(depth - limit);
     }
+    let frames = stack
+        .into_iter()
+        .map(|call_idx| {
+            let record = inner.trace.record(call_idx);
+            backtrace_frame(inner, call_idx, record.pc)
+        })
+        .collect::<Vec<_>>();
     BacktraceResponse {
         status: "ready",
         idx,
         depth,
-        returned: stack.len(),
+        returned: frames.len(),
         truncated,
-        stack,
+        stack: frames,
     }
 }
 

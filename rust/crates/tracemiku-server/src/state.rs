@@ -45,6 +45,7 @@ pub struct AppStateInner {
     memshadow_status: AtomicU8,
     call_tree: OnceLock<CallNode>,
     frame_depths: OnceLock<Vec<u32>>,
+    backtrace_events: OnceLock<Vec<BacktraceEvent>>,
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
     hash_finalize_index: OnceLock<HashFinalizeIndex>,
@@ -63,6 +64,12 @@ pub struct CfgSvgCached {
     pub svg: String,
     pub block_count: usize,
     pub total_block_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BacktraceEvent {
+    pub idx: usize,
+    pub is_call: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -182,6 +189,7 @@ impl AppState {
             memshadow_status,
             call_tree: OnceLock::new(),
             frame_depths: OnceLock::new(),
+            backtrace_events: OnceLock::new(),
             asm_groups: OnceLock::new(),
             jni_calls: OnceLock::new(),
             hash_finalize_index: OnceLock::new(),
@@ -330,6 +338,29 @@ impl AppStateInner {
     pub fn frame_depths(&self) -> &[u32] {
         self.frame_depths
             .get_or_init(|| build_frame_depth_map(&self.trace))
+    }
+
+    pub fn backtrace_events(&self) -> &[BacktraceEvent] {
+        self.backtrace_events
+            .get_or_init(|| {
+                let mut events = Vec::new();
+                for (&pc, idxs) in &self.index.pc_to_idxs {
+                    let Some(&first_idx) = idxs.first() else {
+                        continue;
+                    };
+                    let d = decode(pc, self.trace.inst(first_idx));
+                    if !d.is_call && !d.is_ret {
+                        continue;
+                    }
+                    events.extend(idxs.iter().copied().map(|idx| BacktraceEvent {
+                        idx,
+                        is_call: d.is_call,
+                    }));
+                }
+                events.sort_unstable_by_key(|event| event.idx);
+                events
+            })
+            .as_slice()
     }
 
     pub fn asm_groups(&self) -> &[AsmSearchGroup] {
