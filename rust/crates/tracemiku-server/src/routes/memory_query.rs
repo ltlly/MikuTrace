@@ -12,6 +12,7 @@ use crate::state::AppState;
 
 const MAX_MEM_WRITES_RETURNED: usize = 5_000;
 const MAX_PATTERN_HITS: usize = 5_000;
+const MAX_TOUCHING_IDXS_RETURNED: usize = 5_000;
 
 #[derive(Debug, Deserialize)]
 pub struct LastWriteOfAddrQuery {
@@ -336,6 +337,10 @@ fn default_limit() -> usize {
     50
 }
 
+fn effective_touch_limit(raw: usize) -> usize {
+    raw.min(MAX_TOUCHING_IDXS_RETURNED)
+}
+
 #[derive(Debug, Serialize)]
 pub struct TouchingRangeResponse {
     pub status: &'static str,
@@ -505,10 +510,11 @@ fn idxs_touching_addr_response(
     };
     entries.sort_by_key(|e| e.idx);
     let cut = entries.partition_point(|e| e.idx < q.cursor);
-    let before_start = cut.saturating_sub(q.limit);
+    let limit = effective_touch_limit(q.limit);
+    let before_start = cut.saturating_sub(limit);
     let mut before = entries[before_start..cut].to_vec();
     before.reverse();
-    let after = entries[cut..entries.len().min(cut + q.limit)].to_vec();
+    let after = entries[cut..entries.len().min(cut + limit)].to_vec();
     TouchingAddrResponse {
         status: "ready",
         addr: q.addr,
@@ -786,12 +792,28 @@ fn touching_range_idxs_from_memshadow(
 }
 
 fn split_around_cursor(idxs: &[usize], cursor: usize, limit: usize) -> (Vec<usize>, Vec<usize>) {
+    let limit = effective_touch_limit(limit);
     let cut = idxs.partition_point(|&idx| idx < cursor);
     let before_start = cut.saturating_sub(limit);
     let mut before = idxs[before_start..cut].to_vec();
     before.reverse();
     let after = idxs[cut..idxs.len().min(cut + limit)].to_vec();
     (before, after)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_touch_limit, MAX_TOUCHING_IDXS_RETURNED};
+
+    #[test]
+    fn effective_touch_limit_caps_extreme_requests() {
+        assert_eq!(effective_touch_limit(0), 0);
+        assert_eq!(effective_touch_limit(60), 60);
+        assert_eq!(
+            effective_touch_limit(usize::MAX),
+            MAX_TOUCHING_IDXS_RETURNED
+        );
+    }
 }
 
 fn source_reg_for_write_at(

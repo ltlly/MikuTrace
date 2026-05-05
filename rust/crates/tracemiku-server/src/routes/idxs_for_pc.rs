@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
+const MAX_IDXS_FOR_PC_RETURNED: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct IdxsForPcQuery {
     pub pc: String,
@@ -26,6 +28,10 @@ fn default_cursor() -> usize {
 }
 fn default_limit() -> usize {
     30
+}
+
+fn effective_limit(raw: usize) -> usize {
+    raw.min(MAX_IDXS_FOR_PC_RETURNED)
 }
 
 #[derive(Debug, Serialize)]
@@ -59,12 +65,13 @@ pub async fn idxs_for_pc_handler(
     let cut = all.partition_point(|&idx| idx < cursor);
     let total_before = cut;
     let total_after = all.len().saturating_sub(cut);
-    let before_capped = total_before > q.limit;
-    let after_capped = total_after > q.limit;
+    let limit = effective_limit(q.limit);
+    let before_capped = total_before > limit;
+    let after_capped = total_after > limit;
 
     // before: closest-to-cursor first (descending), capped at limit.
-    let before = all[..cut].iter().rev().take(q.limit).copied().collect();
-    let after = all[cut..].iter().take(q.limit).copied().collect();
+    let before = all[..cut].iter().rev().take(limit).copied().collect();
+    let after = all[cut..].iter().take(limit).copied().collect();
 
     Json(IdxsForPcResponse {
         status: "ready",
@@ -77,4 +84,16 @@ pub async fn idxs_for_pc_handler(
         before_capped,
         after_capped,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_limit, MAX_IDXS_FOR_PC_RETURNED};
+
+    #[test]
+    fn effective_limit_caps_extreme_requests() {
+        assert_eq!(effective_limit(0), 0);
+        assert_eq!(effective_limit(60), 60);
+        assert_eq!(effective_limit(usize::MAX), MAX_IDXS_FOR_PC_RETURNED);
+    }
 }
