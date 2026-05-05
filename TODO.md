@@ -77,6 +77,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   `/api/cfg-svg?mode=auto`; 当前 1542 万 records trace 上用户点名的
   `sub_169a10` 冷缓存约 43ms ready, 最大块数函数走 large overview fallback,
   不再触发 dot 超时路径。
+- ✅ String Provenance 纳入大 trace 性能 smoke:
+  `scripts/web_api_perf_probe.py` 会从 `/api/strings` 选择一个字符串, 再测
+  `/api/string-provenance` 前 128 字节以内的 per-byte writers/readers 来源,
+  防止双击字符串来源面板的冷路径延迟回归。
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
@@ -99,8 +103,8 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   所有 Python gate/helper 脚本。
 - ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
   会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
-  当前 1542 万 records trace + v3 sidecar 下约 7.07s ready, ready 后 auto phase
-  约 173ms, health max 约 2.0ms。
+  当前 1542 万 records trace + v3 sidecar 下约 6.80s ready, ready 后 auto phase
+  约 167ms, health max 约 1.9ms。
 - ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
   Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
   `playwright install chrome` 需要 sudo 交互。现有保障是静态 UI audit +
