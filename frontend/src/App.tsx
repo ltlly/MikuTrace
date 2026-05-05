@@ -41,7 +41,8 @@ type MemoryRequest = { token: number; addr: string };
 type TaintRunRequest = { token: number; idx: number; reg: string; direction: TaintRunDirection };
 
 const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
-const LAYOUT_KEY = "tracemiku-layout-v2";
+const LEGACY_LAYOUT_KEY = "tracemiku-layout-v2";
+const LAYOUT_KEY = "tracemiku-layout-v3";
 
 interface LayoutState {
   leftW: number;
@@ -64,7 +65,7 @@ const DEFAULT_LAYOUT: LayoutState = {
   colPc: 112,
   colFunc: 96,
   colAsm: 360,
-  syncCfg: false,
+  syncCfg: true,
 };
 
 function clampNumber(n: number, lo: number, hi: number): number {
@@ -74,7 +75,9 @@ function clampNumber(n: number, lo: number, hi: number): number {
 function initialLayout(): LayoutState {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
+    const isCurrentLayout = raw !== null;
+    const legacyRaw = raw ?? localStorage.getItem(LEGACY_LAYOUT_KEY);
+    const parsed = legacyRaw ? JSON.parse(legacyRaw) : {};
     return {
       leftW: clampNumber(Number(parsed.leftW) || DEFAULT_LAYOUT.leftW, 180, 680),
       rightW: clampNumber(Number(parsed.rightW) || DEFAULT_LAYOUT.rightW, 320, 960),
@@ -84,7 +87,7 @@ function initialLayout(): LayoutState {
       colPc: clampNumber(Number(parsed.colPc) || DEFAULT_LAYOUT.colPc, 80, 260),
       colFunc: clampNumber(Number(parsed.colFunc) || DEFAULT_LAYOUT.colFunc, 80, 420),
       colAsm: clampNumber(Number(parsed.colAsm) || DEFAULT_LAYOUT.colAsm, 180, 900),
-      syncCfg: typeof parsed.syncCfg === "boolean" ? parsed.syncCfg : DEFAULT_LAYOUT.syncCfg,
+      syncCfg: isCurrentLayout && typeof parsed.syncCfg === "boolean" ? parsed.syncCfg : DEFAULT_LAYOUT.syncCfg,
     };
   } catch {
     return { ...DEFAULT_LAYOUT };
