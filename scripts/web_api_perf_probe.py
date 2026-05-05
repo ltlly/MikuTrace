@@ -46,6 +46,14 @@ class Measurement:
     health_failures: int = 0
 
 
+@dataclass(frozen=True)
+class Probe:
+    label: str
+    path: str
+    method: str = "GET"
+    json_body: Any | None = None
+
+
 def get_json(base_url: str, path: str, timeout: float = DEFAULT_TIMEOUT) -> tuple[Any, int, int, float]:
     url = base_url.rstrip("/") + path
     t0 = time.perf_counter()
@@ -55,16 +63,25 @@ def get_json(base_url: str, path: str, timeout: float = DEFAULT_TIMEOUT) -> tupl
         return json.loads(body.decode("utf-8")), resp.status, len(body), elapsed
 
 
-def timed_get(
+def timed_request(
     base_url: str,
     label: str,
     path: str,
     timeout: float = DEFAULT_TIMEOUT,
+    *,
+    method: str = "GET",
+    json_body: Any | None = None,
 ) -> tuple[Measurement, Any | None]:
     url = base_url.rstrip("/") + path
+    data = None
+    headers: dict[str, str] = {}
+    if json_body is not None:
+        data = json.dumps(json_body).encode("utf-8")
+        headers["content-type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read()
             elapsed = (time.perf_counter() - t0) * 1000.0
             value = json.loads(body.decode("utf-8")) if body else None
@@ -87,6 +104,15 @@ def timed_get(
         )
 
 
+def timed_get(
+    base_url: str,
+    label: str,
+    path: str,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> tuple[Measurement, Any | None]:
+    return timed_request(base_url, label, path, timeout)
+
+
 def timed_get_with_runtime_probe(
     base_url: str,
     label: str,
@@ -99,11 +125,21 @@ def timed_get_with_runtime_probe(
     health_timeout: float,
     max_health_ms: float,
     executor: concurrent.futures.Executor,
+    method: str = "GET",
+    json_body: Any | None = None,
 ) -> tuple[Measurement, Any | None]:
     if not enabled:
-        return timed_get(base_url, label, path, timeout)
+        return timed_request(base_url, label, path, timeout, method=method, json_body=json_body)
 
-    future = executor.submit(timed_get, base_url, label, path, timeout)
+    future = executor.submit(
+        timed_request,
+        base_url,
+        label,
+        path,
+        timeout,
+        method=method,
+        json_body=json_body,
+    )
     polls = 0
     max_ms = 0.0
     failures: list[str] = []
@@ -154,6 +190,19 @@ def pick_function(functions: Any, fallback: str | None) -> str | None:
     return None
 
 
+def pick_function_id(functions: Any) -> str | None:
+    fns = (functions or {}).get("functions", [])
+    for source in ("trace-ir", "symbol"):
+        for fn in fns:
+            if fn.get("source") == source and isinstance(fn.get("id"), str):
+                return fn["id"]
+    for fn in fns:
+        fn_id = fn.get("id")
+        if isinstance(fn_id, str) and fn_id:
+            return fn_id
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
@@ -189,48 +238,76 @@ def main() -> int:
     funcs_measure, funcs = timed_get(base, "functions", "/api/functions", args.timeout)
     measurements.append(funcs_measure)
     fn = pick_function(funcs, fn_hint)
+    fn_id = pick_function_id(funcs)
 
-    probes: list[tuple[str, str]] = [
-        ("meta", "/api/meta"),
-        ("bg status", "/api/bg-status"),
-        ("records first 1k", q("/api/records", start=0, count=1000)),
-        ("records mid 1k", q("/api/records", start=max(0, mid - 500), count=1000)),
-        ("record mid", f"/api/record/{mid}"),
-        ("search ret cursor", q("/api/search", pattern="^ret\\b", max_results=5000, cursor=mid)),
-        ("idxs current pc", q("/api/idxs-for-pc", pc=rec_mid.get("pc"), cursor=mid, limit=80)),
-        ("backtrace mid", q("/api/backtrace", idx=mid, limit=256)),
-        ("calltree depth50", q("/api/call-tree", max_depth=50)),
-        ("forward taint x0", q("/api/forward-taint", traceIdx=mid, reg="x0", max_count=5000, cross_fn_call="true")),
-        ("backward taint x0", q("/api/backward-taint", traceIdx=mid, reg="x0", max_count=5000, cross_fn_call="true")),
-        ("strings 5k", q("/api/strings", min_len=4, limit=5000, cursor=-1)),
-        ("hash finalize", q("/api/hash-finalize-detect", window=500, min_size=16, limit=500)),
-        ("auto phase", q("/api/auto-phase-detect", max_phases=5000, detect_byte_streams="true")),
+    probes: list[Probe] = [
+        Probe("meta", "/api/meta"),
+        Probe("bg status", "/api/bg-status"),
+        Probe("records first 1k", q("/api/records", start=0, count=1000)),
+        Probe("records mid 1k", q("/api/records", start=max(0, mid - 500), count=1000)),
+        Probe("record mid", f"/api/record/{mid}"),
+        Probe("search ret cursor", q("/api/search", pattern="^ret\\b", max_results=5000, cursor=mid)),
+        Probe("idxs current pc", q("/api/idxs-for-pc", pc=rec_mid.get("pc"), cursor=mid, limit=80)),
+        Probe("backtrace mid", q("/api/backtrace", idx=mid, limit=256)),
+        Probe("calltree depth50", q("/api/call-tree", max_depth=50)),
+        Probe("forward taint x0", q("/api/forward-taint", traceIdx=mid, reg="x0", max_count=5000, cross_fn_call="true")),
+        Probe("backward taint x0", q("/api/backward-taint", traceIdx=mid, reg="x0", max_count=5000, cross_fn_call="true")),
+        Probe("strings 5k", q("/api/strings", min_len=4, limit=5000, cursor=-1)),
+        Probe("hash finalize", q("/api/hash-finalize-detect", window=500, min_size=16, limit=500)),
+        Probe("auto phase", q("/api/auto-phase-detect", max_phases=5000, detect_byte_streams="true")),
     ]
     if fn:
         probes.extend(
             [
-                ("cfg svg current fn", q("/api/cfg-svg", fn=fn, mode="auto")),
-                ("cfg current fn", q("/api/cfg", fn=fn)),
+                Probe("cfg svg current fn", q("/api/cfg-svg", fn=fn, mode="auto")),
+                Probe("cfg current fn", q("/api/cfg", fn=fn)),
             ]
         )
-        if not args.visible_ui_only:
-            probes.append(("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)))
+    if not args.visible_ui_only:
+        probes.append(Probe("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)))
+        if fn_id:
+            probes.append(
+                Probe(
+                    "dec fn hot",
+                    q(
+                        f"/api/dec/fn/{urllib.parse.quote(fn_id, safe='')}",
+                        tier="hot",
+                        split_top_k=40,
+                        split_min_records=10,
+                    ),
+                )
+            )
+            probes.append(
+                Probe(
+                    "llil render",
+                    "/api/llil/render",
+                    method="POST",
+                    json_body={
+                        "fn_id": fn_id,
+                        "max_records": 300,
+                        "ssa": True,
+                        "constfold": True,
+                        "flag_elim": True,
+                        "dce": False,
+                    },
+                )
+            )
     if sp:
         probes.extend(
             [
-                ("mem dump sp 128", q("/api/mem-dump", addr=sp, count=128)),
-                ("mem diff sp 128", q("/api/mem-diff", idx=mid, addr=sp, size=128)),
-                ("touch range sp", q("/api/idxs-touching-range", addr=sp, size=128, cursor=mid, limit=80)),
-                ("mem writes sp", q("/api/mem-writes-in-range", addr_lo=sp, addr_hi=sp, idx_lo=0, idx_hi=records, max=200)),
+                Probe("mem dump sp 128", q("/api/mem-dump", addr=sp, count=128)),
+                Probe("mem diff sp 128", q("/api/mem-diff", idx=mid, addr=sp, size=128)),
+                Probe("touch range sp", q("/api/idxs-touching-range", addr=sp, size=128, cursor=mid, limit=80)),
+                Probe("mem writes sp", q("/api/mem-writes-in-range", addr_lo=sp, addr_hi=sp, idx_lo=0, idx_hi=records, max=200)),
             ]
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        for label, path in probes:
+        for probe in probes:
             m, _ = timed_get_with_runtime_probe(
                 base,
-                label,
-                path,
+                probe.label,
+                probe.path,
                 args.timeout,
                 enabled=args.runtime_blocking_check,
                 health_path=args.health_path,
@@ -238,6 +315,8 @@ def main() -> int:
                 health_timeout=args.health_timeout,
                 max_health_ms=args.max_health_ms,
                 executor=executor,
+                method=probe.method,
+                json_body=probe.json_body,
             )
             measurements.append(m)
 
@@ -247,6 +326,7 @@ def main() -> int:
         "mid_idx": mid,
         "mid_pc": rec_mid.get("pc"),
         "mid_func": fn_hint,
+        "function_id": fn_id,
         "runtime_blocking_check": {
             "enabled": args.runtime_blocking_check,
             "health_path": args.health_path,
