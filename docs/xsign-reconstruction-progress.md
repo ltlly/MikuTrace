@@ -180,9 +180,28 @@ str w1, [x19, x6]                    writes "piYQ" group
 <- VM slot / memory byte 0x61         underlying byte feeding that index
 ```
 
-The chain later reaches bytecode constants such as `ldr x19, [x21, #8]`; those
-are VM program constants and need opcode-level interpretation rather than a
-memory-writer hop.
+While validating this chain, a core address-indexing bug was found and fixed:
+Rust `MemOp::addr_of` originally ignored scaled register-index addressing such
+as `[x25, x15, lsl #3]`. That made VM slot writes land at the wrong indexed
+address for MemShadow, `mem-writes-in-range`, and backward chain hops. After the
+fix, the same trace confirms:
+
+```text
+idx 14731216  str x19, [x25, x15, lsl #3]
+slot addr     0x7744599528
+src x19       0x18
+```
+
+so the Base64 table index for `Y` is now explained by the actual `lsr`
+calculation:
+
+```text
+idx 14731214  lsr x19, x2, x11   ; x2=0x61, x11=2, x19=0x18
+```
+
+The next reconstruction step is to interpret these VM opcode windows as
+Base64-index operations and then continue from the bytes being shifted/masked
+back to the payload source.
 
 ## Next target
 

@@ -36,6 +36,25 @@ fn strb_records_size_1() {
 }
 
 #[test]
+fn scaled_register_index_records_shift() {
+    // str x19, [x25, x15, lsl #3] = bytes 33 7b 2f f8.
+    let d = decode(0x100000, 0xf82f7b33);
+    assert_eq!(d.mem_op.len(), 1);
+    assert_eq!(d.mem_op[0].base, "x25");
+    assert_eq!(d.mem_op[0].idx, "x15");
+    assert_eq!(d.mem_op[0].shift, 3);
+    assert!(d.mem_op[0].is_write);
+
+    // ldr x20, [x25, x17, lsl #3] = bytes 34 7b 71 f8.
+    let d = decode(0x100004, 0xf8717b34);
+    assert_eq!(d.mem_op.len(), 1);
+    assert_eq!(d.mem_op[0].base, "x25");
+    assert_eq!(d.mem_op[0].idx, "x17");
+    assert_eq!(d.mem_op[0].shift, 3);
+    assert!(!d.mem_op[0].is_write);
+}
+
+#[test]
 fn stp_pair_splits_into_two_mem_ops_with_disp_offset() {
     // stp x0, x1, [sp, #16] = 0xa90107e0 (x0+x1 → [sp+16], 8+8B). Encoding:
     // STP signed offset, 64-bit, imm7=2 (× 8 = 16), Rt2=1, Rn=31 (sp), Rt=0.
@@ -127,6 +146,7 @@ fn addr_of_base_plus_disp() {
     let op = MemOp {
         base: "x1".to_string(),
         idx: String::new(),
+        shift: 0,
         disp: 16,
         size: 8,
         is_write: true,
@@ -141,6 +161,7 @@ fn addr_of_base_plus_idx_plus_disp() {
     let op = MemOp {
         base: "x1".to_string(),
         idx: "x2".to_string(),
+        shift: 0,
         disp: 0,
         size: 8,
         is_write: false,
@@ -150,11 +171,27 @@ fn addr_of_base_plus_idx_plus_disp() {
 }
 
 #[test]
+fn addr_of_base_plus_shifted_idx_plus_disp() {
+    let r = synth_record_with_regs(0x100000, &[(1, 0x7000), (2, 0x11)]);
+    let op = MemOp {
+        base: "x1".to_string(),
+        idx: "x2".to_string(),
+        shift: 3,
+        disp: 0,
+        size: 8,
+        is_write: true,
+        src_reg: "x0".to_string(),
+    };
+    assert_eq!(addr_of(&r, &op), 0x7088);
+}
+
+#[test]
 fn addr_of_handles_unknown_base_as_zero() {
     let r = synth_record_with_regs(0x100000, &[]);
     let op = MemOp {
         base: "garbage".to_string(),
         idx: String::new(),
+        shift: 0,
         disp: 5,
         size: 8,
         is_write: true,

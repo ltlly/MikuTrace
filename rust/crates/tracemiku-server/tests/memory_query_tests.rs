@@ -50,6 +50,39 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_scaled_store_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_1r_1ms");
+    std::fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272];
+    buf[0..8].copy_from_slice(&0x100000u64.to_le_bytes());
+    // str x19, [x25, x15, lsl #3] = bytes 33 7b 2f f8.
+    buf[268..272].copy_from_slice(&0xf82f7b33u32.to_le_bytes());
+    for (reg, value) in [(15usize, 0x11u64), (19, 0x18), (25, 0x7000)] {
+        let off = 8 + reg * 8;
+        buf[off..off + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    std::fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    std::fs::write(
+        cd.join("meta.json"),
+        r#"{"records":1,"tid":100,"ms":1,"truncated":false}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 async fn get_json(call_dir: PathBuf, uri: &str) -> serde_json::Value {
     let app = tracemiku_server::build_router(call_dir).expect("build router");
     let resp = app
@@ -127,6 +160,21 @@ async fn mem_writes_in_range_matches_overlapping_write() {
     assert_eq!(v["matched"], 1);
     assert_eq!(v["writes"][0]["idx"], 0);
     assert_eq!(v["writes"][0]["dst_addr"], "0x7000");
+}
+
+#[tokio::test]
+async fn mem_writes_in_range_handles_scaled_register_index() {
+    let (_tmp, cd) = synth_scaled_store_call_dir();
+    let v = get_json(
+        cd,
+        "/api/mem-writes-in-range?idx_lo=0&idx_hi=1&addr_lo=0x7088&addr_hi=0x7090&max=5",
+    )
+    .await;
+    assert_eq!(v["matched"], 1);
+    assert_eq!(v["writes"][0]["idx"], 0);
+    assert_eq!(v["writes"][0]["dst_addr"], "0x7088");
+    assert_eq!(v["writes"][0]["src_reg"], "x19");
+    assert_eq!(v["writes"][0]["src_value"], "0x18");
 }
 
 #[tokio::test]

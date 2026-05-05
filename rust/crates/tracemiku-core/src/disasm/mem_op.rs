@@ -1,10 +1,11 @@
-//! MemOp = (base, idx, disp, size, is_write, src_reg).
+//! MemOp = (base, idx, shift, disp, size, is_write, src_reg).
 //!
 //! Direct port of `viewer/disasm.py:100-134` + `viewer/trace.py:131-138`.
+//! `shift` holds scaled register-index addressing such as `[x25, x15, lsl #3]`.
 //! `src_reg` holds the source/dest reg for stp/ldp pair-split entries; empty
 //! for non-pair insns (consumers fall back to `regs_use[0]` / `regs_def[0]`).
 
-use capstone::arch::arm64::Arm64OperandType;
+use capstone::arch::arm64::{Arm64OperandType, Arm64Shift};
 use capstone::arch::DetailsArchInsn;
 use capstone::Capstone;
 use serde::Serialize;
@@ -14,7 +15,7 @@ use crate::trace::Record;
 
 /// One memory operand of an ARM64 instruction. The byte range touched is
 /// `[addr_of(rec, &op), addr_of(rec, &op) + op.size)` where `addr_of` resolves
-/// `base + idx + disp` against a trace record.
+/// `base + (idx << shift) + disp` against a trace record.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct MemOp {
     /// Canonical base reg name (e.g. `"x1"`, `"sp"`, `"fp"`). May be empty
@@ -22,6 +23,8 @@ pub struct MemOp {
     pub base: String,
     /// Canonical index reg name; empty when no scaled index is present.
     pub idx: String,
+    /// Left shift applied to `idx` in register-index addressing.
+    pub shift: u32,
     /// Signed displacement in bytes (negative for pre/post-decrement forms).
     pub disp: i64,
     /// Access size in bytes (1/2/4/8). Derived from mnemonic suffix and
@@ -132,9 +135,14 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
             } else {
                 normalize_disasm_reg(&idx)
             };
+            let shift = match op.shift {
+                Arm64Shift::Lsl(bits) => bits,
+                _ => 0,
+            };
             out.push(MemOp {
                 base: base_norm,
                 idx: idx_norm,
+                shift,
                 disp: m.disp() as i64,
                 size: sz,
                 is_write: is_w,
@@ -200,7 +208,7 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
 }
 
 /// Compute effective address from a record and a MemOp, mirroring
-/// `viewer/trace.py:addr_of` (base + idx + disp, modulo 2^64). Unknown
+/// `viewer/trace.py:addr_of` (base + (idx << shift) + disp, modulo 2^64). Unknown
 /// register names resolve to 0 — matching Python's `if reg in ALL_REGS else 0`.
 pub fn addr_of(rec: &Record, op: &MemOp) -> u64 {
     let bv = rec.reg_by_name(&op.base).unwrap_or(0);
@@ -209,5 +217,6 @@ pub fn addr_of(rec: &Record, op: &MemOp) -> u64 {
     } else {
         rec.reg_by_name(&op.idx).unwrap_or(0)
     };
+    let iv = iv.checked_shl(op.shift).unwrap_or(0);
     bv.wrapping_add(iv).wrapping_add(op.disp as u64)
 }
