@@ -631,6 +631,7 @@ fn output_map_defaults_to_earliest_generation_hit() {
     let v = run_json(&base_args);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["selected_hit_order"], "earliest");
+    assert_eq!(v["tree_frontier_with_next"], false);
     assert_eq!(v["selected_hit"]["addr"], "0x8000");
     assert_eq!(v["selected_hit"]["first_idx"], 0);
     assert_eq!(v["hit_candidates"][0]["rank"], 0);
@@ -639,8 +640,10 @@ fn output_map_defaults_to_earliest_generation_hit() {
     let mut nearest_args = base_args;
     nearest_args.push("--hit-order".into());
     nearest_args.push("nearest".into());
+    nearest_args.push("--tree-frontier-with-next".into());
     let v = run_json(&nearest_args);
     assert_eq!(v["selected_hit_order"], "nearest");
+    assert_eq!(v["tree_frontier_with_next"], true);
     assert_eq!(v["selected_hit"]["addr"], "0x7000");
     assert_eq!(v["selected_hit"]["first_idx"], 1);
 }

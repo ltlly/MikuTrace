@@ -676,6 +676,9 @@ enum Cmd {
         /// Max nodes per attached VM backtree.
         #[arg(long, default_value_t = 40)]
         tree_max_nodes: usize,
+        /// Include frontier source-reg branches even when a tree node has an upstream memory edge.
+        #[arg(long = "tree-frontier-with-next")]
+        tree_frontier_with_next: bool,
         /// Lookback window for each VM backtree step.
         #[arg(long, default_value_t = 200000)]
         lookback: usize,
@@ -1534,6 +1537,7 @@ async fn main() -> anyhow::Result<()> {
             groups,
             tree_depth,
             tree_max_nodes,
+            tree_frontier_with_next,
             lookback,
             no_url_decode,
         }) => {
@@ -1548,6 +1552,7 @@ async fn main() -> anyhow::Result<()> {
                 groups,
                 tree_depth,
                 tree_max_nodes,
+                tree_frontier_with_next,
                 lookback,
                 url_decode: !no_url_decode,
             };
@@ -2155,6 +2160,7 @@ struct OutputMapOpts {
     groups: usize,
     tree_depth: usize,
     tree_max_nodes: usize,
+    tree_frontier_with_next: bool,
     lookback: usize,
     url_decode: bool,
 }
@@ -2485,7 +2491,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                         120,
                         opts.lookback,
                         5000,
-                        false,
+                        opts.tree_frontier_with_next,
                         "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27".to_string(),
                     )
                     .await?;
@@ -2515,6 +2521,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "group_total": group_total,
         "selected_hit_order": opts.hit_order.as_str(),
         "selected_hit_rank": opts.hit_rank,
+        "tree_frontier_with_next": opts.tree_frontier_with_next,
         "hit_candidates": hit_candidates,
         "selected_hit": selected_hit,
         "selected_range": selected_range,

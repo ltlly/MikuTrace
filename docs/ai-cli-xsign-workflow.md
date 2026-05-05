@@ -300,7 +300,8 @@ rust/target/debug/tracemiku-cli output-map <call_dir> \
   --hit-order earliest \
   --group-start 3 \
   --groups 1 \
-  --tree-depth 4
+  --tree-depth 8 \
+  --tree-frontier-with-next
 ```
 
 `output-map` chooses a ranked memory hit for the observed output string, then
@@ -310,6 +311,11 @@ decoded bytes, overlapping writer runs, writer source register, and optional
 analysis: it picks the first full output buffer and walks backward from there.
 Use `--hit-order nearest` when you specifically want the final buffer handed to
 JNI.
+
+When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
+add `--tree-frontier-with-next`. Without it the tree follows the table memory
+edge; with it the report also keeps the `index` register branch, which is the
+branch that usually leads back to the payload bits.
 
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 

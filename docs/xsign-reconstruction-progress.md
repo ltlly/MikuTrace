@@ -240,7 +240,8 @@ rust/target/debug/tracemiku-cli output-map <call_dir> \
   --hit-order earliest \
   --group-start 3 \
   --groups 1 \
-  --tree-depth 4 \
+  --tree-depth 8 \
+  --tree-frontier-with-next \
   --lookback 500000
 ```
 
