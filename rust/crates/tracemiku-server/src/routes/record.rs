@@ -119,7 +119,7 @@ fn regs_map(record: &tracemiku_core::trace::Record, names: &[&str]) -> BTreeMap<
     regs
 }
 
-fn classify_reg_value(
+pub(crate) fn classify_reg_value(
     inner: &crate::state::AppStateInner,
     memshadow: Option<&tracemiku_core::memshadow::MemShadow>,
     value: u64,

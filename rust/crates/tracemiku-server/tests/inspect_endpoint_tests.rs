@@ -91,12 +91,21 @@ async fn reg_value_at_accepts_aliases_and_reports_unknown() {
     let (status, v) = get_json(call_dir.clone(), "/api/reg-value-at?idx=2&reg=x0").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["status"], "ready");
+    assert_eq!(v["reg"], "x0");
     assert_eq!(v["value"], "0xabc2");
+    assert_eq!(v["annotation"], "[SP+0x3bc2]");
 
     let (status, v) = get_json(call_dir.clone(), "/api/reg-at-idx?idx=0&reg=w0").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["status"], "ready");
+    assert_eq!(v["reg"], "x0");
     assert_eq!(v["value"], "0xabc0");
+
+    let (status, v) = get_json(call_dir.clone(), "/api/reg-value-at?idx=0&reg=nzcv").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["reg"], "nzcv");
+    assert_eq!(v["value"], "0x0");
 
     let (status, v) = get_json(call_dir, "/api/reg-value-at?idx=0&reg=bogus").await;
     assert_eq!(status, StatusCode::OK);

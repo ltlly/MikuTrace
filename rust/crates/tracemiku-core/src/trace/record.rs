@@ -69,6 +69,9 @@ impl Record {
         if name == "pc" {
             return Some(self.pc);
         }
+        if name == "nzcv" {
+            return Some(self.nzcv as u64);
+        }
         if name == "fp" {
             return Some(self.regs[29]);
         }
@@ -167,5 +170,11 @@ mod tests {
         assert_eq!(r.reg("x29"), None, "x29 (fp alias) not supported by name");
         assert_eq!(r.reg("xx"), None);
         assert_eq!(r.reg(""), None);
+
+        assert_eq!(r.reg_by_name("w0"), Some(0xdead));
+        assert_eq!(r.reg_by_name("x29"), Some(0xcafe));
+        assert_eq!(r.reg_by_name("x30"), Some(0xbabe));
+        assert_eq!(r.reg_by_name("nzcv"), Some(0b1010));
+        assert_eq!(r.reg_by_name("xzr"), Some(0));
     }
 }

@@ -307,6 +307,7 @@ export interface RegValueAtResponse {
   idx: number;
   reg: string;
   value: string | null;
+  annotation?: string;
   error?: string;
 }
 

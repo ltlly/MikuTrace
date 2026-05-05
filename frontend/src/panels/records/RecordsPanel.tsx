@@ -323,7 +323,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     }
     try {
       const r = await fetchRegValueAt(idx, reg);
-      const title = r.status === "ready" && r.value ? `${reg} = ${r.value}` : `${reg}`;
+      const annotation = r.annotation ? ` ${r.annotation}` : "";
+      const title = r.status === "ready" && r.value ? `${reg} = ${r.value}${annotation}` : `${reg}`;
       regValueTitleCache.set(key, title);
       el.title = title;
     } catch {

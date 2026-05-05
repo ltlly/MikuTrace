@@ -6,6 +6,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
+use tracemiku_core::disasm::normalize_disasm_reg;
 
 #[derive(Debug, Deserialize)]
 pub struct RegValueAtQuery {
@@ -19,6 +20,8 @@ pub struct RegValueAtResponse {
     pub idx: usize,
     pub reg: String,
     pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -34,25 +37,42 @@ pub async fn reg_value_at_handler(
             idx: q.idx,
             reg: q.reg,
             value: None,
+            annotation: None,
             error: Some("idx out of range".to_string()),
         });
     }
     let record = inner.trace.record(q.idx);
-    let value = record.reg_by_name(&q.reg).map(|v| format!("{v:#x}"));
-    if let Some(value) = value {
+    let canon = normalize_disasm_reg(&q.reg);
+    let reg = if canon.is_empty() { q.reg } else { canon };
+    let raw_value = record.reg_by_name(&reg);
+    if let Some(v) = raw_value {
+        let annotation = if reg == "xzr" {
+            None
+        } else {
+            let annotation = crate::routes::record::classify_reg_value(
+                inner,
+                inner.memshadow_if_ready(),
+                v,
+                q.idx,
+                record.reg_by_name("sp").unwrap_or(0),
+            );
+            (!annotation.is_empty()).then_some(annotation)
+        };
         Json(RegValueAtResponse {
             status: "ready".to_string(),
             idx: q.idx,
-            reg: q.reg,
-            value: Some(value),
+            reg,
+            value: Some(format!("{v:#x}")),
+            annotation,
             error: None,
         })
     } else {
         Json(RegValueAtResponse {
             status: "error".to_string(),
             idx: q.idx,
-            reg: q.reg,
+            reg,
             value: None,
+            annotation: None,
             error: Some("unknown register".to_string()),
         })
     }
