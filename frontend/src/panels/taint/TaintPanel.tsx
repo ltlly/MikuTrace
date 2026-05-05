@@ -4,7 +4,7 @@ import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintRow } from "~/api/types";
 
 type Direction = "forward" | "backward";
-type ViewMode = "tree" | "table";
+type ViewMode = "flow" | "table";
 const TAINT_RETRY_MS = 500;
 
 interface RunRequest {
@@ -37,7 +37,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [start, setStart] = createSignal(0);
   const [reg, setReg] = createSignal("x0");
   const [direction, setDirection] = createSignal<Direction>("forward");
-  const [viewMode, setViewMode] = createSignal<ViewMode>("tree");
+  const [viewMode, setViewMode] = createSignal<ViewMode>("flow");
   const [maxCount, setMaxCount] = createSignal(200);
   const [throughMem, setThroughMem] = createSignal(false);
   const [dataOnly, setDataOnly] = createSignal(false);
@@ -228,7 +228,7 @@ export default function TaintPanel(props: TaintPanelProps) {
         <label>
           view
           <select value={viewMode()} onChange={(e) => setViewMode(e.currentTarget.value as ViewMode)}>
-            <option value="tree">flow tree</option>
+            <option value="flow">flow</option>
             <option value="table">table</option>
           </select>
         </label>
@@ -248,7 +248,7 @@ export default function TaintPanel(props: TaintPanelProps) {
                 {" "}· stopped at max
               </Show>
             </p>
-            <Show when={viewMode() === "tree"} fallback={
+            <Show when={viewMode() === "flow"} fallback={
               <table class="taint-table">
                 <thead>
                   <tr>

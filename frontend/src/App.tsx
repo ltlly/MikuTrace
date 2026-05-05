@@ -682,7 +682,7 @@ export default function App() {
     if (leftTab() === "back") return "Backtrace 在当前 cursor 处重建动态调用栈。点击 frame 会跳到对应 call site，用于从深层 JNI/Native 调用回到上游上下文。";
     if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
     if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。单击跳到第一次写入/触碰该字符串地址的 trace；双击会在底部 Provenance 展示每个字符是谁写入、谁读取。";
-    if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源，选项控制是否穿过内存和是否标注函数调用深度。";
+    if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源。Flow 视图按传播命中顺序展示；开启 show call depth 时按调用深度缩进。";
     if (leftTab() === "xref") return "Refs 上半部分是当前 PC 在 trace 中的其它执行位置；下半部分是按解码后的汇编文本做正则搜索。它不是静态代码引用分析，ret 这类通用指令只有在提交文本搜索后才会列出匹配。";
     if (leftTab() === "settings") return "Settings 显示后端 API、MemShadow 状态、密度和调试开关。API debug log 可在需要定位前端/后端交互时打开。";
     return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
