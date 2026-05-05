@@ -637,6 +637,9 @@ enum Cmd {
         /// Do not add a percent-decoded pattern for URL-encoded strings.
         #[arg(long = "no-url-decode")]
         no_url_decode: bool,
+        /// Do not add a best-effort Base64-decoded byte pattern for textual outputs.
+        #[arg(long = "no-base64-decode")]
+        no_base64_decode: bool,
     },
     /// Compact dynamic VM-oriented record slice.
     VmSlice {
@@ -1422,6 +1425,7 @@ async fn main() -> anyhow::Result<()> {
             vm_chain_follow_frontier,
             skip_taint,
             no_url_decode,
+            no_base64_decode,
         }) => {
             let opts = OutputBacktraceOpts {
                 key,
@@ -1438,6 +1442,7 @@ async fn main() -> anyhow::Result<()> {
                 vm_chain_follow_frontier,
                 skip_taint,
                 url_decode: !no_url_decode,
+                base64_decode: !no_base64_decode,
             };
             cmd_output_backtrace(trace_dir, opts).await
         }
@@ -1955,16 +1960,7 @@ fn prior_get_string_inputs(
 }
 
 fn base64_summary(raw: &str) -> serde_json::Value {
-    let mut padded = raw.trim().to_string();
-    let rem = padded.len() % 4;
-    if rem != 0 {
-        padded.push_str(&"=".repeat(4 - rem));
-    }
-    let engine = GeneralPurpose::new(
-        &BASE64_STANDARD_ALPHABET,
-        GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
-    );
-    match engine.decode(padded.as_bytes()) {
+    match base64_decoded_bytes(raw) {
         Ok(bytes) => serde_json::json!({
             "ok": true,
             "decoded_len": bytes.len(),
@@ -1976,6 +1972,23 @@ fn base64_summary(raw: &str) -> serde_json::Value {
             "error": err.to_string(),
         }),
     }
+}
+
+fn base64_decoded_bytes(raw: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut padded = trimmed.replace('-', "+").replace('_', "/");
+    let rem = padded.len() % 4;
+    if rem != 0 {
+        padded.push_str(&"=".repeat(4 - rem));
+    }
+    let engine = GeneralPurpose::new(
+        &BASE64_STANDARD_ALPHABET,
+        GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+    );
+    engine.decode(padded.as_bytes())
 }
 
 #[derive(Debug)]
@@ -1994,6 +2007,7 @@ struct OutputBacktraceOpts {
     vm_chain_follow_frontier: bool,
     skip_taint: bool,
     url_decode: bool,
+    base64_decode: bool,
 }
 
 #[derive(Debug)]
@@ -2009,11 +2023,24 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
     let source = resolve_output_source(&app, &opts).await?;
     let mut patterns: Vec<(&'static str, Vec<u8>)> =
         vec![("observed", source.primary_bytes.clone())];
+    let mut text_for_decoders = source.text.clone();
     if opts.url_decode {
         if let Some(text) = source.text.as_deref() {
             let decoded = percent_decode_bytes(text.as_bytes());
             if decoded != source.primary_bytes {
+                if let Ok(decoded_text) = String::from_utf8(decoded.clone()) {
+                    text_for_decoders = Some(decoded_text);
+                }
                 patterns.push(("percent_decoded", decoded));
+            }
+        }
+    }
+    if opts.base64_decode {
+        if let Some(text) = text_for_decoders.as_deref() {
+            if let Ok(decoded) = base64_decoded_bytes(text) {
+                if !decoded.is_empty() && decoded != source.primary_bytes {
+                    patterns.push(("base64_decoded", decoded));
+                }
             }
         }
     }
@@ -3857,8 +3884,8 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_frontier_next, classify_vm_asm, def_source_regs_from_asm, mem_addr_from_asm,
-        memory_access_width, store_source_regs_from_asm, vm_slot_from_asm,
+        base64_decoded_bytes, choose_frontier_next, classify_vm_asm, def_source_regs_from_asm,
+        mem_addr_from_asm, memory_access_width, store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -3935,6 +3962,19 @@ mod tests {
         assert_eq!(next["idx"], serde_json::json!(10));
         assert_eq!(next["reg"], serde_json::json!("x20"));
         assert_eq!(next["src_value"], serde_json::json!("0x18"));
+    }
+
+    #[test]
+    fn base64_decoder_accepts_unpadded_xsign_output() {
+        let decoded = base64_decoded_bytes(
+            "azYBCM007xAApiYQXVKLkaXxoOr2BiYWKai5MLGI6T9yCUYPHSKV0zba5j/4Jbr6D0UvFBHd3FllrCJShVQSWn+qcIYmFY3mFgYmFi",
+        )
+        .unwrap();
+        assert_eq!(decoded.len(), 76);
+        assert_eq!(
+            &decoded[..9],
+            &[0x6b, 0x36, 0x01, 0x08, 0xcd, 0x34, 0xef, 0x10, 0x00]
+        );
     }
 }
 

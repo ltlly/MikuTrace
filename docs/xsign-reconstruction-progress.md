@@ -22,6 +22,9 @@ Observed across six local samples:
 - base64-decoded payload length: 76 bytes.
 - common decoded prefix: `6b360108cd34ef1000`.
 - corresponding raw base64 prefix: `azYBCM007x`.
+- Searching the trace for the decoded payload prefix did not find a contiguous
+  raw payload buffer in `call_001`; current evidence points to incremental
+  Base64/string assembly rather than a single observed pre-encode buffer.
 
 Example decoded payload prefix/suffix:
 
