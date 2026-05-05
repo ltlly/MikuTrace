@@ -112,6 +112,40 @@ fn make_diff_trace(root: &std::path::Path, name: &str, x_sign: &[u8]) -> PathBuf
     dir
 }
 
+fn make_output_map_hit_order_trace(root: &std::path::Path, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd]);
+    assert_eq!(output.len(), 8);
+    let output_word = u64::from_le_bytes(output.as_bytes().try_into().unwrap());
+    let addrs = [0x8000u64, 0x7000u64];
+    let mut buf = vec![0u8; 272 * addrs.len()];
+    for (i, addr) in addrs.iter().enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&(0x100000u64 + (i as u64 * 4)).to_le_bytes());
+        buf[off + 8..off + 16].copy_from_slice(&output_word.to_le_bytes()); // x0
+        buf[off + 16..off + 24].copy_from_slice(&addr.to_le_bytes()); // x1
+        let str_x0_x1 = 0xf9000020u32;
+        buf[off + 268..off + 272].copy_from_slice(&str_x0_x1.to_le_bytes());
+    }
+    std::fs::write(dir.join("trace.bin"), &buf).unwrap();
+    std::fs::write(dir.join("meta.json"), r#"{"records":2}"#).unwrap();
+    let events = [
+        serde_json::json!({"id":"NewStringUTF","trace_idx":9,"args":{"bytes":"x-sign"}}),
+        serde_json::json!({"id":"NewStringUTF","trace_idx":10,"args":{"bytes":output}}),
+    ];
+    std::fs::write(
+        dir.join("jni_hooks.jsonl"),
+        events
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    dir
+}
+
 #[test]
 fn info_json_reports_call_shape() {
     let (_tmp, cd) = synth_call_dir();
@@ -577,6 +611,38 @@ fn output_backtrace_starts_from_jni_output_pair() {
         v["taint"]["queued"][0]["kind"],
         "jni_new_string_utf_callsite"
     );
+}
+
+#[test]
+fn output_map_defaults_to_earliest_generation_hit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_output_map_hit_order_trace(tmp.path(), "run1");
+    let base_args = vec![
+        "output-map".into(),
+        cd.display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--max-mem-hits".into(),
+        "2".into(),
+        "--groups".into(),
+        "1".into(),
+    ];
+
+    let v = run_json(&base_args);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["selected_hit_order"], "earliest");
+    assert_eq!(v["selected_hit"]["addr"], "0x8000");
+    assert_eq!(v["selected_hit"]["first_idx"], 0);
+    assert_eq!(v["hit_candidates"][0]["rank"], 0);
+    assert_eq!(v["hit_candidates"][0]["addr"], "0x8000");
+
+    let mut nearest_args = base_args;
+    nearest_args.push("--hit-order".into());
+    nearest_args.push("nearest".into());
+    let v = run_json(&nearest_args);
+    assert_eq!(v["selected_hit_order"], "nearest");
+    assert_eq!(v["selected_hit"]["addr"], "0x7000");
+    assert_eq!(v["selected_hit"]["first_idx"], 1);
 }
 
 #[test]

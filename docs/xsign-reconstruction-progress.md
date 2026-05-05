@@ -237,6 +237,7 @@ frontier leaves.
 ```bash
 rust/target/debug/tracemiku-cli output-map <call_dir> \
   --key x-sign \
+  --hit-order earliest \
   --group-start 3 \
   --groups 1 \
   --tree-depth 4 \

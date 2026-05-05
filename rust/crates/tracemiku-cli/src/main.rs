@@ -6,7 +6,7 @@ use axum::body::Body;
 use base64::alphabet::STANDARD as BASE64_STANDARD_ALPHABET;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -656,9 +656,14 @@ enum Cmd {
         /// Max memory locations to consider for the observed output bytes.
         #[arg(long, default_value_t = 8)]
         max_mem_hits: usize,
-        /// Ranked memory hit to use after sorting by distance to JNI value idx.
+        /// Ranked memory hit to use after --hit-order sorting.
         #[arg(long, default_value_t = 0)]
         hit_rank: usize,
+        /// Memory-hit ordering before applying --hit-rank.
+        ///
+        /// earliest is best for reversing generation; nearest follows the final JNI handoff.
+        #[arg(long, value_enum, default_value_t = HitOrder::Earliest)]
+        hit_order: HitOrder,
         /// First Base64 group offset to return.
         #[arg(long, default_value_t = 0)]
         group_start: usize,
@@ -1524,6 +1529,7 @@ async fn main() -> anyhow::Result<()> {
             jni_limit,
             max_mem_hits,
             hit_rank,
+            hit_order,
             group_start,
             groups,
             tree_depth,
@@ -1537,6 +1543,7 @@ async fn main() -> anyhow::Result<()> {
                 jni_limit,
                 max_mem_hits,
                 hit_rank,
+                hit_order,
                 group_start,
                 groups,
                 tree_depth,
@@ -2143,12 +2150,33 @@ struct OutputMapOpts {
     jni_limit: usize,
     max_mem_hits: usize,
     hit_rank: usize,
+    hit_order: HitOrder,
     group_start: usize,
     groups: usize,
     tree_depth: usize,
     tree_max_nodes: usize,
     lookback: usize,
     url_decode: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum HitOrder {
+    /// Earliest first write of a full output buffer. Best for walking generation backward.
+    Earliest,
+    /// Closest full output buffer to the JNI value trace index.
+    Nearest,
+    /// Latest first write of a full output buffer.
+    Latest,
+}
+
+impl HitOrder {
+    fn as_str(self) -> &'static str {
+        match self {
+            HitOrder::Earliest => "earliest",
+            HitOrder::Nearest => "nearest",
+            HitOrder::Latest => "latest",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2387,7 +2415,8 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
             "hits": [],
         })
     };
-    let hits = sorted_pattern_hits(&find, source.value_idx);
+    let hits = sorted_pattern_hits_by(&find, source.value_idx, opts.hit_order);
+    let hit_candidates = hit_candidate_summaries(&hits, source.value_idx);
     let selected_hit = hits.get(opts.hit_rank).cloned();
     let mut writer_runs = Vec::new();
     let mut selected_range = serde_json::Value::Null;
@@ -2484,7 +2513,9 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "source": source.json,
         "text_len": mapped_text.len(),
         "group_total": group_total,
+        "selected_hit_order": opts.hit_order.as_str(),
         "selected_hit_rank": opts.hit_rank,
+        "hit_candidates": hit_candidates,
         "selected_hit": selected_hit,
         "selected_range": selected_range,
         "find_mem_pattern": find,
@@ -2749,20 +2780,67 @@ fn sorted_pattern_hits(
     find_response: &serde_json::Value,
     value_idx: Option<usize>,
 ) -> Vec<serde_json::Value> {
+    sorted_pattern_hits_by(find_response, value_idx, HitOrder::Nearest)
+}
+
+fn sorted_pattern_hits_by(
+    find_response: &serde_json::Value,
+    value_idx: Option<usize>,
+    order: HitOrder,
+) -> Vec<serde_json::Value> {
     let mut hits = find_response
         .get("hits")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    if let Some(value_idx) = value_idx {
-        hits.sort_by_key(|hit| {
+    match order {
+        HitOrder::Earliest => hits.sort_by_key(|hit| {
             hit.get("first_idx")
                 .and_then(|v| v.as_u64())
-                .map(|idx| value_idx.abs_diff(idx as usize))
+                .map(|idx| idx as usize)
                 .unwrap_or(usize::MAX)
-        });
+        }),
+        HitOrder::Nearest => {
+            if let Some(value_idx) = value_idx {
+                hits.sort_by_key(|hit| {
+                    hit.get("first_idx")
+                        .and_then(|v| v.as_u64())
+                        .map(|idx| value_idx.abs_diff(idx as usize))
+                        .unwrap_or(usize::MAX)
+                });
+            }
+        }
+        HitOrder::Latest => hits.sort_by_key(|hit| {
+            std::cmp::Reverse(
+                hit.get("first_idx")
+                    .and_then(|v| v.as_u64())
+                    .map(|idx| idx as usize)
+                    .unwrap_or(0),
+            )
+        }),
     }
     hits
+}
+
+fn hit_candidate_summaries(
+    hits: &[serde_json::Value],
+    value_idx: Option<usize>,
+) -> Vec<serde_json::Value> {
+    hits.iter()
+        .enumerate()
+        .map(|(rank, hit)| {
+            let first_idx = hit
+                .get("first_idx")
+                .and_then(|v| v.as_u64())
+                .map(|idx| idx as usize);
+            serde_json::json!({
+                "rank": rank,
+                "addr": hit.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "first_idx": first_idx,
+                "distance_to_value_idx": value_idx.and_then(|idx| first_idx.map(|first| idx.abs_diff(first))),
+            })
+        })
+        .collect()
 }
 
 fn provenance_writer_runs(

@@ -297,16 +297,19 @@ For Base64-like outputs, use the compact group map when the full
 ```bash
 rust/target/debug/tracemiku-cli output-map <call_dir> \
   --key x-sign \
+  --hit-order earliest \
   --group-start 3 \
   --groups 1 \
   --tree-depth 4
 ```
 
-`output-map` chooses a ranked memory hit for the observed output string, splits
-the textual output into 4-character Base64 groups, reports each group's decoded
-bytes, overlapping writer runs, writer source register, and optional
-`vm-backtree`. This is the quickest way to ask an AI to compare several output
-groups and infer the VM encoding template.
+`output-map` chooses a ranked memory hit for the observed output string, then
+splits the textual output into 4-character Base64 groups, reports each group's
+decoded bytes, overlapping writer runs, writer source register, and optional
+`vm-backtree`. The default `--hit-order earliest` is meant for generation
+analysis: it picks the first full output buffer and walks backward from there.
+Use `--hit-order nearest` when you specifically want the final buffer handed to
+JNI.
 
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
