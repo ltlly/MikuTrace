@@ -64,6 +64,11 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ CFG stale/loading 交互守卫已纳入前端静态审计: 钉住 seq+Abort、
   loading 时清旧图并显示 spinner、requestFn 绑定、以及高亮前的 current graph
   校验，防止快速跨函数点击时旧 CFG/旧异步结果覆盖新 cursor。
+- ✅ 最大 CFG 渲染路径纳入性能 smoke: `scripts/web_api_perf_probe.py`
+  除当前 cursor 函数外, 会额外选择 `/api/functions` 中 blocks 最大的函数跑
+  `/api/cfg-svg?mode=auto`; 当前 1542 万 records trace 上用户点名的
+  `sub_169a10` 冷缓存约 43ms ready, 最大块数函数走 large overview fallback,
+  不再触发 dot 超时路径。
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
@@ -86,7 +91,7 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   所有 Python gate/helper 脚本。
 - ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
   会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
-  当前 1542 万 records trace + v3 sidecar 下约 7.05s ready, ready 后 auto phase
+  当前 1542 万 records trace + v3 sidecar 下约 7.07s ready, ready 后 auto phase
   约 173ms, health max 约 2.0ms。
 - ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
   Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
