@@ -291,6 +291,23 @@ rust/target/debug/tracemiku-cli output-backtrace <call_dir> \
   --vm-chain-follow-frontier
 ```
 
+For Base64-like outputs, use the compact group map when the full
+`output-backtrace` report is too large:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --group-start 3 \
+  --groups 1 \
+  --tree-depth 4
+```
+
+`output-map` chooses a ranked memory hit for the observed output string, splits
+the textual output into 4-character Base64 groups, reports each group's decoded
+bytes, overlapping writer runs, writer source register, and optional
+`vm-backtree`. This is the quickest way to ask an AI to compare several output
+groups and infer the VM encoding template.
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash

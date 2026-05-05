@@ -232,6 +232,27 @@ and then continues the data branches back to earlier intermediate words such as
 `0x4b565851` and `0x59697041`, while keeping shift amounts as separate
 frontier leaves.
 
+`output-map` now packages this per Base64 group. Example:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --group-start 3 \
+  --groups 1 \
+  --tree-depth 4 \
+  --lookback 500000
+```
+
+For group 3 it reports:
+
+```text
+chars       piYQ
+decoded     a62610
+writer      str w16, [x2, x5]
+tree root   0x51596970 -> orr x4, x14, x17
+branches    x14=0x51000000, x17=0x596970
+```
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

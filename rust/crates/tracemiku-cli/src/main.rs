@@ -641,6 +641,43 @@ enum Cmd {
         #[arg(long = "no-base64-decode")]
         no_base64_decode: bool,
     },
+    /// Compact map from textual output/Base64 groups to writer runs.
+    OutputMap {
+        trace_dir: PathBuf,
+        /// Start from a JNI NewStringUTF key/value pair, for example x-sign.
+        #[arg(long)]
+        key: Option<String>,
+        /// Start from an observed UTF-8 output string directly.
+        #[arg(long)]
+        value: Option<String>,
+        /// Max NewStringUTF events to scan when --key is used.
+        #[arg(long, default_value_t = 2000)]
+        jni_limit: usize,
+        /// Max memory locations to consider for the observed output bytes.
+        #[arg(long, default_value_t = 8)]
+        max_mem_hits: usize,
+        /// Ranked memory hit to use after sorting by distance to JNI value idx.
+        #[arg(long, default_value_t = 0)]
+        hit_rank: usize,
+        /// First Base64 group offset to return.
+        #[arg(long, default_value_t = 0)]
+        group_start: usize,
+        /// Number of Base64 groups to return. 0 means all groups.
+        #[arg(long, default_value_t = 0)]
+        groups: usize,
+        /// Attach VM backtrees for this depth per group. 0 disables.
+        #[arg(long, default_value_t = 0)]
+        tree_depth: usize,
+        /// Max nodes per attached VM backtree.
+        #[arg(long, default_value_t = 40)]
+        tree_max_nodes: usize,
+        /// Lookback window for each VM backtree step.
+        #[arg(long, default_value_t = 200000)]
+        lookback: usize,
+        /// Do not percent-decode the textual output before Base64 grouping.
+        #[arg(long = "no-url-decode")]
+        no_url_decode: bool,
+    },
     /// Compact dynamic VM-oriented record slice.
     VmSlice {
         trace_dir: PathBuf,
@@ -1480,6 +1517,35 @@ async fn main() -> anyhow::Result<()> {
             };
             cmd_output_backtrace(trace_dir, opts).await
         }
+        Some(Cmd::OutputMap {
+            trace_dir,
+            key,
+            value,
+            jni_limit,
+            max_mem_hits,
+            hit_rank,
+            group_start,
+            groups,
+            tree_depth,
+            tree_max_nodes,
+            lookback,
+            no_url_decode,
+        }) => {
+            let opts = OutputMapOpts {
+                key,
+                value,
+                jni_limit,
+                max_mem_hits,
+                hit_rank,
+                group_start,
+                groups,
+                tree_depth,
+                tree_max_nodes,
+                lookback,
+                url_decode: !no_url_decode,
+            };
+            cmd_output_map(trace_dir, opts).await
+        }
         Some(Cmd::VmSlice {
             trace_dir,
             start,
@@ -2071,6 +2137,21 @@ struct OutputBacktraceOpts {
 }
 
 #[derive(Debug)]
+struct OutputMapOpts {
+    key: Option<String>,
+    value: Option<String>,
+    jni_limit: usize,
+    max_mem_hits: usize,
+    hit_rank: usize,
+    group_start: usize,
+    groups: usize,
+    tree_depth: usize,
+    tree_max_nodes: usize,
+    lookback: usize,
+    url_decode: bool,
+}
+
+#[derive(Debug)]
 struct OutputSource {
     json: serde_json::Value,
     primary_bytes: Vec<u8>,
@@ -2260,6 +2341,187 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
             "Continue with patterns[].hit_reports[].writer_seeds or taint.runs[].summary.function_counts to choose the next function to decompile."
         ],
     }))
+}
+
+async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Result<()> {
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let source = resolve_output_source(
+        &app,
+        &OutputBacktraceOpts {
+            key: opts.key.clone(),
+            value: opts.value.clone(),
+            bytes_hex: None,
+            jni_limit: opts.jni_limit,
+            max_mem_hits: opts.max_mem_hits,
+            writes_per_hit: 0,
+            taint_seeds: 0,
+            taint_max_count: 0,
+            vm_chain_steps: 0,
+            vm_chain_runs: 0,
+            vm_chain_lookback: opts.lookback,
+            vm_chain_follow_frontier: false,
+            skip_taint: true,
+            url_decode: opts.url_decode,
+            base64_decode: true,
+        },
+    )
+    .await?;
+    let Some(source_text) = source.text.as_deref() else {
+        bail!("output-map requires textual --key or --value source");
+    };
+    let mapped_text = if opts.url_decode {
+        let decoded = percent_decode_bytes(source_text.as_bytes());
+        String::from_utf8(decoded).unwrap_or_else(|_| source_text.to_string())
+    } else {
+        source_text.to_string()
+    };
+    let find = if opts.max_mem_hits > 0 {
+        let params = vec![
+            ("bytes_hex", bytes_to_hex(&source.primary_bytes)),
+            ("max", opts.max_mem_hits.to_string()),
+        ];
+        route_get_json_value_on(&app, route_path("/api/find-mem-pattern", &params)).await?
+    } else {
+        serde_json::json!({
+            "status": "skipped",
+            "hits": [],
+        })
+    };
+    let hits = sorted_pattern_hits(&find, source.value_idx);
+    let selected_hit = hits.get(opts.hit_rank).cloned();
+    let mut writer_runs = Vec::new();
+    let mut selected_range = serde_json::Value::Null;
+    if let Some(hit) = selected_hit.as_ref() {
+        if let Some(addr) = hit
+            .get("addr")
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str)
+        {
+            let params = vec![
+                ("addr", format!("{addr:#x}")),
+                ("length", source.primary_bytes.len().to_string()),
+            ];
+            let provenance =
+                route_get_json_value_on(&app, route_path("/api/string-provenance", &params))
+                    .await?;
+            writer_runs = provenance_writer_runs(&provenance, &[]);
+            selected_range = serde_json::json!({
+                "addr_lo": format!("{addr:#x}"),
+                "addr_hi": format!("{:#x}", addr.saturating_add(source.primary_bytes.len() as u64)),
+                "length": source.primary_bytes.len(),
+            });
+        }
+    }
+
+    let group_total = mapped_text.len().div_ceil(4);
+    let group_end = if opts.groups == 0 {
+        group_total
+    } else {
+        opts.group_start
+            .saturating_add(opts.groups)
+            .min(group_total)
+    };
+    let mut group_rows = Vec::new();
+    for group_idx in opts.group_start.min(group_total)..group_end {
+        let start = group_idx * 4;
+        let end = (start + 4).min(mapped_text.len());
+        let chars = &mapped_text[start..end];
+        let decoded = base64_decoded_bytes(chars).unwrap_or_default();
+        let runs = output_runs_overlapping(&app, &writer_runs, start, end).await?;
+        let mut trees = Vec::new();
+        if opts.tree_depth > 0 {
+            for run in &runs {
+                if let Some(seed) =
+                    run.get("writer_seeds")
+                        .and_then(|v| v.as_array())
+                        .and_then(|seeds| {
+                            seeds.iter().find(|seed| {
+                                seed.get("kind").and_then(|v| v.as_str())
+                                    == Some("memory_writer_src_reg")
+                            })
+                        })
+                {
+                    let Some(idx) = seed.get("start").and_then(|v| v.as_u64()) else {
+                        continue;
+                    };
+                    let Some(reg) = seed.get("reg").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let tree = vm_backtree_value_on(
+                        &app,
+                        idx as usize,
+                        Some(reg.to_string()),
+                        opts.tree_depth,
+                        opts.tree_max_nodes,
+                        120,
+                        opts.lookback,
+                        5000,
+                        false,
+                        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27".to_string(),
+                    )
+                    .await?;
+                    trees.push(serde_json::json!({
+                        "seed": seed,
+                        "tree": tree,
+                    }));
+                    break;
+                }
+            }
+        }
+        group_rows.push(serde_json::json!({
+            "group": group_idx,
+            "offset": start,
+            "chars": chars,
+            "decoded_hex": bytes_to_hex(&decoded),
+            "runs": runs,
+            "trees": trees,
+        }));
+    }
+
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "strategy": "output_base64_group_map",
+        "source": source.json,
+        "text_len": mapped_text.len(),
+        "group_total": group_total,
+        "selected_hit_rank": opts.hit_rank,
+        "selected_hit": selected_hit,
+        "selected_range": selected_range,
+        "find_mem_pattern": find,
+        "groups": group_rows,
+    }))
+}
+
+async fn output_runs_overlapping(
+    app: &axum::Router,
+    writer_runs: &[serde_json::Value],
+    start: usize,
+    end: usize,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut out = Vec::new();
+    for run in writer_runs {
+        let run_start = run.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let run_len = run.get("length").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let run_end = run_start.saturating_add(run_len);
+        if run_start >= end || run_end <= start {
+            continue;
+        }
+        let mut row = run.clone();
+        if row
+            .get("writer_seeds")
+            .and_then(|v| v.as_array())
+            .is_none_or(|items| items.is_empty())
+        {
+            if let Some(idx) = row.get("writer_idx").and_then(|v| v.as_u64()) {
+                let record = route_get_json_value_on(app, format!("/api/record/{idx}")).await?;
+                row["record"] = record.clone();
+                row["writer_seeds"] =
+                    serde_json::Value::Array(writer_taint_seeds_from_record(&record));
+            }
+        }
+        out.push(row);
+    }
+    Ok(out)
 }
 
 async fn resolve_output_source(
