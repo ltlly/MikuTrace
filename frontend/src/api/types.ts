@@ -74,6 +74,12 @@ export interface RecordDetail {
   regs_annotated?: Record<string, string>;
   regs_def?: string[];
   regs_use?: string[];
+  exec_count?: number | null;
+  block_pc?: string | null;
+  cfg_status?: string;
+  is_branch?: boolean;
+  is_call?: boolean;
+  is_ret?: boolean;
 }
 
 // ── /api/functions ───────────────────────────────────────────────────────

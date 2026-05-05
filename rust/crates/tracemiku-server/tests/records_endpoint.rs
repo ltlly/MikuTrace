@@ -197,6 +197,12 @@ async fn record_single_returns_full_regs() {
     assert_eq!(v["idx"], 0);
     assert_eq!(v["pc"], "0x100000");
     assert!(v["asm"].as_str().unwrap().contains("nop"));
+    assert_eq!(v["exec_count"], 1);
+    assert_eq!(v["block_pc"], "0x100000");
+    assert_eq!(v["cfg_status"], "ready");
+    assert_eq!(v["is_branch"], false);
+    assert_eq!(v["is_call"], false);
+    assert_eq!(v["is_ret"], false);
 
     let regs = v["regs"].as_object().expect("regs always required");
     // 31 GPR (x0..x28, fp, lr) + sp + pc + nzcv = 34 entries.
@@ -320,4 +326,6 @@ async fn record_detail_with_symbols_populates_func_off() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["func"], "f_alpha");
     assert_eq!(v["off"], "0x0");
+    assert_eq!(v["block_pc"], "0x100100");
+    assert_eq!(v["cfg_status"], "ready");
 }

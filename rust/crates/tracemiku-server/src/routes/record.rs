@@ -26,6 +26,12 @@ pub struct RecordDetail {
     pub regs_annotated: BTreeMap<String, String>,
     pub regs_def: Vec<String>,
     pub regs_use: Vec<String>,
+    pub exec_count: Option<u64>,
+    pub block_pc: Option<String>,
+    pub cfg_status: &'static str,
+    pub is_branch: bool,
+    pub is_call: bool,
+    pub is_ret: bool,
 }
 
 pub async fn record_handler(
@@ -78,6 +84,9 @@ pub async fn record_handler(
     } else {
         (Some(func_name), Some(format!("{func_off:#x}")))
     };
+    let block = inner.cfg.block_containing(r.pc);
+    let exec_count = block.map(|b| b.executions);
+    let block_pc = block.map(|b| format!("{:#x}", b.start_pc));
 
     Ok(Json(RecordDetail {
         idx,
@@ -91,6 +100,12 @@ pub async fn record_handler(
         regs_annotated,
         regs_def: d.regs_def.iter().cloned().collect(),
         regs_use: d.regs_use.iter().cloned().collect(),
+        exec_count,
+        block_pc,
+        cfg_status: "ready",
+        is_branch: d.is_branch,
+        is_call: d.is_call,
+        is_ret: d.is_ret,
     }))
 }
 
