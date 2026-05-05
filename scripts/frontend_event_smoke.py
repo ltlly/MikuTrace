@@ -267,6 +267,46 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     cfg_source.select_option("trace", timeout=timeout_ms)
     checks.append("CFG source selector switches to BN ASM CFG and back")
 
+    page.wait_for_selector(".cfg-svg-frame", timeout=timeout_ms)
+    zoom_anchor = page.evaluate(
+        """() => {
+            const frame = document.querySelector('.cfg-svg-frame');
+            const canvas = document.querySelector('.cfg-svg-canvas');
+            if (!frame || !canvas) throw new Error('CFG frame/canvas missing');
+            const parse = () => {
+                const t = canvas.style.transform;
+                const m = t.match(/translate\\((-?[0-9.]+)px, (-?[0-9.]+)px\\) scale\\(([0-9.]+)\\)/);
+                if (!m) throw new Error(`bad CFG transform: ${t}`);
+                return { x: Number(m[1]), y: Number(m[2]), scale: Number(m[3]) };
+            };
+            const rect = frame.getBoundingClientRect();
+            const clientX = rect.left + rect.width * 0.63;
+            const clientY = rect.top + rect.height * 0.37;
+            const mx = clientX - rect.left;
+            const my = clientY - rect.top;
+            const before = parse();
+            const beforeContent = { x: (mx - before.x) / before.scale, y: (my - before.y) / before.scale };
+            frame.dispatchEvent(new WheelEvent('wheel', {
+                bubbles: true,
+                cancelable: true,
+                ctrlKey: true,
+                deltaY: -120,
+                clientX,
+                clientY,
+            }));
+            const after = parse();
+            const afterContent = { x: (mx - after.x) / after.scale, y: (my - after.y) / after.scale };
+            return {
+                scaled: after.scale > before.scale,
+                dx: afterContent.x - beforeContent.x,
+                dy: afterContent.y - beforeContent.y,
+            };
+        }"""
+    )
+    if not zoom_anchor["scaled"] or abs(zoom_anchor["dx"]) > 0.05 or abs(zoom_anchor["dy"]) > 0.05:
+        raise RuntimeError(f"CFG ctrl-wheel zoom did not keep cursor anchor stable: {zoom_anchor}")
+    checks.append("CFG ctrl-wheel zoom is anchored at the cursor")
+
     if points and points[0].func and points[1].func and points[0].func != points[1].func:
         jump_to_idx(page, points[0].idx)
         wait_debug_value(page, "cursorHint.func", points[0].func, timeout_ms)

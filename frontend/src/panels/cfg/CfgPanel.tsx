@@ -379,9 +379,20 @@ export default function CfgPanel(props: CfgPanelProps) {
   function onWheel(e: WheelEvent) {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    const current = pan();
-    const nextScale = clampScale(current.scale * (e.deltaY < 0 ? 1.12 : 0.89));
-    setPan({ ...current, scale: nextScale });
+    const rect = frame?.getBoundingClientRect();
+    setPan((current) => {
+      const nextScale = clampScale(current.scale * (e.deltaY < 0 ? 1.12 : 0.89));
+      if (!rect || nextScale === current.scale) return current;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const contentX = (mx - current.x) / current.scale;
+      const contentY = (my - current.y) / current.scale;
+      return {
+        scale: nextScale,
+        x: mx - contentX * nextScale,
+        y: my - contentY * nextScale,
+      };
+    });
   }
 
   function onPointerDown(e: PointerEvent) {
