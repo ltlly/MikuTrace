@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchBacktrace } from "~/api/client";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 interface BacktracePanelProps {
   idx: number;
@@ -46,11 +47,14 @@ export default function BacktracePanel(props: BacktracePanelProps) {
     const next = { idx, limit: limit() };
     return prev && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
   });
-  const [resp] = createResource(source, (s) => fetchBacktrace(s.idx, s.limit));
+  const [resp, resourceResp] = createGuardedResource(
+    source,
+    (s) => fetchBacktrace(s.idx, s.limit),
+    (r, s) => r.idx === s.idx && r.request_limit === s.limit,
+  );
   const currentResp = createMemo(() => {
-    const s = source();
-    const r = resp();
-    return r && s && s.idx === props.idx && r.idx === s.idx && r.request_limit === s.limit ? r : undefined;
+    const r = resourceResp();
+    return r && r.idx === props.idx ? r : undefined;
   });
 
   return (

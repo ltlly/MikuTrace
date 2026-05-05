@@ -34,8 +34,9 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ☐ 继续补齐 records / 隐藏冷路径分析面等 cap surface:
   被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
   入口或解释。
-- ☐ 抽出 Solid stale-frame / latest-selection guard: 当前 guard 散在多个
-  panel, 新面板容易复发 "旧请求覆盖新 cursor"。
+- ☐ 继续迁移 Solid stale-frame / latest-selection guard: 已新增
+  `createGuardedResource` 并接入 Backtrace / Trace-for-PC / Xref / Forks,
+  剩余 panel 仍需逐步迁移, 避免新面板复发 "旧请求覆盖新 cursor"。
 - ☐ 扩大 Rust web↔CLI parity gate: 对 records/cfg/taint/memory/string
   provenance/dec-summary 建立小 fixture baseline, 作为 `make test-v2` 之外的
   PR-ready smoke。

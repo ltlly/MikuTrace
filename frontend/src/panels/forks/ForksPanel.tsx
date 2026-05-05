@@ -1,6 +1,7 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 
 import { fetchForkEvents } from "~/api/client";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 const STATUS_OPTIONS = ["", "success", "failed_ptrace_conflict", "not_attempted"];
 const DEFAULT_FORK_LIMIT = 1000;
@@ -23,15 +24,16 @@ interface ForksPanelProps {
 export default function ForksPanel(props: ForksPanelProps) {
   const [status, setStatus] = createSignal("");
   const [limit, setLimit] = createSignal(DEFAULT_FORK_LIMIT);
-  const [resp] = createResource(
-    () => (props.active ? { status: status(), limit: limit() } : undefined),
-    (s) => fetchForkEvents(s.status, s.limit),
-  );
-  const currentResp = createMemo(() => {
-    const r = resp();
-    if (!r || !props.active) return undefined;
-    return r.request_status === status() && r.request_limit === limit() ? r : undefined;
+  const source = createMemo((prev?: { status: string; limit: number }) => {
+    if (!props.active) return undefined;
+    const next = { status: status(), limit: limit() };
+    return prev && prev.status === next.status && prev.limit === next.limit ? prev : next;
   });
+  const [resp, currentResp] = createGuardedResource(
+    source,
+    (s) => fetchForkEvents(s.status, s.limit),
+    (r, s) => r.request_status === s.status && r.request_limit === s.limit,
+  );
   const failedCount = createMemo(
     () => currentResp()?.events.filter((e) => statusOf(e).startsWith("failed")).length ?? 0,
   );

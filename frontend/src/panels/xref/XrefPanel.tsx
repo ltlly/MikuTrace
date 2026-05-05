@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
 
 import { fetchIdxsForPc, fetchRecord, fetchSearch } from "~/api/client";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 interface XrefPanelProps {
   idx: number;
@@ -58,7 +59,14 @@ export default function XrefPanel(props: XrefPanelProps) {
     const next = { pc, idx: props.idx, limit: pcRefLimit() };
     return prev && prev.pc === next.pc && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
   });
-  const [pcRefs] = createResource(pcSource, (s) => (s ? fetchIdxsForPc(s.pc, s.idx, s.limit) : undefined));
+  const [pcRefs, currentPcRefs] = createGuardedResource<PcRefSource, Awaited<ReturnType<typeof fetchIdxsForPc>>>(
+    pcSource,
+    (s) => fetchIdxsForPc(s.pc, s.idx, s.limit),
+    (r, s) =>
+      r.request_pc === s.pc &&
+      r.request_cursor === s.idx &&
+      r.request_limit === s.limit,
+  );
   const defaultAsmPattern = createMemo(() => {
     if (!props.active || !currentRecord()?.asm) return "";
     return `^${escapeRegex(currentRecord()?.asm)}$`;
@@ -74,29 +82,14 @@ export default function XrefPanel(props: XrefPanelProps) {
       ? prev
       : next;
   });
-  const [asmRefs] = createResource(asmSource, (s) =>
-    s ? fetchSearch(s.pattern, s.limit, undefined, s.cursor) : undefined,
-  );
-  const currentPcRefs = createMemo(() => {
-    const s = pcSource();
-    const r = pcRefs();
-    if (!s || !r) return undefined;
-    return r.request_pc === s.pc &&
-      r.request_cursor === s.idx &&
-      r.request_limit === s.limit
-      ? r
-      : undefined;
-  });
-  const currentAsmRefs = createMemo(() => {
-    const s = asmSource();
-    const r = asmRefs();
-    if (!s || !r) return undefined;
-    return r.request_pattern === s.pattern &&
+  const [asmRefs, currentAsmRefs] = createGuardedResource<AsmSearchSource, Awaited<ReturnType<typeof fetchSearch>>>(
+    asmSource,
+    (s) => fetchSearch(s.pattern, s.limit, undefined, s.cursor),
+    (r, s) =>
+      r.request_pattern === s.pattern &&
       r.request_max_results === s.limit &&
-      r.request_cursor === s.cursor
-      ? r
-      : undefined;
-  });
+      r.request_cursor === s.cursor,
+  );
 
   function submitSearch(limit = DEFAULT_ASM_REF_LIMIT) {
     const p = pattern().trim();

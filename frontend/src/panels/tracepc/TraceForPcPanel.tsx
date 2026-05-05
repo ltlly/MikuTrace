@@ -2,6 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, Show } fro
 
 import { fetchIdxsForPc, fetchRecord } from "~/api/client";
 import type { IdxsForPcResponse } from "~/api/types";
+import { createGuardedResource } from "~/utils/resourceGuards";
 
 interface TraceForPcPanelProps {
   idx: number;
@@ -40,23 +41,14 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     const next = { pc: r.pc, idx: props.idx, limit: limit() };
     return prev && prev.pc === next.pc && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
   });
-  const [idxs] = createResource<IdxsForPcResponse, IpcSource | undefined>(
+  const [idxs, currentHistory] = createGuardedResource<IpcSource, IdxsForPcResponse>(
     source,
-    (source) => {
-      if (!source) throw new Error("missing selected record");
-      return fetchIdxsForPc(source.pc, source.idx, source.limit);
-    },
-  );
-  const currentHistory = createMemo(() => {
-    const s = source();
-    const r = idxs();
-    if (!s || !r) return undefined;
-    return r.request_pc === s.pc &&
+    (source) => fetchIdxsForPc(source.pc, source.idx, source.limit),
+    (r, s) =>
+      r.request_pc === s.pc &&
       r.request_cursor === s.idx &&
-      r.request_limit === s.limit
-      ? r
-      : undefined;
-  });
+      r.request_limit === s.limit,
+  );
 
   return (
     <section class="panel">
