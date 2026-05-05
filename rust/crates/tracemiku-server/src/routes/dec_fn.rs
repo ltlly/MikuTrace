@@ -34,6 +34,23 @@ pub async fn dec_fn_handler(
     Path(fn_id): Path<String>,
     Query(q): Query<DecFnQuery>,
 ) -> Result<Json<DecFnResponse>, (StatusCode, String)> {
+    let response = tokio::task::spawn_blocking(move || dec_fn_response(&state, fn_id, q))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "dec fn worker failed: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "dec fn worker failed".to_string(),
+            )
+        })??;
+    Ok(Json(response))
+}
+
+fn dec_fn_response(
+    state: &AppState,
+    fn_id: String,
+    q: DecFnQuery,
+) -> Result<DecFnResponse, (StatusCode, String)> {
     let inner = &state.inner;
 
     let (src, payload) =
@@ -45,12 +62,12 @@ pub async fn dec_fn_handler(
                 .fn_by_id(&payload)
                 .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))?;
             let markdown = render_func_md(fn_, &q.tier);
-            Ok(Json(DecFnResponse {
+            Ok(DecFnResponse {
                 fn_id,
                 name: fn_.name.clone(),
                 tier: q.tier,
                 markdown,
-            }))
+            })
         }
         "sym" => {
             let fn_ = build_symbol_func_ir_indexed(
@@ -62,14 +79,14 @@ pub async fn dec_fn_handler(
             )
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}")))?;
             let markdown = render_func_md(&fn_, &q.tier);
-            Ok(Json(DecFnResponse {
+            Ok(DecFnResponse {
                 fn_id,
                 name: fn_.name,
                 tier: q.tier,
                 markdown,
-            }))
+            })
         }
-        "bn" => render_bn_hlil_fn(&state, &fn_id, &payload, q.tier).map(Json),
+        "bn" => render_bn_hlil_fn(state, &fn_id, &payload, q.tier),
         _ => Err((
             StatusCode::BAD_REQUEST,
             format!("unsupported fn_id source {src}"),
