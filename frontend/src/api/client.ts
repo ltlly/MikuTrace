@@ -218,7 +218,7 @@ export async function fetchIdxsTouchingRange(
   return out;
 }
 
-export async function fetchMemDump(addr: string, count = 64): Promise<MemDumpResponse> {
+export async function fetchMemDump(addr: string, count = 128): Promise<MemDumpResponse> {
   const params = new URLSearchParams({ addr, count: String(count) });
   const r = await fx(`/api/mem-dump?${params}`);
   if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
