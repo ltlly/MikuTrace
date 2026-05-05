@@ -1,8 +1,8 @@
 # /api/meta wire contract (frozen 2026-05-03 by M0)
 
-`GET /api/meta` returns trace + module metadata. Used by SPA on page load
-to populate header strip and SO filter. Response shape is identical
-across Python v1 and Rust v2.
+`GET /api/meta` returns trace + module metadata. Used by the Solid SPA on page
+load to populate the header strip and SO filter. This is now a Rust server
+contract.
 
 ## Response schema (TypeScript notation)
 
@@ -74,8 +74,8 @@ pub const REG_NAMES: &[&str] = &[
 ];
 ```
 
-This must match `viewer/trace.py::REG_NAMES` exactly (verify Task 1 reads
-it back identically from the synth trace).
+This must match the Rust core canonical register list and the frontend
+`MetaResponse.regs` expectation.
 
 ## Per-call meta.json fields consumed
 

@@ -89,7 +89,7 @@ trace 结束 (onLeave):
 0x10C  u32  inst         (raw 4-byte 机器码)
 ```
 
-viewer / webui 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.
+Rust core / server / CLI 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.
 
 ## 启动
 

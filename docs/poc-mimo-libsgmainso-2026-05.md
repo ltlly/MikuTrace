@@ -1,7 +1,10 @@
-# PoC: mimo-v2.5-pro 反编译 libsgmainso doCommandNative
+# Historical PoC: mimo-v2.5-pro 反编译 libsgmainso doCommandNative
 
 > 日期: 2026-05-03. 路线 B (设计 [`trace-decompiler-design.md`](trace-decompiler-design.md))
 > 端到端验证. 真机 trace + DEC1+DEC2+DEC3-A pipeline + opencode/mimo backend.
+>
+> 这是历史验证记录，不是当前 backlog。当前实现已经切到 Rust/Solid analysis v2；
+> 活跃任务只记录在仓库根 `TODO.md`。
 
 ## Pipeline
 
@@ -79,13 +82,13 @@ mimo **正确识别 trace 局限**:
 - **mimo 输出有不太确定的部分**: B701 indirect dispatch 等几个 handler
   解释含糊 — 这些块 IR 给的信息可能不够, DEC3-B (类型锚点) 应该补.
 
-## TODO 加 (优先级提升)
+## Historical Follow-Ups
 
 - ~~**P2-DEC3-B0 (新, P0 优先)**: split trace into multiple FuncIRs by calltree.~~
   ✅ ship 在 commit `baf4300`. 真机 libsgmainso 切出 10 fn (F0 + 9 helper).
 - DEC3-B 类型锚点 (JNI/libc API sink)
 - DEC3-C 真循环 induction var
-- DEC3-D (新) — VM bytecode 提取, 处理 OLLVM-VM 那 800+ 块 (mimo 已识别 VM)
+- DEC3-D — VM bytecode 提取, 处理 OLLVM-VM 那 800+ 块 (mimo 已识别 VM)
 
 ## DEC3-D ship 后实测 — VM 函数处理能力兑现
 

@@ -38,7 +38,7 @@ Current layers:
   target-specific data in JSON specs under `tools/hooks/` or
   `examples/<so>/known_offsets.json`.
 - Trace formats are stable contracts. `trace.bin` records are 272 bytes;
-  per-call directories use `calls/<idx>_tid<T>_<records>r_<ms>ms/`. Format
+  per-call directories use `calls/call_<idx>_tid<T>_<records>r_<ms>ms/`. Format
   changes need a meta version bump and migration path.
 - `TODO.md` is the only backlog. Do not create parallel TODO lists in
   subdirectory READMEs.
@@ -89,6 +89,24 @@ uv run python scripts/web_api_perf_probe.py http://127.0.0.1:18900 --visible-ui-
 
 The local Python environment is managed with `uv`; use `uv run python ...` for
 Python helper scripts.
+
+## Current Web Interaction Contracts
+
+- Global jump command: `g` opens the command bar. `#N` / `N` jumps to trace
+  index `N`; `0x...` resolves the first executed record at that PC.
+- Records keyboard navigation: ArrowUp/ArrowDown, PageUp/PageDown, Home, End.
+- Functions tab: click selects a function, switches the right pane to CFG, and
+  pauses CFG sync; double-click also jumps to the function entry's first trace
+  execution when present.
+- CFG: sync follows the current cursor when enabled; manual function selection
+  should not be overwritten while sync is paused. `Ctrl+wheel` zooms around the
+  mouse cursor, not around the SVG origin.
+- Large CFGs: `/api/cfg-svg` may return `status=large` with a lightweight
+  representative overview. Surface `edge_count`, `drawn_edge_count`, and
+  `hidden_edge_count` anywhere the overview is shown.
+- BN HLIL/CFG sidecar: when no BN function contains a trace PC, pass the trace
+  function start when available and allow the sidecar to create a BN user
+  function before retrying. Surface `created_function` in the UI for clarity.
 
 ## Code Map
 

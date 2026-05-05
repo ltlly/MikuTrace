@@ -1,6 +1,8 @@
 # traceMiku Analysis v2 — Rust core + TS frontend (Design Spec)
 
-**Status**: design approved 2026-05-03, awaiting plan + implementation
+**Status**: archived cutover spec. The Rust/Solid v2 cutover is implemented; see
+`README.md`, `TODO.md`, and `docs/trace-decompiler-design.md` for live behavior
+and active backlog.
 **Author**: Claude (Opus 4.7) collaborating with @ltlly
 **Replaces**: current Python `viewer/` + `webui/server.py` + `webui/app.js` runtime
 **Out of scope**: capture chain (`tracer/`, Frida agent, `./tracemiku trace`, adb/device)

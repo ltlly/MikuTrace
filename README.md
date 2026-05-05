@@ -39,6 +39,25 @@ For BN-backed HLIL, pass the target SO:
 The wrapper maps `--so` to `TRACEMIKU_BN_SO`. The BN sidecar command defaults to
 `tracemiku-bn-sidecar` and can be overridden with `TRACEMIKU_BN_SIDECAR`.
 
+## Current Web UI
+
+The Solid UI is the primary workflow surface:
+
+- Records are virtualized, keyboard-navigable, and keep stable row identity
+  during range refetches.
+- `g` opens the jump command: `#240` or `240` jumps to a trace index, and
+  `0x...` jumps to the first executed record at that PC.
+- The CFG panel follows cursor changes when sync is enabled. Manual function
+  selection from the Functions tab switches to CFG and pauses sync so the
+  selected function is not immediately overwritten by the current cursor.
+- Large trace CFGs use a representative overview when Graphviz dot rendering
+  would be too expensive. The API reports drawn and hidden edge counts so the
+  overview cannot be mistaken for a full graph.
+- CFG pan/zoom is interactive; `Ctrl+wheel` zooms around the mouse cursor.
+- BN-backed HLIL/Pseudo C follows the current trace PC. If BN has no function
+  containing a trace PC, the sidecar can create a user function at the trace
+  symbol entry or current PC, then retry HLIL/CFG.
+
 ## Rust CLI
 
 The Rust CLI can be run directly during development:
@@ -69,12 +88,27 @@ the Playwright browser event smoke against an already running web server.
 The Rust server serves API routes under `/api/*`, `/openapi.json`, `/ws/jobs`,
 and falls back to the built SPA in `frontend/dist`.
 
+## Documentation
+
+Current source-of-truth docs are:
+
+- `README.md`: user-facing quick start and current UI behavior.
+- `AGENTS.md` / `CLAUDE.md`: repository-local agent rules and workflow.
+- `TODO.md`: the only active backlog. Completed implementation plans are not
+  kept as live TODOs.
+- `REFERENCES.md`: external algorithm/tool references and current test gates.
+- `docs/PER_CALL_TRACE_DESIGN.md`: current per-call trace layout and record
+  contract.
+- `docs/trace-decompiler-design.md`: current decompiler/BN/HLIL route design.
+- `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
+  historical Rust/Solid cutover design and parity map.
+
 ## Trace Format
 
 `trace.bin` records are 272 bytes. Per-call directories use:
 
 ```text
-calls/<idx>_tid<T>_<records>r_<ms>ms/
+calls/call_<idx>_tid<T>_<records>r_<ms>ms/
 ```
 
 Format changes require an explicit meta version bump and migration path.

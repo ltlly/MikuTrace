@@ -36,7 +36,7 @@ Python-vs-Rust parity scripts have been removed from the tracked v2 code path.
   target-specific data in JSON specs under `tools/hooks/` or
   `examples/<so>/known_offsets.json`.
 - Trace formats are stable contracts. `trace.bin` records are 272 bytes;
-  per-call directories use `calls/<idx>_tid<T>_<records>r_<ms>ms/`. Format
+  per-call directories use `calls/call_<idx>_tid<T>_<records>r_<ms>ms/`. Format
   changes need a meta version bump and migration path.
 - `TODO.md` is the only backlog. Do not create parallel TODO lists in
   subdirectory READMEs.
@@ -91,6 +91,24 @@ make webui RUN=<trace_dir> PORT=18900
 The local Python environment is managed with `uv`; use `uv run python ...` for
 Python helper scripts. Slow tests may require real traces, Binary Ninja,
 browser automation, or a real adb device.
+
+## Current Web Interaction Contracts
+
+- `g` opens the jump command. `#N` / `N` jumps to trace index `N`; `0x...`
+  jumps to the first executed record at that PC.
+- ArrowUp/ArrowDown, PageUp/PageDown, Home, and End navigate records.
+- Clicking a Functions row selects it, switches the right panel to CFG, and
+  pauses CFG sync; double-clicking also jumps to the function entry's first
+  trace execution when available.
+- CFG sync follows the current cursor only when enabled. Manual function
+  selection should remain visible while sync is paused.
+- CFG `Ctrl+wheel` zoom must be anchored at the mouse cursor. Keep the
+  Playwright smoke coverage for this behavior.
+- Large trace CFGs may use representative overview SVGs. The UI/API must expose
+  total, drawn, and hidden edge counts.
+- BN HLIL/CFG may create a BN user function on demand when no static BN function
+  contains the trace PC. Prefer trace function start as the creation address,
+  with current PC as fallback.
 
 ## Code Map
 
