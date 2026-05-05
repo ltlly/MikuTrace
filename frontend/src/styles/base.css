@@ -688,11 +688,17 @@ body.is-resizing {
 .reg-diff-table td {
   position: relative;
   min-width: 0;
+  box-sizing: border-box;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 2px 8px;
   border-bottom: 0;
+}
+
+.reg-diff-table th:not(:last-child),
+.reg-diff-table td:not(:last-child) {
+  border-right: 1px solid rgba(255, 255, 255, 0.045);
 }
 
 .reg-diff-table thead .col-resize {
@@ -727,6 +733,14 @@ body.is-resizing {
 .reg-diff-table tbody tr.changed.selected {
   background: linear-gradient(90deg, rgba(88, 166, 255, 0.18), rgba(247, 129, 102, 0.14));
   box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px rgba(88, 166, 255, 0.35);
+}
+
+.reg-diff-table tbody tr.def:not(.changed):not(.selected) {
+  background: rgba(86, 211, 100, 0.105);
+}
+
+.reg-diff-table tbody tr.use:not(.def):not(.changed):not(.selected) {
+  background: rgba(88, 166, 255, 0.085);
 }
 
 .reg-diff-table tbody tr.changed th,
