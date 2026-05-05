@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
-"""tracemiku-view <trace_dir|trace_file>
+"""Deprecated shim for `./tracemiku view`.
 
-Launcher that doesn't care about cwd. Add /home/ltlly/Code/traceMiku to PATH
-or `chmod +x` and run from anywhere.
+The old Python TUI has been removed. Keep this launcher only so older shell
+aliases still open the Rust v2 web viewer.
 """
 import os, sys, pathlib
-# Auto-fallback to a Python with our deps (see ./tracemiku)
-try: import capstone
-except ImportError:
-    for _p in ("/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"):
-        if os.path.exists(_p) and _p != sys.executable:
-            try: os.execv(_p, [_p, *sys.argv])
-            except Exception: pass
-    sys.stderr.write(f"error: capstone missing in {sys.executable}\n")
-    sys.exit(1)
+
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-from viewer.app import main
-main()
+os.execv(str(HERE / "tracemiku"), [str(HERE / "tracemiku"), "view", *sys.argv[1:]])

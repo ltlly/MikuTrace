@@ -260,13 +260,16 @@ BN HLIL 上叠 trace overlay, 折叠死分支, 解析间接, 注入类型, 输�
 - LLM4Decompile — https://github.com/albertan017/LLM4Decompile
 - CodeInverter — https://github.com/LiuPeiP-CS/CodeInverter
 
-## 13. 下一步
+## 13. Current Status
 
-1. **写设计文档** `docs/trace-decompiler-design.md` — 基于第 7 节硬约束 + 第 8 节子算法表, 落到具体的:
-   - IR schema (TOON/YAML)
-   - 分层视图文件树
-   - tool-use endpoint 列表
-   - 模块边界 (哪些复用 viewer/decompiler/, 哪些新写)
-   - benchmark harness
-2. **跑一遍最近邻 repo** (第 11 节) 写 BENCHMARKS.md, 防止设计闭门造车
-3. **写一个 minimal 端到端 PoC**: 拿现有 fail-path 4675 records → 生成 IR → Claude 反编译 → 看 Decompile-Eval 分数
+The research constraints above informed the Rust/Solid analysis v2 decompiler
+work. Current live design lives in
+[`docs/trace-decompiler-design.md`](trace-decompiler-design.md).
+
+Implementation direction:
+
+1. Keep TraceIR / in-house LLIL / Binary Ninja sidecar as separate routes.
+2. Keep LLM calls out of the default UI until latency and failure handling are
+   predictable.
+3. Treat response caps and visible truncation state as correctness requirements,
+   not only performance polish.

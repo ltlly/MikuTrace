@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tracemiku"
 version = "0.3.0"
-description = "ARM64 JNI trace pipeline (Frida agent + Viewer + Web UI + Decompiler integrations) for Android RE/security research."
+description = "ARM64 JNI trace pipeline (Frida agent + Rust analysis server + Solid Web UI) for Android RE/security research."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "ltlly" }]
@@ -16,40 +16,21 @@ keywords = ["android", "frida", "arm64", "trace", "jni", "reverse-engineering"]
 # (Ubuntu 26.04 + Python 3.11). Bump deliberately, not opportunistically.
 dependencies = [
     "capstone>=5.0,<6",
-    "numpy>=2.0,<3",
-    "fastapi>=0.115,<1",
-    "pydantic>=2.10,<3",
-    "uvicorn[standard]>=0.30,<1",
-    "rich>=13.0,<16",
     "frida>=17.0,<18",
 ]
 
 [project.optional-dependencies]
-tui = ["textual>=8.0,<9"]
-
-test = [
-    "pytest>=8.0,<10",
-    "keystone-engine>=0.9.2,<1",
-    "playwright>=1.50,<2",
-]
-
-# Binary Ninja is NOT pip-installable — install via
-# `binaryninja.scripting.install_api()` or PYTHONPATH=<binja>/python.
+test = []
 decomp = []
-
-dev = ["tracemiku[tui,test]"]
+dev = ["tracemiku[test]"]
 
 [project.urls]
 Homepage = "https://github.com/ltlly/traceMiku"
 
-[tool.setuptools.packages.find]
-include = ["viewer*", "webui*", "tracer*"]
-exclude = ["tests*", "vendor*", "tools*", "build*", "examples*", "traces*"]
-
-[tool.setuptools.package-data]
-viewer = ["jni_offsets.json"]
-"webui" = ["index.html", "app.js", "styles.css"]
-tracer = ["*.js"]
+[tool.setuptools]
+# This Python project is dependency/runtime glue for the top-level wrapper.
+# Runtime analysis and the web UI live in Rust crates plus frontend/.
+py-modules = []
 
 # pytest config lives in pytest.ini (pytest reads that first; pyproject.toml
 # duplication would be ignored).

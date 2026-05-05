@@ -1,0 +1,27 @@
+[package]
+name = "tracemiku-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "traceMiku v2 — CLI subcommands (parser, cfg, taint, dec, ...)"
+
+[[bin]]
+name = "tracemiku-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+http-body-util = "0.1"
+serde_json.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracemiku-core.workspace = true
+tracemiku-server.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+base64.workspace = true

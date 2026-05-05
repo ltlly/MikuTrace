@@ -1,0 +1,7 @@
+[project]
+name = "tracemiku-bn-sidecar"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[project.scripts]
+tracemiku-bn-sidecar = "tracemiku_bn_sidecar.__main__:main"

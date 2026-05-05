@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tracemiku-core",
+    "crates/tracemiku-server",
+    "crates/tracemiku-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["traceMiku contributors"]
+
+[workspace.dependencies]
+# Shared deps; pinned at workspace level so all crates use the same version.
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+memmap2 = "0.9"
+bytemuck = { version = "1", features = ["derive"] }
+capstone = "0.13"
+petgraph = "0.6"
+regex = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+md-5 = "0.10"
+hmac = "0.12"
+crc32fast = "1"
+base64 = "0.22"
+# Internal
+tracemiku-core = { path = "crates/tracemiku-core" }
+tracemiku-server = { path = "crates/tracemiku-server" }
+
+[profile.dev]
+opt-level = 1     # debug builds are still fast on mmap workloads
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

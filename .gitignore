@@ -43,3 +43,8 @@ dist/
 !/tools/probe_deep_safe.js
 !/tools/hooks/
 !/tools/hooks/*
+
+# v2 Rust + frontend (added 2026-05-03)
+rust/target/
+frontend/node_modules/
+frontend/dist/
