@@ -203,6 +203,22 @@ The next reconstruction step is to interpret these VM opcode windows as
 Base64-index operations and then continue from the bytes being shifted/masked
 back to the payload source.
 
+For the output group `piYQ`, the corrected chain identifies a reusable VM
+word-assembly template:
+
+```text
+slot2 = 0x59697041                 ; "ApiY" intermediate
+slot2 = slot2 >> 8                 ; 0x596970  ("piY")
+slot4 = slot3 << 24                ; 0x51000000 ("Q" in high byte)
+slot2 = slot4 | slot2              ; 0x51596970, little-endian bytes "piYQ"
+store w1 -> output buffer
+```
+
+This confirms the late VM stage is assembling Base64 character words in
+little-endian order. The raw 76-byte payload still has not appeared as a
+contiguous buffer; the likely route is to lift these VM templates back to the
+table-index calculations that produce each Base64 character.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next
