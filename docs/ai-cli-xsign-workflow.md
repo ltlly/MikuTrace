@@ -179,7 +179,9 @@ rust/target/debug/tracemiku-cli vm-slice <call_dir> \
   `dispatch-branch`. Common arithmetic/bitwise rows are kept as `alu`, because
   VM transforms often happen between slot loads and stores.
 - `def`: best-effort destination register plus the value observed in the next
-  trace row.
+  trace row. `def.src[]` lists source registers and current values, which is
+  especially useful when a chain stops at an ALU row and the agent must choose
+  which source branch to follow.
 - `store_src`: best-effort source register values for store-style
   instructions.
 - `vm_ip`: current bytecode instruction pointer, usually `x21` in the detected

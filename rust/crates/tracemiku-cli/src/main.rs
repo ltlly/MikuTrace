@@ -2320,19 +2320,7 @@ fn first_register_token(op: &str) -> Option<String> {
         .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == '[' || ch == ']')
         .find(|part| !part.is_empty())?;
     let token = token.trim_end_matches('!').to_ascii_lowercase();
-    let is_gp = token == "sp"
-        || token == "wsp"
-        || token == "fp"
-        || token == "lr"
-        || token == "xzr"
-        || token == "wzr"
-        || token
-            .strip_prefix('x')
-            .is_some_and(|rest| rest.parse::<u8>().is_ok())
-        || token
-            .strip_prefix('w')
-            .is_some_and(|rest| rest.parse::<u8>().is_ok());
-    is_gp.then_some(token)
+    is_gp_register_token(&token).then_some(token)
 }
 
 fn register_value_key(reg: &str) -> String {
@@ -2903,8 +2891,18 @@ fn vm_row_from_record(
     let vm_slot = vm_slot_from_asm(asm, rec);
     let mem_addr = mem_addr_from_asm(asm, rec);
     let def = def_reg_from_asm(asm).map(|reg| {
+        let src = def_source_regs_from_asm(asm)
+            .into_iter()
+            .map(|src_reg| {
+                serde_json::json!({
+                    "reg": src_reg,
+                    "value": record_reg_value(rec, &src_reg).cloned().unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
         serde_json::json!({
             "reg": reg,
+            "src": src,
             "value_after": next.and_then(|next| record_reg_value(next, &reg).cloned()).unwrap_or(serde_json::Value::Null),
         })
     });
@@ -3154,6 +3152,44 @@ fn def_reg_from_asm(asm: &str) -> Option<String> {
     split_operands(operands)
         .first()
         .and_then(|op| first_register_token(op))
+}
+
+fn def_source_regs_from_asm(asm: &str) -> Vec<String> {
+    let asm = asm.trim();
+    let Some((_, operands)) = asm.split_once(char::is_whitespace) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    split_operands(operands)
+        .into_iter()
+        .skip(1)
+        .flat_map(|op| register_tokens(&op))
+        .filter(|reg| seen.insert(register_value_key(reg)))
+        .collect()
+}
+
+fn register_tokens(op: &str) -> Vec<String> {
+    op.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter_map(|token| {
+            let token = token.trim_end_matches('!').to_ascii_lowercase();
+            is_gp_register_token(&token).then_some(token)
+        })
+        .collect()
+}
+
+fn is_gp_register_token(token: &str) -> bool {
+    token == "sp"
+        || token == "wsp"
+        || token == "fp"
+        || token == "lr"
+        || token == "xzr"
+        || token == "wzr"
+        || token
+            .strip_prefix('x')
+            .is_some_and(|rest| rest.parse::<u8>().is_ok())
+        || token
+            .strip_prefix('w')
+            .is_some_and(|rest| rest.parse::<u8>().is_ok())
 }
 
 fn memory_access_width(asm: &str) -> u64 {
@@ -3673,8 +3709,8 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_vm_asm, mem_addr_from_asm, memory_access_width, store_source_regs_from_asm,
-        vm_slot_from_asm,
+        classify_vm_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
+        store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -3723,6 +3759,19 @@ mod tests {
         assert_eq!(memory_access_width("ldr w16, [x8, x20]"), 4);
         assert_eq!(memory_access_width("ldrsw x4, [x21, #0x18]"), 4);
         assert_eq!(memory_access_width("ldr x4, [x25, x19, lsl #3]"), 8);
+    }
+
+    #[test]
+    fn parses_definition_source_registers() {
+        assert_eq!(
+            def_source_regs_from_asm("and x20, x19, x4"),
+            vec!["x19", "x4"]
+        );
+        assert_eq!(
+            def_source_regs_from_asm("ldrb w1, [x0, x4]"),
+            vec!["x0", "x4"]
+        );
+        assert_eq!(def_source_regs_from_asm("lsl x5, x3, #3"), vec!["x3"]);
     }
 }
 
