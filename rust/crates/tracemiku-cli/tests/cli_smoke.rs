@@ -45,6 +45,34 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_taint_tree_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid1_4r_1ms");
+    std::fs::create_dir_all(&cd).unwrap();
+    let pcs: [u64; 4] = [0x100000, 0x100004, 0x100008, 0x10000c];
+    let insts: [u32; 4] = [0xd2801560, 0xf9000000, 0xb9400401, 0xd503201f];
+    let mut buf = vec![0u8; 272 * 4];
+    for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 8..off + 16].copy_from_slice(&0xabu64.to_le_bytes()); // x0
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes()); // sp
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+    std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+    std::fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":4096}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 fn run_json(args: &[String]) -> serde_json::Value {
     let out = Command::new(env!("CARGO_BIN_EXE_tracemiku-cli"))
         .args(args)
@@ -290,6 +318,36 @@ fn data_chase_wrapper_uses_server_wire_shape() {
     assert_eq!(v["from"], 2);
     assert_eq!(v["reg"], "x2");
     assert_eq!(v["steps"][0]["via"], "mem-load");
+}
+
+#[test]
+fn taint_wrappers_include_dependency_metadata() {
+    let (_tmp, cd) = synth_taint_tree_call_dir();
+    let v = run_json(&[
+        "taint-fwd".into(),
+        cd.display().to_string(),
+        "--start".into(),
+        "0".into(),
+        "--reg".into(),
+        "x0".into(),
+        "--max-count".into(),
+        "10".into(),
+        "--through-mem".into(),
+        "--cross-fn-call".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    let hits = v["hits"].as_array().unwrap();
+    assert!(
+        hits.iter().all(|hit| hit.get("taint_depth").is_some()),
+        "forward taint hits must carry taint_depth"
+    );
+    assert!(
+        hits.iter().any(|hit| hit
+            .get("parent_idxs")
+            .and_then(|v| v.as_array())
+            .is_some_and(|parents| !parents.is_empty())),
+        "forward taint should expose at least one dependency edge"
+    );
 }
 
 #[test]
