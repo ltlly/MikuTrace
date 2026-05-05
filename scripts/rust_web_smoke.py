@@ -53,6 +53,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="include hidden/backend-only surfaces in web_api_perf_probe.py",
     )
+    parser.add_argument(
+        "--wait-mem-ready",
+        action="store_true",
+        help="wait for background MemShadow to reach ready and print elapsed startup time",
+    )
+    parser.add_argument(
+        "--mem-ready-timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="timeout for --wait-mem-ready; defaults to --timeout baseline",
+    )
     return parser.parse_args()
 
 
@@ -234,12 +245,25 @@ def fetch_bg_status(base: str, timeout: float) -> dict[str, Any]:
     return status
 
 
-def format_parallelism(bg_status: dict[str, Any]) -> str:
+def wait_mem_ready(base: str, timeout: float, server_started: float) -> tuple[dict[str, Any], float]:
+    deadline = time.time() + timeout
+    last_status = "?"
+    while time.time() < deadline:
+        status = fetch_bg_status(base, min(5.0, timeout))
+        last_status = str((status.get("mem") or {}).get("status", "?"))
+        if last_status == "ready":
+            return status, (time.perf_counter() - server_started) * 1000.0
+        time.sleep(0.25)
+    raise TimeoutError(f"MemShadow did not become ready before timeout; last status={last_status}")
+
+
+def format_parallelism(bg_status: dict[str, Any], mem_ready_ms: float | None = None) -> str:
     parallelism = bg_status.get("parallelism") or {}
     workers = parallelism.get("workers") or {}
     worker_text = " ".join(f"{k}={v}" for k, v in sorted(workers.items()))
     mem = (bg_status.get("mem") or {}).get("status", "?")
-    return f"available={parallelism.get('available', '?')} mem={mem} workers: {worker_text}"
+    ready = f" mem_ready={mem_ready_ms:.1f}ms" if mem_ready_ms is not None else ""
+    return f"available={parallelism.get('available', '?')} mem={mem}{ready} workers: {worker_text}"
 
 
 def main() -> int:
@@ -260,6 +284,7 @@ def main() -> int:
     port = args.port or free_port()
     base = f"http://127.0.0.1:{port}"
     cmd = server_cmd(trace, static_dir, port, args.debug_bin)
+    server_started = time.perf_counter()
     proc = subprocess.Popen(
         cmd,
         cwd=REPO_ROOT,
@@ -271,6 +296,9 @@ def main() -> int:
     try:
         wait_ready(base, proc, args.timeout)
         bg_status = fetch_bg_status(base, args.timeout)
+        mem_ready_ms: float | None = None
+        if args.wait_mem_ready:
+            bg_status, mem_ready_ms = wait_mem_ready(base, args.mem_ready_timeout, server_started)
         verify_frontend(base, args.timeout)
         verify_taint_tree(base, args.timeout)
         probe = run_probe(base, args.timeout, visible_only=not args.all_surfaces)
@@ -282,7 +310,7 @@ def main() -> int:
             f"OK rust web smoke base={base} records={probe['records']:,} "
             f"measurements={len(probe['measurements'])}"
         )
-        print(f"  parallelism {format_parallelism(bg_status)}")
+        print(f"  parallelism {format_parallelism(bg_status, mem_ready_ms)}")
         slow = sorted(probe["measurements"], key=lambda m: float(m["ms"]), reverse=True)[:5]
         for m in slow:
             print(f"  {m['ms']:8.1f} ms {m['label']}")

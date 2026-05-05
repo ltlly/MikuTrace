@@ -65,6 +65,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
   大 trace 默认跑 visible UI probe, 必要时加 `SMOKE_ARGS='--all-surfaces'`
   覆盖隐藏/冷路径。`make test-v2` / `make test-fast` 会先 py_compile
   所有 Python gate/helper 脚本。
+- ✅ MemShadow cold/warm startup 可测: `rust_web_smoke.py --wait-mem-ready`
+  会等待 `/api/bg-status.mem.status == ready` 并打印 `mem_ready=...ms`;
+  当前 1542 万 records trace + v3 sidecar 下约 6s ready, ready 后 auto phase
+  约 115ms, health max 约 1.8ms。
 - ⚠️ 真实浏览器级 UI smoke 仍需人工/可用浏览器环境: 当前容器缺 X server /
   Chromium / Xvfb; Playwright 的 Chromium 下载器不支持 ubuntu26.04-x64,
   `playwright install chrome` 需要 sudo 交互。现有保障是静态 UI audit +
