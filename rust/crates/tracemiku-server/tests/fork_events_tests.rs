@@ -64,3 +64,11 @@ async fn fork_events_filters_by_attach_status() {
     assert_eq!(v["count"], 1);
     assert_eq!(v["events"][0]["child_pid"], 456);
 }
+
+#[tokio::test]
+async fn fork_events_filters_by_is_fork_like() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let v = get_json(call_dir, "/api/fork-events?is_fork_like=true").await;
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["events"][0]["child_pid"], 123);
+}
