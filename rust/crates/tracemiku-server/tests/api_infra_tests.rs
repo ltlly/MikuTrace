@@ -162,6 +162,68 @@ const LIGHT_ROUTE_FILES: &[&str] = &[
     "search_pc.rs",
 ];
 
+// Endpoint surface from main:webui/server.py. Keep this list normalized with
+// dynamic segments as `{}` so the Rust router can use Axum's `:param` style.
+const PYTHON_WEB_API_METHODS: &[(&str, &str)] = &[
+    ("/api/asm-tokens-for-pcs", "get"),
+    ("/api/auto-phase-detect", "get"),
+    ("/api/backtrace", "get"),
+    ("/api/backward-taint", "get"),
+    ("/api/bg-status", "get"),
+    ("/api/block", "get"),
+    ("/api/block-for-pc", "get"),
+    ("/api/bn-cfg-for-pc", "get"),
+    ("/api/bn-cfg-svg-for-pc", "get"),
+    ("/api/call-chain", "get"),
+    ("/api/call-tree", "get"),
+    ("/api/cfg", "get"),
+    ("/api/cfg-svg", "get"),
+    ("/api/crypto-scan", "get"),
+    ("/api/data-chase", "get"),
+    ("/api/dec/fn/{}", "get"),
+    ("/api/dec/llm-call", "post"),
+    ("/api/dec/models", "get"),
+    ("/api/dec/summary", "get"),
+    ("/api/decomp-status", "get"),
+    ("/api/diff-traces", "post"),
+    ("/api/field-at", "get"),
+    ("/api/find-mem-pattern", "get"),
+    ("/api/fn-summary", "get"),
+    ("/api/fork-events", "get"),
+    ("/api/forward-taint", "get"),
+    ("/api/hash-finalize-detect", "get"),
+    ("/api/hash-input-search", "post"),
+    ("/api/hlil-for-pc", "get"),
+    ("/api/idxs-for-block", "get"),
+    ("/api/idxs-for-pc", "get"),
+    ("/api/idxs-touching-addr", "get"),
+    ("/api/idxs-touching-range", "get"),
+    ("/api/jni-calls", "get"),
+    ("/api/jni-events", "get"),
+    ("/api/jni-strings", "get"),
+    ("/api/jobj-history", "get"),
+    ("/api/last-write-of-addr", "get"),
+    ("/api/last-write-of-reg", "get"),
+    ("/api/llil/llm", "post"),
+    ("/api/llil/render", "post"),
+    ("/api/loops", "get"),
+    ("/api/mem-diff", "get"),
+    ("/api/mem-dump", "get"),
+    ("/api/mem-flow", "get"),
+    ("/api/mem-writes-in-range", "get"),
+    ("/api/meta", "get"),
+    ("/api/ollvm-detect-vm", "get"),
+    ("/api/record/{}", "get"),
+    ("/api/records", "get"),
+    ("/api/reg-at-idx", "get"),
+    ("/api/reg-timeline", "get"),
+    ("/api/reg-value-at", "get"),
+    ("/api/search", "get"),
+    ("/api/so-stats", "get"),
+    ("/api/string-provenance", "get"),
+    ("/api/strings", "get"),
+];
+
 fn route_rs_files() -> Vec<String> {
     let routes_dir = repo_root().join("rust/crates/tracemiku-server/src/routes");
     let mut files = fs::read_dir(routes_dir)
@@ -263,6 +325,20 @@ fn frontend_api_calls_are_registered_in_rust_router() {
     assert!(
         missing.is_empty(),
         "frontend API paths missing from Rust router: {missing:?}"
+    );
+}
+
+#[test]
+fn rust_router_preserves_python_web_api_surface() {
+    let router_methods = rust_router_methods();
+    let missing = PYTHON_WEB_API_METHODS
+        .iter()
+        .map(|(path, method)| ((*path).to_string(), (*method).to_string()))
+        .filter(|method| !router_methods.contains(method))
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "Rust router is missing Python web API compatibility routes: {missing:?}"
     );
 }
 
