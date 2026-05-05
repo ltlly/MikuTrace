@@ -209,6 +209,19 @@ final output store -> source VM slot -> previous slot writer -> source memory
 load -> previous memory writer -> ...
 ```
 
+Use `vm-backchain` when the next hop should be followed automatically:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx <writer_idx> \
+  --reg <source_reg> \
+  --steps 8
+```
+
+This emits an ordered `chain[]` of `vm-backstep` results. It is intentionally
+linear: for multi-byte memory loads, inspect `writes_tail` and branch manually
+when different output bytes have different writers.
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash

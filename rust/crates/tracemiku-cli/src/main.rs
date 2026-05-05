@@ -676,6 +676,34 @@ enum Cmd {
         )]
         regs: String,
     },
+    /// Iterate vm-backstep and emit a compact backward chain.
+    VmBackchain {
+        trace_dir: PathBuf,
+        /// Initial writer/load trace index.
+        #[arg(long)]
+        idx: usize,
+        /// Initial source register. Defaults to the first store source reg.
+        #[arg(long)]
+        reg: Option<String>,
+        /// Max backward steps.
+        #[arg(long, default_value_t = 8)]
+        steps: usize,
+        /// Local records to inspect before each idx.
+        #[arg(long, default_value_t = 120)]
+        context: usize,
+        /// How far back to scan memory writers for each discovered source.
+        #[arg(long, default_value_t = 200000)]
+        lookback: usize,
+        /// Max memory writes to collect while looking for the last one.
+        #[arg(long, default_value_t = 5000)]
+        max_writes: usize,
+        /// Comma-separated registers to request from /api/records.
+        #[arg(
+            long,
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+        )]
+        regs: String,
+    },
     /// GET /api/jobj-history.
     JobjHistory {
         trace_dir: PathBuf,
@@ -1408,6 +1436,21 @@ async fn main() -> anyhow::Result<()> {
             max_writes,
             regs,
         }) => cmd_vm_backstep(trace_dir, idx, reg, context, lookback, max_writes, regs).await,
+        Some(Cmd::VmBackchain {
+            trace_dir,
+            idx,
+            reg,
+            steps,
+            context,
+            lookback,
+            max_writes,
+            regs,
+        }) => {
+            cmd_vm_backchain(
+                trace_dir, idx, reg, steps, context, lookback, max_writes, regs,
+            )
+            .await
+        }
         Some(Cmd::JobjHistory {
             trace_dir,
             jobject,
@@ -2569,6 +2612,97 @@ async fn cmd_vm_backstep(
     max_writes: usize,
     regs: String,
 ) -> anyhow::Result<()> {
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let value = vm_backstep_value_on(&app, idx, reg, context, lookback, max_writes, regs).await?;
+    print_pretty(&value)
+}
+
+async fn cmd_vm_backchain(
+    trace_dir: PathBuf,
+    idx: usize,
+    reg: Option<String>,
+    steps: usize,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    regs: String,
+) -> anyhow::Result<()> {
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let mut current_idx = idx;
+    let mut current_reg = reg.clone();
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for step_idx in 0..steps {
+        if !seen.insert(format!(
+            "{}:{}",
+            current_idx,
+            current_reg.as_deref().unwrap_or("")
+        )) {
+            rows.push(serde_json::json!({
+                "step": step_idx,
+                "status": "cycle",
+                "idx": current_idx,
+                "reg": current_reg,
+            }));
+            break;
+        }
+        let step = vm_backstep_value_on(
+            &app,
+            current_idx,
+            current_reg.clone(),
+            context,
+            lookback,
+            max_writes,
+            regs.clone(),
+        )
+        .await?;
+        let next = step
+            .get("upstream")
+            .and_then(|v| v.get("next"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        current_idx = match next.get("idx").and_then(|v| v.as_u64()) {
+            Some(idx) => idx as usize,
+            None => {
+                rows.push(serde_json::json!({
+                    "step": step_idx,
+                    "backstep": step,
+                    "next": serde_json::Value::Null,
+                }));
+                break;
+            }
+        };
+        current_reg = next.get("reg").and_then(|v| v.as_str()).map(str::to_string);
+        rows.push(serde_json::json!({
+            "step": step_idx,
+            "backstep": step,
+            "next": next,
+        }));
+        if current_reg.is_none() {
+            break;
+        }
+    }
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "start": {
+            "idx": idx,
+            "reg": reg,
+        },
+        "steps_requested": steps,
+        "steps_returned": rows.len(),
+        "chain": rows,
+    }))
+}
+
+async fn vm_backstep_value_on(
+    app: &axum::Router,
+    idx: usize,
+    reg: Option<String>,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    regs: String,
+) -> anyhow::Result<serde_json::Value> {
     let start = idx.saturating_sub(context);
     let count = context.saturating_add(3);
     let params = vec![
@@ -2576,8 +2710,7 @@ async fn cmd_vm_backstep(
         ("count", count.to_string()),
         ("regs", regs),
     ];
-    let response =
-        route_get_json_value(trace_dir.clone(), route_path("/api/records", &params)).await?;
+    let response = route_get_json_value_on(app, route_path("/api/records", &params)).await?;
     let records = response
         .get("records")
         .and_then(|v| v.as_array())
@@ -2604,12 +2737,11 @@ async fn cmd_vm_backstep(
             .map(str::to_string)
     });
     let Some(source_reg) = source_reg else {
-        print_pretty(&serde_json::json!({
+        return Ok(serde_json::json!({
             "status": "no_source_reg",
             "idx": idx,
             "target": target_row,
-        }))?;
-        return Ok(());
+        }));
     };
     let source_key = register_value_key(&source_reg);
     let local_def = rows[..target_pos]
@@ -2625,14 +2757,14 @@ async fn cmd_vm_backstep(
         })
         .cloned();
     let upstream = if let Some(def_row) = local_def.as_ref() {
-        upstream_writer_for_def(trace_dir, def_row, lookback, max_writes).await?
+        upstream_writer_for_def_on(app, def_row, lookback, max_writes).await?
     } else {
         serde_json::json!({
             "status": "no_local_def",
             "searched_context": context,
         })
     };
-    print_pretty(&serde_json::json!({
+    Ok(serde_json::json!({
         "status": "ready",
         "idx": idx,
         "source_reg": source_reg,
@@ -2685,8 +2817,8 @@ fn vm_row_from_record(
     })
 }
 
-async fn upstream_writer_for_def(
-    trace_dir: PathBuf,
+async fn upstream_writer_for_def_on(
+    app: &axum::Router,
     def_row: &serde_json::Value,
     lookback: usize,
     max_writes: usize,
@@ -2734,7 +2866,7 @@ async fn upstream_writer_for_def(
         ("max", max_writes.to_string()),
     ];
     let response =
-        route_get_json_value(trace_dir, route_path("/api/mem-writes-in-range", &params)).await?;
+        route_get_json_value_on(app, route_path("/api/mem-writes-in-range", &params)).await?;
     let writes = response
         .get("writes")
         .and_then(|v| v.as_array())
