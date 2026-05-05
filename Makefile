@@ -3,13 +3,14 @@ CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
 
-.PHONY: help fmt test test-v2 test-fast test-slow webui clean
+.PHONY: help fmt test test-v2 test-fast test-slow smoke-web webui clean
 
 help:
 	@echo "make fmt       - rust cargo fmt"
 	@echo "make test      - full v2 validation"
 	@echo "make test-v2   - fmt check + Python wrapper compile + Rust tests + frontend build + CLI/web parity"
 	@echo "make test-fast - Python wrapper compile + Rust core/cli tests"
+	@echo "make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"
 	@echo "make webui RUN=<trace_dir> [PORT=18900]"
 	@echo "make clean     - rm local caches/build outputs"
 
@@ -34,6 +35,10 @@ test-fast:
 
 test-slow:
 	@echo "No separate v2 slow suite is defined. Use 'make test-v2'."
+
+smoke-web:
+	@if [ -z "$(RUN)" ]; then echo "usage: make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"; exit 2; fi
+	$(PYTHON) scripts/rust_web_smoke.py "$(RUN)" $(SMOKE_ARGS)
 
 webui:
 	@if [ -z "$(RUN)" ]; then echo "usage: make webui RUN=<trace_dir>"; exit 2; fi

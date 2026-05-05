@@ -449,6 +449,9 @@ export interface DecSummaryResponse {
   fns: DecFnEntry[];
   vm_candidates: unknown[];
   summary_md: string;
+  request_split_top_k?: number;
+  request_split_min_records?: number;
+  request_with_memshadow?: boolean;
 }
 
 export interface DecFnResponse {
@@ -456,6 +459,11 @@ export interface DecFnResponse {
   name: string;
   tier: string;
   markdown: string;
+  request_fn_id?: string;
+  request_tier?: string;
+  request_split_top_k?: number;
+  request_split_min_records?: number;
+  request_with_memshadow?: boolean;
 }
 
 export interface DecModelsResponse {

@@ -31,7 +31,10 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ Trace-for-PC / Xref same-PC / Backtrace / Forks / Memory context 等剩余
   visible cap surface 已补齐 partial result 说明, 能升到服务器上限的面板提供
   "show cap" 重跑入口。
-- ☐ 继续补齐隐藏冷路径分析面等 cap surface:
+- ✅ Decompiler/LLIL hidden panel 已补 guarded resource 和 partial summary 提示;
+  最大 trace `rust_web_smoke.py --all-surfaces` 验证 dec/LLIL 冷路径不阻塞
+  runtime health polling。
+- ☐ 继续补齐其它隐藏冷路径分析面等 cap surface:
   被截断时除了 `truncated` 标记, 还应提供明确的 "load more/export/raise cap"
   入口或解释。
 - ☐ 继续迁移 Solid stale-frame / latest-selection guard: 已新增
@@ -41,10 +44,12 @@ Claude 提交聚类审计指出的方向基本成立: 当前分支主要是在 R
 - ✅ Rust web↔CLI parity gate: `scripts/rust_cli_web_parity.py` 会构建 9-record
   fixture, 对 records/cfg/taint/memory/string provenance/dec-summary 比较
   live HTTP API 与 Rust CLI wrapper JSON; 已接入 `make test-v2`。
-- ☐ 恢复 Decompile/LLIL/LLM 可见 UI 前, 先证明它们不会阻塞当前 trace
-  cursor/CFG/Records 热路径。
-- ☐ 将 `scripts/rust_web_smoke.py` 固化到发布前检查清单; 大 trace 至少跑
-  `--visible-ui-only`, 必要时再跑包含隐藏/冷路径的完整 probe。
+- ✅ 恢复 Decompile/LLIL/LLM 可见 UI 前的性能证明: 最大 trace all-surfaces
+  smoke 中 dec summary 约 413ms, 期间 health max 约 1.9ms, 没有阻塞当前
+  trace cursor/CFG/Records 热路径。
+- ✅ `scripts/rust_web_smoke.py` 已固化为 `make smoke-web RUN=<trace>`;
+  大 trace 默认跑 visible UI probe, 必要时加 `SMOKE_ARGS='--all-surfaces'`
+  覆盖隐藏/冷路径。
 
 ## 🚧 进行中 (2026-05-03 — Analysis v2 — Rust core + TS frontend)
 

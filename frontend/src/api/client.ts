@@ -423,7 +423,11 @@ export async function fetchDecSummary(opts: DecIrOptions = {}): Promise<DecSumma
   const qs = params.toString();
   const r = await fx(`/api/dec/summary${qs ? "?" + qs : ""}`);
   if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
-  return (await r.json()) as DecSummaryResponse;
+  const out = (await r.json()) as DecSummaryResponse;
+  out.request_split_top_k = opts.splitTopK;
+  out.request_split_min_records = opts.splitMinRecords;
+  out.request_with_memshadow = opts.withMemshadow ?? false;
+  return out;
 }
 
 export async function fetchDecFn(
@@ -435,7 +439,13 @@ export async function fetchDecFn(
   appendDecIrOptions(params, opts);
   const r = await fx(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`);
   if (!r.ok) throw new Error(`/api/dec/fn/${fnId} ${r.status}: ${await r.text()}`);
-  return (await r.json()) as DecFnResponse;
+  const out = (await r.json()) as DecFnResponse;
+  out.request_fn_id = fnId;
+  out.request_tier = tier;
+  out.request_split_top_k = opts.splitTopK;
+  out.request_split_min_records = opts.splitMinRecords;
+  out.request_with_memshadow = opts.withMemshadow ?? false;
+  return out;
 }
 
 export async function fetchDecModels(): Promise<DecModelsResponse> {

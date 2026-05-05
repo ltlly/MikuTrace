@@ -9,6 +9,7 @@ import {
   fetchDecSummary,
   renderLlil,
 } from "~/api/client";
+import { createGuardedResource } from "~/utils/resourceGuards";
 import type { Accessor, Setter } from "solid-js";
 
 export interface DecompilerPanelProps {
@@ -40,7 +41,14 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
     const next = decIrSource();
     return sameDecIrSource(prev, next) ? prev : next;
   });
-  const [summary] = createResource(summarySource, (s) => fetchDecSummary(decIrOptions(s)));
+  const [summary, currentSummary] = createGuardedResource<SummarySource, Awaited<ReturnType<typeof fetchDecSummary>>>(
+    summarySource,
+    (s) => fetchDecSummary(decIrOptions(s)),
+    (r, s) =>
+      r.request_split_top_k === s.splitTopK &&
+      r.request_split_min_records === s.splitMinRecords &&
+      r.request_with_memshadow === s.withMemshadow,
+  );
   const activeSource = () => (props.active ? "active" : undefined);
   const [models] = createResource(activeSource, () => fetchDecModels());
   const [tier, setTier] = createSignal("hot");
@@ -89,7 +97,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
 
   createEffect(() => {
     if (!props.active) return;
-    const first = summary()?.fns[0]?.id;
+    const first = currentSummary()?.fns[0]?.id;
     if (!props.selectedFn() && first) props.onSelectFn(first);
   });
 
@@ -112,16 +120,16 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
       ? prev
       : next;
   });
-  const [fnResp] = createResource(fnSource, (s) =>
-    s ? fetchDecFn(s.fnId, s.tier, decIrOptions(s)) : undefined,
+  const [fnResp, currentFnResp] = createGuardedResource<FnSource, Awaited<ReturnType<typeof fetchDecFn>>>(
+    () => fnSource() ?? undefined,
+    (s) => fetchDecFn(s.fnId, s.tier, decIrOptions(s)),
+    (r, s) =>
+      r.request_fn_id === s.fnId &&
+      r.request_tier === s.tier &&
+      r.request_split_top_k === s.splitTopK &&
+      r.request_split_min_records === s.splitMinRecords &&
+      r.request_with_memshadow === s.withMemshadow,
   );
-  const currentFnResp = createMemo(() => {
-    if (fnResp.loading) return undefined;
-    const r = fnResp();
-    const s = fnSource();
-    if (!r || !s) return undefined;
-    return r.fn_id === s.fnId && r.tier === s.tier ? r : undefined;
-  });
 
   createEffect((prev?: string) => {
     const ir = decIrSource();
@@ -223,7 +231,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         llilDce() !== dce
       ) return;
       setLlilOutput([
-        `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · truncated" : ""}`,
+        `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · partial result" : ""}`,
         `lift coverage: ${(r.lift_coverage * 100).toFixed(1)}% · intrinsic ${r.lift_intrinsic}/${r.lift_total}`,
         r.flag_elim_pairs.length ? `flag elim: ${r.flag_elim_pairs.length} branch${r.flag_elim_pairs.length === 1 ? "" : "es"}` : "",
         Object.keys(r.types).length ? `types: ${Object.keys(r.types).length} vars · names: ${Object.keys(r.var_names).length}` : "",
@@ -284,12 +292,17 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
       <Show when={summary.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={summary()}>
+      <Show when={currentSummary()}>
         {(r) => (
           <>
             <p class="dim small">
               {r().records} records · module {r().module_name} · {r().fns.length} fn{r().fns.length === 1 ? "" : "s"}
             </p>
+            <Show when={r().truncated}>
+              <div class="cap-notice" role="status">
+                Decompiler summary is a partial result; increase split top or lower min records before using it as a complete function inventory.
+              </div>
+            </Show>
             <div class="dec-grid">
               <div>
                 <div class="dec-controls">
