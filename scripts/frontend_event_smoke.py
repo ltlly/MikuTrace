@@ -176,6 +176,26 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     wait_selected_idx(page, target_idx, timeout_ms)
     checks.append("records row click selects target idx")
 
+    loading_samples = page.evaluate(
+        """async () => {
+            const viewport = document.querySelector('.records-virtual');
+            if (!viewport) throw new Error('records viewport missing');
+            viewport.scrollTop = Math.min(viewport.scrollTop + 720, viewport.scrollHeight - viewport.clientHeight);
+            viewport.dispatchEvent(new Event('scroll', { bubbles: true }));
+            const samples = [];
+            const started = performance.now();
+            while (performance.now() - started < 800) {
+                samples.push(Boolean(document.querySelector('.records-loading')));
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            return samples;
+        }"""
+    )
+    if any(bool(v) for v in loading_samples):
+        raise RuntimeError(f"records loading marker flickered during cached scroll: {loading_samples}")
+    page.wait_for_selector(".records-row", timeout=timeout_ms)
+    checks.append("records scroll keeps cached rows visible during range refetch")
+
     left_before = css_number(page, "#layout", "--left-w")
     drag_by(page, ".layout-splitter-left", 36)
     left_after = css_number(page, "#layout", "--left-w")

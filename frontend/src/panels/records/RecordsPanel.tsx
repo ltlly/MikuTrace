@@ -198,8 +198,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     (r) => fetchRecords({ start: r.start, count: r.count }),
     (r, s) => r.request_start === s.start && r.request_count === s.count,
   );
-  const displayRows = createMemo(() => {
-    const rows = currentResp()?.records ?? [];
+  function stabilizeRows(rows: RecordRow[]): RecordRow[] {
     if (!rows.length) return rows;
     const visible = new Set<number>();
     const stable = rows.map((row) => {
@@ -216,7 +215,20 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       }
     }
     return stable;
+  }
+  const displayRows = createMemo(() => {
+    const freshRows = currentResp()?.records;
+    if (freshRows) return stabilizeRows(freshRows);
+    const r = range();
+    if (r.count <= 0) return [];
+    const cachedRows: RecordRow[] = [];
+    for (let idx = r.start; idx < r.end; idx += 1) {
+      const row = rowObjectCache.get(idx);
+      if (row) cachedRows.push(row);
+    }
+    return cachedRows;
   });
+  const showRecordsLoading = createMemo(() => (meta.loading || resp.loading) && displayRows().length === 0);
   let lastAutoScrollIdx = -1;
 
   createEffect(() => {
@@ -400,7 +412,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       >
         <div class="records-inner" style={{ height: `${innerHeight()}px` }}>
-          <Show when={meta.loading || resp.loading}>
+          <Show when={showRecordsLoading()}>
             <p class="dim records-loading">loading…</p>
           </Show>
           <Show when={currentResp()?.truncated}>

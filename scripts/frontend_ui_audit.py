@@ -62,6 +62,14 @@ def main() -> int:
         failures,
     )
     require(
+        "Records scroll keeps cached rows during range refetch",
+        "function stabilizeRows(rows: RecordRow[])" in records
+        and "rowObjectCache.get(idx)" in records
+        and "showRecordsLoading" in records
+        and "displayRows().length === 0" in records,
+        failures,
+    )
+    require(
         "ASM keyboard navigation keys are wired",
         'window.addEventListener("keydown", onKey)' in app
         and 'if (isEditableTarget(e.target)) return' in app
@@ -281,7 +289,13 @@ def main() -> int:
 
     require("global themed scrollbar Firefox", "scrollbar-width: thin" in css and "scrollbar-color:" in css, failures)
     require("global themed scrollbar WebKit", "*::-webkit-scrollbar-thumb" in css and "*::-webkit-scrollbar-track" in css, failures)
-    require("controls inherit mono font", "button,\ninput,\nselect,\ntextarea" in css and "font-family: var(--font-mono)" in css, failures)
+    require(
+        "controls inherit mono font",
+        "button,\ninput,\nselect,\ntextarea,\noption,\noptgroup" in css
+        and "pre,\ncode,\nkbd,\nsamp,\nsvg text" in css
+        and "font-family: var(--font-mono)" in css,
+        failures,
+    )
     require("CFG loading uses themed spinner", ".cfg-loading" in css and ".cfg-spinner" in css and "@keyframes cfg-spin" in css, failures)
     require("String provenance long text wraps", ".string-prov-summary code" in css and "word-break: break-all" in css, failures)
     require("String provenance table scrolls horizontally", ".string-prov-scroll" in css and "overflow-x: auto" in css, failures)

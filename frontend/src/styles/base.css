@@ -12,10 +12,14 @@
   --err: #f85149;
   --border: #30363d;
   --hl: #2d4060;
-  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
 }
 
-* { box-sizing: border-box; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 * {
   scrollbar-width: thin;
@@ -70,16 +74,28 @@ body {
 button,
 input,
 select,
-textarea {
+textarea,
+option,
+optgroup {
   font: inherit;
   color: var(--fg);
+  font-family: var(--font-mono);
+}
+
+pre,
+code,
+kbd,
+samp,
+svg text {
   font-family: var(--font-mono);
 }
 
 button,
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 select,
-textarea {
+textarea,
+option,
+optgroup {
   background: var(--bg);
   border: 1px solid var(--border);
 }

@@ -322,8 +322,9 @@ pub fn forward_taint(
             if exclude_regs.contains(nr) {
                 continue;
             }
-            if !tainted_regs.contains_key(nr) {
-                tainted_regs.insert(nr.clone(), next_provenance);
+            let was_tainted = tainted_regs.contains_key(nr);
+            tainted_regs.insert(nr.clone(), next_provenance);
+            if !was_tainted {
                 push_reg(&mut heap, nr, i);
             }
         }
@@ -410,7 +411,6 @@ pub fn backward_taint(
 
     if starts_with_def && !exclude_regs.contains(taint_reg) {
         raw_out.push((idx, taint_reg.to_string(), Vec::new(), 0));
-        visited.insert((idx, taint_reg.to_string()));
         let addr_regs0 = if data_only {
             addressing_regs(&d0.mem_op)
         } else {
@@ -704,23 +704,57 @@ mod tests {
     }
 
     #[test]
+    fn forward_taint_updates_self_reg_provenance() {
+        // Same-reg read-modify-write must advance provenance for tree view:
+        // seed x0 at idx=0, then each `add x0, x0, #1` depends on the prior hit.
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
+        assert!(!stopped);
+        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
+        assert_eq!(idxs, vec![1, 2, 3, 4], "forward self-chain hits: {hits:?}");
+
+        let row1 = hits.iter().find(|h| h.idx == 1).unwrap();
+        assert_eq!(row1.parent_idxs, Vec::<usize>::new());
+        assert_eq!(row1.taint_depth, 0);
+        for (expected_idx, expected_parent, expected_depth) in [(2, 1, 1), (3, 2, 2), (4, 3, 3)] {
+            let row = hits.iter().find(|h| h.idx == expected_idx).unwrap();
+            assert_eq!(
+                row.parent_idxs,
+                vec![expected_parent],
+                "row #{expected_idx} should depend on #{expected_parent}: {row:?}"
+            );
+            assert_eq!(
+                row.taint_depth, expected_depth,
+                "row #{expected_idx} depth should advance along self-chain: {row:?}"
+            );
+        }
+    }
+
+    #[test]
     fn backward_taint_emits_bare_reg_name() {
         // 5-record `add x0, x0, #1` chain. Backward from idx=4, taint=x0.
         // Each `add x0, x0, #1` defines x0 AND uses x0, so chasing x0 backward
-        // should yield idxs 3, 2, 1, 0 (latest def < cursor each step).
+        // should include the seed at idx=4 plus prior defs 3, 2, 1, 0.
         let dir = synth_x0_chain();
         let t = load_trace(&dir);
         let idx = Index::build(&t);
         let exclude = HashSet::new();
         let (hits, stopped) = backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None, false);
-        assert!(!hits.is_empty(), "should chase x0 def chain backwards");
+        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
+        assert_eq!(
+            idxs,
+            vec![0, 1, 2, 3, 4],
+            "should chase self read-modify-write chain backwards: {hits:?}"
+        );
         assert!(!stopped);
         // Wire-shape pin: `why` is the bare reg name, NOT "via:x0".
         for h in &hits {
             assert_eq!(h.why, "x0", "expected bare reg name, got {:?}", h.why);
         }
         // Order: dedup'd by sorted idx, so smallest idx first.
-        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
         for w in idxs.windows(2) {
             assert!(w[0] < w[1], "hits sorted by ascending idx: {idxs:?}");
         }
