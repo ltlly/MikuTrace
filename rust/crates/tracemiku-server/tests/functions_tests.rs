@@ -84,6 +84,32 @@ async fn functions_returns_known_offsets_as_symbol_source() {
         "expected f_alpha in names, got {names:?}"
     );
     assert!(names.contains(&"f_beta"));
+
+    let f_alpha = funcs
+        .iter()
+        .find(|f| f["name"] == "f_alpha")
+        .expect("f_alpha");
+    assert!(
+        f_alpha["blocks"].as_u64().unwrap_or(0) > 0,
+        "f_alpha should inherit CFG block count"
+    );
+    assert!(
+        f_alpha["records"].as_u64().unwrap_or(0) > 0,
+        "f_alpha should inherit CFG execution count"
+    );
+
+    let f_beta = funcs
+        .iter()
+        .find(|f| f["name"] == "f_beta")
+        .expect("f_beta");
+    assert!(
+        f_beta["blocks"].as_u64().unwrap_or(0) > 0,
+        "f_beta should inherit CFG block count"
+    );
+    assert!(
+        f_beta["records"].as_u64().unwrap_or(0) > 0,
+        "f_beta should inherit CFG execution count"
+    );
 }
 
 #[tokio::test]

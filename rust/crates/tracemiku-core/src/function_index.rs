@@ -9,6 +9,8 @@
 //!   - bare `F0` → ("trace", "F0")
 //!   - `cfg:<name>` → ("sym", "<name>")
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 const TRACE_PREFIX: &str = "trace:";
@@ -140,28 +142,33 @@ impl FunctionIndex {
 }
 
 /// Build a FunctionIndex from SymbolMap + optional CFG.
-/// M2-ε: only the symbol source is populated.
 pub fn build_from_symbols(
     symbols: &crate::symbols::SymbolMap,
     cfg: Option<&crate::cfg::CFG>,
 ) -> FunctionIndex {
+    let mut cfg_counts: BTreeMap<String, (u32, u64)> = BTreeMap::new();
+    if let Some(c) = cfg {
+        for block in c.blocks() {
+            let (name, _) = symbols.lookup(block.start_pc);
+            if name == "?" {
+                continue;
+            }
+            let entry = cfg_counts.entry(name).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = entry.1.saturating_add(block.executions);
+        }
+    }
+
     let mut entries = Vec::new();
     for (pc, name) in symbols.iter_functions() {
-        let blocks = cfg
-            .map(|c| {
-                c.blocks()
-                    .iter()
-                    .filter(|b| b.start_pc >= pc && b.fn_name.as_deref() == Some(name.as_str()))
-                    .count() as u32
-            })
-            .unwrap_or(0);
+        let (blocks, records) = cfg_counts.get(&name).copied().unwrap_or((0, 0));
         entries.push(FunctionEntry {
             id: make_sym_id(&name),
             name: name.clone(),
             source: "symbol".to_string(),
             entry_pc: Some(pc),
             blocks,
-            records: 0,
+            records,
             trace_ir_id: None,
             bn_start: None,
             can_llil: false,

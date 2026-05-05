@@ -71,6 +71,9 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                     <Show when={fn.blocks > 0}>
                       <span class="dim small">{fn.blocks} blocks</span>
                     </Show>
+                    <Show when={fn.records > 0}>
+                      <span class="dim small">{fn.records.toLocaleString()} recs</span>
+                    </Show>
                   </li>
                 )}
               </For>
