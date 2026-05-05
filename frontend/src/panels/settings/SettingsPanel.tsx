@@ -21,7 +21,7 @@ function statusText(item: unknown): string {
 
 function workerSummary(workers: Record<string, number> | undefined): string {
   if (!workers) return "?";
-  return `idx ${workers.index ?? "?"} · sym ${workers.symbols ?? "?"} · cfg ${workers.cfg ?? "?"} · mem ${workers.memshadow ?? "?"} · reg ${workers.reg_timeline ?? "?"} · jni ${workers.jni_calls ?? "?"}`;
+  return `idx ${workers.index ?? "?"} · sym ${workers.symbols ?? "?"} · cfg ${workers.cfg ?? "?"} · frame ${workers.frame_depths ?? "?"} · mem ${workers.memshadow ?? "?"} · reg ${workers.reg_timeline ?? "?"} · jni ${workers.jni_calls ?? "?"}`;
 }
 
 interface SettingsPanelProps {

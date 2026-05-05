@@ -14,15 +14,22 @@
 use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet, VecDeque};
+use std::thread;
 
 use crate::disasm::{addr_of, decode, MemOp};
 use crate::index::Index;
 use crate::memshadow::MemShadow;
+use crate::parallel;
 use crate::trace::Trace;
 
 /// Default frame registers almost always skipped during data-only taint.
 /// Matches viewer/taint.py:37 DEFAULT_FRAME_REGS.
 pub const DEFAULT_FRAME_REGS: &[&str] = &["sp", "fp", "lr"];
+
+const FRAME_DEPTH_PARALLEL_MIN_RECORDS: usize = 250_000;
+const FRAME_DEPTH_MIN_CHUNK_RECORDS: usize = 200_000;
+const FRAME_FLAG_CALL: u8 = 1;
+const FRAME_FLAG_RET: u8 = 2;
 
 /// Build the default frame-reg HashSet (sp, fp, lr).
 pub fn default_frame_reg_set() -> HashSet<String> {
@@ -66,19 +73,84 @@ pub struct TaintHit {
 
 pub fn build_frame_depth_map(trace: &Trace) -> Vec<u32> {
     let n = trace.len();
+    let flags = scan_frame_depth_flags(trace);
     let mut out = vec![0u32; n];
     let mut depth: u32 = 0;
-    for (i, slot) in out.iter_mut().enumerate().take(n) {
+    for (flag, slot) in flags.into_iter().zip(out.iter_mut()) {
         *slot = depth;
-        let r = trace.record(i);
-        let d = decode(r.pc, r.inst);
-        if d.is_call {
+        if flag == FRAME_FLAG_CALL {
             depth = depth.saturating_add(1);
-        } else if d.is_ret && depth > 0 {
+        } else if flag == FRAME_FLAG_RET && depth > 0 {
             depth -= 1;
         }
     }
     out
+}
+
+pub fn frame_depth_worker_count(n: usize) -> usize {
+    parallel::worker_count(
+        n,
+        "TRACEMIKU_FRAME_DEPTH_THREADS",
+        FRAME_DEPTH_PARALLEL_MIN_RECORDS,
+        FRAME_DEPTH_MIN_CHUNK_RECORDS,
+    )
+}
+
+struct FrameDepthChunk {
+    start: usize,
+    flags: Vec<u8>,
+}
+
+fn scan_frame_depth_flags(trace: &Trace) -> Vec<u8> {
+    let n = trace.len();
+    let workers = frame_depth_worker_count(n);
+    if workers <= 1 {
+        return scan_frame_depth_range(trace, 0, n).flags;
+    }
+
+    tracing::info!(
+        target: "tracemiku-core",
+        records = n,
+        workers,
+        "scanning frame-depth call/ret flags in parallel"
+    );
+
+    let chunk_size = n.div_ceil(workers);
+    let chunks = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let start = worker * chunk_size;
+            let end = (start + chunk_size).min(n);
+            if start >= end {
+                continue;
+            }
+            handles.push(scope.spawn(move || scan_frame_depth_range(trace, start, end)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("frame-depth worker panicked"))
+            .collect::<Vec<_>>()
+    });
+
+    let mut flags = vec![0u8; n];
+    for chunk in chunks {
+        flags[chunk.start..chunk.start + chunk.flags.len()].copy_from_slice(&chunk.flags);
+    }
+    flags
+}
+
+fn scan_frame_depth_range(trace: &Trace, start: usize, end: usize) -> FrameDepthChunk {
+    let mut flags = vec![0u8; end.saturating_sub(start)];
+    for i in start..end {
+        let r = trace.record(i);
+        let d = decode(r.pc, r.inst);
+        if d.is_call {
+            flags[i - start] = FRAME_FLAG_CALL;
+        } else if d.is_ret {
+            flags[i - start] = FRAME_FLAG_RET;
+        }
+    }
+    FrameDepthChunk { start, flags }
 }
 
 #[allow(clippy::too_many_arguments)] // M3-γ Task 4 will add cross_fn_call.
