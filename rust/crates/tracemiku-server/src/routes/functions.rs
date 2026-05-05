@@ -1,6 +1,7 @@
 //! GET /api/functions
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
@@ -9,7 +10,7 @@ use serde_json::json;
 
 use tracemiku_core::prelude::{make_bn_id, FunctionEntry};
 
-use crate::state::AppState;
+use crate::state::{AppState, AppStateInner};
 
 #[derive(Debug, Serialize)]
 pub struct FunctionsResponse {
@@ -18,7 +19,17 @@ pub struct FunctionsResponse {
 }
 
 pub async fn functions_handler(State(state): State<AppState>) -> Json<FunctionsResponse> {
-    let inner = &state.inner;
+    let inner = state.inner.clone();
+    let response = tokio::task::spawn_blocking(move || functions_response(inner))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "functions worker failed: {err}");
+            functions_response_no_bn(&state.inner)
+        });
+    Json(response)
+}
+
+fn functions_response(inner: Arc<AppStateInner>) -> FunctionsResponse {
     let mut fns = inner.function_index.entries.clone();
     if let Ok(mut sidecar) = inner.bn_sidecar.lock() {
         let bn = sidecar.request("functions", json!({}));
@@ -50,6 +61,14 @@ pub async fn functions_handler(State(state): State<AppState>) -> Json<FunctionsR
             }
         }
     }
+    functions_response_from_entries(fns)
+}
+
+fn functions_response_no_bn(inner: &AppStateInner) -> FunctionsResponse {
+    functions_response_from_entries(inner.function_index.entries.clone())
+}
+
+fn functions_response_from_entries(fns: Vec<FunctionEntry>) -> FunctionsResponse {
     let mut counts: HashMap<String, u64> = HashMap::new();
     counts.insert("trace-ir".to_string(), 0);
     counts.insert("symbol".to_string(), 0);
@@ -57,8 +76,8 @@ pub async fn functions_handler(State(state): State<AppState>) -> Json<FunctionsR
     for f in &fns {
         *counts.entry(f.source.clone()).or_insert(0) += 1;
     }
-    Json(FunctionsResponse {
+    FunctionsResponse {
         counts,
         functions: fns,
-    })
+    }
 }

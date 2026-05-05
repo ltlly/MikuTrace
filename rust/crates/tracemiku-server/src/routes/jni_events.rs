@@ -24,7 +24,21 @@ pub async fn jni_events_handler(
     State(state): State<AppState>,
     Query(q): Query<JniEventsQuery>,
 ) -> Json<JniEventsResponse> {
-    let path = state.inner.trace_dir.join("jni_hooks.jsonl");
+    let trace_dir = state.inner.trace_dir.clone();
+    let response = tokio::task::spawn_blocking(move || jni_events_response(trace_dir, q))
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(target: "tracemiku-server", "jni events worker failed: {err}");
+            JniEventsResponse {
+                count: 0,
+                events: Vec::new(),
+            }
+        });
+    Json(response)
+}
+
+fn jni_events_response(trace_dir: std::path::PathBuf, q: JniEventsQuery) -> JniEventsResponse {
+    let path = trace_dir.join("jni_hooks.jsonl");
     let mut events = Vec::new();
     if let Ok(text) = std::fs::read_to_string(path) {
         for line in text.lines() {
@@ -54,8 +68,8 @@ pub async fn jni_events_handler(
             events.push(value);
         }
     }
-    Json(JniEventsResponse {
+    JniEventsResponse {
         count: events.len(),
         events,
-    })
+    }
 }

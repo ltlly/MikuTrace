@@ -40,6 +40,16 @@ pub async fn diff_traces_handler(
     State(_state): State<AppState>,
     Json(req): Json<DiffTracesRequest>,
 ) -> Result<Json<DiffTracesResponse>, StatusCode> {
+    tokio::task::spawn_blocking(move || diff_traces_response(req))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "diff traces worker failed: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map(Json)
+}
+
+fn diff_traces_response(req: DiffTracesRequest) -> Result<DiffTracesResponse, StatusCode> {
     if req.traces.len() < 2 {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -68,11 +78,11 @@ pub async fn diff_traces_handler(
         headers.insert(header.to_string(), diff_header(&binaries, &req));
     }
 
-    Ok(Json(DiffTracesResponse {
+    Ok(DiffTracesResponse {
         traces: req.traces,
         n_traces: all_outputs.len(),
         headers,
-    }))
+    })
 }
 
 fn extract_outputs(trace_dir: &Path) -> Option<HashMap<String, OutputValue>> {

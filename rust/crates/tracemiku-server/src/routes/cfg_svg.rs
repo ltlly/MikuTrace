@@ -12,7 +12,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::state::{AppState, CfgSvgCached};
+use crate::state::{AppState, AppStateInner, CfgSvgCached};
 
 #[derive(Debug, Deserialize)]
 pub struct CfgSvgQuery {
@@ -101,42 +101,39 @@ pub async fn cfg_svg_handler(
         }
     }
 
-    let inner = &state.inner;
-    let included = included_blocks(&inner.cfg, &inner.symbols, filter_fn.as_deref());
-    if included.is_empty() {
-        return Json(CfgSvgResponse::Empty {
-            fn_name: filter_fn,
-            svg: None,
-        });
-    }
+    let inner = state.inner.clone();
+    let force = q.force;
+    let prepare_filter = filter_fn.clone();
+    let prepare_cache_key = cache_key.clone();
+    let prepared = tokio::task::spawn_blocking(move || {
+        prepare_cfg_svg(inner, prepare_filter, prepare_cache_key, force)
+    })
+    .await
+    .unwrap_or_else(|err| {
+        tracing::warn!(target: "tracemiku-server", "cfg svg prepare worker failed: {err}");
+        CfgSvgPrepared::Response(CfgSvgResponse::Error {
+            err: "cfg svg prepare worker failed".to_string(),
+        })
+    });
 
-    let included_starts: HashSet<u64> = included.iter().map(|b| b.start_pc).collect();
-    let edge_count = included_edge_count(inner, &included_starts);
-    if !q.force && (included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES) {
-        let overview_svg = if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
-            && edge_count <= LARGE_OVERVIEW_MAX_EDGES
-        {
-            Some(build_large_overview_svg(inner, &included, &included_starts))
-        } else {
-            None
-        };
-        return Json(CfgSvgResponse::Large {
-            fn_name: filter_fn,
-            svg: overview_svg,
-            block_count: included.len(),
-            edge_count,
-            total_block_count: inner.cfg.block_count(),
-            dot_bytes: estimate_dot_bytes(included.len(), edge_count),
-        });
-    }
-    let dot = build_dot(inner, &included, &included_starts);
+    let (dot, fn_name, block_count, total_block_count, cache_key) = match prepared {
+        CfgSvgPrepared::Response(response) => return Json(response),
+        CfgSvgPrepared::Dot {
+            dot,
+            fn_name,
+            block_count,
+            total_block_count,
+            cache_key,
+        } => (dot, fn_name, block_count, total_block_count, cache_key),
+    };
+
     let timeout = q.timeout.clamp(5, 300);
     match render_dot_to_svg(dot, timeout).await {
         Ok(svg) => {
             let cached = CfgSvgCached {
                 svg: svg.clone(),
-                block_count: included.len(),
-                total_block_count: inner.cfg.block_count(),
+                block_count,
+                total_block_count,
             };
             state
                 .inner
@@ -146,13 +143,71 @@ pub async fn cfg_svg_handler(
                 .insert(cache_key, cached);
             Json(CfgSvgResponse::Ready {
                 svg,
-                fn_name: filter_fn,
-                block_count: included.len(),
-                total_block_count: inner.cfg.block_count(),
+                fn_name,
+                block_count,
+                total_block_count,
                 cached: false,
             })
         }
         Err(err) => Json(CfgSvgResponse::Error { err }),
+    }
+}
+
+enum CfgSvgPrepared {
+    Response(CfgSvgResponse),
+    Dot {
+        dot: String,
+        fn_name: Option<String>,
+        block_count: usize,
+        total_block_count: usize,
+        cache_key: String,
+    },
+}
+
+fn prepare_cfg_svg(
+    inner: std::sync::Arc<AppStateInner>,
+    filter_fn: Option<String>,
+    cache_key: String,
+    force: bool,
+) -> CfgSvgPrepared {
+    let included = included_blocks(&inner.cfg, &inner.symbols, filter_fn.as_deref());
+    if included.is_empty() {
+        return CfgSvgPrepared::Response(CfgSvgResponse::Empty {
+            fn_name: filter_fn,
+            svg: None,
+        });
+    }
+
+    let included_starts: HashSet<u64> = included.iter().map(|b| b.start_pc).collect();
+    let edge_count = included_edge_count(&inner, &included_starts);
+    if !force && (included.len() > AUTO_DOT_MAX_BLOCKS || edge_count > AUTO_DOT_MAX_EDGES) {
+        let overview_svg = if included.len() <= LARGE_OVERVIEW_MAX_BLOCKS
+            && edge_count <= LARGE_OVERVIEW_MAX_EDGES
+        {
+            Some(build_large_overview_svg(
+                &inner,
+                &included,
+                &included_starts,
+            ))
+        } else {
+            None
+        };
+        return CfgSvgPrepared::Response(CfgSvgResponse::Large {
+            fn_name: filter_fn,
+            svg: overview_svg,
+            block_count: included.len(),
+            edge_count,
+            total_block_count: inner.cfg.block_count(),
+            dot_bytes: estimate_dot_bytes(included.len(), edge_count),
+        });
+    }
+
+    CfgSvgPrepared::Dot {
+        dot: build_dot(&inner, &included, &included_starts),
+        fn_name: filter_fn,
+        block_count: included.len(),
+        total_block_count: inner.cfg.block_count(),
+        cache_key,
     }
 }
 
