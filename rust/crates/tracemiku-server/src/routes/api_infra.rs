@@ -93,6 +93,7 @@ fn parallelism_status_value(state: &AppState) -> Value {
             "cfg": tracemiku_core::cfg::cfg_worker_count(records),
             "memshadow": tracemiku_core::memshadow::memshadow_worker_count(records),
             "reg_timeline": crate::routes::timeline_diff::reg_timeline_worker_count(records),
+            "jni_calls": crate::jni_scan::jni_worker_count(records),
         },
         "env": {
             "TRACEMIKU_ANALYSIS_THREADS": std::env::var("TRACEMIKU_ANALYSIS_THREADS").ok(),
@@ -101,6 +102,7 @@ fn parallelism_status_value(state: &AppState) -> Value {
             "TRACEMIKU_CFG_THREADS": std::env::var("TRACEMIKU_CFG_THREADS").ok(),
             "TRACEMIKU_MEMSHADOW_THREADS": std::env::var("TRACEMIKU_MEMSHADOW_THREADS").ok(),
             "TRACEMIKU_REG_TIMELINE_THREADS": std::env::var("TRACEMIKU_REG_TIMELINE_THREADS").ok(),
+            "TRACEMIKU_JNI_THREADS": std::env::var("TRACEMIKU_JNI_THREADS").ok(),
         }
     })
 }

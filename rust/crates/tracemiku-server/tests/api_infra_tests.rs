@@ -144,6 +144,9 @@ async fn python_web_compat_status_endpoints_are_available() {
             assert_eq!(v["index"]["status"], "ready");
             assert_eq!(v["mem"]["status"], "ready");
             assert!(v["decomp"]["status"].is_string());
+            assert!(v["parallelism"]["available"].is_number());
+            assert!(v["parallelism"]["workers"]["index"].is_number());
+            assert!(v["parallelism"]["workers"]["jni_calls"].is_number());
         } else {
             assert!(v["status"].is_string());
             assert!(v.get("so_path").is_some());

@@ -2,9 +2,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::thread;
 
 use serde_json::Value;
 use tracemiku_core::prelude::{decode, Index, SymbolMap, Trace};
+
+const PARALLEL_MIN_RECORDS: usize = 250_000;
+const MIN_CHUNK_RECORDS: usize = 200_000;
 
 #[derive(Debug, Clone)]
 pub struct JniCallScan {
@@ -71,8 +75,74 @@ pub fn scan_jni_calls(
         };
     }
 
+    let entries = index
+        .pc_to_idxs
+        .iter()
+        .map(|(&pc, idxs)| (pc, idxs.as_slice()))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return JniCallScan {
+            calls: Vec::new(),
+            vtable_size: jni_vtable.len(),
+        };
+    }
+
+    let workers = jni_worker_count(trace.len()).min(entries.len()).max(1);
+    let mut calls = if workers <= 1 {
+        scan_jni_call_entries(trace, symbols, primary_base, &jni_vtable, &entries)
+    } else {
+        tracing::info!(
+            target: "tracemiku-server",
+            records = trace.len(),
+            pc_groups = entries.len(),
+            workers,
+            "scanning JNI calls in parallel"
+        );
+        let chunk_size = entries.len().div_ceil(workers);
+        let partials = thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            let table = &jni_vtable;
+            for chunk in entries.chunks(chunk_size) {
+                handles.push(scope.spawn(move || {
+                    scan_jni_call_entries(trace, symbols, primary_base, table, chunk)
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("JNI scan worker panicked"))
+                .collect::<Vec<_>>()
+        });
+        let mut merged = Vec::new();
+        for mut part in partials {
+            merged.append(&mut part);
+        }
+        merged
+    };
+    calls.sort_by_key(|hit| hit.idx);
+    JniCallScan {
+        calls,
+        vtable_size: jni_vtable.len(),
+    }
+}
+
+pub(crate) fn jni_worker_count(records: usize) -> usize {
+    tracemiku_core::parallel::worker_count(
+        records,
+        "TRACEMIKU_JNI_THREADS",
+        PARALLEL_MIN_RECORDS,
+        MIN_CHUNK_RECORDS,
+    )
+}
+
+fn scan_jni_call_entries(
+    trace: &Trace,
+    symbols: &SymbolMap,
+    primary_base: Option<u64>,
+    jni_vtable: &HashMap<u64, String>,
+    entries: &[(u64, &[usize])],
+) -> Vec<JniCallRecord> {
     let mut calls = Vec::new();
-    for (&pc, idxs) in &index.pc_to_idxs {
+    for &(pc, idxs) in entries {
         let Some(&first_idx) = idxs.first() else {
             continue;
         };
@@ -122,11 +192,7 @@ pub fn scan_jni_calls(
             });
         }
     }
-    calls.sort_by_key(|hit| hit.idx);
-    JniCallScan {
-        calls,
-        vtable_size: jni_vtable.len(),
-    }
+    calls
 }
 
 fn branch_reg(op_str: &str) -> Option<String> {

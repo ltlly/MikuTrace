@@ -482,6 +482,8 @@ export interface ParallelismStatus {
     symbols: number;
     cfg: number;
     memshadow: number;
+    reg_timeline: number;
+    jni_calls: number;
     [key: string]: number;
   };
   env?: Record<string, string | null>;
