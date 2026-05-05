@@ -39,15 +39,29 @@ pub async fn hlil_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    Ok(Json(request_sidecar(&state, "hlil_for", json!({"pc": pc}))))
+    Ok(Json(
+        request_sidecar_blocking(state, "hlil_for", json!({"pc": pc})).await?,
+    ))
 }
 
 pub async fn hlil_for_fn_handler(
     State(state): State<AppState>,
     Query(q): Query<FnQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let pc = resolve_fn_pc(&state, &q.fn_id)?;
-    Ok(Json(request_sidecar(&state, "hlil_for", json!({"pc": pc}))))
+    let fn_id = q.fn_id;
+    let response = tokio::task::spawn_blocking(move || {
+        let pc = resolve_fn_pc(&state, &fn_id)?;
+        Ok::<_, (StatusCode, String)>(request_sidecar(&state, "hlil_for", json!({"pc": pc})))
+    })
+    .await
+    .map_err(|err| {
+        tracing::warn!(target: "tracemiku-server", "hlil-for-fn worker failed: {err}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "hlil-for-fn worker failed".to_string(),
+        )
+    })??;
+    Ok(Json(response))
 }
 
 pub async fn bn_cfg_for_pc_handler(
@@ -60,7 +74,9 @@ pub async fn bn_cfg_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    Ok(Json(request_sidecar(&state, "cfg_for", json!({"pc": pc}))))
+    Ok(Json(
+        request_sidecar_blocking(state, "cfg_for", json!({"pc": pc})).await?,
+    ))
 }
 
 pub async fn bn_cfg_svg_for_pc_handler(
@@ -73,13 +89,29 @@ pub async fn bn_cfg_svg_for_pc_handler(
             format!("invalid pc, expected decimal or hex: {}", q.pc),
         )
     })?;
-    let cfg = request_sidecar(&state, "cfg_for", json!({"pc": pc}));
+    let cfg = request_sidecar_blocking(state, "cfg_for", json!({"pc": pc})).await?;
     Ok(Json(json!({
         "ok": cfg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
         "ready": cfg.get("ready").and_then(|v| v.as_bool()).unwrap_or(false),
         "svg": cfg.get("svg").and_then(|v| v.as_str()).unwrap_or(""),
         "error": cfg.get("error").cloned().unwrap_or(Value::Null),
     })))
+}
+
+async fn request_sidecar_blocking(
+    state: AppState,
+    method: &'static str,
+    params: Value,
+) -> Result<Value, (StatusCode, String)> {
+    tokio::task::spawn_blocking(move || request_sidecar(&state, method, params))
+        .await
+        .map_err(|err| {
+            tracing::warn!(target: "tracemiku-server", "bn sidecar worker failed: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "bn sidecar worker failed".to_string(),
+            )
+        })
 }
 
 fn request_sidecar(state: &AppState, method: &str, params: Value) -> Value {
