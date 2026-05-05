@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
+const DEFAULT_MEM_DUMP_BYTES: usize = 128;
+const MAX_MEM_DUMP_BYTES: usize = 4096;
+
 #[derive(Debug, Deserialize)]
 pub struct MemDumpQuery {
     /// Hex string ("0x7000") — Python accepts this form too.
@@ -15,7 +18,11 @@ pub struct MemDumpQuery {
 }
 
 fn default_count() -> usize {
-    256
+    DEFAULT_MEM_DUMP_BYTES
+}
+
+fn effective_count(raw: usize) -> usize {
+    raw.clamp(1, MAX_MEM_DUMP_BYTES)
 }
 
 #[derive(Debug, Serialize)]
@@ -52,19 +59,20 @@ fn mem_dump_response(
     let stripped = q.addr.trim_start_matches("0x").trim_start_matches("0X");
     let start =
         u64::from_str_radix(stripped, 16).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let count = effective_count(q.count);
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
             return Ok(MemDumpResponse {
                 status,
                 addr: q.addr,
-                count: q.count,
+                count,
                 bytes: Vec::new(),
             });
         }
     };
-    let mut bytes = Vec::with_capacity(q.count);
-    for i in 0..q.count {
+    let mut bytes = Vec::with_capacity(count);
+    for i in 0..count {
         let a = start + i as u64;
         let (byte, kind, src) = mem.byte_at(a, u64::MAX);
         bytes.push(MemDumpByte {
@@ -77,7 +85,7 @@ fn mem_dump_response(
     Ok(MemDumpResponse {
         status: "ready",
         addr: q.addr,
-        count: q.count,
+        count,
         bytes,
     })
 }

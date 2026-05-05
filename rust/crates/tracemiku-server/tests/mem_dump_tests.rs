@@ -91,3 +91,40 @@ async fn mem_dump_unaccessed_addr_returns_questionmark_kind() {
         assert!(b["src_idx"].is_null());
     }
 }
+
+#[tokio::test]
+async fn mem_dump_defaults_to_128_and_caps_large_counts() {
+    let (_tmp, cd) = synth_call_dir_with_string();
+    let app = tracemiku_server::build_router(cd).expect("build router");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/mem-dump?addr=0x7000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["count"].as_u64().unwrap(), 128);
+    assert_eq!(v["bytes"].as_array().unwrap().len(), 128);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/mem-dump?addr=0x7000&count=999999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["count"].as_u64().unwrap(), 4096);
+    assert_eq!(v["bytes"].as_array().unwrap().len(), 4096);
+}
