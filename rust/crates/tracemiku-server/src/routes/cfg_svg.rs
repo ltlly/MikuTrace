@@ -59,7 +59,7 @@ pub enum CfgSvgResponse {
 }
 
 const AUTO_DOT_MAX_BLOCKS: usize = 120;
-const AUTO_DOT_MAX_EDGES: usize = 900;
+const AUTO_DOT_MAX_EDGES: usize = 250;
 const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
 const LARGE_OVERVIEW_MAX_BLOCKS: usize = 2_000;
 const LARGE_OVERVIEW_MAX_EDGES: usize = 6_000;

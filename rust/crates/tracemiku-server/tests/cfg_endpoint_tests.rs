@@ -64,6 +64,55 @@ fn synth_large_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
     synth_cfg_call_dir(190, "f_big")
 }
 
+fn synth_edge_heavy_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let block_count = 80usize;
+    let mut pc_indexes = Vec::new();
+    for src in 0..20usize {
+        for dst in 20..40usize {
+            pc_indexes.push(src);
+            pc_indexes.push(dst);
+        }
+    }
+    let record_count = pc_indexes.len();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join(format!("call_001_tid100_{record_count}r_2ms"));
+    fs::create_dir_all(&cd).unwrap();
+    let base = 0x100000u64;
+    let mut buf = vec![0u8; 272 * record_count];
+    for (i, pc_index) in pc_indexes.into_iter().enumerate() {
+        let pc = base + (pc_index as u64) * 4;
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&0x14000001u32.to_le_bytes());
+    }
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    let known_offsets = (0..block_count)
+        .map(|i| format!(r#""0x{:x}":"f_edge""#, i * 4))
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::write(
+        cd.join("meta.json"),
+        format!(
+            r#"{{"records":{record_count},"truncated":false,"known_offsets":{{{known_offsets}}}}}"#
+        ),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"pkg":"tst","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 fn synth_huge_cfg_call_dir() -> (tempfile::TempDir, PathBuf) {
     synth_cfg_call_dir(2_100, "f_huge")
 }
@@ -224,6 +273,45 @@ async fn cfg_svg_large_fn_returns_overview_without_dot() {
         v["svg"]
             .as_str()
             .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100000")),
+        "expected lightweight overview SVG with block anchors: {v}"
+    );
+}
+
+#[tokio::test]
+async fn cfg_svg_edge_heavy_fn_returns_overview_without_dot() {
+    let _guard = dot_env_lock().lock().await;
+    std::env::set_var("TRACEMIKU_DOT", "/definitely/not/a/graphviz-dot");
+
+    let (_tmp, call_dir) = synth_edge_heavy_cfg_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cfg-svg?fn=f_edge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("TRACEMIKU_DOT");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["status"], "large");
+    assert_eq!(v["fn"], "f_edge");
+    assert!(
+        v["block_count"].as_u64().unwrap_or(usize::MAX as u64) < 120,
+        "edge-heavy fixture should stay below the block threshold: {v}"
+    );
+    assert!(
+        v["edge_count"].as_u64().unwrap_or(0) > 250,
+        "edge-heavy fixture should trip the edge threshold: {v}"
+    );
+    assert!(
+        v["svg"]
+            .as_str()
+            .is_some_and(|s| s.contains("<svg") && s.contains("hdr_b100004")),
         "expected lightweight overview SVG with block anchors: {v}"
     );
 }
