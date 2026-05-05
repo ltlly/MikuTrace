@@ -166,4 +166,44 @@ mod tests {
         assert_eq!(index.detect(2, 16).len(), 0);
         assert_eq!(index.detect(10, 64).len(), 0);
     }
+
+    #[test]
+    fn hash_finalize_index_preserves_same_addr_trace_order() {
+        let mem = MemShadow {
+            writes: vec![
+                MemRec {
+                    idx: 0,
+                    addr: 0x1000,
+                    size: 4,
+                    value: 0,
+                },
+                MemRec {
+                    idx: 1,
+                    addr: 0x1004,
+                    size: 4,
+                    value: 0,
+                },
+                MemRec {
+                    idx: 2,
+                    addr: 0x1000,
+                    size: 4,
+                    value: 0,
+                },
+                MemRec {
+                    idx: 3,
+                    addr: 0x1008,
+                    size: 4,
+                    value: 0,
+                },
+            ],
+            reads: Vec::new(),
+            bytes: BTreeMap::new(),
+        };
+        let candidates = HashFinalizeIndex::build(&mem).detect(10, 8);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].addr, "0x1000");
+        assert_eq!(candidates[0].size, 12);
+        assert_eq!(candidates[0].enter_idx, 1);
+        assert_eq!(candidates[0].exit_idx, 3);
+    }
 }
