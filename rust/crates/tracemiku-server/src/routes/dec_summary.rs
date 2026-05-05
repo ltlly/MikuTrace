@@ -7,12 +7,13 @@
 
 use std::collections::HashSet;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::Json;
 use serde::Serialize;
 
 use tracemiku_core::prelude::{make_trace_id, render_summary_md};
 
+use crate::routes::dec_options::DecIrQuery;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -41,10 +42,13 @@ pub struct DecSummaryResponse {
     pub summary_md: String,
 }
 
-pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSummaryResponse> {
+pub async fn dec_summary_handler(
+    State(state): State<AppState>,
+    Query(q): Query<DecIrQuery>,
+) -> Json<DecSummaryResponse> {
     let inner = state.inner.clone();
     Json(
-        tokio::task::spawn_blocking(move || dec_summary_response(&inner))
+        tokio::task::spawn_blocking(move || dec_summary_response(&inner, q))
             .await
             .unwrap_or_else(|err| {
                 tracing::warn!(target: "tracemiku-server", "dec summary worker failed: {err}");
@@ -62,9 +66,20 @@ pub async fn dec_summary_handler(State(state): State<AppState>) -> Json<DecSumma
     )
 }
 
-fn dec_summary_response(inner: &crate::state::AppStateInner) -> DecSummaryResponse {
-    let top = inner.top_ir();
+fn dec_summary_response(inner: &crate::state::AppStateInner, q: DecIrQuery) -> DecSummaryResponse {
+    let opts = q.to_options();
+    if opts.uses_cached_default() {
+        dec_summary_response_for_top(inner, inner.top_ir())
+    } else {
+        let top = inner.build_top_ir_with_options(&opts);
+        dec_summary_response_for_top(inner, &top)
+    }
+}
 
+fn dec_summary_response_for_top(
+    inner: &crate::state::AppStateInner,
+    top: &tracemiku_core::prelude::TopIR,
+) -> DecSummaryResponse {
     let fns: Vec<DecFnEntry> = top
         .fns
         .iter()

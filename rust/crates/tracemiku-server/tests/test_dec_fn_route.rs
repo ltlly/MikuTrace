@@ -76,6 +76,42 @@ fn synth_with_branch() -> tempfile::TempDir {
     dir
 }
 
+fn synth_two_callees() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid1_9r_1ms");
+    fs::create_dir_all(&cd).unwrap();
+    let pcs: [u64; 9] = [
+        0x100000, 0x100004, 0x100100, 0x100104, 0x100008, 0x100200, 0x100204, 0x100208, 0x10000c,
+    ];
+    let insts: [u32; 9] = [
+        0xd503201f, 0x9400003f, 0xd503201f, 0xd65f03c0, 0x9400007e, 0xd503201f, 0xd503201f,
+        0xd65f03c0, 0xd65f03c0,
+    ];
+    let mut buf = vec![0u8; 272 * 9];
+    for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        r#"{"records":9,"known_offsets":{"0x0":"f_root","0x100":"f_alpha","0x200":"f_beta"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536},"method":"f","cmd":42}"#,
+    )
+    .unwrap();
+    dir
+}
+
 fn call_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path()
         .join("run")
@@ -156,6 +192,33 @@ async fn dec_fn_returns_404_for_unknown() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn dec_fn_honors_split_query_parameters() {
+    let dir = synth_two_callees();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/trace:F1?split_top_k=2&split_min_records=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["fn_id"], "trace:F1");
+    assert_eq!(v["tier"], "hot");
+    assert!(
+        v["markdown"].as_str().unwrap().contains("# F1"),
+        "split query should build a non-default TraceIR containing F1: {v}"
+    );
 }
 
 #[tokio::test]

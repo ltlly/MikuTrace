@@ -39,6 +39,42 @@ fn synth_root_only() -> tempfile::TempDir {
     dir
 }
 
+fn synth_two_callees() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid1_9r_1ms");
+    fs::create_dir_all(&cd).unwrap();
+    let pcs: [u64; 9] = [
+        0x100000, 0x100004, 0x100100, 0x100104, 0x100008, 0x100200, 0x100204, 0x100208, 0x10000c,
+    ];
+    let insts: [u32; 9] = [
+        0xd503201f, 0x9400003f, 0xd503201f, 0xd65f03c0, 0x9400007e, 0xd503201f, 0xd503201f,
+        0xd65f03c0, 0xd65f03c0,
+    ];
+    let mut buf = vec![0u8; 272 * 9];
+    for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        r#"{"records":9,"known_offsets":{"0x0":"f_root","0x100":"f_alpha","0x200":"f_beta"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536},"method":"f","cmd":42}"#,
+    )
+    .unwrap();
+    dir
+}
+
 fn call_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path()
         .join("run")
@@ -211,6 +247,40 @@ async fn dec_llm_call_uses_mock_mimo_and_caches_success() {
         count.load(Ordering::SeqCst),
         2,
         "sym request should call mock once"
+    );
+
+    let split_dir = synth_two_callees();
+    let split_app = tracemiku_server::build_router(call_dir(&split_dir)).expect("router builds");
+    let resp4 = split_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/dec/llm-call")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "fn_id":"trace:F1",
+                        "model":"mimo",
+                        "max_tokens":64,
+                        "split_top_k":2,
+                        "split_min_records":1
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp4.status(), StatusCode::OK);
+    let bytes4 = axum::body::to_bytes(resp4.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v4: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
+    assert_eq!(v4["ok"], true);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        3,
+        "split trace-ir request should resolve F1 and call mock once"
     );
 
     std::env::remove_var("MIMO_BASE_URL");

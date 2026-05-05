@@ -3,23 +3,14 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{build_symbol_func_ir_indexed, render_func_md};
 
+use crate::routes::dec_options::DecFnQuery;
 use crate::state::AppState;
-
-#[derive(Debug, Deserialize)]
-pub struct DecFnQuery {
-    #[serde(default = "default_tier")]
-    pub tier: String,
-}
-
-fn default_tier() -> String {
-    "hot".to_string()
-}
 
 #[derive(Debug, Serialize)]
 pub struct DecFnResponse {
@@ -57,17 +48,32 @@ fn dec_fn_response(
         parse_id(&fn_id).map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid fn_id: {e}")))?;
     match src.as_str() {
         "trace" => {
-            let fn_ = inner
-                .top_ir()
-                .fn_by_id(&payload)
-                .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))?;
-            let markdown = render_func_md(fn_, &q.tier);
-            Ok(DecFnResponse {
-                fn_id,
-                name: fn_.name.clone(),
-                tier: q.tier,
-                markdown,
-            })
+            let opts = q.to_options();
+            if opts.uses_cached_default() {
+                let fn_ = inner
+                    .top_ir()
+                    .fn_by_id(&payload)
+                    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))?;
+                let markdown = render_func_md(fn_, &q.tier);
+                Ok(DecFnResponse {
+                    fn_id,
+                    name: fn_.name.clone(),
+                    tier: q.tier,
+                    markdown,
+                })
+            } else {
+                let top = inner.build_top_ir_with_options(&opts);
+                let fn_ = top
+                    .fn_by_id(&payload)
+                    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))?;
+                let markdown = render_func_md(fn_, &q.tier);
+                Ok(DecFnResponse {
+                    fn_id,
+                    name: fn_.name.clone(),
+                    tier: q.tier,
+                    markdown,
+                })
+            }
         }
         "sym" => {
             let fn_ = build_symbol_func_ir_indexed(

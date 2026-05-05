@@ -27,6 +27,31 @@ const MEMSHADOW_NOT_STARTED: u8 = 0;
 const MEMSHADOW_LOADING: u8 = 1;
 const MEMSHADOW_READY: u8 = 2;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceIrBuildOptions {
+    pub hook_paths: Vec<PathBuf>,
+    pub with_memshadow: bool,
+    pub split_top_k: usize,
+    pub split_min_records: usize,
+}
+
+impl Default for TraceIrBuildOptions {
+    fn default() -> Self {
+        Self {
+            hook_paths: Vec::new(),
+            with_memshadow: false,
+            split_top_k: 10,
+            split_min_records: 50,
+        }
+    }
+}
+
+impl TraceIrBuildOptions {
+    pub fn uses_cached_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub inner: Arc<AppStateInner>,
@@ -268,6 +293,30 @@ impl AppStateInner {
                 self.memshadow_if_ready(),
             )
         })
+    }
+
+    pub fn build_top_ir_with_options(&self, opts: &TraceIrBuildOptions) -> TopIR {
+        let spec_paths = if opts.hook_paths.is_empty() {
+            self.type_spec_paths.as_slice()
+        } else {
+            opts.hook_paths.as_slice()
+        };
+        let memshadow = if opts.with_memshadow {
+            Some(self.memshadow())
+        } else {
+            None
+        };
+        build_trace_ir(
+            &self.trace,
+            &self.meta,
+            &self.symbols,
+            &self.cfg,
+            Some(&self.index),
+            opts.split_top_k,
+            opts.split_min_records,
+            spec_paths,
+            memshadow,
+        )
     }
 
     pub fn memshadow(&self) -> &MemShadow {

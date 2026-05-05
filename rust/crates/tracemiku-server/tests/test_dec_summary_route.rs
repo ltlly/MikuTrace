@@ -174,6 +174,37 @@ async fn dec_summary_includes_symbol_source_fallback() {
 }
 
 #[tokio::test]
+async fn dec_summary_honors_split_query_parameters() {
+    let dir = synth_two_callees_fixture();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/summary?split_top_k=2&split_min_records=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let trace_ir_count = v["fns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["source"] == "trace-ir")
+        .count();
+    assert!(
+        trace_ir_count > 1,
+        "split_top_k/min_records should expose split trace-ir callees: {v}"
+    );
+}
+
+#[tokio::test]
 async fn dec_summary_no_vm_candidates_on_synth_root_only() {
     let dir = synth_root_only();
     let cd = call_dir(&dir);

@@ -7,10 +7,14 @@ use serde::Deserialize;
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
-    build_fn_decompile_prompt, build_symbol_func_ir_indexed, FuncIR, PromptBundle,
+    build_fn_decompile_prompt, build_symbol_func_ir_indexed, FuncIR, PromptBundle, TopIR,
 };
 
+use crate::routes::dec_options::{
+    default_split_min_records, default_split_top_k, hook_paths_from_value,
+};
 use crate::state::AppState;
+use crate::state::TraceIrBuildOptions;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DecLlmCallPayload {
@@ -48,14 +52,6 @@ fn default_lang() -> String {
 
 fn default_tier() -> String {
     "hot".to_string()
-}
-
-fn default_split_top_k() -> usize {
-    10
-}
-
-fn default_split_min_records() -> usize {
-    50
 }
 
 pub async fn dec_llm_call_handler(
@@ -128,7 +124,13 @@ fn prepare_dec_llm_call(
     payload: &DecLlmCallPayload,
 ) -> Result<DecLlmPrepared, (StatusCode, String)> {
     let inner = &state.inner;
-    let fn_ = resolve_fn(state, &payload.fn_id)?;
+    let opts = TraceIrBuildOptions {
+        hook_paths: hook_paths_from_value(&payload.hooks),
+        with_memshadow: payload.with_memshadow,
+        split_top_k: payload.split_top_k,
+        split_min_records: payload.split_min_records,
+    };
+    let (fn_, top_owned) = resolve_fn(state, &payload.fn_id, &opts)?;
     let canonical_id = fn_.id.clone();
     let cache_key = cache_key(payload, &canonical_id);
 
@@ -145,21 +147,42 @@ fn prepare_dec_llm_call(
         return Ok(DecLlmPrepared::Cached(cached));
     }
 
-    let bundle =
-        build_fn_decompile_prompt(inner.top_ir(), &fn_, &payload.tier, &payload.lang, 200_000);
+    let prompt_top_owned = if top_owned.is_none() && !opts.uses_cached_default() {
+        Some(inner.build_top_ir_with_options(&opts))
+    } else {
+        top_owned
+    };
+    let top = prompt_top_owned.as_ref().unwrap_or_else(|| inner.top_ir());
+    let bundle = build_fn_decompile_prompt(top, &fn_, &payload.tier, &payload.lang, 200_000);
     Ok(DecLlmPrepared::Ready { cache_key, bundle })
 }
 
-fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, String)> {
+fn resolve_fn(
+    state: &AppState,
+    fn_id: &str,
+    opts: &TraceIrBuildOptions,
+) -> Result<(FuncIR, Option<TopIR>), (StatusCode, String)> {
     let inner = &state.inner;
     let (src, payload) =
         parse_id(fn_id).map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid fn_id: {e}")))?;
     match src.as_str() {
-        "trace" => inner
-            .top_ir()
-            .fn_by_id(&payload)
-            .cloned()
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}"))),
+        "trace" => {
+            if opts.uses_cached_default() {
+                inner
+                    .top_ir()
+                    .fn_by_id(&payload)
+                    .cloned()
+                    .map(|fn_| (fn_, None))
+                    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))
+            } else {
+                let top = inner.build_top_ir_with_options(opts);
+                let fn_ = top
+                    .fn_by_id(&payload)
+                    .cloned()
+                    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such fn {fn_id}")))?;
+                Ok((fn_, Some(top)))
+            }
+        }
         "sym" => build_symbol_func_ir_indexed(
             &inner.trace,
             &inner.symbols,
@@ -167,6 +190,7 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
             &inner.index,
             &payload,
         )
+        .map(|fn_| (fn_, None))
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
         "bn" => Err((
             StatusCode::NOT_FOUND,

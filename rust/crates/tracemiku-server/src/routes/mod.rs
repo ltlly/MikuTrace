@@ -11,6 +11,7 @@ pub mod data_chase;
 pub mod dec_fn;
 pub mod dec_llm_call;
 pub mod dec_models;
+pub mod dec_options;
 pub mod dec_summary;
 pub mod diff_traces;
 pub mod field_at;
