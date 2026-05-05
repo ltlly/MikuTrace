@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::jni_scan::JniCallRecord;
 use crate::state::AppState;
 
+const MAX_HITS: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct JniCallsQuery {
     pub in_fn: Option<String>,
@@ -35,6 +37,8 @@ pub struct JniCallHit {
 pub struct JniCallsResponse {
     pub in_fn: Option<String>,
     pub count: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub hits: Vec<JniCallHit>,
     pub vtable_size: usize,
 }
@@ -46,7 +50,9 @@ pub async fn jni_calls_handler(
     Json(
         tokio::task::spawn_blocking(move || {
             let scan = state.inner.jni_calls();
-            let mut hits = Vec::new();
+            let max_hits = effective_max(q.max);
+            let mut count = 0usize;
+            let mut hits = Vec::with_capacity(max_hits.min(256));
             for call in &scan.calls {
                 if q.in_fn
                     .as_deref()
@@ -54,14 +60,17 @@ pub async fn jni_calls_handler(
                 {
                     continue;
                 }
-                hits.push(jni_call_hit(call));
-                if q.max > 0 && hits.len() >= q.max {
-                    break;
+                count += 1;
+                if hits.len() < max_hits {
+                    hits.push(jni_call_hit(call));
                 }
             }
+            let returned = hits.len();
             JniCallsResponse {
                 in_fn: q.in_fn,
-                count: hits.len(),
+                count,
+                returned,
+                truncated: returned < count,
                 hits,
                 vtable_size: scan.vtable_size,
             }
@@ -72,11 +81,21 @@ pub async fn jni_calls_handler(
             JniCallsResponse {
                 in_fn: None,
                 count: 0,
+                returned: 0,
+                truncated: false,
                 hits: Vec::new(),
                 vtable_size: 0,
             }
         }),
     )
+}
+
+fn effective_max(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_HITS
+    } else {
+        raw.min(MAX_HITS)
+    }
 }
 
 fn jni_call_hit(call: &JniCallRecord) -> JniCallHit {

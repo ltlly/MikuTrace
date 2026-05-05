@@ -12,16 +12,35 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
         .path()
         .join("run")
         .join("calls")
-        .join("call_001_tid100_3r_1ms");
+        .join("call_001_tid100_6r_1ms");
     fs::create_dir_all(&cd).unwrap();
-    let pcs = [0x100000u64, 0x100004, 0x100008];
-    let insts = [0xf9000043u32, 0xf942a809, 0xd63f0120];
-    let hello = u64::from_le_bytes([b'h', b'e', b'l', b'l', b'o', 0, 0, 0]);
-    let mut buf = vec![0u8; 272 * 3];
+    let pcs = [
+        0x100000u64,
+        0x100004,
+        0x100008,
+        0x100000,
+        0x100004,
+        0x100008,
+    ];
+    let insts = [
+        0xf9000043u32,
+        0xf942a809,
+        0xd63f0120,
+        0xf9000043,
+        0xf942a809,
+        0xd63f0120,
+    ];
+    let strings = [
+        u64::from_le_bytes([b'h', b'e', b'l', b'l', b'o', 0, 0, 0]),
+        u64::from_le_bytes([b'w', b'o', b'r', b'l', b'd', 0, 0, 0]),
+    ];
+    let addrs = [0x7000u64, 0x7010];
+    let mut buf = vec![0u8; 272 * 6];
     for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
         let off = i * 272;
         buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
-        for (reg_i, value) in [0x1111u64, 0x2222, 0x7000, hello, 0x4444]
+        let group = i / 3;
+        for (reg_i, value) in [0x1111u64, 0x2222, addrs[group], strings[group], 0x4444]
             .into_iter()
             .enumerate()
         {
@@ -34,7 +53,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("trace.bin"), &buf).unwrap();
     fs::write(
         cd.join("meta.json"),
-        r#"{"records":3,"known_offsets":{"0x0":"f_root"}}"#,
+        r#"{"records":6,"known_offsets":{"0x0":"f_root"}}"#,
     )
     .unwrap();
     fs::write(
@@ -61,8 +80,10 @@ async fn jni_strings_recovers_observed_input_buffer() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(cd, "/api/jni-strings?max=5&max_len=16").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["with_observed_string"], 1);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["truncated"], false);
+    assert_eq!(v["with_observed_string"], 2);
     assert_eq!(v["without_observed_string"], 0);
     assert_eq!(v["hits"][0]["idx"], 2);
     assert_eq!(v["hits"][0]["jni_fn"], "ReleaseStringUTFChars");
@@ -78,5 +99,18 @@ async fn jni_strings_max_zero_returns_all_hits() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(cd, "/api/jni-strings?max=0").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(v["count"], 1);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["truncated"], false);
+}
+
+#[tokio::test]
+async fn jni_strings_reports_total_and_truncation() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/jni-strings?max=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["hits"].as_array().unwrap().len(), 1);
 }

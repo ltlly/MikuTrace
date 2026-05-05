@@ -194,7 +194,8 @@ export default function StringsPanel(props: StringsPanelProps) {
         {(r) => (
           <>
             <p class="dim small">
-              {r().count} string{r().count === 1 ? "" : "s"}
+              {r().returned ?? r().strings.length}/{r().count} string{r().count === 1 ? "" : "s"}
+              {r().truncated ? " · truncated" : ""}
               <Show when={r().cursor >= 0}>
                 {" "}@ cursor={r().cursor}
               </Show>

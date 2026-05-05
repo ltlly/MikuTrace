@@ -585,6 +585,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                         <Show when={ctx().writes?.writes.length}>
                           <div class="memory-context-writes">
                             <h3>write details</h3>
+                            <p class="dim small">
+                              {ctx().writes?.returned}/{ctx().writes?.matched} writes
+                              {ctx().writes?.truncated ? " · truncated" : ""}
+                            </p>
                             <For each={ctx().writes?.writes ?? []}>
                               {(w) => (
                                 <button type="button" onClick={() => props.onSelect(w.idx)}>

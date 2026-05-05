@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::jni_scan::{parse_int, JniCallRecord};
 use crate::state::{AppState, AppStateInner};
 
+const MAX_HITS: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct JobjHistoryQuery {
     pub jobject: String,
@@ -47,6 +49,8 @@ pub struct JobjHistoryResponse {
     pub start: usize,
     pub end: usize,
     pub count: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub hits: Vec<JobjHistoryHit>,
 }
 
@@ -78,7 +82,9 @@ fn jobj_history_response(
     end: usize,
 ) -> JobjHistoryResponse {
     let scan = inner.jni_calls();
-    let mut hits = Vec::new();
+    let max_hits = effective_max(q.max);
+    let mut count = 0usize;
+    let mut hits = Vec::with_capacity(max_hits.min(256));
     for call in &scan.calls {
         if call.idx < q.start {
             continue;
@@ -92,17 +98,28 @@ fn jobj_history_response(
         else {
             continue;
         };
-        hits.push(jobj_history_hit(call, match_arg));
-        if q.max > 0 && hits.len() >= q.max {
-            break;
+        count += 1;
+        if hits.len() < max_hits {
+            hits.push(jobj_history_hit(call, match_arg));
         }
     }
+    let returned = hits.len();
     JobjHistoryResponse {
         jobject: format!("{target:#x}"),
         start: q.start,
         end,
-        count: hits.len(),
+        count,
+        returned,
+        truncated: returned < count,
         hits,
+    }
+}
+
+fn effective_max(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_HITS
+    } else {
+        raw.min(MAX_HITS)
     }
 }
 

@@ -10,6 +10,9 @@ use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
 
+const MAX_MEM_WRITES_RETURNED: usize = 5_000;
+const MAX_PATTERN_HITS: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct LastWriteOfAddrQuery {
     pub addr: String,
@@ -150,6 +153,7 @@ pub struct MemWritesInRangeResponse {
     pub idx_range: Vec<usize>,
     pub matched: usize,
     pub returned: usize,
+    pub truncated: bool,
     pub writes: Vec<MemWriteRow>,
 }
 
@@ -183,10 +187,11 @@ fn mem_writes_in_range_response(
     let addr_lo = parse_optional_int("addr_lo", &q.addr_lo)?;
     let addr_hi = parse_optional_int("addr_hi", &q.addr_hi)?;
     let src_byte = parse_optional_int("src_byte", &q.src_byte)?.map(|v| (v & 0xff) as u8);
+    let max = effective_writes_max(q.max);
     let base = primary_base(&inner.meta);
     if let (Some(src_byte), Some(memshadow)) = (src_byte, inner.memshadow_if_ready()) {
         return Ok(mem_writes_in_range_from_memshadow(
-            inner, &q, lo, hi, addr_lo, addr_hi, src_byte, base, memshadow,
+            inner, max, lo, hi, addr_lo, addr_hi, src_byte, base, memshadow,
         ));
     }
 
@@ -200,7 +205,7 @@ fn mem_writes_in_range_response(
         }
         if src_byte.is_none() {
             matched += 1;
-            if q.max > 0 && rows.len() >= q.max {
+            if rows.len() >= max {
                 continue;
             }
         }
@@ -217,7 +222,7 @@ fn mem_writes_in_range_response(
         if src_byte.is_some() {
             matched += 1;
         }
-        if q.max > 0 && rows.len() >= q.max {
+        if rows.len() >= max {
             continue;
         }
 
@@ -242,6 +247,7 @@ fn mem_writes_in_range_response(
         idx_range: vec![lo, hi],
         matched,
         returned: rows.len(),
+        truncated: rows.len() < matched,
         writes: rows,
     })
 }
@@ -249,7 +255,7 @@ fn mem_writes_in_range_response(
 #[allow(clippy::too_many_arguments)]
 fn mem_writes_in_range_from_memshadow(
     inner: &crate::state::AppStateInner,
-    q: &MemWritesInRangeQuery,
+    max: usize,
     lo: usize,
     hi: usize,
     addr_lo: Option<u64>,
@@ -270,7 +276,7 @@ fn mem_writes_in_range_from_memshadow(
             continue;
         }
         matched += 1;
-        if q.max > 0 && rows.len() >= q.max {
+        if rows.len() >= max {
             continue;
         }
 
@@ -298,7 +304,16 @@ fn mem_writes_in_range_from_memshadow(
         idx_range: vec![lo, hi],
         matched,
         returned: rows.len(),
+        truncated: rows.len() < matched,
         writes: rows,
+    }
+}
+
+fn effective_writes_max(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_MEM_WRITES_RETURNED
+    } else {
+        raw.min(MAX_MEM_WRITES_RETURNED)
     }
 }
 
@@ -563,6 +578,8 @@ pub struct FindMemPatternResponse {
     pub pattern: String,
     pub since_idx: isize,
     pub count: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub hits: Vec<MemPatternHit>,
 }
 
@@ -581,6 +598,8 @@ pub async fn find_mem_pattern_handler(
                     pattern: String::new(),
                     since_idx: -1,
                     count: 0,
+                    returned: 0,
+                    truncated: false,
                     hits: Vec::new(),
                 }
             }),
@@ -597,6 +616,8 @@ fn find_mem_pattern_response(
     } else {
         u64::MAX
     };
+    let max = effective_pattern_max(q.max);
+    let mut count = 0usize;
     let mut hits = Vec::new();
     if !pattern.is_empty() {
         let mem = match inner.memshadow_ready_or_block_if_idle() {
@@ -607,6 +628,8 @@ fn find_mem_pattern_response(
                     pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),
                     since_idx: q.since,
                     count: 0,
+                    returned: 0,
+                    truncated: false,
                     hits,
                 };
             }
@@ -637,21 +660,32 @@ fn find_mem_pattern_response(
             {
                 continue;
             }
-            hits.push(MemPatternHit {
-                addr: format!("{addr:#x}"),
-                first_idx,
-            });
-            if q.max > 0 && hits.len() >= q.max {
-                break;
+            count += 1;
+            if hits.len() < max {
+                hits.push(MemPatternHit {
+                    addr: format!("{addr:#x}"),
+                    first_idx,
+                });
             }
         }
     }
+    let returned = hits.len();
     FindMemPatternResponse {
         status: "ready",
         pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),
         since_idx: q.since,
-        count: hits.len(),
+        count,
+        returned,
+        truncated: returned < count,
         hits,
+    }
+}
+
+fn effective_pattern_max(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_PATTERN_HITS
+    } else {
+        raw.min(MAX_PATTERN_HITS)
     }
 }
 

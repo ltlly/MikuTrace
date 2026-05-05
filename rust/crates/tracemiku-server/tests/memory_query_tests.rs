@@ -110,6 +110,7 @@ async fn mem_writes_in_range_reports_write_details() {
     assert_eq!(v["idx_range"], serde_json::json!([0, 3]));
     assert_eq!(v["matched"], 1);
     assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["writes"][0]["idx"], 0);
     assert_eq!(v["writes"][0]["dst_addr"], "0x7000");
     assert_eq!(v["writes"][0]["src_reg"], "x0");
@@ -134,6 +135,8 @@ async fn find_mem_pattern_finds_latest_bytes() {
     let v = get_json(cd, "/api/find-mem-pattern?bytes_hex=68656c6c6f&max=5").await;
     assert_eq!(v["pattern"], "68656c6c6f");
     assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["hits"][0]["addr"], "0x7000");
     assert_eq!(v["hits"][0]["first_idx"], 1);
 }

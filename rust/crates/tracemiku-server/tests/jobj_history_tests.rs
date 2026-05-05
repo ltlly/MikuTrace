@@ -12,11 +12,11 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
         .path()
         .join("run")
         .join("calls")
-        .join("call_001_tid100_2r_1ms");
+        .join("call_001_tid100_4r_1ms");
     fs::create_dir_all(&cd).unwrap();
-    let pcs = [0x100000u64, 0x100004];
-    let insts = [0xf9401809u32, 0xd63f0120]; // ldr x9,[x0,#0x30]; blr x9
-    let mut buf = vec![0u8; 272 * 2];
+    let pcs = [0x100000u64, 0x100004, 0x100000, 0x100004];
+    let insts = [0xf9401809u32, 0xd63f0120, 0xf9401809, 0xd63f0120]; // ldr x9,[x0,#0x30]; blr x9
+    let mut buf = vec![0u8; 272 * 4];
     for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
         let off = i * 272;
         buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
@@ -33,7 +33,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("trace.bin"), &buf).unwrap();
     fs::write(
         cd.join("meta.json"),
-        r#"{"records":2,"known_offsets":{"0x0":"f_root"}}"#,
+        r#"{"records":4,"known_offsets":{"0x0":"f_root"}}"#,
     )
     .unwrap();
     fs::write(
@@ -59,13 +59,15 @@ async fn get(call_dir: PathBuf, uri: &str) -> (StatusCode, Option<serde_json::Va
 #[tokio::test]
 async fn jobj_history_filters_matching_jobject_args() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "/api/jobj-history?jobject=0x2222&start=0&end=2&max=5").await;
+    let (status, v) = get(cd, "/api/jobj-history?jobject=0x2222&start=0&end=4&max=5").await;
     let v = v.unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["jobject"], "0x2222");
     assert_eq!(v["start"], 0);
-    assert_eq!(v["end"], 2);
-    assert_eq!(v["count"], 1);
+    assert_eq!(v["end"], 4);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["hits"][0]["idx"], 1);
     assert_eq!(v["hits"][0]["jni_fn"], "FindClass");
     assert_eq!(v["hits"][0]["vtable_offset"], "0x30");
@@ -80,6 +82,8 @@ async fn jobj_history_returns_empty_when_object_is_absent() {
     let v = v.unwrap();
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 0);
+    assert_eq!(v["returned"], 0);
+    assert_eq!(v["truncated"], false);
     assert!(v["hits"].as_array().unwrap().is_empty());
 }
 
@@ -88,4 +92,16 @@ async fn jobj_history_rejects_invalid_jobject() {
     let (_tmp, cd) = synth_call_dir();
     let (status, _) = get(cd, "/api/jobj-history?jobject=bogus").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn jobj_history_reports_total_and_truncation() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/jobj-history?jobject=0x2222&max=1").await;
+    let v = v.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["hits"].as_array().unwrap().len(), 1);
 }

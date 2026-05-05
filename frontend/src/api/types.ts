@@ -151,6 +151,8 @@ export interface StringEntry {
 export interface StringsResponse {
   status: string;     // "ready"
   count: number;
+  returned: number;
+  truncated: boolean;
   cursor: number;     // -1 if no cursor filter
   strings: StringEntry[];
   request_min_len?: number;
@@ -522,6 +524,7 @@ export interface MemWritesInRangeResponse {
   idx_range: number[];
   matched: number;
   returned: number;
+  truncated: boolean;
   writes: MemWriteRow[];
   status?: string | null;
 }

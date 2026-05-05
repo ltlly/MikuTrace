@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::state::AppState;
 use tracemiku_core::prelude::MemShadow;
 
+const MAX_HITS: usize = 5_000;
+
 #[derive(Debug, Deserialize)]
 pub struct JniStringsQuery {
     #[serde(default = "default_max")]
@@ -43,6 +45,8 @@ pub struct JniStringHit {
 pub struct JniStringsResponse {
     pub status: &'static str,
     pub count: usize,
+    pub returned: usize,
+    pub truncated: bool,
     pub with_observed_string: usize,
     pub without_observed_string: usize,
     pub note: &'static str,
@@ -61,6 +65,8 @@ pub async fn jni_strings_handler(
                 JniStringsResponse {
                     status: "error",
                     count: 0,
+                    returned: 0,
+                    truncated: false,
                     with_observed_string: 0,
                     without_observed_string: 0,
                     note: "worker failed",
@@ -77,6 +83,8 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
             return JniStringsResponse {
                 status,
                 count: 0,
+                returned: 0,
+                truncated: false,
                 with_observed_string: 0,
                 without_observed_string: 0,
                 note: "memory index is still loading",
@@ -85,11 +93,17 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
         }
     };
     let scan = state.inner.jni_calls();
-    let mut hits = Vec::new();
+    let max_hits = effective_max(q.max);
+    let mut count = 0usize;
+    let mut hits = Vec::with_capacity(max_hits.min(256));
     for call in &scan.calls {
         let Some((arg_name, direction)) = jni_string_op(&call.jni_fn) else {
             continue;
         };
+        count += 1;
+        if hits.len() >= max_hits {
+            continue;
+        }
         let (buffer_addr, cursor) = match direction {
             "out_x0" if call.idx + 1 < state.inner.trace.len() => (
                 state.inner.trace.record(call.idx + 1).reg_by_name("x0"),
@@ -119,18 +133,26 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
             observed_bytes,
             string,
         });
-        if q.max > 0 && hits.len() >= q.max {
-            break;
-        }
     }
     let with_observed_string = hits.iter().filter(|hit| hit.string.is_some()).count();
+    let returned = hits.len();
     JniStringsResponse {
         status: "ready",
-        count: hits.len(),
+        count,
+        returned,
+        truncated: returned < count,
         with_observed_string,
-        without_observed_string: hits.len() - with_observed_string,
+        without_observed_string: returned - with_observed_string,
         note: "buffers in libart heap are Stalker-excluded; agent-side hook on GetStringUTFChars needed for content",
         hits,
+    }
+}
+
+fn effective_max(raw: usize) -> usize {
+    if raw == 0 {
+        MAX_HITS
+    } else {
+        raw.min(MAX_HITS)
     }
 }
 

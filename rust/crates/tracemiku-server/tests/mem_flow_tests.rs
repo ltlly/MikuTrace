@@ -95,6 +95,7 @@ async fn mem_writes_in_range_filters_by_idx_addr_and_src_byte() {
     assert_eq!(v["idx_range"][1], 2);
     assert_eq!(v["matched"], 1);
     assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
     assert_eq!(v["writes"][0]["idx"], 1);
     assert_eq!(v["writes"][0]["pc"], "0x100004");
     assert_eq!(v["writes"][0]["dst_addr"], "0x7000");

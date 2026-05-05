@@ -12,11 +12,11 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
         .path()
         .join("run")
         .join("calls")
-        .join("call_001_tid100_2r_1ms");
+        .join("call_001_tid100_4r_1ms");
     fs::create_dir_all(&cd).unwrap();
-    let pcs = [0x100000u64, 0x100004];
-    let insts = [0xf9401809u32, 0xd63f0120]; // ldr x9,[x0,#0x30]; blr x9
-    let mut buf = vec![0u8; 272 * 2];
+    let pcs = [0x100000u64, 0x100004, 0x100000, 0x100004];
+    let insts = [0xf9401809u32, 0xd63f0120, 0xf9401809, 0xd63f0120]; // ldr x9,[x0,#0x30]; blr x9
+    let mut buf = vec![0u8; 272 * 4];
     for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
         let off = i * 272;
         buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
@@ -33,7 +33,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("trace.bin"), &buf).unwrap();
     fs::write(
         cd.join("meta.json"),
-        r#"{"records":2,"known_offsets":{"0x0":"f_root"}}"#,
+        r#"{"records":4,"known_offsets":{"0x0":"f_root"}}"#,
     )
     .unwrap();
     fs::write(
@@ -60,7 +60,9 @@ async fn jni_calls_detects_vtable_call() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(cd, "/api/jni-calls?max=5").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(v["count"], 1);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["truncated"], false);
     assert!(v["vtable_size"].as_u64().unwrap() > 100);
     assert_eq!(v["hits"][0]["idx"], 1);
     assert_eq!(v["hits"][0]["jni_fn"], "FindClass");
@@ -74,4 +76,17 @@ async fn jni_calls_filters_function() {
     let (status, v) = get(cd, "/api/jni-calls?in_fn=nope").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["count"], 0);
+    assert_eq!(v["returned"], 0);
+    assert_eq!(v["truncated"], false);
+}
+
+#[tokio::test]
+async fn jni_calls_reports_total_and_truncation() {
+    let (_tmp, cd) = synth_call_dir();
+    let (status, v) = get(cd, "/api/jni-calls?max=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["hits"].as_array().unwrap().len(), 1);
 }
