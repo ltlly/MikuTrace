@@ -5078,6 +5078,13 @@ fn output_semantic_xor_word_state_source_summary(
 ) -> serde_json::Value {
     let templates = templates.as_array().cloned().unwrap_or_default();
     let sources = sources.as_array().cloned().unwrap_or_default();
+    let mut source_status_counts = BTreeMap::<String, usize>::new();
+    for source in &sources {
+        let Some(status) = source.get("source_status").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        *source_status_counts.entry(status.to_string()).or_insert(0) += 1;
+    }
     let source_starts = sources
         .iter()
         .filter_map(|source| {
@@ -5114,6 +5121,10 @@ fn output_semantic_xor_word_state_source_summary(
             "partial"
         },
         "missing_templates": missing_templates,
+        "source_status_counts": source_status_counts
+            .into_iter()
+            .map(|(status, count)| serde_json::json!({ "status": status, "count": count }))
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -13518,13 +13529,21 @@ mod tests {
             {"semantic_range": [4, 8], "lhs_word_le": "0xb9f37778"}
         ]);
         let sources = serde_json::json!([
-            {"semantic_range": [0, 4], "source_word_be": "0x783e786f"}
+            {
+                "semantic_range": [0, 4],
+                "source_word_be": "0x783e786f",
+                "source_status": "state_update_found"
+            }
         ]);
         let summary = output_semantic_xor_word_state_source_summary(&templates, &sources);
         assert_eq!(summary["template_count"], serde_json::json!(2));
         assert_eq!(summary["source_count"], serde_json::json!(1));
         assert_eq!(summary["missing_count"], serde_json::json!(1));
         assert_eq!(summary["coverage_status"], serde_json::json!("partial"));
+        assert_eq!(
+            summary["source_status_counts"],
+            serde_json::json!([{"status": "state_update_found", "count": 1}])
+        );
         assert_eq!(
             summary["missing_templates"][0]["semantic_range"],
             serde_json::json!([4, 8])
