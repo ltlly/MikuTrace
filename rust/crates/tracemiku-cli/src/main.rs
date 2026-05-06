@@ -7754,6 +7754,7 @@ fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
         .flatten()
         .map(compact_backchain_summary_step)
         .collect::<Vec<_>>();
+    let stop = vm_backchain_stop_summary(&chain);
     let recognized_semantics = chain
         .iter()
         .filter_map(|step| {
@@ -7777,10 +7778,34 @@ fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
         "follow_frontier": backchain.get("follow_frontier").cloned().unwrap_or(serde_json::Value::Null),
         "steps_requested": backchain.get("steps_requested").cloned().unwrap_or(serde_json::Value::Null),
         "steps_returned": backchain.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "stop": stop,
         "recognized_semantics": recognized_semantics,
         "recognized_patterns": recognized_patterns,
         "recognized_pattern_summary": recognized_pattern_summary,
         "chain": chain,
+    })
+}
+
+fn vm_backchain_stop_summary(chain: &[serde_json::Value]) -> serde_json::Value {
+    let Some(last) = chain.last() else {
+        return serde_json::Value::Null;
+    };
+    let decision = last
+        .get("decision")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if decision.get("kind").and_then(|v| v.as_str()) != Some("stop") {
+        return serde_json::Value::Null;
+    }
+    serde_json::json!({
+        "step": last.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": last.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": last.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": last.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "target": last.get("target").cloned().unwrap_or(serde_json::Value::Null),
+        "local_def": last.get("local_def").cloned().unwrap_or(serde_json::Value::Null),
+        "upstream": last.get("upstream").cloned().unwrap_or(serde_json::Value::Null),
+        "decision": decision,
     })
 }
 
@@ -11670,8 +11695,8 @@ mod tests {
         output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
         recognized_backchain_pattern_summary, recognized_backchain_patterns,
         resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
-        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_ops_state_updates,
-        vm_slot_from_asm, ElfSymbol, VmProfile,
+        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_backchain_stop_summary,
+        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -12872,6 +12897,35 @@ mod tests {
         assert_eq!(inverse, 0xc097ef87329e28a5);
         assert_eq!(multiplier.wrapping_mul(inverse), 1);
         assert!(odd_u64_inverse(2).is_none());
+    }
+
+    #[test]
+    fn summarizes_vm_backchain_stop_reason() {
+        let chain = vec![serde_json::json!({
+            "step": 12,
+            "idx": 10616024,
+            "reg": "x21",
+            "value": "0x75ebae5d80",
+            "target": {
+                "asm": "ldr x13, [x21, #8]",
+                "class": "bytecode-read"
+            },
+            "upstream": {
+                "status": "no_local_def",
+                "searched_context": 120
+            },
+            "decision": {
+                "kind": "stop",
+                "reason": "no_upstream_next_or_frontier"
+            }
+        })];
+        let stop = vm_backchain_stop_summary(&chain);
+        assert_eq!(stop["idx"], serde_json::json!(10616024));
+        assert_eq!(
+            stop["decision"]["reason"],
+            serde_json::json!("no_upstream_next_or_frontier")
+        );
+        assert_eq!(stop["target"]["class"], serde_json::json!("bytecode-read"));
     }
 
     #[test]

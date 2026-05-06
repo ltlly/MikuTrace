@@ -553,6 +553,12 @@ earlier traced writers around `#11430997..#11431512`. The truly unresolved
 no-writer-in-window table reads in this probe are the `0x74fbf29xxx` values
 reached by the `ecf29541` run.
 
+The CLI summary now carries the window metadata (`idx_lo`, `idx_hi`,
+`returned`, `maybe_truncated`, `source_boundary`) and a caution string on these
+loads. `vm-backchain --summary` also exposes `stop`, so a chain that ends at a
+VM bytecode read reports the final row and `no_upstream_next_or_frontier`
+instead of looking like a complete proof.
+
 The full 16-writer summary over the table is now compact enough for an AI to
 consume directly:
 
