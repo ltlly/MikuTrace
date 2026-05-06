@@ -6613,6 +6613,7 @@ struct VmOpTemplateOperand {
     offset: serde_json::Value,
     width: serde_json::Value,
     values: BTreeMap<String, VmOpTemplateOperandValue>,
+    roles: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Default)]
@@ -6713,6 +6714,7 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
                 .or_insert(0) += 1;
             add_vm_op_template_effect_shape(group, effect);
         }
+        add_vm_op_template_operand_roles(group, op);
     }
     groups
         .into_values()
@@ -6739,6 +6741,7 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
                     serde_json::json!({
                         "offset": operand.offset,
                         "width": operand.width,
+                        "roles": counted_roles_json(&operand.roles),
                         "values": values,
                     })
                 })
@@ -6773,6 +6776,7 @@ fn vm_op_template_operand_params(
                 "name": bytecode_operand_param_name(&operand.offset, &operand.width),
                 "offset": operand.offset.clone(),
                 "width": operand.width.clone(),
+                "roles": counted_roles_json(&operand.roles),
             })
         })
         .collect()
@@ -6900,6 +6904,127 @@ fn vm_op_template_args(operand_names: &[String], include_slot_srcs: bool) -> Str
     }
     args.extend(operand_names.iter().cloned());
     args.join(", ")
+}
+
+fn add_vm_op_template_operand_roles(group: &mut VmOpTemplateGroup, op: &serde_json::Value) {
+    for read in op
+        .get("bytecode_reads")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let (offset_key, width_key) = bytecode_read_sort_key(read);
+        let key = format!("{offset_key:016x}:{width_key:016x}");
+        let Some(operand) = group.bytecode_operands.get_mut(&key) else {
+            continue;
+        };
+        for role in vm_op_bytecode_operand_roles(read, op) {
+            *operand.roles.entry(role).or_insert(0) += 1;
+        }
+    }
+}
+
+fn vm_op_bytecode_operand_roles(
+    read: &serde_json::Value,
+    op: &serde_json::Value,
+) -> BTreeSet<String> {
+    let mut roles = BTreeSet::new();
+    let read_value = read.get("value").unwrap_or(&serde_json::Value::Null);
+    for effect in op
+        .get("effects")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        if json_values_match_u64(effect.get("slot"), read_value) {
+            roles.insert("dst_slot".to_string());
+        }
+        if json_values_match_u64(effect.get("addr"), read_value) {
+            roles.insert("dst_addr".to_string());
+        }
+        for input in effect
+            .get("inputs")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            if json_values_match_u64(input.get("slot"), read_value) {
+                roles.insert("src_slot".to_string());
+            }
+        }
+        if json_values_match_u64(effect.pointer("/source_slot/slot"), read_value) {
+            roles.insert("src_slot".to_string());
+        }
+        let formula = effect.get("formula").unwrap_or(&serde_json::Value::Null);
+        if json_values_match_u64(formula.pointer("/semantic/lsb"), read_value) {
+            roles.insert("formula_lsb".to_string());
+        }
+        if json_values_match_u64(formula.pointer("/semantic/width"), read_value) {
+            roles.insert("formula_width".to_string());
+        }
+        if formula
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .any(|operand| json_values_match_u64(operand.get("value"), read_value))
+        {
+            roles.insert("formula_operand".to_string());
+        }
+        if effect.get("kind").and_then(|v| v.as_str()) == Some("control")
+            && expression_mentions_value(formula.get("expression"), read_value)
+        {
+            roles.insert("control_operand".to_string());
+        }
+    }
+    if roles.is_empty() {
+        roles.insert("bytecode_operand".to_string());
+    }
+    roles
+}
+
+fn json_values_match_u64(
+    candidate: Option<&serde_json::Value>,
+    wanted: &serde_json::Value,
+) -> bool {
+    let Some(candidate) = candidate else {
+        return false;
+    };
+    match (json_u64(candidate), json_u64(wanted)) {
+        (Some(lhs), Some(rhs)) => lhs == rhs,
+        _ => candidate == wanted,
+    }
+}
+
+fn expression_mentions_value(
+    expression: Option<&serde_json::Value>,
+    value: &serde_json::Value,
+) -> bool {
+    let Some(expression) = expression.and_then(|v| v.as_str()) else {
+        return false;
+    };
+    if let Some(value) = json_u64(value) {
+        expression.contains(&format!("{value:#x}")) || expression.contains(&value.to_string())
+    } else {
+        expression.contains(&json_display(value))
+    }
+}
+
+fn counted_roles_json(roles: &BTreeMap<String, usize>) -> Vec<serde_json::Value> {
+    let mut roles = roles
+        .iter()
+        .map(|(role, count)| serde_json::json!({ "role": role, "count": count }))
+        .collect::<Vec<_>>();
+    roles.sort_by(|lhs, rhs| {
+        let lhs_count = lhs.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let rhs_count = rhs.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        rhs_count.cmp(&lhs_count).then_with(|| {
+            json_display(lhs.get("role").unwrap_or(&serde_json::Value::Null)).cmp(&json_display(
+                rhs.get("role").unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+    });
+    roles
 }
 
 impl VmOpTemplateEffectShape {
@@ -14781,6 +14906,13 @@ mod tests {
                     "idx_end": 10616041,
                     "bytecode_reads": [
                         {
+                            "idx": 10616029,
+                            "offset": "0x5",
+                            "width": 1,
+                            "bytes_le_hex": "12",
+                            "value": "0x12"
+                        },
+                        {
                             "idx": 10616030,
                             "offset": "0x8",
                             "width": 4,
@@ -14842,7 +14974,7 @@ mod tests {
         assert_eq!(summary["byte_load_effect_count"], serde_json::json!(1));
         assert_eq!(summary["memory_store_effect_count"], serde_json::json!(1));
         assert_eq!(summary["control_effect_count"], serde_json::json!(1));
-        assert_eq!(summary["bytecode_read_count"], serde_json::json!(2));
+        assert_eq!(summary["bytecode_read_count"], serde_json::json!(3));
         assert_eq!(summary["op_template_count"], serde_json::json!(2));
         assert_eq!(
             summary["effects"][0]["pseudocode"],
@@ -14861,7 +14993,7 @@ mod tests {
             serde_json::json!("mem[0x753ddd7fd0] = 0xab")
         );
         assert_eq!(
-            summary["bytecode_reads"][1]["value"],
+            summary["bytecode_reads"][2]["value"],
             serde_json::json!("0x9")
         );
         assert_eq!(
@@ -14887,8 +15019,20 @@ mod tests {
                     .is_some_and(|signature| signature.contains("slot_write:byte_load:none"))
             })
             .unwrap();
+        let byte_load_operands = byte_load_template["template_operands"].as_array().unwrap();
+        let byte_load_dst_operand = byte_load_operands
+            .iter()
+            .find(|operand| operand["name"] == serde_json::json!("bc_0x5_u8"))
+            .unwrap();
         assert_eq!(
-            byte_load_template["template_operands"][0]["name"],
+            byte_load_dst_operand["roles"][0],
+            serde_json::json!({"role": "dst_slot", "count": 1})
+        );
+        assert_eq!(
+            byte_load_operands
+                .iter()
+                .find(|operand| operand["name"] == serde_json::json!("bc_0x8_u32"))
+                .unwrap()["name"],
             serde_json::json!("bc_0x8_u32")
         );
         assert!(byte_load_template["template_skeletons"]
@@ -14915,6 +15059,10 @@ mod tests {
         assert_eq!(
             control_template["template_operands"][0]["name"],
             serde_json::json!("bc_0x8_u64")
+        );
+        assert_eq!(
+            control_template["template_operands"][0]["roles"][0],
+            serde_json::json!({"role": "control_operand", "count": 1})
         );
         assert_eq!(
             control_template["template_skeletons"][0]["python"],

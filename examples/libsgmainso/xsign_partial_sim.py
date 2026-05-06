@@ -963,6 +963,9 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "bytecode_value": "0x9",
             "template_signature": "bc[0x8:8] effects[control:formula:add]",
             "template_skeleton": "vm_ip = add(vm_ip, bc_0x8_u64)",
+            "template_operand_roles": {
+                "bc_0x8_u64": [{"role": "control_operand", "count": 1}],
+            },
         },
         "interpretation": (
             "Formula-only byte-writer chains that stop at x21 can be continued "
@@ -987,6 +990,18 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 "bc_0x8_u32",
                 "bc_0x10_u16",
             ],
+            "template_operand_roles": {
+                "bc_0x3_u8": [
+                    {"role": "src_slot", "count": 49},
+                    {"role": "dst_slot", "count": 32},
+                ],
+                "bc_0x5_u8": [
+                    {"role": "dst_slot", "count": 49},
+                    {"role": "src_slot", "count": 32},
+                ],
+                "bc_0x8_u32": [{"role": "bytecode_operand", "count": 49}],
+                "bc_0x10_u16": [{"role": "bytecode_operand", "count": 49}],
+            },
             "template_skeleton": (
                 "slot[dst] = ubfx(slot_srcs, bc_0x3_u8, bc_0x5_u8, "
                 "bc_0x8_u32, bc_0x10_u16)"
@@ -1003,7 +1018,8 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "The highest-frequency template is a bytecode-operand-driven UBFX "
             "slot write and is now directly visible without scanning raw ops. "
             "Template effect_shapes expose input/output slot roles for lifting, "
-            "while template_skeletons provide shape-only Python starting points."
+            "template_operands.roles adds aggregate parameter-role hints, and "
+            "template_skeletons provide shape-only Python starting points."
         ),
     },
     "interpretation": (
