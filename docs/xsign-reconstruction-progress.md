@@ -391,10 +391,18 @@ x1 = 0x74b68bd0b0
 target addr 0x74b68bd108 = x1 + 0x58
 ```
 
-Resolving that device libc offset gives `stat/stat64`. So the first middle
-word `fbe9f269` is most likely bytes from a `struct stat` output buffer written
-inside libc, outside the current instruction-level trace coverage. The next
-candidate `#13980660 libc.so+0x5c4fc` resolves to `free`, and is a later
+Resolve the candidate target with the CLI:
+
+```bash
+rust/target/debug/tracemiku-cli resolve-elf-symbol \
+  /tmp/tracemiku-device-libs/libc.so \
+  0xa0f5c
+```
+
+On the current device libc this returns `stat@@LIBC` exactly. So the first
+middle word `fbe9f269` is most likely bytes from a `struct stat` output buffer
+written inside libc, outside the current instruction-level trace coverage. The
+next candidate `#13980660 libc.so+0x5c4fc` resolves to `free`, and is a later
 near-pointer false positive rather than the producer. This is a useful
 reconstruction boundary: the simulator should model this word as data supplied
 by the stat output structure, or collect the corresponding file metadata, not

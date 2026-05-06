@@ -532,7 +532,19 @@ rust/target/debug/tracemiku-cli resolve-map-addr /tmp/proc-pid.maps \
 ```
 
 The output gives the mapped path and ELF file offset. Use that offset with
-`llvm-nm`, `readelf`, Binary Ninja, or IDA to name the external helper.
+`resolve-elf-symbol` to name the external helper from a pulled local copy of
+the shared library:
+
+```bash
+rust/target/debug/tracemiku-cli resolve-elf-symbol \
+  /tmp/tracemiku-device-libs/libc.so \
+  0xa0f5c
+```
+
+For the first changing x-sign middle word observed in `call_001`, this resolves
+`libc.so+0xa0f5c` to `stat@@LIBC`. That turns the trace gap into a concrete
+modeling requirement: capture or simulate the pathname plus the `struct stat`
+output bytes that the traced code later reads.
 
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and

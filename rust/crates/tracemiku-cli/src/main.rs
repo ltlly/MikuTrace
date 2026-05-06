@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{bail, Context};
 use axum::body::Body;
@@ -80,6 +81,8 @@ enum Cmd {
     },
     /// Resolve an address against a saved /proc/<pid>/maps file.
     ResolveMapAddr { maps_file: PathBuf, addr: String },
+    /// Resolve an ELF/shared-library virtual offset to the nearest symbol.
+    ResolveElfSymbol { elf_file: PathBuf, offset: String },
     /// GET /api/records.
     Records {
         trace_dir: PathBuf,
@@ -1055,6 +1058,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Cmd::List { path, dir, json }) => cmd_list(path, dir, json),
         Some(Cmd::Info { path, json }) => cmd_info(path, json),
         Some(Cmd::ResolveMapAddr { maps_file, addr }) => cmd_resolve_map_addr(maps_file, addr),
+        Some(Cmd::ResolveElfSymbol { elf_file, offset }) => {
+            cmd_resolve_elf_symbol(elf_file, offset)
+        }
         Some(Cmd::Records {
             trace_dir,
             start,
@@ -10194,6 +10200,28 @@ fn cmd_resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<()> 
     print_pretty(&out)
 }
 
+fn cmd_resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<()> {
+    let offset = parse_u64_str(&offset).with_context(|| format!("invalid offset: {offset}"))?;
+    let (tool, symbols) = elf_symbols_from_nm(&elf_file)
+        .with_context(|| format!("failed to read ELF symbols: {}", elf_file.display()))?;
+    let out = resolve_elf_symbol_json(&symbols, offset).unwrap_or_else(|| {
+        serde_json::json!({
+            "status": "miss",
+            "elf_file": elf_file.display().to_string(),
+            "offset": format!("{offset:#x}"),
+            "symbol_count": symbols.len(),
+            "source_tool": tool,
+        })
+    });
+    let mut obj = out.as_object().cloned().unwrap_or_default();
+    obj.insert(
+        "elf_file".to_string(),
+        serde_json::Value::String(elf_file.display().to_string()),
+    );
+    obj.insert("source_tool".to_string(), serde_json::Value::String(tool));
+    print_pretty(&serde_json::Value::Object(obj))
+}
+
 fn resolve_addr_in_maps_text(text: &str, addr: u64) -> Option<serde_json::Value> {
     for line in text.lines() {
         let mut parts = line.split_whitespace();
@@ -10228,6 +10256,137 @@ fn resolve_addr_in_maps_text(text: &str, addr: u64) -> Option<serde_json::Value>
         }));
     }
     None
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ElfSymbol {
+    addr: u64,
+    size: Option<u64>,
+    kind: String,
+    name: String,
+}
+
+fn elf_symbols_from_nm(elf_file: &Path) -> anyhow::Result<(String, Vec<ElfSymbol>)> {
+    let attempts: &[(&str, &[&str])] = &[
+        ("llvm-nm", &["-D", "--defined-only", "--print-size"]),
+        ("llvm-nm", &["--defined-only", "--print-size"]),
+        ("nm", &["-D", "--defined-only", "--print-size"]),
+        ("nm", &["--defined-only", "--print-size"]),
+    ];
+    let mut errors = Vec::new();
+    for (tool, args) in attempts {
+        match run_nm_command(tool, args, elf_file) {
+            Ok(text) => {
+                let mut symbols = parse_nm_symbols(&text);
+                if !symbols.is_empty() {
+                    symbols.sort_by_key(|sym| sym.addr);
+                    return Ok((format!("{} {}", tool, args.join(" ")), symbols));
+                }
+                errors.push(format!(
+                    "{} {} returned no defined symbols",
+                    tool,
+                    args.join(" ")
+                ));
+            }
+            Err(err) => errors.push(format!("{} {}: {err}", tool, args.join(" "))),
+        }
+    }
+    bail!("{}", errors.join("; "))
+}
+
+fn run_nm_command(tool: &str, args: &[&str], elf_file: &Path) -> anyhow::Result<String> {
+    let output = Command::new(tool)
+        .args(args)
+        .arg(elf_file)
+        .output()
+        .with_context(|| format!("failed to execute {tool}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        bail!(
+            "exit status {}{}",
+            output.status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn parse_nm_symbols(text: &str) -> Vec<ElfSymbol> {
+    text.lines()
+        .filter_map(parse_nm_symbol_line)
+        .collect::<Vec<_>>()
+}
+
+fn parse_nm_symbol_line(line: &str) -> Option<ElfSymbol> {
+    let parts = line.split_whitespace().collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return None;
+    }
+    let addr = u64::from_str_radix(parts[0].trim_start_matches("0x"), 16).ok()?;
+    let (size, kind_idx, name_idx) = if parts.len() >= 4 && is_nm_kind(parts[2]) {
+        (
+            u64::from_str_radix(parts[1].trim_start_matches("0x"), 16).ok(),
+            2usize,
+            3usize,
+        )
+    } else if is_nm_kind(parts[1]) {
+        (None, 1usize, 2usize)
+    } else {
+        return None;
+    };
+    let kind = parts[kind_idx].to_string();
+    if kind.eq_ignore_ascii_case("U") {
+        return None;
+    }
+    let name = parts[name_idx..].join(" ");
+    (!name.is_empty()).then_some(ElfSymbol {
+        addr,
+        size,
+        kind,
+        name,
+    })
+}
+
+fn is_nm_kind(s: &str) -> bool {
+    s.len() == 1 && s.as_bytes()[0].is_ascii_alphabetic()
+}
+
+fn resolve_elf_symbol_json(symbols: &[ElfSymbol], offset: u64) -> Option<serde_json::Value> {
+    let sym = symbols.iter().rev().find(|sym| sym.addr <= offset)?;
+    let delta = offset.saturating_sub(sym.addr);
+    let next = symbols.iter().find(|next| next.addr > sym.addr);
+    let in_size = sym
+        .size
+        .map(|size| delta < size)
+        .or_else(|| next.map(|next| offset < next.addr));
+    Some(serde_json::json!({
+        "status": if delta == 0 { "exact" } else { "nearest" },
+        "offset": format!("{offset:#x}"),
+        "symbol_addr": format!("{:#x}", sym.addr),
+        "symbol_size": sym.size.map(|size| format!("{size:#x}")),
+        "delta": format!("{delta:#x}"),
+        "name": sym.name,
+        "base_name": elf_symbol_base_name(&sym.name),
+        "kind": sym.kind,
+        "in_symbol_range": in_size,
+        "next_symbol_addr": next.map(|sym| format!("{:#x}", sym.addr)),
+        "next_symbol": next.map(|sym| sym.name.clone()),
+        "symbol_count": symbols.len(),
+    }))
+}
+
+fn elf_symbol_base_name(name: &str) -> String {
+    name.split("@@")
+        .next()
+        .unwrap_or(name)
+        .split('@')
+        .next()
+        .unwrap_or(name)
+        .to_string()
 }
 
 fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
@@ -10421,9 +10580,10 @@ mod tests {
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_semantic_byte_equation,
         output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
-        output_semantic_xor_word_templates, recognize_alu_semantic, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
-        store_source_regs_from_asm, vm_ops_state_updates, vm_slot_from_asm,
+        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
+        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol,
     };
 
     #[test]
@@ -11546,6 +11706,32 @@ mod tests {
             serde_json::json!("/apex/com.android.runtime/lib64/bionic/libc.so")
         );
         assert!(resolve_addr_in_maps_text(maps, 0x7601b72790).is_none());
+    }
+
+    #[test]
+    fn resolves_nm_symbols_by_nearest_preceding_offset() {
+        let stat = parse_nm_symbol_line("00000000000a0f5c 0000000000000038 T stat64@@LIBC")
+            .expect("parse stat symbol");
+        assert_eq!(stat.addr, 0xa0f5c);
+        assert_eq!(stat.size, Some(0x38));
+        assert_eq!(stat.name, "stat64@@LIBC");
+
+        let symbols = vec![
+            ElfSymbol {
+                addr: 0x5c4fc,
+                size: Some(0x20),
+                kind: "T".to_string(),
+                name: "free@@LIBC".to_string(),
+            },
+            stat,
+        ];
+        let hit = resolve_elf_symbol_json(&symbols, 0xa0f60).unwrap();
+        assert_eq!(hit["status"], serde_json::json!("nearest"));
+        assert_eq!(hit["symbol_addr"], serde_json::json!("0xa0f5c"));
+        assert_eq!(hit["delta"], serde_json::json!("0x4"));
+        assert_eq!(hit["name"], serde_json::json!("stat64@@LIBC"));
+        assert_eq!(hit["base_name"], serde_json::json!("stat64"));
+        assert_eq!(hit["in_symbol_range"], serde_json::json!(true));
     }
 
     #[test]
