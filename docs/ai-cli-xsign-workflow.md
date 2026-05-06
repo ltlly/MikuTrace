@@ -194,6 +194,10 @@ In `vm-backchain --summary`, the same condition is surfaced under
 `recognized_pattern_summary.memory_boundary_reads[]`. Use this compact field
 first when an AI needs to decide whether a chain can continue automatically or
 needs a wider trace / external metadata hook.
+In `byte-lineage --summary`, the equivalent compact entry is
+`memory_boundaries[]`, which promotes the terminal step, register value, and
+upstream observed bytes / gap-call evidence without requiring a scan of the
+full `chain[]`.
 
 For this boundary case, `vm-backstep` / `byte-lineage` also include
 `upstream.gap_call_candidates`. The scan covers the trace-index gap between the

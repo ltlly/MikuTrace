@@ -8246,6 +8246,24 @@ fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::Value {
                 })
         })
         .collect::<Vec<_>>();
+    let memory_boundaries = chain
+        .iter()
+        .filter_map(|step| {
+            let decision = step.get("decision")?;
+            if decision.get("kind").and_then(|v| v.as_str())
+                != Some("observed_read_without_matching_traced_write")
+            {
+                return None;
+            }
+            Some(serde_json::json!({
+                "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "idx": step.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": step.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "upstream": decision.get("upstream").cloned().unwrap_or(serde_json::Value::Null),
+            }))
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
         "status": lineage.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": lineage.get("start").cloned().unwrap_or(serde_json::Value::Null),
@@ -8253,6 +8271,7 @@ fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::Value {
         "steps_returned": lineage.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
         "stop_reason": compact_lineage_stop_reason(lineage.get("stop_reason")),
         "recognized_semantics": recognized_semantics,
+        "memory_boundaries": memory_boundaries,
         "chain": chain,
     })
 }
@@ -12343,10 +12362,11 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, byte_lane_from_writer_map_entry,
-        byte_writer_map_output, byte_writer_map_summary, byte_writers_from_range_writes,
-        choose_frontier_next, choose_frontier_next_for_lane, choose_laned_upstream_next,
-        classify_vm_asm, compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
-        def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        byte_lineage_summary, byte_writer_map_output, byte_writer_map_summary,
+        byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
+        choose_laned_upstream_next, classify_vm_asm, compact_gap_call_candidates,
+        dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm,
+        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
         gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
         mem_dump_summary, memory_access_width, observed_byte_writer_mismatches, odd_u64_inverse,
         output_map_summary, output_semantic_byte_equation,
@@ -14263,6 +14283,65 @@ mod tests {
         assert_eq!(
             decision["upstream"]["gap_call_candidates"]["candidate_count_total"],
             serde_json::json!(1)
+        );
+    }
+
+    #[test]
+    fn byte_lineage_summary_promotes_memory_boundaries() {
+        let lineage = serde_json::json!({
+            "status": "ready",
+            "start": {"addr": "0x4000", "before_idx": 200},
+            "depth_requested": 8,
+            "steps_returned": 1,
+            "stop_reason": {
+                "kind": "terminal",
+                "decision": {
+                    "kind": "observed_read_without_matching_traced_write"
+                }
+            },
+            "steps": [
+                {
+                    "step": 0,
+                    "kind": "reg_source",
+                    "seed": {"kind": "reg_at", "idx": 200, "reg": "x8"},
+                    "backstep": {
+                        "idx": 200,
+                        "source_reg": "x8",
+                        "source_value": "0x69f2e9fb",
+                        "target": {"idx": 200, "asm": "str x8, [x25]", "class": "vm-reg-store"},
+                        "local_def": {"idx": 199, "asm": "ldr x8, [x1]", "class": "mem-load"},
+                        "upstream": {
+                            "status": "observed_read_without_matching_traced_write",
+                            "addr": "0x4000",
+                            "addr_hi": "0x4008",
+                            "observed_bytes_hex": "fbe9f26900000000",
+                            "observed_mismatches": [
+                                {"addr": "0x4000", "observed_byte": "fb", "writer_byte": "00"}
+                            ],
+                            "last_write": {"idx": 120, "asm": "str x6, [x19]", "src_value": "0x0"}
+                        }
+                    },
+                    "decision": {
+                        "kind": "observed_read_without_matching_traced_write",
+                        "upstream": {
+                            "addr": "0x4000",
+                            "addr_hi": "0x4008",
+                            "observed_bytes_hex": "fbe9f26900000000"
+                        }
+                    },
+                    "next": null
+                }
+            ]
+        });
+        let summary = byte_lineage_summary(&lineage);
+        assert_eq!(summary["memory_boundaries"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            summary["memory_boundaries"][0]["upstream"]["observed_bytes_hex"],
+            serde_json::json!("fbe9f26900000000")
+        );
+        assert_eq!(
+            summary["memory_boundaries"][0]["value"],
+            serde_json::json!("0x69f2e9fb")
         );
     }
 
