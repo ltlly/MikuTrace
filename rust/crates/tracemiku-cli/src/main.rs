@@ -699,6 +699,9 @@ enum Cmd {
         /// Do not percent-decode the textual output before Base64 grouping.
         #[arg(long = "no-url-decode")]
         no_url_decode: bool,
+        /// Emit a compact AI-readable summary.
+        #[arg(long)]
+        summary: bool,
     },
     /// Compact dynamic VM-oriented record slice.
     VmSlice {
@@ -1623,6 +1626,7 @@ async fn main() -> anyhow::Result<()> {
             tree_frontier_with_next,
             lookback,
             no_url_decode,
+            summary,
         }) => {
             let opts = OutputMapOpts {
                 key,
@@ -1640,6 +1644,7 @@ async fn main() -> anyhow::Result<()> {
                 tree_frontier_with_next,
                 lookback,
                 url_decode: !no_url_decode,
+                summary,
             };
             cmd_output_map(trace_dir, opts).await
         }
@@ -2530,7 +2535,7 @@ async fn attach_base64_index_trees_on(
                 opts.lookback,
                 5000,
                 opts.tree_frontier_with_next,
-                "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27".to_string(),
+                "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28".to_string(),
             )
             .await?;
             let summary = index_tree_summary(&tree);
@@ -2676,6 +2681,7 @@ struct OutputMapOpts {
     tree_frontier_with_next: bool,
     lookback: usize,
     url_decode: bool,
+    summary: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -3006,7 +3012,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                         opts.lookback,
                         5000,
                         opts.tree_frontier_with_next,
-                        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27".to_string(),
+                        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28".to_string(),
                     )
                     .await?;
                     trees.push(serde_json::json!({
@@ -3033,7 +3039,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         }));
     }
 
-    print_pretty(&serde_json::json!({
+    let output = serde_json::json!({
         "status": "ready",
         "strategy": "output_base64_group_map",
         "source": source.json,
@@ -3049,7 +3055,133 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "selected_range": selected_range,
         "find_mem_pattern": find,
         "groups": group_rows,
-    }))
+    });
+    if opts.summary {
+        print_pretty(&output_map_summary(&output))
+    } else {
+        print_pretty(&output)
+    }
+}
+
+fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
+    let groups = value
+        .get("groups")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(output_map_group_summary)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "strategy": value.get("strategy").cloned().unwrap_or(serde_json::Value::Null),
+        "source": value.get("source").cloned().unwrap_or(serde_json::Value::Null),
+        "text_len": value.get("text_len").cloned().unwrap_or(serde_json::Value::Null),
+        "group_total": value.get("group_total").cloned().unwrap_or(serde_json::Value::Null),
+        "selected_hit_order": value.get("selected_hit_order").cloned().unwrap_or(serde_json::Value::Null),
+        "selected_hit_rank": value.get("selected_hit_rank").cloned().unwrap_or(serde_json::Value::Null),
+        "selected_range": value.get("selected_range").cloned().unwrap_or(serde_json::Value::Null),
+        "groups": groups,
+    })
+}
+
+fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
+    let indices = group
+        .pointer("/base64/indices")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            serde_json::json!({
+                "pos": item.get("pos").cloned().unwrap_or(serde_json::Value::Null),
+                "char": item.get("char").cloned().unwrap_or(serde_json::Value::Null),
+                "index_hex": item.get("index_hex").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let decoded = group
+        .pointer("/base64/decoded_bytes")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            serde_json::json!({
+                "byte": item.get("byte").cloned().unwrap_or(serde_json::Value::Null),
+                "value_hex": item.get("value_hex").cloned().unwrap_or(serde_json::Value::Null),
+                "formula": item.get("formula").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let lookups = group
+        .get("base64_lookup_matches")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(output_map_lookup_summary)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "group": group.get("group").cloned().unwrap_or(serde_json::Value::Null),
+        "offset": group.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+        "chars": group.get("chars").cloned().unwrap_or(serde_json::Value::Null),
+        "decoded_hex": group.get("decoded_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "indices": indices,
+        "decoded": decoded,
+        "lookups": lookups,
+    })
+}
+
+fn output_map_lookup_summary(lookup: &serde_json::Value) -> serde_json::Value {
+    let matches = lookup
+        .get("matches")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let interesting = item
+                .pointer("/index_summary/interesting_formulas")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .take(6)
+                .map(compact_formula_summary)
+                .collect::<Vec<_>>();
+            let semantic = item
+                .pointer("/index_summary/semantic_formulas")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .take(6)
+                .map(compact_formula_summary)
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "idx": item.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": item.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                "index_reg": item.get("index_reg").cloned().unwrap_or(serde_json::Value::Null),
+                "base_value": item.get("base_value").cloned().unwrap_or(serde_json::Value::Null),
+                "interesting_formulas": interesting,
+                "semantic_formulas": semantic,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "pos": lookup.get("pos").cloned().unwrap_or(serde_json::Value::Null),
+        "char": lookup.get("char").cloned().unwrap_or(serde_json::Value::Null),
+        "index_hex": lookup.get("index_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "match_count": lookup
+            .get("matches")
+            .and_then(|v| v.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0),
+        "matches": matches,
+    })
+}
+
+fn compact_formula_summary(formula: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": formula.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "expression": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic": formula.get("semantic").cloned().unwrap_or(serde_json::Value::Null),
+    })
 }
 
 async fn output_runs_overlapping(
@@ -3435,7 +3567,7 @@ async fn vm_chains_for_writer_runs(
     opts: &OutputBacktraceOpts,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let regs =
-        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27";
+        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28";
     let mut out = Vec::new();
     for run in writer_runs.iter().take(opts.vm_chain_runs) {
         let mut seed_value = run

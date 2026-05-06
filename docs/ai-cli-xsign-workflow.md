@@ -352,6 +352,11 @@ analysis: it picks the first full output buffer and walks backward from there.
 Use `--hit-order nearest` when you specifically want the final buffer handed to
 JNI.
 
+Add `--summary` when the result is meant for an AI prompt or a quick survey
+across many groups. It keeps each group's Base64 indices, decoded bytes, lookup
+match counts, and compact interesting/semantic formulas, while dropping the
+large raw backtree nodes.
+
 Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
 fields to line up a traced alphabet index, for example `i2 = 0x18`, with the
 payload byte formula such as `((i1 & 0x0f) << 4) | (i2 >> 2)`.
