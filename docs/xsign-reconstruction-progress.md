@@ -1020,7 +1020,14 @@ scratch slot25 before #14164280:
 
 [21,25) ladder slot26 before #14015880:
   slot26 = 0x1f7b3460
-  20 compact steps show XOR/shift/mask structure and end at depth_limit
+  compact lineage: 0x1f7b3460 = 0x1fda836e ^ 0x0a1b70e
+  lhs 0x1fda836e loads from static/preinitialized table
+      base 0x74fbf29190 + offset 0x698 = 0x74fbf29828
+  rhs 0x0a1b70e is slot26 previous value shifted right by 8
+  follow-frontier chain exposes more static table seeds:
+    base+0x508 -> 0xa1d1937e
+    base+0x6d0 -> 0x66063bca
+    base+0x600 -> 0x9b64c2b0
 ```
 
 So the seed problem is no longer one undifferentiated fallback bucket. The
@@ -1028,7 +1035,8 @@ pair-store fixes removed a false `slot8` seed and false observed-read
 boundaries. The remaining hard parts are scratch pointer provenance
 (`slot25/28`) and ladder chains (`slot24/26`).
 
-The `slot24` chain now has a concrete external identity: it is derived from
+The `slot24` and `slot26` chains now have concrete boundary identities.
+`slot24` is derived from
 `malloc(0x12)` in Android `libc.so`, not an unknown libsgmainso helper.
 
 ```bash
@@ -1057,6 +1065,21 @@ This turns `slot24` into an allocator-pointer boundary. A portable Python model
 must either parameterize allocator-derived pointer values or prove that later
 VM operations cancel them out across samples; it should not treat
 `0x7599191120` as a stable constant.
+
+`slot26` is now classified as a static-table XOR/shift ladder rather than an
+unexplained depth limit:
+
+```text
+slot26 = 0x1f7b3460
+       = 0x1fda836e ^ 0x0a1b70e
+
+0x1fda836e <- ldr x5, [0x74fbf29190 + 0x698]
+             table addr 0x74fbf29828, no traced writer
+0x0a1b70e  <- 0x0a1b70eb2 >> 8, from previous slot26 chain
+```
+
+So the next portable work is table extraction/labelling and cross-sample
+validation for these static-table words, not just increasing lineage depth.
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:

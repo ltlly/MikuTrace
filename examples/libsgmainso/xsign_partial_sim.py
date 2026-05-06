@@ -2707,9 +2707,27 @@ def vm_replay_seed_provenance_summary() -> dict:
             },
             "slot26": {
                 "value": "0x1f7b3460",
-                "lineage": "XOR/shift/mask chain, depth_limit at 20 compact steps",
-                "terminal": "depth_limit at bitmask_extract value 0xd5",
-                "portable_status": "not_proven",
+                "formula": "0x1f7b3460 = 0x1fda836e ^ 0x0a1b70e",
+                "lhs": {
+                    "value": "0x1fda836e",
+                    "source": "static/preinitialized table load",
+                    "table_base": "0x74fbf29190",
+                    "table_offset": "0x698",
+                    "addr": "0x74fbf29828",
+                    "observed_bytes_hex": "6e83da1f00000000",
+                    "terminal": "memory_not_found_boundary",
+                },
+                "rhs": {
+                    "value": "0x0a1b70e",
+                    "formula": "0x0a1b70e = 0x0a1b70eb2 >> 8",
+                    "source": "previous slot26 chain",
+                },
+                "additional_static_table_seeds": [
+                    {"table_offset": "0x508", "addr": "0x74fbf29698", "value": "0xa1d1937e"},
+                    {"table_offset": "0x6d0", "addr": "0x74fbf29860", "value": "0x66063bca"},
+                    {"table_offset": "0x600", "addr": "0x74fbf29790", "value": "0x9b64c2b0"},
+                ],
+                "portable_status": "static_table_boundary",
             },
             "slot28": {
                 "value": "0x6f",
