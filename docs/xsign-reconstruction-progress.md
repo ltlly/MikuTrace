@@ -188,7 +188,24 @@ tail[6] = 0xd8 ^ 0x61 = 0xb9
 
 These are now emitted directly by `output-map --summary` under
 `semantic_writer_map.byte_equations[]`, together with the adjacent
-`mod255_low_byte` equations for `tail[1]` and `tail[2]`.
+`mod255_low_byte` equations for `tail[1]` and `tail[2]`. The summary also
+collapses this repeated four-byte shape under
+`semantic_writer_map.xor_word_templates[]`, so the AI workflow can consume the
+word-level relation directly:
+
+```json
+{
+  "semantic_range": [3, 7],
+  "lhs_bytes_hex": "67b44ad8",
+  "lhs_word_le": "0xd84ab467",
+  "rhs_pattern": {
+    "kind": "alternating_two_byte_mask",
+    "bytes_hex": "6261",
+    "source_offsets": [1, 2]
+  },
+  "result_bytes_hex": "05d528b9"
+}
+```
 
 Across the five current `traces/diff` samples, these four XORs reduce to a
 stable word template:

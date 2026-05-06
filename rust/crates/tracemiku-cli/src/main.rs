@@ -3842,6 +3842,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .and_then(|v| v.as_array())
         .map(|runs| runs.len())
         .unwrap_or(0);
+    let byte_equations = output_semantic_byte_equations(value);
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_context": value.get("semantic_context").cloned().unwrap_or(serde_json::Value::Null),
@@ -3856,7 +3857,8 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "writer_run_count": writer_run_count,
         "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
-        "byte_equations": output_semantic_byte_equations(value),
+        "byte_equations": byte_equations,
+        "xor_word_templates": output_semantic_xor_word_templates(&byte_equations),
         "vm_chains": output_semantic_vm_chain_summaries(value),
     })
 }
@@ -3924,6 +3926,141 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
         }
     }
     None
+}
+
+#[derive(Clone, Debug)]
+struct CompactByteEquation {
+    offset: u64,
+    kind: String,
+    result: u64,
+    lhs: Option<u64>,
+    rhs: Option<u64>,
+    output_byte: Option<u64>,
+}
+
+fn output_semantic_xor_word_templates(equations: &serde_json::Value) -> serde_json::Value {
+    let mut parsed = equations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(compact_byte_equation)
+        .collect::<Vec<_>>();
+    parsed.sort_by_key(|item| item.offset);
+
+    let mut templates = Vec::new();
+    for window in parsed.windows(4) {
+        if let Some(template) = semantic_xor_word_template(window, &parsed) {
+            templates.push(template);
+        }
+    }
+    serde_json::Value::Array(templates)
+}
+
+fn compact_byte_equation(value: &serde_json::Value) -> Option<CompactByteEquation> {
+    let offset = value.get("offset").and_then(value_as_u64)?;
+    let kind = value.get("kind")?.as_str()?.to_string();
+    let result = value
+        .get("result")
+        .or_else(|| value.get("output_byte"))
+        .and_then(value_as_u64)?;
+    let lhs = value.get("lhs").and_then(value_as_u64);
+    let rhs = value.get("rhs").and_then(value_as_u64);
+    let output_byte = value.get("output_byte").and_then(value_as_u64);
+    Some(CompactByteEquation {
+        offset,
+        kind,
+        result,
+        lhs,
+        rhs,
+        output_byte,
+    })
+}
+
+fn semantic_xor_word_template(
+    window: &[CompactByteEquation],
+    equations: &[CompactByteEquation],
+) -> Option<serde_json::Value> {
+    let start = window.first()?.offset;
+    if !window
+        .iter()
+        .enumerate()
+        .all(|(idx, item)| item.offset == start + idx as u64 && item.kind == "xor_mix")
+    {
+        return None;
+    }
+
+    let lhs = window
+        .iter()
+        .map(|item| item.lhs.map(|v| (v & 0xff) as u8))
+        .collect::<Option<Vec<_>>>()?;
+    let rhs = window
+        .iter()
+        .map(|item| item.rhs.map(|v| (v & 0xff) as u8))
+        .collect::<Option<Vec<_>>>()?;
+    let result = window
+        .iter()
+        .map(|item| (item.result & 0xff) as u8)
+        .collect::<Vec<_>>();
+    if result
+        .iter()
+        .zip(lhs.iter().zip(rhs.iter()))
+        .any(|(out, (l, r))| *out != (*l ^ *r))
+    {
+        return None;
+    }
+
+    let rhs_pattern = if rhs[0] == rhs[2] && rhs[1] == rhs[3] {
+        serde_json::json!({
+            "kind": "alternating_two_byte_mask",
+            "bytes_hex": bytes_to_hex(&rhs[..2]),
+            "repeat_hex": bytes_to_hex(&rhs),
+            "source_offsets": [
+                equation_offset_for_byte(equations, start, rhs[0]),
+                equation_offset_for_byte(equations, start, rhs[1]),
+            ],
+        })
+    } else {
+        serde_json::json!({
+            "kind": "literal_bytes",
+            "bytes_hex": bytes_to_hex(&rhs),
+        })
+    };
+
+    Some(serde_json::json!({
+        "semantic_range": [start, start + 4],
+        "formula": "semantic[start..start+4] = word32_le(lhs_word_le) xor rhs_bytes",
+        "lhs_bytes_hex": bytes_to_hex(&lhs),
+        "lhs_word_le": format!("0x{:08x}", le_word_u32(&lhs)),
+        "rhs_bytes_hex": bytes_to_hex(&rhs),
+        "rhs_word_le": format!("0x{:08x}", le_word_u32(&rhs)),
+        "rhs_pattern": rhs_pattern,
+        "result_bytes_hex": bytes_to_hex(&result),
+        "result_word_le": format!("0x{:08x}", le_word_u32(&result)),
+    }))
+}
+
+fn equation_offset_for_byte(
+    equations: &[CompactByteEquation],
+    before_offset: u64,
+    byte: u8,
+) -> serde_json::Value {
+    equations
+        .iter()
+        .rev()
+        .find(|item| {
+            item.offset < before_offset
+                && (item.output_byte.or(Some(item.result)).unwrap_or_default() & 0xff) as u8 == byte
+        })
+        .map(|item| serde_json::json!(item.offset))
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn le_word_u32(bytes: &[u8]) -> u32 {
+    bytes
+        .iter()
+        .take(4)
+        .enumerate()
+        .fold(0u32, |acc, (idx, byte)| acc | ((*byte as u32) << (idx * 8)))
 }
 
 fn first_hex_byte(hex: &str) -> Option<u8> {
@@ -9185,9 +9322,10 @@ mod tests {
         byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
         choose_laned_upstream_next, classify_vm_asm, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, find_hex_byte_offsets, mem_addr_from_asm, memory_access_width,
-        odd_u64_inverse, output_semantic_byte_equation, recognize_alu_semantic,
-        recognized_backchain_patterns, resolve_addr_in_maps_text, source_byte_for_write_at,
-        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_slot_from_asm,
+        odd_u64_inverse, output_semantic_byte_equation, output_semantic_xor_word_templates,
+        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        vm_slot_from_asm,
     };
 
     #[test]
@@ -9718,6 +9856,65 @@ mod tests {
         assert_eq!(equation["offset"], serde_json::json!(4));
         assert_eq!(equation["kind"], serde_json::json!("xor_mix"));
         assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn summarizes_xor_word_templates_from_byte_equations() {
+        let equations = serde_json::json!([
+            {
+                "offset": 1,
+                "kind": "mod255_low_byte",
+                "output_byte": "0x62",
+                "result": "0x62"
+            },
+            {
+                "offset": 2,
+                "kind": "mod255_low_byte",
+                "output_byte": "0x61",
+                "result": "0x61"
+            },
+            {
+                "offset": 3,
+                "kind": "xor_mix",
+                "lhs": "0x67",
+                "rhs": "0x62",
+                "result": "0x05"
+            },
+            {
+                "offset": 4,
+                "kind": "xor_mix",
+                "lhs": "0xb4",
+                "rhs": "0x61",
+                "result": "0xd5"
+            },
+            {
+                "offset": 5,
+                "kind": "xor_mix",
+                "lhs": "0x4a",
+                "rhs": "0x62",
+                "result": "0x28"
+            },
+            {
+                "offset": 6,
+                "kind": "xor_mix",
+                "lhs": "0xd8",
+                "rhs": "0x61",
+                "result": "0xb9"
+            }
+        ]);
+        let templates = output_semantic_xor_word_templates(&equations);
+        let first = templates.as_array().unwrap().first().unwrap();
+        assert_eq!(first["semantic_range"], serde_json::json!([3, 7]));
+        assert_eq!(first["lhs_word_le"], serde_json::json!("0xd84ab467"));
+        assert_eq!(
+            first["rhs_pattern"]["kind"],
+            serde_json::json!("alternating_two_byte_mask")
+        );
+        assert_eq!(
+            first["rhs_pattern"]["source_offsets"],
+            serde_json::json!([1, 2])
+        );
+        assert_eq!(first["result_bytes_hex"], serde_json::json!("05d528b9"));
     }
 
     #[test]

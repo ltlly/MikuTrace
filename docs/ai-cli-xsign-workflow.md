@@ -155,6 +155,28 @@ without reading the full trace-shaped JSON. The same summary also emits
 such as `xor_mix` and `mod255_low_byte`; this is the first place to look when
 building a Python simulator from trace evidence.
 
+When four consecutive byte equations are XORs, the summary additionally emits
+`semantic_writer_map.xor_word_templates[]`. This is designed for the manual
+"start from generated x-sign and walk upward" flow: it turns rows like
+`byte = lhs ^ mask` into one word-sized relation with little-endian bytes and,
+when applicable, links an alternating two-byte mask back to earlier byte
+equation offsets.
+
+Example shape:
+
+```json
+{
+  "semantic_range": [3, 7],
+  "formula": "semantic[start..start+4] = word32_le(lhs_word_le) xor rhs_bytes",
+  "lhs_word_le": "0xd84ab467",
+  "rhs_pattern": {
+    "kind": "alternating_two_byte_mask",
+    "source_offsets": [1, 2]
+  },
+  "result_bytes_hex": "05d528b9"
+}
+```
+
 ## Backward dataflow path
 
 Trace register provenance from a writer or suspicious finalizer instruction:
