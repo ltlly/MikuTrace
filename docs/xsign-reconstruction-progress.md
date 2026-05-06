@@ -606,6 +606,29 @@ previously hid later byte loads because the records source was capped; the CLI
 now exposes `source_requested`, `source_returned`, and
 `source_maybe_truncated` in both summary modes.
 
+A later probe over the same buffer shows why the index window matters. Around
+`#11454867..#11455168`, the VM writes zeroes back into
+`0x753ddd7fd0..0x753ddd7fdf`:
+
+```text
+11454867  mem[0x753ddd7fd0] = low8(slot[0])   # 0x00
+11454911  mem[0x753ddd7fd1] = low8(slot[25])  # 0x00
+11454921  mem[0x753ddd7fd2] = low8(slot[25])  # 0x00
+11454960  mem[0x753ddd7fd3] = low8(slot[25])  # 0x00
+11455075  mem[0x753ddd7fd0] = 0x0
+11455119  mem[0x753ddd7fd4] = 0x0
+11455125  mem[0x753ddd7fd8] = 0x0
+11455168  mem[0x753ddd7fdc] = 0x0
+```
+
+`byte-writer-map --addr 0x753ddd7fd0 --size 16 --idx-lo 11454800 --idx-hi
+11455200 --summary` returns four 32-bit zero writer runs covering all 16 bytes,
+and `mem-dump --cursor 11455200 --addr 0x753ddd7fd0 --count 32 --summary`
+shows `0000000000000000000000000000000000000000000000000000000076365430`.
+So this later trace segment is a buffer clear/reuse, not the producer for the
+earlier observed `QfYBk7NLPFEMz` bytes. The right reconstruction boundary is
+still the earlier observed read without a matching traced write.
+
 The full 16-writer summary over the table is now compact enough for an AI to
 consume directly:
 
