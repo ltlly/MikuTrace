@@ -723,6 +723,31 @@ enum Cmd {
         #[arg(long)]
         base_ip: Option<String>,
     },
+    /// Group dynamic VM-oriented records into compact virtual instruction slices.
+    VmOps {
+        trace_dir: PathBuf,
+        /// First trace index to include.
+        #[arg(long)]
+        start: usize,
+        /// End trace index, exclusive. Overrides --count.
+        #[arg(long)]
+        end: Option<usize>,
+        /// Number of records when --end is not set.
+        #[arg(long, default_value_t = 300)]
+        count: usize,
+        /// Comma-separated registers to request from /api/records.
+        #[arg(
+            long,
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+        )]
+        regs: String,
+        /// Base VM IP for vm_off. Defaults to the first row's x21.
+        #[arg(long)]
+        base_ip: Option<String>,
+        /// Max VM op groups to return.
+        #[arg(long, default_value_t = 80)]
+        max_ops: usize,
+    },
     /// One backward step through a dynamic VM store/load chain.
     VmBackstep {
         trace_dir: PathBuf,
@@ -1590,6 +1615,15 @@ async fn main() -> anyhow::Result<()> {
             only_vm,
             base_ip,
         }) => cmd_vm_slice(trace_dir, start, end, count, regs, only_vm, base_ip).await,
+        Some(Cmd::VmOps {
+            trace_dir,
+            start,
+            end,
+            count,
+            regs,
+            base_ip,
+            max_ops,
+        }) => cmd_vm_ops(trace_dir, start, end, count, regs, base_ip, max_ops).await,
         Some(Cmd::VmBackstep {
             trace_dir,
             idx,
@@ -3521,6 +3555,57 @@ async fn cmd_vm_slice(
     base_ip: Option<String>,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
+    let (rows, source_returned, inferred_base) =
+        load_vm_rows(trace_dir, start, end, regs, only_vm, base_ip).await?;
+
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "start": start,
+        "end": end,
+        "returned": rows.len(),
+        "source_returned": source_returned,
+        "only_vm": only_vm,
+        "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
+        "records": rows,
+    }))
+}
+
+async fn cmd_vm_ops(
+    trace_dir: PathBuf,
+    start: usize,
+    end: Option<usize>,
+    count: usize,
+    regs: String,
+    base_ip: Option<String>,
+    max_ops: usize,
+) -> anyhow::Result<()> {
+    let end = end.unwrap_or_else(|| start.saturating_add(count));
+    let (rows, source_returned, inferred_base) =
+        load_vm_rows(trace_dir, start, end, regs, true, base_ip).await?;
+    let all_ops = vm_ops_from_rows(&rows);
+    let truncated = all_ops.len() > max_ops;
+    let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
+    print_pretty(&serde_json::json!({
+        "status": "ready",
+        "start": start,
+        "end": end,
+        "source_returned": source_returned,
+        "vm_rows": rows.len(),
+        "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
+        "ops_returned": ops.len(),
+        "truncated": truncated,
+        "ops": ops,
+    }))
+}
+
+async fn load_vm_rows(
+    trace_dir: PathBuf,
+    start: usize,
+    end: usize,
+    regs: String,
+    only_vm: bool,
+    base_ip: Option<String>,
+) -> anyhow::Result<(Vec<serde_json::Value>, usize, Option<u64>)> {
     let count = end.saturating_sub(start);
     let params = vec![
         ("start", start.to_string()),
@@ -3547,17 +3632,7 @@ async fn cmd_vm_slice(
         let next = records.get(pos + 1);
         rows.push(vm_row_from_record(rec, next, inferred_base));
     }
-
-    print_pretty(&serde_json::json!({
-        "status": "ready",
-        "start": start,
-        "end": end,
-        "returned": rows.len(),
-        "source_returned": records.len(),
-        "only_vm": only_vm,
-        "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
-        "records": rows,
-    }))
+    Ok((rows, records.len(), inferred_base))
 }
 
 async fn cmd_vm_backstep(
@@ -4307,6 +4382,239 @@ fn vm_row_from_record(
         "mem_addr": mem_addr.map(|v| format!("{v:#x}")),
         "regs": rec.get("regs").cloned().unwrap_or_else(|| serde_json::json!({})),
     })
+}
+
+fn vm_ops_from_rows(rows: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut groups: Vec<Vec<serde_json::Value>> = Vec::new();
+    let mut current_key: Option<String> = None;
+    for row in rows {
+        let key = row
+            .get("vm_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        if current_key.as_deref() != Some(key.as_str()) {
+            groups.push(Vec::new());
+            current_key = Some(key);
+        }
+        if let Some(group) = groups.last_mut() {
+            group.push(row.clone());
+        }
+    }
+    groups
+        .into_iter()
+        .filter(|group| !group.is_empty())
+        .map(|group| vm_op_from_group(&group))
+        .collect()
+}
+
+fn vm_op_from_group(group: &[serde_json::Value]) -> serde_json::Value {
+    let first = &group[0];
+    let last = group.last().unwrap_or(first);
+    let mut class_counts = BTreeMap::<String, usize>::new();
+    for row in group {
+        let class = row
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        *class_counts.entry(class).or_default() += 1;
+    }
+    let bytecode_reads = group
+        .iter()
+        .filter_map(bytecode_read_summary)
+        .collect::<Vec<_>>();
+    let vm_slot_reads = group
+        .iter()
+        .filter(|row| row.get("class").and_then(|v| v.as_str()) == Some("vm-reg-load"))
+        .filter_map(vm_slot_access_summary)
+        .collect::<Vec<_>>();
+    let vm_slot_writes = group
+        .iter()
+        .filter(|row| row.get("class").and_then(|v| v.as_str()) == Some("vm-reg-store"))
+        .filter_map(vm_slot_access_summary)
+        .collect::<Vec<_>>();
+    let small_byte_loads = group
+        .iter()
+        .filter_map(byte_load_summary)
+        .collect::<Vec<_>>();
+    let memory_stores = group
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.get("class").and_then(|v| v.as_str()),
+                Some("mem-store" | "byte-store")
+            )
+        })
+        .map(memory_access_summary)
+        .collect::<Vec<_>>();
+    let alu_formulas = group.iter().filter_map(row_alu_formula).collect::<Vec<_>>();
+    serde_json::json!({
+        "idx_start": first.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_end": last
+            .get("idx")
+            .and_then(|v| v.as_u64())
+            .map(|idx| serde_json::json!(idx + 1))
+            .unwrap_or(serde_json::Value::Null),
+        "vm_ip": first.get("vm_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_off": first.get("vm_off").cloned().unwrap_or(serde_json::Value::Null),
+        "rows": group.len(),
+        "class_counts": class_counts,
+        "bytecode_reads": bytecode_reads,
+        "vm_slot_reads": vm_slot_reads,
+        "vm_slot_writes": vm_slot_writes,
+        "small_byte_loads": small_byte_loads,
+        "memory_stores": memory_stores,
+        "alu_formulas": alu_formulas,
+        "dispatches": group
+            .iter()
+            .filter(|row| row.get("class").and_then(|v| v.as_str()) == Some("dispatch-branch"))
+            .map(|row| {
+                serde_json::json!({
+                    "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn bytecode_read_summary(row: &serde_json::Value) -> Option<serde_json::Value> {
+    if row.get("class").and_then(|v| v.as_str()) != Some("bytecode-read") {
+        return None;
+    }
+    let asm = row.get("asm").and_then(|v| v.as_str()).unwrap_or("");
+    let width = memory_access_width(asm).min(8);
+    let value = row
+        .pointer("/def/value_after")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let value_u64 = value
+        .as_str()
+        .and_then(parse_u64_str)
+        .or_else(|| value.as_u64());
+    let vm_ip = row
+        .get("vm_ip")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str);
+    let mem_addr = row
+        .get("mem_addr")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str);
+    let offset = vm_ip.zip(mem_addr).map(|(ip, addr)| addr.wrapping_sub(ip));
+    Some(serde_json::json!({
+        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": asm,
+        "reg": row.pointer("/def/reg").cloned().unwrap_or(serde_json::Value::Null),
+        "offset": offset.map(|v| format!("{v:#x}")),
+        "width": width,
+        "value": value,
+        "bytes_le_hex": value_u64.map(|v| {
+            let bytes = v.to_le_bytes();
+            bytes_to_hex(&bytes[..width as usize])
+        }),
+    }))
+}
+
+fn vm_slot_access_summary(row: &serde_json::Value) -> Option<serde_json::Value> {
+    let slot = row.get("vm_slot")?;
+    let class = row.get("class").and_then(|v| v.as_str()).unwrap_or("");
+    let (op, reg, value) = if class == "vm-reg-load" {
+        (
+            "load",
+            row.pointer("/def/reg")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            row.pointer("/def/value_after")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        )
+    } else if class == "vm-reg-store" {
+        let src = row
+            .get("store_src")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first());
+        (
+            "store",
+            src.and_then(|v| v.get("reg"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            src.and_then(|v| v.get("value"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        )
+    } else {
+        return None;
+    };
+    Some(serde_json::json!({
+        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "op": op,
+        "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "slot": slot.get("slot").cloned().unwrap_or(serde_json::Value::Null),
+        "index_reg": slot.get("index_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "index_value": slot.get("index_value").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": reg,
+        "value": value,
+        "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+    }))
+}
+
+fn byte_load_summary(row: &serde_json::Value) -> Option<serde_json::Value> {
+    if row.get("class").and_then(|v| v.as_str()) != Some("byte-load") {
+        return None;
+    }
+    let value = row
+        .pointer("/def/value_after")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)?;
+    (value <= 0xff).then(|| {
+        serde_json::json!({
+            "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+            "reg": row.pointer("/def/reg").cloned().unwrap_or(serde_json::Value::Null),
+            "value": format!("{value:#x}"),
+            "byte_hex": format!("{:02x}", value as u8),
+            "ascii": printable_ascii_char(value as u8),
+            "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        })
+    })
+}
+
+fn memory_access_summary(row: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "class": row.get("class").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        "store_src": row.get("store_src").cloned().unwrap_or_else(|| serde_json::json!([])),
+    })
+}
+
+fn row_alu_formula(row: &serde_json::Value) -> Option<serde_json::Value> {
+    if row.get("class").and_then(|v| v.as_str()) != Some("alu") {
+        return None;
+    }
+    let asm = row.get("asm").and_then(|v| v.as_str())?;
+    let result = row.pointer("/def/value_after").and_then(|v| v.as_str())?;
+    let operands = row
+        .pointer("/def/src")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let operand_values = operands
+        .iter()
+        .filter_map(|operand| operand.get("value").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let expression = alu_expression_from_asm(asm, result, &operand_values)?;
+    Some(serde_json::json!({
+        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": asm,
+        "reg": row.pointer("/def/reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": result,
+        "expression": expression,
+        "operands": operands,
+    }))
 }
 
 async fn upstream_writer_for_def_on(

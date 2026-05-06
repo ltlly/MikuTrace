@@ -351,6 +351,24 @@ The summary drops the raw node tree and keeps the parts that matter for
 result-to-input analysis: `word_loads`, Base64 table lookups, low-noise
 formulas, small byte loads, bytecode-read frontiers, and terminal nodes.
 
+When a tree stops at bytecode-read frontiers, inspect the dynamic VM execution as
+virtual operations:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops <call_dir> \
+  --start <idx_before_frontier> \
+  --end <idx_after_frontier> \
+  --max-ops 40
+```
+
+`vm-ops` groups contiguous native records by `x21`/`vm_ip`. Each group reports
+bytecode immediate reads, VM slot reads/writes, small byte loads, memory stores,
+dispatch branches, and ALU formulas. This is the layer to use after
+`vm-backtree --summary` reaches bytecode frontiers: it turns interpreter noise
+into a compact sequence such as "load byte 0x0a into slot 16", "load byte 0x62
+into slot 17", "compute 0x29 = (0x0a << 2) | (0x62 >> 6)", and "lookup Base64
+char p".
+
 For a shorter AI prompt, use `highlights.word_loads` and
 `highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses
 byte writers into `ascii`/`bytes_hex`; `table_lookups` reports the Base64

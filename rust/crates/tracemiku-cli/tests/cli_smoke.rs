@@ -176,6 +176,40 @@ fn make_word_load_byte_branch_trace(root: &std::path::Path, name: &str) -> PathB
     dir
 }
 
+fn set_trace_reg(buf: &mut [u8], rec: usize, reg: usize, value: u64) {
+    let off = rec * 272 + 8 + reg * 8;
+    buf[off..off + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn make_vm_ops_trace(root: &std::path::Path, name: &str) -> PathBuf {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let insts: [u32; 5] = [
+        0x394016a6, // ldrb w6, [x21, #5]
+        0xf8667b28, // ldr x8, [x25, x6, lsl #3]
+        0xf94006ae, // ldr x14, [x21, #8]
+        0xf8256b21, // str x1, [x25, x5]
+        0xd61f0100, // br x8
+    ];
+    let mut buf = vec![0u8; 272 * insts.len()];
+    for (idx, inst) in insts.iter().enumerate() {
+        let off = idx * 272;
+        buf[off..off + 8].copy_from_slice(&(0x100000u64 + idx as u64 * 4).to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        set_trace_reg(&mut buf, idx, 21, 0x5000);
+        set_trace_reg(&mut buf, idx, 25, 0x7000);
+    }
+    set_trace_reg(&mut buf, 1, 6, 0x3);
+    set_trace_reg(&mut buf, 2, 8, 0x1234);
+    set_trace_reg(&mut buf, 3, 1, 0xaa);
+    set_trace_reg(&mut buf, 3, 5, 0x18);
+    set_trace_reg(&mut buf, 3, 14, 0x1122_3344_5566_7788);
+    set_trace_reg(&mut buf, 4, 8, 0x1234);
+    std::fs::write(dir.join("trace.bin"), &buf).unwrap();
+    std::fs::write(dir.join("meta.json"), r#"{"records":5}"#).unwrap();
+    dir
+}
+
 #[test]
 fn info_json_reports_call_shape() {
     let (_tmp, cd) = synth_call_dir();
@@ -728,6 +762,35 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
     assert_eq!(summary["nodes_returned"], 5);
     assert!(summary.get("nodes").is_none());
     assert_eq!(summary["highlights"]["word_loads"][0]["ascii"], "ABCD");
+}
+
+#[test]
+fn vm_ops_groups_rows_by_vm_ip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_vm_ops_trace(tmp.path(), "run1");
+    let v = run_json(&[
+        "vm-ops".into(),
+        cd.display().to_string(),
+        "--start".into(),
+        "0".into(),
+        "--end".into(),
+        "5".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["ops_returned"], 1);
+    let op = &v["ops"][0];
+    assert_eq!(op["vm_ip"], "0x5000");
+    assert_eq!(op["bytecode_reads"][0]["offset"], "0x5");
+    assert_eq!(op["bytecode_reads"][0]["width"], 1);
+    assert_eq!(op["bytecode_reads"][0]["value"], "0x3");
+    assert_eq!(op["bytecode_reads"][1]["offset"], "0x8");
+    assert_eq!(op["bytecode_reads"][1]["width"], 8);
+    assert_eq!(op["bytecode_reads"][1]["bytes_le_hex"], "8877665544332211");
+    assert_eq!(op["vm_slot_reads"][0]["slot"], 3);
+    assert_eq!(op["vm_slot_reads"][0]["value"], "0x1234");
+    assert_eq!(op["vm_slot_writes"][0]["slot"], 3);
+    assert_eq!(op["vm_slot_writes"][0]["value"], "0xaa");
+    assert_eq!(op["dispatches"][0]["idx"], 4);
 }
 
 #[test]
