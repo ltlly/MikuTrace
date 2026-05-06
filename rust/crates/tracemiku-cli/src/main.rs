@@ -352,6 +352,12 @@ enum Cmd {
         count: usize,
         #[arg(long)]
         cursor: Option<u64>,
+        /// Emit compact hex/ascii fields instead of only per-byte entries.
+        #[arg(long)]
+        summary: bool,
+        /// Interpret the range as a NUL-terminated C string.
+        #[arg(long)]
+        cstr: bool,
     },
     /// GET /api/last-write-of-addr.
     LastWriteOfAddr {
@@ -1470,12 +1476,20 @@ async fn main() -> anyhow::Result<()> {
             addr,
             count,
             cursor,
+            summary,
+            cstr,
         }) => {
             let mut params = vec![("addr", addr), ("count", count.to_string())];
             if let Some(cursor) = cursor {
                 params.push(("cursor", cursor.to_string()));
             }
-            route_get_json(trace_dir, route_path("/api/mem-dump", &params)).await
+            let path = route_path("/api/mem-dump", &params);
+            if summary || cstr {
+                let value = route_get_json_value(trace_dir, path).await?;
+                print_pretty(&mem_dump_summary(&value, cstr))
+            } else {
+                route_get_json(trace_dir, path).await
+            }
         }
         Some(Cmd::LastWriteOfAddr {
             trace_dir,
@@ -9572,6 +9586,62 @@ fn compact_byte_writer_chain(chain: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+fn mem_dump_summary(response: &serde_json::Value, cstr: bool) -> serde_json::Value {
+    let bytes = response
+        .get("bytes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let byte_values = bytes
+        .iter()
+        .map(|entry| entry.get("byte").and_then(|v| v.as_u64()).map(|b| b as u8))
+        .collect::<Vec<_>>();
+    let known_count = byte_values.iter().filter(|byte| byte.is_some()).count();
+    let bytes_hex = byte_values
+        .iter()
+        .map(|byte| {
+            byte.map(|value| format!("{value:02x}"))
+                .unwrap_or_else(|| "..".to_string())
+        })
+        .collect::<String>();
+    let ascii = byte_values
+        .iter()
+        .map(|byte| {
+            byte.and_then(printable_ascii_char)
+                .unwrap_or_else(|| ".".to_string())
+        })
+        .collect::<String>();
+    let nul_offset = byte_values.iter().position(|byte| matches!(byte, Some(0)));
+    let c_string = if cstr {
+        let raw = byte_values
+            .iter()
+            .take(nul_offset.unwrap_or(byte_values.len()))
+            .filter_map(|byte| *byte)
+            .collect::<Vec<_>>();
+        serde_json::Value::String(String::from_utf8_lossy(&raw).into_owned())
+    } else {
+        serde_json::Value::Null
+    };
+    serde_json::json!({
+        "status": response.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "addr": response.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+        "count": response.get("count").cloned().unwrap_or(serde_json::Value::Null),
+        "cursor": response.get("cursor").cloned().unwrap_or(serde_json::Value::Null),
+        "known_byte_count": known_count,
+        "bytes_hex": bytes_hex,
+        "ascii": ascii,
+        "c_string": c_string,
+        "c_string_terminated": if cstr {
+            serde_json::Value::Bool(nul_offset.is_some())
+        } else {
+            serde_json::Value::Null
+        },
+        "nul_offset": nul_offset
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null),
+    })
+}
+
 async fn hash_candidate_byte_map(
     app: &axum::Router,
     candidate: &serde_json::Value,
@@ -11573,7 +11643,7 @@ mod tests {
         choose_frontier_next, choose_frontier_next_for_lane, choose_laned_upstream_next,
         classify_vm_asm, compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, find_hex_byte_offsets, gap_call_candidate_from_record,
-        lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
+        lineage_next_from_backstep, mem_addr_from_asm, mem_dump_summary, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
         output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
@@ -12931,6 +13001,28 @@ mod tests {
             serde_json::json!("str w16, [x2]")
         );
         assert!(summary.get("bytes").is_none());
+    }
+
+    #[test]
+    fn summarizes_mem_dump_as_c_string() {
+        let response = serde_json::json!({
+            "status": "ready",
+            "addr": "0x1000",
+            "count": 4,
+            "cursor": 10,
+            "bytes": [
+                {"addr": "0x1000", "byte": 47, "kind": "r", "src_idx": 1},
+                {"addr": "0x1001", "byte": 0, "kind": "r", "src_idx": 1},
+                {"addr": "0x1002", "byte": null, "kind": "missing", "src_idx": null},
+                {"addr": "0x1003", "byte": 65, "kind": "r", "src_idx": 2}
+            ]
+        });
+        let summary = mem_dump_summary(&response, true);
+        assert_eq!(summary["bytes_hex"], serde_json::json!("2f00..41"));
+        assert_eq!(summary["ascii"], serde_json::json!("/..A"));
+        assert_eq!(summary["c_string"], serde_json::json!("/"));
+        assert_eq!(summary["c_string_terminated"], serde_json::json!(true));
+        assert_eq!(summary["nul_offset"], serde_json::json!(1));
     }
 
     #[test]

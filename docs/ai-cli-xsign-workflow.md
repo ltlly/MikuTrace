@@ -220,12 +220,24 @@ Without `--cursor`, it shows the final MemShadow state:
 rust/target/debug/tracemiku-cli mem-dump <call_dir> \
   --addr <addr> \
   --count 128 \
-  --cursor <idx>
+  --cursor <idx> \
+  --summary
 ```
 
 This is useful for external-call parameters, such as reading a C string or
 output structure around the call boundary rather than after the buffer has been
 reused later in the trace.
+
+For a pointer argument that should be a C string, add `--cstr`; it emits
+`c_string`, `nul_offset`, and whether the terminator was observed:
+
+```bash
+rust/target/debug/tracemiku-cli mem-dump <call_dir> \
+  --addr <char_ptr> \
+  --count 256 \
+  --cursor <call_idx> \
+  --cstr
+```
 
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly

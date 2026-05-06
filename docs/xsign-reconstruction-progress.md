@@ -559,6 +559,21 @@ rust/target/debug/tracemiku-cli resolve-elf-symbol \
   0xa0f5c
 ```
 
+Read the pathname argument at the call boundary:
+
+```bash
+rust/target/debug/tracemiku-cli mem-dump \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --addr 0x753dcfeac0 \
+  --count 64 \
+  --cursor 13980120 \
+  --cstr
+```
+
+This returns `c_string="/"`. The terminator is not observed in the selected
+MemShadow cursor window, so `c_string_terminated=false`; the known byte is still
+enough to identify the pathname argument as root.
+
 On the current device libc this returns `stat@@LIBC` exactly. So the first
 middle word `fbe9f269` is most likely bytes from a `struct stat` output buffer
 written inside libc, outside the current instruction-level trace coverage. The
