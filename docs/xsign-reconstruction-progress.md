@@ -815,7 +815,7 @@ semantic range `[16,59)`:
 
 ```text
 [16,21) formula_validated_stat_mtim_static_byte  fbe9f26979
-[21,25) trace_produced_table_word_pending_upstream ecf29541
+[21,25) vm_xor_ladder_from_static_table_seed_pending_lift ecf29541
 [25,49) traced_formula_only                     f60193b34b3c510ccc029de339cec2953090237cbfa4f43b
 [49,57) memory_boundary_read                    a0444a342344c59b
 [57,59) traced_formula_only                     c569
@@ -837,9 +837,23 @@ tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe08 \
 #14019868 str w1, [x19, x6] writes 79ecf295 at 0x74b68bcc24
 ```
 
-So this segment is trace-produced, not a confirmed static table constant. The
-next open question is the upstream source of `#14019868`: portable formula, VM
-table value, or external input.
+A deeper probe from `#14019868` no longer hits an external boundary. It walks
+120 lineage steps through repeated VM slot copies and formulas:
+
+```text
+formula_kind_counts: xor_mix=23, shift_left=11, bitmask_extract=10, or_identity=1
+0x95f2ec79 = 0x90d2d669 ^ 0x5203a10
+static table loads include:
+  0x74fbf29208 -> 0x90bf1d91
+  0x74fbf29238 -> 0x6ddde4eb
+  0x74fbf29888 -> 0x166ccf45
+  ...
+  0x74fbf297c8 -> 0x05005713
+```
+
+So this segment is trace-produced by a VM XOR/shift/mask ladder over static
+table seeds, not a confirmed external input. The next open question is lifting
+that ladder into portable Python opcode replay or a compact formula.
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
@@ -889,7 +903,7 @@ opaque/non-portable middle-lhs segments.
 Those opaque inputs now include next CLI probes in the JSON output:
 
 ```text
-[21,25) trace_produced_table_word -> byte-lineage upstream #14019868
+[21,25) vm_xor_ladder_static_seed -> vm-ops role-bound replay
 [25,49), [57,59) traced_formula_only -> vm-ops role-bound replay
 [49,57) memory_boundary_text -> byte-lineage boundary confirmation
 ```
