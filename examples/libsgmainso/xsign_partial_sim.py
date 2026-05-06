@@ -1627,6 +1627,57 @@ def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
     }
 
 
+def call001_middle_lhs_source_manifest() -> dict:
+    semantic_start = 16
+    scratch_start = 3
+    middle = call001_lhs_run_bytes({"source": "stat_mtim_le_plus_mixed_suffix"})
+    scratch_end = scratch_start + len(middle)
+    segments = [
+        {
+            "semantic_range": [16, 21],
+            "scratch_offsets": [3, 8],
+            "source_class": "formula_validated_stat_mtim_static_byte",
+            "bytes_hex": call001_scratch_lhs_prefix_bytes().hex(),
+            "inputs": ["stat('/').st_mtim.tv_sec", "static_byte_0x79"],
+        }
+    ]
+    for item in TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY["cli_vm_source_ranges"]:
+        start, end_inclusive = item["offsets_inclusive"]
+        end = end_inclusive + 1
+        overlap_start = max(start, scratch_start + len(call001_scratch_lhs_prefix_bytes()))
+        overlap_end = min(end, scratch_end)
+        if overlap_start >= overlap_end:
+            continue
+        rel_start = overlap_start - scratch_start
+        rel_end = overlap_end - scratch_start
+        row = {
+            "semantic_range": [semantic_start + rel_start, semantic_start + rel_end],
+            "scratch_offsets": [overlap_start, overlap_end],
+            "source_class": item["source_class"],
+            "bytes_hex": middle[rel_start:rel_end].hex(),
+        }
+        if item["source_class"] == "memory_boundary_read":
+            row["boundary_values"] = item.get("boundary_values") or [
+                item.get("boundary_value")
+            ]
+        if item["source_class"] == "static_memory_load_constant":
+            row["static_memory_load_count"] = item.get("static_memory_load_count")
+            row["first_static_addr"] = item.get("first_static_addr")
+        if item["source_class"] == "traced_formula_only":
+            row["writer_idxs"] = item.get("writer_idxs")
+        segments.append(row)
+    covered = sum(item["semantic_range"][1] - item["semantic_range"][0] for item in segments)
+    return {
+        "semantic_range": [semantic_start, semantic_start + len(middle)],
+        "scratch_offsets": [scratch_start, scratch_end],
+        "bytes_hex": middle.hex(),
+        "segments": segments,
+        "covered_bytes": covered,
+        "expected_bytes": len(middle),
+        "complete": covered == len(middle),
+    }
+
+
 def xor_mix(lhs: int, rhs: int) -> int:
     return (lhs ^ rhs) & 0xFF
 
@@ -1907,6 +1958,7 @@ def main() -> None:
     ]
     scratch_vm_opcode_validation = validate_scratch_vm_opcode_samples()
     scratch_lhs_prefix_formula = reconstruct_call001_scratch_lhs_prefix_from_sources()
+    middle_lhs_source_manifest = call001_middle_lhs_source_manifest()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -2280,6 +2332,7 @@ def main() -> None:
             "scratch_table_writer_chain_summary": TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY,
             "scratch_vm_opcode_validation": scratch_vm_opcode_validation,
             "scratch_lhs_prefix_formula": scratch_lhs_prefix_formula,
+            "middle_lhs_source_manifest": middle_lhs_source_manifest,
             "vm_byte_load_boundaries": TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES,
             "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,
             "multi_sample_mask_folds": {

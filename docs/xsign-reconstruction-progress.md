@@ -810,6 +810,20 @@ semantic lhs starts at scratch+3                             = fbe9f26979
 bytes before appending the remaining traced mixed suffix, while preserving the
 existing call_001 tail reconstruction match.
 
+The simulator also emits a machine-readable `middle_lhs_source_manifest` for
+semantic range `[16,59)`:
+
+```text
+[16,21) formula_validated_stat_mtim_static_byte  fbe9f26979
+[21,25) static_memory_load_constant             ecf29541
+[25,49) traced_formula_only                     f60193b34b3c510ccc029de339cec2953090237cbfa4f43b
+[49,57) memory_boundary_read                    a0444a342344c59b
+[57,59) traced_formula_only                     c569
+```
+
+This covers 43/43 middle lhs bytes and keeps the remaining work segment-scoped
+instead of one opaque hex blob.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and
