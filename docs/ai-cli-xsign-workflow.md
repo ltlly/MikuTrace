@@ -369,6 +369,24 @@ into a compact sequence such as "load byte 0x0a into slot 16", "load byte 0x62
 into slot 17", "compute 0x29 = (0x0a << 2) | (0x62 >> 6)", and "lookup Base64
 char p".
 
+For a specific scratch byte, use `byte-lineage` to automate the repeated
+last-write/backstep loop:
+
+```bash
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
+  --addr <byte_addr> \
+  --before-idx <consumer_idx> \
+  --depth 12 \
+  --lookback 1200000
+```
+
+The command alternates between `/api/last-write-of-addr` and `vm-backstep`.
+When there is one upstream byte source it continues automatically; when the
+source becomes an ALU expression with multiple operands or another branch point,
+it stops with explicit frontier candidates. This is the preferred way to walk
+from a Base64 scratch byte toward the actual payload byte, hash digest, fixed
+table, or JNI input without silently choosing the wrong branch.
+
 For a shorter AI prompt, use `highlights.word_loads` and
 `highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses
 byte writers into `ascii`/`bytes_hex`; `table_lookups` reports the Base64

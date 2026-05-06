@@ -339,14 +339,40 @@ This confirms the Base64 stage is standard, but the current source bytes are
 not yet business payload fields; they are copied through VM-managed scratch
 buffers before alphabet lookup.
 
+The same chain can now be reproduced with:
+
+```bash
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
+  --addr 0x74b68bcc1e \
+  --before-idx 14731017 \
+  --depth 8 \
+  --lookback 1200000
+```
+
+For the `0x62` path, this follows:
+
+```text
+0x74b68bcc1e <- strb@14723253 x14=0x62
+slot28       <- str@14723221 x3=0x62
+0x74b68bbcff <- strb@13946358 x14=0x757524ef62
+slot2        <- str@13946347 x15=0x757524ef62
+stop: x15 = x13 + x14, frontier x13=0x74ffafca73 and x14=0x757524ef
+```
+
+This is the current boundary: the byte lineage now reaches an ALU branch instead
+of a single memory source. The next pass should follow both frontier operands and
+classify whether they are pointer arithmetic, encoded payload state, or constant
+tables.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next
 work item is to trace Base64 table index registers back to payload bytes and
 record the VM bytecode pattern that maps three payload bytes into four alphabet
 indexes. The immediate next target is to follow the `0x0a`/`0x62` scratch byte
-lineage one level earlier until it reaches either a JNI input byte, a hash
-digest/finalizer output, a fixed table, or a bytecode immediate. Once that
+lineage through the new `byte-lineage` frontiers until it reaches either a JNI
+input byte, a hash digest/finalizer output, a fixed table, or a bytecode
+immediate. Once that
 mapping is isolated, the Python simulator should implement:
 
 1. build the 76-byte payload,

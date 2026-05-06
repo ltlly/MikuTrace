@@ -785,6 +785,29 @@ fn vm_backstep_uses_target_row_when_it_defines_requested_reg() {
 }
 
 #[test]
+fn byte_lineage_starts_from_last_memory_writer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
+    let v = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--before-idx".into(),
+        "4".into(),
+        "--depth".into(),
+        "3".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["steps"][0]["kind"], "last_write");
+    assert_eq!(v["steps"][0]["write"]["writer_idx"], 0);
+    assert_eq!(v["steps"][0]["write"]["src_value"], "0x41");
+    assert_eq!(v["steps"][0]["next"]["idx"], 0);
+    assert_eq!(v["steps"][1]["kind"], "reg_source");
+    assert_eq!(v["steps"][1]["backstep"]["source_reg"], "x0");
+}
+
+#[test]
 fn vm_ops_groups_rows_by_vm_ip() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_vm_ops_trace(tmp.path(), "run1");

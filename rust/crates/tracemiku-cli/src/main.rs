@@ -748,6 +748,34 @@ enum Cmd {
         #[arg(long, default_value_t = 80)]
         max_ops: usize,
     },
+    /// Follow a single byte backward through memory writes and VM source registers.
+    ByteLineage {
+        trace_dir: PathBuf,
+        /// Memory byte address to start from.
+        #[arg(long)]
+        addr: String,
+        /// Find the last write strictly before this trace index.
+        #[arg(long)]
+        before_idx: usize,
+        /// Max lineage steps.
+        #[arg(long, default_value_t = 12)]
+        depth: usize,
+        /// Local records to inspect before each writer idx.
+        #[arg(long, default_value_t = 120)]
+        context: usize,
+        /// How far back to scan memory writers for each discovered source.
+        #[arg(long, default_value_t = 200000)]
+        lookback: usize,
+        /// Max memory writes to collect while looking for the last one.
+        #[arg(long, default_value_t = 5000)]
+        max_writes: usize,
+        /// Comma-separated registers to request from /api/records.
+        #[arg(
+            long,
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+        )]
+        regs: String,
+    },
     /// One backward step through a dynamic VM store/load chain.
     VmBackstep {
         trace_dir: PathBuf,
@@ -1624,6 +1652,21 @@ async fn main() -> anyhow::Result<()> {
             base_ip,
             max_ops,
         }) => cmd_vm_ops(trace_dir, start, end, count, regs, base_ip, max_ops).await,
+        Some(Cmd::ByteLineage {
+            trace_dir,
+            addr,
+            before_idx,
+            depth,
+            context,
+            lookback,
+            max_writes,
+            regs,
+        }) => {
+            cmd_byte_lineage(
+                trace_dir, addr, before_idx, depth, context, lookback, max_writes, regs,
+            )
+            .await
+        }
         Some(Cmd::VmBackstep {
             trace_dir,
             idx,
@@ -3649,6 +3692,26 @@ async fn cmd_vm_backstep(
     print_pretty(&value)
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn cmd_byte_lineage(
+    trace_dir: PathBuf,
+    addr: String,
+    before_idx: usize,
+    depth: usize,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    regs: String,
+) -> anyhow::Result<()> {
+    let addr = parse_u64_str(&addr).with_context(|| format!("parse addr {addr}"))?;
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let value = byte_lineage_value_on(
+        &app, addr, before_idx, depth, context, lookback, max_writes, regs,
+    )
+    .await?;
+    print_pretty(&value)
+}
+
 async fn cmd_vm_backchain(
     trace_dir: PathBuf,
     idx: usize,
@@ -4112,6 +4175,222 @@ fn compact_tree_node_summary(node: &serde_json::Value) -> serde_json::Value {
         },
         "upstream_status": node.pointer("/upstream/status").cloned().unwrap_or(serde_json::Value::Null),
         "via_kind": node.pointer("/via/kind").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+enum LineageSeed {
+    AddrBefore { addr: u64, before_idx: usize },
+    RegAt { idx: usize, reg: String },
+}
+
+impl LineageSeed {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::AddrBefore { addr, before_idx } => serde_json::json!({
+                "kind": "addr_before",
+                "addr": format!("{addr:#x}"),
+                "before_idx": before_idx,
+            }),
+            Self::RegAt { idx, reg } => serde_json::json!({
+                "kind": "reg_at",
+                "idx": idx,
+                "reg": reg,
+            }),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn byte_lineage_value_on(
+    app: &axum::Router,
+    addr: u64,
+    before_idx: usize,
+    depth: usize,
+    context: usize,
+    lookback: usize,
+    max_writes: usize,
+    regs: String,
+) -> anyhow::Result<serde_json::Value> {
+    let mut seed = LineageSeed::AddrBefore { addr, before_idx };
+    let mut steps = Vec::new();
+    let mut seen = HashSet::new();
+    let mut stop_reason = serde_json::json!({"kind": "depth_limit"});
+    for step_idx in 0..depth {
+        let seed_json = seed.to_json();
+        let key = seed_json.to_string();
+        if !seen.insert(key) {
+            stop_reason = serde_json::json!({
+                "kind": "cycle",
+                "seed": seed_json,
+            });
+            break;
+        }
+        match seed {
+            LineageSeed::AddrBefore { addr, before_idx } => {
+                let write = last_write_of_addr_on(app, addr, before_idx).await?;
+                let next_seed = write
+                    .get("writer_idx")
+                    .and_then(|v| v.as_u64())
+                    .zip(write.get("src_reg").and_then(|v| v.as_str()))
+                    .map(|(idx, reg)| LineageSeed::RegAt {
+                        idx: idx as usize,
+                        reg: reg.to_string(),
+                    });
+                let next_json = next_seed.as_ref().map(LineageSeed::to_json);
+                steps.push(serde_json::json!({
+                    "step": step_idx,
+                    "seed": seed_json,
+                    "kind": "last_write",
+                    "write": write,
+                    "next": next_json,
+                }));
+                if let Some(next) = next_seed {
+                    seed = next;
+                } else {
+                    stop_reason = serde_json::json!({
+                        "kind": "no_writer_source",
+                    });
+                    break;
+                }
+            }
+            LineageSeed::RegAt { idx, ref reg } => {
+                let backstep = vm_backstep_value_on(
+                    app,
+                    idx,
+                    Some(reg.clone()),
+                    context,
+                    lookback,
+                    max_writes,
+                    regs.clone(),
+                )
+                .await?;
+                let (next_seed, decision) = lineage_next_from_backstep(&backstep);
+                let next_json = next_seed.as_ref().map(LineageSeed::to_json);
+                steps.push(serde_json::json!({
+                    "step": step_idx,
+                    "seed": seed_json,
+                    "kind": "reg_source",
+                    "backstep": compact_lineage_backstep(&backstep),
+                    "decision": decision,
+                    "next": next_json,
+                }));
+                if let Some(next) = next_seed {
+                    seed = next;
+                } else {
+                    stop_reason = serde_json::json!({
+                        "kind": "terminal",
+                        "decision": decision,
+                    });
+                    break;
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "status": "ready",
+        "start": {
+            "addr": format!("{addr:#x}"),
+            "before_idx": before_idx,
+        },
+        "depth_requested": depth,
+        "steps_returned": steps.len(),
+        "stop_reason": stop_reason,
+        "steps": steps,
+    }))
+}
+
+async fn last_write_of_addr_on(
+    app: &axum::Router,
+    addr: u64,
+    before_idx: usize,
+) -> anyhow::Result<serde_json::Value> {
+    let params = vec![
+        ("addr", format!("{addr:#x}")),
+        ("before_idx", before_idx.to_string()),
+    ];
+    route_get_json_value_on(app, route_path("/api/last-write-of-addr", &params)).await
+}
+
+fn lineage_next_from_backstep(
+    backstep: &serde_json::Value,
+) -> (Option<LineageSeed>, serde_json::Value) {
+    let upstream_next = backstep
+        .get("upstream")
+        .and_then(|v| v.get("next"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if let Some(seed) = lineage_seed_from_next(&upstream_next) {
+        return (
+            Some(seed),
+            serde_json::json!({
+                "kind": "upstream_next",
+                "next": upstream_next,
+            }),
+        );
+    }
+    let byte_nexts = backstep
+        .get("upstream")
+        .and_then(|v| v.get("byte_nexts"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if byte_nexts.len() == 1 {
+        let next = byte_nexts[0].clone();
+        if let Some(seed) = lineage_seed_from_next(&next) {
+            return (
+                Some(seed),
+                serde_json::json!({
+                    "kind": "single_byte_next",
+                    "next": next,
+                }),
+            );
+        }
+    }
+    if byte_nexts.len() > 1 {
+        return (
+            None,
+            serde_json::json!({
+                "kind": "branch_required",
+                "reason": "multiple byte upstream candidates",
+                "byte_nexts": byte_nexts,
+            }),
+        );
+    }
+    (
+        None,
+        serde_json::json!({
+            "kind": "stop",
+            "upstream_status": backstep.pointer("/upstream/status").cloned().unwrap_or(serde_json::Value::Null),
+            "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
+        }),
+    )
+}
+
+fn lineage_seed_from_next(next: &serde_json::Value) -> Option<LineageSeed> {
+    let idx = next.get("idx")?.as_u64()? as usize;
+    let reg = next.get("reg")?.as_str()?.to_string();
+    Some(LineageSeed::RegAt { idx, reg })
+}
+
+fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_json::Value {
+    let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "status": backstep.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "source_reg": backstep.get("source_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "source_value": backstep.get("source_value").cloned().unwrap_or(serde_json::Value::Null),
+        "target": compact_vm_row(backstep.get("target")),
+        "local_def": compact_vm_row(backstep.get("local_def")),
+        "upstream": {
+            "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
+            "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+            "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+            "addr_hi": upstream.get("addr_hi").cloned().unwrap_or(serde_json::Value::Null),
+            "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
+            "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
+            "byte_nexts": upstream.get("byte_nexts").cloned().unwrap_or_else(|| serde_json::json!([])),
+        },
+        "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
 }
 
