@@ -4169,9 +4169,8 @@ fn highlight_table_lookup(node: &serde_json::Value) -> Option<serde_json::Value>
     if !asm.contains('[') {
         return None;
     }
-    let index = node
-        .get("frontier_nexts")
-        .and_then(|v| v.as_array())?
+    let frontier_nexts = node.get("frontier_nexts").and_then(|v| v.as_array())?;
+    let index = frontier_nexts
         .iter()
         .filter_map(|next| {
             let value = next
@@ -4181,11 +4180,24 @@ fn highlight_table_lookup(node: &serde_json::Value) -> Option<serde_json::Value>
             (value <= 0x3f).then_some((next, value))
         })
         .min_by_key(|(_, value)| *value)?;
+    let base = frontier_nexts
+        .iter()
+        .filter_map(|next| {
+            let value = next
+                .get("src_value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str)?;
+            (value > 0x1000).then_some((next, value))
+        })
+        .next();
     let char_value = node
         .get("value")
         .and_then(|v| v.as_str())
         .and_then(parse_u64_str)
         .map(|v| (v & 0xff) as u8);
+    if char_value != Some(base64_char_for_index(index.1)?) {
+        return None;
+    }
     Some(serde_json::json!({
         "node": node.get("id").cloned().unwrap_or(serde_json::Value::Null),
         "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
@@ -4195,7 +4207,14 @@ fn highlight_table_lookup(node: &serde_json::Value) -> Option<serde_json::Value>
         "char": char_value.and_then(printable_ascii_char),
         "index_reg": index.0.get("reg").cloned().unwrap_or(serde_json::Value::Null),
         "index_value": format!("{:#x}", index.1),
+        "base_reg": base.map(|(next, _)| next.get("reg").cloned().unwrap_or(serde_json::Value::Null)),
+        "base_value": base.map(|(_, value)| format!("{value:#x}")),
     }))
+}
+
+fn base64_char_for_index(index: u64) -> Option<u8> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    ALPHABET.get(index as usize).copied()
 }
 
 fn printable_ascii_char(byte: u8) -> Option<String> {
