@@ -850,6 +850,18 @@ portable_algorithm_ready false
 So Python can reproduce `call_001` from the trace-derived formulas and manifest,
 but this is still not the final portable x-sign algorithm.
 
+The script now emits `completion_audit` with four success criteria:
+
+```text
+cli_surfaces                 substantially_available
+trace_bound_python_sim       done_for_call001_trace_model
+portable_python_algorithm    not_done
+multi_sample_generalization  weakly_covered
+```
+
+The audit intentionally keeps `goal_complete=false` until the portable algorithm
+and multi-sample formula coverage are real, not inferred from trace replay.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and

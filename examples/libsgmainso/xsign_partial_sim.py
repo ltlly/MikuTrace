@@ -1739,6 +1739,56 @@ def current_trace_model_input_manifest() -> dict:
     }
 
 
+def completion_audit() -> dict:
+    return {
+        "objective": (
+            "Use generic traceMiku CLI evidence from libsgmainso traces to "
+            "recover and simulate the x-sign generation algorithm in Python."
+        ),
+        "success_criteria": [
+            {
+                "id": "cli_surfaces",
+                "requirement": "CLI exposes enough VM/taint/provenance evidence for AI analysis.",
+                "evidence": [
+                    "vm-ops op_templates/template_skeletons/template_operands.roles",
+                    "vm-ops op_effects bytecode_reads.name",
+                    "vm-ops effects python_with_values",
+                    "byte-writer-map vm_source_ranges and stops",
+                ],
+                "status": "substantially_available",
+            },
+            {
+                "id": "trace_bound_python_sim",
+                "requirement": "Python reproduces at least call_001 x-sign from trace-derived formulas.",
+                "evidence": ["current_trace_model_simulation.matches_trace == true"],
+                "status": "done_for_call001_trace_model",
+            },
+            {
+                "id": "portable_python_algorithm",
+                "requirement": "Python can generate x-sign from portable inputs without opaque trace bytes.",
+                "evidence": ["current_trace_model_simulation.portable_algorithm_ready == false"],
+                "status": "not_done",
+            },
+            {
+                "id": "multi_sample_generalization",
+                "requirement": "Python formulas explain multiple libsgmainso trace samples.",
+                "evidence": [
+                    "multi_sample_reencode_all_match uses observed semantic tails",
+                    "middle_lhs_source_manifest is call_001-scoped",
+                ],
+                "status": "weakly_covered",
+            },
+        ],
+        "blocking_gaps": [
+            "Replace middle_lhs traced_formula_only/static/table segments with portable formulas or declared external inputs.",
+            "Resolve raw 12-character prefix semantics or intentionally model it as protocol literal.",
+            "Validate VM opcode implementations over full scratch table and semantic tail source windows, not just samples.",
+            "Prove how LCG/time-derived state feeds every payload byte, not only selected mod255 inputs.",
+        ],
+        "goal_complete": False,
+    }
+
+
 def xor_mix(lhs: int, rhs: int) -> int:
     return (lhs ^ rhs) & 0xFF
 
@@ -2038,6 +2088,7 @@ def main() -> None:
     middle_lhs_source_manifest = call001_middle_lhs_source_manifest()
     input_manifest = current_trace_model_input_manifest()
     current_trace_model_simulation = simulate_call001_xsign_current_trace_model()
+    audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -2145,6 +2196,7 @@ def main() -> None:
         },
         "current_trace_model_input_manifest": input_manifest,
         "current_trace_model_simulation": current_trace_model_simulation,
+        "completion_audit": audit,
         "small_affine": {
             "previous_state": f"{TRACE_SMALL_AFFINE['previous_state']:#x}",
             "multiplier": f"{TRACE_SMALL_AFFINE['multiplier']:#x}",
