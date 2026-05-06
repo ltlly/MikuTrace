@@ -272,6 +272,19 @@ byte has no writer, but the table index register is usually the dataflow branch
 to keep chasing. Each row records `decision.kind` as `upstream_next`,
 `frontier_auto`, or `stop`.
 
+The infrastructure-register filter is a preference, not a hard stop. If the
+only frontier is a register such as `x23`, the chain still follows it. This is
+important around indirect calls where a return value may be saved through a
+callee-saved register before being written into a VM slot.
+
+Call returns are explicit boundaries. If a value in `x0` is consumed immediately
+after `bl`/`blr`, `vm-backstep` emits a `local_def.class = call-return` row
+instead of attributing the value to an older pre-call definition of `x0`. The
+row includes the call idx, call target register/value, return value, and
+argument registers `x0..x7`. Linear `vm-backchain --follow-frontier` stops at
+this boundary; use the call target and args to decide whether the value came
+from an external helper, a JNI/runtime callback, or an untraced function.
+
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and
 `x10`, with memory addresses `base+0` and `base+8`. This prevents a chain for

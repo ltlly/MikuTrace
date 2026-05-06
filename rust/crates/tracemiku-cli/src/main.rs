@@ -713,7 +713,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
         /// Drop records that do not look VM-related.
@@ -738,7 +738,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
         /// Base VM IP for vm_off. Defaults to the first row's x21.
@@ -772,7 +772,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
         /// Emit a compact AI-readable summary instead of the full step payload.
@@ -800,7 +800,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
     },
@@ -834,7 +834,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
     },
@@ -871,7 +871,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
     },
@@ -3928,12 +3928,14 @@ async fn vm_backchain_value_on(
 }
 
 fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
+    if step.pointer("/local_def/class").and_then(|v| v.as_str()) == Some("call-return") {
+        return None;
+    }
     if let Some(next) = choose_semantic_frontier_next(step) {
         return Some(next);
     }
-    let mut candidates = step
-        .get("frontier")?
-        .as_array()?
+    let frontiers = step.get("frontier")?.as_array()?;
+    let mut candidates = frontiers
         .iter()
         .filter_map(|frontier| {
             let reg = frontier.get("reg")?.as_str()?;
@@ -3948,6 +3950,19 @@ fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
             Some((score, frontier))
         })
         .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        candidates = frontiers
+            .iter()
+            .filter_map(|frontier| {
+                let value = frontier
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let score = frontier_value_score(&value);
+                Some((score, frontier))
+            })
+            .collect::<Vec<_>>();
+    }
     candidates.sort_by_key(|(score, _)| *score);
     let (_, frontier) = candidates.first()?;
     frontier_to_next(frontier)
@@ -3955,6 +3970,9 @@ fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
 
 fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
     let local_def = step.get("local_def")?;
+    if local_def.get("class").and_then(|v| v.as_str()) == Some("call-return") {
+        return None;
+    }
     let formula = row_alu_formula(local_def)?;
     if formula
         .pointer("/semantic/input")
@@ -4719,6 +4737,7 @@ fn compact_lineage_row_for_summary(row: Option<&serde_json::Value>) -> serde_jso
         "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
         "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
         "formula": row.get("formula").cloned().unwrap_or(serde_json::Value::Null),
+        "call_return": row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -4900,6 +4919,7 @@ fn compact_vm_row(row: Option<&serde_json::Value>) -> serde_json::Value {
         "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
         "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
         "formula": formula,
+        "call_return": row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -4956,6 +4976,10 @@ async fn vm_backstep_value_on(
     let target_defines_source = row_defines_reg(target_row, &source_key);
     let local_def = if target_defines_source {
         row_for_def_reg(target_row, &source_key)
+    } else if let Some(call_return) =
+        call_return_def_from_previous_call(&rows, records, target_pos, &source_key, target_record)
+    {
+        Some(call_return)
     } else {
         rows[..target_pos]
             .iter()
@@ -4997,6 +5021,90 @@ fn row_def_reg_key(row: &serde_json::Value) -> Option<String> {
         .and_then(|v| v.get("reg"))
         .and_then(|v| v.as_str())
         .map(register_value_key)
+}
+
+fn call_return_def_from_previous_call(
+    rows: &[serde_json::Value],
+    records: &[serde_json::Value],
+    target_pos: usize,
+    source_key: &str,
+    target_record: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if source_key != "x0" || target_pos == 0 {
+        return None;
+    }
+    let call_row = rows.get(target_pos - 1)?;
+    let call_record = records.get(target_pos - 1)?;
+    let asm = call_row.get("asm").and_then(|v| v.as_str())?.trim();
+    if !is_call_asm(asm) {
+        return None;
+    }
+    let target_reg = indirect_call_target_reg(asm);
+    let target_value = target_reg
+        .as_deref()
+        .and_then(|reg| record_reg_value(call_record, reg))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let args = ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"]
+        .into_iter()
+        .map(|reg| {
+            serde_json::json!({
+                "reg": reg,
+                "value": record_reg_value(call_record, reg).cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut src = args.clone();
+    if let Some(reg) = target_reg.as_deref() {
+        src.push(serde_json::json!({
+            "reg": reg,
+            "role": "call_target",
+            "value": target_value.clone(),
+        }));
+    }
+    let mut row = call_row.clone();
+    if let Some(obj) = row.as_object_mut() {
+        obj.insert("class".to_string(), serde_json::json!("call-return"));
+        obj.insert(
+            "def".to_string(),
+            serde_json::json!({
+                "reg": "x0",
+                "src": src,
+                "value_after": record_reg_value(target_record, "x0").cloned().unwrap_or(serde_json::Value::Null),
+            }),
+        );
+        obj.insert(
+            "call_return".to_string(),
+            serde_json::json!({
+                "call_idx": call_row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "call_pc": call_row.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": asm,
+                "return_reg": "x0",
+                "return_value": record_reg_value(target_record, "x0").cloned().unwrap_or(serde_json::Value::Null),
+                "target_reg": target_reg,
+                "target_value": target_value,
+                "args": args,
+                "note": "x0 changed across a call; do not attribute it to pre-call local definitions",
+            }),
+        );
+    }
+    Some(row)
+}
+
+fn is_call_asm(asm: &str) -> bool {
+    let mnemonic = asm.split_whitespace().next().unwrap_or("");
+    matches!(mnemonic, "bl" | "blr")
+}
+
+fn indirect_call_target_reg(asm: &str) -> Option<String> {
+    let mut parts = asm.trim().splitn(2, char::is_whitespace);
+    if parts.next()? != "blr" {
+        return None;
+    }
+    parts
+        .next()
+        .and_then(|operands| split_operands(operands).first().cloned())
+        .and_then(|op| first_register_token(&op))
 }
 
 fn row_defines_reg(row: &serde_json::Value, reg_key: &str) -> bool {
@@ -5403,6 +5511,13 @@ async fn upstream_writer_for_def_on(
 ) -> anyhow::Result<serde_json::Value> {
     let class = def_row.get("class").and_then(|v| v.as_str()).unwrap_or("");
     let idx = def_row.get("idx").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    if class == "call-return" {
+        return Ok(serde_json::json!({
+            "status": "call_return_boundary",
+            "reason": "register value came from a call return; inspect call_return target and args",
+            "call_return": def_row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
     let mut kind = None;
     let mut addr = None;
     let mut size = 1u64;
@@ -6884,6 +6999,26 @@ mod tests {
         assert_eq!(next["idx"], serde_json::json!(10));
         assert_eq!(next["reg"], serde_json::json!("x20"));
         assert_eq!(next["src_value"], serde_json::json!("0x18"));
+
+        let infra_only = serde_json::json!({
+            "frontier": [
+                {"idx": 20, "reg": "x23", "value": "0x69f5b3cb"}
+            ]
+        });
+        let next = choose_frontier_next(&infra_only).unwrap();
+        assert_eq!(next["idx"], serde_json::json!(20));
+        assert_eq!(next["reg"], serde_json::json!("x23"));
+        assert_eq!(next["src_value"], serde_json::json!("0x69f5b3cb"));
+
+        let call_return = serde_json::json!({
+            "local_def": {
+                "class": "call-return"
+            },
+            "frontier": [
+                {"idx": 30, "reg": "x0", "value": "0x0"}
+            ]
+        });
+        assert!(choose_frontier_next(&call_return).is_none());
     }
 
     #[test]

@@ -443,6 +443,33 @@ state, multiplier, delta, odd-multiplier flag, and multiplier inverse
 candidate PRNG/digest-state transition until more surrounding bytecode proves
 its exact role.
 
+Continuing backward from the earlier 32-bit state `0x69f5b3cb` reaches a call
+return boundary:
+
+```text
+mov x3, x23
+<- mov x23, x0
+<- blr x22 returned x0 = 0x69f5b3cb
+```
+
+The concrete call row is:
+
+```text
+idx        13831027
+pc         0x7601b72790
+asm        blr x22
+target     x22 = 0x787bf034e8
+args       x0=0, x1=1, x2=0x747d0dc500, x3=1, x4=0, x5=0x1010101,
+           x6=0x169b, x7=0x2c
+return     x0 = 0x69f5b3cb
+```
+
+This is an important boundary for reconstruction: the value should not be
+attributed to the pre-call `mov x0, x20`; it came back from an indirect
+function pointer outside the currently traced instruction stream. The next
+question is whether `0x787bf034e8` is a known runtime/JNI helper, an untraced
+native helper, or a callback into code that needs a wider trace/hook.
+
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
 
