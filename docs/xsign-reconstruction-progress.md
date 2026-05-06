@@ -688,6 +688,32 @@ portable inputs are a mixture of `stat("/")`, no-writer-window table reads,
 earlier VM-generated ladder values, a short text buffer, and a few literal tail
 bytes.
 
+For the `traced_formula_only` ranges, `vm_source_ranges[].stops[]` now points
+at VM-IP stop rows. A focused continuation from the first stop:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --start 10613140 \
+  --count 120 \
+  --summary \
+  --effects-only \
+  --max-ops 20
+```
+
+returns `bytecode_read_count=44` and `control_effect_count=1`. The first
+control step is:
+
+```text
+#10613173 bytecode[+0x8] = 0x9
+#10613174 add x21, x21, x6, lsl #4
+         0x75ebae5970 = 0x75ebae58e0 + 0x9
+```
+
+This closes the prompt-surface gap for VM-IP stops: an AI can move from a
+byte-writer formula-only range into a compact VM operation window without
+loading the full per-op payload.
+
 The Python reconstruction now uses this split directly:
 
 ```text

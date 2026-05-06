@@ -6500,6 +6500,8 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
     let mut effects = Vec::new();
     let mut byte_load_effects = Vec::new();
     let mut memory_store_effects = Vec::new();
+    let mut control_effects = Vec::new();
+    let mut bytecode_reads = Vec::new();
     for op in &ops {
         let idx_start = op
             .get("idx_start")
@@ -6509,6 +6511,19 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
             .get("idx_end")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+        for read in op
+            .get("bytecode_reads")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let mut compact = read.clone();
+            if let Some(obj) = compact.as_object_mut() {
+                obj.insert("op_idx_start".to_string(), idx_start.clone());
+                obj.insert("op_idx_end".to_string(), idx_end.clone());
+            }
+            bytecode_reads.push(compact);
+        }
         for effect in op
             .get("effects")
             .and_then(|v| v.as_array())
@@ -6530,6 +6545,9 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
             if compact.get("kind").and_then(|v| v.as_str()) == Some("memory_store") {
                 memory_store_effects.push(compact.clone());
             }
+            if compact.get("kind").and_then(|v| v.as_str()) == Some("control") {
+                control_effects.push(compact.clone());
+            }
             effects.push(compact);
         }
     }
@@ -6550,10 +6568,14 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "effect_count": effects.len(),
         "byte_load_effect_count": byte_load_effects.len(),
         "memory_store_effect_count": memory_store_effects.len(),
+        "control_effect_count": control_effects.len(),
+        "bytecode_read_count": bytecode_reads.len(),
         "semantic_counts": vm_ops_semantic_counts(&ops),
         "state_updates": vm_ops_state_updates(&ops),
         "byte_load_effects": byte_load_effects,
         "memory_store_effects": memory_store_effects,
+        "control_effects": control_effects,
+        "bytecode_reads": bytecode_reads,
         "effects": effects,
     })
 }
@@ -14288,6 +14310,15 @@ mod tests {
                 {
                     "idx_start": 10616026,
                     "idx_end": 10616041,
+                    "bytecode_reads": [
+                        {
+                            "idx": 10616030,
+                            "offset": "0x8",
+                            "width": 4,
+                            "bytes_le_hex": "12000000",
+                            "value": "0x12"
+                        }
+                    ],
                     "vm_slot_reads": [
                         {"slot": 24, "value": "0x753ddd7fd0"},
                         {"slot": 25, "value": "0xc"}
@@ -14307,15 +14338,41 @@ mod tests {
                         }
                     ],
                     "alu_formulas": []
+                },
+                {
+                    "idx_start": 10616041,
+                    "idx_end": 10616045,
+                    "bytecode_reads": [
+                        {
+                            "idx": 10616042,
+                            "offset": "0x8",
+                            "width": 8,
+                            "bytes_le_hex": "0900000000000000",
+                            "value": "0x9"
+                        }
+                    ],
+                    "vm_slot_reads": [],
+                    "vm_slot_writes": [],
+                    "small_byte_loads": [],
+                    "memory_stores": [],
+                    "alu_formulas": [
+                        {
+                            "idx": 10616043,
+                            "asm": "add x21, x21, x6, lsl #4",
+                            "expression": "0x200 = 0x100 + 0x9"
+                        }
+                    ]
                 }
             ]
         });
         let summary = vm_ops_effects_only_summary(&output);
         assert!(summary.get("ops").is_none());
-        assert_eq!(summary["effect_count"], serde_json::json!(2));
+        assert_eq!(summary["effect_count"], serde_json::json!(3));
         assert_eq!(summary["source_maybe_truncated"], serde_json::json!(false));
         assert_eq!(summary["byte_load_effect_count"], serde_json::json!(1));
         assert_eq!(summary["memory_store_effect_count"], serde_json::json!(1));
+        assert_eq!(summary["control_effect_count"], serde_json::json!(1));
+        assert_eq!(summary["bytecode_read_count"], serde_json::json!(2));
         assert_eq!(
             summary["effects"][0]["pseudocode"],
             serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
@@ -14331,6 +14388,14 @@ mod tests {
         assert_eq!(
             summary["memory_store_effects"][0]["pseudocode"],
             serde_json::json!("mem[0x753ddd7fd0] = 0xab")
+        );
+        assert_eq!(
+            summary["bytecode_reads"][1]["value"],
+            serde_json::json!("0x9")
+        );
+        assert_eq!(
+            summary["control_effects"][0]["idx"],
+            serde_json::json!(10616043)
         );
     }
 

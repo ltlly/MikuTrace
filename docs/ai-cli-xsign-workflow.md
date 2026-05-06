@@ -868,7 +868,10 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> \
 ```
 
 This drops per-op details and promotes `effects[]`, `byte_load_effects[]`,
-`memory_store_effects[]`, and `state_updates[]` to the top level. Always check
+`memory_store_effects[]`, `control_effects[]`, `bytecode_reads[]`, and
+`state_updates[]` to the top level. `control_effects[]` plus
+`bytecode_reads[]` is the compact surface for VM-IP stop points from
+`byte-writer-map --summary.vm_source_ranges[].stops[]`. Always check
 `source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is still
 too large for the records cap and the window must be split further before
 concluding that a byte-load or writer is absent.
