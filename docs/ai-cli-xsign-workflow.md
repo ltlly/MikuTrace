@@ -116,7 +116,7 @@ For AI use, treat the output categories as contracts:
 | `seed_lineage_commands[]` | Optional command hints that turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, compact formula operands, memory boundaries, and next actions. Use it before requesting the full chain. |
-| `local_def.formula.operands[].role` | Generic operand hint for compact formulas. For pointer-shaped `add`, roles such as `pointer_base` and `delta` expose both sides of `base + offset`; `delta` includes small positive values and small two's-complement negative offsets. |
+| `local_def.formula.operands[].role` | Generic operand hint for compact formulas. For pointer-shaped `add`, roles such as `pointer_base` and `delta` expose both sides of `base + offset`; `delta` includes small positive values and small two's-complement negative offsets. Shifted register operands also expose `shift`, `shift_amount`, and `effective_value`, for example `reg << 4`. |
 | `local_def.call_return` | Explicit call-return boundary for `x0` values. It records the call idx, direct or indirect target value, return value, argument registers, and how many non-def rows were skipped between the call and the consumer. |
 | `repeated_values[]` | Compact count of values seen multiple times in the lineage path. A repeated pointer/state value near a depth limit usually means a copy loop or stable VM base that should be proven once rather than chased through every move. |
 | `pointer_transitions[]` | Compact list of pointer-shaped formula transitions found in the lineage path. It keeps `pointer_base + delta` rows plus pointer-shaped `sub_small_delta` and `align_down_mask` rows, so an AI agent can read a long base-pointer migration without scanning every copy step. |
@@ -722,7 +722,9 @@ override generic heuristics: `udiv` follows the numerator,
 `mod255_low_byte` follows the folded input, pointer-shaped `add` follows the
 `pointer_base` operand before small immediates or offsets, and
 `add_small_delta` follows the large state value instead of constants such as
-`1`. `sub_small_delta` does the same for `sub reg, reg, #imm`, and
+`1`. Shifted-register add operands such as `add base, base, reg, lsl #4` are
+rendered as scaled deltas with an `effective_value`. `sub_small_delta` does the
+same for `sub reg, reg, #imm`, and
 `align_down_mask` recognizes
 `and reg, reg, #0xffff...fff0`-style pointer alignment. When these operations
 write back to the same register they read, the next seed is moved to the trace

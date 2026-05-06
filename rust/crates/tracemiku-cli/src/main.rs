@@ -8746,6 +8746,14 @@ fn operand_value_u64(operand: &serde_json::Value) -> Option<u64> {
         .and_then(parse_u64_str)
 }
 
+fn operand_effective_value_u64(operand: &serde_json::Value) -> Option<u64> {
+    operand
+        .get("effective_value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+        .or_else(|| operand_value_u64(operand))
+}
+
 fn value_as_u64(value: &serde_json::Value) -> Option<u64> {
     value
         .as_u64()
@@ -9581,16 +9589,37 @@ fn compact_lineage_formula_operands(formula: &serde_json::Value) -> serde_json::
             .iter()
             .enumerate()
             .map(|(idx, operand)| {
-                let value = operand
-                    .get("value")
-                    .and_then(|v| v.as_str())
-                    .and_then(parse_u64_str);
-                serde_json::json!({
-                    "idx": idx,
-                    "reg": operand.get("reg").cloned().unwrap_or(serde_json::Value::Null),
-                    "value": operand.get("value").cloned().unwrap_or(serde_json::Value::Null),
-                    "role": compact_formula_operand_role(op, idx, value, &operands),
-                })
+                let value = operand_effective_value_u64(operand);
+                let mut item = serde_json::Map::new();
+                item.insert("idx".to_string(), serde_json::json!(idx));
+                item.insert(
+                    "reg".to_string(),
+                    operand
+                        .get("reg")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                item.insert(
+                    "value".to_string(),
+                    operand
+                        .get("value")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                if let Some(shift) = operand.get("shift").cloned() {
+                    item.insert("shift".to_string(), shift);
+                }
+                if let Some(amount) = operand.get("shift_amount").cloned() {
+                    item.insert("shift_amount".to_string(), amount);
+                }
+                if let Some(effective) = operand.get("effective_value").cloned() {
+                    item.insert("effective_value".to_string(), effective);
+                }
+                item.insert(
+                    "role".to_string(),
+                    serde_json::json!(compact_formula_operand_role(op, idx, value, &operands)),
+                );
+                serde_json::Value::Object(item)
             })
             .collect(),
     )
@@ -9608,7 +9637,7 @@ fn compact_formula_operand_role(
                 .iter()
                 .enumerate()
                 .find(|(other_idx, _)| *other_idx != idx)
-                .and_then(|(_, operand)| operand_value_u64(operand));
+                .and_then(|(_, operand)| operand_effective_value_u64(operand));
             match (value, other) {
                 (Some(value), Some(other))
                     if looks_like_pointer(value) && looks_like_delta(other) =>
@@ -11096,7 +11125,7 @@ fn row_alu_formula(row: &serde_json::Value) -> Option<serde_json::Value> {
         "value": result,
         "op": op,
         "expression": expression,
-        "operands": operands,
+        "operands": annotate_formula_operands(asm, operands),
     });
     if let Some(semantic) = recognize_alu_semantic(asm, result, &operand_values) {
         if let Some(obj) = formula.as_object_mut() {
@@ -12924,7 +12953,7 @@ fn highlight_alu_formula(node: &serde_json::Value) -> Option<serde_json::Value> 
         "asm": asm,
         "op": mnemonic,
         "expression": expression,
-        "operands": operands,
+        "operands": annotate_formula_operands(asm, operands),
     });
     if let Some(semantic) = recognize_alu_semantic(asm, &result, &operand_values) {
         if let Some(obj) = formula.as_object_mut() {
@@ -12954,7 +12983,7 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
             };
             let rhs = values
                 .get(1)
-                .cloned()
+                .map(|value| shifted_rhs_display(asm, value))
                 .or_else(|| operands.get(2).and_then(|op| immediate_operand_value(op)))?;
             Some(format!("{result} = {} {op} {rhs}", values[0]))
         }
@@ -12979,6 +13008,78 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
             Some(format!("{result} = ubfx({}, {lsb}, {width})", values[0]))
         }
         "udiv" if values.len() >= 2 => Some(format!("{result} = {} / {}", values[0], values[1])),
+        _ => None,
+    }
+}
+
+fn annotate_formula_operands(
+    asm: &str,
+    mut operands: Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    let Some((kind, amount)) = rhs_shift_modifier(asm) else {
+        return operands;
+    };
+    let Some(rhs) = operands
+        .get_mut(1)
+        .and_then(|operand| operand.as_object_mut())
+    else {
+        return operands;
+    };
+    rhs.insert("shift".to_string(), serde_json::json!(kind));
+    rhs.insert(
+        "shift_amount".to_string(),
+        serde_json::json!(format!("{amount:#x}")),
+    );
+    if let Some(value) = rhs
+        .get("value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+        .and_then(|value| apply_shift_modifier(value, &kind, amount))
+    {
+        rhs.insert(
+            "effective_value".to_string(),
+            serde_json::json!(format!("{value:#x}")),
+        );
+    }
+    operands
+}
+
+fn shifted_rhs_display(asm: &str, value: &str) -> String {
+    let Some((kind, amount)) = rhs_shift_modifier(asm) else {
+        return value.to_string();
+    };
+    let op = match kind.as_str() {
+        "lsl" => "<<",
+        "lsr" => ">>",
+        "asr" => "asr",
+        _ => return value.to_string(),
+    };
+    format!("({value} {op} {amount:#x})")
+}
+
+fn rhs_shift_modifier(asm: &str) -> Option<(String, u32)> {
+    let operands = asm
+        .split_once(char::is_whitespace)
+        .map(|(_, operands)| split_operands(operands))
+        .unwrap_or_default();
+    let modifier = operands.get(3)?.trim().to_ascii_lowercase();
+    let mut parts = modifier.split_whitespace();
+    let kind = parts.next()?.to_string();
+    if !matches!(kind.as_str(), "lsl" | "lsr" | "asr") {
+        return None;
+    }
+    let amount = parts
+        .next()
+        .and_then(immediate_operand_value)
+        .and_then(|value| parse_u64_str(&value))?;
+    (amount < 64).then_some((kind, amount as u32))
+}
+
+fn apply_shift_modifier(value: u64, kind: &str, amount: u32) -> Option<u64> {
+    match kind {
+        "lsl" => Some(value.wrapping_shl(amount)),
+        "lsr" => Some(value.wrapping_shr(amount)),
+        "asr" => Some(((value as i64) >> amount) as u64),
         _ => None,
     }
 }
@@ -13045,12 +13146,16 @@ fn parse_binary_values(values: &[String]) -> Option<(u64, u64)> {
 }
 
 fn parse_binary_values_or_immediate(asm: &str, values: &[String]) -> Option<(u64, u64)> {
-    parse_binary_values(values).or_else(|| {
-        Some((
-            parse_u64_str(values.first()?)?,
-            last_immediate_operand_u64(asm)?,
-        ))
-    })
+    if let Some(lhs) = values.first().and_then(|value| parse_u64_str(value)) {
+        if let Some(rhs) = values.get(1).and_then(|value| parse_u64_str(value)) {
+            let rhs = rhs_shift_modifier(asm)
+                .and_then(|(kind, amount)| apply_shift_modifier(rhs, &kind, amount))
+                .unwrap_or(rhs);
+            return Some((lhs, rhs));
+        }
+        return Some((lhs, last_immediate_operand_u64(asm)?));
+    }
+    None
 }
 
 fn last_immediate_operand_u64(asm: &str) -> Option<u64> {
@@ -14875,6 +14980,14 @@ mod tests {
         );
         assert_eq!(
             alu_expression_from_asm(
+                "add x21, x21, x3, lsl #4",
+                "0x74fbf636e0",
+                &["0x74fbf635f0".to_string(), "0xf".to_string()],
+            ),
+            Some("0x74fbf636e0 = 0x74fbf635f0 + (0xf << 0x4)".to_string())
+        );
+        assert_eq!(
+            alu_expression_from_asm(
                 "lsr w4, w20, w1",
                 "0x1",
                 &["0x62".to_string(), "0x6".to_string()],
@@ -14925,6 +15038,14 @@ mod tests {
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("add_small_delta"));
         assert_eq!(semantic["input"], serde_json::json!("0x99bd5d21d7d8102"));
+        let semantic = recognize_alu_semantic(
+            "add x21, x21, x3, lsl #4",
+            "0x74fbf636e0",
+            &["0x74fbf635f0".to_string(), "0xf".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("add_small_delta"));
+        assert_eq!(semantic["delta"], serde_json::json!("0xf0"));
         let semantic = recognize_alu_semantic(
             "mul x3, x6, x4",
             "0xdd1841bea1487649",
@@ -17285,6 +17406,31 @@ mod tests {
             serde_json::json!("pointer_base")
         );
         assert_eq!(compact["operands"][1]["role"], serde_json::json!("delta"));
+
+        let formula = serde_json::json!({
+            "op": "add",
+            "expression": "0x74fbf636e0 = 0x74fbf635f0 + (0xf << 0x4)",
+            "operands": [
+                {"reg": "x21", "value": "0x74fbf635f0"},
+                {
+                    "reg": "x3",
+                    "value": "0xf",
+                    "shift": "lsl",
+                    "shift_amount": "0x4",
+                    "effective_value": "0xf0"
+                }
+            ]
+        });
+        let compact = compact_lineage_formula(Some(&formula));
+        assert_eq!(
+            compact["operands"][0]["role"],
+            serde_json::json!("pointer_base")
+        );
+        assert_eq!(compact["operands"][1]["role"], serde_json::json!("delta"));
+        assert_eq!(
+            compact["operands"][1]["effective_value"],
+            serde_json::json!("0xf0")
+        );
     }
 
     #[test]

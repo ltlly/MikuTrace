@@ -2679,8 +2679,29 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "0x38, 0x2f, 0x2e, 0x24, 0xc, 0x8, 0x4 through "
                     "OR/shift/ubfx identities"
                 ),
-                "terminal": "depth_limit after 80 compact steps",
-                "portable_status": "not_proven",
+                "bytecode_ip_tail": {
+                    "states": ["0x38", "0x2f", "0x2e", "0x24", "0xc", "0x8", "0x4"],
+                    "byte_load_idx": 13952492,
+                    "byte_load_asm": "ldrb w8, [x20, x0]",
+                    "byte_load_addr": "0x74b68bd0b8",
+                    "byte_value": "0x4",
+                    "terminal_reg": "x21",
+                    "terminal_value": "0x74fbf63110",
+                    "scaled_ip_updates": [
+                        {
+                            "asm": "add x21, x21, x3, lsl #4",
+                            "expression": "0x74fbf636e0 = 0x74fbf635f0 + (0xf << 0x4)",
+                            "effective_delta": "0xf0",
+                        },
+                        {
+                            "asm": "add x21, x21, x19, lsl #4",
+                            "expression": "0x74fbf63520 = 0x74fbf63110 + (0x41 << 0x4)",
+                            "effective_delta": "0x410",
+                        },
+                    ],
+                },
+                "terminal": "no_local_def at VM bytecode/IP base after scaled x21 updates",
+                "portable_status": "bytecode_ip_boundary",
             },
             "slot28": {
                 "value": "0x74b68bbe00",
@@ -2901,7 +2922,8 @@ def vm_replay_seed_provenance_summary() -> dict:
             "After fixing pair-store slot handling, slot8 is computed inside "
             "the ladder replay window instead of being an initial seed. The "
             "open portable-algorithm work is concentrated in heap-allocation "
-            "parameterization for scratch slot25/28 and ladder slot24/26."
+            "parameterization for scratch slot25/28, VM bytecode/IP "
+            "parameterization for scratch slot26, and ladder slot24/26."
         ),
     }
 
@@ -2936,6 +2958,7 @@ def completion_audit() -> dict:
                     "byte-lineage --compact formula operands label pointer_base and delta",
                     "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
                     "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",
+                    "byte-lineage formulas expose shifted-register effective_value for VM bytecode/IP updates",
                 ],
                 "status": "substantially_available",
             },
@@ -2986,8 +3009,9 @@ def completion_audit() -> dict:
             (
                 "Prove or parameterize the remaining VM seed semantics: "
                 "scratch-writer slot25/28 reach malloc-backed heap scratch "
-                "boundaries; slot26 and ladder slot24/26 still carry VM-base, "
-                "static-table, or allocator boundaries."
+                "boundaries; scratch-writer slot26 reaches a VM bytecode/IP "
+                "boundary; ladder slot24/26 still carry static-table or "
+                "allocator boundaries."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
