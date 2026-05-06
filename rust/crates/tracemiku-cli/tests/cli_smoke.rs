@@ -45,6 +45,19 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn append_external_write(cd: &std::path::Path, idx: u64, addr: u64, byte: u8) {
+    let mut rec = Vec::with_capacity(17);
+    rec.extend_from_slice(&idx.to_le_bytes());
+    rec.extend_from_slice(&addr.to_le_bytes());
+    rec.push(byte);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cd.join("external_writes.bin"))
+        .unwrap();
+    f.write_all(&rec).unwrap();
+}
+
 fn synth_taint_tree_call_dir() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let cd = tmp
@@ -358,6 +371,7 @@ fn fork_events_wrapper_filters_status() {
 #[test]
 fn memory_query_wrappers_use_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
+    append_external_write(&cd, 2, 0x7002, b'X');
 
     let v = run_json(&[
         "last-write-of-addr".into(),
@@ -367,6 +381,20 @@ fn memory_query_wrappers_use_server_wire_shape() {
     ]);
     assert_eq!(v["status"], "found");
     assert_eq!(v["writer_idx"], 0);
+
+    let v = run_json(&[
+        "last-write-of-addr".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7002".into(),
+        "--before-idx".into(),
+        "3".into(),
+        "--with-external".into(),
+    ]);
+    assert_eq!(v["status"], "found");
+    assert_eq!(v["writer_idx"], 2);
+    assert_eq!(v["write_kind"], "x");
+    assert_eq!(v["src_value"], "0x58");
 
     let v = run_json(&[
         "idxs-touching-addr".into(),
