@@ -3246,6 +3246,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         };
         let mut trees = Vec::new();
         if opts.tree_depth > 0 {
+            let mut seen_tree_seeds = HashSet::new();
             for run in &runs {
                 if let Some(seed) =
                     run.get("writer_seeds")
@@ -3263,6 +3264,9 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                     let Some(reg) = seed.get("reg").and_then(|v| v.as_str()) else {
                         continue;
                     };
+                    if !seen_tree_seeds.insert((idx, reg.to_string())) {
+                        continue;
+                    }
                     let tree = vm_backtree_value_on(
                         &app,
                         idx as usize,
@@ -3280,7 +3284,9 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                         "seed": seed,
                         "tree": tree,
                     }));
-                    break;
+                    if trees.len() >= 8 {
+                        break;
+                    }
                 }
             }
         }
