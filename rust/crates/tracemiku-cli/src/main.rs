@@ -11987,19 +11987,22 @@ fn mem_dump_known_le_words(
     if width == 0 {
         return Vec::new();
     }
-    byte_values
-        .chunks(width)
-        .enumerate()
-        .filter_map(|(chunk_idx, chunk)| {
-            if chunk.len() != width || chunk.iter().any(Option::is_none) {
-                return None;
-            }
-            let offset = chunk_idx * width;
+    if byte_values.len() < width {
+        return Vec::new();
+    }
+    (0..=byte_values.len() - width)
+        .filter_map(|offset| {
             let addr = entries
                 .get(offset)
                 .and_then(|entry| entry.get("addr"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
+                .and_then(json_u64)?;
+            if addr % width as u64 != 0 {
+                return None;
+            }
+            let chunk = &byte_values[offset..offset + width];
+            if chunk.iter().any(Option::is_none) {
+                return None;
+            }
             let mut value = 0u64;
             let mut bytes = Vec::with_capacity(width);
             for (idx, byte) in chunk.iter().enumerate() {
@@ -12011,7 +12014,7 @@ fn mem_dump_known_le_words(
             }
             Some(serde_json::json!({
                 "offset": offset,
-                "addr": addr,
+                "addr": format!("{addr:#x}"),
                 "width": width,
                 "value": format!("{value:#x}"),
                 "bytes_hex": bytes_to_hex(&bytes),
@@ -16304,10 +16307,14 @@ mod tests {
     fn summarizes_mem_dump_known_little_endian_words() {
         let response = serde_json::json!({
             "status": "ready",
-            "addr": "0x2000",
+            "addr": "0x1ffc",
             "count": 16,
             "cursor": 20,
             "bytes": [
+                {"addr": "0x1ffc", "byte": 170},
+                {"addr": "0x1ffd", "byte": 187},
+                {"addr": "0x1ffe", "byte": 204},
+                {"addr": "0x1fff", "byte": 221},
                 {"addr": "0x2000", "byte": 1},
                 {"addr": "0x2001", "byte": 2},
                 {"addr": "0x2002", "byte": 3},
@@ -16319,11 +16326,7 @@ mod tests {
                 {"addr": "0x2008", "byte": null},
                 {"addr": "0x2009", "byte": 10},
                 {"addr": "0x200a", "byte": 11},
-                {"addr": "0x200b", "byte": 12},
-                {"addr": "0x200c", "byte": 13},
-                {"addr": "0x200d", "byte": 14},
-                {"addr": "0x200e", "byte": 15},
-                {"addr": "0x200f", "byte": 16}
+                {"addr": "0x200b", "byte": 12}
             ]
         });
         let summary = mem_dump_summary(&response, false);
@@ -16331,7 +16334,7 @@ mod tests {
             summary["words_le64"],
             serde_json::json!([
                 {
-                    "offset": 0,
+                    "offset": 4,
                     "addr": "0x2000",
                     "width": 8,
                     "value": "0x807060504030201",
