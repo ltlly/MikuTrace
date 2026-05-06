@@ -338,6 +338,9 @@ For a shorter AI prompt, use `highlights.word_loads` and
 `highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses
 byte writers into `ascii`/`bytes_hex`; `table_lookups` reports the Base64
 character and the small alphabet index register when it can identify one.
+`highlights.alu_formulas` condenses bitwise/arithmetic VM rows into value
+formulas such as `0x29 = 0x28 | 0x1` or `0x18 = 0x61 >> 0x2`, which is the
+shortest view for reconstructing Base64-index and payload-byte logic.
 
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 

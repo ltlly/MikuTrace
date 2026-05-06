@@ -291,6 +291,17 @@ business payload fields. The VM writes overlapping 4-character windows, so a
 character reused in final group `piYQ` may have been generated in a neighboring
 window such as `ApiY`.
 
+`index_tree.highlights.alu_formulas` now exposes these relationships directly.
+For group 3, current examples include:
+
+```text
+p  0x29 = 0x28 | 0x1
+p  0x1  = 0x62 >> 0x6
+i  0x22 = 0x62 & 0x3f
+Y  0x18 = 0x61 >> 0x2
+Q  0x10 = 0x610 & 0x30
+```
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

@@ -4196,9 +4196,14 @@ fn vm_backtree_highlights(nodes: &[serde_json::Value]) -> serde_json::Value {
         .iter()
         .filter_map(highlight_table_lookup)
         .collect::<Vec<_>>();
+    let alu_formulas = nodes
+        .iter()
+        .filter_map(highlight_alu_formula)
+        .collect::<Vec<_>>();
     serde_json::json!({
         "word_loads": word_loads,
         "table_lookups": table_lookups,
+        "alu_formulas": alu_formulas,
     })
 }
 
@@ -4325,6 +4330,103 @@ fn highlight_table_lookup(node: &serde_json::Value) -> Option<serde_json::Value>
 fn base64_char_for_index(index: u64) -> Option<u8> {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     ALPHABET.get(index as usize).copied()
+}
+
+fn highlight_alu_formula(node: &serde_json::Value) -> Option<serde_json::Value> {
+    let local = node.get("local_def")?;
+    if local.get("class").and_then(|v| v.as_str()) != Some("alu") {
+        return None;
+    }
+    let asm = local.get("asm")?.as_str()?;
+    let mnemonic = asm.split_whitespace().next()?.to_ascii_lowercase();
+    if !matches!(
+        mnemonic.as_str(),
+        "orr" | "and" | "lsl" | "lsr" | "add" | "sub" | "ubfx"
+    ) {
+        return None;
+    }
+    let operands = local
+        .get("def")
+        .and_then(|v| v.get("src"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let operand_values = operands
+        .iter()
+        .filter_map(|operand| operand.get("value").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let result = node
+        .get("value")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            local
+                .get("def")
+                .and_then(|v| v.get("value_after"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })?;
+    let expression = alu_expression_from_asm(asm, &result, &operand_values)?;
+    Some(serde_json::json!({
+        "node": node.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": node.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": result,
+        "asm": asm,
+        "op": mnemonic,
+        "expression": expression,
+        "operands": operands,
+    }))
+}
+
+fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option<String> {
+    let mut parts = asm.trim().splitn(2, char::is_whitespace);
+    let mnemonic = parts.next()?.to_ascii_lowercase();
+    let operands = parts.next().map(split_operands).unwrap_or_default();
+    match mnemonic.as_str() {
+        "orr" | "and" | "add" | "sub" if values.len() >= 2 => {
+            let op = match mnemonic.as_str() {
+                "orr" => "|",
+                "and" => "&",
+                "add" => "+",
+                "sub" => "-",
+                _ => unreachable!(),
+            };
+            Some(format!("{result} = {} {op} {}", values[0], values[1]))
+        }
+        "lsl" | "lsr" if !values.is_empty() => {
+            let op = if mnemonic == "lsl" { "<<" } else { ">>" };
+            let shift = values
+                .get(1)
+                .cloned()
+                .or_else(|| operands.get(2).and_then(|op| immediate_operand_value(op)))
+                .unwrap_or_else(|| "?".to_string());
+            Some(format!("{result} = {} {op} {shift}", values[0]))
+        }
+        "ubfx" if !values.is_empty() => {
+            let lsb = operands
+                .get(2)
+                .and_then(|op| immediate_operand_value(op))
+                .unwrap_or_else(|| "?".to_string());
+            let width = operands
+                .get(3)
+                .and_then(|op| immediate_operand_value(op))
+                .unwrap_or_else(|| "?".to_string());
+            Some(format!("{result} = ubfx({}, {lsb}, {width})", values[0]))
+        }
+        _ => None,
+    }
+}
+
+fn immediate_operand_value(op: &str) -> Option<String> {
+    let trimmed = op.trim().trim_start_matches('#');
+    if trimmed.is_empty() {
+        return None;
+    }
+    parse_u64_str(trimmed)
+        .map(|value| format!("{value:#x}"))
+        .or_else(|| Some(trimmed.to_string()))
 }
 
 fn printable_ascii_char(byte: u8) -> Option<String> {
@@ -5032,8 +5134,9 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decoded_bytes, choose_frontier_next, classify_vm_asm, def_source_regs_from_asm,
-        mem_addr_from_asm, memory_access_width, store_source_regs_from_asm, vm_slot_from_asm,
+        alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
+        def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
+        store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -5095,6 +5198,30 @@ mod tests {
             vec!["x0", "x4"]
         );
         assert_eq!(def_source_regs_from_asm("lsl x5, x3, #3"), vec!["x3"]);
+    }
+
+    #[test]
+    fn renders_alu_value_formulas() {
+        assert_eq!(
+            alu_expression_from_asm(
+                "orr x4, x14, x17",
+                "0x29",
+                &["0x28".to_string(), "0x1".to_string()],
+            ),
+            Some("0x29 = 0x28 | 0x1".to_string())
+        );
+        assert_eq!(
+            alu_expression_from_asm("lsl w16, w2, #2", "0x28", &["0xa".to_string()]),
+            Some("0x28 = 0xa << 0x2".to_string())
+        );
+        assert_eq!(
+            alu_expression_from_asm(
+                "lsr w4, w20, w1",
+                "0x1",
+                &["0x62".to_string(), "0x6".to_string()],
+            ),
+            Some("0x1 = 0x62 >> 0x6".to_string())
+        );
     }
 
     #[test]
