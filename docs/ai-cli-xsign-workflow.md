@@ -874,10 +874,17 @@ row per VM instruction with that op's bytecode operands, dispatches, and
 effects already joined. `op_templates[]` groups repeated op shapes by bytecode
 operand layout and effect kind, keeping sampled operands, aggregate
 `effect_shapes[]`, input slots, output slots/addresses, and pseudocode samples
-for quick lifting. `op_effects[]` and `op_templates[]` are the compact surfaces for VM-IP
-stop points from `byte-writer-map --summary.vm_source_ranges[].stops[]`. Always check
-`source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is still
-too large for the records cap and the window must be split further before
+for quick lifting. Each template also exposes `template_operands[]` and
+`template_skeletons[]`: these give stable bytecode parameter names such as
+`bc_0x8_u32` and a shape-only Python sketch such as
+`slot[dst] = ubfx(slot_srcs, bc_0x3_u8, bc_0x5_u8, bc_0x8_u32, bc_0x10_u16)`
+or `vm_ip = add(vm_ip, bc_0x8_u64)`. Treat these sketches as generic lifting
+starting points: bind exact source/destination slot roles from `effect_shapes[]`
+and `sample_ops[]` before turning them into a simulator opcode.
+`op_effects[]` and `op_templates[]` are the compact surfaces for VM-IP stop
+points from `byte-writer-map --summary.vm_source_ranges[].stops[]`. Always
+check `source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is
+still too large for the records cap and the window must be split further before
 concluding that a byte-load or writer is absent.
 
 For a specific scratch byte, use `byte-lineage` to automate the repeated

@@ -6717,6 +6717,9 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
     groups
         .into_values()
         .map(|group| {
+            let template_operands = vm_op_template_operand_params(&group.bytecode_operands);
+            let template_skeletons =
+                vm_op_template_skeletons(&template_operands, &group.effect_shapes);
             let bytecode_operands = group
                 .bytecode_operands
                 .into_values()
@@ -6743,6 +6746,8 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
             serde_json::json!({
                 "signature": group.signature,
                 "count": group.count,
+                "template_operands": template_operands,
+                "template_skeletons": template_skeletons,
                 "bytecode_operands": bytecode_operands,
                 "effect_kind_counts": group.effect_kind_counts
                     .into_iter()
@@ -6756,6 +6761,145 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+fn vm_op_template_operand_params(
+    operands: &BTreeMap<String, VmOpTemplateOperand>,
+) -> Vec<serde_json::Value> {
+    operands
+        .values()
+        .map(|operand| {
+            serde_json::json!({
+                "name": bytecode_operand_param_name(&operand.offset, &operand.width),
+                "offset": operand.offset.clone(),
+                "width": operand.width.clone(),
+            })
+        })
+        .collect()
+}
+
+fn bytecode_operand_param_name(offset: &serde_json::Value, width: &serde_json::Value) -> String {
+    let offset_text = value_as_u64(offset)
+        .map(|v| format!("{v:#x}"))
+        .unwrap_or_else(|| json_display(offset));
+    let width_text = value_as_u64(width)
+        .map(|v| match v {
+            1 => "u8".to_string(),
+            2 => "u16".to_string(),
+            4 => "u32".to_string(),
+            8 => "u64".to_string(),
+            other => format!("u{}bytes", other),
+        })
+        .unwrap_or_else(|| sanitize_identifier_component(&json_display(width)));
+    format!(
+        "bc_{}_{}",
+        sanitize_identifier_component(&offset_text),
+        width_text
+    )
+}
+
+fn sanitize_identifier_component(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn vm_op_template_skeletons(
+    template_operands: &[serde_json::Value],
+    effect_shapes: &BTreeMap<String, VmOpTemplateEffectShape>,
+) -> Vec<serde_json::Value> {
+    let operand_names = template_operands
+        .iter()
+        .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    effect_shapes
+        .values()
+        .map(|shape| {
+            let source = vm_op_effect_source_from_signature(&shape.signature);
+            let python = vm_op_template_python_skeleton(
+                &shape.kind,
+                &source,
+                &shape.formula_op,
+                &operand_names,
+            );
+            serde_json::json!({
+                "signature": shape.signature.clone(),
+                "kind": shape.kind.clone(),
+                "source": source,
+                "formula_op": shape.formula_op.clone(),
+                "count": shape.count,
+                "python": python,
+                "bytecode_operands": operand_names.clone(),
+                "binding": "shape_only",
+            })
+        })
+        .collect()
+}
+
+fn vm_op_effect_source_from_signature(signature: &str) -> String {
+    signature
+        .split(':')
+        .nth(1)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn vm_op_template_python_skeleton(
+    kind: &str,
+    source: &str,
+    formula_op: &str,
+    operand_names: &[String],
+) -> String {
+    let args = vm_op_template_args(operand_names, true);
+    let operand_args = vm_op_template_args(operand_names, false);
+    match (kind, source, formula_op) {
+        ("slot_write", "byte_load", _) => "slot[dst] = byte_load(addr_expr)".to_string(),
+        ("slot_write", "formula", op) if op != "none" => {
+            format!("slot[dst] = {op}({args})")
+        }
+        ("slot_write", _, _) => "slot[dst] = observed_value".to_string(),
+        ("memory_store", "formula", op) if op != "none" => {
+            format!("mem[addr] = {op}({args})")
+        }
+        ("memory_store", _, _) => "mem[addr] = src_value".to_string(),
+        ("control", "formula", op) if op != "none" => {
+            if operand_args.is_empty() {
+                format!("vm_ip = {op}(vm_ip)")
+            } else {
+                format!("vm_ip = {op}(vm_ip, {operand_args})")
+            }
+        }
+        ("control", _, _) => "vm_ip = next_vm_ip".to_string(),
+        _ => {
+            if formula_op != "none" {
+                format!("effect = {formula_op}({args})")
+            } else {
+                "effect = observed_value".to_string()
+            }
+        }
+    }
+}
+
+fn vm_op_template_args(operand_names: &[String], include_slot_srcs: bool) -> String {
+    let mut args = Vec::new();
+    if include_slot_srcs {
+        args.push("slot_srcs".to_string());
+    }
+    args.extend(operand_names.iter().cloned());
+    args.join(", ")
 }
 
 impl VmOpTemplateEffectShape {
@@ -14734,6 +14878,27 @@ mod tests {
             serde_json::json!("control")
         );
         let templates = summary["op_templates"].as_array().unwrap();
+        let byte_load_template = templates
+            .iter()
+            .find(|template| {
+                template
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|signature| signature.contains("slot_write:byte_load:none"))
+            })
+            .unwrap();
+        assert_eq!(
+            byte_load_template["template_operands"][0]["name"],
+            serde_json::json!("bc_0x8_u32")
+        );
+        assert!(byte_load_template["template_skeletons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skeleton| {
+                skeleton["python"] == serde_json::json!("slot[dst] = byte_load(addr_expr)")
+                    && skeleton["binding"] == serde_json::json!("shape_only")
+            }));
         let control_template = templates
             .iter()
             .find(|template| {
@@ -14746,6 +14911,14 @@ mod tests {
         assert_eq!(
             control_template["bytecode_operands"][0]["values"][0]["value"],
             serde_json::json!("0x9")
+        );
+        assert_eq!(
+            control_template["template_operands"][0]["name"],
+            serde_json::json!("bc_0x8_u64")
+        );
+        assert_eq!(
+            control_template["template_skeletons"][0]["python"],
+            serde_json::json!("vm_ip = add(vm_ip, bc_0x8_u64)")
         );
         assert_eq!(
             control_template["effect_shapes"][0]["formula_op"],

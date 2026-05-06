@@ -962,12 +962,13 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "bytecode_offset": "0x8",
             "bytecode_value": "0x9",
             "template_signature": "bc[0x8:8] effects[control:formula:add]",
+            "template_skeleton": "vm_ip = add(vm_ip, bc_0x8_u64)",
         },
         "interpretation": (
             "Formula-only byte-writer chains that stop at x21 can be continued "
             "as VM operation windows. The compact effects-only view now keeps "
-            "bytecode reads, control effects, joined op_effects, and grouped "
-            "op_templates at top level."
+            "bytecode reads, control effects, joined op_effects, grouped "
+            "op_templates, and shape-only template_skeletons at top level."
         ),
     },
     "wide_vm_template_probe": {
@@ -980,6 +981,16 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "count": 49,
             "signature": "bc[0x3:1,0x5:1,0x8:4,0x10:2] effects[slot_write:formula:ubfx]",
             "operand_offsets": ["0x3", "0x5", "0x8", "0x10"],
+            "template_operands": [
+                "bc_0x3_u8",
+                "bc_0x5_u8",
+                "bc_0x8_u32",
+                "bc_0x10_u16",
+            ],
+            "template_skeleton": (
+                "slot[dst] = ubfx(slot_srcs, bc_0x3_u8, bc_0x5_u8, "
+                "bc_0x8_u32, bc_0x10_u16)"
+            ),
             "effect_shape": {
                 "kind": "slot_write",
                 "formula_op": "ubfx",
@@ -991,7 +1002,8 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "The formula-only VM ladder window has repeated opcode shapes. "
             "The highest-frequency template is a bytecode-operand-driven UBFX "
             "slot write and is now directly visible without scanning raw ops. "
-            "Template effect_shapes expose input/output slot roles for lifting."
+            "Template effect_shapes expose input/output slot roles for lifting, "
+            "while template_skeletons provide shape-only Python starting points."
         ),
     },
     "interpretation": (

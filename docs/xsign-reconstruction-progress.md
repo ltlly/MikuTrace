@@ -736,10 +736,16 @@ operands  = 0x3, 0x5, 0x8, 0x10
 shape     = slot_write:formula:ubfx
 inputs    = slot19 x44, slot20 x5
 outputs   = slot19 x27, slot20 x22
+skeleton = slot[dst] = ubfx(slot_srcs, bc_0x3_u8, bc_0x5_u8, bc_0x8_u32, bc_0x10_u16)
 ```
 
-This is the next lift target for the `[12,35)` VM ladder: convert these repeated
-bytecode operand layouts plus effect shapes into portable Python VM templates.
+The narrow VM-IP stop probe now also emits the control-flow skeleton
+`vm_ip = add(vm_ip, bc_0x8_u64)` for
+`bc[0x8:8] effects[control:formula:add]`. These skeletons are intentionally
+shape-only: exact slot role binding still comes from `effect_shapes[]` and
+`sample_ops[]`. The next lift target for the `[12,35)` VM ladder is to convert
+these repeated bytecode operand layouts plus effect shapes into portable Python
+VM templates.
 
 The Python reconstruction now uses this split directly:
 
