@@ -478,6 +478,35 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
         "odd_byte": 0x62,
         "matched_offsets": 57,
     },
+    "xor_lhs_runs": [
+        {
+            "range": [3, 13],
+            "lhs_hex": "67b44ad8783e786fcd01",
+            "rhs_hex": "62616261626162616261",
+            "result_hex": "05d528b91a5f1a0eaf60",
+        },
+        {
+            "range": [16, 59],
+            "lhs_hex": (
+                "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
+                "bfa4f43ba0444a342344c59bc569"
+            ),
+            "rhs_hex": (
+                "616261626162616261626162616261626162616261626162616261626162"
+                "61626162616261626162616261"
+            ),
+            "result_hex": (
+                "9a8b930b188e93f7209460f1d2295d336dae63ff825bafa0f452f1"
+                "411dddc5965ac22528554125a7faa708"
+            ),
+        },
+        {
+            "range": [61, 65],
+            "lhs_hex": "3abf0301",
+            "rhs_hex": "62616261",
+            "result_hex": "58de6160",
+        },
+    ],
     "unexplained_offsets": [0],
 }
 
@@ -533,6 +562,12 @@ def xor_word_tail_bytes(state_word: int, mask_a: int, mask_b: int) -> bytes:
             xor_mix(state[3], mask_b),
         ]
     )
+
+
+def xor_lhs_run_result(run: dict) -> bytes:
+    lhs = bytes.fromhex(run["lhs_hex"])
+    rhs = bytes.fromhex(run["rhs_hex"])
+    return bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
 
 
 def aligned_tail(xsign: str) -> bytes:
@@ -662,6 +697,12 @@ def main() -> None:
     byte_lane_source_low32 = (
         byte_lane_source["state_add_lhs"] + byte_lane_source["state_add_rhs"]
     ) & 0xFFFFFFFF
+    xor_lhs_runs = TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["xor_lhs_runs"]
+    xor_lhs_runs_match_tail = all(
+        xor_lhs_run_result(run) == semantic[run["range"][0] : run["range"][1]]
+        and xor_lhs_run_result(run).hex() == run["result_hex"]
+        for run in xor_lhs_runs
+    )
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -871,6 +912,8 @@ def main() -> None:
                     ]["matched_offsets"],
                     "formula": "tail[i] xor rhs is 0x61 for even semantic offsets and 0x62 for odd offsets",
                 },
+                "xor_lhs_runs": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["xor_lhs_runs"],
+                "xor_lhs_runs_match_tail": xor_lhs_runs_match_tail,
                 "unexplained_offsets": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
                     "unexplained_offsets"
                 ],

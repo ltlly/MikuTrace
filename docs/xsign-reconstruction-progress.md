@@ -289,6 +289,15 @@ even offsets                = xor rhs 0x61
 odd offsets                 = xor rhs 0x62
 ```
 
+The same summary now compresses the 57 XOR left-hand bytes into three
+contiguous streams:
+
+```text
+[3,13):  67b44ad8783e786fcd01
+[16,59): fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43ba0444a342344c59bc569
+[61,65): 3abf0301
+```
+
 So the current trace-proven call_001 tail shape is:
 
 ```text

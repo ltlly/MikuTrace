@@ -3949,7 +3949,75 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
             .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
             .collect::<Vec<_>>(),
         "xor_rhs_pattern": semantic_xor_rhs_offset_pattern(&parsed),
+        "xor_lhs_runs": semantic_xor_lhs_runs(&parsed),
     })
+}
+
+#[derive(Debug)]
+struct XorByteRun {
+    start: u64,
+    end: u64,
+    lhs: Vec<u8>,
+    rhs: Vec<u8>,
+    result: Vec<u8>,
+}
+
+impl XorByteRun {
+    fn new(offset: u64, lhs: u8, rhs: u8, result: u8) -> Self {
+        Self {
+            start: offset,
+            end: offset + 1,
+            lhs: vec![lhs],
+            rhs: vec![rhs],
+            result: vec![result],
+        }
+    }
+
+    fn push(&mut self, offset: u64, lhs: u8, rhs: u8, result: u8) -> bool {
+        if offset != self.end {
+            return false;
+        }
+        self.end += 1;
+        self.lhs.push(lhs);
+        self.rhs.push(rhs);
+        self.result.push(result);
+        true
+    }
+
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "range": [self.start, self.end],
+            "size": self.end.saturating_sub(self.start),
+            "lhs_hex": bytes_to_hex(&self.lhs),
+            "rhs_hex": bytes_to_hex(&self.rhs),
+            "result_hex": bytes_to_hex(&self.result),
+        })
+    }
+}
+
+fn semantic_xor_lhs_runs(equations: &[CompactByteEquation]) -> serde_json::Value {
+    let mut runs = Vec::<XorByteRun>::new();
+    let mut current: Option<XorByteRun> = None;
+    for item in equations.iter().filter(|item| item.kind == "xor_mix") {
+        let Some(lhs) = item.lhs.map(|v| (v & 0xff) as u8) else {
+            continue;
+        };
+        let Some(rhs) = item.rhs.map(|v| (v & 0xff) as u8) else {
+            continue;
+        };
+        let result = (item.result & 0xff) as u8;
+        if let Some(run) = current.as_mut() {
+            if run.push(item.offset, lhs, rhs, result) {
+                continue;
+            }
+            runs.push(current.take().unwrap());
+        }
+        current = Some(XorByteRun::new(item.offset, lhs, rhs, result));
+    }
+    if let Some(run) = current {
+        runs.push(run);
+    }
+    serde_json::Value::Array(runs.into_iter().map(XorByteRun::into_json).collect())
 }
 
 fn semantic_xor_rhs_offset_pattern(equations: &[CompactByteEquation]) -> serde_json::Value {
@@ -10401,6 +10469,18 @@ mod tests {
         assert_eq!(
             summary["xor_rhs_pattern"]["even_byte"],
             serde_json::json!("0x61")
+        );
+        assert_eq!(
+            summary["xor_lhs_runs"][0]["range"],
+            serde_json::json!([3, 5])
+        );
+        assert_eq!(
+            summary["xor_lhs_runs"][0]["lhs_hex"],
+            serde_json::json!("67b4")
+        );
+        assert_eq!(
+            summary["xor_lhs_runs"][0]["result_hex"],
+            serde_json::json!("05d5")
         );
     }
 
