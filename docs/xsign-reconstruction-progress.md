@@ -868,6 +868,17 @@ multi_sample_generalization  weakly_covered
 The audit intentionally keeps `goal_complete=false` until the portable algorithm
 and multi-sample formula coverage are real, not inferred from trace replay.
 
+`xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
+
+```text
+even semantic offsets 2,14,60,66       -> mod255(0x74beabe59c) = 0x61
+odd  semantic offsets 1,13,15,59,65,67 -> mod255(0x74ffafca73) = 0x62
+```
+
+The odd input is tied to the time-seeded LCG chain; the even input is tied to a
+small-affine VM frontier chain. This explains the call_001 parity mask bytes,
+but still does not prove the full state schedule for every payload byte.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and

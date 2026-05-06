@@ -1762,6 +1762,34 @@ def fixed_prefix_model() -> dict:
     }
 
 
+def xor_rhs_mask_model() -> dict:
+    even_offsets = [offset for offset in CALL001_MOD255_MASK_OFFSETS if offset % 2 == 0]
+    odd_offsets = [offset for offset in CALL001_MOD255_MASK_OFFSETS if offset % 2 == 1]
+    return {
+        "status": "parity_mask_model",
+        "even": {
+            "semantic_offsets": even_offsets,
+            "input": f"{TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN['mod255_input']:#x}",
+            "byte": f"{mod255_low_byte(TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN['mod255_input']):#x}",
+            "chain_status": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN["status"],
+            "chain_kind": "small_affine_from_vm_frontier",
+        },
+        "odd": {
+            "semantic_offsets": odd_offsets,
+            "input": f"{TRACE_MOD255_INPUT_LCG_CHAIN['mod255_input']:#x}",
+            "byte": f"{mod255_low_byte(TRACE_MOD255_INPUT_LCG_CHAIN['mod255_input']):#x}",
+            "chain_status": TRACE_MOD255_INPUT_LCG_CHAIN["status"],
+            "chain_kind": "lcg_time_seeded_state_chain",
+        },
+        "all_mask_offsets_covered": sorted(even_offsets + odd_offsets)
+        == sorted(CALL001_MOD255_MASK_OFFSETS),
+        "note": (
+            "This explains the repeated xor RHS mask bytes for call_001. "
+            "It does not yet prove the full state schedule for every payload byte."
+        ),
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -2111,6 +2139,7 @@ def main() -> None:
     input_manifest = current_trace_model_input_manifest()
     current_trace_model_simulation = simulate_call001_xsign_current_trace_model()
     prefix_model = fixed_prefix_model()
+    rhs_mask_model = xor_rhs_mask_model()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -2230,6 +2259,7 @@ def main() -> None:
             "matches_trace": small_affine_state == TRACE_SMALL_AFFINE["expected_state"],
         },
         "mod255_low_byte": folds,
+        "xor_rhs_mask_model": rhs_mask_model,
         "tail_repeat_trace_evidence": [
             {
                 **item,
