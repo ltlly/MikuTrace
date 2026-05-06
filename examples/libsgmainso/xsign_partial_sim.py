@@ -2859,9 +2859,21 @@ def completion_audit() -> dict:
             },
         ],
         "blocking_gaps": [
-            "Replace remaining replay evaluator observed-value fallbacks with portable initial slot/table inputs.",
-            "Lift replay-plan steps into maintained Python algorithm code instead of a trace-bound evaluator.",
-            "Prove how LCG/time-derived state feeds every payload byte, not only selected mod255 inputs.",
+            (
+                "Prove or parameterize the remaining VM seed semantics: "
+                "scratch-writer slot25/26/28 and ladder slot24/26 still carry "
+                "not_proven or static-table/allocator boundaries."
+            ),
+            (
+                "Lift the replay-plan skeletons into maintained Python "
+                "algorithm code with explicit table/app/device parameters, "
+                "instead of relying on trace-bound replay summaries."
+            ),
+            (
+                "Expand multi-sample formula coverage beyond semantic offsets "
+                "1..6 and prove how LCG/time-derived state feeds every payload "
+                "byte."
+            ),
         ],
         "goal_complete": False,
     }
