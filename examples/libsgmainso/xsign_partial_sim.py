@@ -2669,8 +2669,12 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "value": "0x38",
                 "writer_idx": 14164105,
                 "writer_asm": "stp x9, x10, [x25, #0xd0]",
-                "lineage": "small integer chain through 0x2f + 0x9 and OR/shift identities",
-                "terminal": "depth_limit at value 0x24 after 30 compact steps",
+                "lineage": (
+                    "80-step compact lineage walks small integer states "
+                    "0x38, 0x2f, 0x2e, 0x24, 0xc, 0x8, 0x4 through "
+                    "OR/shift/ubfx identities"
+                ),
+                "terminal": "depth_limit after 80 compact steps",
                 "portable_status": "not_proven",
             },
             "slot28": {
@@ -2678,10 +2682,11 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "writer_idx": 14164235,
                 "writer_asm": "str x5, [x25, x6, lsl #3]",
                 "lineage": (
-                    "pointer chain: 0x74b68bb9a0 + 0x200 + 0x25f + 1, "
-                    "with repeated identity masks"
+                    "80-step compact lineage shows pointer chain "
+                    "0x74b68bb9a0 + 0x200 + 0x25f + 1 with repeated "
+                    "identity masks"
                 ),
-                "terminal": "depth_limit on VM slot24 pointer source after 30 compact steps",
+                "terminal": "depth_limit on VM pointer source after 80 compact steps",
                 "portable_status": "not_proven",
             },
             "slot25": {
@@ -2694,10 +2699,10 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "writer_idx": 14164103,
                 "writer_asm": "stp x9, x10, [x25, #0xc0]",
                 "lineage": (
-                    "loaded from slot9, then slot26, then byte memory around "
-                    "0x74b68bcc10"
+                    "18-step compact lineage reconstructs pointer bytes via "
+                    "bitwise OR merges, then stops at a local-def frontier"
                 ),
-                "terminal": "no_local_def at VM bytecode IP base 0x74fbf72380",
+                "terminal": "no_local_def after deeper seed-lineage probe",
                 "portable_status": "not_proven",
             },
         },
