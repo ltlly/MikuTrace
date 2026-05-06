@@ -336,6 +336,21 @@ independent character sources that make up the loaded word. This matters for
 the x-sign Base64 stage because the VM often builds overlapping 4-character
 windows and then combines them with `lsl`/`lsr`/`orr`.
 
+When the full tree is too noisy for an AI prompt, add `--summary`:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backtree <call_dir> \
+  --idx <trace_idx> \
+  --reg <reg> \
+  --depth 16 \
+  --frontier-with-next \
+  --summary
+```
+
+The summary drops the raw node tree and keeps the parts that matter for
+result-to-input analysis: `word_loads`, Base64 table lookups, low-noise
+formulas, small byte loads, bytecode-read frontiers, and terminal nodes.
+
 For a shorter AI prompt, use `highlights.word_loads` and
 `highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses
 byte writers into `ascii`/`bytes_hex`; `table_lookups` reports the Base64

@@ -806,6 +806,9 @@ enum Cmd {
         /// Also enqueue frontier branches when upstream.next exists.
         #[arg(long)]
         frontier_with_next: bool,
+        /// Emit a compact AI-readable summary instead of the full node tree.
+        #[arg(long)]
+        summary: bool,
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
@@ -1630,6 +1633,7 @@ async fn main() -> anyhow::Result<()> {
             lookback,
             max_writes,
             frontier_with_next,
+            summary,
             regs,
         }) => {
             cmd_vm_backtree(
@@ -1642,6 +1646,7 @@ async fn main() -> anyhow::Result<()> {
                 lookback,
                 max_writes,
                 frontier_with_next,
+                summary,
                 regs,
             )
             .await
@@ -3607,6 +3612,7 @@ async fn cmd_vm_backtree(
     lookback: usize,
     max_writes: usize,
     frontier_with_next: bool,
+    summary: bool,
     regs: String,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
@@ -3623,7 +3629,11 @@ async fn cmd_vm_backtree(
         regs,
     )
     .await?;
-    print_pretty(&value)
+    if summary {
+        print_pretty(&vm_backtree_summary(&value))
+    } else {
+        print_pretty(&value)
+    }
 }
 
 async fn vm_backchain_value_on(
@@ -3922,6 +3932,112 @@ async fn vm_backtree_value_on(
         "highlights": highlights,
         "nodes": nodes,
     }))
+}
+
+fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value {
+    let nodes = tree
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let interesting_formulas = index_tree_summary(tree)
+        .get("interesting_formulas")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let bytecode_frontiers = nodes
+        .iter()
+        .filter(|node| {
+            local_class(node) == Some("bytecode-read")
+                && node
+                    .get("frontier_nexts")
+                    .and_then(|v| v.as_array())
+                    .map_or(true, |items| items.is_empty())
+        })
+        .take(64)
+        .map(compact_tree_node_summary)
+        .collect::<Vec<_>>();
+    let small_byte_loads = nodes
+        .iter()
+        .filter(|node| {
+            local_class(node) == Some("byte-load")
+                && node_value_u64(node).is_some_and(|value| value <= 0xff)
+        })
+        .take(64)
+        .map(compact_tree_node_summary)
+        .collect::<Vec<_>>();
+    let terminal_nodes = nodes
+        .iter()
+        .filter(|node| {
+            node.get("status").and_then(|v| v.as_str()) == Some("cycle")
+                || (node
+                    .get("upstream")
+                    .and_then(|v| v.get("status"))
+                    .and_then(|v| v.as_str())
+                    != Some("ready")
+                    && node
+                        .get("frontier_nexts")
+                        .and_then(|v| v.as_array())
+                        .map_or(true, |items| items.is_empty()))
+        })
+        .take(64)
+        .map(compact_tree_node_summary)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": tree.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": tree.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "depth_requested": tree.get("depth_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "max_nodes": tree.get("max_nodes").cloned().unwrap_or(serde_json::Value::Null),
+        "frontier_with_next": tree.get("frontier_with_next").cloned().unwrap_or(serde_json::Value::Null),
+        "nodes_returned": tree.get("nodes_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated": tree.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "highlights": {
+            "word_loads": tree.pointer("/highlights/word_loads").cloned().unwrap_or_else(|| serde_json::json!([])),
+            "table_lookups": tree.pointer("/highlights/table_lookups").cloned().unwrap_or_else(|| serde_json::json!([])),
+            "interesting_formulas": interesting_formulas,
+        },
+        "small_byte_loads": small_byte_loads,
+        "bytecode_frontiers": bytecode_frontiers,
+        "terminal_nodes": terminal_nodes,
+    })
+}
+
+fn local_class(node: &serde_json::Value) -> Option<&str> {
+    node.pointer("/local_def/class").and_then(|v| v.as_str())
+}
+
+fn node_value_u64(node: &serde_json::Value) -> Option<u64> {
+    node.get("value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+        .or_else(|| node.get("value").and_then(|v| v.as_u64()))
+}
+
+fn compact_tree_node_summary(node: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id": node.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "parent": node.get("parent").cloned().unwrap_or(serde_json::Value::Null),
+        "depth": node.get("depth").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": node.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": node.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "producer": {
+            "asm": node.pointer("/local_def/asm").cloned().unwrap_or(serde_json::Value::Null),
+            "class": node.pointer("/local_def/class").cloned().unwrap_or(serde_json::Value::Null),
+            "func": node.pointer("/local_def/func").cloned().unwrap_or(serde_json::Value::Null),
+            "pc": node.pointer("/local_def/pc").cloned().unwrap_or(serde_json::Value::Null),
+            "mem_addr": node.pointer("/local_def/mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        },
+        "consumer": {
+            "asm": node.pointer("/target/asm").cloned().unwrap_or(serde_json::Value::Null),
+            "class": node.pointer("/target/class").cloned().unwrap_or(serde_json::Value::Null),
+            "func": node.pointer("/target/func").cloned().unwrap_or(serde_json::Value::Null),
+            "pc": node.pointer("/target/pc").cloned().unwrap_or(serde_json::Value::Null),
+            "mem_addr": node.pointer("/target/mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        },
+        "upstream_status": node.pointer("/upstream/status").cloned().unwrap_or(serde_json::Value::Null),
+        "via_kind": node.pointer("/via/kind").cloned().unwrap_or(serde_json::Value::Null),
+    })
 }
 
 struct TreeSeed {

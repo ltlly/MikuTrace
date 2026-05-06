@@ -710,6 +710,24 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
     assert_eq!(byte_nexts[3]["offsets"], serde_json::json!([3]));
     assert_eq!(v["highlights"]["word_loads"][0]["ascii"], "ABCD");
     assert_eq!(v["highlights"]["word_loads"][0]["bytes_hex"], "41424344");
+
+    let summary = run_json(&[
+        "vm-backtree".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "5".into(),
+        "--reg".into(),
+        "x2".into(),
+        "--depth".into(),
+        "1".into(),
+        "--max-nodes".into(),
+        "8".into(),
+        "--summary".into(),
+    ]);
+    assert_eq!(summary["status"], "ready");
+    assert_eq!(summary["nodes_returned"], 5);
+    assert!(summary.get("nodes").is_none());
+    assert_eq!(summary["highlights"]["word_loads"][0]["ascii"], "ABCD");
 }
 
 #[test]
