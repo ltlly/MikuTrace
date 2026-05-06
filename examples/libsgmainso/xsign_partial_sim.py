@@ -2011,10 +2011,19 @@ def validate_scratch_vm_opcode_samples() -> dict:
 
 
 def call001_scratch_lhs_prefix_bytes() -> bytes:
-    word0 = vm_lsl(CALL001_STAT_MTIM_TV_SEC, 0x18, 32)
+    return scratch_lhs_prefix_bytes_from_parameters(
+        CALL001_STAT_MTIM_TV_SEC,
+        CALL001_SCRATCH_PREFIX_STATIC_BYTE,
+    )
+
+
+def scratch_lhs_prefix_bytes_from_parameters(
+    stat_mtim_tv_sec: int, scratch_prefix_static_byte: int
+) -> bytes:
+    word0 = vm_lsl(stat_mtim_tv_sec, 0x18, 32)
     word1 = vm_orr(
-        vm_lsr(CALL001_STAT_MTIM_TV_SEC, 0x8, 32),
-        vm_lsl(CALL001_SCRATCH_PREFIX_STATIC_BYTE, 0x18, 32),
+        vm_lsr(stat_mtim_tv_sec, 0x8, 32),
+        vm_lsl(scratch_prefix_static_byte, 0x18, 32),
         32,
     )
     scratch = word32_le_bytes(word0) + word32_le_bytes(word1)
@@ -2237,6 +2246,10 @@ def parameterized_simulation_contract() -> dict:
     return {
         "status": "replay_contract_available",
         "can_reproduce_call001_when_inputs_supplied": True,
+        "implementation": (
+            "call001_trace_model_parameters() -> "
+            "reconstruct_semantic_tail_from_parameters() -> xsign_from_semantic_tail()"
+        ),
         "required_inputs": [
             {
                 "name": "raw_prefix",
@@ -2985,6 +2998,7 @@ def completion_audit() -> dict:
                         "python_vm_replay_plan_eval_summary scratch dump "
                         "matches 52/52 bytes"
                     ),
+                    "simulate_call001_xsign_current_trace_model uses reconstruct_semantic_tail_from_parameters",
                 ],
                 "status": "done_for_call001_trace_model",
             },
@@ -3059,40 +3073,69 @@ def xor_lhs_run_result(run: dict) -> bytes:
 
 
 def call001_lhs_run_bytes(run: dict) -> bytes:
+    return lhs_run_bytes_from_parameters(run, call001_trace_model_parameters())
+
+
+def lhs_run_bytes_from_parameters(run: dict, params: dict) -> bytes:
     if "lhs_hex" in run:
         return bytes.fromhex(run["lhs_hex"])
     if run.get("source") == "stat_mtim_le_plus_mixed_suffix":
-        return call001_scratch_lhs_prefix_bytes() + bytes.fromhex(
-            CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX
-        )[1:]
+        prefix = scratch_lhs_prefix_bytes_from_parameters(
+            params["stat_mtim_tv_sec"],
+            params["scratch_prefix_static_byte"],
+        )
+        return prefix + bytes.fromhex(params["middle_lhs_mixed_suffix_hex"])[1:]
     raise ValueError(f"unsupported lhs run source: {run}")
 
 
-def trace_mask_byte_for_semantic_offset(offset: int) -> int:
+def call001_trace_model_parameters() -> dict:
+    return {
+        "raw_prefix": urllib.parse.unquote(CALL_001_XSIGN)[:FIXED_PREFIX_CHARS],
+        "semantic_length": 68,
+        "semantic_byte0_source_value": TRACE_BYTE_LANE_STATIC_SOURCE["source_value"],
+        "mod255_mask_offsets": CALL001_MOD255_MASK_OFFSETS,
+        "mod255_even_input": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN["mod255_input"],
+        "mod255_odd_input": TRACE_MOD255_INPUT_LCG_CHAIN["mod255_input"],
+        "xor_lhs_runs": CALL001_XOR_LHS_RUNS,
+        "stat_mtim_tv_sec": CALL001_STAT_MTIM_TV_SEC,
+        "scratch_prefix_static_byte": CALL001_SCRATCH_PREFIX_STATIC_BYTE,
+        "middle_lhs_mixed_suffix_hex": CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX,
+    }
+
+
+def mask_byte_for_semantic_offset(offset: int, params: dict) -> int:
     if offset % 2 == 0:
-        return mod255_low_byte(0x74BEABE59C)
-    return mod255_low_byte(0x74FFAFCA73)
+        return mod255_low_byte(params["mod255_even_input"])
+    return mod255_low_byte(params["mod255_odd_input"])
 
 
-def reconstruct_call001_semantic_tail_from_trace_formulas() -> bytes:
-    out = bytearray(68)
-    out[0] = byte_lane_le(0x0A000142, 3)
-    for offset in CALL001_MOD255_MASK_OFFSETS:
-        out[offset] = trace_mask_byte_for_semantic_offset(offset)
-    for run in CALL001_XOR_LHS_RUNS:
+def trace_mask_byte_for_semantic_offset(offset: int) -> int:
+    return mask_byte_for_semantic_offset(offset, call001_trace_model_parameters())
+
+
+def reconstruct_semantic_tail_from_parameters(params: dict) -> bytes:
+    out = bytearray(params["semantic_length"])
+    out[0] = byte_lane_le(params["semantic_byte0_source_value"], 3)
+    for offset in params["mod255_mask_offsets"]:
+        out[offset] = mask_byte_for_semantic_offset(offset, params)
+    for run in params["xor_lhs_runs"]:
         start, end = run["range"]
-        lhs = call001_lhs_run_bytes(run)
+        lhs = lhs_run_bytes_from_parameters(run, params)
         if len(lhs) != end - start:
             raise ValueError(f"bad lhs length for range {run['range']}")
         for idx, lhs_byte in enumerate(lhs, start=start):
-            out[idx] = xor_mix(lhs_byte, trace_mask_byte_for_semantic_offset(idx))
+            out[idx] = xor_mix(lhs_byte, mask_byte_for_semantic_offset(idx, params))
     return bytes(out)
 
 
+def reconstruct_call001_semantic_tail_from_trace_formulas() -> bytes:
+    return reconstruct_semantic_tail_from_parameters(call001_trace_model_parameters())
+
+
 def simulate_call001_xsign_current_trace_model() -> dict:
-    prefix = urllib.parse.unquote(CALL_001_XSIGN)[:FIXED_PREFIX_CHARS]
-    semantic = reconstruct_call001_semantic_tail_from_trace_formulas()
-    xsign = xsign_from_semantic_tail(prefix, semantic)
+    params = call001_trace_model_parameters()
+    semantic = reconstruct_semantic_tail_from_parameters(params)
+    xsign = xsign_from_semantic_tail(params["raw_prefix"], semantic)
     expected = urllib.parse.unquote(CALL_001_XSIGN)
     return {
         "status": "trace_bound_simulation",
@@ -3101,6 +3144,8 @@ def simulate_call001_xsign_current_trace_model() -> dict:
         "matches_trace": xsign == expected,
         "semantic_tail_hex": semantic.hex(),
         "uses_current_trace_model_input_manifest": True,
+        "uses_parameterized_replay_function": True,
+        "parameter_names": sorted(params),
         "portable_algorithm_ready": False,
     }
 

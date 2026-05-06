@@ -2206,6 +2206,11 @@ group `piYQ`. It also records the corrected interpretation of
 `tail[65:68] == tail[13:16]`: a repeated range re-encoded through VM scratch,
 not yet a direct output copy. It deliberately reports `complete_algorithm =
 false` until the full 76-byte payload construction is recovered.
+The current trace-bound simulator is now a real parameterized function chain:
+`call001_trace_model_parameters() -> reconstruct_semantic_tail_from_parameters()
+-> xsign_from_semantic_tail()`. This keeps all remaining trace-bound inputs in
+one explicit parameter object, so replacing constants with portable
+app/device/table inputs no longer requires rewriting the simulator control flow.
 
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
