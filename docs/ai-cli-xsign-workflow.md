@@ -560,6 +560,7 @@ virtual operations:
 rust/target/debug/tracemiku-cli vm-ops <call_dir> \
   --start <idx_before_frontier> \
   --end <idx_after_frontier> \
+  --summary \
   --max-ops 40
 ```
 
@@ -570,6 +571,9 @@ dispatch branches, and ALU formulas. This is the layer to use after
 into a compact sequence such as "load byte 0x0a into slot 16", "load byte 0x62
 into slot 17", "compute 0x29 = (0x0a << 2) | (0x62 >> 6)", and "lookup Base64
 char p".
+Use `--summary` for AI analysis windows; it keeps slot traffic, bytecode reads,
+dispatches, semantic formula counts, and compact ALU formulas without the full
+record-shaped payload.
 
 For a specific scratch byte, use `byte-lineage` to automate the repeated
 last-write/backstep loop:

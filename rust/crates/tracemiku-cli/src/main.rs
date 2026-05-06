@@ -835,6 +835,9 @@ enum Cmd {
         /// Max VM op groups to return.
         #[arg(long, default_value_t = 80)]
         max_ops: usize,
+        /// Emit a compact AI-readable summary.
+        #[arg(long)]
+        summary: bool,
     },
     /// Follow a single byte backward through memory writes and VM source registers.
     ByteLineage {
@@ -1816,7 +1819,13 @@ async fn main() -> anyhow::Result<()> {
             regs,
             base_ip,
             max_ops,
-        }) => cmd_vm_ops(trace_dir, start, end, count, regs, base_ip, max_ops).await,
+            summary,
+        }) => {
+            cmd_vm_ops(
+                trace_dir, start, end, count, regs, base_ip, max_ops, summary,
+            )
+            .await
+        }
         Some(Cmd::ByteLineage {
             trace_dir,
             addr,
@@ -4903,6 +4912,7 @@ async fn cmd_vm_ops(
     regs: String,
     base_ip: Option<String>,
     max_ops: usize,
+    summary: bool,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
     let (rows, source_returned, inferred_base) =
@@ -4910,7 +4920,7 @@ async fn cmd_vm_ops(
     let all_ops = vm_ops_from_rows(&rows);
     let truncated = all_ops.len() > max_ops;
     let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
-    print_pretty(&serde_json::json!({
+    let output = serde_json::json!({
         "status": "ready",
         "start": start,
         "end": end,
@@ -4920,7 +4930,94 @@ async fn cmd_vm_ops(
         "ops_returned": ops.len(),
         "truncated": truncated,
         "ops": ops,
-    }))
+    });
+    if summary {
+        print_pretty(&vm_ops_output_summary(&output))
+    } else {
+        print_pretty(&output)
+    }
+}
+
+fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
+    let ops = value
+        .get("ops")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(vm_op_summary)
+        .collect::<Vec<_>>();
+    let mut semantic_counts = BTreeMap::<String, usize>::new();
+    for op in &ops {
+        if let Some(formulas) = op.get("alu_formulas").and_then(|v| v.as_array()) {
+            for formula in formulas {
+                if let Some(kind) = formula
+                    .get("semantic")
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|v| v.as_str())
+                {
+                    *semantic_counts.entry(kind.to_string()).or_default() += 1;
+                }
+            }
+        }
+    }
+    serde_json::json!({
+        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": value.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "end": value.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic_counts": semantic_counts
+            .into_iter()
+            .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+            .collect::<Vec<_>>(),
+        "ops": ops,
+    })
+}
+
+fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
+    let bytecode_reads = op
+        .get("bytecode_reads")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            serde_json::json!({
+                "idx": item.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "offset": item.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+                "width": item.get("width").cloned().unwrap_or(serde_json::Value::Null),
+                "bytes_le_hex": item.get("bytes_le_hex").cloned().unwrap_or(serde_json::Value::Null),
+                "value": item.get("value").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let alu_formulas = op
+        .get("alu_formulas")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|formula| {
+            serde_json::json!({
+                "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": formula.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "expression": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
+                "semantic": formula.get("semantic").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "idx_start": op.get("idx_start").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_end": op.get("idx_end").cloned().unwrap_or(serde_json::Value::Null),
+        "rows": op.get("rows").cloned().unwrap_or(serde_json::Value::Null),
+        "class_counts": op.get("class_counts").cloned().unwrap_or(serde_json::Value::Null),
+        "bytecode_reads": bytecode_reads,
+        "vm_slot_reads": op.get("vm_slot_reads").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "vm_slot_writes": op.get("vm_slot_writes").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "memory_stores": op.get("memory_stores").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "alu_formulas": alu_formulas,
+        "dispatches": op.get("dispatches").cloned().unwrap_or_else(|| serde_json::json!([])),
+    })
 }
 
 async fn load_vm_rows(
