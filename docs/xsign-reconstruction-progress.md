@@ -68,6 +68,32 @@ buffer shape currently observed in the trace. The traceable scratch bytes for
 the first variable group are `0x0a, 0x62, 0x61, ...`, not the whole-string
 decoded bytes `a6 26 10`.
 
+The fixed 12-character prefix is now better characterized. Searching trace
+memory finds the raw text `azYBCM007xAA`, but not the decoded bytes
+`6b360108cd34ef1000`:
+
+```text
+raw prefix hits:
+  0x74b68bcc1c first_idx=14755491
+  0x756649a2d0 first_idx=14761618
+  0x756649f510 first_idx=14818316
+  0x756649fb35 first_idx=14803456
+decoded prefix hits: 0
+```
+
+At `0x756649a2d0`, `byte-writer-map --summary` compresses the prefix into three
+little-endian word stores:
+
+```text
+[0,4)  "azYB"  src=0x42597a61  writer #14755538
+[4,8)  "CM00"  src=0x30304d43  writer #14755552
+[8,12) "7xAA"  src=0x41417837  writer #14755558
+```
+
+So the current simulator boundary is the raw 12-character prefix, not a
+directly observed nine-byte pre-Base64 header. The semantic meaning of that
+prefix is still unresolved, but the storage form is no longer ambiguous.
+
 Aligned-tail `output-map` form:
 
 ```bash

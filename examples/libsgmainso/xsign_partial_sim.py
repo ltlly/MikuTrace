@@ -132,6 +132,46 @@ TRACE_TAIL_WRITER_MAP = {
     ],
 }
 
+TRACE_FIXED_PREFIX_WRITER_MAP = {
+    "status": "trace_observed_string_prefix",
+    "raw_prefix": "azYBCM007xAA",
+    "raw_prefix_hex": "617a5942434d303037784141",
+    "whole_base64_decoded_hex": "6b360108cd34ef1000",
+    "decoded_prefix_direct_trace_hits": 0,
+    "raw_prefix_hits": [
+        {"addr": "0x74b68bcc1c", "first_idx": 14755491},
+        {"addr": "0x756649a2d0", "first_idx": 14761618},
+        {"addr": "0x756649f510", "first_idx": 14818316},
+        {"addr": "0x756649fb35", "first_idx": 14803456},
+    ],
+    "copy_buffer_writer_runs": [
+        {
+            "range": [0, 4],
+            "ascii": "azYB",
+            "src_value": "0x42597a61",
+            "writer_idx": 14755538,
+        },
+        {
+            "range": [4, 8],
+            "ascii": "CM00",
+            "src_value": "0x30304d43",
+            "writer_idx": 14755552,
+        },
+        {
+            "range": [8, 12],
+            "ascii": "7xAA",
+            "src_value": "0x41417837",
+            "writer_idx": 14755558,
+        },
+    ],
+    "interpretation": (
+        "The stable prefix is observed as raw Base64 text written/copied in "
+        "three little-endian word stores. The decoded nine-byte prefix is not "
+        "observed directly in trace memory, so the simulator should treat the "
+        "raw 12-character prefix as the current evidence boundary."
+    ),
+}
+
 TRACE_MULTI_SAMPLE_WRITER_MAPS = {
     "status": "stable_auto_anchor",
     "samples": 5,
@@ -1150,6 +1190,7 @@ def main() -> None:
                 },
             },
         },
+        "fixed_prefix_writer_map": TRACE_FIXED_PREFIX_WRITER_MAP,
         "multi_sample_writer_maps": TRACE_MULTI_SAMPLE_WRITER_MAPS,
         "crypto_evidence": TRACE_CRYPTO_EVIDENCE,
         "multi_sample_tail_structure": {
@@ -1457,7 +1498,10 @@ def main() -> None:
                 "portable formulas or external inputs for the word_source_only "
                 "XOR lhs chunks"
             ),
-            "meaning of the fixed 12-character prefix / 9 decoded bytes",
+            (
+                "semantic meaning of the fixed 12-character raw prefix; trace "
+                "now proves it as raw text, not as directly observed decoded bytes"
+            ),
             "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",
         ],

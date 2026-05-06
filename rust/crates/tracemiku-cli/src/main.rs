@@ -525,6 +525,9 @@ enum Cmd {
         /// Let attached VM chains continue through frontier source regs.
         #[arg(long)]
         vm_chain_follow_frontier: bool,
+        /// Emit a compact AI-readable summary instead of all byte and chain details.
+        #[arg(long)]
+        summary: bool,
         /// Register holding the VM instruction pointer in this trace/profile.
         #[arg(long, default_value = "x21")]
         vm_ip_reg: String,
@@ -1661,6 +1664,7 @@ async fn main() -> anyhow::Result<()> {
             vm_chain_runs,
             vm_chain_lookback,
             vm_chain_follow_frontier,
+            summary,
             vm_ip_reg,
             vm_state_reg,
             vm_dispatch_reg,
@@ -1678,6 +1682,7 @@ async fn main() -> anyhow::Result<()> {
                 vm_chain_runs,
                 vm_chain_lookback,
                 vm_chain_follow_frontier,
+                summary,
                 profile,
             )
             .await
@@ -2325,6 +2330,7 @@ async fn cmd_byte_writer_map(
     vm_chain_runs: usize,
     vm_chain_lookback: usize,
     vm_chain_follow_frontier: bool,
+    summary: bool,
     vm_profile: VmProfile,
 ) -> anyhow::Result<()> {
     let addr_value =
@@ -2376,6 +2382,11 @@ async fn cmd_byte_writer_map(
             obj.insert("vm_chains".to_string(), serde_json::Value::Array(chains));
         }
     }
+    let output = if summary {
+        byte_writer_map_summary(&output)
+    } else {
+        output
+    };
     print_pretty(&output)
 }
 
@@ -9477,6 +9488,90 @@ fn byte_writer_map_output(
     })
 }
 
+fn byte_writer_map_summary(output: &serde_json::Value) -> serde_json::Value {
+    let bytes = output
+        .get("bytes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let ready_count = bytes
+        .iter()
+        .filter(|entry| entry.get("status").and_then(|v| v.as_str()) == Some("ready"))
+        .count();
+    let writer_runs = output
+        .get("writer_runs")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(compact_byte_writer_run)
+        .collect::<Vec<_>>();
+    let vm_chains = output
+        .get("vm_chains")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(compact_byte_writer_chain)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": output.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "addr": output.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+        "size": output.get("size").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_range": output.get("idx_range").cloned().unwrap_or(serde_json::Value::Null),
+        "source": output.get("source").cloned().unwrap_or(serde_json::Value::Null),
+        "complete": output.get("complete").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": output.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "ascii": output.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+        "byte_count": bytes.len(),
+        "ready_byte_count": ready_count,
+        "missing_offsets": output.get("missing_offsets").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "writer_run_count": writer_runs.len(),
+        "writer_runs": writer_runs,
+        "vm_chain_summary": output.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_chains": vm_chains,
+        "warning": output.get("warning").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn compact_byte_writer_run(run: &serde_json::Value) -> serde_json::Value {
+    let writer = run.get("writer").unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "start_offset": run.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "end_offset": run.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "size": run.get("size").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": run.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "ascii": run.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+        "source_byte_offset": run.get("source_byte_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "source_byte_offsets": run.get("source_byte_offsets").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "writer": {
+            "idx": writer.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "func": writer.get("func").cloned().unwrap_or(serde_json::Value::Null),
+            "asm": writer.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+            "dst_addr": writer.get("dst_addr").cloned().unwrap_or(serde_json::Value::Null),
+            "size": writer.get("size").cloned().unwrap_or(serde_json::Value::Null),
+            "src_reg": writer.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+            "src_value": writer.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+        }
+    })
+}
+
+fn compact_byte_writer_chain(chain: &serde_json::Value) -> serde_json::Value {
+    let inner = chain.get("chain").unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "start_offset": chain.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "end_offset": chain.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "size": chain.get("size").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": chain.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "ascii": chain.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+        "source_byte_offsets": chain.get("source_byte_offsets").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "writer_idx": chain.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+        "seed": chain.get("seed").cloned().unwrap_or(serde_json::Value::Null),
+        "chain_status": inner.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "steps_returned": inner.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "recognized_pattern_summary": inner.get("recognized_pattern_summary").cloned().unwrap_or(serde_json::Value::Null),
+        "recognized_semantics": inner.get("recognized_semantics").cloned().unwrap_or_else(|| serde_json::json!([])),
+    })
+}
+
 async fn hash_candidate_byte_map(
     app: &axum::Router,
     candidate: &serde_json::Value,
@@ -11474,9 +11569,9 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, byte_lane_from_writer_map_entry,
-        byte_writer_map_output, byte_writers_from_range_writes, choose_frontier_next,
-        choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
-        compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
+        byte_writer_map_output, byte_writer_map_summary, byte_writers_from_range_writes,
+        choose_frontier_next, choose_frontier_next_for_lane, choose_laned_upstream_next,
+        classify_vm_asm, compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, find_hex_byte_offsets, gap_call_candidate_from_record,
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
@@ -12827,6 +12922,15 @@ mod tests {
         );
         assert_eq!(out["writer_runs"][1]["bytes_hex"], serde_json::json!("62"));
         assert_eq!(byte_lane_from_writer_map_entry(&out["bytes"][2]), Some(2));
+        let summary = byte_writer_map_summary(&out);
+        assert_eq!(summary["byte_count"], serde_json::json!(5));
+        assert_eq!(summary["ready_byte_count"], serde_json::json!(5));
+        assert_eq!(summary["writer_run_count"], serde_json::json!(2));
+        assert_eq!(
+            summary["writer_runs"][0]["writer"]["asm"],
+            serde_json::json!("str w16, [x2]")
+        );
+        assert!(summary.get("bytes").is_none());
     }
 
     #[test]

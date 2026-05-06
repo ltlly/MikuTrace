@@ -196,6 +196,23 @@ rust/target/debug/tracemiku-cli idxs-touching-addr <call_dir> \
 agent distinguish "latest traced write" from "last observed read value" when a
 scratch address is reused.
 
+For buffer-level provenance, prefer `byte-writer-map --summary` first:
+
+```bash
+rust/target/debug/tracemiku-cli byte-writer-map <call_dir> \
+  --addr <addr> \
+  --size <n> \
+  --idx-hi <idx> \
+  --vm-chain-steps 16 \
+  --vm-chain-runs 12 \
+  --vm-chain-follow-frontier \
+  --summary
+```
+
+The summary keeps `bytes_hex`, printable `ascii`, compact writer runs,
+aggregate VM chain counts, and per-run chain summaries. Omit `--summary` only
+when the AI needs the full byte list or full backchain steps.
+
 To dump a byte range as of a specific trace index, use `mem-dump --cursor`.
 Without `--cursor`, it shows the final MemShadow state:
 
