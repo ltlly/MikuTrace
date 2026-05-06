@@ -4937,16 +4937,19 @@ fn output_semantic_xor_word_state_sources(
         let Some(source) = xor_word_source_from_semantics(&semantics, lhs_word_le) else {
             continue;
         };
-        if source
+        let source_status = if source
             .get("state_update")
-            .is_none_or(|state_update| state_update.is_null())
+            .is_some_and(|state_update| !state_update.is_null())
         {
-            continue;
-        }
+            "state_update_found"
+        } else {
+            "word_source_only"
+        };
         sources.push(serde_json::json!({
             "semantic_range": template.get("semantic_range").cloned().unwrap_or(serde_json::Value::Null),
             "lhs_word_le": template.get("lhs_word_le").cloned().unwrap_or(serde_json::Value::Null),
             "source_offset": start,
+            "source_status": source_status,
             "source_word": source.get("source_word").cloned().unwrap_or(serde_json::Value::Null),
             "source_word_be": source.get("source_word_be").cloned().unwrap_or(serde_json::Value::Null),
             "source_word_match": source.get("source_word_match").cloned().unwrap_or(serde_json::Value::Null),
@@ -12470,6 +12473,10 @@ mod tests {
         });
         let sources = output_semantic_xor_word_state_sources(&value, &templates);
         let first = sources.as_array().unwrap().first().unwrap();
+        assert_eq!(
+            first["source_status"],
+            serde_json::json!("state_update_found")
+        );
         assert_eq!(first["source_word_be"], serde_json::json!("0x67b44ad8"));
         assert_eq!(first["state_update"]["idx"], serde_json::json!(14678154));
     }
@@ -12492,6 +12499,46 @@ mod tests {
             summary["missing_templates"][0]["semantic_range"],
             serde_json::json!([4, 8])
         );
+    }
+
+    #[test]
+    fn keeps_xor_word_sources_without_state_update() {
+        let templates = serde_json::json!([
+            {
+                "semantic_range": [0, 4],
+                "lhs_word_le": "0x69f2e9fb"
+            }
+        ]);
+        let value = serde_json::json!({
+            "vm_chains": [
+                {
+                    "start_offset": 0,
+                    "chain": {
+                        "recognized_semantics": [
+                            {
+                                "step": 15,
+                                "idx": 14695079,
+                                "asm": "orr x3, x19, x8",
+                                "semantic": {
+                                    "kind": "bitwise_or_merge",
+                                    "lhs": "0x69000000",
+                                    "rhs": "0xf2e9fb",
+                                    "result": "0x69f2e9fb"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let sources = output_semantic_xor_word_state_sources(&value, &templates);
+        let first = sources.as_array().unwrap().first().unwrap();
+        assert_eq!(
+            first["source_status"],
+            serde_json::json!("word_source_only")
+        );
+        assert_eq!(first["source_word"], serde_json::json!("0x69f2e9fb"));
+        assert_eq!(first["state_update"], serde_json::Value::Null);
     }
 
     #[test]
