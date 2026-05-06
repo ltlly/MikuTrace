@@ -6952,6 +6952,9 @@ fn vm_op_template_role_binding(
         ("slot_write", "byte_load", _) if !dst_slots.is_empty() => {
             Some(format!("slot[{}] = byte_load(addr_expr)", dst_slots[0]))
         }
+        ("slot_write", _, _) if !dst_slots.is_empty() => {
+            Some(format!("slot[{}] = observed_value", dst_slots[0]))
+        }
         ("memory_store", "formula", op) if op != "none" => {
             let mut args = if src_slots.is_empty() {
                 vec!["src_value".to_string()]
@@ -7482,6 +7485,7 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
             "src": src,
             "source_slot": src_slot.unwrap_or(serde_json::Value::Null),
             "pseudocode": pseudocode,
+            "python_with_values": pseudocode,
         }));
     }
     if effects.is_empty() {
@@ -7496,6 +7500,7 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
                 "kind": "control",
                 "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
                 "pseudocode": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
+                "python_with_values": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
                 "formula": formula,
             }));
         }
@@ -15240,6 +15245,10 @@ mod tests {
             serde_json::json!("mem[0x753ddd7fd0] = 0xab")
         );
         assert_eq!(
+            summary["memory_store_effects"][0]["python_with_values"],
+            serde_json::json!("mem[0x753ddd7fd0] = 0xab")
+        );
+        assert_eq!(
             summary["bytecode_reads"][2]["value"],
             serde_json::json!("0x9")
         );
@@ -15250,6 +15259,10 @@ mod tests {
         assert_eq!(
             summary["control_effects"][0]["idx"],
             serde_json::json!(10616043)
+        );
+        assert_eq!(
+            summary["control_effects"][0]["python_with_values"],
+            serde_json::json!("0x200 = 0x100 + 0x9")
         );
         assert_eq!(summary["op_effects"].as_array().unwrap().len(), 2);
         assert_eq!(
