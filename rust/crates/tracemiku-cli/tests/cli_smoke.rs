@@ -765,6 +765,26 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
 }
 
 #[test]
+fn vm_backstep_uses_target_row_when_it_defines_requested_reg() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
+    let v = run_json(&[
+        "vm-backstep".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "4".into(),
+        "--reg".into(),
+        "x2".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["source_value"], "0x44434241");
+    assert_eq!(v["local_def"]["idx"], 4);
+    assert_eq!(v["local_def"]["asm"], "ldr w2, [x1]");
+    assert_eq!(v["upstream"]["status"], "ready");
+    assert_eq!(v["upstream"]["byte_nexts"].as_array().unwrap().len(), 4);
+}
+
+#[test]
 fn vm_ops_groups_rows_by_vm_ip() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_vm_ops_trace(tmp.path(), "run1");

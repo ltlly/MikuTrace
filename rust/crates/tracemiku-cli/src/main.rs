@@ -4273,18 +4273,16 @@ async fn vm_backstep_value_on(
         }));
     };
     let source_key = register_value_key(&source_reg);
-    let local_def = rows[..target_pos]
-        .iter()
-        .rev()
-        .find(|row| {
-            row.get("def")
-                .and_then(|v| v.get("reg"))
-                .and_then(|v| v.as_str())
-                .map(register_value_key)
-                .as_deref()
-                == Some(source_key.as_str())
-        })
-        .cloned();
+    let target_defines_source = row_def_reg_key(target_row).as_deref() == Some(source_key.as_str());
+    let local_def = if target_defines_source {
+        Some(target_row.clone())
+    } else {
+        rows[..target_pos]
+            .iter()
+            .rev()
+            .find(|row| row_def_reg_key(row).as_deref() == Some(source_key.as_str()))
+            .cloned()
+    };
     let upstream = if let Some(def_row) = local_def.as_ref() {
         upstream_writer_for_def_on(app, def_row, lookback, max_writes).await?
     } else {
@@ -4301,12 +4299,23 @@ async fn vm_backstep_value_on(
         "status": "ready",
         "idx": idx,
         "source_reg": source_reg,
-        "source_value": record_reg_value(target_record, &source_key).cloned().unwrap_or(serde_json::Value::Null),
+        "source_value": if target_defines_source {
+            target_row.pointer("/def/value_after").cloned().unwrap_or(serde_json::Value::Null)
+        } else {
+            record_reg_value(target_record, &source_key).cloned().unwrap_or(serde_json::Value::Null)
+        },
         "target": target_row,
         "local_def": local_def,
         "upstream": upstream,
         "frontier": frontier,
     }))
+}
+
+fn row_def_reg_key(row: &serde_json::Value) -> Option<String> {
+    row.get("def")
+        .and_then(|v| v.get("reg"))
+        .and_then(|v| v.as_str())
+        .map(register_value_key)
 }
 
 fn backstep_frontier_from_def(def_row: &serde_json::Value) -> Vec<serde_json::Value> {
