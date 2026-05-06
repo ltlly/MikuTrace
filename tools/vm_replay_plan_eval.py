@@ -28,6 +28,7 @@ class ReplayState:
     skipped_effects: int = 0
     unresolved_reads: list[dict[str, Any]] = field(default_factory=list)
     writes: list[dict[str, Any]] = field(default_factory=list)
+    seeded_slots: dict[int, int] = field(default_factory=dict)
 
 
 def parse_int(text: str | None) -> int | None:
@@ -155,6 +156,11 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
         state.skipped_effects += 1
         return
     lhs, rhs = [part.strip() for part in text.split("=", 1)]
+    slot_match = re.fullmatch(r"slot\[(\d+)\]", lhs)
+    mem_match = re.fullmatch(r"mem\[(0x[0-9a-fA-F]+|\d+|null)\]", lhs)
+    if slot_match is None and mem_match is None:
+        state.skipped_effects += 1
+        return
     computed = eval_expr(rhs, state, effect)
     observed = parse_value(effect.get("value"))
     if computed is None and trust_observed:
@@ -168,8 +174,8 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
     if computed is None:
         state.skipped_effects += 1
         return
-    if match := re.fullmatch(r"slot\[(\d+)\]", lhs):
-        slot = int(match.group(1))
+    if slot_match is not None:
+        slot = int(slot_match.group(1))
         state.slots[slot] = computed & MASK64
         state.writes.append(
             {
@@ -182,8 +188,8 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
             }
         )
         return
-    if match := re.fullmatch(r"mem\[(0x[0-9a-fA-F]+|\d+|null)\]", lhs):
-        addr = parse_int(match.group(1))
+    if mem_match is not None:
+        addr = parse_int(mem_match.group(1))
         if addr is None:
             state.skipped_effects += 1
             return
@@ -203,8 +209,19 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
     state.skipped_effects += 1
 
 
-def replay_plan(plan: dict[str, Any], trust_observed: bool) -> ReplayState:
+def parse_seed_slot(spec: str) -> tuple[int, int]:
+    slot_text, value_text = spec.split("=", 1)
+    return int(slot_text, 0), int(value_text, 0)
+
+
+def replay_plan(
+    plan: dict[str, Any], trust_observed: bool, seed_slots: list[str]
+) -> ReplayState:
     state = ReplayState()
+    for spec in seed_slots:
+        slot, value = parse_seed_slot(spec)
+        state.slots[slot] = value & MASK64
+        state.seeded_slots[slot] = value & MASK64
     for step in plan.get("replay_steps", []):
         for effect in step.get("effects", []):
             apply_effect(effect, state, trust_observed=trust_observed)
@@ -241,6 +258,9 @@ def summarize(plan: dict[str, Any], state: ReplayState, dump_specs: list[str]) -
         "unresolved_read_count": len(state.unresolved_reads),
         "unresolved_reads_preview": state.unresolved_reads[:20],
         "slot_count": len(state.slots),
+        "seeded_slots": {
+            str(slot): f"{value:#x}" for slot, value in sorted(state.seeded_slots.items())
+        },
         "touched_slots": touched_slots,
         "recent_writes": state.writes[-20:],
         "mem_dumps": [dump_mem(state, spec) for spec in dump_specs],
@@ -251,13 +271,22 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-mem", action="append", default=[], metavar="ADDR:SIZE")
     parser.add_argument(
+        "--seed-slot",
+        action="append",
+        default=[],
+        metavar="SLOT=VALUE",
+        help="Seed an initial VM slot value before replay, e.g. --seed-slot 0=0.",
+    )
+    parser.add_argument(
         "--no-trust-observed",
         action="store_true",
         help="Do not fall back to observed trace values when operands are missing.",
     )
     args = parser.parse_args()
     plan = json.load(sys.stdin)
-    state = replay_plan(plan, trust_observed=not args.no_trust_observed)
+    state = replay_plan(
+        plan, trust_observed=not args.no_trust_observed, seed_slots=args.seed_slot
+    )
     json.dump(summarize(plan, state, args.dump_mem), sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0

@@ -2495,12 +2495,14 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "tracemiku-cli vm-ops <call_dir> --start 14164280 "
                 "--end 14165320 --replay-plan --max-ops 400 | "
                 "uv run python tools/vm_replay_plan_eval.py "
-                "--dump-mem 0x74b68bbe00:52"
+                "--seed-slot 0=0 --dump-mem 0x74b68bbe00:52"
             ),
-            "computed_effects": 98,
-            "trusted_effects": 12,
+            "seeded_slots": {"0": "0x0"},
+            "computed_effects": 100,
+            "trusted_effects": 5,
             "skipped_effects": 5,
-            "unresolved_read_count": 13,
+            "unresolved_read_count": 6,
+            "remaining_missing_slots": [25, 2, 28, 29, 26, 27],
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
                 "size": 52,
@@ -2517,20 +2519,22 @@ def python_vm_replay_plan_eval_summary() -> dict:
             "command": (
                 "tracemiku-cli vm-ops <call_dir> --start 14015880 "
                 "--end 14017110 --replay-plan --max-ops 400 | "
-                "uv run python tools/vm_replay_plan_eval.py"
+                "uv run python tools/vm_replay_plan_eval.py --seed-slot 0=0"
             ),
-            "computed_effects": 109,
-            "trusted_effects": 18,
+            "seeded_slots": {"0": "0x0"},
+            "computed_effects": 108,
+            "trusted_effects": 7,
             "skipped_effects": 14,
-            "unresolved_read_count": 17,
+            "unresolved_read_count": 6,
+            "remaining_missing_slots": [26, 28, 25, 24, 8],
             "final_observed_slot24": "0x95f2ec79",
         },
         "interpretation": (
             "The generic replay-plan evaluator can reconstruct the full "
             "call_001 scratch table bytes from ordered VM effects, but it "
-            "still falls back to observed trace values for missing initial "
-            "slot/table inputs. This is trace-bound replay, not yet a "
-            "portable algorithm."
+            "still falls back to observed trace values for a small set of "
+            "missing initial slot/table inputs. This is trace-bound replay, "
+            "not yet a portable algorithm."
         ),
     }
 
