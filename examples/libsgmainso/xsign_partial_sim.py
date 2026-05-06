@@ -2772,6 +2772,11 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "--addr 0x7744599568 --before-idx 14164280 "
                     "--depth 24 --lookback 5000000 --compact"
                 ),
+                "deep_command": (
+                    "tracemiku-cli byte-lineage <call_dir> "
+                    "--addr 0x7744599568 --before-idx 14164280 "
+                    "--depth 1000 --lookback 15000000 --compact"
+                ),
                 "value": "0x74b68bcc1c",
                 "writer_idx": 14164103,
                 "writer_asm": "stp x9, x10, [x25, #0xc0]",
@@ -2781,8 +2786,29 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "label x13 as pointer_base and x14 as delta"
                 ),
                 "delta_source": "0x127c comes from a VM bytecode read around #14159863..#14159865",
-                "remaining_boundary": "pointer_base 0x74b68bb9a0 is not yet proven",
-                "portable_status": "base_pointer_not_proven",
+                "pointer_transitions": [
+                    "0x74b68bcc1c = 0x74b68bb9a0 + 0x127c",
+                    "0x74b68bb9a0 = 0x74b68bd4c0 - 0x1b20",
+                    "0x74b68bd4c0 = 0x74b68bd6d0 - 0x210",
+                    "0x74b68bd6d0 = align16(0x74b68bd750 - 0x71)",
+                    "0x74b68bdb40 = 0x74b68bde20 - 0x2e0",
+                ],
+                "heap_allocation_boundary": {
+                    "shared_with_slot28": True,
+                    "call_idx": 7364,
+                    "call_asm": "bl #0x7601bcbd60",
+                    "target_value": "0x7601bcbd60",
+                    "resolved_target": "libc.so+0x5c718 = malloc@@LIBC",
+                    "size_arg_x0": "0x40000",
+                    "return_value": "0x74b687edc0",
+                    "deep_probe_steps": 953,
+                    "evidence": (
+                        "deep byte-lineage reaches call_return_boundary "
+                        "after expanding lookback across the VM copy loop"
+                    ),
+                },
+                "terminal": "call_return_boundary at malloc(0x40000)",
+                "portable_status": "heap_scratch_allocation_boundary",
             },
         },
         "middle_lhs_ladder_window": {
@@ -2874,9 +2900,8 @@ def vm_replay_seed_provenance_summary() -> dict:
         "interpretation": (
             "After fixing pair-store slot handling, slot8 is computed inside "
             "the ladder replay window instead of being an initial seed. The "
-            "open portable-algorithm work is concentrated in scratch slot25 "
-            "pointer provenance, heap-allocation parameterization for slot28, "
-            "and ladder slot24/26."
+            "open portable-algorithm work is concentrated in heap-allocation "
+            "parameterization for scratch slot25/28 and ladder slot24/26."
         ),
     }
 
@@ -2910,6 +2935,7 @@ def completion_audit() -> dict:
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",
                     "byte-lineage --compact formula operands label pointer_base and delta",
                     "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
+                    "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",
                 ],
                 "status": "substantially_available",
             },
@@ -2959,11 +2985,9 @@ def completion_audit() -> dict:
         "blocking_gaps": [
             (
                 "Prove or parameterize the remaining VM seed semantics: "
-                "scratch-writer slot25 delta is now bytecode-backed but its "
-                "pointer base remains open; scratch-writer slot28 reaches a "
-                "malloc-backed heap scratch boundary; slot26 and ladder "
-                "slot24/26 still carry VM-base, static-table, or allocator "
-                "boundaries."
+                "scratch-writer slot25/28 reach malloc-backed heap scratch "
+                "boundaries; slot26 and ladder slot24/26 still carry VM-base, "
+                "static-table, or allocator boundaries."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "

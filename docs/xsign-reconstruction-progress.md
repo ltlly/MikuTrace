@@ -913,12 +913,13 @@ an opaque pointer into a visible pointer expression:
 VM bytecode read. `byte-lineage --compact` now keeps formula operands with
 roles such as `pointer_base` and `delta`, so this evidence survives the compact
 AI-facing view. Slot26 still reaches VM bytecode after a chain of small integer
-states, and slot28 still loops through the `0x74b68bb9a0` base-pointer copy
-chain at depth 180. That confirms the remaining issue is initial VM state/base
-semantics, not missing replay mechanics. The compact slot28 probe now also
-reports `repeated_values`: `0x74b68bb9a0` appears 69 times in an 80-step
-lineage, while `0x74b68bbdff` appears 7 times. That turns the prior
-`depth_limit` into an explicit copy-loop/stable-base signal for the next proof.
+states. Slot25 and slot28 both pass through long `0x74b68bb9a0` /
+`0x74b68bd4c0` base-pointer copy chains; the short probes stop at depth limits,
+but the repeated-value summaries make the copy loops explicit enough to expand
+the lookback and keep chasing. The compact slot28 probe reports
+`repeated_values`: `0x74b68bb9a0` appears 69 times in an 80-step lineage, while
+`0x74b68bbdff` appears 7 times. That turns the prior `depth_limit` into an
+explicit copy-loop/stable-base signal for the next proof.
 Chasing the earlier slot20 writer shows the same base as pointer arithmetic:
 `0x74b68bb9a0 = 0x74b68bd4c0 + 0xffffffffffffe4e0`, i.e.
 `0x74b68bd4c0 - 0x1b20`. The signed delta is VM-bytecode-backed, while
@@ -972,6 +973,11 @@ This turns the slot28 deep base into heap scratch provenance rather than a
 missing portable arithmetic input. The portable model should parameterize it as
 `malloc(0x40000)`-derived state, or prove that later operations cancel the ASLR
 address, instead of trying to reproduce the concrete pointer value.
+The slot25 seed reaches the same boundary when rerun with a deeper search:
+`byte-lineage --addr 0x7744599568 --before-idx 14164280 --depth 1000
+--lookback 15000000 --compact` returns `call_return_boundary` after 953 steps,
+with the same call `#7364 bl #0x7601bcbd60`, `x0=0x40000`, and return value
+`0x74b687edc0`.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1117,7 +1123,11 @@ scratch slot25 before #14164280:
     x13 = 0x74b68bb9a0 role pointer_base
     x14 = 0x127c       role delta
   delta source: VM bytecode read around #14159863..#14159865
-  remaining boundary: prove or parameterize pointer_base 0x74b68bb9a0
+  deep command:
+    byte-lineage --addr 0x7744599568 --before-idx 14164280 \
+      --depth 1000 --lookback 15000000 --compact
+  terminal: call_return_boundary at #7364 malloc(0x40000)
+  boundary: same heap scratch allocation chain as slot28
 
 [21,25) ladder slot8 around #14017046:
   no longer an initial seed after fixed-offset pair slot handling
@@ -1152,8 +1162,10 @@ scratch slot25 before #14164280:
 
 So the seed problem is no longer one undifferentiated fallback bucket. The
 pair-store fixes removed a false `slot8` seed and false observed-read
-boundaries. The remaining hard parts are scratch pointer provenance
-(`slot25/28`) and ladder chains (`slot24/26`).
+boundaries, while scratch pointer provenance for `slot25/28` now reaches
+malloc-backed heap boundaries. The remaining hard parts are ladder chains
+(`slot24/26`) and deciding whether heap-derived pointer terms cancel out or must
+be explicit simulator parameters.
 
 The `slot24` and `slot26` chains now have concrete boundary identities.
 `slot24` is derived from
