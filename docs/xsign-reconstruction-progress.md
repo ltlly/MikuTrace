@@ -893,6 +893,23 @@ Each xor byte records its rhs parity mask and lhs source. This makes the exact
 remaining weakness visible: coverage is complete for `call_001`, but several
 lhs sources are still trace literals or segmented non-portable sources.
 
+`python_semantic_helper_coverage` now maps every semantic kind currently seen in
+the tail writer evidence to a Python helper:
+
+```text
+add_small_delta    vm_add
+bitwise_or_merge   vm_orr
+byte_lane_extract  byte_lane_le
+mod255_low_byte    mod255_low_byte
+shift_right        vm_lsr
+ubfx               vm_ubfx
+xor_identity       xor_mix
+xor_mix            xor_mix
+```
+
+All seen semantic kinds have helpers, and the opcode sample validation now
+includes `byte_lane_le`. This is helper coverage, not full-window validation.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and

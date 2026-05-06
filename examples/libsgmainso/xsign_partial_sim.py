@@ -1526,6 +1526,10 @@ def vm_store_le(memory: dict[int, int], addr: int, value: int, width: int) -> No
         memory[addr + offset] = (value >> (offset * 8)) & 0xFF
 
 
+def byte_lane_le(value: int, offset: int) -> int:
+    return (value >> (offset * 8)) & 0xFF
+
+
 def validate_scratch_vm_opcode_samples() -> dict:
     memory: dict[int, int] = {}
     samples = [
@@ -1558,6 +1562,11 @@ def validate_scratch_vm_opcode_samples() -> dict:
             "expr": "slot[20] = ubfx(slot[19], 0x0, 0x20)",
             "computed": vm_ubfx(0x10, 0, 0x20),
             "expected": 0x10,
+        },
+        {
+            "expr": "byte_lane_le(0x0a000142, 3)",
+            "computed": byte_lane_le(0x0A000142, 3),
+            "expected": 0x0A,
         },
     ]
     vm_store_le(memory, 0x74B68BBE04, 0x7969F2E9, 4)
@@ -1843,6 +1852,50 @@ def semantic_byte_source_model() -> dict:
     }
 
 
+def python_semantic_helper_coverage() -> dict:
+    helpers = [
+        "byte_lane_le",
+        "mod255_low_byte",
+        "xor_mix",
+        "vm_add",
+        "vm_and",
+        "vm_orr",
+        "vm_lsl",
+        "vm_lsr",
+        "vm_ubfx",
+        "vm_store_le",
+    ]
+    semantic_kinds = sorted(
+        set(TRACE_TAIL_WRITER_MAP["semantic_kind_counts"])
+        | set(TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["kind_counts"])
+    )
+    helper_by_kind = {
+        "add_small_delta": "vm_add",
+        "bitwise_or_merge": "vm_orr",
+        "byte_lane_extract": "byte_lane_le",
+        "mod255_low_byte": "mod255_low_byte",
+        "shift_right": "vm_lsr",
+        "ubfx": "vm_ubfx",
+        "xor_identity": "xor_mix",
+        "xor_mix": "xor_mix",
+    }
+    rows = [
+        {
+            "semantic_kind": kind,
+            "helper": helper_by_kind.get(kind),
+            "implemented": helper_by_kind.get(kind) in helpers,
+        }
+        for kind in semantic_kinds
+    ]
+    return {
+        "status": "helper_mapping_available",
+        "helpers": helpers,
+        "semantic_kinds": rows,
+        "all_seen_semantic_kinds_have_helpers": all(item["implemented"] for item in rows),
+        "caution": "Helper coverage is not full-window opcode validation.",
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -1940,7 +1993,7 @@ def trace_mask_byte_for_semantic_offset(offset: int) -> int:
 
 def reconstruct_call001_semantic_tail_from_trace_formulas() -> bytes:
     out = bytearray(68)
-    out[0] = (0x0A000142 >> 24) & 0xFF
+    out[0] = byte_lane_le(0x0A000142, 3)
     for offset in CALL001_MOD255_MASK_OFFSETS:
         out[offset] = trace_mask_byte_for_semantic_offset(offset)
     for run in CALL001_XOR_LHS_RUNS:
@@ -2194,6 +2247,7 @@ def main() -> None:
     prefix_model = fixed_prefix_model()
     rhs_mask_model = xor_rhs_mask_model()
     byte_source_model = semantic_byte_source_model()
+    helper_coverage = python_semantic_helper_coverage()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -2315,6 +2369,7 @@ def main() -> None:
         "mod255_low_byte": folds,
         "xor_rhs_mask_model": rhs_mask_model,
         "semantic_byte_source_model": byte_source_model,
+        "python_semantic_helper_coverage": helper_coverage,
         "tail_repeat_trace_evidence": [
             {
                 **item,
