@@ -1790,6 +1790,59 @@ def xor_rhs_mask_model() -> dict:
     }
 
 
+def semantic_byte_source_model() -> dict:
+    rows = []
+    rows.append(
+        {
+            "offset": 0,
+            "kind": "byte_lane_extract",
+            "source": "static_memory_load_constant",
+            "expression": "byte_lane_le(0x0a000142, 3)",
+        }
+    )
+    for offset in CALL001_MOD255_MASK_OFFSETS:
+        rows.append(
+            {
+                "offset": offset,
+                "kind": "mod255_low_byte",
+                "rhs_parity": "even" if offset % 2 == 0 else "odd",
+                "input": (
+                    f"{TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN['mod255_input']:#x}"
+                    if offset % 2 == 0
+                    else f"{TRACE_MOD255_INPUT_LCG_CHAIN['mod255_input']:#x}"
+                ),
+            }
+        )
+    for run in CALL001_XOR_LHS_RUNS:
+        start, end = run["range"]
+        lhs = call001_lhs_run_bytes(run)
+        for rel, offset in enumerate(range(start, end)):
+            rows.append(
+                {
+                    "offset": offset,
+                    "kind": "xor_mix",
+                    "lhs_byte": f"{lhs[rel]:#x}",
+                    "rhs_parity": "even" if offset % 2 == 0 else "odd",
+                    "rhs_byte": f"{trace_mask_byte_for_semantic_offset(offset):#x}",
+                    "lhs_source": run.get("source", "trace_literal_lhs_hex"),
+                }
+            )
+    rows.sort(key=lambda item: item["offset"])
+    covered_offsets = [item["offset"] for item in rows]
+    return {
+        "status": "complete_for_call001_trace_model",
+        "covered_count": len(set(covered_offsets)),
+        "expected_count": 68,
+        "complete": sorted(set(covered_offsets)) == list(range(68)),
+        "kind_counts": {
+            "byte_lane_extract": sum(1 for item in rows if item["kind"] == "byte_lane_extract"),
+            "mod255_low_byte": sum(1 for item in rows if item["kind"] == "mod255_low_byte"),
+            "xor_mix": sum(1 for item in rows if item["kind"] == "xor_mix"),
+        },
+        "rows": rows,
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -2140,6 +2193,7 @@ def main() -> None:
     current_trace_model_simulation = simulate_call001_xsign_current_trace_model()
     prefix_model = fixed_prefix_model()
     rhs_mask_model = xor_rhs_mask_model()
+    byte_source_model = semantic_byte_source_model()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -2260,6 +2314,7 @@ def main() -> None:
         },
         "mod255_low_byte": folds,
         "xor_rhs_mask_model": rhs_mask_model,
+        "semantic_byte_source_model": byte_source_model,
         "tail_repeat_trace_evidence": [
             {
                 **item,

@@ -879,6 +879,20 @@ The odd input is tied to the time-seeded LCG chain; the even input is tied to a
 small-affine VM frontier chain. This explains the call_001 parity mask bytes,
 but still does not prove the full state schedule for every payload byte.
 
+`semantic_byte_source_model` now covers all 68 semantic bytes for the current
+trace model:
+
+```text
+byte_lane_extract  1
+mod255_low_byte   10
+xor_mix           57
+covered           68/68
+```
+
+Each xor byte records its rhs parity mask and lhs source. This makes the exact
+remaining weakness visible: coverage is complete for `call_001`, but several
+lhs sources are still trace literals or segmented non-portable sources.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and
