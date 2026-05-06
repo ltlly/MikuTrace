@@ -1492,6 +1492,99 @@ def affine_mod64(previous_state: int, multiplier: int, delta: int) -> int:
     return (previous_state * multiplier + delta) & MASK64
 
 
+def mask_bits(value: int, bits: int) -> int:
+    return value & ((1 << bits) - 1)
+
+
+def vm_add(lhs: int, rhs: int, bits: int = 64) -> int:
+    return mask_bits(lhs + rhs, bits)
+
+
+def vm_and(lhs: int, rhs: int, bits: int = 64) -> int:
+    return mask_bits(lhs & rhs, bits)
+
+
+def vm_orr(lhs: int, rhs: int, bits: int = 64) -> int:
+    return mask_bits(lhs | rhs, bits)
+
+
+def vm_lsl(value: int, shift: int, bits: int = 64) -> int:
+    return mask_bits(value << shift, bits)
+
+
+def vm_lsr(value: int, shift: int, bits: int = 64) -> int:
+    return mask_bits(value, bits) >> shift
+
+
+def vm_ubfx(value: int, lsb: int, width: int) -> int:
+    return (value >> lsb) & ((1 << width) - 1)
+
+
+def vm_store_le(memory: dict[int, int], addr: int, value: int, width: int) -> None:
+    for offset in range(width):
+        memory[addr + offset] = (value >> (offset * 8)) & 0xFF
+
+
+def validate_scratch_vm_opcode_samples() -> dict:
+    memory: dict[int, int] = {}
+    samples = [
+        {
+            "expr": "slot[25] = add(slot[25], 0x10)",
+            "computed": vm_add(0x74B68BCC1C, 0x10),
+            "expected": 0x74B68BCC2C,
+        },
+        {
+            "expr": "slot[2] = and(slot[2], 0x9)",
+            "computed": vm_and(0x1, 0x9, 32),
+            "expected": 0x1,
+        },
+        {
+            "expr": "slot[2] = lsr(slot[2], 0x8)",
+            "computed": vm_lsr(0x1, 0x8, 32),
+            "expected": 0x0,
+        },
+        {
+            "expr": "slot[4] = lsl(slot[3], 0x18)",
+            "computed": vm_lsl(0x69F2E9FB, 0x18, 32),
+            "expected": 0xFB000000,
+        },
+        {
+            "expr": "slot[2] = orr(slot[4], slot[2])",
+            "computed": vm_orr(0xFB000000, 0x0, 32),
+            "expected": 0xFB000000,
+        },
+        {
+            "expr": "slot[20] = ubfx(slot[19], 0x0, 0x20)",
+            "computed": vm_ubfx(0x10, 0, 0x20),
+            "expected": 0x10,
+        },
+    ]
+    vm_store_le(memory, 0x74B68BBE04, 0x7969F2E9, 4)
+    store_sample = {
+        "expr": "mem[0x74b68bbe04] = slot[5]",
+        "computed_hex": bytes(memory[0x74B68BBE04 + i] for i in range(4)).hex(),
+        "expected_hex": "e9f26979",
+    }
+    return {
+        "status": "partial_opcode_semantics_validated",
+        "samples": [
+            {
+                "expr": item["expr"],
+                "computed": f"{item['computed']:#x}",
+                "expected": f"{item['expected']:#x}",
+                "matches": item["computed"] == item["expected"],
+            }
+            for item in samples
+        ],
+        "store_sample": {
+            **store_sample,
+            "matches": store_sample["computed_hex"] == store_sample["expected_hex"],
+        },
+        "all_match": all(item["computed"] == item["expected"] for item in samples)
+        and store_sample["computed_hex"] == store_sample["expected_hex"],
+    }
+
+
 def xor_mix(lhs: int, rhs: int) -> int:
     return (lhs ^ rhs) & 0xFF
 
@@ -1770,6 +1863,7 @@ def main() -> None:
         if len({chunks[chunk_idx]["lhs_hex"] for chunks in middle_lhs_chunks_by_sample.values()})
         > 1
     ]
+    scratch_vm_opcode_validation = validate_scratch_vm_opcode_samples()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -2141,6 +2235,7 @@ def main() -> None:
             "xor_word_source_coverage": TRACE_XOR_WORD_SOURCE_COVERAGE,
             "boundary_stat_launch2_sem16_lineage": TRACE_BOUNDARY_STAT_LAUNCH2_SEM16_LINEAGE,
             "scratch_table_writer_chain_summary": TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY,
+            "scratch_vm_opcode_validation": scratch_vm_opcode_validation,
             "vm_byte_load_boundaries": TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES,
             "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,
             "multi_sample_mask_folds": {

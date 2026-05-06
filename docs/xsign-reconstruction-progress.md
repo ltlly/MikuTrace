@@ -790,6 +790,14 @@ slot[4]  = lsl(slot[3], 0x18)
 slot[2]  = orr(slot[4], slot[2])
 ```
 
+The Python partial simulator now validates these opcode semantics against trace
+samples:
+
+```text
+add/and/lsr/lsl/orr/ubfx samples: all match
+store little-endian word sample: e9f26979 == e9f26979
+```
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and
