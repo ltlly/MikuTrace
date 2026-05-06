@@ -5765,7 +5765,13 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
     let mnemonic = parts.next()?.to_ascii_lowercase();
     let operands = parts.next().map(split_operands).unwrap_or_default();
     match mnemonic.as_str() {
-        "orr" | "and" | "add" | "sub" if values.len() >= 2 => {
+        "orr" | "and" | "add" | "sub" | "mul" if values.len() >= 2 => {
+            if mnemonic == "mul" {
+                return Some(format!(
+                    "{result} = ({} * {}) mod 2^64",
+                    values[0], values[1]
+                ));
+            }
             let op = match mnemonic.as_str() {
                 "orr" => "|",
                 "and" => "&",
@@ -5802,16 +5808,20 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
 
 fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<serde_json::Value> {
     let mnemonic = asm.split_whitespace().next()?.to_ascii_lowercase();
-    if mnemonic.as_str() != "add" || values.len() < 2 {
+    if values.len() < 2 {
         return None;
     }
     let result = parse_u64_str(result)?;
     let lhs = parse_u64_str(&values[0])?;
     let rhs = parse_u64_str(&values[1])?;
-    mod255_fold_semantic(lhs, rhs, result)
-        .or_else(|| mod255_fold_semantic(rhs, lhs, result))
-        .or_else(|| add_small_delta_semantic(lhs, rhs, result))
-        .or_else(|| add_small_delta_semantic(rhs, lhs, result))
+    match mnemonic.as_str() {
+        "add" => mod255_fold_semantic(lhs, rhs, result)
+            .or_else(|| mod255_fold_semantic(rhs, lhs, result))
+            .or_else(|| add_small_delta_semantic(lhs, rhs, result))
+            .or_else(|| add_small_delta_semantic(rhs, lhs, result)),
+        "mul" => mul_mod64_semantic(lhs, rhs, result),
+        _ => None,
+    }
 }
 
 fn mod255_fold_semantic(input: u64, quotient: u64, result: u64) -> Option<serde_json::Value> {
@@ -5844,6 +5854,22 @@ fn add_small_delta_semantic(input: u64, delta: u64, result: u64) -> Option<serde
         "delta": format!("{delta:#x}"),
         "result": format!("{result:#x}"),
         "expression": "result == input + small_delta",
+    }))
+}
+
+fn mul_mod64_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::Value> {
+    if lhs.wrapping_mul(rhs) != result {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "mul_mod64",
+        "lhs": format!("{lhs:#x}"),
+        "rhs": format!("{rhs:#x}"),
+        "result": format!("{result:#x}"),
+        "modulus": "2^64",
+        "lhs_odd": lhs & 1 == 1,
+        "rhs_odd": rhs & 1 == 1,
+        "expression": "result == (lhs * rhs) mod 2^64",
     }))
 }
 
@@ -6732,6 +6758,20 @@ mod tests {
             ),
             Some("0x757524ef = 0x74ffafca73 / 0xff".to_string())
         );
+        assert_eq!(
+            alu_expression_from_asm(
+                "mul x3, x6, x4",
+                "0xdd1841bea1487649",
+                &[
+                    "0x52c36263893da50d".to_string(),
+                    "0x5851f42d4c957f2d".to_string()
+                ],
+            ),
+            Some(
+                "0xdd1841bea1487649 = (0x52c36263893da50d * 0x5851f42d4c957f2d) mod 2^64"
+                    .to_string()
+            )
+        );
         let semantic = recognize_alu_semantic(
             "add x15, x13, x14",
             "0x757524ef62",
@@ -6748,6 +6788,17 @@ mod tests {
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("add_small_delta"));
         assert_eq!(semantic["input"], serde_json::json!("0x99bd5d21d7d8102"));
+        let semantic = recognize_alu_semantic(
+            "mul x3, x6, x4",
+            "0xdd1841bea1487649",
+            &[
+                "0x52c36263893da50d".to_string(),
+                "0x5851f42d4c957f2d".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("mul_mod64"));
+        assert_eq!(semantic["rhs_odd"], serde_json::json!(true));
     }
 
     #[test]

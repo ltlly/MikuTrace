@@ -411,6 +411,7 @@ result-to-input analysis:
 ldp x9, x10, [x25,#0xc0]   expands to separate x9/x10 memory definitions
 lsr w0, w13, w4            follows w13, not the shift register w4
 add x5, x3, x4             recognizes state + 1 as add_small_delta
+mul x3, x6, x4             reports wrapped 64-bit multiplication
 ```
 
 The resulting chain no longer stops at the pair-load or follows the constant
@@ -426,8 +427,17 @@ The resulting chain no longer stops at the pair-load or follows the constant
 
 This is still VM/digest state, not yet the final business input. The value is
 useful because it proves the CLI can keep walking through interpreter register
-loads, pair loads, shifts, and small state increments without manual register
-selection at every row.
+loads, pair loads, shifts, wrapped multiplication, and small state increments
+without manual register selection at every row.
+
+A longer continuation shows a repeated update shape:
+
+```text
+state = (state * 0x5851f42d4c957f2d + 1) mod 2^64
+```
+
+This should be treated as a candidate PRNG/digest-state transition until more
+surrounding bytecode proves its exact role.
 
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:

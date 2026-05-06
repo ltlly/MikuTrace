@@ -428,6 +428,19 @@ Treat this as state advancement and continue tracing `input`. The delta is
 usually an immediate or bytecode-controlled increment, not the source of the
 cryptographic state.
 
+Multiplication rows are reported as 64-bit wrapped arithmetic:
+
+```text
+kind: mul_mod64
+result == (lhs * rhs) mod 2^64
+```
+
+When one operand is an odd repeated constant and the next row is
+`add_small_delta`, the pair is likely an LCG-like state update. Use
+`vm-backtree` if both multiplicands must be preserved; use linear
+`vm-backchain --follow-frontier` when the goal is to continue chasing the state
+operand.
+
 `vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
 non-small formulas that are still semantically important, such as:
 
