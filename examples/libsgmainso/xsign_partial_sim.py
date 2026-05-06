@@ -948,7 +948,7 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
 
 TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
     {
-        "status": "trace_boundary_one_sample",
+        "status": "x_umt_trace_boundary_one_sample",
         "command": (
             "tracemiku-cli vm-ops <call_dir> --start 10616026 --count 15 "
             "--max-ops 1 --summary"
@@ -970,6 +970,13 @@ TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
             {"idx": 10616034, "addr": "0x753ddd7fdc", "value": "0x7a", "ascii": "z"},
         ],
         "observed_stream_ascii": "QfYBk7NLPFEMz",
+        "jni_output_pair": {
+            "key": "x-umt",
+            "key_idx": 15322406,
+            "value": "QfYBk7NLPFEMzAKd4znOwpUwkCN8v6T0",
+            "value_idx": 15322467,
+            "note": "This boundary is not the final x-sign value; x-sign is emitted at #15322907.",
+        },
         "wide_window_probe": {
             "command": (
                 "tracemiku-cli vm-ops <call_dir> --start 10613240 "
