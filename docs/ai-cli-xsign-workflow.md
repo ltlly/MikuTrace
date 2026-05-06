@@ -182,6 +182,9 @@ When a traced memory load's observed value does not match the latest traced
 write to that address, the CLI marks the upstream as
 `observed_read_without_matching_traced_write`, emits `observed_bytes_hex` and
 `observed_mismatches[]`, and suppresses automatic `next` / `byte_nexts`.
+`byte-lineage` also treats this as terminal and will not auto-follow an ALU
+frontier after the mismatch; following the pointer/base-register frontier here
+usually walks away from the value that was actually read.
 Treat this as an analysis boundary: the value may come from an untraced library
 write, preexisting mapped data, a syscall/JNI side effect, or a trace coverage
 gap. Do not keep following the stale traced write just because it is the latest

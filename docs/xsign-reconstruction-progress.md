@@ -865,16 +865,44 @@ addr 0x756649a2d4 = substring offset 4 = "0.10"
 So the `[52,56)` word-source path now has an external text boundary candidate,
 not just an unexplained stale-write mismatch.
 
+For the boundary-stat capture, `byte-lineage` from semantic offset `16` now
+stops at the first observed memory boundary instead of following a pointer
+frontier:
+
+```bash
+rust/target/debug/tracemiku-cli byte-lineage \
+  traces/boundary_stat_launch2/calls/call_001_tid11945_8882256r_7389ms \
+  --addr 0x74974cc16d \
+  --before-idx 8319800 \
+  --depth 80 \
+  --lookback 5000000 \
+  --summary
+```
+
+The chain reaches `observed_read_without_matching_traced_write` at step `41`:
+
+```text
+load addr          = 0x74974cc648
+observed bytes     = fbe9f26900000000
+latest traced write= #7571629 str x6, [x19, x20]  src_value=0x0
+top gap candidate  = #7572198 libc.so+0xa0f5c, addr at x1+0x58 / x6+0x44
+```
+
+This classifies the `[16,20)` lhs word `0x69f2e9fb` as a boundary-fed value at
+this point in the trace. It is consistent with the separately captured
+`stat('/')` external write, but the portable simulator should still model it as
+an external file-metadata input rather than as a VM-generated constant.
+
 So the current trace-proven call_001 tail shape is:
 
 ```text
 tail[0] = 0x0a                      # not yet explained by this summary
 tail[i] = mod255_low_byte(input_i)   # 10 known mask/fold positions
-tail[i] = lhs_i ^ (i & 1 ? 0x62 : 0x61)
+tail[i] = lhs_i ^ parity_mask_i       # 56 known XOR positions
 ```
 
 The remaining reconstruction problem is now narrower: trace the `lhs_i` stream
-for the 57 XOR bytes back to its generating VM/hash state, instead of treating
+for the 56 XOR bytes back to its generating VM/hash state, instead of treating
 the final x-sign tail as opaque bytes.
 
 For `call_001`, the state word is now traced one layer further. The XOR

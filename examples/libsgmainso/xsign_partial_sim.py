@@ -854,6 +854,38 @@ TRACE_XOR_WORD_SOURCE_COVERAGE = {
     ),
 }
 
+TRACE_BOUNDARY_STAT_LAUNCH2_SEM16_LINEAGE = {
+    "command": (
+        "tracemiku-cli byte-lineage <call_dir> --addr 0x74974cc16d "
+        "--before-idx 8319800 --depth 80 --lookback 5000000 --summary"
+    ),
+    "semantic_offset": 16,
+    "status": "observed_read_without_matching_traced_write",
+    "stop_step": 41,
+    "load_addr": "0x74974cc648",
+    "observed_bytes_hex": "fbe9f26900000000",
+    "latest_traced_write": {
+        "idx": 7571629,
+        "asm": "str x6, [x19, x20]",
+        "src_value": "0x0",
+    },
+    "top_gap_candidate": {
+        "idx": 7572198,
+        "target_module": "libc.so",
+        "target_offset": "0xa0f5c",
+        "arg_offsets": [
+            {"reg": "x1", "offset": "0x58"},
+            {"reg": "x6", "offset": "0x44"},
+        ],
+    },
+    "interpretation": (
+        "The first boundary-stat semantic lhs word now stops at the observed "
+        "memory boundary instead of following a stale zero write or pointer "
+        "frontier. Model this as an external file-metadata input unless a "
+        "future hook proves a narrower producer."
+    ),
+}
+
 TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
     "command": (
         "tracemiku-cli byte-writer-map <call_dir> --addr 0x74b68bbe00 "
@@ -1919,6 +1951,7 @@ def main() -> None:
                 "interpretation": middle_lhs["interpretation"],
             },
             "xor_word_source_coverage": TRACE_XOR_WORD_SOURCE_COVERAGE,
+            "boundary_stat_launch2_sem16_lineage": TRACE_BOUNDARY_STAT_LAUNCH2_SEM16_LINEAGE,
             "scratch_table_writer_chain_summary": TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY,
             "vm_byte_load_boundaries": TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES,
             "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,

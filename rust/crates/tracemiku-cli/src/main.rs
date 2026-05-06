@@ -8135,6 +8135,25 @@ fn lineage_next_from_backstep(
             }),
         );
     }
+    let upstream_status = backstep
+        .pointer("/upstream/status")
+        .and_then(|v| v.as_str());
+    if upstream_status == Some("observed_read_without_matching_traced_write") {
+        return (
+            None,
+            serde_json::json!({
+                "kind": "observed_read_without_matching_traced_write",
+                "upstream": {
+                    "addr": backstep.pointer("/upstream/addr").cloned().unwrap_or(serde_json::Value::Null),
+                    "addr_hi": backstep.pointer("/upstream/addr_hi").cloned().unwrap_or(serde_json::Value::Null),
+                    "observed_bytes_hex": backstep.pointer("/upstream/observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+                    "observed_mismatches": backstep.pointer("/upstream/observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
+                    "last_write": backstep.pointer("/upstream/last_write").cloned().unwrap_or(serde_json::Value::Null),
+                    "gap_call_candidates": compact_gap_call_candidates(backstep.pointer("/upstream/gap_call_candidates")),
+                },
+            }),
+        );
+    }
     if let Some(frontier_next) =
         choose_frontier_next_for_lane(backstep, current_byte_lane, &VmProfile::default_profile())
     {
@@ -14175,6 +14194,76 @@ mod tests {
         assert_eq!(seed["reg"], serde_json::json!("x16"));
         assert_eq!(seed["byte_lane"], serde_json::json!(2));
         assert_eq!(decision["next"]["addr"], serde_json::json!("0x4002"));
+    }
+
+    #[test]
+    fn lineage_stops_at_observed_memory_boundary_before_frontier() {
+        let backstep = serde_json::json!({
+            "local_def": {
+                "idx": 7572808,
+                "asm": "ldr x8, [x1, x5]",
+                "class": "mem-load",
+                "def": {
+                    "reg": "x8",
+                    "src": [
+                        {"reg": "x1", "value": "0x74974cca00"},
+                        {"reg": "x5", "value": "0xfffffffffffffc48"}
+                    ],
+                    "value_after": "0x69f2e9fb"
+                }
+            },
+            "upstream": {
+                "status": "observed_read_without_matching_traced_write",
+                "addr": "0x74974cc648",
+                "addr_hi": "0x74974cc650",
+                "observed_bytes_hex": "fbe9f26900000000",
+                "observed_mismatches": [
+                    {
+                        "addr": "0x74974cc648",
+                        "observed_byte": "fb",
+                        "writer_byte": "00",
+                        "writer_idx": 7571629
+                    }
+                ],
+                "last_write": {
+                    "idx": 7571629,
+                    "asm": "str x6, [x19, x20]",
+                    "src_value": "0x0"
+                },
+                "gap_call_candidates": {
+                    "candidate_count_total": 1,
+                    "candidates": [
+                        {
+                            "idx": 7572198,
+                            "asm": "blr x22",
+                            "target_module": {"name": "libc.so"}
+                        }
+                    ]
+                }
+            },
+            "frontier": [
+                {
+                    "idx": 7572808,
+                    "reason": "local_def_source_reg",
+                    "reg": "x1",
+                    "value": "0x74974cca00"
+                }
+            ]
+        });
+        let (seed, decision) = lineage_next_from_backstep(&backstep, Some(0));
+        assert!(seed.is_none());
+        assert_eq!(
+            decision["kind"],
+            serde_json::json!("observed_read_without_matching_traced_write")
+        );
+        assert_eq!(
+            decision["upstream"]["observed_bytes_hex"],
+            serde_json::json!("fbe9f26900000000")
+        );
+        assert_eq!(
+            decision["upstream"]["gap_call_candidates"]["candidate_count_total"],
+            serde_json::json!(1)
+        );
     }
 
     #[test]
