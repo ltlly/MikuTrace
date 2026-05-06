@@ -285,6 +285,16 @@ argument registers `x0..x7`. Linear `vm-backchain --follow-frontier` stops at
 this boundary; use the call target and args to decide whether the value came
 from an external helper, a JNI/runtime callback, or an untraced function.
 
+If a process maps file is available, resolve indirect call targets with:
+
+```bash
+rust/target/debug/tracemiku-cli resolve-map-addr /tmp/proc-pid.maps \
+  0x787bf034e8
+```
+
+The output gives the mapped path and ELF file offset. Use that offset with
+`llvm-nm`, `readelf`, Binary Ninja, or IDA to name the external helper.
+
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and
 `x10`, with memory addresses `base+0` and `base+8`. This prevents a chain for

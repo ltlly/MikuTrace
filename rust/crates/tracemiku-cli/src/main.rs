@@ -69,6 +69,8 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Resolve an address against a saved /proc/<pid>/maps file.
+    ResolveMapAddr { maps_file: PathBuf, addr: String },
     /// GET /api/records.
     Records {
         trace_dir: PathBuf,
@@ -943,6 +945,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Cmd::Meta { trace_dir }) => route_get_json(trace_dir, "/api/meta".to_string()).await,
         Some(Cmd::List { path, dir, json }) => cmd_list(path, dir, json),
         Some(Cmd::Info { path, json }) => cmd_info(path, json),
+        Some(Cmd::ResolveMapAddr { maps_file, addr }) => cmd_resolve_map_addr(maps_file, addr),
         Some(Cmd::Records {
             trace_dir,
             start,
@@ -6648,6 +6651,56 @@ fn cmd_info(path: PathBuf, json: bool) -> anyhow::Result<()> {
     }
 }
 
+fn cmd_resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<()> {
+    let addr = parse_u64_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
+    let text = std::fs::read_to_string(&maps_file)
+        .with_context(|| format!("failed to read maps file: {}", maps_file.display()))?;
+    let out = resolve_addr_in_maps_text(&text, addr).unwrap_or_else(|| {
+        serde_json::json!({
+            "status": "miss",
+            "addr": format!("{addr:#x}"),
+            "maps_file": maps_file.display().to_string(),
+        })
+    });
+    print_pretty(&out)
+}
+
+fn resolve_addr_in_maps_text(text: &str, addr: u64) -> Option<serde_json::Value> {
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let range = parts.next()?;
+        let perms = parts.next().unwrap_or("");
+        let offset_raw = parts.next().unwrap_or("0");
+        let dev = parts.next().unwrap_or("");
+        let inode = parts.next().unwrap_or("");
+        let path = parts.collect::<Vec<_>>().join(" ");
+        let (lo_raw, hi_raw) = range.split_once('-')?;
+        let lo = u64::from_str_radix(lo_raw, 16).ok()?;
+        let hi = u64::from_str_radix(hi_raw, 16).ok()?;
+        if !(lo <= addr && addr < hi) {
+            continue;
+        }
+        let map_file_offset = u64::from_str_radix(offset_raw, 16).unwrap_or(0);
+        let map_offset = addr.saturating_sub(lo);
+        let file_offset = map_file_offset.saturating_add(map_offset);
+        return Some(serde_json::json!({
+            "status": "hit",
+            "addr": format!("{addr:#x}"),
+            "map_start": format!("{lo:#x}"),
+            "map_end": format!("{hi:#x}"),
+            "perms": perms,
+            "map_file_offset": format!("{map_file_offset:#x}"),
+            "map_offset": format!("{map_offset:#x}"),
+            "file_offset": format!("{file_offset:#x}"),
+            "dev": dev,
+            "inode": inode,
+            "path": if path.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(path) },
+            "line": line,
+        }));
+    }
+    None
+}
+
 fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
     let meta = read_json_opt(&path.join("meta.json"));
     let trace = tracemiku_core::prelude::Trace::load(path)?;
@@ -6819,7 +6872,7 @@ mod tests {
         alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
         def_entries_from_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
         odd_u64_inverse, recognize_alu_semantic, recognized_backchain_patterns,
-        store_source_regs_from_asm, vm_slot_from_asm,
+        resolve_addr_in_maps_text, store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -7171,6 +7224,21 @@ mod tests {
         assert_eq!(inverse, 0xc097ef87329e28a5);
         assert_eq!(multiplier.wrapping_mul(inverse), 1);
         assert!(odd_u64_inverse(2).is_none());
+    }
+
+    #[test]
+    fn resolves_proc_maps_addresses() {
+        let maps = "\
+787beb8000-787bf61000 r-xp 0005b000 07:128 126231 /apex/com.android.runtime/lib64/bionic/libc.so\n";
+        let hit = resolve_addr_in_maps_text(maps, 0x787bf034e8).unwrap();
+        assert_eq!(hit["status"], serde_json::json!("hit"));
+        assert_eq!(hit["map_offset"], serde_json::json!("0x4b4e8"));
+        assert_eq!(hit["file_offset"], serde_json::json!("0xa64e8"));
+        assert_eq!(
+            hit["path"],
+            serde_json::json!("/apex/com.android.runtime/lib64/bionic/libc.so")
+        );
+        assert!(resolve_addr_in_maps_text(maps, 0x7601b72790).is_none());
     }
 
     #[test]

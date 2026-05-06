@@ -470,6 +470,31 @@ function pointer outside the currently traced instruction stream. The next
 question is whether `0x787bf034e8` is a known runtime/JNI helper, an untraced
 native helper, or a callback into code that needs a wider trace/hook.
 
+On the currently attached device, resolving the same address range in the
+current Taobao process maps places this target in bionic libc:
+
+```text
+787beb8000-787bf61000 r-xp 0005b000 ... /apex/com.android.runtime/lib64/bionic/libc.so
+addr 0x787bf034e8 -> file offset 0xa64e8 -> time@@LIBC
+```
+
+The map part can now be reproduced by CLI:
+
+```bash
+rust/target/debug/tracemiku-cli resolve-map-addr /tmp/taobao_7979.maps 0x787bf034e8
+```
+
+So the returned value is a Unix timestamp:
+
+```text
+0x69f5b3cb == 1777710027 == 2026-05-02T16:20:27 local time
+```
+
+This is close to the input timestamp string `1777710018`, but not identical
+(`+9s`). For simulator work, treat the affine state chain as seeded or mixed
+with the native `time()` result unless a wider trace shows additional writes to
+the same VM slot before this call.
+
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
 
