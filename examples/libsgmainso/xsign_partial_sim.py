@@ -598,6 +598,21 @@ TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN = {
     "small_affine": TRACE_SMALL_AFFINE,
 }
 
+TRACE_BYTE_LANE_STATIC_SOURCE = {
+    "status": "trace_proven_one_sample",
+    "command": (
+        "tracemiku-cli vm-backchain <call_dir> --idx 13781975 --reg x1 "
+        "--steps 10 --follow-frontier --summary"
+    ),
+    "semantic_offset": 0,
+    "source_value": 0x0A000142,
+    "load_idx": 13720346,
+    "load_asm": "ldr w16, [x8, x20]",
+    "addr": "0x74fbf2dc7c",
+    "observed_bytes_hex": "4201000a",
+    "interpretation": "static_memory_load_constant",
+}
+
 TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS = {
     "command": (
         "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
@@ -1297,6 +1312,19 @@ def main() -> None:
                     "expected_state": f"{TRACE_SMALL_AFFINE['expected_state']:#x}",
                 },
             },
+            "call_001_byte_lane_static_source": {
+                "status": TRACE_BYTE_LANE_STATIC_SOURCE["status"],
+                "command": TRACE_BYTE_LANE_STATIC_SOURCE["command"],
+                "semantic_offset": TRACE_BYTE_LANE_STATIC_SOURCE["semantic_offset"],
+                "source_value": f"{TRACE_BYTE_LANE_STATIC_SOURCE['source_value']:#x}",
+                "load_idx": TRACE_BYTE_LANE_STATIC_SOURCE["load_idx"],
+                "load_asm": TRACE_BYTE_LANE_STATIC_SOURCE["load_asm"],
+                "addr": TRACE_BYTE_LANE_STATIC_SOURCE["addr"],
+                "observed_bytes_hex": TRACE_BYTE_LANE_STATIC_SOURCE[
+                    "observed_bytes_hex"
+                ],
+                "interpretation": TRACE_BYTE_LANE_STATIC_SOURCE["interpretation"],
+            },
             "multi_sample_xor_lhs_middle_run": {
                 "status": "trace_observed_four_diff_samples",
                 "semantic_range": middle_lhs["semantic_range"],
@@ -1350,7 +1378,7 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "remaining upstream sources for the XOR lhs stream and byte-lane source words",
+            "remaining upstream sources for the XOR lhs stream",
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",

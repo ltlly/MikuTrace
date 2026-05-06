@@ -363,8 +363,29 @@ The compact recurrence summary reports one transition:
 ```
 
 So both known `mod255_low_byte` input classes now have upstream arithmetic
-anchors; the remaining byte-equation sources are the XOR lhs streams and the
-byte-lane source words.
+anchors.
+
+The lone `byte_lane_extract` source word is now classified as a static memory
+load constant by `vm-backchain --summary`:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx 13781975 \
+  --reg x1 \
+  --steps 10 \
+  --follow-frontier \
+  --summary
+```
+
+```text
+0x0a000142 <- ldr w16, [x8, x20]
+addr       = 0x74fbf2dc7c
+bytes      = 42 01 00 0a
+pattern    = static_memory_load_constant
+```
+
+At the byte-equation layer, the only remaining dynamic sources are therefore
+the XOR lhs streams.
 
 The same summary now compresses the 57 XOR left-hand bytes into three
 contiguous streams:
