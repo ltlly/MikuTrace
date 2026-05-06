@@ -221,6 +221,21 @@ maps the semantic tail at `0x74b68bcc1d`, returns the same complete 68-byte
 sequence, reports 32 writer runs, and recognizes two `mod255_low_byte` chains in
 the first three expanded runs.
 
+The same automatic writer-map path works across all five current
+`traces/diff` x-sign samples:
+
+```text
+_truncated_call_006  complete=true size=68 writer_runs=32 idx_hi=7083756  writes=189
+call_001            complete=true size=68 writer_runs=32 idx_hi=14747885 writes=228
+call_003            complete=true size=68 writer_runs=32 idx_hi=7007945  writes=179
+call_004            complete=true size=68 writer_runs=32 idx_hi=6988275  writes=179
+call_005            complete=true size=68 writer_runs=32 idx_hi=7029973  writes=179
+```
+
+This makes the output-to-input anchor stable enough for differential algorithm
+reconstruction: every current sample can be reduced to the same 68-byte semantic
+tail shape and the same 32 writer-run chunking without manual trace indexes.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under

@@ -126,6 +126,45 @@ TRACE_TAIL_WRITER_MAP = {
     ],
 }
 
+TRACE_MULTI_SAMPLE_WRITER_MAPS = {
+    "status": "stable_auto_anchor",
+    "samples": 5,
+    "all_complete": True,
+    "semantic_len": 68,
+    "writer_runs": 32,
+    "command": (
+        "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
+        "--base64-tail-align-prefix AA --base64-tail-drop 1 --semantic-writer-map --summary"
+    ),
+    "calls": [
+        {
+            "name": "_truncated_call_006",
+            "idx_hi": 7083756,
+            "matched_writes": 189,
+        },
+        {
+            "name": "call_001",
+            "idx_hi": 14747885,
+            "matched_writes": 228,
+        },
+        {
+            "name": "call_003",
+            "idx_hi": 7007945,
+            "matched_writes": 179,
+        },
+        {
+            "name": "call_004",
+            "idx_hi": 6988275,
+            "matched_writes": 179,
+        },
+        {
+            "name": "call_005",
+            "idx_hi": 7029973,
+            "matched_writes": 179,
+        },
+    ],
+}
+
 TRACE_CRYPTO_EVIDENCE = {
     "status": "candidate_component",
     "note": "MD5/SHA1 IV constants are loaded in the same VM bytecode window, but final digest linkage is not proven yet.",
@@ -368,6 +407,7 @@ def main() -> None:
                 },
             },
         },
+        "multi_sample_writer_maps": TRACE_MULTI_SAMPLE_WRITER_MAPS,
         "crypto_evidence": TRACE_CRYPTO_EVIDENCE,
         "multi_sample_tail_structure": {
             "samples": len(sample_tails),
