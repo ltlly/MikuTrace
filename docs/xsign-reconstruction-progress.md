@@ -760,6 +760,33 @@ middle_lhs[0:4]  = word32_le(stat("/").st_mtim.tv_sec)
 middle_lhs[4:43] = traced mixed suffix from static/text/literal VM sources
 ```
 
+The actual scratch writer window is now inspectable as role-bound VM templates:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --start 14164280 \
+  --end 14165320 \
+  --summary \
+  --effects-only \
+  --max-ops 200
+```
+
+returns `op_template_count=24`, `effect_count=110`, and
+`memory_store_effect_count=16` without truncation. The highest-count templates
+include:
+
+```text
+count 14  slot[bc_0x2_u8] = add(slot[bc_0x6_u8], bc_0x8_u64, bc_0x10_u16)
+count 12  mem[addr] = slot[bc_0x5_u8]
+count  9  slot[bc_0x3_u8] = orr(slot[bc_0x3_u8], slot[bc_0x4_u8], slot[bc_0x5_u8], bc_0x10_u16)
+```
+
+So the remaining blocker is no longer "find the upstream VM bytecode" for this
+range. The blocker is validating each role-bound skeleton against `sample_ops[]`
+and implementing portable Python opcode semantics for the scratch table and
+tail byte-source windows.
+
 Tracing the first middle word `fbe9f269` in `call_001` found three memory hits:
 
 ```text
