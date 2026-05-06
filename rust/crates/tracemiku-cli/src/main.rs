@@ -761,6 +761,27 @@ enum Cmd {
         /// Drop this many decoded bytes from the aligned tail before assigning semantic offsets.
         #[arg(long, default_value_t = 0)]
         base64_tail_drop: usize,
+        /// Attach byte-writer-map evidence for decoded semantic bytes in the pre-encoding scratch buffer.
+        #[arg(long)]
+        semantic_writer_map: bool,
+        /// Override the exclusive idx_hi used for --semantic-writer-map. Defaults to the first final-output writer.
+        #[arg(long)]
+        semantic_writer_map_idx_hi: Option<usize>,
+        /// Max writes to read while building --semantic-writer-map.
+        #[arg(long, default_value_t = 5000)]
+        semantic_writer_map_max: usize,
+        /// Attach VM backchains for this many steps per semantic writer run. 0 disables.
+        #[arg(long, default_value_t = 0)]
+        semantic_writer_map_vm_chain_steps: usize,
+        /// Max semantic writer runs to expand with VM backchains.
+        #[arg(long, default_value_t = 8)]
+        semantic_writer_map_vm_chain_runs: usize,
+        /// Lookback window for each semantic writer VM backchain step.
+        #[arg(long, default_value_t = 1800000)]
+        semantic_writer_map_vm_chain_lookback: usize,
+        /// Let semantic writer VM chains continue through frontier source regs.
+        #[arg(long)]
+        semantic_writer_map_vm_chain_follow_frontier: bool,
         /// Emit a compact AI-readable summary.
         #[arg(long)]
         summary: bool,
@@ -1734,6 +1755,13 @@ async fn main() -> anyhow::Result<()> {
             base64_tail_start,
             base64_tail_align_prefix,
             base64_tail_drop,
+            semantic_writer_map,
+            semantic_writer_map_idx_hi,
+            semantic_writer_map_max,
+            semantic_writer_map_vm_chain_steps,
+            semantic_writer_map_vm_chain_runs,
+            semantic_writer_map_vm_chain_lookback,
+            semantic_writer_map_vm_chain_follow_frontier,
             summary,
         }) => {
             let opts = OutputMapOpts {
@@ -1757,6 +1785,13 @@ async fn main() -> anyhow::Result<()> {
                 base64_tail_start,
                 base64_tail_align_prefix,
                 base64_tail_drop,
+                semantic_writer_map,
+                semantic_writer_map_idx_hi,
+                semantic_writer_map_max,
+                semantic_writer_map_vm_chain_steps,
+                semantic_writer_map_vm_chain_runs,
+                semantic_writer_map_vm_chain_lookback,
+                semantic_writer_map_vm_chain_follow_frontier,
                 summary,
             };
             cmd_output_map(trace_dir, opts).await
@@ -3111,6 +3146,13 @@ struct OutputMapOpts {
     base64_tail_start: Option<usize>,
     base64_tail_align_prefix: String,
     base64_tail_drop: usize,
+    semantic_writer_map: bool,
+    semantic_writer_map_idx_hi: Option<usize>,
+    semantic_writer_map_max: usize,
+    semantic_writer_map_vm_chain_steps: usize,
+    semantic_writer_map_vm_chain_runs: usize,
+    semantic_writer_map_vm_chain_lookback: usize,
+    semantic_writer_map_vm_chain_follow_frontier: bool,
     summary: bool,
 }
 
@@ -3402,12 +3444,15 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
     let selected_hit = hits.get(opts.hit_rank).cloned();
     let mut writer_runs = Vec::new();
     let mut selected_range = serde_json::Value::Null;
+    let mut selected_addr = None;
+    let mut first_output_writer_idx = None;
     if let Some(hit) = selected_hit.as_ref() {
         if let Some(addr) = hit
             .get("addr")
             .and_then(|v| v.as_str())
             .and_then(parse_u64_str)
         {
+            selected_addr = Some(addr);
             let params = vec![
                 ("addr", format!("{addr:#x}")),
                 ("length", source.primary_bytes.len().to_string()),
@@ -3416,6 +3461,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                 route_get_json_value_on(&app, route_path("/api/string-provenance", &params))
                     .await?;
             writer_runs = provenance_writer_runs(&provenance, &[]);
+            first_output_writer_idx = min_writer_idx(&writer_runs);
             selected_range = serde_json::json!({
                 "addr_lo": format!("{addr:#x}"),
                 "addr_hi": format!("{:#x}", addr.saturating_add(source.primary_bytes.len() as u64)),
@@ -3525,6 +3571,18 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
             "trees": trees,
         }));
     }
+    let semantic_writer_map = if opts.semantic_writer_map {
+        output_semantic_writer_map(
+            &app,
+            &grouped_text,
+            selected_addr,
+            first_output_writer_idx,
+            &opts,
+        )
+        .await?
+    } else {
+        serde_json::Value::Null
+    };
 
     let output = serde_json::json!({
         "status": "ready",
@@ -3545,6 +3603,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "selected_hit": selected_hit,
         "selected_range": selected_range,
         "find_mem_pattern": find,
+        "semantic_writer_map": semantic_writer_map,
         "groups": group_rows,
     });
     if opts.summary {
@@ -3552,6 +3611,124 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
     } else {
         print_pretty(&output)
     }
+}
+
+fn min_writer_idx(runs: &[serde_json::Value]) -> Option<usize> {
+    runs.iter()
+        .filter_map(|run| run.get("writer_idx").and_then(|v| v.as_u64()))
+        .filter_map(|idx| usize::try_from(idx).ok())
+        .min()
+}
+
+async fn output_semantic_writer_map(
+    app: &axum::Router,
+    grouped_text: &str,
+    selected_addr: Option<u64>,
+    first_output_writer_idx: Option<usize>,
+    opts: &OutputMapOpts,
+) -> anyhow::Result<serde_json::Value> {
+    let Some(base_addr) = selected_addr else {
+        return Ok(serde_json::json!({
+            "status": "unavailable",
+            "reason": "no selected output memory hit",
+        }));
+    };
+    let idx_hi = opts.semantic_writer_map_idx_hi.or(first_output_writer_idx);
+    let Some(idx_hi) = idx_hi else {
+        return Ok(serde_json::json!({
+            "status": "unavailable",
+            "reason": "no final-output writer idx found; pass --semantic-writer-map-idx-hi",
+        }));
+    };
+    let decoded = base64_decoded_bytes(grouped_text)
+        .context("failed to decode selected output text for --semantic-writer-map")?;
+    let drop = opts.base64_tail_drop;
+    if drop >= decoded.len() {
+        return Ok(serde_json::json!({
+            "status": "unavailable",
+            "reason": "semantic drop is past decoded byte length",
+            "decoded_len": decoded.len(),
+            "semantic_drop_bytes": drop,
+        }));
+    }
+    let semantic_total = decoded.len() - drop;
+    let semantic_start = opts.semantic_offset.unwrap_or(0);
+    if semantic_start >= semantic_total {
+        return Ok(serde_json::json!({
+            "status": "unavailable",
+            "reason": "semantic offset is past decoded semantic byte length",
+            "semantic_offset": semantic_start,
+            "semantic_total": semantic_total,
+        }));
+    }
+    let requested_count = if opts.semantic_offset.is_some() {
+        opts.semantic_count.max(1)
+    } else {
+        semantic_total
+    };
+    let semantic_len = requested_count.min(semantic_total - semantic_start);
+    let addr_offset = drop
+        .checked_add(semantic_start)
+        .context("semantic writer-map offset overflowed")?;
+    let map_addr = base_addr
+        .checked_add(addr_offset as u64)
+        .context("semantic writer-map address overflowed")?;
+    let addr_hi = map_addr
+        .checked_add(semantic_len as u64)
+        .context("semantic writer-map end address overflowed")?;
+    let params = vec![
+        ("idx_lo", "0".to_string()),
+        ("idx_hi", idx_hi.to_string()),
+        ("addr_lo", format!("{map_addr:#x}")),
+        ("addr_hi", format!("{addr_hi:#x}")),
+        ("max", opts.semantic_writer_map_max.to_string()),
+    ];
+    let response =
+        route_get_json_value_on(app, route_path("/api/mem-writes-in-range", &params)).await?;
+    let mut map = byte_writer_map_output(map_addr, semantic_len, &response);
+    if opts.semantic_writer_map_vm_chain_steps > 0 && opts.semantic_writer_map_vm_chain_runs > 0 {
+        let runs = map
+            .get("writer_runs")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let chains = vm_chains_for_byte_writer_runs(
+            app,
+            &runs,
+            opts.semantic_writer_map_vm_chain_steps,
+            opts.semantic_writer_map_vm_chain_runs,
+            opts.semantic_writer_map_vm_chain_lookback,
+            opts.semantic_writer_map_vm_chain_follow_frontier,
+        )
+        .await?;
+        let chain_summary = vm_chain_batch_summary(&chains);
+        if let Some(obj) = map.as_object_mut() {
+            obj.insert("vm_chain_summary".to_string(), chain_summary);
+            obj.insert("vm_chains".to_string(), serde_json::Value::Array(chains));
+        }
+    }
+    if let Some(obj) = map.as_object_mut() {
+        obj.insert(
+            "semantic_context".to_string(),
+            serde_json::json!({
+                "mode": "selected_output_buffer_pre_encoding",
+                "base_addr": format!("{base_addr:#x}"),
+                "addr_offset_from_base": addr_offset,
+                "semantic_offset": semantic_start,
+                "semantic_count": semantic_len,
+                "semantic_total": semantic_total,
+                "decoded_len": decoded.len(),
+                "idx_hi": idx_hi,
+                "idx_hi_source": if opts.semantic_writer_map_idx_hi.is_some() {
+                    "explicit"
+                } else {
+                    "first_final_output_writer"
+                },
+                "note": "Uses the selected final output buffer as the earlier pre-encoding scratch buffer and stops before the final output overwrite.",
+            }),
+        );
+    }
+    Ok(map)
 }
 
 fn base64_output_context(
@@ -3635,7 +3812,36 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
         "selected_hit_order": value.get("selected_hit_order").cloned().unwrap_or(serde_json::Value::Null),
         "selected_hit_rank": value.get("selected_hit_rank").cloned().unwrap_or(serde_json::Value::Null),
         "selected_range": value.get("selected_range").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic_writer_map": output_semantic_writer_map_summary(
+            value.get("semantic_writer_map").unwrap_or(&serde_json::Value::Null)
+        ),
         "groups": groups,
+    })
+}
+
+fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::Value {
+    if value.is_null() {
+        return serde_json::Value::Null;
+    }
+    let writer_run_count = value
+        .get("writer_runs")
+        .and_then(|v| v.as_array())
+        .map(|runs| runs.len())
+        .unwrap_or(0);
+    serde_json::json!({
+        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic_context": value.get("semantic_context").cloned().unwrap_or(serde_json::Value::Null),
+        "addr": value.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+        "size": value.get("size").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_range": value.get("idx_range").cloned().unwrap_or(serde_json::Value::Null),
+        "source": value.get("source").cloned().unwrap_or(serde_json::Value::Null),
+        "complete": value.get("complete").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": value.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "ascii": value.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+        "missing_offsets": value.get("missing_offsets").cloned().unwrap_or(serde_json::Value::Null),
+        "writer_run_count": writer_run_count,
+        "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 

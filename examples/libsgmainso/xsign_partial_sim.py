@@ -351,6 +351,21 @@ def main() -> None:
                 "--size 68 --idx-hi 14739000 --max 300 --vm-chain-steps 10 "
                 "--vm-chain-runs 34 --vm-chain-follow-frontier"
             ),
+            "auto_trace_command": (
+                "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
+                "--base64-tail-align-prefix AA --base64-tail-drop 1 --semantic-writer-map "
+                "--semantic-writer-map-vm-chain-steps 4 --semantic-writer-map-vm-chain-runs 3 "
+                "--semantic-writer-map-vm-chain-follow-frontier --summary"
+            ),
+            "auto_trace_result": {
+                "semantic_addr": "0x74b68bcc1d",
+                "idx_hi": 14747885,
+                "idx_hi_source": "first_final_output_writer",
+                "writer_runs": 32,
+                "expanded_chain_semantics": {
+                    "mod255_low_byte": 2,
+                },
+            },
         },
         "crypto_evidence": TRACE_CRYPTO_EVIDENCE,
         "multi_sample_tail_structure": {

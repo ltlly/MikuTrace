@@ -198,6 +198,27 @@ bytes occur inside the 68-byte semantic tail. Therefore the current best
 result-to-input anchor remains the final semantic tail byte-writer map at
 `0x74b68bcc1d`, not the early hash-finalize candidates.
 
+The final-output-to-semantic-tail step is now reproducible with one command:
+
+```bash
+rust/target/debug/tracemiku-cli output-map \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --semantic-writer-map \
+  --semantic-writer-map-vm-chain-steps 4 \
+  --semantic-writer-map-vm-chain-runs 3 \
+  --semantic-writer-map-vm-chain-follow-frontier \
+  --summary
+```
+
+It automatically chooses `idx_hi=14747885` from the first final-output writer,
+maps the semantic tail at `0x74b68bcc1d`, returns the same complete 68-byte
+sequence, reports 32 writer runs, and recognizes two `mod255_low_byte` chains in
+the first three expanded runs.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under

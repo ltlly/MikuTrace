@@ -113,6 +113,30 @@ assembly, `add32_mix` for 32-bit state addition, `add_known_constant` for
 recognized IV/constants such as MD5, and `and_identity`/`or_identity` for
 masking or merging operations that preserve the value being chased.
 
+For x-sign-like outputs that Base64-encode a variable tail in the same scratch
+buffer, `output-map` can now derive the pre-encoding semantic byte map directly
+from the final JNI string:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --semantic-writer-map \
+  --semantic-writer-map-vm-chain-steps 8 \
+  --semantic-writer-map-vm-chain-runs 12 \
+  --semantic-writer-map-vm-chain-follow-frontier \
+  --summary
+```
+
+The command selects the earliest full output buffer, finds the first writer of
+the final textual output, and uses that writer index as the exclusive `idx_hi`
+for the semantic byte map. This reproduces the manual "final x-sign -> decoded
+tail -> last writers -> upstream chain" workflow without hand-picking the
+pre-encoding cutoff index. If the buffer layout differs, override the cutoff
+with `--semantic-writer-map-idx-hi`.
+
 ## Backward dataflow path
 
 Trace register provenance from a writer or suspicious finalizer instruction:
