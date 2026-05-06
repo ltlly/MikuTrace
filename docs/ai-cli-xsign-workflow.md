@@ -718,15 +718,19 @@ stops at a table lookup or ALU row with no direct writer, it chooses a
 non-infrastructure `frontier[]` source register. Recognized semantic formulas
 override generic heuristics: `udiv` follows the numerator,
 `mod255_low_byte` follows the folded input, and `add_small_delta` follows the
-large state value instead of constants such as `1`. `xor_identity` handles
-`eor/xor value, 0` and follows the non-zero input; this matters for VM byte
-normalization before payload bytes are written. Shift/extract operations such
-as `lsl`, `lsr`, `asr`, and `ubfx` follow their first operand, not the shift
-amount. The remaining generic table-lookup case still prefers small index-like
-values. This is useful for Base64-style table lookups: the alphabet byte has no
-writer, but the table index register is usually the dataflow branch to keep
-chasing. Each row records `decision.kind` as `upstream_next`, `frontier_auto`,
-or `stop`.
+large state value instead of constants such as `1`. `sub_small_delta` does the
+same for `sub reg, reg, #imm`, and `align_down_mask` recognizes
+`and reg, reg, #0xffff...fff0`-style pointer alignment. When these operations
+write back to the same register they read, the next seed is moved to the trace
+index before the current write so the chain does not self-cycle.
+`xor_identity` handles `eor/xor value, 0` and follows the non-zero input; this
+matters for VM byte normalization before payload bytes are written.
+Shift/extract operations such as `lsl`, `lsr`, `asr`, and `ubfx` follow their
+first operand, not the shift amount. The remaining generic table-lookup case
+still prefers small index-like values. This is useful for Base64-style table
+lookups: the alphabet byte has no writer, but the table index register is
+usually the dataflow branch to keep chasing. Each row records `decision.kind`
+as `upstream_next`, `frontier_auto`, or `stop`.
 
 The infrastructure-register filter is a preference, not a hard stop. If the
 only frontier is a register such as `x23`, the chain still follows it. This is

@@ -2713,8 +2713,22 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "delta_source": "VM bytecode read",
                     "evidence": "byte-lineage --compact labels x8 as pointer_base and x7 as delta",
                 },
-                "terminal": "depth_limit, but repeated_values now identify the stable base",
-                "portable_status": "next_base_pointer_not_proven",
+                "next_base_expression": {
+                    "expression": "0x74b68bd4c0 = align16(0x74b68bd750 - 0x71) - 0x210",
+                    "expanded_steps": [
+                        "0x74b68bd4c0 = 0x74b68bd6d0 + 0xfffffffffffffdf0",
+                        "0x74b68bd6d0 = 0x74b68bd6df & 0xfffffffffffffff0",
+                        "0x74b68bd6df = 0x74b68bd750 - 0x71",
+                    ],
+                    "recognized_semantics": ["sub_small_delta", "align_down_mask"],
+                    "evidence": (
+                        "byte-lineage --compact now moves self-def ALU seeds "
+                        "before the current write and reaches depth_limit "
+                        "beyond this layer"
+                    ),
+                },
+                "terminal": "depth_limit, but repeated_values now identify deeper copied bases",
+                "portable_status": "deeper_base_pointer_not_proven",
             },
             "slot25": {
                 "command": (

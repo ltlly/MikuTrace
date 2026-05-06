@@ -922,7 +922,23 @@ lineage, while `0x74b68bbdff` appears 7 times. That turns the prior
 Chasing the earlier slot20 writer shows the same base as pointer arithmetic:
 `0x74b68bb9a0 = 0x74b68bd4c0 + 0xffffffffffffe4e0`, i.e.
 `0x74b68bd4c0 - 0x1b20`. The signed delta is VM-bytecode-backed, while
-`0x74b68bd4c0` remains the next pointer-base boundary.
+`0x74b68bd4c0` remains the next pointer-base boundary. Chasing that boundary
+now crosses another generic in-place ALU layer instead of cycling on the same
+instruction:
+
+```text
+0x74b68bd4c0 = 0x74b68bd6d0 - 0x210
+0x74b68bd6d0 = align16(0x74b68bd750 - 0x71)
+```
+
+The first line is a signed pointer delta carried by compact formula operands.
+The second line comes from `sub_small_delta` followed by `align_down_mask` on
+`and x8, x8, #0xfffffffffffffff0`. `byte-lineage --compact` now moves the next
+seed to the trace index before a self-defining in-place ALU write, so the chain
+continues past `and/sub reg, reg, #imm` instead of reporting a false cycle.
+The wider probe currently stops at `depth_limit` on further copied pointer
+values such as `0x74b68bd7d0`, `0x74b68bda80`, and `0x74b68bdb40`; these remain
+base-pointer provenance to prove, not portable semantics.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1035,6 +1051,10 @@ scratch slot28 before #14164280:
   earlier base expression:
     0x74b68bb9a0 = 0x74b68bd4c0 + 0xffffffffffffe4e0
     operand roles: x8 pointer_base, x7 signed delta (-0x1b20)
+  next base expression:
+    0x74b68bd4c0 = 0x74b68bd6d0 + 0xfffffffffffffdf0
+    0x74b68bd6d0 = align16(0x74b68bd750 - 0x71)
+    semantics: sub_small_delta + align_down_mask
 
 scratch slot29 before #14164280:
   command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact

@@ -8507,8 +8507,12 @@ fn choose_semantic_frontier_next(
         let input = formula
             .pointer("/semantic/input")
             .and_then(|v| v.as_str())?;
-        return frontier_next_by_value(step, input)
-            .map(|next| annotate_next_source_lane(next, byte_lane));
+        let next = frontier_next_by_value(step, input)?;
+        let next = annotate_next_source_lane(next, byte_lane);
+        let next = formula_operand_by_value(&formula, input)
+            .map(|operand| adjust_self_def_formula_next(step, operand, next.clone()))
+            .unwrap_or(next);
+        return Some(next);
     }
     if formula.get("op").and_then(|v| v.as_str()) == Some("udiv") {
         let numerator = formula
@@ -8599,6 +8603,17 @@ fn choose_or_operand_for_lane<'a>(
     }
 }
 
+fn formula_operand_by_value<'a>(
+    formula: &'a serde_json::Value,
+    value: &str,
+) -> Option<&'a serde_json::Value> {
+    formula
+        .get("operands")?
+        .as_array()?
+        .iter()
+        .find(|operand| operand.get("value").and_then(|v| v.as_str()) == Some(value))
+}
+
 fn next_for_formula_operand(
     step: &serde_json::Value,
     operand: &serde_json::Value,
@@ -8606,13 +8621,47 @@ fn next_for_formula_operand(
 ) -> Option<serde_json::Value> {
     if let Some(reg) = operand.get("reg").and_then(|v| v.as_str()) {
         return frontier_next_by_reg(step, reg)
-            .map(|next| annotate_next_source_lane(next, source_lane));
+            .map(|next| annotate_next_source_lane(next, source_lane))
+            .map(|next| adjust_self_def_formula_next(step, operand, next));
     }
     if let Some(value) = operand.get("value").and_then(|v| v.as_str()) {
         return frontier_next_by_value(step, value)
-            .map(|next| annotate_next_source_lane(next, source_lane));
+            .map(|next| annotate_next_source_lane(next, source_lane))
+            .map(|next| adjust_self_def_formula_next(step, operand, next));
     }
     None
+}
+
+fn adjust_self_def_formula_next(
+    step: &serde_json::Value,
+    operand: &serde_json::Value,
+    mut next: serde_json::Value,
+) -> serde_json::Value {
+    let Some(operand_reg) = operand.get("reg").and_then(|v| v.as_str()) else {
+        return next;
+    };
+    let Some(def_reg) = step.pointer("/local_def/def/reg").and_then(|v| v.as_str()) else {
+        return next;
+    };
+    if register_value_key(operand_reg) != register_value_key(def_reg) {
+        return next;
+    }
+    let local_idx = step.pointer("/local_def/idx").and_then(|v| v.as_u64());
+    let next_idx = next.get("idx").and_then(|v| v.as_u64());
+    let Some(local_idx) = local_idx.filter(|idx| Some(*idx) == next_idx) else {
+        return next;
+    };
+    if let Some(obj) = next.as_object_mut() {
+        obj.insert(
+            "idx".to_string(),
+            serde_json::json!(local_idx.saturating_sub(1)),
+        );
+        obj.insert(
+            "reason".to_string(),
+            serde_json::json!("self_def_input_before_idx"),
+        );
+    }
+    next
 }
 
 fn annotate_next_source_lane(
@@ -12765,13 +12814,11 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
     let mnemonic = parts.next()?.to_ascii_lowercase();
     let operands = parts.next().map(split_operands).unwrap_or_default();
     match mnemonic.as_str() {
-        "orr" | "eor" | "and" | "add" | "sub" | "mul" if values.len() >= 2 => {
-            if mnemonic == "mul" {
-                return Some(format!(
-                    "{result} = ({} * {}) mod 2^64",
-                    values[0], values[1]
-                ));
-            }
+        "mul" if values.len() >= 2 => Some(format!(
+            "{result} = ({} * {}) mod 2^64",
+            values[0], values[1]
+        )),
+        "orr" | "eor" | "and" | "add" | "sub" if !values.is_empty() => {
             let op = match mnemonic.as_str() {
                 "orr" => "|",
                 "eor" => "^",
@@ -12780,7 +12827,11 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
                 "sub" => "-",
                 _ => unreachable!(),
             };
-            Some(format!("{result} = {} {op} {}", values[0], values[1]))
+            let rhs = values
+                .get(1)
+                .cloned()
+                .or_else(|| operands.get(2).and_then(|op| immediate_operand_value(op)))?;
+            Some(format!("{result} = {} {op} {rhs}", values[0]))
         }
         "lsl" | "lsr" if !values.is_empty() => {
             let op = if mnemonic == "lsl" { "<<" } else { ">>" };
@@ -12821,10 +12872,16 @@ fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<
                 .or_else(|| add_small_delta_semantic(rhs, lhs, result))
                 .or_else(|| add32_mix_semantic(lhs, rhs, result))
         }
+        "sub" => {
+            let (lhs, rhs) = parse_binary_values_or_immediate(asm, values)?;
+            sub_small_delta_semantic(lhs, rhs, result)
+        }
         "and" => {
             let (lhs, rhs) = parse_binary_values_or_immediate(asm, values)?;
             and_identity_semantic(lhs, rhs, result)
                 .or_else(|| and_identity_semantic(rhs, lhs, result))
+                .or_else(|| align_down_mask_semantic(lhs, rhs, result))
+                .or_else(|| align_down_mask_semantic(rhs, lhs, result))
                 .or_else(|| bitmask_extract_semantic(lhs, rhs, result))
                 .or_else(|| bitmask_extract_semantic(rhs, lhs, result))
         }
@@ -12920,6 +12977,25 @@ fn and_identity_semantic(input: u64, mask: u64, result: u64) -> Option<serde_jso
         "mask": format!("{mask:#x}"),
         "result": format!("{result:#x}"),
         "expression": "result == input & mask",
+    }))
+}
+
+fn align_down_mask_semantic(input: u64, mask: u64, result: u64) -> Option<serde_json::Value> {
+    if input == 0 || mask <= 0xfff || input & mask != result || result == input {
+        return None;
+    }
+    let cleared = !mask;
+    let alignment = cleared.checked_add(1)?;
+    if alignment <= 1 || !alignment.is_power_of_two() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "align_down_mask",
+        "input": format!("{input:#x}"),
+        "mask": format!("{mask:#x}"),
+        "alignment": format!("{alignment:#x}"),
+        "result": format!("{result:#x}"),
+        "expression": "result == input & ~(alignment - 1)",
     }))
 }
 
@@ -13106,6 +13182,19 @@ fn add_small_delta_semantic(input: u64, delta: u64, result: u64) -> Option<serde
         "delta": format!("{delta:#x}"),
         "result": format!("{result:#x}"),
         "expression": "result == input + small_delta",
+    }))
+}
+
+fn sub_small_delta_semantic(input: u64, delta: u64, result: u64) -> Option<serde_json::Value> {
+    if delta == 0 || delta > 0xfff || input <= 0xfff || input.wrapping_sub(delta) != result {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "sub_small_delta",
+        "input": format!("{input:#x}"),
+        "delta": format!("{delta:#x}"),
+        "result": format!("{result:#x}"),
+        "expression": "result == input - small_delta",
     }))
 }
 
@@ -14234,14 +14323,15 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        alu_expression_from_asm, base64_decoded_bytes, byte_lane_from_writer_map_entry,
-        byte_lineage_compact_summary, byte_lineage_summary, byte_writer_map_output,
-        byte_writer_map_summary, byte_writer_vm_source_ranges, byte_writers_from_range_writes,
-        choose_frontier_next, choose_frontier_next_for_lane, choose_laned_upstream_next,
-        classify_vm_asm, compact_gap_call_candidates, compact_lineage_formula, dedupe_byte_nexts,
-        def_entries_from_asm, def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes,
-        find_hex_byte_offsets, gap_call_candidate_from_record, lineage_next_from_backstep,
-        mem_addr_from_asm, mem_dump_summary, memory_access_width, merge_missing_meta_field,
+        adjust_self_def_formula_next, alu_expression_from_asm, base64_decoded_bytes,
+        byte_lane_from_writer_map_entry, byte_lineage_compact_summary, byte_lineage_summary,
+        byte_writer_map_output, byte_writer_map_summary, byte_writer_vm_source_ranges,
+        byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
+        choose_laned_upstream_next, classify_vm_asm, compact_gap_call_candidates,
+        compact_lineage_formula, dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm,
+        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
+        mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
         output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
@@ -14606,6 +14696,22 @@ mod tests {
         );
         assert_eq!(
             alu_expression_from_asm(
+                "and x8, x8, #0xfffffffffffffff0",
+                "0x74b68bd6d0",
+                &["0x74b68bd6df".to_string()],
+            ),
+            Some("0x74b68bd6d0 = 0x74b68bd6df & 0xfffffffffffffff0".to_string())
+        );
+        assert_eq!(
+            alu_expression_from_asm(
+                "sub x8, x8, #0x71",
+                "0x74b68bd6df",
+                &["0x74b68bd750".to_string()],
+            ),
+            Some("0x74b68bd6df = 0x74b68bd750 - 0x71".to_string())
+        );
+        assert_eq!(
+            alu_expression_from_asm(
                 "lsr w4, w20, w1",
                 "0x1",
                 &["0x62".to_string(), "0x6".to_string()],
@@ -14741,6 +14847,24 @@ mod tests {
         assert_eq!(semantic["kind"], serde_json::json!("and_identity"));
         assert_eq!(semantic["mask"], serde_json::json!("0xffffffff"));
         let semantic = recognize_alu_semantic(
+            "and x8, x8, #0xfffffffffffffff0",
+            "0x74b68bd6d0",
+            &["0x74b68bd6df".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("align_down_mask"));
+        assert_eq!(semantic["input"], serde_json::json!("0x74b68bd6df"));
+        assert_eq!(semantic["alignment"], serde_json::json!("0x10"));
+        let semantic = recognize_alu_semantic(
+            "sub x8, x8, #0x71",
+            "0x74b68bd6df",
+            &["0x74b68bd750".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("sub_small_delta"));
+        assert_eq!(semantic["input"], serde_json::json!("0x74b68bd750"));
+        assert_eq!(semantic["delta"], serde_json::json!("0x71"));
+        let semantic = recognize_alu_semantic(
             "add x13, x8, x12",
             "0x1b2345fc4",
             &["0x14aef3cc3".to_string(), "0x67452301".to_string()],
@@ -14763,6 +14887,30 @@ mod tests {
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("add32_mix"));
         assert_eq!(semantic["result_low32"], serde_json::json!("0x67b44ad8"));
+    }
+
+    #[test]
+    fn formula_next_for_self_def_starts_before_current_write() {
+        let step = serde_json::json!({
+            "local_def": {
+                "idx": 13545196_u64,
+                "def": {"reg": "x8"}
+            }
+        });
+        let operand = serde_json::json!({
+            "reg": "x8",
+            "value": "0x74b68bd6df"
+        });
+        let next = serde_json::json!({
+            "idx": 13545196_u64,
+            "reg": "x8"
+        });
+        let adjusted = adjust_self_def_formula_next(&step, &operand, next);
+        assert_eq!(adjusted["idx"], serde_json::json!(13545195_u64));
+        assert_eq!(
+            adjusted["reason"],
+            serde_json::json!("self_def_input_before_idx")
+        );
     }
 
     #[test]
@@ -14955,6 +15103,56 @@ mod tests {
         let next = choose_frontier_next(&eor_identity).unwrap();
         assert_eq!(next["reg"], serde_json::json!("x5"));
         assert_eq!(next["src_value"], serde_json::json!("0x62"));
+
+        let align_self_def = serde_json::json!({
+            "local_def": {
+                "idx": 13545196_u64,
+                "asm": "and x8, x8, #0xfffffffffffffff0",
+                "class": "alu",
+                "def": {
+                    "reg": "x8",
+                    "src": [
+                        {"reg": "x8", "value": "0x74b68bd6df"}
+                    ],
+                    "value_after": "0x74b68bd6d0"
+                }
+            },
+            "frontier": [
+                {"idx": 13545196_u64, "reg": "x8", "value": "0x74b68bd6df"}
+            ]
+        });
+        let next = choose_frontier_next(&align_self_def).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x8"));
+        assert_eq!(next["idx"], serde_json::json!(13545195_u64));
+        assert_eq!(
+            next["reason"],
+            serde_json::json!("self_def_input_before_idx")
+        );
+
+        let sub_self_def = serde_json::json!({
+            "local_def": {
+                "idx": 13545195_u64,
+                "asm": "sub x8, x8, #0x71",
+                "class": "alu",
+                "def": {
+                    "reg": "x8",
+                    "src": [
+                        {"reg": "x8", "value": "0x74b68bd750"}
+                    ],
+                    "value_after": "0x74b68bd6df"
+                }
+            },
+            "frontier": [
+                {"idx": 13545195_u64, "reg": "x8", "value": "0x74b68bd750"}
+            ]
+        });
+        let next = choose_frontier_next(&sub_self_def).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x8"));
+        assert_eq!(next["idx"], serde_json::json!(13545194_u64));
+        assert_eq!(
+            next["reason"],
+            serde_json::json!("self_def_input_before_idx")
+        );
     }
 
     #[test]
