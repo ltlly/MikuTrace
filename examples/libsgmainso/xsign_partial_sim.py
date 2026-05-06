@@ -820,21 +820,21 @@ TRACE_XOR_WORD_SOURCE_COVERAGE = {
     ),
     "coverage_status": "complete",
     "semantic_byte_equation_coverage": {
-        "coverage_status": "partial_in_requested_range",
+        "coverage_status": "complete_in_requested_range",
         "requested_range": [0, 68],
-        "covered_count": 67,
-        "missing_offsets": [44],
+        "covered_count": 68,
+        "missing_offsets": [],
         "kind_counts": {
-            "byte_lane_extract": 1,
+            "byte_lane_extract": 2,
             "mod255_low_byte": 10,
             "xor_mix": 56,
         },
         "note": (
-            "Earlier output-map summaries counted offset 44 as covered because "
-            "the first recognized xor_mix in that chain described result 0xfd "
-            "while the selected byte was 0x00. The CLI now keeps that row in "
-            "byte_equations[] for diagnostics but excludes it from compact "
-            "coverage and word-template summaries."
+            "Offset 44 is not an xor byte. Its selected byte is 0x00 and is "
+            "explained as byte_lane_le(0xb71300fd, 1). Earlier output-map "
+            "summaries picked the first recognized xor_mix in that chain, "
+            "which described neighboring result 0xfd and produced a false "
+            "xor-word template."
         ),
     },
     "template_count": 13,
@@ -848,9 +848,9 @@ TRACE_XOR_WORD_SOURCE_COVERAGE = {
         "Every word-sized XOR lhs chunk has a trace source candidate. This is "
         "source coverage, not portable formula coverage: most middle/tail chunks "
         "still need their word_source_only upstream classified as static table, "
-        "external metadata, or a wider-trace boundary. One byte-level semantic "
-        "equation at offset 44 is still missing after filtering mismatched "
-        "equations, so full semantic-byte coverage is 67/68."
+        "external metadata, or a wider-trace boundary. Full semantic-byte "
+        "coverage is 68/68, but offsets 0 and 44 are byte-lane extracts rather "
+        "than xor formulas."
     ),
 }
 
@@ -1953,11 +1953,6 @@ def main() -> None:
             (
                 "portable formulas or external inputs for the word_source_only "
                 "XOR lhs chunks"
-            ),
-            (
-                "semantic byte offset 44: output-map keeps the mismatched raw "
-                "equation for diagnostics, but no compact equation currently "
-                "proves the selected byte"
             ),
             (
                 "semantic meaning of the fixed 12-character raw prefix; trace "

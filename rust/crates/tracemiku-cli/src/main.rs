@@ -4708,6 +4708,7 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
     let semantics = item
         .pointer("/chain/recognized_semantics")
         .and_then(|v| v.as_array())?;
+    let mut first_mismatch: Option<serde_json::Value> = None;
     for entry in semantics {
         let semantic = entry.get("semantic")?;
         let kind = semantic.get("kind").and_then(|v| v.as_str())?;
@@ -4717,7 +4718,7 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
                     .get("result")
                     .and_then(|v| v.as_str())
                     .and_then(parse_u64_str)?;
-                return Some(serde_json::json!({
+                let equation = serde_json::json!({
                     "offset": offset,
                     "bytes_hex": bytes_hex,
                     "kind": "xor_mix",
@@ -4729,14 +4730,18 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
                     "result": semantic.get("result").cloned().unwrap_or(serde_json::Value::Null),
                     "expression": "result == (lhs ^ rhs) & 0xff",
                     "matches_first_byte": (result & 0xff) as u8 == byte,
-                }));
+                });
+                if equation.get("matches_first_byte").and_then(|v| v.as_bool()) == Some(true) {
+                    return Some(equation);
+                }
+                first_mismatch.get_or_insert(equation);
             }
             "mod255_low_byte" => {
                 let output_byte = semantic
                     .get("output_byte")
                     .and_then(|v| v.as_str())
                     .and_then(parse_u64_str)?;
-                return Some(serde_json::json!({
+                let equation = serde_json::json!({
                     "offset": offset,
                     "bytes_hex": bytes_hex,
                     "kind": "mod255_low_byte",
@@ -4749,12 +4754,61 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
                     "result": semantic.get("output_byte").cloned().unwrap_or(serde_json::Value::Null),
                     "expression": "result == (input + floor(input / 0xff)) & 0xff",
                     "matches_first_byte": (output_byte & 0xff) as u8 == byte,
-                }));
+                });
+                if equation.get("matches_first_byte").and_then(|v| v.as_bool()) == Some(true) {
+                    return Some(equation);
+                }
+                first_mismatch.get_or_insert(equation);
             }
             _ => {}
         }
     }
-    output_semantic_byte_lane_equation(item, offset, bytes_hex, byte)
+    output_semantic_byte_lane_equation(item, offset.clone(), bytes_hex, byte)
+        .or_else(|| {
+            output_semantic_writer_byte_lane_equation(
+                item,
+                offset,
+                bytes_hex,
+                byte,
+                first_mismatch.clone(),
+            )
+        })
+        .or(first_mismatch)
+}
+
+fn output_semantic_writer_byte_lane_equation(
+    item: &serde_json::Value,
+    offset: serde_json::Value,
+    bytes_hex: &str,
+    byte: u8,
+    rejected_semantic: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let source_byte_offset = item
+        .get("source_byte_offset")
+        .or_else(|| item.pointer("/seed/byte_lane"))
+        .and_then(value_as_u64)?;
+    if source_byte_offset >= 8 {
+        return None;
+    }
+    let src_value = item.pointer("/seed/src_value").and_then(value_as_u64)?;
+    let result = ((src_value >> (source_byte_offset * 8)) & 0xff) as u8;
+    if result != byte {
+        return None;
+    }
+    Some(serde_json::json!({
+        "offset": offset,
+        "bytes_hex": bytes_hex,
+        "kind": "writer_byte_lane_extract",
+        "step": serde_json::Value::Null,
+        "idx": item.pointer("/seed/idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": item.pointer("/seed/asm").cloned().unwrap_or(serde_json::Value::Null),
+        "source_value": format!("{src_value:#x}"),
+        "source_byte_offset": source_byte_offset,
+        "result": format!("{result:#x}"),
+        "expression": "result == byte_lane_le(writer_src_value, source_byte_offset)",
+        "matches_first_byte": true,
+        "rejected_semantic": rejected_semantic.unwrap_or(serde_json::Value::Null),
+    }))
 }
 
 fn output_semantic_byte_lane_equation(
@@ -13035,6 +13089,53 @@ mod tests {
             serde_json::json!("result == (input + floor(input / 0xff)) & 0xff")
         );
         assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn falls_back_to_writer_byte_lane_when_first_semantic_mismatches() {
+        let item = serde_json::json!({
+            "start_offset": 44,
+            "bytes_hex": "00",
+            "source_byte_offset": 1,
+            "seed": {
+                "idx": 8320257,
+                "asm": "str w16, [x2, x5]",
+                "src_value": "0xb71300fd",
+                "byte_lane": 1
+            },
+            "chain": {
+                "recognized_semantics": [
+                    {
+                        "step": 9,
+                        "idx": 8301779,
+                        "asm": "eor x16, x20, x5",
+                        "semantic": {
+                            "kind": "xor_mix",
+                            "lhs": "0x79",
+                            "rhs": "0x84",
+                            "result": "0xfd"
+                        }
+                    }
+                ]
+            }
+        });
+
+        let equation = output_semantic_byte_equation(&item).unwrap();
+        assert_eq!(
+            equation["kind"],
+            serde_json::json!("writer_byte_lane_extract")
+        );
+        assert_eq!(equation["source_value"], serde_json::json!("0xb71300fd"));
+        assert_eq!(equation["source_byte_offset"], serde_json::json!(1));
+        assert_eq!(equation["result"], serde_json::json!("0x0"));
+        assert_eq!(
+            equation["rejected_semantic"]["kind"],
+            serde_json::json!("xor_mix")
+        );
+        assert_eq!(
+            equation["rejected_semantic"]["matches_first_byte"],
+            serde_json::json!(false)
+        );
     }
 
     #[test]
