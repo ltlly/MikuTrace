@@ -90,6 +90,7 @@ TRACE_SMALL_AFFINE = {
 }
 
 CALL001_STAT_MTIM_TV_SEC = 0x69F2E9FB
+CALL001_SCRATCH_PREFIX_STATIC_BYTE = 0x79
 CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX = (
     "79ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43b"
     "a0444a342344c59bc569"
@@ -1585,6 +1586,35 @@ def validate_scratch_vm_opcode_samples() -> dict:
     }
 
 
+def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
+    word0 = vm_lsl(CALL001_STAT_MTIM_TV_SEC, 0x18, 32)
+    word1 = vm_orr(
+        vm_lsr(CALL001_STAT_MTIM_TV_SEC, 0x8, 32),
+        vm_lsl(CALL001_SCRATCH_PREFIX_STATIC_BYTE, 0x18, 32),
+        32,
+    )
+    scratch = word32_le_bytes(word0) + word32_le_bytes(word1)
+    semantic_prefix = scratch[3:8]
+    expected_scratch = bytes.fromhex("000000fbe9f26979")
+    expected_semantic_prefix = bytes.fromhex("fbe9f26979")
+    return {
+        "status": "formula_validated",
+        "formula": (
+            "scratch[0:4]=u32((stat_mtim << 24)); "
+            "scratch[4:8]=u32((stat_mtim >> 8) | (static_byte << 24)); "
+            "semantic_lhs_prefix=scratch[3:8]"
+        ),
+        "stat_mtim_tv_sec": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
+        "static_byte": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
+        "scratch_prefix_hex": scratch.hex(),
+        "expected_scratch_prefix_hex": expected_scratch.hex(),
+        "semantic_lhs_prefix_hex": semantic_prefix.hex(),
+        "expected_semantic_lhs_prefix_hex": expected_semantic_prefix.hex(),
+        "matches": scratch == expected_scratch
+        and semantic_prefix == expected_semantic_prefix,
+    }
+
+
 def xor_mix(lhs: int, rhs: int) -> int:
     return (lhs ^ rhs) & 0xFF
 
@@ -1864,6 +1894,7 @@ def main() -> None:
         > 1
     ]
     scratch_vm_opcode_validation = validate_scratch_vm_opcode_samples()
+    scratch_lhs_prefix_formula = reconstruct_call001_scratch_lhs_prefix_from_sources()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -2236,6 +2267,7 @@ def main() -> None:
             "boundary_stat_launch2_sem16_lineage": TRACE_BOUNDARY_STAT_LAUNCH2_SEM16_LINEAGE,
             "scratch_table_writer_chain_summary": TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY,
             "scratch_vm_opcode_validation": scratch_vm_opcode_validation,
+            "scratch_lhs_prefix_formula": scratch_lhs_prefix_formula,
             "vm_byte_load_boundaries": TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES,
             "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,
             "multi_sample_mask_folds": {

@@ -798,6 +798,14 @@ add/and/lsr/lsl/orr/ubfx samples: all match
 store little-endian word sample: e9f26979 == e9f26979
 ```
 
+It also reconstructs the first scratch-lhs prefix from executable sources:
+
+```text
+scratch[0:4] = u32(stat_mtim << 24)                         = 000000fb
+scratch[4:8] = u32((stat_mtim >> 8) | (static_byte << 24))   = e9f26979
+semantic lhs starts at scratch+3                             = fbe9f26979
+```
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and
