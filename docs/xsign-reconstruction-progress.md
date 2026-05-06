@@ -131,18 +131,18 @@ rust/target/debug/tracemiku-cli byte-writer-map \
 ```
 
 This keeps one JSON document containing the output bytes, writer chunking, and
-the first layer of result-to-input backchains. A short `--vm-chain-steps 10`
+the first layer of result-to-input backchains. A short `--vm-chain-steps 12`
 run over all current `call_001` writer runs reports:
 
 ```text
 32 writer runs
-bitwise_or_merge: 13
+add_small_delta: 6
+bitwise_or_merge: 16
 mod255_low_byte: 7
-xor_identity: 5
-xor_mix: 24
-ubfx: 12
-shift_right: 12
-add_small_delta: 2
+shift_right: 13
+ubfx: 13
+xor_identity: 6
+xor_mix: 23
 ```
 
 This confirms three active classes in the semantic tail: XOR byte mixing and
@@ -1094,18 +1094,19 @@ Y: 0x18 = 0x61 >> 0x2
 Q: 0x10 = 0x610 & 0x30
 ```
 
-Those are trace summaries of the alphabet indices, not yet proof of the full
-76-byte payload construction.
+Running the same compact view over semantic offsets `0..68` now returns 68
+`payload_formula_table` rows and no missing semantic offsets. That proves the
+late Base64 index layer for the whole aligned 68-byte semantic tail. The
+remaining unknown is the upstream construction of the semantic bytes
+themselves, especially the XOR lhs stream and the mod255/LCG inputs.
 
 ## Next target
 
-The remaining unknown is the 76-byte binary payload before Base64. The next
-work item is to trace Base64 table index registers back to payload bytes and
-record the VM bytecode pattern that maps three payload bytes into four alphabet
-indexes. The immediate next target is to follow the `0x0a`/`0x62` scratch byte
-lineage through the new `byte-lineage` frontiers until it reaches either a JNI
-input byte, a hash digest/finalizer output, a fixed table, or a bytecode
-immediate. Once that
+The remaining unknown is the 76-byte binary payload before Base64, not the
+Base64 table lookup layer. The immediate next target is to trace the semantic
+tail byte sources, especially the 57-byte XOR lhs stream and the 10 known
+`mod255_low_byte` folds, until each reaches either a JNI input byte, a hash
+digest/finalizer output, a fixed table, or a bytecode immediate. Once that
 mapping is isolated, the Python simulator should implement:
 
 1. build the 76-byte payload,

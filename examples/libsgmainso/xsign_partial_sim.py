@@ -98,13 +98,13 @@ TRACE_TAIL_WRITER_MAP = {
     "truncated": False,
     "writer_runs": 32,
     "semantic_kind_counts": {
-        "add_small_delta": 2,
-        "bitwise_or_merge": 13,
+        "add_small_delta": 6,
+        "bitwise_or_merge": 16,
         "mod255_low_byte": 7,
-        "shift_right": 12,
-        "ubfx": 12,
-        "xor_identity": 5,
-        "xor_mix": 24,
+        "shift_right": 13,
+        "ubfx": 13,
+        "xor_identity": 6,
+        "xor_mix": 23,
     },
     "classes": [
         {
@@ -955,7 +955,7 @@ def main() -> None:
             and semantic == expected_semantic,
             "trace_command": (
                 "tracemiku-cli byte-writer-map <call_dir> --addr 0x74b68bcc1d "
-                "--size 68 --idx-hi 14739000 --max 300 --vm-chain-steps 10 "
+                "--size 68 --idx-hi 14739000 --max 300 --vm-chain-steps 12 "
                 "--vm-chain-runs 34 --vm-chain-follow-frontier"
             ),
             "auto_trace_command": (
@@ -1187,9 +1187,9 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "full semantic tail construction after the currently proven XOR/mod255 fragments",
+            "full semantic tail construction from the XOR lhs stream and mod255 inputs",
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
-            "all VM bytecode templates feeding Base64 indexes",
+            "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",
         ],
     }
