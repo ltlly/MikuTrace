@@ -97,6 +97,7 @@ TRACE_TAIL_WRITER_MAP = {
     "writer_runs": 32,
     "semantic_kind_counts": {
         "add_small_delta": 2,
+        "bitwise_or_merge": 13,
         "mod255_low_byte": 7,
         "shift_right": 12,
         "ubfx": 12,
@@ -110,7 +111,11 @@ TRACE_TAIL_WRITER_MAP = {
         },
         {
             "range": "7..54",
-            "note": "packed 32-bit stores; short chains classify as ubfx/shift_right byte extraction",
+            "note": "packed 32-bit stores; short chains classify as OR merge plus ubfx/shift_right byte extraction",
+        },
+        {
+            "range": "3..6 deeper selected chains",
+            "note": "selected long chains expose add_known_constant(md5_iv_a), add32_mix, 32-bit shift_left, and identity masks",
         },
         {
             "range": "59..60,65..67",

@@ -108,7 +108,10 @@ rank which byte or run should be investigated next, not to replace a focused
 `vm_chain_summary.semantic_kind_counts[]` shows whether the selected runs are
 mostly Base64 bit slicing (`ubfx`/`shift_right`), byte normalization
 (`xor_identity`), modulo folding (`mod255_low_byte`), or another repeated
-template.
+template. Other useful labels include `bitwise_or_merge` for packed-word
+assembly, `add32_mix` for 32-bit state addition, `add_known_constant` for
+recognized IV/constants such as MD5, and `and_identity`/`or_identity` for
+masking or merging operations that preserve the value being chased.
 
 ## Backward dataflow path
 
