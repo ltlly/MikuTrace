@@ -194,15 +194,22 @@ TRACE_CRYPTO_EVIDENCE = {
             "first_idx": 14590500,
         },
         {
-            "name": "MD5_D/SHA1_H3",
+            "name": "SHA1_H3/MD5_D",
             "value": "0x10325476",
             "addr": "0x74fbf3af18",
             "first_idx": 14590508,
+        },
+        {
+            "name": "SHA1_H4",
+            "value": "0xc3d2e1f0",
+            "addr": "0x74fbf3af58",
+            "first_idx": 14590537,
         },
     ],
     "packed_vm_values": [
         "0xefcdab8967452301",
         "0x1032547698badcfe",
+        "0xc3d2e1f0",
     ],
     "hash_finalize_map_summary": {
         "command": (
@@ -358,6 +365,48 @@ TRACE_CALL_001_STATE_WORD_SOURCE = {
     "previous_state_writer_idx": 14635558,
     "previous_state_word": 0xB2345FC4,
     "round_accumulator": 0xB57FEB14,
+    "state_updates": [
+        {
+            "formula_idx": 14678154,
+            "store_idx": 14678167,
+            "store_addr": "0x74b68bb6a8",
+            "lhs": 0x1B57FEB14,
+            "rhs": 0xB2345FC4,
+            "result": 0x267B44AD8,
+        },
+        {
+            "formula_idx": 14678176,
+            "store_idx": 14678188,
+            "store_addr": "0x74b68bb6ac",
+            "lhs": 0x561D4E18,
+            "rhs": 0x22212A57,
+            "result": 0x783E786F,
+        },
+        {
+            "formula_idx": 14678197,
+            "store_idx": 14678209,
+            "store_addr": "0x74b68bb6b0",
+            "lhs": 0x2E657DF9,
+            "rhs": 0x9F97230B,
+            "result": 0xCDFCA104,
+        },
+        {
+            "formula_idx": 14678218,
+            "store_idx": 14678230,
+            "store_addr": "0x74b68bb6b4",
+            "lhs": 0x9397F163,
+            "rhs": 0xB87FE8D3,
+            "result": 0x14C17DA36,
+        },
+        {
+            "formula_idx": 14678239,
+            "store_idx": 14678255,
+            "store_addr": "0x74b68bb6b8",
+            "lhs": 0x059D465C,
+            "rhs": 0x69C3F988,
+            "result": 0x6F613FE4,
+        },
+    ],
 }
 
 
@@ -510,6 +559,23 @@ def main() -> None:
     state_source_add_low32 = (state_source["state_add_lhs"] + state_source["state_add_rhs"]) & 0xFFFFFFFF
     state_source_loaded = state_source["state_word_loaded_value"] & 0xFFFFFFFF
     state_source_word_le = bswap32(state_source_loaded)
+    state_updates = [
+        {
+            **item,
+            "lhs": f"{item['lhs']:#x}",
+            "lhs_low32": f"{item['lhs'] & 0xFFFFFFFF:#x}",
+            "rhs": f"{item['rhs']:#x}",
+            "rhs_low32": f"{item['rhs'] & 0xFFFFFFFF:#x}",
+            "result": f"{item['result']:#x}",
+            "result_low32": f"{item['result'] & 0xFFFFFFFF:#x}",
+            "computed_low32": f"{(item['lhs'] + item['rhs']) & 0xFFFFFFFF:#x}",
+            "matches_result_low32": ((item["lhs"] + item["rhs"]) & 0xFFFFFFFF)
+            == (item["result"] & 0xFFFFFFFF),
+        }
+        for item in state_source["state_updates"]
+    ]
+    state_words_be = [item["result"] & 0xFFFFFFFF for item in state_source["state_updates"]]
+    state_digest_be = b"".join(value.to_bytes(4, "big") for value in state_words_be)
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -642,6 +708,10 @@ def main() -> None:
             "call_001_state_word_source": {
                 "status": "trace_proven_one_sample",
                 "state_buffer_addr": state_source["state_buffer_addr"],
+                "sha1_like_state_words_be": [f"{value:#x}" for value in state_words_be],
+                "sha1_like_state_digest_be_hex": state_digest_be.hex(),
+                "all_state_updates_match_low32": all(item["matches_result_low32"] for item in state_updates),
+                "state_updates": state_updates,
                 "loaded_idx": state_source["state_word_loaded_idx"],
                 "loaded_word_be": f"{state_source_loaded:#x}",
                 "template_state_word_le": f"{state_source_word_le:#x}",

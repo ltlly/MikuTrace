@@ -241,6 +241,22 @@ full result is wider than 32 bits and the following store truncates through
 `str w*`. The same summary now pairs this formula with the following state
 buffer store under `state_updates[]`.
 
+Expanding the same VM window shows five adjacent low-32 state writes, matching
+the SHA-1 state width rather than a four-word MD5-only finalize:
+
+```text
+0x74b68bb6a8 = 0x67b44ad8
+0x74b68bb6ac = 0x783e786f
+0x74b68bb6b0 = 0xcdfca104
+0x74b68bb6b4 = 0x4c17da36
+0x74b68bb6b8 = 0x6f613fe4
+digest_be = 67b44ad8783e786fcdfca1044c17da366f613fe4
+```
+
+`crypto-scan` also sees `SHA1_H[4] = 0xc3d2e1f0` in the same constant family,
+so the current working label for this component is SHA1-like state finalize.
+Only the first word has been connected to `tail[3:7]` so far.
+
 The mask bytes themselves are also cross-sample `mod255_low_byte` folds:
 
 ```text
