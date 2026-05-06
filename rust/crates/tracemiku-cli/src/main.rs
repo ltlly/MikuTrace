@@ -9657,10 +9657,12 @@ fn compact_lineage_next_actions(
             "lift recognized formula semantics into a replay template and replace concrete values with inputs"
         ));
     }
-    if terminal.get("kind").and_then(|v| v.as_str()) == Some("depth_limit")
-        && repeated_values
-            .as_array()
-            .is_some_and(|values| !values.is_empty())
+    if matches!(
+        terminal.get("kind").and_then(|v| v.as_str()),
+        Some("depth_limit" | "cycle")
+    ) && repeated_values
+        .as_array()
+        .is_some_and(|values| !values.is_empty())
     {
         actions.push(serde_json::json!(
             "inspect repeated_values; repeated pointer/state values usually indicate a copy loop or stable VM base"
@@ -10159,6 +10161,7 @@ fn compact_lineage_stop_reason(reason: Option<&serde_json::Value>) -> serde_json
     let decision = reason.get("decision");
     serde_json::json!({
         "kind": reason.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+        "seed": reason.get("seed").cloned().unwrap_or(serde_json::Value::Null),
         "decision_kind": decision
             .and_then(|v| v.get("kind"))
             .cloned()
@@ -16892,7 +16895,10 @@ mod tests {
             "start": {"addr": "0x4000", "before_idx": 200},
             "depth_requested": 2,
             "steps_returned": 2,
-            "stop_reason": {"kind": "depth_limit"},
+            "stop_reason": {
+                "kind": "cycle",
+                "seed": {"kind": "reg_at", "idx": 190, "reg": "x1"}
+            },
             "steps": [
                 {
                     "step": 0,
@@ -16944,6 +16950,8 @@ mod tests {
             compact["repeated_values"][0]["value"],
             serde_json::json!("0x74b68bb9a0")
         );
+        assert_eq!(compact["terminal"]["kind"], serde_json::json!("cycle"));
+        assert_eq!(compact["terminal"]["seed"]["reg"], serde_json::json!("x1"));
         assert!(compact["next_actions"]
             .as_array()
             .unwrap()
