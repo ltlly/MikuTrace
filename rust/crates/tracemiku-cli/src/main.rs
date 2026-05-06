@@ -366,6 +366,9 @@ enum Cmd {
         addr: String,
         #[arg(long, default_value_t = -1)]
         before_idx: isize,
+        /// Include boundary-diff external writes from MemShadow.
+        #[arg(long)]
+        with_external: bool,
     },
     /// GET /api/idxs-touching-addr.
     IdxsTouchingAddr {
@@ -1501,8 +1504,13 @@ async fn main() -> anyhow::Result<()> {
             trace_dir,
             addr,
             before_idx,
+            with_external,
         }) => {
-            let params = vec![("addr", addr), ("before_idx", before_idx.to_string())];
+            let params = vec![
+                ("addr", addr),
+                ("before_idx", before_idx.to_string()),
+                ("with_external", with_external.to_string()),
+            ];
             route_get_json(trace_dir, route_path("/api/last-write-of-addr", &params)).await
         }
         Some(Cmd::IdxsTouchingAddr {
@@ -7979,6 +7987,7 @@ async fn last_write_of_addr_on(
     let params = vec![
         ("addr", format!("{addr:#x}")),
         ("before_idx", before_idx.to_string()),
+        ("with_external", "true".to_string()),
     ];
     route_get_json_value_on(app, route_path("/api/last-write-of-addr", &params)).await
 }

@@ -620,6 +620,9 @@ instead of enabling full `--trace-deep`:
 This records changed bytes under `external_writes.bin`, which Rust MemShadow v4
 loads as `kind: "x"` writes. It lets `byte-lineage` continue through external
 stat output bytes without following stale in-module writes.
+For direct probes, `last-write-of-addr --with-external` and
+`/api/last-write-of-addr?with_external=true` use the same MemShadow-backed view;
+the default last-write route keeps the faster trace-index-only path.
 
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and

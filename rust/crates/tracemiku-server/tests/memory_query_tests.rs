@@ -83,6 +83,19 @@ fn synth_scaled_store_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn append_external_write(cd: &std::path::Path, idx: u64, addr: u64, byte: u8) {
+    let mut rec = Vec::with_capacity(17);
+    rec.extend_from_slice(&idx.to_le_bytes());
+    rec.extend_from_slice(&addr.to_le_bytes());
+    rec.push(byte);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cd.join("external_writes.bin"))
+        .unwrap();
+    f.write_all(&rec).unwrap();
+}
+
 async fn get_json(call_dir: PathBuf, uri: &str) -> serde_json::Value {
     let app = tracemiku_server::build_router(call_dir).expect("build router");
     let resp = app
@@ -106,6 +119,24 @@ async fn last_write_of_addr_reports_writer_context() {
     assert_eq!(v["src_reg"], "x0");
     assert_eq!(v["src_value"], "0x6f6c6c6568");
     assert_eq!(v["writes_before"], 1);
+}
+
+#[tokio::test]
+async fn last_write_of_addr_can_include_external_writes() {
+    let (_tmp, cd) = synth_call_dir();
+    append_external_write(&cd, 2, 0x7002, b'X');
+    let v = get_json(
+        cd,
+        "/api/last-write-of-addr?addr=0x7002&before_idx=3&with_external=true",
+    )
+    .await;
+    assert_eq!(v["status"], "found");
+    assert_eq!(v["writer_idx"], 2);
+    assert_eq!(v["write_kind"], "x");
+    assert_eq!(v["dst_addr"], "0x7002");
+    assert_eq!(v["size"], 1);
+    assert_eq!(v["src_reg"], serde_json::Value::Null);
+    assert_eq!(v["src_value"], "0x58");
 }
 
 #[tokio::test]

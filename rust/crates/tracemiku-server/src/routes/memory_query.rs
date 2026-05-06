@@ -19,6 +19,8 @@ pub struct LastWriteOfAddrQuery {
     pub addr: String,
     #[serde(default = "default_before_idx")]
     pub before_idx: isize,
+    #[serde(default)]
+    pub with_external: bool,
 }
 
 fn default_before_idx() -> isize {
@@ -33,6 +35,7 @@ pub enum LastWriteOfAddrResponse {
         addr: String,
         before_idx: usize,
         writer_idx: usize,
+        write_kind: &'static str,
         writer_pc: String,
         rel: Option<String>,
         func: Option<String>,
@@ -90,6 +93,9 @@ fn last_write_of_addr_response(
     } else {
         inner.trace.len()
     };
+    if q.with_external {
+        return last_write_of_addr_response_from_memshadow(inner, q, addr, before);
+    }
     let mut last_seen_idx: Option<usize> = None;
     let mut writes_before = 0usize;
     let mut writes_after = 0usize;
@@ -137,6 +143,7 @@ fn last_write_of_addr_response(
         addr: q.addr.clone(),
         before_idx: before,
         writer_idx,
+        write_kind: "w",
         writer_pc: format!("{:#x}", record.pc),
         rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
         func,
@@ -152,6 +159,83 @@ fn last_write_of_addr_response(
         writes_before,
         writes_after,
     }
+}
+
+fn last_write_of_addr_response_from_memshadow(
+    inner: &crate::state::AppStateInner,
+    q: LastWriteOfAddrQuery,
+    addr: u64,
+    before: usize,
+) -> LastWriteOfAddrResponse {
+    let mem = inner.memshadow();
+    let mut writes_before = 0usize;
+    let mut writes_after = 0usize;
+    let mut writer: Option<&tracemiku_core::prelude::ShadowMemRec> = None;
+    let mut writer_kind = "w";
+    for write in &mem.writes {
+        if !touches_addr(write.addr, write.size, addr) {
+            continue;
+        }
+        if write.idx < before {
+            writes_before += 1;
+            writer = Some(write);
+            writer_kind = mem_write_kind_at(mem, addr, write.idx).unwrap_or("w");
+        } else {
+            writes_after += 1;
+        }
+    }
+    let Some(write) = writer else {
+        return LastWriteOfAddrResponse::NotFound {
+            status: "not-found",
+            addr: q.addr,
+            before_idx: before,
+            writes_total: writes_before + writes_after,
+        };
+    };
+    let record = inner.trace.record(write.idx);
+    let decoded = decode(record.pc, record.inst);
+    let (func_name, _) = inner.symbols.lookup(record.pc);
+    let func = (func_name != "?").then_some(func_name);
+    let base = primary_base(&inner.meta);
+    let src_reg = (writer_kind != "x")
+        .then(|| source_reg_for_write_at(&decoded, &record, addr))
+        .flatten();
+    let src_value = src_reg
+        .as_deref()
+        .and_then(|reg| record.reg_by_name(reg))
+        .unwrap_or(write.value);
+
+    LastWriteOfAddrResponse::Found {
+        status: "found",
+        addr: q.addr,
+        before_idx: before,
+        writer_idx: write.idx,
+        write_kind: writer_kind,
+        writer_pc: format!("{:#x}", record.pc),
+        rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+        func,
+        asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
+            .trim()
+            .to_string(),
+        dst_addr: format!("{:#x}", write.addr),
+        size: write.size,
+        src_reg,
+        src_value: Some(format!("{src_value:#x}")),
+        writes_before,
+        writes_after,
+    }
+}
+
+fn mem_write_kind_at(
+    mem: &tracemiku_core::prelude::MemShadow,
+    addr: u64,
+    idx: usize,
+) -> Option<&'static str> {
+    mem.bytes
+        .get(&addr)?
+        .iter()
+        .find(|ev| ev.idx == idx && (ev.kind == "w" || ev.kind == "x"))
+        .map(|ev| ev.kind)
 }
 
 #[derive(Debug, Deserialize)]
