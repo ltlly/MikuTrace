@@ -1678,6 +1678,67 @@ def call001_middle_lhs_source_manifest() -> dict:
     }
 
 
+def current_trace_model_input_manifest() -> dict:
+    middle_manifest = call001_middle_lhs_source_manifest()
+    entries = [
+        {
+            "name": "raw_prefix",
+            "kind": "trace_observed_literal",
+            "value": TRACE_FIXED_PREFIX_WRITER_MAP["raw_prefix"],
+            "status": "observed_raw_text_not_decoded_semantics",
+            "used_by": "xsign[0:12]",
+        },
+        {
+            "name": "stat_mtim_tv_sec",
+            "kind": "external_metadata",
+            "value": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
+            "status": "formula_input_validated_for_middle_lhs_prefix",
+            "used_by": "middle_lhs[0:4] via scratch writer",
+        },
+        {
+            "name": "scratch_prefix_static_byte",
+            "kind": "static_or_table_byte",
+            "value": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
+            "status": "trace_value_known_source_not_portable_yet",
+            "used_by": "middle_lhs[4]",
+        },
+        {
+            "name": "middle_lhs_source_segments",
+            "kind": "segmented_trace_sources",
+            "status": "complete_for_call001_not_fully_portable",
+            "used_by": "semantic[16:59] xor lhs",
+            "segments": middle_manifest["segments"],
+        },
+        {
+            "name": "mod255_input_even",
+            "kind": "vm_state_expression",
+            "value": f"{TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN['mod255_input']:#x}",
+            "status": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN["status"],
+            "used_by": "even parity xor rhs bytes",
+        },
+        {
+            "name": "mod255_input_odd",
+            "kind": "vm_state_expression",
+            "value": f"{TRACE_MOD255_INPUT_LCG_CHAIN['mod255_input']:#x}",
+            "status": TRACE_MOD255_INPUT_LCG_CHAIN["status"],
+            "used_by": "odd parity xor rhs bytes",
+        },
+    ]
+    return {
+        "status": "call001_trace_model_inputs_known",
+        "portable_algorithm_ready": False,
+        "entry_count": len(entries),
+        "entries": entries,
+        "remaining_nonportable_kinds": sorted(
+            {
+                entry["kind"]
+                for entry in entries
+                if "not" in entry["status"] or entry["kind"].startswith("external")
+            }
+        ),
+    }
+
+
 def xor_mix(lhs: int, rhs: int) -> int:
     return (lhs ^ rhs) & 0xFF
 
@@ -1959,6 +2020,7 @@ def main() -> None:
     scratch_vm_opcode_validation = validate_scratch_vm_opcode_samples()
     scratch_lhs_prefix_formula = reconstruct_call001_scratch_lhs_prefix_from_sources()
     middle_lhs_source_manifest = call001_middle_lhs_source_manifest()
+    input_manifest = current_trace_model_input_manifest()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -2064,6 +2126,7 @@ def main() -> None:
             "matches_trace": lcg_states == TRACE_LCG_STATES,
             "states_hex": [f"{value:#x}" for value in lcg_states],
         },
+        "current_trace_model_input_manifest": input_manifest,
         "small_affine": {
             "previous_state": f"{TRACE_SMALL_AFFINE['previous_state']:#x}",
             "multiplier": f"{TRACE_SMALL_AFFINE['multiplier']:#x}",

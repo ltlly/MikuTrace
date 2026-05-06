@@ -824,6 +824,21 @@ semantic range `[16,59)`:
 This covers 43/43 middle lhs bytes and keeps the remaining work segment-scoped
 instead of one opaque hex blob.
 
+The partial simulator now also emits `current_trace_model_input_manifest`.
+For `call_001`, the manifest has six entries:
+
+```text
+raw_prefix                  trace_observed_literal
+stat_mtim_tv_sec            external_metadata, formula input validated
+scratch_prefix_static_byte  static_or_table_byte, source not portable yet
+middle_lhs_source_segments  segmented_trace_sources, complete for call_001
+mod255_input_even           vm_state_expression, trace-proven one sample
+mod255_input_odd            vm_state_expression, trace-proven one sample
+```
+
+This is the checklist for turning the current trace replay model into a
+portable algorithm: eliminate or parameterize every non-portable manifest entry.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and
