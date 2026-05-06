@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -4142,6 +4142,10 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
         .get("byte_equation_summary")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let semantic_byte_input_summary = semantic_writer_map
+        .get("byte_equation_input_summary")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let semantic_vm_chain_summary = semantic_writer_map
         .get("vm_chain_summary")
         .cloned()
@@ -4166,6 +4170,7 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
         "selected_hit_rank": value.get("selected_hit_rank").cloned().unwrap_or(serde_json::Value::Null),
         "selected_range": value.get("selected_range").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_byte_equation_summary": semantic_byte_equation_summary,
+        "semantic_byte_input_summary": semantic_byte_input_summary,
         "semantic_vm_chain_summary": semantic_vm_chain_summary,
         "semantic_writer_map": semantic_writer_map,
         "groups": groups,
@@ -4186,6 +4191,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         &byte_equations,
         value.get("semantic_context"),
     );
+    let byte_equation_input_summary = output_semantic_byte_equation_input_summary(&byte_equations);
     let xor_word_templates = output_semantic_xor_word_templates(&byte_equations);
     let xor_word_template_count = xor_word_templates
         .as_array()
@@ -4207,6 +4213,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "vm_chain_seed_mode": value.get("vm_chain_seed_mode").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
         "byte_equation_summary": byte_equation_summary,
+        "byte_equation_input_summary": byte_equation_input_summary,
         "byte_equations": byte_equations,
         "xor_word_template_count": xor_word_template_count,
         "xor_word_templates": xor_word_templates,
@@ -4324,6 +4331,117 @@ fn semantic_requested_range(context: &serde_json::Value) -> Option<(u64, u64)> {
     let count = context.get("semantic_count").and_then(value_as_u64)?;
     let end = start.checked_add(count)?;
     Some((start, end))
+}
+
+#[derive(Debug, Default)]
+struct ByteLaneInputGroup {
+    source_value: String,
+    offsets: Vec<u64>,
+    source_byte_offsets: BTreeSet<u64>,
+    result: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct Mod255InputGroup {
+    input: String,
+    output_byte: String,
+    quotient: Option<String>,
+    offsets: Vec<u64>,
+}
+
+fn output_semantic_byte_equation_input_summary(equations: &serde_json::Value) -> serde_json::Value {
+    let mut byte_lane_sources = BTreeMap::<String, ByteLaneInputGroup>::new();
+    let mut mod255_inputs = BTreeMap::<String, Mod255InputGroup>::new();
+    let mut xor_lhs_offsets = Vec::<u64>::new();
+    for item in equations.as_array().into_iter().flatten() {
+        let Some(kind) = item.get("kind").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(offset) = item.get("offset").and_then(value_as_u64) else {
+            continue;
+        };
+        match kind {
+            "byte_lane_extract" => {
+                let Some(source_value) = item.get("source_value").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(source_byte_offset) =
+                    item.get("source_byte_offset").and_then(value_as_u64)
+                else {
+                    continue;
+                };
+                let result = item
+                    .get("result")
+                    .and_then(value_as_u64)
+                    .map(|v| (v & 0xff) as u8)
+                    .or_else(|| {
+                        item.get("bytes_hex")
+                            .and_then(|v| v.as_str())
+                            .and_then(first_hex_byte)
+                    });
+                let group = byte_lane_sources
+                    .entry(source_value.to_string())
+                    .or_insert_with(|| ByteLaneInputGroup {
+                        source_value: source_value.to_string(),
+                        ..ByteLaneInputGroup::default()
+                    });
+                group.offsets.push(offset);
+                group.source_byte_offsets.insert(source_byte_offset);
+                if let Some(result) = result {
+                    group.result.push(result);
+                }
+            }
+            "mod255_low_byte" => {
+                let Some(input) = item.get("input").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(output_byte) = item.get("output_byte").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let key = format!("{input}|{output_byte}");
+                let group = mod255_inputs
+                    .entry(key)
+                    .or_insert_with(|| Mod255InputGroup {
+                        input: input.to_string(),
+                        output_byte: output_byte.to_string(),
+                        quotient: item
+                            .get("quotient")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                        ..Mod255InputGroup::default()
+                    });
+                group.offsets.push(offset);
+            }
+            "xor_mix" => {
+                xor_lhs_offsets.push(offset);
+            }
+            _ => {}
+        }
+    }
+    xor_lhs_offsets.sort_unstable();
+    serde_json::json!({
+        "byte_lane_sources": byte_lane_sources
+            .into_values()
+            .map(|group| serde_json::json!({
+                "source_value": group.source_value,
+                "offsets": group.offsets,
+                "source_byte_offsets": group.source_byte_offsets.into_iter().collect::<Vec<_>>(),
+                "result_hex": bytes_to_hex(&group.result),
+                "count": group.result.len(),
+            }))
+            .collect::<Vec<_>>(),
+        "mod255_inputs": mod255_inputs
+            .into_values()
+            .map(|group| serde_json::json!({
+                "input": group.input,
+                "output_byte": group.output_byte,
+                "quotient": group.quotient,
+                "offsets": group.offsets,
+                "count": group.offsets.len(),
+            }))
+            .collect::<Vec<_>>(),
+        "xor_lhs_offsets": xor_lhs_offsets,
+    })
 }
 
 #[derive(Debug)]
@@ -11151,12 +11269,12 @@ mod tests {
         def_source_regs_from_asm, find_hex_byte_offsets, gap_call_candidate_from_record,
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
-        output_semantic_byte_equation, output_semantic_byte_equation_summary,
-        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
-        parse_nm_symbol_line, recognize_alu_semantic, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
-        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_ops_state_updates,
-        vm_slot_from_asm, ElfSymbol, VmProfile,
+        output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
+        output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
+        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
+        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -11953,6 +12071,59 @@ mod tests {
     }
 
     #[test]
+    fn summarizes_semantic_byte_equation_inputs() {
+        let equations = serde_json::json!([
+            {
+                "offset": 0,
+                "kind": "byte_lane_extract",
+                "bytes_hex": "0a",
+                "source_value": "0xa000142",
+                "source_byte_offset": 3,
+                "result": "0xa"
+            },
+            {
+                "offset": 1,
+                "kind": "mod255_low_byte",
+                "input": "0x74ffafca73",
+                "output_byte": "0x62",
+                "quotient": "0x757524ef"
+            },
+            {
+                "offset": 13,
+                "kind": "mod255_low_byte",
+                "input": "0x74ffafca73",
+                "output_byte": "0x62",
+                "quotient": "0x757524ef"
+            },
+            {
+                "offset": 3,
+                "kind": "xor_mix",
+                "lhs": "0x67",
+                "rhs": "0x62",
+                "result": "0x05"
+            }
+        ]);
+        let summary = output_semantic_byte_equation_input_summary(&equations);
+        assert_eq!(
+            summary["byte_lane_sources"][0]["source_value"],
+            serde_json::json!("0xa000142")
+        );
+        assert_eq!(
+            summary["byte_lane_sources"][0]["source_byte_offsets"],
+            serde_json::json!([3])
+        );
+        assert_eq!(
+            summary["byte_lane_sources"][0]["result_hex"],
+            serde_json::json!("0a")
+        );
+        assert_eq!(
+            summary["mod255_inputs"][0]["offsets"],
+            serde_json::json!([1, 13])
+        );
+        assert_eq!(summary["xor_lhs_offsets"], serde_json::json!([3]));
+    }
+
+    #[test]
     fn output_map_summary_exposes_top_level_semantic_byte_summary() {
         let output = serde_json::json!({
             "status": "ready",
@@ -11993,6 +12164,10 @@ mod tests {
         assert_eq!(
             summary["semantic_byte_equation_summary"],
             summary["semantic_writer_map"]["byte_equation_summary"]
+        );
+        assert_eq!(
+            summary["semantic_byte_input_summary"],
+            summary["semantic_writer_map"]["byte_equation_input_summary"]
         );
         assert_eq!(summary["semantic_byte_equation_summary"]["count"], 1);
         assert_eq!(
