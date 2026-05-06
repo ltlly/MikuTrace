@@ -722,6 +722,7 @@ fn scan_jni_output_strings_reads_hooks_without_trace_load() {
         "--key".into(),
         "x-sign".into(),
         "--decode-base64".into(),
+        "--decode-base64-full".into(),
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["count"], 1);
@@ -731,6 +732,7 @@ fn scan_jni_output_strings_reads_hooks_without_trace_load() {
         STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
     );
     assert_eq!(v["pairs"][0]["base64"]["decoded_len"], 4);
+    assert_eq!(v["pairs"][0]["base64"]["decoded_hex"], "aabbccdd");
 }
 
 #[test]

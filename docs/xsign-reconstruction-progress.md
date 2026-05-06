@@ -12,6 +12,7 @@ rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
   --key x-sign \
   --decode-url \
   --decode-base64 \
+  --decode-base64-full \
   --prior-inputs 80 \
   --limit 20
 ```

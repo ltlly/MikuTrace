@@ -350,12 +350,15 @@ For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
   --key x-sign \
   --decode-url \
-  --decode-base64
+  --decode-base64 \
+  --decode-base64-full
 ```
 
 This recursively reads only `jni_hooks.jsonl`, so it is suitable for quickly
 finding differential x-sign samples before running heavier MemShadow/taint
-commands on selected calls.
+commands on selected calls. `--decode-base64-full` includes the full decoded
+payload hex for small signature payloads, which makes byte-level multi-sample
+diffing straightforward.
 
 Use `string-provenance` when a string table entry or discovered byte sequence
 looks like the x-sign, an input token, timestamp, app key, device id, or encoded

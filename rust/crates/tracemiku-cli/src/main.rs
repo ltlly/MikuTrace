@@ -588,6 +588,9 @@ enum Cmd {
         /// Include best-effort base64 decoded length and prefix/suffix hex.
         #[arg(long)]
         decode_base64: bool,
+        /// Include full base64 decoded hex. Useful for small signature payload diffing.
+        #[arg(long)]
+        decode_base64_full: bool,
         /// Include this many recent GetStringUTFChars strings before each output.
         #[arg(long, default_value_t = 0)]
         prior_inputs: usize,
@@ -1484,6 +1487,7 @@ async fn main() -> anyhow::Result<()> {
             limit,
             decode_url,
             decode_base64,
+            decode_base64_full,
             prior_inputs,
         }) => cmd_scan_jni_output_strings(
             path,
@@ -1492,6 +1496,7 @@ async fn main() -> anyhow::Result<()> {
             limit,
             decode_url,
             decode_base64,
+            decode_base64_full,
             prior_inputs,
         ),
         Some(Cmd::OutputBacktrace {
@@ -1927,6 +1932,7 @@ fn cmd_scan_jni_output_strings(
     limit: usize,
     decode_url: bool,
     decode_base64: bool,
+    decode_base64_full: bool,
     prior_inputs: usize,
 ) -> anyhow::Result<()> {
     let hook_files = find_jni_hook_files(&path)?;
@@ -1977,7 +1983,7 @@ fn cmd_scan_jni_output_strings(
                     .get("url_decoded")
                     .and_then(|v| v.as_str())
                     .unwrap_or(value_text);
-                row["base64"] = base64_summary(base64_text);
+                row["base64"] = base64_summary(base64_text, decode_base64_full);
             }
             if prior_inputs > 0 {
                 let value_idx = pair[1].get("idx").and_then(|v| v.as_u64());
@@ -2107,14 +2113,20 @@ fn prior_get_string_inputs(
     out
 }
 
-fn base64_summary(raw: &str) -> serde_json::Value {
+fn base64_summary(raw: &str, include_full_hex: bool) -> serde_json::Value {
     match base64_decoded_bytes(raw) {
-        Ok(bytes) => serde_json::json!({
-            "ok": true,
-            "decoded_len": bytes.len(),
-            "prefix_hex": bytes_to_hex(&bytes[..bytes.len().min(16)]),
-            "suffix_hex": bytes_to_hex(&bytes[bytes.len().saturating_sub(16)..]),
-        }),
+        Ok(bytes) => {
+            let mut summary = serde_json::json!({
+                "ok": true,
+                "decoded_len": bytes.len(),
+                "prefix_hex": bytes_to_hex(&bytes[..bytes.len().min(16)]),
+                "suffix_hex": bytes_to_hex(&bytes[bytes.len().saturating_sub(16)..]),
+            });
+            if include_full_hex {
+                summary["decoded_hex"] = serde_json::Value::String(bytes_to_hex(&bytes));
+            }
+            summary
+        }
         Err(err) => serde_json::json!({
             "ok": false,
             "error": err.to_string(),
