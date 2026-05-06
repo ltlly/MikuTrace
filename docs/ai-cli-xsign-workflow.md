@@ -628,9 +628,10 @@ from output text back toward payload construction.
 For an even flatter prompt input, use `payload_formula_table[]`: each row is one
 decoded payload byte with its Base64 byte formula plus compact expression lists
 for the contributing alphabet indices. The table also carries
-`interesting_refs[]` / `semantic_refs[]` entries with trace idx and asm, so an
-agent can immediately continue with `vm-backtree --idx <idx> --reg ...` on the
-operation that produced an index component.
+`interesting_refs[]` / `semantic_refs[]` entries with trace idx, result reg,
+asm, and a `continue_with` hint. An agent can immediately continue with
+`vm-backtree --idx <idx> --reg <reg>` on the operation that produced an index
+component.
 
 Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
 fields to line up a traced alphabet index, for example `i2 = 0x18`, with the

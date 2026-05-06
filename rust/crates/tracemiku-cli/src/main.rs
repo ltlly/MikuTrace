@@ -4783,8 +4783,27 @@ fn formula_reference_list(value: Option<&serde_json::Value>) -> Vec<serde_json::
         .flatten()
         .take(4)
         .map(|formula| {
+            let idx = formula
+                .get("idx")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let reg = formula
+                .get("reg")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let continue_with = if idx.is_null() || reg.is_null() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!({
+                    "cmd": "vm-backtree",
+                    "idx": idx,
+                    "reg": reg,
+                })
+            };
             serde_json::json!({
                 "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": formula.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                "value": formula.get("value").cloned().unwrap_or(serde_json::Value::Null),
                 "asm": formula.get("asm").cloned().unwrap_or(serde_json::Value::Null),
                 "expression": formula
                     .get("expression")
@@ -4795,6 +4814,7 @@ fn formula_reference_list(value: Option<&serde_json::Value>) -> Vec<serde_json::
                     .pointer("/semantic/kind")
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
+                "continue_with": continue_with,
             })
         })
         .collect()
@@ -4891,6 +4911,8 @@ fn output_map_lookup_summary(lookup: &serde_json::Value) -> serde_json::Value {
 fn compact_formula_summary(formula: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": formula.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": formula.get("value").cloned().unwrap_or(serde_json::Value::Null),
         "asm": formula.get("asm").cloned().unwrap_or(serde_json::Value::Null),
         "expression": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
         "semantic": formula.get("semantic").cloned().unwrap_or(serde_json::Value::Null),
