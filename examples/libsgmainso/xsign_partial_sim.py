@@ -10,6 +10,8 @@ pieces that have been proven from local libsgmainso traces:
 - two output byte paths fold 64-bit states with (x + x / 0xff) & 0xff;
 - Base64 group "piYQ" is built from the aligned tail scratch bytes
   0x0a, 0x62, and 0x61.
+- the full 68-byte semantic tail for call_001 has a complete byte-writer map
+  before the final output buffer overwrite;
 - the repeated semantic tail range tail[65:68] == tail[13:16] is a structural
   repeat across samples, but call_001 trace evidence shows the tail copy
   candidate is re-encoded from VM scratch bytes, not yet proven as a direct
@@ -77,6 +79,45 @@ TRACE_SMALL_AFFINE = {
     "multiplier": 0x3,
     "delta": 0x13,
     "expected_state": 0x25A8,
+}
+
+CALL_001_SEMANTIC_TAIL_HEX = (
+    "0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460"
+    "f1d2295d336dae63ff825bafa0f452f1411dddc5965ac22528554125"
+    "a7faa708626158de6160626162"
+)
+
+TRACE_TAIL_WRITER_MAP = {
+    "scratch_addr": "0x74b68bcc1d",
+    "size": 68,
+    "idx_hi": 14739000,
+    "matched": 228,
+    "returned": 228,
+    "truncated": False,
+    "writer_runs": 32,
+    "semantic_kind_counts": {
+        "add_small_delta": 2,
+        "mod255_low_byte": 7,
+        "shift_right": 12,
+        "ubfx": 12,
+        "xor_identity": 6,
+    },
+    "classes": [
+        {
+            "range": "0..6",
+            "bytes_hex": "0a626105d528b9",
+            "note": "single-byte stores; offsets 1 and 2 already fold through mod255",
+        },
+        {
+            "range": "7..54",
+            "note": "packed 32-bit stores; short chains classify as ubfx/shift_right byte extraction",
+        },
+        {
+            "range": "59..60,65..67",
+            "bytes_hex": "6261626162",
+            "note": "mod255_low_byte with xor_identity normalization; includes repeated suffix 62 61 62",
+        },
+    ],
 }
 
 TRACE_TAIL_REPEAT_EVIDENCE = [
@@ -166,6 +207,7 @@ def main() -> None:
     semantic = aligned[1:]
     sample_tails = {name: semantic_tail(xsign) for name, xsign in SAMPLE_XSIGNS.items()}
     reencoded_tail = b64encode_unpadded(aligned)
+    expected_semantic = bytes.fromhex(CALL_001_SEMANTIC_TAIL_HEX)
     lcg_states = lcg_sequence(TRACE_TIME_RET, len(TRACE_LCG_STATES))
     folds = [
         {
@@ -215,9 +257,23 @@ def main() -> None:
             "aligned_tail_len": len(aligned),
             "aligned_tail_prefix_hex": aligned[:16].hex(),
             "semantic_tail_prefix_hex": semantic[:16].hex(),
+            "semantic_tail_hex": semantic.hex(),
+            "semantic_tail_matches_writer_map": semantic == expected_semantic,
             "reencoded_tail_prefix": reencoded_tail[:18],
             "tail_reencodes_xsign_tail_from_char_2": reencoded_tail[2:] == tail_chars,
             "note": "The first aligned byte is synthetic; semantic tracing starts at aligned_tail[1].",
+        },
+        "semantic_tail_writer_map": {
+            **TRACE_TAIL_WRITER_MAP,
+            "bytes_hex": CALL_001_SEMANTIC_TAIL_HEX,
+            "complete": TRACE_TAIL_WRITER_MAP["matched"] == TRACE_TAIL_WRITER_MAP["returned"]
+            and not TRACE_TAIL_WRITER_MAP["truncated"]
+            and semantic == expected_semantic,
+            "trace_command": (
+                "tracemiku-cli byte-writer-map <call_dir> --addr 0x74b68bcc1d "
+                "--size 68 --idx-hi 14739000 --max 300 --vm-chain-steps 10 "
+                "--vm-chain-runs 34 --vm-chain-follow-frontier"
+            ),
         },
         "multi_sample_tail_structure": {
             "samples": len(sample_tails),
