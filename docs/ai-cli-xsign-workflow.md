@@ -446,6 +446,13 @@ under `recognized_patterns[]` as `affine_mod64_state_step`:
 state == (previous_state * multiplier + delta) mod 2^64
 ```
 
+When the multiplier is odd, the same pattern includes `multiplier_inverse`.
+This gives the exact reverse step:
+
+```text
+previous_state == (state - delta) * multiplier_inverse mod 2^64
+```
+
 `vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
 non-small formulas that are still semantically important, such as:
 

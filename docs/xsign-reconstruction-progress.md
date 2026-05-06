@@ -438,7 +438,8 @@ state = (state * 0x5851f42d4c957f2d + 1) mod 2^64
 
 `vm-backchain --summary` now reports these adjacent multiply/add pairs under
 `recognized_patterns[].kind = affine_mod64_state_step`, with the previous
-state, multiplier, delta, and odd-multiplier flag. This should be treated as a
+state, multiplier, delta, odd-multiplier flag, and multiplier inverse
+(`0xc097ef87329e28a5` for the multiplier above). This should be treated as a
 candidate PRNG/digest-state transition until more surrounding bytecode proves
 its exact role.
 

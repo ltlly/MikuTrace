@@ -4612,6 +4612,13 @@ fn recognized_backchain_patterns(chain: &[serde_json::Value]) -> Vec<serde_json:
         let Some(mul_semantic) = mul_step.pointer("/local_def/formula/semantic") else {
             continue;
         };
+        let multiplier_inverse = mul_semantic
+            .get("rhs")
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str)
+            .and_then(odd_u64_inverse)
+            .map(|value| serde_json::Value::String(format!("{value:#x}")))
+            .unwrap_or(serde_json::Value::Null);
         patterns.push(serde_json::json!({
             "kind": "affine_mod64_state_step",
             "add_step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
@@ -4619,12 +4626,24 @@ fn recognized_backchain_patterns(chain: &[serde_json::Value]) -> Vec<serde_json:
             "state": add_semantic.get("result").cloned().unwrap_or(serde_json::Value::Null),
             "previous_state": mul_semantic.get("lhs").cloned().unwrap_or(serde_json::Value::Null),
             "multiplier": mul_semantic.get("rhs").cloned().unwrap_or(serde_json::Value::Null),
+            "multiplier_inverse": multiplier_inverse,
             "delta": add_semantic.get("delta").cloned().unwrap_or(serde_json::Value::Null),
             "multiplier_odd": mul_semantic.get("rhs_odd").cloned().unwrap_or(serde_json::Value::Null),
             "expression": "state == (previous_state * multiplier + delta) mod 2^64",
         }));
     }
     patterns
+}
+
+fn odd_u64_inverse(value: u64) -> Option<u64> {
+    if value & 1 == 0 {
+        return None;
+    }
+    let mut inverse = value;
+    for _ in 0..6 {
+        inverse = inverse.wrapping_mul(2u64.wrapping_sub(value.wrapping_mul(inverse)));
+    }
+    Some(inverse)
 }
 
 fn compact_backchain_summary_step(step: &serde_json::Value) -> serde_json::Value {
@@ -6684,8 +6703,8 @@ mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
         def_entries_from_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
-        recognize_alu_semantic, recognized_backchain_patterns, store_source_regs_from_asm,
-        vm_slot_from_asm,
+        odd_u64_inverse, recognize_alu_semantic, recognized_backchain_patterns,
+        store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -7003,7 +7022,20 @@ mod tests {
             patterns[0]["multiplier"],
             serde_json::json!("0x5851f42d4c957f2d")
         );
+        assert_eq!(
+            patterns[0]["multiplier_inverse"],
+            serde_json::json!("0xc097ef87329e28a5")
+        );
         assert_eq!(patterns[0]["delta"], serde_json::json!("0x1"));
+    }
+
+    #[test]
+    fn computes_odd_inverse_mod_2_64() {
+        let multiplier = 0x5851f42d4c957f2d_u64;
+        let inverse = odd_u64_inverse(multiplier).unwrap();
+        assert_eq!(inverse, 0xc097ef87329e28a5);
+        assert_eq!(multiplier.wrapping_mul(inverse), 1);
+        assert!(odd_u64_inverse(2).is_none());
     }
 
     #[test]
