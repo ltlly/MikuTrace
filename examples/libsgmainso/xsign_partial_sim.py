@@ -1417,6 +1417,54 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                     "ascii": "0.10",
                 },
             ],
+            "lineage_confirmation": {
+                "status": "confirmed_external_text_boundary",
+                "commands": [
+                    (
+                        "tracemiku-cli byte-lineage <call_dir> "
+                        "--addr 0x74b68bbe24 --before-idx 14164925 "
+                        "--depth 80 --lookback 5000000 --summary"
+                    ),
+                    (
+                        "tracemiku-cli byte-lineage <call_dir> "
+                        "--addr 0x74b68bbe28 --before-idx 14164980 "
+                        "--depth 80 --lookback 5000000 --summary"
+                    ),
+                ],
+                "memory_boundaries": [
+                    {
+                        "addr": "0x756649a2d0",
+                        "observed_bytes_hex": "31302e36",
+                        "ascii": "10.6",
+                        "step": 21,
+                        "status": "observed_read_without_matching_traced_write",
+                        "last_traced_write_idx": 14062790,
+                        "last_traced_write_mismatched": True,
+                    },
+                    {
+                        "addr": "0x756649a2d4",
+                        "observed_bytes_hex": "302e3130",
+                        "ascii": "0.10",
+                        "step": 21,
+                        "status": "observed_read_without_matching_traced_write",
+                        "last_traced_write_idx": 14062790,
+                        "last_traced_write_mismatched": True,
+                    },
+                ],
+                "formula_chain_shapes": [
+                    "bitwise_or_merge",
+                    "ubfx",
+                    "shift_right",
+                    "xor_mix",
+                ],
+                "interpretation": (
+                    "Both four-byte words flow from observed text bytes at "
+                    "0x756649a2d0. The latest traced write to that address "
+                    "does not match the observed bytes, so model this as an "
+                    "external text input unless a future hook labels the "
+                    "producer more precisely."
+                ),
+            },
         },
         {
             "scratch_offset": [44, 52],
@@ -1905,6 +1953,17 @@ def call001_middle_lhs_source_manifest() -> dict:
             row["boundary_values"] = item.get("boundary_values") or [
                 item.get("boundary_value")
             ]
+            if row["scratch_offsets"] == [36, 44]:
+                boundary_run = next(
+                    run
+                    for run in TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY[
+                        "runs"
+                    ]
+                    if run.get("scratch_offset") == [36, 44]
+                )
+                row["original_source_class"] = row["source_class"]
+                row["source_class"] = "confirmed_external_text_boundary"
+                row["lineage_confirmation"] = boundary_run["lineage_confirmation"]
         if item["source_class"] == "static_memory_load_constant":
             row["static_memory_load_count"] = item.get("static_memory_load_count")
             row["first_static_addr"] = item.get("first_static_addr")
@@ -2064,13 +2123,19 @@ def parameterized_simulation_contract() -> dict:
                 "goal": "Lift role-bound scratch writer templates into full Python opcode replay.",
             },
             {
-                "name": "middle_lhs_memory_boundary_text",
+                "name": "middle_lhs_external_text_boundary",
                 "semantic_range": [49, 57],
-                "next_cli": (
-                    "tracemiku-cli byte-lineage <call_dir> --addr <semantic_addr+49> "
-                    "--before-idx <writer_idx> --depth 80 --lookback 5000000 --summary"
+                "status": "confirmed_external_text_input_pending_semantic_label",
+                "observed_ascii": "10.60.10",
+                "source": (
+                    "TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY.runs"
+                    "[scratch_offset=36..44].lineage_confirmation"
                 ),
-                "goal": "Confirm whether the 10.60.10^^ text boundary is external app/device input.",
+                "goal": (
+                    "Name the semantic role of the external text input "
+                    "(for example version/config/device string) or expose it "
+                    "as an explicit replay parameter."
+                ),
             },
         ],
         "not_an_algorithm_because": (

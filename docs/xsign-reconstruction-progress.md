@@ -817,7 +817,7 @@ semantic range `[16,59)`:
 [16,21) formula_validated_stat_mtim_static_byte  fbe9f26979
 [21,25) vm_xor_ladder_from_static_table_seed_pending_lift ecf29541
 [25,49) traced_formula_only                     f60193b34b3c510ccc029de339cec2953090237cbfa4f43b
-[49,57) memory_boundary_read                    a0444a342344c59b
+[49,57) confirmed_external_text_boundary        a0444a342344c59b
 [57,59) traced_formula_only                     c569
 ```
 
@@ -871,6 +871,20 @@ slot[bc_0x5_u8] = eor(slot[bc_0x4_u8], slot[bc_0x5_u8], slot[bc_0x6_u8], bc_0x10
 This is a generic CLI improvement: it is not tied to `libsgmainso`, but it turns
 large VM windows into a short replay-template list an agent can consume.
 
+The `[49,57)` segment is now confirmed as an external text boundary rather than
+an unresolved VM source:
+
+```text
+scratch[36:40] -> 0x756649a2d0 observed 31302e36 "10.6"
+scratch[40:44] -> 0x756649a2d4 observed 302e3130 "0.10"
+combined text                         "10.60.10"
+lineage stop                          observed_read_without_matching_traced_write
+```
+
+The latest traced write to `0x756649a2d0` does not match the observed bytes, so
+the portable replay should treat this as an explicit external text parameter
+until a hook labels the producer more precisely.
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 
@@ -921,7 +935,7 @@ Those opaque inputs now include next CLI probes in the JSON output:
 ```text
 [21,25) vm_xor_ladder_static_seed -> vm-ops --compact replay
 [25,49), [57,59) traced_formula_only -> vm-ops role-bound replay
-[49,57) memory_boundary_text -> byte-lineage boundary confirmation
+[49,57) external_text_boundary -> semantic role label / replay parameter
 ```
 
 The script now emits `completion_audit` with four success criteria:
