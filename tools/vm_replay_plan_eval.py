@@ -28,6 +28,7 @@ class ReplayState:
     skipped_effects: int = 0
     unresolved_reads: list[dict[str, Any]] = field(default_factory=list)
     writes: list[dict[str, Any]] = field(default_factory=list)
+    trusted_writes: list[dict[str, Any]] = field(default_factory=list)
     seeded_slots: dict[int, int] = field(default_factory=dict)
 
 
@@ -165,7 +166,15 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
     observed = parse_value(effect.get("value"))
     if computed is None and trust_observed:
         computed = observed
-        state.trusted_effects += 1
+        if computed is not None:
+            state.trusted_effects += 1
+            state.trusted_writes.append(
+                {
+                    "idx": effect.get("idx"),
+                    "value": f"{computed:#x}",
+                    "python_with_values": text,
+                }
+            )
     elif computed is not None:
         state.computed_effects += 1
     else:
@@ -257,6 +266,7 @@ def summarize(plan: dict[str, Any], state: ReplayState, dump_specs: list[str]) -
         "skipped_effects": state.skipped_effects,
         "unresolved_read_count": len(state.unresolved_reads),
         "unresolved_reads_preview": state.unresolved_reads[:20],
+        "trusted_writes_preview": state.trusted_writes[:20],
         "slot_count": len(state.slots),
         "seeded_slots": {
             str(slot): f"{value:#x}" for slot, value in sorted(state.seeded_slots.items())

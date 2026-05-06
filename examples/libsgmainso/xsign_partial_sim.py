@@ -2503,6 +2503,13 @@ def python_vm_replay_plan_eval_summary() -> dict:
             "skipped_effects": 5,
             "unresolved_read_count": 6,
             "remaining_missing_slots": [25, 2, 28, 29, 26, 27],
+            "trusted_writes": [
+                "slot[25] = add(slot[25], 0x10) -> 0x74b68bcc2c",
+                "slot[2] = and(slot[2], 0x9) -> 0x1",
+                "slot[28] = add(slot[28], 0x10) -> 0x74b68bbe10",
+                "slot[29] = add(slot[29], 0xfffffffffffffff0) -> 0x27",
+                "slot[26] = sub(slot[26], slot[27]) -> 0x18",
+            ],
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
                 "size": 52,
@@ -2523,10 +2530,18 @@ def python_vm_replay_plan_eval_summary() -> dict:
             ),
             "seeded_slots": {"0": "0x0"},
             "computed_effects": 108,
-            "trusted_effects": 7,
+            "trusted_effects": 6,
             "skipped_effects": 14,
             "unresolved_read_count": 6,
             "remaining_missing_slots": [26, 28, 25, 24, 8],
+            "trusted_writes": [
+                "slot[29] = and(slot[26], 0xff) -> 0x60",
+                "slot[28] = eor(slot[29], slot[28]) -> 0xf",
+                "slot[26] = lsr(slot[26], 0x8) -> 0x1f7b34",
+                "slot[25] = add(slot[25], 0xffffffffffffffff) -> 0xa",
+                "slot[24] = add(slot[24], 0x1) -> 0x7599191127",
+                "slot[24] = eor(slot[8], slot[24]) -> 0x95f2ec79",
+            ],
             "final_observed_slot24": "0x95f2ec79",
         },
         "interpretation": (
