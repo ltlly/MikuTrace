@@ -345,6 +345,27 @@ The CLI now also surfaces this directly as
 `recognized_pattern_summary.affine_mod64_recurrences[]`, grouping the seven
 observed transitions by multiplier and delta.
 
+The `0x61` mod255 input at `tail[2]` follows a shorter affine state path:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx 13946997 \
+  --reg x13 \
+  --steps 45 \
+  --follow-frontier \
+  --summary
+```
+
+The compact recurrence summary reports one transition:
+
+```text
+0x25a8 = 0xc87 * 0x3 + 0x13
+```
+
+So both known `mod255_low_byte` input classes now have upstream arithmetic
+anchors; the remaining byte-equation sources are the XOR lhs streams and the
+byte-lane source words.
+
 The same summary now compresses the 57 XOR left-hand bytes into three
 contiguous streams:
 

@@ -581,6 +581,23 @@ TRACE_MOD255_INPUT_LCG_CHAIN = {
     ],
 }
 
+TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN = {
+    "status": "trace_proven_one_sample",
+    "command": (
+        "tracemiku-cli vm-backchain <call_dir> --idx 13946997 --reg x13 "
+        "--steps 45 --follow-frontier --summary"
+    ),
+    "semantic_offset": 2,
+    "mod255_input": 0x74BEABE59C,
+    "output_byte": 0x61,
+    "chain_head": [
+        "0x74beabe59c uses vm frontier value 0x25a8",
+        "0x25a8 = 0x2595 + 0x13",
+        "0x2595 = 0xc87 * 0x3",
+    ],
+    "small_affine": TRACE_SMALL_AFFINE,
+}
+
 TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS = {
     "command": (
         "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
@@ -1264,6 +1281,22 @@ def main() -> None:
                     for state in TRACE_MOD255_INPUT_LCG_CHAIN["lcg_states_seen"]
                 ],
             },
+            "call_001_mod255_input_small_affine_chain": {
+                "status": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN["status"],
+                "command": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN["command"],
+                "semantic_offset": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN[
+                    "semantic_offset"
+                ],
+                "mod255_input": f"{TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN['mod255_input']:#x}",
+                "output_byte": f"{TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN['output_byte']:#x}",
+                "chain_head": TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN["chain_head"],
+                "small_affine": {
+                    "previous_state": f"{TRACE_SMALL_AFFINE['previous_state']:#x}",
+                    "multiplier": f"{TRACE_SMALL_AFFINE['multiplier']:#x}",
+                    "delta": f"{TRACE_SMALL_AFFINE['delta']:#x}",
+                    "expected_state": f"{TRACE_SMALL_AFFINE['expected_state']:#x}",
+                },
+            },
             "multi_sample_xor_lhs_middle_run": {
                 "status": "trace_observed_four_diff_samples",
                 "semantic_range": middle_lhs["semantic_range"],
@@ -1317,7 +1350,7 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "remaining upstream sources for the XOR lhs stream, byte-lane source words, and the second mod255 input",
+            "remaining upstream sources for the XOR lhs stream and byte-lane source words",
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",
