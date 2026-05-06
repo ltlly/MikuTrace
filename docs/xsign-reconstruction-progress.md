@@ -886,6 +886,11 @@ slot[28] = lsl(slot[28], 0x3)
 
 This is a generic CLI improvement: it is not tied to `libsgmainso`, but it turns
 large VM windows into a short replay-template list an agent can consume.
+`tools/vm_replay_plan_eval.py --emit-python` can now turn the same replay-plan
+JSON into an editable Python replay skeleton. That skeleton keeps trace-index
+comments and generic `slots`/`mem` operations, but it remains a trace replay
+until every literal/byte-load input is replaced by a proven table, app metadata,
+or device/environment parameter.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:

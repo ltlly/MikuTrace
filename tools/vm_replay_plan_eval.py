@@ -286,6 +286,99 @@ def replay_plan(
     return state
 
 
+def replay_python_expr(expr: str) -> str:
+    expr = expr.strip()
+    expr = re.sub(r"\bslot\[(\d+)\]", r"slots[\1]", expr)
+    helpers = {
+        "add": "vm_add",
+        "sub": "vm_sub",
+        "and": "vm_and",
+        "orr": "vm_orr",
+        "eor": "vm_eor",
+        "lsl": "vm_lsl",
+        "lsr": "vm_lsr",
+        "low8": "vm_low8",
+    }
+
+    def replace_helper(match: re.Match[str]) -> str:
+        return f"{helpers.get(match.group(1), match.group(1))}("
+
+    return re.sub(
+        r"\b(add|sub|and|orr|eor|lsl|lsr|low8|byte_load)\(",
+        replace_helper,
+        expr,
+    )
+
+
+def generate_python_replay(plan: dict[str, Any]) -> str:
+    lines = [
+        "# Generated from traceMiku vm-ops --replay-plan.",
+        "# This is a generic trace replay skeleton, not a target-specific algorithm.",
+        "MASK64 = (1 << 64) - 1",
+        "",
+        "def vm_add(*values): return sum(values) & MASK64",
+        "def vm_sub(head, *tail):",
+        "    for value in tail:",
+        "        head = (head - value) & MASK64",
+        "    return head",
+        "def vm_and(head, *tail):",
+        "    for value in tail:",
+        "        head &= value",
+        "    return head & MASK64",
+        "def vm_orr(*values):",
+        "    out = 0",
+        "    for value in values:",
+        "        out |= value",
+        "    return out & MASK64",
+        "def vm_eor(*values):",
+        "    out = 0",
+        "    for value in values:",
+        "        out ^= value",
+        "    return out & MASK64",
+        "def vm_lsl(value, shift): return (value << shift) & MASK64",
+        "def vm_lsr(value, shift): return (value & MASK64) >> shift",
+        "def vm_low8(value): return value & 0xff",
+        "",
+        "def store_le(mem, addr, value, width=None):",
+        "    if width is None:",
+        "        width = 1 if value <= 0xff else 2 if value <= 0xffff else 4 if value <= 0xffffffff else 8",
+        "    for offset in range(width):",
+        "        mem[addr + offset] = (value >> (offset * 8)) & 0xff",
+        "",
+        "def replay(seed_slots=None, byte_loads=None):",
+        "    slots = {int(k): int(v) & MASK64 for k, v in (seed_slots or {}).items()}",
+        "    byte_loads = {int(k): int(v) & 0xff for k, v in (byte_loads or {}).items()}",
+        "    mem = {}",
+        "    def byte_load(addr):",
+        "        return byte_loads[addr]",
+    ]
+    for step_idx, step in enumerate(plan.get("replay_steps", [])):
+        lines.append(f"    # replay step {step_idx}")
+        for effect in step.get("effects", []):
+            text = effect.get("python_with_values")
+            if not isinstance(text, str) or "=" not in text:
+                continue
+            lhs, rhs = [part.strip() for part in text.split("=", 1)]
+            expr = replay_python_expr(rhs)
+            lines.append(f"    # trace #{effect.get('idx')}: {text}")
+            if slot_match := re.fullmatch(r"slot\[(\d+)\]", lhs):
+                lines.append(f"    slots[{int(slot_match.group(1))}] = ({expr}) & MASK64")
+                continue
+            if mem_match := re.fullmatch(r"mem\[(0x[0-9a-fA-F]+|\d+|null)\]", lhs):
+                addr = parse_int(mem_match.group(1))
+                if addr is None:
+                    lines.append("    # skipped unresolved memory address")
+                    continue
+                width = parse_value(effect.get("store_width"))
+                width_arg = "None" if width is None else str(width)
+                lines.append(f"    store_le(mem, {addr:#x}, {expr}, {width_arg})")
+                continue
+            lines.append("    # skipped unsupported effect lhs")
+    lines.append('    return {"slots": slots, "mem": mem}')
+    lines.append("")
+    return "\n".join(lines)
+
+
 def dump_mem(state: ReplayState, spec: str) -> dict[str, Any]:
     addr_text, size_text = spec.split(":", 1)
     addr = int(addr_text, 0)
@@ -344,8 +437,16 @@ def main() -> int:
         action="store_true",
         help="Do not fall back to observed trace values when operands are missing.",
     )
+    parser.add_argument(
+        "--emit-python",
+        action="store_true",
+        help="Emit a standalone Python replay skeleton instead of executing the plan.",
+    )
     args = parser.parse_args()
     plan = json.load(sys.stdin)
+    if args.emit_python:
+        sys.stdout.write(generate_python_replay(plan))
+        return 0
     state = replay_plan(
         plan, trust_observed=not args.no_trust_observed, seed_slots=args.seed_slot
     )

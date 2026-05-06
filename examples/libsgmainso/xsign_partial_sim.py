@@ -2799,6 +2799,7 @@ def completion_audit() -> dict:
                     "resolve-trace-addr resolves call targets through parent run module metadata",
                     "byte-lineage default stack registers preserve sp/fp/lr stack-slot chains",
                     "mem-dump --summary words_le64 exposes aligned static-table seeds",
+                    "vm_replay_plan_eval.py --emit-python emits editable replay skeletons",
                 ],
                 "status": "substantially_available",
             },

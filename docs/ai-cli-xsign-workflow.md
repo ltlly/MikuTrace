@@ -111,6 +111,7 @@ For AI use, treat the output categories as contracts:
 | `python_with_values` | A concrete, value-filled expression. It is good for verification, but must be parameterized before calling it an algorithm. |
 | `source_byte_load` | A byte/word input to the VM operation. Follow it with `byte-lineage` when it is not yet a known table, literal, or app/device input. |
 | `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
+| `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, memory boundaries, and next actions. Use it before requesting the full chain. |
 | `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
 | `observed_read_without_matching_traced_write` frontier | Memory was read with no matching earlier traced write. This usually means pre-trace initialization, an untraced helper, mmap/file input, JNI/framework state, or a trace gap. |
@@ -119,6 +120,20 @@ For AI use, treat the output categories as contracts:
 Do not add target-specific VM commands for one SO. If a new variant needs
 additional recognition, add a generic signal, such as a new formula kind, a
 new frontier kind, or a configurable VM profile field.
+
+To hand a replay window to an AI as editable Python, emit a skeleton:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops <call_dir> \
+  --start <idx> --end <idx> \
+  --replay-plan --max-ops 400 \
+| uv run python tools/vm_replay_plan_eval.py --emit-python
+```
+
+The generated code keeps trace index comments and generic helper calls such as
+`vm_eor`, `vm_lsr`, and `store_le`. Replace literal or `byte_load` inputs with
+proven table/app/device parameters before promoting it from trace replay to a
+portable simulator.
 
 ## Output-to-writer path
 
