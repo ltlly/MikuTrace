@@ -5079,11 +5079,20 @@ fn output_semantic_xor_word_state_source_summary(
     let templates = templates.as_array().cloned().unwrap_or_default();
     let sources = sources.as_array().cloned().unwrap_or_default();
     let mut source_status_counts = BTreeMap::<String, usize>::new();
+    let mut source_status_ranges = BTreeMap::<String, Vec<serde_json::Value>>::new();
     for source in &sources {
         let Some(status) = source.get("source_status").and_then(|v| v.as_str()) else {
             continue;
         };
         *source_status_counts.entry(status.to_string()).or_insert(0) += 1;
+        source_status_ranges
+            .entry(status.to_string())
+            .or_default()
+            .push(serde_json::json!({
+                "semantic_range": source.get("semantic_range").cloned().unwrap_or(serde_json::Value::Null),
+                "lhs_word_le": source.get("lhs_word_le").cloned().unwrap_or(serde_json::Value::Null),
+                "source_word": source.get("source_word").cloned().unwrap_or(serde_json::Value::Null),
+            }));
     }
     let source_starts = sources
         .iter()
@@ -5124,6 +5133,10 @@ fn output_semantic_xor_word_state_source_summary(
         "source_status_counts": source_status_counts
             .into_iter()
             .map(|(status, count)| serde_json::json!({ "status": status, "count": count }))
+            .collect::<Vec<_>>(),
+        "source_status_ranges": source_status_ranges
+            .into_iter()
+            .map(|(status, ranges)| serde_json::json!({ "status": status, "ranges": ranges }))
             .collect::<Vec<_>>(),
     })
 }
@@ -13543,6 +13556,19 @@ mod tests {
         assert_eq!(
             summary["source_status_counts"],
             serde_json::json!([{"status": "state_update_found", "count": 1}])
+        );
+        assert_eq!(
+            summary["source_status_ranges"][0],
+            serde_json::json!({
+                "status": "state_update_found",
+                "ranges": [
+                    {
+                        "semantic_range": [0, 4],
+                        "lhs_word_le": null,
+                        "source_word": null
+                    }
+                ]
+            })
         );
         assert_eq!(
             summary["missing_templates"][0]["semantic_range"],
