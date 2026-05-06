@@ -309,22 +309,47 @@ TRACE_MULTI_SAMPLE_XOR_WORDS = {
     "diff_run1_truncated_call_006": {
         "state_word_le": 0x3B61D005,
         "source": "lane-aware byte_equations lhs bytes 05 d0 61 3b",
+        "source_word_be": 0x05D0613B,
+        "state_add_idx": 7014025,
+        "state_add_lhs": 0x27DA05E37,
+        "state_add_rhs": 0x88300304,
+        "state_add_result": 0x305D0613B,
     },
     "diff_run1_call_001": {
         "state_word_le": 0xD84AB467,
         "source": "lane-aware byte_equations lhs bytes 67 b4 4a d8",
+        "source_word_be": 0x67B44AD8,
+        "state_add_idx": 14678154,
+        "state_add_lhs": 0x1B57FEB14,
+        "state_add_rhs": 0xB2345FC4,
+        "state_add_result": 0x267B44AD8,
     },
     "diff_run1_call_003": {
         "state_word_le": 0xB9F37778,
         "source": "lane-aware byte_equations lhs bytes 78 77 f3 b9",
+        "source_word_be": 0x7877F3B9,
+        "state_add_idx": 6938214,
+        "state_add_lhs": 0x17E6740B3,
+        "state_add_rhs": 0xFA10B306,
+        "state_add_result": 0x27877F3B9,
     },
     "diff_run1_call_004": {
         "state_word_le": 0x84E5092B,
         "source": "lane-aware byte_equations lhs bytes 2b 09 e5 84",
+        "source_word_be": 0x2B09E584,
+        "state_add_idx": 6918544,
+        "state_add_lhs": 0x20D8147DD,
+        "state_add_rhs": 0x1D889DA7,
+        "state_add_result": 0x22B09E584,
     },
     "diff_run1_call_005": {
         "state_word_le": 0x6F4484FA,
         "source": "lane-aware byte_equations lhs bytes fa 84 44 6f",
+        "source_word_be": 0xFA84446F,
+        "state_add_idx": 6960242,
+        "state_add_lhs": 0x2B018C817,
+        "state_add_rhs": 0x4A6B7C58,
+        "state_add_result": 0x2FA84446F,
     },
 }
 
@@ -531,9 +556,19 @@ def main() -> None:
     for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS.items():
         tail = sample_tails[name]
         computed = xor_word_tail_bytes(item["state_word_le"], tail[1], tail[2])
+        state_add_low32 = (item["state_add_lhs"] + item["state_add_rhs"]) & 0xFFFFFFFF
         xor_word_samples[name] = {
             "state_word_le": f"{item['state_word_le']:#x}",
             "state_bytes_le": word32_le_bytes(item["state_word_le"]).hex(),
+            "source_word_be": f"{item['source_word_be']:#x}",
+            "bswap32_source_matches_state_word": bswap32(item["source_word_be"]) == item["state_word_le"],
+            "state_add_idx": item["state_add_idx"],
+            "state_add_lhs": f"{item['state_add_lhs']:#x}",
+            "state_add_rhs": f"{item['state_add_rhs']:#x}",
+            "state_add_result": f"{item['state_add_result']:#x}",
+            "state_add_result_low32": f"{item['state_add_result'] & 0xFFFFFFFF:#x}",
+            "state_add_computed_low32": f"{state_add_low32:#x}",
+            "state_add_matches_source_word": state_add_low32 == item["source_word_be"],
             "mask_bytes_from_tail_1_2": tail[1:3].hex(),
             "computed_tail_3_7": computed.hex(),
             "expected_tail_3_7": tail[3:7].hex(),
@@ -704,6 +739,10 @@ def main() -> None:
                 "formula": "tail[3:7] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]",
                 "samples": xor_word_samples,
                 "all_match": all(item["matches_trace"] for item in xor_word_samples.values()),
+                "all_state_adds_match": all(
+                    item["bswap32_source_matches_state_word"] and item["state_add_matches_source_word"]
+                    for item in xor_word_samples.values()
+                ),
             },
             "call_001_state_word_source": {
                 "status": "trace_proven_one_sample",

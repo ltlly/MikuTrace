@@ -224,6 +224,24 @@ call_004:           state=0x84e5092b masks=1b54 -> 305dfed0
 call_005:           state=0x6f4484fa masks=95c5 -> 6f41d1aa
 ```
 
+With `--semantic-writer-map-vm-chain-steps 40`, all five samples also trace
+that template state word to the same upstream shape:
+
+```text
+bswap32(source_word_be) == state_word_le
+source_word_be == low32(add32_mix.lhs + add32_mix.rhs)
+```
+
+Example cross-sample source words:
+
+```text
+_truncated_call_006: source_word_be=0x05d0613b add_idx=7014025
+call_001:           source_word_be=0x67b44ad8 add_idx=14678154
+call_003:           source_word_be=0x7877f3b9 add_idx=6938214
+call_004:           source_word_be=0x2b09e584 add_idx=6918544
+call_005:           source_word_be=0xfa84446f add_idx=6960242
+```
+
 For `call_001`, the state word is now traced one layer further. The XOR
 template uses `state_word_le = 0xd84ab467`, which is the little-endian view of
 the bytes loaded from `0x67b44ad8`. That word is read at #14678409 from
