@@ -190,6 +190,23 @@ These are now emitted directly by `output-map --summary` under
 `semantic_writer_map.byte_equations[]`, together with the adjacent
 `mod255_low_byte` equations for `tail[1]` and `tail[2]`.
 
+Across the five current `traces/diff` samples, these four XORs reduce to a
+stable word template:
+
+```text
+tail[3:7] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]
+```
+
+The partial simulator verifies:
+
+```text
+_truncated_call_006: state=0x3b61d005 masks=baa1 -> bf71db9a
+call_001:           state=0xd84ab467 masks=6261 -> 05d528b9
+call_003:           state=0xb9f37778 masks=34b9 -> 4ccec700
+call_004:           state=0x84e5092b masks=1b54 -> 305dfed0
+call_005:           state=0x6f4484fa masks=95c5 -> 6f41d1aa
+```
+
 Crypto cross-check:
 
 ```bash

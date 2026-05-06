@@ -298,6 +298,29 @@ TRACE_TAIL_XOR_EQUATIONS = [
     },
 ]
 
+TRACE_MULTI_SAMPLE_XOR_WORDS = {
+    "diff_run1_truncated_call_006": {
+        "state_word_le": 0x3B61D005,
+        "source": "lane-aware byte_equations lhs bytes 05 d0 61 3b",
+    },
+    "diff_run1_call_001": {
+        "state_word_le": 0xD84AB467,
+        "source": "lane-aware byte_equations lhs bytes 67 b4 4a d8",
+    },
+    "diff_run1_call_003": {
+        "state_word_le": 0xB9F37778,
+        "source": "lane-aware byte_equations lhs bytes 78 77 f3 b9",
+    },
+    "diff_run1_call_004": {
+        "state_word_le": 0x84E5092B,
+        "source": "lane-aware byte_equations lhs bytes 2b 09 e5 84",
+    },
+    "diff_run1_call_005": {
+        "state_word_le": 0x6F4484FA,
+        "source": "lane-aware byte_equations lhs bytes fa 84 44 6f",
+    },
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -330,6 +353,22 @@ def affine_mod64(previous_state: int, multiplier: int, delta: int) -> int:
 
 def xor_mix(lhs: int, rhs: int) -> int:
     return (lhs ^ rhs) & 0xFF
+
+
+def word32_le_bytes(value: int) -> bytes:
+    return int(value & 0xFFFFFFFF).to_bytes(4, "little")
+
+
+def xor_word_tail_bytes(state_word: int, mask_a: int, mask_b: int) -> bytes:
+    state = word32_le_bytes(state_word)
+    return bytes(
+        [
+            xor_mix(state[0], mask_a),
+            xor_mix(state[1], mask_b),
+            xor_mix(state[2], mask_a),
+            xor_mix(state[3], mask_b),
+        ]
+    )
 
 
 def aligned_tail(xsign: str) -> bytes:
@@ -396,6 +435,19 @@ def main() -> None:
     xor_reconstructed = bytearray(semantic[:7])
     for item in TRACE_TAIL_XOR_EQUATIONS:
         xor_reconstructed[item["semantic_offset"]] = xor_mix(item["lhs"], item["rhs"])
+    xor_word_samples = {}
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS.items():
+        tail = sample_tails[name]
+        computed = xor_word_tail_bytes(item["state_word_le"], tail[1], tail[2])
+        xor_word_samples[name] = {
+            "state_word_le": f"{item['state_word_le']:#x}",
+            "state_bytes_le": word32_le_bytes(item["state_word_le"]).hex(),
+            "mask_bytes_from_tail_1_2": tail[1:3].hex(),
+            "computed_tail_3_7": computed.hex(),
+            "expected_tail_3_7": tail[3:7].hex(),
+            "matches_trace": computed == tail[3:7],
+            "source": item["source"],
+        }
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -520,6 +572,11 @@ def main() -> None:
             "reconstructed_offsets": [item["semantic_offset"] for item in TRACE_TAIL_XOR_EQUATIONS],
             "reconstructed_prefix_0_7_hex": bytes(xor_reconstructed).hex(),
             "matches_semantic_prefix_0_7": bytes(xor_reconstructed) == semantic[:7],
+            "multi_sample_word_template": {
+                "formula": "tail[3:7] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]",
+                "samples": xor_word_samples,
+                "all_match": all(item["matches_trace"] for item in xor_word_samples.values()),
+            },
             "upstream_lane_note": (
                 "Offsets 4..6 require byte-lane-aware OR/shift/extract tracking; "
                 "otherwise the chain can drift into neighboring packed-word bytes."
