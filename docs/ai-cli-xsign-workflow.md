@@ -188,6 +188,11 @@ Example shape:
 }
 ```
 
+When the selected VM backchain reaches the word source, the same summary emits
+`semantic_writer_map.xor_word_state_sources[]`. This links the XOR word to the
+byte-extraction instruction and the upstream `add32_mix` state update, for
+example `source_word_be = 0x67b44ad8` and `result_low32 = 0x67b44ad8`.
+
 ## Backward dataflow path
 
 Trace register provenance from a writer or suspicious finalizer instruction:

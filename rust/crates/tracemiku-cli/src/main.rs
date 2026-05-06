@@ -3843,6 +3843,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .map(|runs| runs.len())
         .unwrap_or(0);
     let byte_equations = output_semantic_byte_equations(value);
+    let xor_word_templates = output_semantic_xor_word_templates(&byte_equations);
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_context": value.get("semantic_context").cloned().unwrap_or(serde_json::Value::Null),
@@ -3858,7 +3859,8 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
         "byte_equations": byte_equations,
-        "xor_word_templates": output_semantic_xor_word_templates(&byte_equations),
+        "xor_word_templates": xor_word_templates,
+        "xor_word_state_sources": output_semantic_xor_word_state_sources(value, &xor_word_templates),
         "vm_chains": output_semantic_vm_chain_summaries(value),
     })
 }
@@ -4061,6 +4063,82 @@ fn le_word_u32(bytes: &[u8]) -> u32 {
         .take(4)
         .enumerate()
         .fold(0u32, |acc, (idx, byte)| acc | ((*byte as u32) << (idx * 8)))
+}
+
+fn output_semantic_xor_word_state_sources(
+    value: &serde_json::Value,
+    templates: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(templates) = templates.as_array() else {
+        return serde_json::json!([]);
+    };
+    let chains = value
+        .get("vm_chains")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut sources = Vec::new();
+    for template in templates {
+        let Some(start) = template
+            .get("semantic_range")
+            .and_then(|v| v.as_array())
+            .and_then(|range| range.first())
+            .and_then(value_as_u64)
+        else {
+            continue;
+        };
+        let Some(chain) = chains
+            .iter()
+            .find(|chain| chain.get("start_offset").and_then(value_as_u64) == Some(start))
+        else {
+            continue;
+        };
+        let semantics = chain
+            .pointer("/chain/recognized_semantics")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let Some(source) = xor_word_source_from_semantics(&semantics) else {
+            continue;
+        };
+        sources.push(serde_json::json!({
+            "semantic_range": template.get("semantic_range").cloned().unwrap_or(serde_json::Value::Null),
+            "lhs_word_le": template.get("lhs_word_le").cloned().unwrap_or(serde_json::Value::Null),
+            "source_offset": start,
+            "source_word_be": source.get("source_word_be").cloned().unwrap_or(serde_json::Value::Null),
+            "word_extract": source.get("word_extract").cloned().unwrap_or(serde_json::Value::Null),
+            "state_update": source.get("state_update").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
+    serde_json::Value::Array(sources)
+}
+
+fn xor_word_source_from_semantics(semantics: &[serde_json::Value]) -> Option<serde_json::Value> {
+    let word_extract = semantics.iter().find(|entry| {
+        let semantic = entry.get("semantic").unwrap_or(&serde_json::Value::Null);
+        semantic.get("kind").and_then(|v| v.as_str()) == Some("shift_right")
+            && semantic.get("shift").and_then(value_as_u64) == Some(0x18)
+    })?;
+    let source_word = word_extract
+        .pointer("/semantic/input")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)?;
+    let state_update = semantics.iter().find(|entry| {
+        let semantic = entry.get("semantic").unwrap_or(&serde_json::Value::Null);
+        if semantic.get("kind").and_then(|v| v.as_str()) != Some("add32_mix") {
+            return false;
+        }
+        semantic
+            .get("result_low32")
+            .or_else(|| semantic.get("result"))
+            .and_then(value_as_u64)
+            .is_some_and(|result| (result & 0xffff_ffff) == source_word)
+    });
+    Some(serde_json::json!({
+        "source_word_be": format!("{source_word:#x}"),
+        "word_extract": word_extract,
+        "state_update": state_update.cloned().unwrap_or(serde_json::Value::Null),
+    }))
 }
 
 fn first_hex_byte(hex: &str) -> Option<u8> {
@@ -9391,10 +9469,10 @@ mod tests {
         byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
         choose_laned_upstream_next, classify_vm_asm, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, find_hex_byte_offsets, mem_addr_from_asm, memory_access_width,
-        odd_u64_inverse, output_semantic_byte_equation, output_semantic_xor_word_templates,
-        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm,
+        odd_u64_inverse, output_semantic_byte_equation, output_semantic_xor_word_state_sources,
+        output_semantic_xor_word_templates, recognize_alu_semantic, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
+        store_source_regs_from_asm, vm_ops_state_updates, vm_slot_from_asm,
     };
 
     #[test]
@@ -9992,6 +10070,52 @@ mod tests {
             serde_json::json!([1, 2])
         );
         assert_eq!(first["result_bytes_hex"], serde_json::json!("05d528b9"));
+    }
+
+    #[test]
+    fn summarizes_xor_word_state_sources_from_vm_chain() {
+        let templates = serde_json::json!([
+            {
+                "semantic_range": [3, 7],
+                "lhs_word_le": "0xd84ab467"
+            }
+        ]);
+        let value = serde_json::json!({
+            "vm_chains": [
+                {
+                    "start_offset": 3,
+                    "chain": {
+                        "recognized_semantics": [
+                            {
+                                "step": 15,
+                                "idx": 14678420,
+                                "asm": "lsr w0, w13, w4",
+                                "semantic": {
+                                    "kind": "shift_right",
+                                    "input": "0x67b44ad8",
+                                    "result": "0x67",
+                                    "shift": "0x18"
+                                }
+                            },
+                            {
+                                "step": 19,
+                                "idx": 14678154,
+                                "asm": "add x13, x8, x12",
+                                "semantic": {
+                                    "kind": "add32_mix",
+                                    "result": "0x267b44ad8",
+                                    "result_low32": "0x67b44ad8"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let sources = output_semantic_xor_word_state_sources(&value, &templates);
+        let first = sources.as_array().unwrap().first().unwrap();
+        assert_eq!(first["source_word_be"], serde_json::json!("0x67b44ad8"));
+        assert_eq!(first["state_update"]["idx"], serde_json::json!(14678154));
     }
 
     #[test]

@@ -240,6 +240,10 @@ bswap32(0x67b44ad8) = 0xd84ab467
 full result is wider than 32 bits and the following store truncates through
 `str w*`. The same summary now pairs this formula with the following state
 buffer store under `state_updates[]`.
+For the output-first workflow, `output-map --summary` also exposes the same
+link under `semantic_writer_map.xor_word_state_sources[]`, so one command from
+the final `x-sign` string now reaches the upstream state update for
+`tail[3:7]`.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
