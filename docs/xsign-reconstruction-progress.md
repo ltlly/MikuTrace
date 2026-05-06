@@ -868,6 +868,19 @@ multi_sample_generalization  weakly_covered
 The audit intentionally keeps `goal_complete=false` until the portable algorithm
 and multi-sample formula coverage are real, not inferred from trace replay.
 
+`multi_sample_formula_coverage` now makes the cross-sample boundary explicit:
+
+```text
+available samples  7
+covered samples    5
+covered offsets    semantic[1:7)
+all_match          true
+```
+
+This proves the current mod255 pair and first xor-word formula across several
+samples, but only for six semantic bytes. The rest of the 68-byte semantic tail
+is still mostly call_001-scoped.
+
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
 
 ```text

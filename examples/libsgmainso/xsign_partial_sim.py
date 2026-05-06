@@ -1896,6 +1896,58 @@ def python_semantic_helper_coverage() -> dict:
     }
 
 
+def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
+    tail_3_7 = []
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS.items():
+        tail = sample_tails[name]
+        computed = xor_word_tail_bytes(item["state_word_le"], tail[1], tail[2])
+        tail_3_7.append(
+            {
+                "sample": name,
+                "semantic_range": [3, 7],
+                "computed_hex": computed.hex(),
+                "expected_hex": tail[3:7].hex(),
+                "matches": computed == tail[3:7],
+            }
+        )
+    mask_fold_rows = []
+    for name, item in TRACE_MULTI_SAMPLE_MASK_FOLDS.items():
+        tail = sample_tails[name]
+        computed = bytes(
+            [
+                mod255_low_byte(item["tail1_input"]),
+                mod255_low_byte(item["tail2_input"]),
+            ]
+        )
+        mask_fold_rows.append(
+            {
+                "sample": name,
+                "semantic_range": [1, 3],
+                "computed_hex": computed.hex(),
+                "expected_hex": tail[1:3].hex(),
+                "matches": computed == tail[1:3],
+            }
+        )
+    all_rows = tail_3_7 + mask_fold_rows
+    covered_samples = sorted({row["sample"] for row in all_rows})
+    return {
+        "status": "partial_multi_sample_formula_coverage",
+        "available_sample_count": len(sample_tails),
+        "covered_sample_count": len(covered_samples),
+        "covered_samples": covered_samples,
+        "formula_ranges": [
+            {"semantic_range": [1, 3], "kind": "mod255_low_byte_pair"},
+            {"semantic_range": [3, 7], "kind": "xor_word_tail_bytes"},
+        ],
+        "covered_semantic_offsets": [1, 2, 3, 4, 5, 6],
+        "covered_byte_count": 6,
+        "tail_3_7": tail_3_7,
+        "mask_fold_1_3": mask_fold_rows,
+        "all_match": all(row["matches"] for row in all_rows),
+        "coverage_note": "Only semantic offsets 1..6 are formula-checked across samples.",
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -1930,6 +1982,7 @@ def completion_audit() -> dict:
                 "id": "multi_sample_generalization",
                 "requirement": "Python formulas explain multiple libsgmainso trace samples.",
                 "evidence": [
+                    "multi_sample_formula_coverage covers semantic offsets 1..6 for 5 samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                 ],
@@ -2248,6 +2301,7 @@ def main() -> None:
     rhs_mask_model = xor_rhs_mask_model()
     byte_source_model = semantic_byte_source_model()
     helper_coverage = python_semantic_helper_coverage()
+    multi_sample_coverage = multi_sample_formula_coverage(sample_tails)
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -2344,6 +2398,7 @@ def main() -> None:
             },
             "trace_note": "Repeated bytes are equality evidence only; call_001 currently shows re-encoding through VM scratch/Base64, not direct string memcpy.",
         },
+        "multi_sample_formula_coverage": multi_sample_coverage,
         "time_seed": {
             "hex": f"{TRACE_TIME_RET:#x}",
             "unix": TRACE_TIME_RET,
