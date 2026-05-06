@@ -460,8 +460,8 @@ result bytes    = 9a8b930b
 ```
 
 `xor_word_state_source_summary` now uses these run-aligned chunks instead of
-sliding windows. With the full semantic tail probe, the source coverage is now
-complete:
+sliding windows. With the full semantic tail probe, the word-template source
+coverage is now complete:
 
 ```text
 semantic range        = [0,68)
@@ -476,6 +476,23 @@ XOR `lhs` chunk now has a concrete trace source candidate. The first two chunks
 in `[3,11)` reach SHA1-like state updates; most later chunks are still
 `word_source_only`, where the trace proves the word value but the portable
 upstream formula or external input is not fully derived yet.
+
+The byte-level semantic equation coverage is intentionally stricter than the
+word-template source coverage:
+
+```text
+semantic bytes requested = 68
+compact equations        = 67
+missing offset           = 44
+xor_mix equations        = 56
+```
+
+The missing byte is a real diagnostic hole, not an extra algorithm feature. The
+raw `byte_equations[]` row at offset `44` has `bytes_hex = 00` but the first
+recognized `xor_mix` semantic in that chain reports `result = 0xfd` and
+`matches_first_byte = false`. `output-map` now keeps this raw row for debugging
+but excludes it from compact coverage, XOR runs, and word-template summaries so
+AI prompts no longer treat the byte as proven.
 
 Cross-sample extraction over `call_001`, `call_003`, `call_004`, and `call_005`
 shows that the large middle stream is almost fixed, not ASLR-shaped pointer

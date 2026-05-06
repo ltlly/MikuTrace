@@ -4845,6 +4845,9 @@ fn output_semantic_xor_word_run_templates(equations: &serde_json::Value) -> serd
 }
 
 fn compact_byte_equation(value: &serde_json::Value) -> Option<CompactByteEquation> {
+    if value.get("matches_first_byte").and_then(|v| v.as_bool()) == Some(false) {
+        return None;
+    }
     let offset = value.get("offset").and_then(value_as_u64)?;
     let kind = value.get("kind")?.as_str()?.to_string();
     let result = value
@@ -13107,6 +13110,61 @@ mod tests {
             run_templates[0]["lhs_word_le"],
             serde_json::json!("0xd84ab467")
         );
+    }
+
+    #[test]
+    fn excludes_mismatched_byte_equations_from_compact_summaries() {
+        let equations = serde_json::json!([
+            {
+                "offset": 3,
+                "kind": "xor_mix",
+                "lhs": "0x67",
+                "rhs": "0x62",
+                "result": "0x05",
+                "matches_first_byte": true
+            },
+            {
+                "offset": 4,
+                "kind": "xor_mix",
+                "lhs": "0xb4",
+                "rhs": "0x61",
+                "result": "0xd5",
+                "bytes_hex": "00",
+                "matches_first_byte": false
+            },
+            {
+                "offset": 5,
+                "kind": "xor_mix",
+                "lhs": "0x4a",
+                "rhs": "0x62",
+                "result": "0x28",
+                "matches_first_byte": true
+            },
+            {
+                "offset": 6,
+                "kind": "xor_mix",
+                "lhs": "0xd8",
+                "rhs": "0x61",
+                "result": "0xb9",
+                "matches_first_byte": true
+            }
+        ]);
+
+        let summary = output_semantic_byte_equation_summary(&equations);
+        assert_eq!(summary["count"], serde_json::json!(3));
+        assert_eq!(
+            summary["missing_offsets_in_covered_range"],
+            serde_json::json!([4])
+        );
+        assert_eq!(summary["xor_lhs_word_chunks"].as_array().unwrap().len(), 2);
+        assert!(summary["xor_lhs_word_chunks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|chunk| chunk["kind"] != serde_json::json!("word32")));
+
+        let templates = output_semantic_xor_word_run_templates(&equations);
+        assert!(templates.as_array().unwrap().is_empty());
     }
 
     #[test]

@@ -819,6 +819,24 @@ TRACE_XOR_WORD_SOURCE_COVERAGE = {
         "--summary"
     ),
     "coverage_status": "complete",
+    "semantic_byte_equation_coverage": {
+        "coverage_status": "partial_in_requested_range",
+        "requested_range": [0, 68],
+        "covered_count": 67,
+        "missing_offsets": [44],
+        "kind_counts": {
+            "byte_lane_extract": 1,
+            "mod255_low_byte": 10,
+            "xor_mix": 56,
+        },
+        "note": (
+            "Earlier output-map summaries counted offset 44 as covered because "
+            "the first recognized xor_mix in that chain described result 0xfd "
+            "while the selected byte was 0x00. The CLI now keeps that row in "
+            "byte_equations[] for diagnostics but excludes it from compact "
+            "coverage and word-template summaries."
+        ),
+    },
     "template_count": 13,
     "source_count": 13,
     "missing_count": 0,
@@ -830,7 +848,9 @@ TRACE_XOR_WORD_SOURCE_COVERAGE = {
         "Every word-sized XOR lhs chunk has a trace source candidate. This is "
         "source coverage, not portable formula coverage: most middle/tail chunks "
         "still need their word_source_only upstream classified as static table, "
-        "external metadata, or a wider-trace boundary."
+        "external metadata, or a wider-trace boundary. One byte-level semantic "
+        "equation at offset 44 is still missing after filtering mismatched "
+        "equations, so full semantic-byte coverage is 67/68."
     ),
 }
 
@@ -1933,6 +1953,11 @@ def main() -> None:
             (
                 "portable formulas or external inputs for the word_source_only "
                 "XOR lhs chunks"
+            ),
+            (
+                "semantic byte offset 44: output-map keeps the mismatched raw "
+                "equation for diagnostics, but no compact equation currently "
+                "proves the selected byte"
             ),
             (
                 "semantic meaning of the fixed 12-character raw prefix; trace "
