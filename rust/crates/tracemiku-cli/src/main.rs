@@ -4133,6 +4133,19 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
         .flatten()
         .map(output_map_group_summary)
         .collect::<Vec<_>>();
+    let semantic_writer_map = output_semantic_writer_map_summary(
+        value
+            .get("semantic_writer_map")
+            .unwrap_or(&serde_json::Value::Null),
+    );
+    let semantic_byte_equation_summary = semantic_writer_map
+        .get("byte_equation_summary")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let semantic_vm_chain_summary = semantic_writer_map
+        .get("vm_chain_summary")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "strategy": value.get("strategy").cloned().unwrap_or(serde_json::Value::Null),
@@ -4152,9 +4165,9 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
         "selected_hit_order": value.get("selected_hit_order").cloned().unwrap_or(serde_json::Value::Null),
         "selected_hit_rank": value.get("selected_hit_rank").cloned().unwrap_or(serde_json::Value::Null),
         "selected_range": value.get("selected_range").cloned().unwrap_or(serde_json::Value::Null),
-        "semantic_writer_map": output_semantic_writer_map_summary(
-            value.get("semantic_writer_map").unwrap_or(&serde_json::Value::Null)
-        ),
+        "semantic_byte_equation_summary": semantic_byte_equation_summary,
+        "semantic_vm_chain_summary": semantic_vm_chain_summary,
+        "semantic_writer_map": semantic_writer_map,
         "groups": groups,
     })
 }
@@ -4170,6 +4183,10 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .unwrap_or(0);
     let byte_equations = output_semantic_byte_equations(value);
     let xor_word_templates = output_semantic_xor_word_templates(&byte_equations);
+    let xor_word_template_count = xor_word_templates
+        .as_array()
+        .map(|templates| templates.len())
+        .unwrap_or(0);
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_context": value.get("semantic_context").cloned().unwrap_or(serde_json::Value::Null),
@@ -4187,6 +4204,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
         "byte_equation_summary": output_semantic_byte_equation_summary(&byte_equations),
         "byte_equations": byte_equations,
+        "xor_word_template_count": xor_word_template_count,
         "xor_word_templates": xor_word_templates,
         "xor_word_state_sources": output_semantic_xor_word_state_sources(value, &xor_word_templates),
         "vm_chains": output_semantic_vm_chain_summaries(value),
@@ -4229,6 +4247,7 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
+    let xor_lhs_run_chunks = semantic_xor_lhs_run_chunks(&parsed);
     serde_json::json!({
         "count": parsed.len(),
         "covered_offsets": covered_offsets,
@@ -4243,7 +4262,8 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
             .collect::<Vec<_>>(),
         "xor_rhs_pattern": semantic_xor_rhs_offset_pattern(&parsed),
         "xor_lhs_runs": semantic_xor_lhs_runs(&parsed),
-        "xor_lhs_word_chunks": semantic_xor_lhs_word_chunks(&parsed),
+        "xor_lhs_run_chunks": xor_lhs_run_chunks.clone(),
+        "xor_lhs_word_chunks": xor_lhs_run_chunks,
     })
 }
 
@@ -4314,7 +4334,7 @@ fn semantic_xor_lhs_runs(equations: &[CompactByteEquation]) -> serde_json::Value
     serde_json::Value::Array(runs.into_iter().map(XorByteRun::into_json).collect())
 }
 
-fn semantic_xor_lhs_word_chunks(equations: &[CompactByteEquation]) -> serde_json::Value {
+fn semantic_xor_lhs_run_chunks(equations: &[CompactByteEquation]) -> serde_json::Value {
     let mut chunks = Vec::new();
     let mut current = Vec::<CompactByteEquation>::new();
     for item in equations.iter().filter(|item| item.kind == "xor_mix") {
@@ -11030,12 +11050,13 @@ mod tests {
         compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, find_hex_byte_offsets, gap_call_candidate_from_record,
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
-        observed_byte_writer_mismatches, odd_u64_inverse, output_semantic_byte_equation,
-        output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
-        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
-        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
+        output_semantic_byte_equation, output_semantic_byte_equation_summary,
+        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
+        parse_nm_symbol_line, recognize_alu_semantic, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
+        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_ops_state_updates,
+        vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -11792,6 +11813,59 @@ mod tests {
         assert_eq!(
             summary["xor_lhs_runs"][0]["result_hex"],
             serde_json::json!("05d5")
+        );
+        assert_eq!(
+            summary["xor_lhs_run_chunks"],
+            summary["xor_lhs_word_chunks"]
+        );
+    }
+
+    #[test]
+    fn output_map_summary_exposes_top_level_semantic_byte_summary() {
+        let output = serde_json::json!({
+            "status": "ready",
+            "strategy": "output_base64_group_map",
+            "semantic_writer_map": {
+                "status": "ready",
+                "vm_chain_summary": {
+                    "chain_count": 1
+                },
+                "vm_chains": [
+                    {
+                        "start_offset": 3,
+                        "bytes_hex": "05",
+                        "chain": {
+                            "recognized_semantics": [
+                                {
+                                    "step": 1,
+                                    "asm": "eor w0, w1, w2",
+                                    "semantic": {
+                                        "kind": "xor_mix",
+                                        "lhs": "0x67",
+                                        "rhs": "0x62",
+                                        "result": "0x05"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "groups": []
+        });
+        let summary = output_map_summary(&output);
+        assert_eq!(
+            summary["semantic_byte_equation_summary"],
+            summary["semantic_writer_map"]["byte_equation_summary"]
+        );
+        assert_eq!(summary["semantic_byte_equation_summary"]["count"], 1);
+        assert_eq!(
+            summary["semantic_vm_chain_summary"]["chain_count"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            summary["semantic_writer_map"]["xor_word_template_count"],
+            serde_json::json!(0)
         );
     }
 
