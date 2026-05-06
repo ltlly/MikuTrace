@@ -546,6 +546,7 @@ rust/target/debug/tracemiku-cli vm-backstep \
 
 ```text
 #13980120 blr x22 -> libc.so+0xa0f5c
+x0 = 0x753dcfeac0 -> "/"
 x1 = 0x74b68bd0b0
 target addr 0x74b68bd108 = x1 + 0x58
 ```
@@ -566,7 +567,7 @@ Android AArch64 NDK layout confirms `offsetof(struct stat, st_mtim.tv_sec) ==
 `fbe9f26900000000` are therefore little-endian `st_mtim.tv_sec =
 0x69f2e9fb`, which is `2026-04-30T13:34:51+08:00` on the current local
 timezone. The x-sign simulator should treat this word as the target file's
-modification time unless a future trace/hook proves a different stat-like
+modification time for the `stat("/")` input unless a future trace/hook proves a different stat-like
 structure.
 
 The next candidate `#13980660 libc.so+0x5c4fc` resolves to `free`, and is a later
