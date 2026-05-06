@@ -6966,8 +6966,14 @@ async fn exact_byte_writers_for_load_on(
                 "rel": response.get("rel").cloned().unwrap_or(serde_json::Value::Null),
                 "func": response.get("func").cloned().unwrap_or(serde_json::Value::Null),
                 "asm": response.get("asm").cloned().unwrap_or(serde_json::Value::Null),
-                "dst_addr": format!("{byte_addr:#x}"),
-                "size": 1,
+                "dst_addr": response
+                    .get("dst_addr")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(format!("{byte_addr:#x}"))),
+                "size": response
+                    .get("size")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(1)),
                 "src_reg": response.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
                 "src_value": response.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
             }))

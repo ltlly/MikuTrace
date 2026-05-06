@@ -37,6 +37,8 @@ pub enum LastWriteOfAddrResponse {
         rel: Option<String>,
         func: Option<String>,
         asm: String,
+        dst_addr: String,
+        size: u32,
         src_reg: Option<String>,
         src_value: Option<String>,
         writes_before: usize,
@@ -92,6 +94,8 @@ fn last_write_of_addr_response(
     let mut writes_before = 0usize;
     let mut writes_after = 0usize;
     let mut writer_idx: Option<usize> = None;
+    let mut writer_addr: Option<u64> = None;
+    let mut writer_size: Option<u32> = None;
     for write in &inner.index.mem_writes {
         if !touches_addr(write.addr, write.size, addr) {
             continue;
@@ -103,6 +107,8 @@ fn last_write_of_addr_response(
         if write.idx < before {
             writes_before += 1;
             writer_idx = Some(write.idx);
+            writer_addr = Some(write.addr);
+            writer_size = Some(write.size);
         } else {
             writes_after += 1;
         }
@@ -128,7 +134,7 @@ fn last_write_of_addr_response(
 
     LastWriteOfAddrResponse::Found {
         status: "found",
-        addr: q.addr,
+        addr: q.addr.clone(),
         before_idx: before,
         writer_idx,
         writer_pc: format!("{:#x}", record.pc),
@@ -137,6 +143,10 @@ fn last_write_of_addr_response(
         asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
             .trim()
             .to_string(),
+        dst_addr: writer_addr
+            .map(|addr| format!("{addr:#x}"))
+            .unwrap_or_else(|| q.addr.clone()),
+        size: writer_size.unwrap_or(1),
         src_reg,
         src_value,
         writes_before,

@@ -578,6 +578,9 @@ rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
 ```
 
 The command alternates between `/api/last-write-of-addr` and `vm-backstep`.
+`/api/last-write-of-addr` reports the original writer `dst_addr` and `size`,
+not just the queried byte address, so a byte inside a `str w` or `str x`
+write can preserve its source lane for the next `vm-backchain` hop.
 When there is one upstream byte source it continues automatically; when the
 source becomes an ALU expression with multiple operands or another branch point,
 it stops with explicit frontier candidates. This is the preferred way to walk

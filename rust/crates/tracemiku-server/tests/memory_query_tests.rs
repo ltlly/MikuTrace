@@ -101,6 +101,8 @@ async fn last_write_of_addr_reports_writer_context() {
     assert_eq!(v["status"], "found");
     assert_eq!(v["writer_idx"], 0);
     assert_eq!(v["writer_pc"], "0x100000");
+    assert_eq!(v["dst_addr"], "0x7000");
+    assert_eq!(v["size"], 8);
     assert_eq!(v["src_reg"], "x0");
     assert_eq!(v["src_value"], "0x6f6c6c6568");
     assert_eq!(v["writes_before"], 1);
