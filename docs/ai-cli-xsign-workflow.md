@@ -264,13 +264,15 @@ stops at a table lookup or ALU row with no direct writer, it chooses a
 non-infrastructure `frontier[]` source register. Recognized semantic formulas
 override generic heuristics: `udiv` follows the numerator,
 `mod255_low_byte` follows the folded input, and `add_small_delta` follows the
-large state value instead of constants such as `1`. Shift/extract operations
-such as `lsl`, `lsr`, `asr`, and `ubfx` follow their first operand, not the
-shift amount. The remaining generic table-lookup case still prefers small
-index-like values. This is useful for Base64-style table lookups: the alphabet
-byte has no writer, but the table index register is usually the dataflow branch
-to keep chasing. Each row records `decision.kind` as `upstream_next`,
-`frontier_auto`, or `stop`.
+large state value instead of constants such as `1`. `xor_identity` handles
+`eor/xor value, 0` and follows the non-zero input; this matters for VM byte
+normalization before payload bytes are written. Shift/extract operations such
+as `lsl`, `lsr`, `asr`, and `ubfx` follow their first operand, not the shift
+amount. The remaining generic table-lookup case still prefers small index-like
+values. This is useful for Base64-style table lookups: the alphabet byte has no
+writer, but the table index register is usually the dataflow branch to keep
+chasing. Each row records `decision.kind` as `upstream_next`, `frontier_auto`,
+or `stop`.
 
 The infrastructure-register filter is a preference, not a hard stop. If the
 only frontier is a register such as `x23`, the chain still follows it. This is
@@ -417,7 +419,11 @@ rust/target/debug/tracemiku-cli output-map <call_dir> \
 
 In this mode `group_start` refers to the aligned tail groups. Summary rows keep
 both `aligned_decoded_offset` and `semantic_offset`; bytes before
-`--base64-tail-drop` are marked `dropped_by_alignment`.
+`--base64-tail-drop` are marked `dropped_by_alignment`. When `--tree-depth` is
+enabled, `--summary` also keeps compact `groups[].trees[]` entries with the
+writer seed, table lookups, word loads, arithmetic semantics, and terminal
+frontiers. This keeps output-map useful as an AI prompt without dumping the full
+nested route payload.
 
 When you already know the tail byte offset, skip group arithmetic:
 
@@ -508,6 +514,17 @@ kind: mod255_low_byte
 This comes from an ARM64 VM sequence where a quotient register is added back to
 the original value, and only the low byte is stored. Treat it as a collapsed
 formula and continue tracing the `input` operand.
+
+Another small but important normalizer is:
+
+```text
+kind: xor_identity
+result == input ^ 0
+```
+
+This prevents `--follow-frontier` from chasing a zero VM slot when an
+OLLVM-style sequence computes `eor x16, x20, x5` with `x20=0` and `x5` carrying
+the byte of interest.
 
 Another common VM state pattern is:
 

@@ -10,6 +10,10 @@ pieces that have been proven from local libsgmainso traces:
 - two output byte paths fold 64-bit states with (x + x / 0xff) & 0xff;
 - Base64 group "piYQ" is built from the aligned tail scratch bytes
   0x0a, 0x62, and 0x61.
+- the repeated semantic tail range tail[65:68] == tail[13:16] is a structural
+  repeat across samples, but call_001 trace evidence shows the tail copy
+  candidate is re-encoded from VM scratch bytes, not yet proven as a direct
+  string memcpy.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -74,6 +78,30 @@ TRACE_SMALL_AFFINE = {
     "delta": 0x13,
     "expected_state": 0x25A8,
 }
+
+TRACE_TAIL_REPEAT_EVIDENCE = [
+    {
+        "semantic_offset": 65,
+        "byte": 0x62,
+        "scratch_addr": "0x74b68bcc5e",
+        "xor_identity_idx": 14712345,
+        "mod255_input": 0x74FFAFCA73,
+    },
+    {
+        "semantic_offset": 66,
+        "byte": 0x61,
+        "scratch_addr": "0x74b68bcc5f",
+        "xor_identity_idx": 14712478,
+        "mod255_input": 0x74BEABE59C,
+    },
+    {
+        "semantic_offset": 67,
+        "byte": 0x62,
+        "scratch_addr": "0x74b68bcc60",
+        "xor_identity_idx": 14712611,
+        "mod255_input": 0x74FFAFCA73,
+    },
+]
 
 
 def b64decode_unpadded(raw: str) -> bytes:
@@ -200,14 +228,15 @@ def main() -> None:
                 if len({tail[offset] for tail in sample_tails.values()}) == 1
             ],
             "tail0_value": f"{next(iter(sample_tails.values()))[0]:#x}",
-            "copy_13_16_to_65_68_all": all(tail[13:16] == tail[65:68] for tail in sample_tails.values()),
-            "copy_examples": {
+            "repeat_13_16_to_65_68_all": all(tail[13:16] == tail[65:68] for tail in sample_tails.values()),
+            "repeat_examples": {
                 name: {
                     "tail_13_16": tail[13:16].hex(),
                     "tail_65_68": tail[65:68].hex(),
                 }
                 for name, tail in sample_tails.items()
             },
+            "trace_note": "Repeated bytes are equality evidence only; call_001 currently shows re-encoding through VM scratch/Base64, not direct string memcpy.",
         },
         "time_seed": {
             "hex": f"{TRACE_TIME_RET:#x}",
@@ -229,6 +258,17 @@ def main() -> None:
             "matches_trace": small_affine_state == TRACE_SMALL_AFFINE["expected_state"],
         },
         "mod255_low_byte": folds,
+        "tail_repeat_trace_evidence": [
+            {
+                **item,
+                "byte": f"{item['byte']:#x}",
+                "mod255_input": f"{item['mod255_input']:#x}",
+                "mod255_computed": f"{mod255_low_byte(item['mod255_input']):#x}",
+                "matches_trace": mod255_low_byte(item["mod255_input"]) == item["byte"],
+                "frontier_semantic": "xor_identity feeds the non-zero operand before the mod255 fold",
+            }
+            for item in TRACE_TAIL_REPEAT_EVIDENCE
+        ],
         "base64_group_3": {
             "chars": group,
             "decoded_hex": decoded_group.hex(),

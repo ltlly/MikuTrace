@@ -93,7 +93,7 @@ group arithmetic.
 
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
-The CLI reports one copy-like structural invariant under
+The CLI reports one repeat/copy-candidate structural invariant under
 `base64_tail_diff.repeated_ranges_all_samples[]`:
 
 ```text
@@ -102,6 +102,22 @@ tail[65:68] == tail[13:16]
 
 Examples: `626162 -> 626162` in `call_001`, `95c595 -> 95c595` in
 `call_005`, and `47ae47 -> 47ae47` in the JNI-only sample.
+
+Do not treat this as a proven direct memcpy yet. A backward trace of
+`call_001` shows `tail[65:68]` is written as Base64 chars `YmFi` at output
+offsets `98..102`, then traced through VM scratch bytes at
+`0x74b68bcc5e..0x74b68bcc60`. Those three bytes rejoin the already-known
+generators:
+
+```text
+tail[65] 0x62 <- eor x16, 0, 0x62 <- mod255_low_byte(0x74ffafca73)
+tail[66] 0x61 <- eor x16, 0, 0x61 <- mod255_low_byte(0x74beabe59c)
+tail[67] 0x62 <- eor x16, 0, 0x62 <- mod255_low_byte(0x74ffafca73)
+```
+
+So the current evidence is stronger than string equality but weaker than a
+source-level copy proof: the tail repeat is re-encoded from the same upstream
+byte producers.
 
 ## Output buffer chain
 
@@ -565,8 +581,10 @@ uv run python examples/libsgmainso/xsign_partial_sim.py
 It verifies the standard Base64 decode, the `time()`-seeded LCG sequence above,
 the `mod255_low_byte` folds for the `0x62` and `0x61` scratch bytes, the small
 `0xc87 * 3 + 0x13 = 0x25a8` affine fragment, and the first variable Base64
-group `piYQ`. It deliberately reports `complete_algorithm = false` until the
-full 76-byte payload construction is recovered.
+group `piYQ`. It also records the corrected interpretation of
+`tail[65:68] == tail[13:16]`: a repeated range re-encoded through VM scratch,
+not yet a direct output copy. It deliberately reports `complete_algorithm =
+false` until the full 76-byte payload construction is recovered.
 
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
