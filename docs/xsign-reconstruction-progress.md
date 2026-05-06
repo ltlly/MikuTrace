@@ -174,6 +174,12 @@ tail generation. It is not yet a full proof that the final x-sign contains a
 standard MD5 digest, because the 16-byte `hash-finalize-detect` candidates still
 need to be connected byte-for-byte to the semantic tail.
 
+The first local `hash-finalize-detect --guess md5` candidates at
+`0x74b68bc770`, `0x74b68bc780`, and `0x74b68bca08` are not useful digest
+outputs: `byte-writer-map --size 16` shows they are all zero writes in the
+queried windows. Treat them as false positives or cleanup/state buffers until a
+non-zero candidate is linked back to tail bytes.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under

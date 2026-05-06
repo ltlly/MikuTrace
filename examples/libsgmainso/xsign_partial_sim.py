@@ -164,18 +164,21 @@ TRACE_CRYPTO_EVIDENCE = {
             "enter_idx": 13749400,
             "exit_idx": 13749442,
             "size": 16,
+            "byte_writer_map": "all_zero",
         },
         {
             "addr": "0x74b68bc780",
             "enter_idx": 13749456,
             "exit_idx": 13749466,
             "size": 16,
+            "byte_writer_map": "all_zero",
         },
         {
             "addr": "0x74b68bca08",
             "enter_idx": 13750906,
             "exit_idx": 13750912,
             "size": 16,
+            "byte_writer_map": "all_zero",
         },
     ],
 }
