@@ -964,6 +964,27 @@ example, it can infer `slot25=0x74b68bcc1c` from
 Follow-up seed lineage probes show the current boundary more precisely:
 
 ```text
+scratch slot2 before #14164280:
+  slot2 = 0x1
+  writer #14164225: str x16, [x25, x1]
+  26 compact steps end at no_local_def on VM bytecode IP 0x74fbf560f0
+
+scratch slot26 before #14164280:
+  slot26 = 0x38
+  writer #14164105: stp x9, x10, [x25, #0xd0]
+  chain includes 0x38 = 0x2f + 0x9 plus OR/shift identities
+  30 compact steps still end at depth_limit on value 0x24
+
+scratch slot27 before #14164280:
+  slot27 = 0x20
+  writer #14164276: str x8, [x25, x11, lsl #3]
+  local formula: 0x20 = 0xfffffffffffffff0 & 0x24
+
+scratch slot28 before #14164280:
+  slot28 = 0x74b68bbe00
+  writer #14164235: str x5, [x25, x6, lsl #3]
+  pointer chain: 0x74b68bb9a0 + 0x200 + 0x25f + 1, then depth_limit
+
 scratch slot29 before #14164280:
   command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact
   slot29 = 0x37
@@ -978,11 +999,26 @@ scratch slot25 before #14164280:
   loaded from slot9, then slot26, then byte memory around 0x74b68bcc10
   frontier: observed_read_without_matching_traced_write on slot27/memory state
   boundary: addr 0x7744599578, observed 1ccc8bb674000000, gap calls 1
+
+[21,25) ladder slot8/24 before #14015880:
+  both reach the same slot29 observed-read boundary at addr 0x7744599588
+  observed 2011199975000000, gap calls 1
+  slot24 is six +1 increments from 0x7599191120
+
+[21,25) ladder slot25/28 before #14015880:
+  slot25 = 0xb = 0xffffffffffffffff + 0xc
+  slot28 = 0x6f = 0xdb ^ 0xb4
+  both end at VM bytecode IP no_local_def frontiers
+
+[21,25) ladder slot26 before #14015880:
+  slot26 = 0x1f7b3460
+  20 compact steps show XOR/shift/mask structure and end at depth_limit
 ```
 
-So `slot29` is no longer a semantic unknown. `slot25` is still a real algorithm
-frontier: it names a scratch/table pointer inside the trace, but its portable
-origin is not yet proven.
+So the seed problem is no longer one undifferentiated "observed fallback" bucket.
+The remaining hard parts are scratch pointer provenance (`slot25/28`) and the
+ladder seed chains (`slot8/24/26`); `slot27/29` and ladder `slot25/28` are now
+closer to bytecode-literal or bytecode-frontier explanations.
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:

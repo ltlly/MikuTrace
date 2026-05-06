@@ -2591,6 +2591,14 @@ def vm_replay_seed_provenance_summary() -> dict:
         "status": "partial_seed_lineage",
         "tool": "tracemiku-cli byte-lineage --compact",
         "scratch_writer_window": {
+            "slot2": {
+                "value": "0x1",
+                "writer_idx": 14164225,
+                "writer_asm": "str x16, [x25, x1]",
+                "lineage_depth": 26,
+                "terminal": "no_local_def at VM bytecode IP base 0x74fbf560f0",
+                "portable_status": "vm_ip_frontier_not_proven",
+            },
             "slot29": {
                 "command": (
                     "tracemiku-cli byte-lineage <call_dir> "
@@ -2604,6 +2612,33 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "upstream": "0xffffffffffffffff is read as a VM bytecode literal at #14164253",
                 "terminal": "no_local_def at VM bytecode IP base",
                 "portable_status": "bytecode_literal",
+            },
+            "slot27": {
+                "value": "0x20",
+                "writer_idx": 14164276,
+                "writer_asm": "str x8, [x25, x11, lsl #3]",
+                "formula": "0x20 = 0xfffffffffffffff0 & 0x24",
+                "terminal": "no_local_def at VM bytecode IP base",
+                "portable_status": "bytecode_or_mask_literal",
+            },
+            "slot26": {
+                "value": "0x38",
+                "writer_idx": 14164105,
+                "writer_asm": "stp x9, x10, [x25, #0xd0]",
+                "lineage": "small integer chain through 0x2f + 0x9 and OR/shift identities",
+                "terminal": "depth_limit at value 0x24 after 30 compact steps",
+                "portable_status": "not_proven",
+            },
+            "slot28": {
+                "value": "0x74b68bbe00",
+                "writer_idx": 14164235,
+                "writer_asm": "str x5, [x25, x6, lsl #3]",
+                "lineage": (
+                    "pointer chain: 0x74b68bb9a0 + 0x200 + 0x25f + 1, "
+                    "with repeated identity masks"
+                ),
+                "terminal": "depth_limit on VM slot24 pointer source after 30 compact steps",
+                "portable_status": "not_proven",
             },
             "slot25": {
                 "command": (
@@ -2627,10 +2662,47 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "portable_status": "not_proven",
             },
         },
+        "middle_lhs_ladder_window": {
+            "slot8": {
+                "value": "0x90d2d669",
+                "frontier": "observed_read_without_matching_traced_write",
+                "boundary": {
+                    "addr": "0x7744599588",
+                    "observed_bytes_hex": "2011199975000000",
+                    "gap_call_count_total": 1,
+                },
+                "portable_status": "not_proven",
+            },
+            "slot24": {
+                "value": "0x7599191126",
+                "lineage": "six +1 increments from 0x7599191120",
+                "frontier": "same slot29 observed-read boundary as slot8",
+                "portable_status": "not_proven",
+            },
+            "slot25": {
+                "value": "0xb",
+                "formula": "0xb = 0xffffffffffffffff + 0xc",
+                "terminal": "no_local_def at VM bytecode IP base",
+                "portable_status": "bytecode_literal",
+            },
+            "slot26": {
+                "value": "0x1f7b3460",
+                "lineage": "XOR/shift/mask chain, depth_limit at 20 compact steps",
+                "terminal": "depth_limit at bitmask_extract value 0xd5",
+                "portable_status": "not_proven",
+            },
+            "slot28": {
+                "value": "0x6f",
+                "formula": "0x6f = 0xdb ^ 0xb4",
+                "terminal": "no_local_def at VM bytecode IP base",
+                "portable_status": "bytecode_or_static_literal",
+            },
+        },
         "interpretation": (
-            "slot29 is now explainable as bytecode-literal arithmetic. slot25 "
-            "still names a trace scratch/table pointer whose portable origin "
-            "requires more lineage or a broader trace."
+            "The replay seeds are now split into bytecode-literal frontiers, "
+            "pointer/constant chains, and observed-read memory boundaries. "
+            "The open portable-algorithm work is concentrated in slot25/28 "
+            "scratch pointer provenance and the ladder slot8/24/26 chains."
         ),
     }
 
