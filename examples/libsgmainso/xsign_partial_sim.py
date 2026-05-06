@@ -2521,6 +2521,11 @@ def python_vm_replay_plan_eval_summary() -> dict:
             "trusted fallback records include formula-derived seed_suggestions; "
             "--auto-seed-suggestions can apply them into a second no-trust replay"
         ),
+        "emit_python_status": (
+            "--emit-python now embeds USER_SEED_SLOTS, SUGGESTED_SEED_SLOTS, "
+            "and OBSERVED_BYTE_LOADS; with suggested seeds the emitted scratch "
+            "writer skeleton reproduces the 52-byte dump"
+        ),
         "scratch_writer_window": {
             "command": (
                 "tracemiku-cli vm-ops <call_dir> --start 14164280 "
@@ -2824,6 +2829,7 @@ def completion_audit() -> dict:
                     "byte-lineage default stack registers preserve sp/fp/lr stack-slot chains",
                     "mem-dump --summary words_le64 exposes aligned static-table seeds",
                     "vm_replay_plan_eval.py --emit-python emits editable replay skeletons",
+                    "emitted replay skeletons include suggested seeds and observed byte-load defaults",
                     "vm_replay_plan_eval.py --auto-seed-suggestions separates seed gaps from replay logic",
                     "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",

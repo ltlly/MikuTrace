@@ -321,11 +321,59 @@ def replay_python_expr(expr: str) -> str:
     )
 
 
-def generate_python_replay(plan: dict[str, Any]) -> str:
+def python_int_dict(items: dict[int, int]) -> str:
+    if not items:
+        return "{}"
+    entries = ", ".join(f"{slot}: {value:#x}" for slot, value in sorted(items.items()))
+    return "{" + entries + "}"
+
+
+def suggestion_seed_slots(suggestions: dict[int, dict[str, Any]]) -> dict[int, int]:
+    out = {}
+    for slot, suggestion in sorted(suggestions.items()):
+        value = parse_value(suggestion.get("value"))
+        if value is not None:
+            out[slot] = value & MASK64
+    return out
+
+
+def replay_plan_observed_byte_loads(plan: dict[str, Any]) -> dict[int, int]:
+    out = {}
+    for step in plan.get("replay_steps", []):
+        for effect in step.get("effects", []):
+            text = effect.get("python_with_values")
+            if not isinstance(text, str):
+                continue
+            match = re.search(r"byte_load\((0x[0-9a-fA-F]+|\d+)\)", text)
+            if match is None:
+                continue
+            addr = parse_int(match.group(1))
+            value = parse_value(effect.get("value"))
+            if value is None:
+                value = parse_value((effect.get("source_byte_load") or {}).get("value"))
+            if addr is not None and value is not None:
+                out[addr] = value & 0xFF
+    return out
+
+
+def generate_python_replay(
+    plan: dict[str, Any],
+    seed_slots: list[str] | None = None,
+    suggestions: dict[int, dict[str, Any]] | None = None,
+) -> str:
+    user_seeds = parse_seed_slots(seed_slots or [])
+    suggested_seeds = suggestion_seed_slots(suggestions or {})
+    observed_byte_loads = replay_plan_observed_byte_loads(plan)
     lines = [
         "# Generated from traceMiku vm-ops --replay-plan.",
         "# This is a generic trace replay skeleton, not a target-specific algorithm.",
+        "# SUGGESTED_SEED_SLOTS are formula-derived from observed trace values.",
+        "# OBSERVED_BYTE_LOADS are also trace-derived defaults.",
+        "# Prove or replace both before treating this as a portable algorithm.",
         "MASK64 = (1 << 64) - 1",
+        f"USER_SEED_SLOTS = {python_int_dict(user_seeds)}",
+        f"SUGGESTED_SEED_SLOTS = {python_int_dict(suggested_seeds)}",
+        f"OBSERVED_BYTE_LOADS = {python_int_dict(observed_byte_loads)}",
         "",
         "def vm_add(*values): return sum(values) & MASK64",
         "def vm_sub(head, *tail):",
@@ -357,8 +405,14 @@ def generate_python_replay(plan: dict[str, Any]) -> str:
         "        mem[addr + offset] = (value >> (offset * 8)) & 0xff",
         "",
         "def replay(seed_slots=None, byte_loads=None):",
-        "    slots = {int(k): int(v) & MASK64 for k, v in (seed_slots or {}).items()}",
-        "    byte_loads = {int(k): int(v) & 0xff for k, v in (byte_loads or {}).items()}",
+        "    merged_seed_slots = dict(USER_SEED_SLOTS)",
+        "    if seed_slots is not None:",
+        "        merged_seed_slots.update(seed_slots)",
+        "    slots = {int(k): int(v) & MASK64 for k, v in merged_seed_slots.items()}",
+        "    merged_byte_loads = dict(OBSERVED_BYTE_LOADS)",
+        "    if byte_loads is not None:",
+        "        merged_byte_loads.update(byte_loads)",
+        "    byte_loads = {int(k): int(v) & 0xff for k, v in merged_byte_loads.items()}",
         "    mem = {}",
         "    def byte_load(addr):",
         "        return byte_loads[addr]",
@@ -545,7 +599,10 @@ def main() -> int:
     args = parser.parse_args()
     plan = json.load(sys.stdin)
     if args.emit_python:
-        sys.stdout.write(generate_python_replay(plan))
+        trusted_pass = replay_plan(plan, trust_observed=True, seed_slots=args.seed_slot)
+        sys.stdout.write(
+            generate_python_replay(plan, args.seed_slot, trusted_pass.seed_suggestions)
+        )
         return 0
     state = replay_plan(
         plan, trust_observed=not args.no_trust_observed, seed_slots=args.seed_slot

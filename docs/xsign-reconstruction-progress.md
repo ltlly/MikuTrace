@@ -891,6 +891,10 @@ JSON into an editable Python replay skeleton. That skeleton keeps trace-index
 comments and generic `slots`/`mem` operations, but it remains a trace replay
 until every literal/byte-load input is replaced by a proven table, app metadata,
 or device/environment parameter.
+The emitted skeleton now carries `USER_SEED_SLOTS`, `SUGGESTED_SEED_SLOTS`, and
+`OBSERVED_BYTE_LOADS`; using the suggested seeds on the scratch-writer window
+replays the same 52-byte scratch dump as the trace. This makes the replay
+directly executable while keeping unproven inputs visible.
 `tools/vm_replay_plan_eval.py --auto-seed-suggestions` also distinguishes
 mechanical seed gaps from missing logic. On the scratch-writer window it applies
 six formula-derived seed suggestions and replays with `trusted_effects=0`,

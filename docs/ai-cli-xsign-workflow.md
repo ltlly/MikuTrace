@@ -134,7 +134,9 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> \
 ```
 
 The generated code keeps trace index comments and generic helper calls such as
-`vm_eor`, `vm_lsr`, and `store_le`. Replace literal or `byte_load` inputs with
+`vm_eor`, `vm_lsr`, and `store_le`. It also includes `USER_SEED_SLOTS`,
+formula-derived `SUGGESTED_SEED_SLOTS`, and trace-derived
+`OBSERVED_BYTE_LOADS`. Replace suggested seeds and observed byte loads with
 proven table/app/device parameters before promoting it from trace replay to a
 portable simulator.
 
