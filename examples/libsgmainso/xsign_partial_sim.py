@@ -2490,6 +2490,9 @@ def python_vm_replay_plan_eval_summary() -> dict:
     return {
         "status": "trace_bound_replay_eval_available",
         "tool": "tools/vm_replay_plan_eval.py",
+        "seed_suggestion_status": (
+            "trusted fallback records include formula-derived seed_suggestions"
+        ),
         "scratch_writer_window": {
             "command": (
                 "tracemiku-cli vm-ops <call_dir> --start 14164280 "

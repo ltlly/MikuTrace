@@ -956,6 +956,11 @@ The replay engine can now compute these windows without observed-value
 fallbacks. The remaining algorithm work is provenance for these seed values and
 multi-sample validation.
 
+The evaluator now includes `seed_suggestions` on trusted fallback records. For
+example, it can infer `slot25=0x74b68bcc1c` from
+`slot[25] = 0x74b68bcc2c = 0x74b68bcc1c + 0x10`, and `slot26=0x1f7b3460` from
+`slot[29] = 0x60 = 0x1f7b3460 & 0xff`.
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 

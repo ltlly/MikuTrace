@@ -124,6 +124,49 @@ def eval_expr(expr: str, state: ReplayState, effect: dict[str, Any]) -> int | No
     return None
 
 
+def formula_rhs_operands(effect: dict[str, Any]) -> list[int]:
+    formula = effect.get("formula") or {}
+    expression = formula.get("expression")
+    if not isinstance(expression, str) or "=" not in expression:
+        return []
+    rhs = expression.split("=", 1)[1]
+    return [int(value, 0) for value in re.findall(r"0x[0-9a-fA-F]+|\b\d+\b", rhs)]
+
+
+def seed_suggestions(effect: dict[str, Any], text: str) -> list[dict[str, Any]]:
+    if "=" not in text:
+        return []
+    _lhs, rhs = [part.strip() for part in text.split("=", 1)]
+    match = re.fullmatch(r"(add|sub|and|orr|eor|lsl|lsr)\((.*)\)", rhs)
+    if match is None:
+        return []
+    args = split_args(match.group(2))
+    operands = formula_rhs_operands(effect)
+    if not operands:
+        return []
+    suggestions: list[dict[str, Any]] = []
+    operand_idx = 0
+    for arg in args:
+        if re.fullmatch(r"0x[0-9a-fA-F]+|\d+", arg):
+            operand_idx += 1
+            continue
+        slot_match = re.fullmatch(r"slot\[(\d+)\]", arg)
+        if slot_match is None:
+            operand_idx += 1
+            continue
+        if operand_idx >= len(operands):
+            continue
+        suggestions.append(
+            {
+                "slot": int(slot_match.group(1)),
+                "value": f"{operands[operand_idx]:#x}",
+                "source": effect.get("pseudocode") or effect.get("python_with_values"),
+            }
+        )
+        operand_idx += 1
+    return suggestions
+
+
 def record_unresolved(state: ReplayState, effect: dict[str, Any], expr: str) -> None:
     state.unresolved_reads.append(
         {
@@ -173,6 +216,7 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
                     "idx": effect.get("idx"),
                     "value": f"{computed:#x}",
                     "python_with_values": text,
+                    "seed_suggestions": seed_suggestions(effect, text),
                 }
             )
     elif computed is not None:
