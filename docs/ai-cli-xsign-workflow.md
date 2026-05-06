@@ -321,7 +321,9 @@ When a tree is attached, `base64_lookup_matches` maps each character in the
 current group to the concrete `ldrb alphabet[index]` trace idx and index
 register. Add `--index-tree-depth N` to attach a second tree from each matched
 index register, which is the shortest path from the Base64 text layer toward
-payload bit construction.
+payload bit construction. Each attached match also has
+`index_summary.interesting_formulas`, a compact filtered list of small-value
+ALU formulas suitable for prompt input.
 
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory

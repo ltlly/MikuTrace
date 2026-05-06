@@ -292,6 +292,8 @@ character reused in final group `piYQ` may have been generated in a neighboring
 window such as `ApiY`.
 
 `index_tree.highlights.alu_formulas` now exposes these relationships directly.
+`base64_lookup_matches[].matches[].index_summary.interesting_formulas` filters
+that list to small-value formulas so it can be used as a compact prompt input.
 For group 3, current examples include:
 
 ```text
