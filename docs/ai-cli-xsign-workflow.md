@@ -377,7 +377,8 @@ rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
   --addr <byte_addr> \
   --before-idx <consumer_idx> \
   --depth 12 \
-  --lookback 1200000
+  --lookback 1200000 \
+  --summary
 ```
 
 The command alternates between `/api/last-write-of-addr` and `vm-backstep`.
@@ -386,6 +387,20 @@ source becomes an ALU expression with multiple operands or another branch point,
 it stops with explicit frontier candidates. This is the preferred way to walk
 from a Base64 scratch byte toward the actual payload byte, hash digest, fixed
 table, or JNI input without silently choosing the wrong branch.
+
+Use `--summary` for AI prompts. It keeps the chain, local definitions, selected
+frontiers, and compact upstream writes, while avoiding the full nested route
+payload. It also surfaces recognized arithmetic identities under
+`recognized_semantics[]`. One important x-sign pattern is:
+
+```text
+kind: mod255_low_byte
+(input + input / 0xff) & 0xff == input % 0xff
+```
+
+This comes from an ARM64 VM sequence where a quotient register is added back to
+the original value, and only the low byte is stored. Treat it as a collapsed
+formula and continue tracing the `input` operand.
 
 For a shorter AI prompt, use `highlights.word_loads` and
 `highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses

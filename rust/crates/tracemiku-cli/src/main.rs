@@ -775,6 +775,9 @@ enum Cmd {
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27"
         )]
         regs: String,
+        /// Emit a compact AI-readable summary instead of the full step payload.
+        #[arg(long)]
+        summary: bool,
     },
     /// One backward step through a dynamic VM store/load chain.
     VmBackstep {
@@ -1661,9 +1664,10 @@ async fn main() -> anyhow::Result<()> {
             lookback,
             max_writes,
             regs,
+            summary,
         }) => {
             cmd_byte_lineage(
-                trace_dir, addr, before_idx, depth, context, lookback, max_writes, regs,
+                trace_dir, addr, before_idx, depth, context, lookback, max_writes, regs, summary,
             )
             .await
         }
@@ -3702,6 +3706,7 @@ async fn cmd_byte_lineage(
     lookback: usize,
     max_writes: usize,
     regs: String,
+    summary: bool,
 ) -> anyhow::Result<()> {
     let addr = parse_u64_str(&addr).with_context(|| format!("parse addr {addr}"))?;
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
@@ -3709,7 +3714,11 @@ async fn cmd_byte_lineage(
         &app, addr, before_idx, depth, context, lookback, max_writes, regs,
     )
     .await?;
-    print_pretty(&value)
+    if summary {
+        print_pretty(&byte_lineage_summary(&value))
+    } else {
+        print_pretty(&value)
+    }
 }
 
 async fn cmd_vm_backchain(
@@ -4394,6 +4403,172 @@ fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::Value {
+    let chain = lineage
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(compact_lineage_summary_step)
+        .collect::<Vec<_>>();
+    let recognized_semantics = chain
+        .iter()
+        .filter_map(|step| {
+            step.pointer("/local_def/formula/semantic")
+                .cloned()
+                .map(|semantic| {
+                    serde_json::json!({
+                        "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                        "idx": step.pointer("/local_def/idx").cloned().unwrap_or(serde_json::Value::Null),
+                        "asm": step.pointer("/local_def/asm").cloned().unwrap_or(serde_json::Value::Null),
+                        "semantic": semantic,
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": lineage.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": lineage.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "depth_requested": lineage.get("depth_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "steps_returned": lineage.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "stop_reason": compact_lineage_stop_reason(lineage.get("stop_reason")),
+        "recognized_semantics": recognized_semantics,
+        "chain": chain,
+    })
+}
+
+fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
+    match step.get("kind").and_then(|v| v.as_str()) {
+        Some("last_write") => {
+            let write = step.get("write").unwrap_or(&serde_json::Value::Null);
+            serde_json::json!({
+                "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "kind": "last_write",
+                "addr": write.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "writer_idx": write.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+                "func": write.get("func").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": write.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "src_reg": write.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+                "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        }
+        Some("reg_source") => {
+            let backstep = step.get("backstep").unwrap_or(&serde_json::Value::Null);
+            let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
+            serde_json::json!({
+                "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "kind": "reg_source",
+                "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": backstep.get("source_reg").cloned().unwrap_or(serde_json::Value::Null),
+                "value": backstep.get("source_value").cloned().unwrap_or(serde_json::Value::Null),
+                "target": compact_lineage_row_for_summary(backstep.get("target")),
+                "local_def": compact_lineage_row_for_summary(backstep.get("local_def")),
+                "upstream": {
+                    "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
+                    "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+                    "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                    "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
+                    "last_write": compact_lineage_last_write(upstream.get("last_write")),
+                    "byte_nexts": compact_lineage_byte_nexts(upstream.get("byte_nexts")),
+                },
+                "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
+                "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        }
+        _ => step.clone(),
+    }
+}
+
+fn compact_lineage_row_for_summary(row: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(row) = row else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "func": row.get("func").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "class": row.get("class").cloned().unwrap_or(serde_json::Value::Null),
+        "def": row.get("def").cloned().unwrap_or(serde_json::Value::Null),
+        "store_src": row.get("store_src").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
+        "formula": row.get("formula").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn compact_lineage_last_write(write: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(write) = write else {
+        return serde_json::Value::Null;
+    };
+    if write.is_null() {
+        return serde_json::Value::Null;
+    }
+    serde_json::json!({
+        "idx": write.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "func": write.get("func").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": write.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "dst_addr": write.get("dst_addr").cloned().unwrap_or(serde_json::Value::Null),
+        "size": write.get("size").cloned().unwrap_or(serde_json::Value::Null),
+        "src_reg": write.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn compact_lineage_byte_nexts(nexts: Option<&serde_json::Value>) -> serde_json::Value {
+    let rows = nexts
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|next| {
+            let offsets = next
+                .get("offsets")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .take(8)
+                        .cloned()
+                        .collect::<Vec<serde_json::Value>>()
+                })
+                .unwrap_or_default();
+            serde_json::json!({
+                "idx": next.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": next.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                "src_value": next.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "addr": next.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "offset": next.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+                "offsets": offsets,
+                "reason": next.get("reason").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(rows)
+}
+
+fn compact_lineage_stop_reason(reason: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(reason) = reason else {
+        return serde_json::Value::Null;
+    };
+    let decision = reason.get("decision");
+    serde_json::json!({
+        "kind": reason.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+        "decision_kind": decision
+            .and_then(|v| v.get("kind"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "upstream_status": decision
+            .and_then(|v| v.get("upstream_status"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "frontier": decision
+            .and_then(|v| v.get("frontier"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+    })
+}
+
 struct TreeSeed {
     parent: Option<usize>,
     depth: usize,
@@ -4489,6 +4664,7 @@ fn compact_vm_row(row: Option<&serde_json::Value>) -> serde_json::Value {
     let Some(row) = row else {
         return serde_json::Value::Null;
     };
+    let formula = row_alu_formula(row);
     serde_json::json!({
         "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "pc": row.get("pc").cloned().unwrap_or(serde_json::Value::Null),
@@ -4499,6 +4675,7 @@ fn compact_vm_row(row: Option<&serde_json::Value>) -> serde_json::Value {
         "store_src": row.get("store_src").cloned().unwrap_or_else(|| serde_json::json!([])),
         "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
         "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
+        "formula": formula,
     })
 }
 
@@ -4895,14 +5072,20 @@ fn row_alu_formula(row: &serde_json::Value) -> Option<serde_json::Value> {
         .map(str::to_string)
         .collect::<Vec<_>>();
     let expression = alu_expression_from_asm(asm, result, &operand_values)?;
-    Some(serde_json::json!({
+    let mut formula = serde_json::json!({
         "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "asm": asm,
         "reg": row.pointer("/def/reg").cloned().unwrap_or(serde_json::Value::Null),
         "value": result,
         "expression": expression,
         "operands": operands,
-    }))
+    });
+    if let Some(semantic) = recognize_alu_semantic(asm, result, &operand_values) {
+        if let Some(obj) = formula.as_object_mut() {
+            obj.insert("semantic".to_string(), semantic);
+        }
+    }
+    Some(formula)
 }
 
 async fn upstream_writer_for_def_on(
@@ -5321,7 +5504,7 @@ fn highlight_alu_formula(node: &serde_json::Value) -> Option<serde_json::Value> 
                 .map(str::to_string)
         })?;
     let expression = alu_expression_from_asm(asm, &result, &operand_values)?;
-    Some(serde_json::json!({
+    let mut formula = serde_json::json!({
         "node": node.get("id").cloned().unwrap_or(serde_json::Value::Null),
         "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "reg": node.get("reg").cloned().unwrap_or(serde_json::Value::Null),
@@ -5330,7 +5513,13 @@ fn highlight_alu_formula(node: &serde_json::Value) -> Option<serde_json::Value> 
         "op": mnemonic,
         "expression": expression,
         "operands": operands,
-    }))
+    });
+    if let Some(semantic) = recognize_alu_semantic(asm, &result, &operand_values) {
+        if let Some(obj) = formula.as_object_mut() {
+            obj.insert("semantic".to_string(), semantic);
+        }
+    }
+    Some(formula)
 }
 
 fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option<String> {
@@ -5368,8 +5557,40 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
                 .unwrap_or_else(|| "?".to_string());
             Some(format!("{result} = ubfx({}, {lsb}, {width})", values[0]))
         }
+        "udiv" if values.len() >= 2 => Some(format!("{result} = {} / {}", values[0], values[1])),
         _ => None,
     }
+}
+
+fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<serde_json::Value> {
+    let mnemonic = asm.split_whitespace().next()?.to_ascii_lowercase();
+    if mnemonic.as_str() != "add" || values.len() < 2 {
+        return None;
+    }
+    let result = parse_u64_str(result)?;
+    let lhs = parse_u64_str(&values[0])?;
+    let rhs = parse_u64_str(&values[1])?;
+    mod255_fold_semantic(lhs, rhs, result).or_else(|| mod255_fold_semantic(rhs, lhs, result))
+}
+
+fn mod255_fold_semantic(input: u64, quotient: u64, result: u64) -> Option<serde_json::Value> {
+    if quotient != input / 0xff {
+        return None;
+    }
+    let output_byte = (result & 0xff) as u8;
+    let remainder = (input % 0xff) as u8;
+    if output_byte != remainder {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "mod255_low_byte",
+        "input": format!("{input:#x}"),
+        "quotient": format!("{quotient:#x}"),
+        "divisor": "0xff",
+        "result": format!("{result:#x}"),
+        "output_byte": format!("{output_byte:#x}"),
+        "expression": "(input + input / 0xff) & 0xff == input % 0xff",
+    }))
 }
 
 fn immediate_operand_value(op: &str) -> Option<String> {
@@ -6088,7 +6309,7 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
-        def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
+        def_source_regs_from_asm, mem_addr_from_asm, memory_access_width, recognize_alu_semantic,
         store_source_regs_from_asm, vm_slot_from_asm,
     };
 
@@ -6175,6 +6396,22 @@ mod tests {
             ),
             Some("0x1 = 0x62 >> 0x6".to_string())
         );
+        assert_eq!(
+            alu_expression_from_asm(
+                "udiv x14, x13, x12",
+                "0x757524ef",
+                &["0x74ffafca73".to_string(), "0xff".to_string()],
+            ),
+            Some("0x757524ef = 0x74ffafca73 / 0xff".to_string())
+        );
+        let semantic = recognize_alu_semantic(
+            "add x15, x13, x14",
+            "0x757524ef62",
+            &["0x74ffafca73".to_string(), "0x757524ef".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("mod255_low_byte"));
+        assert_eq!(semantic["output_byte"], serde_json::json!("0x62"));
     }
 
     #[test]

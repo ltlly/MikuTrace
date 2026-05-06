@@ -346,7 +346,8 @@ rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
   --addr 0x74b68bcc1e \
   --before-idx 14731017 \
   --depth 8 \
-  --lookback 1200000
+  --lookback 1200000 \
+  --summary
 ```
 
 For the `0x62` path, this follows:
@@ -359,10 +360,37 @@ slot2        <- str@13946347 x15=0x757524ef62
 stop: x15 = x13 + x14, frontier x13=0x74ffafca73 and x14=0x757524ef
 ```
 
-This is the current boundary: the byte lineage now reaches an ALU branch instead
-of a single memory source. The next pass should follow both frontier operands and
-classify whether they are pointer arithmetic, encoded payload state, or constant
-tables.
+`byte-lineage --summary` now recognizes this as an end-around carry reduction:
+
+```text
+x14 == x13 / 0xff
+(x13 + x14) & 0xff == x13 % 0xff == 0x62
+```
+
+The summary emits this under `recognized_semantics[].semantic.kind =
+mod255_low_byte`, so an AI agent does not have to rediscover the arithmetic
+identity from the raw register values on every pass. The remaining boundary is
+now the upstream `x13` value (`0x74ffafca73`): it must be traced further to
+classify whether it is payload state, digest state, pointer-derived state, or a
+table constant.
+
+For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
+reaches a copied word value rather than an ALU merge:
+
+```text
+0x74b68bcc1d <- strb@14719759 x19=0x0a
+slot29       <- str@14719718 x1=0x0a
+0x74b68bd069 <- strb@14717321 x14=0x0a
+slot25       <- str@14717262 x3=0x0a
+0x74b68bb9a2 <- strb@13835725 x14=0x0a
+slot2        <- str@13835683 x1=0x0a
+0x756649e1d3 <- str@13781975 x1=0x0a000142
+...
+stop: ldr w16, [0x74fbf2dc7c] has no observed writer
+```
+
+That looks like a VM/static memory table or unobserved pre-trace initialized
+word. It is not yet safe to label `0x0a` as a business payload byte.
 
 ## Next target
 
