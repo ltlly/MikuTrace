@@ -7392,6 +7392,17 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
             .get("slot")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+        let inputs = op
+            .get("vm_slot_reads")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let python_with_values = slot_write_effect_python(
+            &slot,
+            &value,
+            formula.as_ref(),
+            source_byte_load.as_ref(),
+            inputs.as_array().map(Vec::as_slice).unwrap_or(&[]),
+        );
         let rhs = formula
             .as_ref()
             .and_then(|f| f.get("expression"))
@@ -7413,9 +7424,10 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
             "slot": slot,
             "value": value,
             "pseudocode": pseudocode,
+            "python_with_values": python_with_values,
             "formula": formula.unwrap_or(serde_json::Value::Null),
             "source_byte_load": source_byte_load.unwrap_or(serde_json::Value::Null),
-            "inputs": op.get("vm_slot_reads").cloned().unwrap_or_else(|| serde_json::json!([])),
+            "inputs": inputs,
         }));
     }
     for store in op
@@ -7489,6 +7501,75 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
         }
     }
     effects
+}
+
+fn slot_write_effect_python(
+    slot: &serde_json::Value,
+    value: &serde_json::Value,
+    formula: Option<&serde_json::Value>,
+    source_byte_load: Option<&serde_json::Value>,
+    inputs: &[serde_json::Value],
+) -> String {
+    let dst = format!("slot[{}]", json_display(slot));
+    if let Some(load) = source_byte_load {
+        return format!(
+            "{dst} = byte_load({})",
+            json_display(load.get("mem_addr").unwrap_or(&serde_json::Value::Null))
+        );
+    }
+    if let Some(formula) = formula {
+        if formula.pointer("/semantic/kind").and_then(|v| v.as_str()) == Some("ubfx") {
+            let src = formula
+                .pointer("/semantic/input")
+                .and_then(|input| source_slot_for_value(inputs.iter(), input))
+                .and_then(|input| input.get("slot").cloned())
+                .map(|slot| format!("slot[{}]", json_display(&slot)))
+                .unwrap_or_else(|| {
+                    formula
+                        .pointer("/semantic/input")
+                        .map(json_display)
+                        .unwrap_or_else(|| "input".to_string())
+                });
+            return format!(
+                "{dst} = ubfx({}, {}, {})",
+                src,
+                formula
+                    .pointer("/semantic/lsb")
+                    .map(json_display)
+                    .unwrap_or_else(|| "lsb".to_string()),
+                formula
+                    .pointer("/semantic/width")
+                    .map(json_display)
+                    .unwrap_or_else(|| "width".to_string())
+            );
+        }
+        if let Some(op) = formula.get("op").and_then(|v| v.as_str()) {
+            let terms = formula_operand_terms(formula, inputs);
+            if !terms.is_empty() {
+                return format!("{dst} = {op}({})", terms.join(", "));
+            }
+        }
+        if let Some(expression) = formula.get("expression") {
+            return format!("{dst} = {}", json_display(expression));
+        }
+    }
+    format!("{dst} = {}", json_display(value))
+}
+
+fn formula_operand_terms(formula: &serde_json::Value, inputs: &[serde_json::Value]) -> Vec<String> {
+    formula
+        .get("operands")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|operand| {
+            let value = operand.get("value").unwrap_or(&serde_json::Value::Null);
+            source_slot_for_value(inputs.iter(), value)
+                .and_then(|input| input.get("slot").cloned())
+                .map(|slot| format!("slot[{}]", json_display(&slot)))
+                .unwrap_or_else(|| json_display(value))
+        })
+        .collect()
 }
 
 fn is_probable_vm_infra_store(
@@ -14984,6 +15065,42 @@ mod tests {
     }
 
     #[test]
+    fn summarizes_vm_op_formula_effect_python_values() {
+        let op = serde_json::json!({
+            "vm_slot_reads": [
+                {"slot": 19, "value": "0x10"}
+            ],
+            "vm_slot_writes": [
+                {"idx": 10613292, "slot": 20, "value": "0x10"}
+            ],
+            "small_byte_loads": [],
+            "memory_stores": [],
+            "alu_formulas": [
+                {
+                    "idx": 10613289,
+                    "asm": "ubfx x3, x1, #0, #0x20",
+                    "expression": "0x10 = ubfx(0x10, 0x0, 0x20)",
+                    "op": "ubfx",
+                    "operands": [{"reg": "x1", "value": "0x10"}],
+                    "semantic": {
+                        "kind": "ubfx",
+                        "input": "0x10",
+                        "lsb": "0x0",
+                        "width": "0x20",
+                        "result": "0x10"
+                    },
+                    "value": "0x10"
+                }
+            ]
+        });
+        let effects = vm_op_effect_summaries(&op);
+        assert_eq!(
+            effects[0]["python_with_values"],
+            serde_json::json!("slot[20] = ubfx(slot[19], 0x0, 0x20)")
+        );
+    }
+
+    #[test]
     fn summarizes_vm_op_byte_load_effects() {
         let op = serde_json::json!({
             "vm_slot_reads": [
@@ -15003,6 +15120,10 @@ mod tests {
         assert_eq!(
             effects[0]["pseudocode"],
             serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
+        );
+        assert_eq!(
+            effects[0]["python_with_values"],
+            serde_json::json!("slot[18] = byte_load(0x753ddd7fdc)")
         );
         assert_eq!(
             effects[0]["source_byte_load"]["idx"],
@@ -15101,6 +15222,10 @@ mod tests {
         assert_eq!(
             summary["effects"][0]["pseudocode"],
             serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
+        );
+        assert_eq!(
+            summary["effects"][0]["python_with_values"],
+            serde_json::json!("slot[18] = byte_load(0x753ddd7fdc)")
         );
         assert_eq!(
             summary["effects"][0]["op_idx_start"],

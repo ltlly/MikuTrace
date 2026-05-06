@@ -782,6 +782,14 @@ count 12  mem[addr] = slot[bc_0x5_u8]
 count  9  slot[bc_0x3_u8] = orr(slot[bc_0x3_u8], slot[bc_0x4_u8], slot[bc_0x5_u8], bc_0x10_u16)
 ```
 
+The same window now emits per-effect `python_with_values` checks, for example:
+
+```text
+slot[25] = add(slot[25], 0x10)
+slot[4]  = lsl(slot[3], 0x18)
+slot[2]  = orr(slot[4], slot[2])
+```
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and

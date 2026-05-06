@@ -1075,6 +1075,11 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 "sample": "slot[2] = 0x7969f2e9 = 0x79000000 | 0x69f2e9",
             },
         ],
+        "python_with_values_samples": [
+            "slot[25] = add(slot[25], 0x10)",
+            "slot[4] = lsl(slot[3], 0x18)",
+            "slot[2] = orr(slot[4], slot[2])",
+        ],
         "interpretation": (
             "The scratch lhs writer window now has directly liftable VM opcode "
             "templates. The remaining work is validating each role-bound "

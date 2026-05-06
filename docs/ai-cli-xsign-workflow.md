@@ -890,6 +890,12 @@ value belongs to which bytecode offset. `effect_shapes[]` and `sample_ops[]`
 still hold the exact per-op evidence. Use the role-bound sketch as the starting
 point, then confirm on `sample_ops[]` before turning a skeleton into a
 simulator opcode.
+
+For concrete validation, slot-write effects also include `python_with_values`.
+This is the current operation with observed slots/immediates substituted, for
+example `slot[4] = lsl(slot[3], 0x18)` or
+`slot[2] = orr(slot[4], slot[2])`. Use it to spot-check a proposed opcode
+implementation against the trace before generalizing from a template.
 `op_effects[]` and `op_templates[]` are the compact surfaces for VM-IP stop
 points from `byte-writer-map --summary.vm_source_ranges[].stops[]`. Always
 check `source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is
