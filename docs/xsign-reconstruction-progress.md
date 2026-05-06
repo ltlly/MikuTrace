@@ -524,6 +524,18 @@ stop: ldr w16, [0x74fbf2dc7c] has no observed writer
 That looks like a VM/static memory table or unobserved pre-trace initialized
 word. It is not yet safe to label `0x0a` as a business payload byte.
 
+For the `0x61` byte that contributes to the same group, the current compact
+chain reaches a smaller affine step:
+
+```text
+0x25a8 = 0xc87 * 0x3 + 0x13
+```
+
+`vm-backchain --follow-frontier` now follows `0xc87` rather than the small
+multiplier `3`. The next layer currently enters repeated zero-valued `and` and
+VM-slot loads, so more boolean/mask-aware summarization is still needed before
+this branch can be treated as a real input or constant.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

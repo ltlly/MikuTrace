@@ -484,6 +484,11 @@ This gives the exact reverse step:
 previous_state == (state - delta) * multiplier_inverse mod 2^64
 ```
 
+For `mul_mod64` rows with one byte-sized multiplier and one larger operand,
+`--follow-frontier` treats the larger operand as the state branch. This avoids
+walking into constants such as `3` when the trace contains `state * 3 + 0x13`
+style bytecode arithmetic.
+
 `vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
 non-small formulas that are still semantically important, such as:
 

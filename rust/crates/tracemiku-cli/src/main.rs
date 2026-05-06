@@ -4213,6 +4213,34 @@ fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json:
             return frontier_next_by_value(step, value);
         }
     }
+    if formula.pointer("/semantic/kind").and_then(|v| v.as_str()) == Some("mul_mod64") {
+        let operands = formula.get("operands").and_then(|v| v.as_array())?;
+        if operands.len() >= 2 {
+            let lhs_value = operands[0]
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str);
+            let rhs_value = operands[1]
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str);
+            let chosen = match (lhs_value, rhs_value) {
+                (Some(lhs), Some(rhs)) if lhs > 0xff && rhs <= 0xff => Some(&operands[0]),
+                (Some(lhs), Some(rhs)) if rhs > 0xff && lhs <= 0xff => Some(&operands[1]),
+                _ => None,
+            };
+            if let Some(input) = chosen {
+                if let Some(reg) = input.get("reg").and_then(|v| v.as_str()) {
+                    if let Some(next) = frontier_next_by_reg(step, reg) {
+                        return Some(next);
+                    }
+                }
+                if let Some(value) = input.get("value").and_then(|v| v.as_str()) {
+                    return frontier_next_by_value(step, value);
+                }
+            }
+        }
+    }
     if matches!(
         formula.get("op").and_then(|v| v.as_str()),
         Some("lsl" | "lsr" | "asr" | "ubfx")
@@ -7384,6 +7412,28 @@ mod tests {
         let next = choose_frontier_next(&add_delta).unwrap();
         assert_eq!(next["reg"], serde_json::json!("x3"));
         assert_eq!(next["src_value"], serde_json::json!("0x99bd5d21d7d8102"));
+
+        let mul_small = serde_json::json!({
+            "local_def": {
+                "asm": "mul x12, x2, x15",
+                "class": "alu",
+                "def": {
+                    "reg": "x12",
+                    "src": [
+                        {"reg": "x2", "value": "0xc87"},
+                        {"reg": "x15", "value": "0x3"}
+                    ],
+                    "value_after": "0x2595"
+                }
+            },
+            "frontier": [
+                {"idx": 60, "reg": "x2", "value": "0xc87"},
+                {"idx": 60, "reg": "x15", "value": "0x3"}
+            ]
+        });
+        let next = choose_frontier_next(&mul_small).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x2"));
+        assert_eq!(next["src_value"], serde_json::json!("0xc87"));
     }
 
     #[test]
