@@ -10284,6 +10284,7 @@ struct ByteWriterVmSourceGroup {
     static_memory_loads: Vec<serde_json::Value>,
     static_memory_load_count: usize,
     semantic_kind_counts: BTreeMap<String, usize>,
+    stops: Vec<serde_json::Value>,
 }
 
 impl ByteWriterVmSourceGroup {
@@ -10379,6 +10380,9 @@ impl ByteWriterVmSourceGroup {
                     .or_insert(0) += 1;
             }
         }
+        if let Some(stop) = chain.get("stop").filter(|v| !v.is_null()) {
+            push_unique_json(&mut self.stops, compact_vm_chain_stop(stop));
+        }
     }
 
     fn into_json(self) -> serde_json::Value {
@@ -10399,6 +10403,7 @@ impl ByteWriterVmSourceGroup {
                 .into_iter()
                 .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
                 .collect::<Vec<_>>(),
+            "stops": self.stops,
             "interpretation": vm_source_class_interpretation(&self.source_class),
         })
     }
@@ -10544,8 +10549,37 @@ fn compact_byte_writer_chain(chain: &serde_json::Value) -> serde_json::Value {
         "seed": chain.get("seed").cloned().unwrap_or(serde_json::Value::Null),
         "chain_status": inner.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "steps_returned": inner.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "stop": inner
+            .get("stop")
+            .filter(|v| !v.is_null())
+            .map(compact_vm_chain_stop)
+            .unwrap_or(serde_json::Value::Null),
         "recognized_pattern_summary": inner.get("recognized_pattern_summary").cloned().unwrap_or(serde_json::Value::Null),
         "recognized_semantics": inner.get("recognized_semantics").cloned().unwrap_or_else(|| serde_json::json!([])),
+    })
+}
+
+fn compact_vm_chain_stop(stop: &serde_json::Value) -> serde_json::Value {
+    if stop.is_null() {
+        return serde_json::Value::Null;
+    }
+    let local_def = stop.get("local_def").unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "step": stop.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": stop.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": stop.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": stop.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "decision": stop.get("decision").cloned().unwrap_or(serde_json::Value::Null),
+        "local_def": {
+            "idx": local_def.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "asm": local_def.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+            "class": local_def.get("class").cloned().unwrap_or(serde_json::Value::Null),
+        },
+        "upstream_status": stop
+            .get("upstream")
+            .and_then(|v| v.get("status"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -13821,7 +13855,19 @@ mod tests {
                 "recognized_semantics": [
                     {"semantic": {"kind": "shift_right"}},
                     {"semantic": {"kind": "bitwise_or_merge"}}
-                ]
+                ],
+                "stop": {
+                    "step": 30,
+                    "idx": 60,
+                    "reg": "x8",
+                    "value": "0x1234",
+                    "decision": {"kind": "stop", "reason": "no_next"},
+                    "local_def": {
+                        "idx": 60,
+                        "asm": "ret",
+                        "class": "branch"
+                    }
+                }
             },
             {
                 "start_offset": 8,
@@ -13864,6 +13910,7 @@ mod tests {
             ranges[0]["memory_boundary_reads"][0]["observed_mismatch_count"],
             serde_json::json!(4)
         );
+        assert_eq!(ranges[0]["stops"][0]["idx"], serde_json::json!(60));
         assert_eq!(
             ranges[1]["source_class"],
             serde_json::json!("static_memory_load_constant")
