@@ -823,6 +823,22 @@ surface for VM lifting: it turns slot writes, memory stores, and control steps
 into pseudocode such as `slot[19] = 0x39 = 0x7a + 0xffffffffffffffbf` or
 `slot[18] = byte[0x...] (0x7a)`.
 
+For larger windows, add `--effects-only`:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops <call_dir> \
+  --start <idx_before_frontier> \
+  --end <idx_after_frontier> \
+  --summary \
+  --effects-only
+```
+
+This drops per-op details and promotes `effects[]`, `byte_load_effects[]`, and
+`state_updates[]` to the top level. Always check `source_maybe_truncated`: the
+underlying records endpoint is capped, so a wide `--start/--end` window may
+need to be split into smaller chunks before concluding that a byte-load or
+writer is absent.
+
 For a specific scratch byte, use `byte-lineage` to automate the repeated
 last-write/backstep loop:
 

@@ -579,6 +579,31 @@ calling `libsgmainso+0x163928` over the same buffer span. Treat this as a
 trace-coverage/helper-call boundary until that helper is lifted or traced more
 deeply.
 
+Using `vm-ops --summary --effects-only` in capped chunks over the surrounding
+VM loop shows the full observed byte-load sequence:
+
+```text
+10613257  slot[18] = byte[0x753ddd7fd0] (0x51)  Q
+10613454  slot[18] = byte[0x753ddd7fd1] (0x66)  f
+10613695  slot[18] = byte[0x753ddd7fd2] (0x59)  Y
+10613892  slot[18] = byte[0x753ddd7fd3] (0x42)  B
+10614172  slot[18] = byte[0x753ddd7fd4] (0x6b)  k
+10614413  slot[18] = byte[0x753ddd7fd5] (0x37)  7
+10614686  slot[18] = byte[0x753ddd7fd6] (0x4e)  N
+10614883  slot[18] = byte[0x753ddd7fd7] (0x4c)  L
+10615163  slot[18] = byte[0x753ddd7fd8] (0x50)  P
+10615360  slot[18] = byte[0x753ddd7fd9] (0x46)  F
+10615557  slot[18] = byte[0x753ddd7fda] (0x45)  E
+10615754  slot[18] = byte[0x753ddd7fdb] (0x4d)  M
+10616034  slot[18] = byte[0x753ddd7fdc] (0x7a)  z
+```
+
+This reconstructs the observed stream `QfYBk7NLPFEMz` at the VM-consumer layer.
+It does not explain who produced that buffer. A wide single `vm-ops` request
+previously hid later byte loads because the records source was capped; the CLI
+now exposes `source_requested`, `source_returned`, and
+`source_maybe_truncated` in both summary modes.
+
 The full 16-writer summary over the table is now compact enough for an AI to
 consume directly:
 

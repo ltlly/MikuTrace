@@ -991,6 +991,9 @@ enum Cmd {
         /// Emit a compact AI-readable summary.
         #[arg(long)]
         summary: bool,
+        /// With --summary, emit only top-level effects and state updates.
+        #[arg(long)]
+        effects_only: bool,
     },
     /// Follow a single byte backward through memory writes and VM source registers.
     ByteLineage {
@@ -2066,10 +2069,20 @@ async fn main() -> anyhow::Result<()> {
             base_ip,
             max_ops,
             summary,
+            effects_only,
         }) => {
             let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_vm_ops(
-                trace_dir, start, end, count, regs, base_ip, max_ops, summary, profile,
+                trace_dir,
+                start,
+                end,
+                count,
+                regs,
+                base_ip,
+                max_ops,
+                summary,
+                effects_only,
+                profile,
             )
             .await
         }
@@ -6312,11 +6325,13 @@ async fn cmd_vm_ops(
     base_ip: Option<String>,
     max_ops: usize,
     summary: bool,
+    effects_only: bool,
     profile: VmProfile,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
     let (rows, source_returned, inferred_base) =
         load_vm_rows(trace_dir, start, end, regs, true, base_ip, &profile).await?;
+    let source_requested = end.saturating_sub(start);
     let all_ops = vm_ops_from_rows(&rows);
     let truncated = all_ops.len() > max_ops;
     let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
@@ -6325,14 +6340,18 @@ async fn cmd_vm_ops(
         "start": start,
         "end": end,
         "vm_profile": profile.to_json(),
+        "source_requested": source_requested,
         "source_returned": source_returned,
+        "source_maybe_truncated": source_returned < source_requested,
         "vm_rows": rows.len(),
         "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
         "ops_returned": ops.len(),
         "truncated": truncated,
         "ops": ops,
     });
-    if summary {
+    if effects_only {
+        print_pretty(&vm_ops_effects_only_summary(&output))
+    } else if summary {
         print_pretty(&vm_ops_output_summary(&output))
     } else {
         print_pretty(&output)
@@ -6347,8 +6366,88 @@ fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
         .flatten()
         .map(vm_op_summary)
         .collect::<Vec<_>>();
-    let mut semantic_counts = BTreeMap::<String, usize>::new();
+    serde_json::json!({
+        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": value.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "end": value.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_profile": value.get("vm_profile").cloned().unwrap_or(serde_json::Value::Null),
+        "source_requested": value.get("source_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "source_returned": value.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "source_maybe_truncated": value.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic_counts": vm_ops_semantic_counts(&ops),
+        "state_updates": vm_ops_state_updates(&ops),
+        "ops": ops,
+    })
+}
+
+fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
+    let ops = value
+        .get("ops")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(vm_op_summary)
+        .collect::<Vec<_>>();
+    let mut effects = Vec::new();
+    let mut byte_load_effects = Vec::new();
     for op in &ops {
+        let idx_start = op
+            .get("idx_start")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let idx_end = op
+            .get("idx_end")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        for effect in op
+            .get("effects")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let mut compact = effect.clone();
+            if let Some(obj) = compact.as_object_mut() {
+                obj.insert("op_idx_start".to_string(), idx_start.clone());
+                obj.insert("op_idx_end".to_string(), idx_end.clone());
+            }
+            if compact
+                .get("source_byte_load")
+                .map(|v| !v.is_null())
+                .unwrap_or(false)
+            {
+                byte_load_effects.push(compact.clone());
+            }
+            effects.push(compact);
+        }
+    }
+    serde_json::json!({
+        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": value.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "end": value.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_profile": value.get("vm_profile").cloned().unwrap_or(serde_json::Value::Null),
+        "source_requested": value.get("source_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "source_returned": value.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "source_maybe_truncated": value.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "effect_count": effects.len(),
+        "byte_load_effect_count": byte_load_effects.len(),
+        "semantic_counts": vm_ops_semantic_counts(&ops),
+        "state_updates": vm_ops_state_updates(&ops),
+        "byte_load_effects": byte_load_effects,
+        "effects": effects,
+    })
+}
+
+fn vm_ops_semantic_counts(ops: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut semantic_counts = BTreeMap::<String, usize>::new();
+    for op in ops {
         if let Some(formulas) = op.get("alu_formulas").and_then(|v| v.as_array()) {
             for formula in formulas {
                 if let Some(kind) = formula
@@ -6361,22 +6460,10 @@ fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
             }
         }
     }
-    serde_json::json!({
-        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
-        "start": value.get("start").cloned().unwrap_or(serde_json::Value::Null),
-        "end": value.get("end").cloned().unwrap_or(serde_json::Value::Null),
-        "vm_profile": value.get("vm_profile").cloned().unwrap_or(serde_json::Value::Null),
-        "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
-        "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
-        "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
-        "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
-        "semantic_counts": semantic_counts
-            .into_iter()
-            .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
-            .collect::<Vec<_>>(),
-        "state_updates": vm_ops_state_updates(&ops),
-        "ops": ops,
-    })
+    semantic_counts
+        .into_iter()
+        .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+        .collect::<Vec<_>>()
 }
 
 fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
@@ -11893,7 +11980,8 @@ mod tests {
         recognized_backchain_pattern_summary, recognized_backchain_patterns,
         resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
         source_byte_offset_for_write_at, store_source_regs_from_asm, vm_backchain_stop_summary,
-        vm_op_effect_summaries, vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        vm_op_effect_summaries, vm_ops_effects_only_summary, vm_ops_state_updates,
+        vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -13183,6 +13271,56 @@ mod tests {
         );
         assert_eq!(
             effects[0]["source_byte_load"]["idx"],
+            serde_json::json!(10616034)
+        );
+    }
+
+    #[test]
+    fn vm_ops_effects_only_summary_lifts_effects_to_top_level() {
+        let output = serde_json::json!({
+            "status": "ready",
+            "start": 10616026,
+            "end": 10616041,
+            "source_requested": 15,
+            "source_returned": 15,
+            "source_maybe_truncated": false,
+            "vm_rows": 15,
+            "ops_returned": 1,
+            "truncated": false,
+            "ops": [
+                {
+                    "idx_start": 10616026,
+                    "idx_end": 10616041,
+                    "vm_slot_reads": [
+                        {"slot": 24, "value": "0x753ddd7fd0"},
+                        {"slot": 25, "value": "0xc"}
+                    ],
+                    "vm_slot_writes": [
+                        {"idx": 10616037, "slot": 18, "value": "0x7a"}
+                    ],
+                    "small_byte_loads": [
+                        {"idx": 10616034, "mem_addr": "0x753ddd7fdc", "value": "0x7a"}
+                    ],
+                    "memory_stores": [],
+                    "alu_formulas": []
+                }
+            ]
+        });
+        let summary = vm_ops_effects_only_summary(&output);
+        assert!(summary.get("ops").is_none());
+        assert_eq!(summary["effect_count"], serde_json::json!(1));
+        assert_eq!(summary["source_maybe_truncated"], serde_json::json!(false));
+        assert_eq!(summary["byte_load_effect_count"], serde_json::json!(1));
+        assert_eq!(
+            summary["effects"][0]["pseudocode"],
+            serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
+        );
+        assert_eq!(
+            summary["effects"][0]["op_idx_start"],
+            serde_json::json!(10616026)
+        );
+        assert_eq!(
+            summary["byte_load_effects"][0]["source_byte_load"]["idx"],
             serde_json::json!(10616034)
         );
     }
