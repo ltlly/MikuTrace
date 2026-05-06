@@ -711,6 +711,27 @@ rust/target/debug/tracemiku-cli hash-input-search <call_dir> \
   --search-in-mem
 ```
 
+When a finalize candidate looks promising, expand the candidate buffer bytes in
+the same command before spending time on deeper taint. This maps each candidate
+back to `mem-writes-in-range`, reports whether its current bytes are all zero,
+and optionally checks whether the candidate bytes occur inside the known output:
+
+```bash
+rust/target/debug/tracemiku-cli hash-finalize-detect <call_dir> \
+  --window 500 \
+  --min-size 16 \
+  --limit 1000 \
+  --map-bytes \
+  --map-candidates 50 \
+  --target-bytes <known_output_hex>
+```
+
+Use `--nonzero-only` when scanning large traces interactively. A candidate with
+`all_zero: true` is usually a cleanup/state-buffer false positive for
+result-to-input work. A candidate with non-empty `target_hits[]` is much more
+interesting because its bytes are directly found inside the observed output
+sequence.
+
 For differential analysis, collect multiple calls with controlled input changes
 and compare traces:
 

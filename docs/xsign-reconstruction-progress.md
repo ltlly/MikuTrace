@@ -180,6 +180,24 @@ outputs: `byte-writer-map --size 16` shows they are all zero writes in the
 queried windows. Treat them as false positives or cleanup/state buffers until a
 non-zero candidate is linked back to tail bytes.
 
+A combined candidate-map run confirms this at the `hash-finalize-detect` level:
+
+```bash
+rust/target/debug/tracemiku-cli hash-finalize-detect \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --limit 50 \
+  --window 500 \
+  --min-size 16 \
+  --map-bytes \
+  --map-candidates 10 \
+  --target-bytes 0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460f1d2295d336dae63ff825bafa0f452f1411dddc5965ac22528554125a7faa708626158de6160626162
+```
+
+Result: 10 candidates inspected, 7 all-zero, 3 non-zero, 0 candidates whose
+bytes occur inside the 68-byte semantic tail. Therefore the current best
+result-to-input anchor remains the final semantic tail byte-writer map at
+`0x74b68bcc1d`, not the early hash-finalize candidates.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under

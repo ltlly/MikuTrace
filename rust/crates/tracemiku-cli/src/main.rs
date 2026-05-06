@@ -476,6 +476,18 @@ enum Cmd {
         min_size: u64,
         #[arg(long, default_value_t = 500)]
         limit: usize,
+        /// Expand candidate output buffers with byte-writer-map evidence.
+        #[arg(long)]
+        map_bytes: bool,
+        /// Max candidates to expand when --map-bytes is enabled.
+        #[arg(long, default_value_t = 50)]
+        map_candidates: usize,
+        /// Keep only mapped candidates whose bytes are not all zero.
+        #[arg(long)]
+        nonzero_only: bool,
+        /// Optional target bytes as hex; mapped candidates report byte-offset hits.
+        #[arg(long = "target-bytes")]
+        target_bytes: Option<String>,
     },
     /// POST /api/hash-input-search.
     HashInputSearch {
@@ -1475,13 +1487,22 @@ async fn main() -> anyhow::Result<()> {
             window,
             min_size,
             limit,
+            map_bytes,
+            map_candidates,
+            nonzero_only,
+            target_bytes,
         }) => {
-            let params = vec![
-                ("window", window.to_string()),
-                ("min_size", min_size.to_string()),
-                ("limit", limit.to_string()),
-            ];
-            route_get_json(trace_dir, route_path("/api/hash-finalize-detect", &params)).await
+            cmd_hash_finalize_detect(
+                trace_dir,
+                window,
+                min_size,
+                limit,
+                map_bytes,
+                map_candidates,
+                nonzero_only,
+                target_bytes,
+            )
+            .await
         }
         Some(Cmd::HashInputSearch {
             trace_dir,
@@ -2055,6 +2076,85 @@ async fn cmd_byte_writer_map(
         }
     }
     print_pretty(&output)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_hash_finalize_detect(
+    trace_dir: PathBuf,
+    window: usize,
+    min_size: u64,
+    limit: usize,
+    map_bytes: bool,
+    map_candidates: usize,
+    nonzero_only: bool,
+    target_bytes: Option<String>,
+) -> anyhow::Result<()> {
+    let params = vec![
+        ("window", window.to_string()),
+        ("min_size", min_size.to_string()),
+        ("limit", limit.to_string()),
+    ];
+    let path = route_path("/api/hash-finalize-detect", &params);
+    let needs_map = map_bytes || nonzero_only || target_bytes.is_some();
+    if !needs_map {
+        return route_get_json(trace_dir, path).await;
+    }
+    let target = target_bytes
+        .as_deref()
+        .map(parse_hex_bytes_cli)
+        .transpose()?;
+    let target_hex = target.as_ref().map(|bytes| bytes_to_hex(bytes));
+    let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    let mut response = route_get_json_value_on(&app, path).await?;
+    let candidates = response
+        .get("candidates")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut maps = Vec::new();
+    let mut zero_candidates = 0usize;
+    let mut nonzero_candidates = 0usize;
+    let mut target_hits = 0usize;
+    for candidate in candidates.iter().take(map_candidates) {
+        let map = hash_candidate_byte_map(&app, candidate, target_hex.as_deref()).await?;
+        let all_zero = map
+            .get("all_zero")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let has_target_hit = map
+            .get("target_hits")
+            .and_then(|v| v.as_array())
+            .is_some_and(|hits| !hits.is_empty());
+        if all_zero {
+            zero_candidates += 1;
+        } else {
+            nonzero_candidates += 1;
+        }
+        if has_target_hit {
+            target_hits += 1;
+        }
+        if nonzero_only && all_zero {
+            continue;
+        }
+        maps.push(map);
+    }
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert(
+            "candidate_map_summary".to_string(),
+            serde_json::json!({
+                "mapped": maps.len(),
+                "inspected": candidates.len().min(map_candidates),
+                "map_candidates_limit": map_candidates,
+                "zero_candidates": zero_candidates,
+                "nonzero_candidates": nonzero_candidates,
+                "target_hit_candidates": target_hits,
+                "nonzero_only": nonzero_only,
+                "target_bytes_len": target.as_ref().map(|bytes| bytes.len()),
+            }),
+        );
+        obj.insert("candidate_maps".to_string(), serde_json::Value::Array(maps));
+    }
+    print_pretty(&response)
 }
 
 async fn cmd_api(
@@ -6609,6 +6709,69 @@ fn byte_writer_map_output(
     })
 }
 
+async fn hash_candidate_byte_map(
+    app: &axum::Router,
+    candidate: &serde_json::Value,
+    target_hex: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    let addr_raw = candidate
+        .get("addr")
+        .and_then(|v| v.as_str())
+        .context("hash candidate missing addr")?;
+    let addr =
+        parse_u64_str(addr_raw).with_context(|| format!("invalid candidate addr {addr_raw:?}"))?;
+    let size = candidate
+        .get("size")
+        .and_then(|v| v.as_u64())
+        .context("hash candidate missing size")?;
+    let size_usize = usize::try_from(size).context("candidate size does not fit in usize")?;
+    let enter_idx = candidate
+        .get("enter_idx")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let exit_idx = candidate
+        .get("exit_idx")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(enter_idx as u64) as usize;
+    let addr_hi = addr
+        .checked_add(size)
+        .context("candidate addr + size overflowed u64")?;
+    let params = vec![
+        ("idx_lo", enter_idx.to_string()),
+        ("idx_hi", exit_idx.saturating_add(1).to_string()),
+        ("addr_lo", format!("{addr:#x}")),
+        ("addr_hi", format!("{addr_hi:#x}")),
+        ("max", "5000".to_string()),
+    ];
+    let response =
+        route_get_json_value_on(app, route_path("/api/mem-writes-in-range", &params)).await?;
+    let map = byte_writer_map_output(addr, size_usize, &response);
+    let bytes_hex = map
+        .get("bytes_hex")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let all_zero = bytes_hex
+        .as_deref()
+        .is_some_and(|hex| !hex.is_empty() && hex.as_bytes().iter().all(|&b| b == b'0'));
+    let target_hits = target_hex
+        .zip(bytes_hex.as_deref())
+        .map(|(target, needle)| {
+            if all_zero {
+                Vec::new()
+            } else {
+                find_hex_byte_offsets(target, needle)
+            }
+        })
+        .unwrap_or_default();
+    Ok(serde_json::json!({
+        "candidate": candidate,
+        "bytes_hex": bytes_hex,
+        "all_zero": all_zero,
+        "target_hits": target_hits,
+        "map": map,
+    }))
+}
+
 fn byte_writer_map_entries_from_range_writes(
     addr: u64,
     size: usize,
@@ -8232,6 +8395,21 @@ fn parse_hex_bytes_cli(raw: &str) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
+fn find_hex_byte_offsets(haystack_hex: &str, needle_hex: &str) -> Vec<usize> {
+    let mut haystack = haystack_hex.trim().to_ascii_lowercase();
+    let mut needle = needle_hex.trim().to_ascii_lowercase();
+    haystack.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
+    needle.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
+    if needle.is_empty() || needle.len() % 2 != 0 || haystack.len() < needle.len() {
+        return Vec::new();
+    }
+    (0..=haystack.len() - needle.len())
+        .step_by(2)
+        .filter(|&idx| haystack[idx..idx + needle.len()] == needle)
+        .map(|idx| idx / 2)
+        .collect()
+}
+
 fn parse_u64_str(raw: &str) -> Option<u64> {
     let s = raw.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -8281,9 +8459,9 @@ mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, byte_writer_map_output,
         choose_frontier_next, classify_vm_asm, def_entries_from_asm, def_source_regs_from_asm,
-        mem_addr_from_asm, memory_access_width, odd_u64_inverse, recognize_alu_semantic,
-        recognized_backchain_patterns, resolve_addr_in_maps_text, source_byte_for_write_at,
-        store_source_regs_from_asm, vm_slot_from_asm,
+        find_hex_byte_offsets, mem_addr_from_asm, memory_access_width, odd_u64_inverse,
+        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
+        source_byte_for_write_at, store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -8858,6 +9036,16 @@ mod tests {
         assert_eq!(source_byte_for_write_at(&write, 0x3002), Some(0x28));
         assert_eq!(source_byte_for_write_at(&write, 0x3003), Some(0xd5));
         assert_eq!(source_byte_for_write_at(&write, 0x3004), None);
+    }
+
+    #[test]
+    fn finds_hex_byte_offsets_on_byte_boundaries() {
+        assert_eq!(
+            find_hex_byte_offsets("aa 62:61_62 bb 62 61 62", "626162"),
+            vec![1, 5]
+        );
+        assert!(find_hex_byte_offsets("0626162", "626162").is_empty());
+        assert!(find_hex_byte_offsets("626162", "00").is_empty());
     }
 
     #[test]

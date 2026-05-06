@@ -158,6 +158,20 @@ TRACE_CRYPTO_EVIDENCE = {
         "0xefcdab8967452301",
         "0x1032547698badcfe",
     ],
+    "hash_finalize_map_summary": {
+        "command": (
+            "tracemiku-cli hash-finalize-detect <call_dir> --limit 50 --window 500 "
+            "--min-size 16 --map-bytes --map-candidates 10 --target-bytes <semantic_tail_hex>"
+        ),
+        "inspected": 10,
+        "zero_candidates": 7,
+        "nonzero_candidates": 3,
+        "target_hit_candidates": 0,
+        "interpretation": (
+            "No inspected finalize candidate bytes occur inside the 68-byte semantic tail; "
+            "continue anchoring backward analysis at the final tail byte-writer map."
+        ),
+    },
     "hash_finalize_md5_candidates": [
         {
             "addr": "0x74b68bc770",
