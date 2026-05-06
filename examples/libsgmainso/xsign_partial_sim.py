@@ -1780,9 +1780,33 @@ def parameterized_simulation_contract() -> dict:
             },
         ],
         "opaque_or_nonportable_inputs": [
-            "middle_lhs static_memory_load_constant segment",
-            "middle_lhs traced_formula_only segments",
-            "middle_lhs memory_boundary_read text segment",
+            {
+                "name": "middle_lhs_static_memory_load_constant",
+                "semantic_range": [21, 25],
+                "next_cli": (
+                    "tracemiku-cli byte-lineage <call_dir> --addr <semantic_addr+21> "
+                    "--before-idx <writer_idx> --depth 80 --lookback 5000000 --summary"
+                ),
+                "goal": "Decide whether the 0x74fbf29208 table value is a true static table input.",
+            },
+            {
+                "name": "middle_lhs_traced_formula_only_segments",
+                "semantic_ranges": [[25, 49], [57, 59]],
+                "next_cli": (
+                    "tracemiku-cli vm-ops <call_dir> --start 14164280 --end 14165320 "
+                    "--summary --effects-only --max-ops 200"
+                ),
+                "goal": "Lift role-bound scratch writer templates into full Python opcode replay.",
+            },
+            {
+                "name": "middle_lhs_memory_boundary_text",
+                "semantic_range": [49, 57],
+                "next_cli": (
+                    "tracemiku-cli byte-lineage <call_dir> --addr <semantic_addr+49> "
+                    "--before-idx <writer_idx> --depth 80 --lookback 5000000 --summary"
+                ),
+                "goal": "Confirm whether the 10.60.10^^ text boundary is external app/device input.",
+            },
         ],
         "not_an_algorithm_because": (
             "The contract still accepts segmented trace-derived lhs inputs "

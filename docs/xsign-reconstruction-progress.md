@@ -869,6 +869,13 @@ xor_lhs_runs
 
 The contract is not a recovered algorithm because `xor_lhs_runs` still contains
 opaque/non-portable middle-lhs segments.
+Those opaque inputs now include next CLI probes in the JSON output:
+
+```text
+[21,25) static_memory_load_constant -> byte-lineage depth/lookback probe
+[25,49), [57,59) traced_formula_only -> vm-ops role-bound replay
+[49,57) memory_boundary_text -> byte-lineage boundary confirmation
+```
 
 The script now emits `completion_audit` with four success criteria:
 
