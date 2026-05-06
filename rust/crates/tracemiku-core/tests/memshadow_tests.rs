@@ -58,6 +58,19 @@ fn append_store_record(cd: &std::path::Path, pc: u64, addr: u64, value: u64) {
     f.write_all(&rec).unwrap();
 }
 
+fn append_external_write(cd: &std::path::Path, idx: u64, addr: u64, byte: u8) {
+    let mut rec = Vec::with_capacity(17);
+    rec.extend_from_slice(&idx.to_le_bytes());
+    rec.extend_from_slice(&addr.to_le_bytes());
+    rec.push(byte);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cd.join("external_writes.bin"))
+        .unwrap();
+    f.write_all(&rec).unwrap();
+}
+
 #[test]
 fn memshadow_byte_at_returns_written_byte() {
     use tracemiku_core::memshadow::MemShadow;
@@ -128,10 +141,36 @@ fn memshadow_byte_at_t_zero_returns_event_at_idx_zero() {
 }
 
 #[test]
-fn memshadow_v3_sidecar_roundtrip_preserves_shadow() {
+fn memshadow_loads_external_writes_as_x_events() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
+    append_external_write(&cd, 1, 0x7002, b'X');
+    let trace = Trace::load(&cd).unwrap();
+    let mem = MemShadow::build_from_trace(&trace);
+
+    let (before, before_kind, before_src) = mem.byte_at(0x7002, 0);
+    assert_eq!(before, Some(b'l'));
+    assert_eq!(before_kind, "w");
+    assert_eq!(before_src, Some(0));
+
+    let (after, after_kind, after_src) = mem.byte_at(0x7002, 1);
+    assert_eq!(after, Some(b'X'));
+    assert_eq!(after_kind, "x");
+    assert_eq!(after_src, Some(1));
+    assert_eq!(mem.latest_write_idx_strict_before(0x7002, 2), Some(1));
+    assert!(mem
+        .writes
+        .iter()
+        .any(|rec| rec.idx == 1 && rec.addr == 0x7002 && rec.value == b'X' as u64));
+}
+
+#[test]
+fn memshadow_v4_sidecar_roundtrip_preserves_shadow() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+    let (_tmp, cd) = synth_string_trace_dir();
+    append_external_write(&cd, 1, 0x7002, b'X');
     let trace = Trace::load(&cd).unwrap();
     let mem1 = MemShadow::load_or_build(&trace);
     let sidecar = MemShadow::sidecar_path(&trace);
@@ -144,7 +183,7 @@ fn memshadow_v3_sidecar_roundtrip_preserves_shadow() {
 }
 
 #[test]
-fn memshadow_v3_sidecar_stale_trace_size_rebuilds() {
+fn memshadow_v4_sidecar_stale_trace_size_rebuilds() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -164,7 +203,7 @@ fn memshadow_v3_sidecar_stale_trace_size_rebuilds() {
 }
 
 #[test]
-fn memshadow_v3_corrupt_sidecar_is_ignored() {
+fn memshadow_v4_corrupt_sidecar_is_ignored() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();

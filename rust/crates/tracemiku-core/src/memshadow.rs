@@ -1,6 +1,6 @@
 //! Sparse byte-level memory shadow built from a trace.
 //!
-//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v3 binary
+//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v4 binary
 //! sidecar for fast reloads on large traces.
 //!
 //! Each instruction has full register state captured BEFORE its execution.
@@ -27,8 +27,7 @@ use crate::trace::Trace;
 
 /// One byte-level memory event: which trace-record idx touched this byte,
 /// the byte value, and the kind ("r" = load, "w" = store, "x" = external/
-/// boundary-diff write — the latter is only populated when external writes
-/// are loaded; this Rust port doesn't load them yet).
+/// boundary-diff write from external_writes.bin).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByteEvent {
     pub idx: usize,
@@ -49,9 +48,11 @@ pub struct MemRec {
     pub value: u64,
 }
 
-const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV3\0\0";
-const SIDECAR_VERSION: u32 = 3;
-pub const SIDECAR_SUFFIX: &str = ".memshadow.v3.bin";
+const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV4\0\0";
+const SIDECAR_VERSION: u32 = 4;
+pub const SIDECAR_SUFFIX: &str = ".memshadow.v4.bin";
+const EXTERNAL_WRITES_FILE: &str = "external_writes.bin";
+const EXTERNAL_WRITE_RECORD_SIZE: usize = 17;
 const PARALLEL_MIN_RECORDS: usize = 250_000;
 const MIN_CHUNK_RECORDS: usize = 200_000;
 
@@ -68,12 +69,12 @@ pub struct MemShadow {
 }
 
 impl MemShadow {
-    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v3.bin`.
+    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v4.bin`.
     pub fn sidecar_path(trace: &Trace) -> PathBuf {
         trace.call_dir().join(format!("trace.bin{SIDECAR_SUFFIX}"))
     }
 
-    /// Load from a valid v3 sidecar when possible; otherwise cold-build and
+    /// Load from a valid v4 sidecar when possible; otherwise cold-build and
     /// best-effort save. Corrupt/stale sidecars are ignored.
     pub fn load_or_build(trace: &Trace) -> Self {
         if let Some(mem) = Self::try_load_sidecar(trace) {
@@ -86,42 +87,45 @@ impl MemShadow {
 
     /// Walk every record once; for each store, record the source-reg pre-state
     /// bytes; for each load, record the dest-reg post-state (next record's
-    /// value) bytes. Mirrors `viewer/memshadow.py:74-110` minus the sidecar
-    /// load/save and the external_writes.bin handling.
+    /// value) bytes. Also merges boundary-diff events from
+    /// `<call_dir>/external_writes.bin` as kind `"x"` writes.
     pub fn build_from_trace(trace: &Trace) -> Self {
         let n = trace.len();
         let workers = memshadow_worker_count(n);
-        if workers <= 1 {
-            return build_range(trace, 0, n);
-        }
-        tracing::info!(
-            target: "tracemiku-core",
-            records = n,
-            workers,
-            "building MemShadow in parallel"
-        );
+        let mut mem = if workers <= 1 {
+            build_range(trace, 0, n)
+        } else {
+            tracing::info!(
+                target: "tracemiku-core",
+                records = n,
+                workers,
+                "building MemShadow in parallel"
+            );
 
-        let chunk_size = n.div_ceil(workers);
-        let partials = thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(workers);
-            for worker in 0..workers {
-                let start = worker * chunk_size;
-                let end = (start + chunk_size).min(n);
-                if start >= end {
-                    continue;
+            let chunk_size = n.div_ceil(workers);
+            let partials = thread::scope(|scope| {
+                let mut handles = Vec::with_capacity(workers);
+                for worker in 0..workers {
+                    let start = worker * chunk_size;
+                    let end = (start + chunk_size).min(n);
+                    if start >= end {
+                        continue;
+                    }
+                    handles.push(scope.spawn(move || build_range(trace, start, end)));
                 }
-                handles.push(scope.spawn(move || build_range(trace, start, end)));
-            }
-            handles
-                .into_iter()
-                .map(|handle| handle.join().expect("memshadow worker panicked"))
-                .collect::<Vec<_>>()
-        });
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("memshadow worker panicked"))
+                    .collect::<Vec<_>>()
+            });
 
-        merge_partials(partials)
+            merge_partials(partials)
+        };
+        merge_external_writes(trace, &mut mem);
+        mem
     }
 
-    /// Try to load `<call_dir>/trace.bin.memshadow.v3.bin`.
+    /// Try to load `<call_dir>/trace.bin.memshadow.v4.bin`.
     ///
     /// Returns `None` for miss, stale trace size, schema mismatch, or corrupt
     /// content. Callers that want a ready MemShadow should use
@@ -130,7 +134,7 @@ impl MemShadow {
         Self::read_sidecar(trace).ok()
     }
 
-    /// Save this shadow as v3 binary sidecar. Writes to a temp file in the
+    /// Save this shadow as v4 binary sidecar. Writes to a temp file in the
     /// call directory and then atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
         let path = Self::sidecar_path(trace);
@@ -138,7 +142,7 @@ impl MemShadow {
             "{}.tmp.{}",
             path.file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or("trace.bin.memshadow.v3.bin"),
+                .unwrap_or("trace.bin.memshadow.v4.bin"),
             std::process::id()
         );
         let tmp_path = path.with_file_name(tmp_name);
@@ -420,6 +424,36 @@ fn merge_partials(partials: Vec<MemShadow>) -> MemShadow {
         }
     }
     out
+}
+
+fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
+    let path = trace.call_dir().join(EXTERNAL_WRITES_FILE);
+    let Ok(raw) = std::fs::read(path) else {
+        return;
+    };
+    for chunk in raw.chunks_exact(EXTERNAL_WRITE_RECORD_SIZE) {
+        let idx_u64 = u64::from_le_bytes(chunk[0..8].try_into().unwrap());
+        let Ok(idx) = usize::try_from(idx_u64) else {
+            continue;
+        };
+        let addr = u64::from_le_bytes(chunk[8..16].try_into().unwrap());
+        let byte = chunk[16];
+        mem.writes.push(MemRec {
+            idx,
+            addr,
+            size: 1,
+            value: byte as u64,
+        });
+        mem.bytes.entry(addr).or_default().push(ByteEvent {
+            idx,
+            byte,
+            kind: "x",
+        });
+    }
+    mem.writes.sort_by_key(|rec| (rec.idx, rec.addr));
+    for events in mem.bytes.values_mut() {
+        events.sort_by_key(|ev| ev.idx);
+    }
 }
 
 /// Flush a pending printable-ASCII run into `out` if it meets `min_len`,

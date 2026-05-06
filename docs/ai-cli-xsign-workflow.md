@@ -617,9 +617,9 @@ instead of enabling full `--trace-deep`:
   --boundary-diff-patterns stat@@,stat64@@,fstatat@@,fstatat64@@,lstat@@,lstat64@@
 ```
 
-This records changed bytes under `external_writes.bin`, which MemShadow exposes
-as `kind: "x"` writes. It lets `byte-lineage` continue through external stat
-output bytes without following stale in-module writes.
+This records changed bytes under `external_writes.bin`, which Rust MemShadow v4
+loads as `kind: "x"` writes. It lets `byte-lineage` continue through external
+stat output bytes without following stale in-module writes.
 
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and

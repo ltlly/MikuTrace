@@ -787,6 +787,12 @@ last write = #14062790 str x0, [x19]
 This lets an AI stop at the right boundary and ask for a wider trace, boundary
 hook, or external metadata instead of following a stale pointer-shaped write.
 
+Rust MemShadow now loads boundary-diff `external_writes.bin` records into the
+v4 sidecar as `kind="x"` writes. A new capture with
+`--boundary-diff-patterns stat@@,stat64@@,fstatat@@,fstatat64@@,lstat@@,lstat64@@`
+should therefore let `byte-lineage` and `mem-writes-in-range` continue through
+the stat output structure instead of stopping at this boundary.
+
 Dumping the containing buffer at the same cursor shows that this boundary is a
 substring of a short ASCII value:
 
