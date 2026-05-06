@@ -402,7 +402,15 @@ rust/target/debug/tracemiku-cli resolve-elf-symbol \
 On the current device libc this returns `stat@@LIBC` exactly. So the first
 middle word `fbe9f269` is most likely bytes from a `struct stat` output buffer
 written inside libc, outside the current instruction-level trace coverage. The
-next candidate `#13980660 libc.so+0x5c4fc` resolves to `free`, and is a later
+Android AArch64 NDK layout confirms `offsetof(struct stat, st_mtim.tv_sec) ==
+0x58` and `sizeof(struct stat) == 0x80`; the observed eight bytes
+`fbe9f26900000000` are therefore little-endian `st_mtim.tv_sec =
+0x69f2e9fb`, which is `2026-04-30T13:34:51+08:00` on the current local
+timezone. The x-sign simulator should treat this word as the target file's
+modification time unless a future trace/hook proves a different stat-like
+structure.
+
+The next candidate `#13980660 libc.so+0x5c4fc` resolves to `free`, and is a later
 near-pointer false positive rather than the producer. This is a useful
 reconstruction boundary: the simulator should model this word as data supplied
 by the stat output structure, or collect the corresponding file metadata, not

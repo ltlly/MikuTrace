@@ -544,7 +544,10 @@ rust/target/debug/tracemiku-cli resolve-elf-symbol \
 For the first changing x-sign middle word observed in `call_001`, this resolves
 `libc.so+0xa0f5c` to `stat@@LIBC`. That turns the trace gap into a concrete
 modeling requirement: capture or simulate the pathname plus the `struct stat`
-output bytes that the traced code later reads.
+output bytes that the traced code later reads. On Android AArch64,
+`struct stat + 0x58` is `st_mtim.tv_sec`; a value such as
+`fbe9f26900000000` is the little-endian mtime seconds field, not a stale traced
+zero store.
 
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and
