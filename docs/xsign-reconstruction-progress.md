@@ -150,8 +150,8 @@ normalization for many single-byte staging writes, packed-word byte extraction
 for the middle 4-byte runs, and modulo-255 byte generation for
 several single-byte tail positions including the repeated `62 61 62` suffix.
 Deeper selected chains also expose MD5-like 32-bit state operations, including
-`add_known_constant` with `md5_iv_a = 0x67452301`, `add32_mix`, 32-bit
-`shift_left`, `and_identity`, and `or_identity`.
+`add_known_constant` with `md5_iv_a = 0x67452301`, `add32_mix`, and 32-bit
+shift/extract operations.
 
 The backward byte chains are now lane-aware. Each byte writer map entry records
 `source_byte_offset`; `vm-backchain` receives that as `start.byte_lane` and
@@ -168,6 +168,13 @@ step 4: 0xd5 = 0xb4 ^ 0x61
 
 Before lane selection, the same path could incorrectly follow lane 3 of the
 word and report `0x1a = 0x78 ^ 0x62`.
+
+Lane selection also applies at semantic ALU frontiers. For `bitwise_or_merge`,
+the chain follows the operand that contributes the selected result byte. For
+shift/extract semantics, the next hop carries the transformed source lane. This
+keeps chains such as `0x78d84ab4 -> 0xd84ab4 -> 0xd84ab467` on the byte that
+actually produced the observed output byte instead of drifting to a neighboring
+packed-word lane.
 
 Crypto cross-check:
 

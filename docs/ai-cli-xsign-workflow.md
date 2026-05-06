@@ -121,6 +121,9 @@ was written with `strb` from the low byte of a register that was previously
 loaded as a 32-bit word: without lane selection, a linear chain can accidentally
 follow the newest writer of another byte in that word. The auto
 `output-map --semantic-writer-map-vm-chain-*` path passes the lane for you.
+Semantic frontier selection is lane-aware too: `bitwise_or_merge` follows the
+operand that contributes the selected byte, and `lsl`/`lsr`/`asr`/`ubfx` update
+the source byte lane when the shift/extract is byte-aligned.
 
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly

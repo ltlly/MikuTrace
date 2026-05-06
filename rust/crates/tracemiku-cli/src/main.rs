@@ -5060,7 +5060,7 @@ async fn vm_backchain_value_on(
                 }),
             )
         } else if follow_frontier {
-            match choose_frontier_next(&step) {
+            match choose_frontier_next_for_lane(&step, current_byte_lane) {
                 Some(frontier_next) => (
                     frontier_next.clone(),
                     serde_json::json!({
@@ -5196,11 +5196,19 @@ fn next_with_selected_byte_lane(
     next
 }
 
+#[cfg(test)]
 fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
+    choose_frontier_next_for_lane(step, None)
+}
+
+fn choose_frontier_next_for_lane(
+    step: &serde_json::Value,
+    byte_lane: Option<usize>,
+) -> Option<serde_json::Value> {
     if step.pointer("/local_def/class").and_then(|v| v.as_str()) == Some("call-return") {
         return None;
     }
-    if let Some(next) = choose_semantic_frontier_next(step) {
+    if let Some(next) = choose_semantic_frontier_next(step, byte_lane) {
         return Some(next);
     }
     let frontiers = step.get("frontier")?.as_array()?;
@@ -5237,35 +5245,34 @@ fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
     frontier_to_next(frontier)
 }
 
-fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
+fn choose_semantic_frontier_next(
+    step: &serde_json::Value,
+    byte_lane: Option<usize>,
+) -> Option<serde_json::Value> {
     let local_def = step.get("local_def")?;
     if local_def.get("class").and_then(|v| v.as_str()) == Some("call-return") {
         return None;
     }
     let formula = row_alu_formula(local_def)?;
+    let op = formula.get("op").and_then(|v| v.as_str());
     if formula
         .pointer("/semantic/input")
         .and_then(|v| v.as_str())
         .is_some()
+        && !matches!(op, Some("lsl" | "lsr" | "asr" | "ubfx"))
     {
         let input = formula
             .pointer("/semantic/input")
             .and_then(|v| v.as_str())?;
-        return frontier_next_by_value(step, input);
+        return frontier_next_by_value(step, input)
+            .map(|next| annotate_next_source_lane(next, byte_lane));
     }
     if formula.get("op").and_then(|v| v.as_str()) == Some("udiv") {
         let numerator = formula
             .get("operands")
             .and_then(|v| v.as_array())
             .and_then(|items| items.first())?;
-        if let Some(reg) = numerator.get("reg").and_then(|v| v.as_str()) {
-            if let Some(next) = frontier_next_by_reg(step, reg) {
-                return Some(next);
-            }
-        }
-        if let Some(value) = numerator.get("value").and_then(|v| v.as_str()) {
-            return frontier_next_by_value(step, value);
-        }
+        return next_for_formula_operand(step, numerator, byte_lane);
     }
     if matches!(
         formula.get("op").and_then(|v| v.as_str()),
@@ -5273,6 +5280,15 @@ fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json:
     ) {
         let operands = formula.get("operands").and_then(|v| v.as_array())?;
         if operands.len() >= 2 {
+            if formula.get("op").and_then(|v| v.as_str()) == Some("orr") {
+                if let Some(lane) = byte_lane {
+                    if let Some(input) =
+                        choose_or_operand_for_lane(&operands[0], &operands[1], lane)
+                    {
+                        return next_for_formula_operand(step, input, Some(lane));
+                    }
+                }
+            }
             let lhs_value = operands[0]
                 .get("value")
                 .and_then(|v| v.as_str())
@@ -5287,14 +5303,7 @@ fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json:
                 _ => None,
             };
             if let Some(input) = chosen {
-                if let Some(reg) = input.get("reg").and_then(|v| v.as_str()) {
-                    if let Some(next) = frontier_next_by_reg(step, reg) {
-                        return Some(next);
-                    }
-                }
-                if let Some(value) = input.get("value").and_then(|v| v.as_str()) {
-                    return frontier_next_by_value(step, value);
-                }
+                return next_for_formula_operand(step, input, byte_lane);
             }
         }
     }
@@ -5315,14 +5324,7 @@ fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json:
                 _ => None,
             };
             if let Some(input) = chosen {
-                if let Some(reg) = input.get("reg").and_then(|v| v.as_str()) {
-                    if let Some(next) = frontier_next_by_reg(step, reg) {
-                        return Some(next);
-                    }
-                }
-                if let Some(value) = input.get("value").and_then(|v| v.as_str()) {
-                    return frontier_next_by_value(step, value);
-                }
+                return next_for_formula_operand(step, input, byte_lane);
             }
         }
     }
@@ -5334,16 +5336,117 @@ fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json:
             .get("operands")
             .and_then(|v| v.as_array())
             .and_then(|items| items.first())?;
-        if let Some(reg) = input.get("reg").and_then(|v| v.as_str()) {
-            if let Some(next) = frontier_next_by_reg(step, reg) {
-                return Some(next);
-            }
-        }
-        if let Some(value) = input.get("value").and_then(|v| v.as_str()) {
-            return frontier_next_by_value(step, value);
-        }
+        let source_lane = byte_lane.and_then(|lane| source_lane_for_shift_formula(&formula, lane));
+        return next_for_formula_operand(step, input, source_lane.or(byte_lane));
     }
     None
+}
+
+fn choose_or_operand_for_lane<'a>(
+    lhs: &'a serde_json::Value,
+    rhs: &'a serde_json::Value,
+    lane: usize,
+) -> Option<&'a serde_json::Value> {
+    let lhs_byte = operand_value_u64(lhs).map(|value| byte_at_lane(value, lane));
+    let rhs_byte = operand_value_u64(rhs).map(|value| byte_at_lane(value, lane));
+    match (lhs_byte, rhs_byte) {
+        (Some(Some(lhs_byte)), Some(Some(0))) if lhs_byte != 0 => Some(lhs),
+        (Some(Some(0)), Some(Some(rhs_byte))) if rhs_byte != 0 => Some(rhs),
+        _ => None,
+    }
+}
+
+fn next_for_formula_operand(
+    step: &serde_json::Value,
+    operand: &serde_json::Value,
+    source_lane: Option<usize>,
+) -> Option<serde_json::Value> {
+    if let Some(reg) = operand.get("reg").and_then(|v| v.as_str()) {
+        return frontier_next_by_reg(step, reg)
+            .map(|next| annotate_next_source_lane(next, source_lane));
+    }
+    if let Some(value) = operand.get("value").and_then(|v| v.as_str()) {
+        return frontier_next_by_value(step, value)
+            .map(|next| annotate_next_source_lane(next, source_lane));
+    }
+    None
+}
+
+fn annotate_next_source_lane(
+    mut next: serde_json::Value,
+    source_lane: Option<usize>,
+) -> serde_json::Value {
+    if let Some(lane) = source_lane {
+        if let Some(obj) = next.as_object_mut() {
+            obj.insert("source_byte_offset".to_string(), serde_json::json!(lane));
+        }
+    }
+    next
+}
+
+fn source_lane_for_shift_formula(formula: &serde_json::Value, result_lane: usize) -> Option<usize> {
+    let semantic = formula.get("semantic");
+    let op = formula.get("op").and_then(|v| v.as_str());
+    let kind = semantic
+        .and_then(|v| v.get("kind"))
+        .and_then(|v| v.as_str())
+        .or(op)?;
+    let result_bit = result_lane.checked_mul(8)?;
+    let source_bit = match kind {
+        "shift_right" | "lsr" | "asr" => {
+            let shift = shift_amount_from_formula(formula, semantic)?;
+            result_bit.checked_add(shift as usize)?
+        }
+        "shift_left" | "lsl" => {
+            let shift = shift_amount_from_formula(formula, semantic)? as usize;
+            result_bit.checked_sub(shift)?
+        }
+        "ubfx" | "bitmask_extract" => {
+            let lsb = semantic
+                .and_then(|v| v.get("lsb").or_else(|| v.get("shift")))
+                .and_then(value_as_u64)
+                .or_else(|| formula_operand_value_u64(formula, 2))? as usize;
+            result_bit.checked_add(lsb)?
+        }
+        _ => return Some(result_lane),
+    };
+    (source_bit % 8 == 0).then_some(source_bit / 8)
+}
+
+fn shift_amount_from_formula(
+    formula: &serde_json::Value,
+    semantic: Option<&serde_json::Value>,
+) -> Option<u64> {
+    semantic
+        .and_then(|v| v.get("shift"))
+        .and_then(value_as_u64)
+        .or_else(|| formula_operand_value_u64(formula, 1))
+}
+
+fn formula_operand_value_u64(formula: &serde_json::Value, idx: usize) -> Option<u64> {
+    formula
+        .get("operands")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.get(idx))
+        .and_then(operand_value_u64)
+}
+
+fn operand_value_u64(operand: &serde_json::Value) -> Option<u64> {
+    operand
+        .get("value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+}
+
+fn value_as_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(parse_u64_str))
+}
+
+fn byte_at_lane(value: u64, lane: usize) -> Option<u8> {
+    let shift = lane.checked_mul(8)?;
+    (shift < 64).then_some(((value >> shift) & 0xff) as u8)
 }
 
 fn frontier_next_by_reg(step: &serde_json::Value, reg: &str) -> Option<serde_json::Value> {
@@ -8905,12 +9008,12 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, byte_writer_map_output,
-        byte_writers_from_range_writes, choose_frontier_next, choose_laned_upstream_next,
-        classify_vm_asm, dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm,
-        find_hex_byte_offsets, mem_addr_from_asm, memory_access_width, odd_u64_inverse,
-        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_slot_from_asm,
+        byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
+        choose_laned_upstream_next, classify_vm_asm, dedupe_byte_nexts, def_entries_from_asm,
+        def_source_regs_from_asm, find_hex_byte_offsets, mem_addr_from_asm, memory_access_width,
+        odd_u64_inverse, recognize_alu_semantic, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
+        store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -9361,6 +9464,59 @@ mod tests {
         let next = choose_frontier_next(&eor_identity).unwrap();
         assert_eq!(next["reg"], serde_json::json!("x5"));
         assert_eq!(next["src_value"], serde_json::json!("0x62"));
+    }
+
+    #[test]
+    fn frontier_auto_uses_byte_lane_for_or_merge_and_shifts() {
+        let or_merge = serde_json::json!({
+            "local_def": {
+                "asm": "orr x4, x14, x17",
+                "class": "alu",
+                "def": {
+                    "reg": "x4",
+                    "src": [
+                        {"reg": "x14", "value": "0x78000000"},
+                        {"reg": "x17", "value": "0xd84ab4"}
+                    ],
+                    "value_after": "0x78d84ab4"
+                }
+            },
+            "frontier": [
+                {"idx": 90, "reg": "x14", "value": "0x78000000"},
+                {"idx": 90, "reg": "x17", "value": "0xd84ab4"}
+            ]
+        });
+        let lane1 = choose_frontier_next_for_lane(&or_merge, Some(1)).unwrap();
+        assert_eq!(lane1["reg"], serde_json::json!("x17"));
+        assert_eq!(lane1["src_value"], serde_json::json!("0xd84ab4"));
+        assert_eq!(lane1["source_byte_offset"], serde_json::json!(1));
+
+        let lane3 = choose_frontier_next_for_lane(&or_merge, Some(3)).unwrap();
+        assert_eq!(lane3["reg"], serde_json::json!("x14"));
+        assert_eq!(lane3["src_value"], serde_json::json!("0x78000000"));
+        assert_eq!(lane3["source_byte_offset"], serde_json::json!(3));
+
+        let shift_left = serde_json::json!({
+            "local_def": {
+                "asm": "lsl w16, w1, w11",
+                "class": "alu",
+                "def": {
+                    "reg": "w16",
+                    "src": [
+                        {"reg": "w1", "value": "0x6f783e78"},
+                        {"reg": "w11", "value": "0x18"}
+                    ],
+                    "value_after": "0x78000000"
+                }
+            },
+            "frontier": [
+                {"idx": 91, "reg": "w1", "value": "0x6f783e78"},
+                {"idx": 91, "reg": "w11", "value": "0x18"}
+            ]
+        });
+        let shifted = choose_frontier_next_for_lane(&shift_left, Some(3)).unwrap();
+        assert_eq!(shifted["reg"], serde_json::json!("w1"));
+        assert_eq!(shifted["source_byte_offset"], serde_json::json!(0));
     }
 
     #[test]
