@@ -419,6 +419,19 @@ In this mode `group_start` refers to the aligned tail groups. Summary rows keep
 both `aligned_decoded_offset` and `semantic_offset`; bytes before
 `--base64-tail-drop` are marked `dropped_by_alignment`.
 
+When you already know the tail byte offset, skip group arithmetic:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --semantic-offset 65 \
+  --semantic-count 3 \
+  --summary
+```
+
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory
 edge; with it the report also keeps the `index` register branch, which is the

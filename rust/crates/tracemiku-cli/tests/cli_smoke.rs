@@ -761,6 +761,33 @@ fn output_map_can_group_aligned_base64_tail() {
     assert_eq!(v["groups"][1]["chars"], "YQU=");
     assert_eq!(v["groups"][1]["decoded_payload"][0]["semantic_offset"], 2);
     assert_eq!(v["groups"][1]["decoded_payload"][0]["value_hex"], "61");
+
+    let v = run_json(&[
+        "output-map".into(),
+        cd.display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--max-mem-hits".into(),
+        "0".into(),
+        "--base64-tail-start".into(),
+        fixed.len().to_string(),
+        "--base64-tail-align-prefix".into(),
+        "AA".into(),
+        "--base64-tail-drop".into(),
+        "1".into(),
+        "--semantic-offset".into(),
+        "2".into(),
+        "--semantic-count".into(),
+        "3".into(),
+        "--summary".into(),
+    ]);
+    assert_eq!(
+        v["selected_semantic_range"],
+        serde_json::json!({"start": 2, "end": 5, "length": 3})
+    );
+    assert_eq!(v["selected_group_start"], 1);
+    assert_eq!(v["selected_group_end"], 2);
+    assert_eq!(v["groups"][0]["chars"], "YQU=");
 }
 
 #[test]

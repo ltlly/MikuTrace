@@ -87,6 +87,9 @@ rust/target/debug/tracemiku-cli output-map <call_dir> \
 For `call_001`, this maps aligned group `0` to `AApi`, where decoded byte
 offset `0` is synthetic/dropped, semantic offsets `0` and `1` are `0x0a` and
 `0x62`; aligned group `1` starts semantic offsets `2..4` as `0x61 0x05 0xd5`.
+For direct byte-oriented work, `--semantic-offset 65 --semantic-count 3` selects
+aligned group `22` and reports `tail[65:68] = 62 61 62` without manual Base64
+group arithmetic.
 
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.

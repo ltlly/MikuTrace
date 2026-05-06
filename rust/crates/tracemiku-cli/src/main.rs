@@ -687,6 +687,12 @@ enum Cmd {
         /// Number of Base64 groups to return. 0 means all groups.
         #[arg(long, default_value_t = 0)]
         groups: usize,
+        /// Select groups covering this decoded semantic byte offset.
+        #[arg(long)]
+        semantic_offset: Option<usize>,
+        /// Number of decoded semantic bytes to cover when --semantic-offset is set.
+        #[arg(long, default_value_t = 1)]
+        semantic_count: usize,
         /// Attach VM backtrees for this depth per group. 0 disables.
         #[arg(long, default_value_t = 0)]
         tree_depth: usize,
@@ -1643,6 +1649,8 @@ async fn main() -> anyhow::Result<()> {
             hit_order,
             group_start,
             groups,
+            semantic_offset,
+            semantic_count,
             tree_depth,
             tree_max_nodes,
             index_tree_depth,
@@ -1664,6 +1672,8 @@ async fn main() -> anyhow::Result<()> {
                 hit_order,
                 group_start,
                 groups,
+                semantic_offset,
+                semantic_count,
                 tree_depth,
                 tree_max_nodes,
                 index_tree_depth,
@@ -2874,6 +2884,8 @@ struct OutputMapOpts {
     hit_order: HitOrder,
     group_start: usize,
     groups: usize,
+    semantic_offset: Option<usize>,
+    semantic_count: usize,
     tree_depth: usize,
     tree_max_nodes: usize,
     index_tree_depth: usize,
@@ -3149,6 +3161,15 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         .get("semantic_drop_bytes")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
+    let selected_semantic_range = opts.semantic_offset.map(|start| {
+        let count = opts.semantic_count.max(1);
+        let end = start.saturating_add(count);
+        serde_json::json!({
+            "start": start,
+            "end": end,
+            "length": count,
+        })
+    });
     let find = if opts.max_mem_hits > 0 {
         let params = vec![
             ("bytes_hex", bytes_to_hex(&source.primary_bytes)),
@@ -3189,15 +3210,28 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
     }
 
     let group_total = grouped_text.len().div_ceil(4);
-    let group_end = if opts.groups == 0 {
-        group_total
-    } else {
-        opts.group_start
-            .saturating_add(opts.groups)
-            .min(group_total)
-    };
+    let (selected_group_start, selected_group_end) =
+        if let Some(semantic_start) = opts.semantic_offset {
+            let count = opts.semantic_count.max(1);
+            let aligned_start = (semantic_start as u64).saturating_add(semantic_drop) as usize;
+            let aligned_end = (semantic_start.saturating_add(count) as u64)
+                .saturating_add(semantic_drop) as usize;
+            (
+                (aligned_start / 3).min(group_total),
+                aligned_end.div_ceil(3).min(group_total),
+            )
+        } else {
+            let group_end = if opts.groups == 0 {
+                group_total
+            } else {
+                opts.group_start
+                    .saturating_add(opts.groups)
+                    .min(group_total)
+            };
+            (opts.group_start.min(group_total), group_end)
+        };
     let mut group_rows = Vec::new();
-    for group_idx in opts.group_start.min(group_total)..group_end {
+    for group_idx in selected_group_start..selected_group_end {
         let start = group_idx * 4;
         let end = (start + 4).min(grouped_text.len());
         let chars = &grouped_text[start..end];
@@ -3278,6 +3312,9 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "text_len": mapped_text.len(),
         "base64_context": base64_context,
         "group_total": group_total,
+        "selected_group_start": selected_group_start,
+        "selected_group_end": selected_group_end,
+        "selected_semantic_range": selected_semantic_range,
         "selected_hit_order": opts.hit_order.as_str(),
         "selected_hit_rank": opts.hit_rank,
         "tree_frontier_with_next": opts.tree_frontier_with_next,
@@ -3371,6 +3408,9 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
             "grouped_text_len": value.pointer("/base64_context/grouped_text_len").cloned().unwrap_or(serde_json::Value::Null),
         },
         "group_total": value.get("group_total").cloned().unwrap_or(serde_json::Value::Null),
+        "selected_group_start": value.get("selected_group_start").cloned().unwrap_or(serde_json::Value::Null),
+        "selected_group_end": value.get("selected_group_end").cloned().unwrap_or(serde_json::Value::Null),
+        "selected_semantic_range": value.get("selected_semantic_range").cloned().unwrap_or(serde_json::Value::Null),
         "selected_hit_order": value.get("selected_hit_order").cloned().unwrap_or(serde_json::Value::Null),
         "selected_hit_rank": value.get("selected_hit_rank").cloned().unwrap_or(serde_json::Value::Null),
         "selected_range": value.get("selected_range").cloned().unwrap_or(serde_json::Value::Null),
