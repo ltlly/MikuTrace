@@ -4745,6 +4745,8 @@ fn output_map_payload_formula_table(
                         "match_count": source.get("match_count").cloned().unwrap_or(serde_json::Value::Null),
                         "interesting": formula_expression_list(source.pointer("/formulas/interesting")),
                         "semantic": formula_expression_list(source.pointer("/formulas/semantic")),
+                        "interesting_refs": formula_reference_list(source.pointer("/formulas/interesting")),
+                        "semantic_refs": formula_reference_list(source.pointer("/formulas/semantic")),
                     })
                 })
                 .collect::<Vec<_>>();
@@ -4771,6 +4773,30 @@ fn formula_expression_list(value: Option<&serde_json::Value>) -> Vec<serde_json:
                 .or_else(|| formula.get("asm").cloned())
         })
         .take(4)
+        .collect()
+}
+
+fn formula_reference_list(value: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    value
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .take(4)
+        .map(|formula| {
+            serde_json::json!({
+                "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": formula.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "expression": formula
+                    .get("expression")
+                    .cloned()
+                    .or_else(|| formula.get("asm").cloned())
+                    .unwrap_or(serde_json::Value::Null),
+                "kind": formula
+                    .pointer("/semantic/kind")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            })
+        })
         .collect()
 }
 
