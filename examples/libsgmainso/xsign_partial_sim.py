@@ -851,6 +851,29 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
             "writer_runs": 16,
             "truncated": False,
         },
+        "representative_writer_sources": [
+            {
+                "writer_idx": 14164352,
+                "writer_bytes_hex": "000000fb",
+                "source_class": "stat_mtim_shift",
+                "source_value": "0x69f2e9fb",
+                "formula": "(stat('/').st_mtim.tv_sec << 24) & 0xffffffff",
+            },
+            {
+                "writer_idx": 14164406,
+                "writer_bytes_hex": "e9f26979",
+                "source_class": "static_table_xor_ladder",
+                "static_load_count": 6,
+                "terminal_static_values": [
+                    "0x90bf1d91",
+                    "0x6ddde4eb",
+                    "0x166ccf45",
+                    "0x706af48f",
+                    "0x2eb40d81",
+                    "0x71b18589",
+                ],
+            },
+        ],
         "note": (
             "Backchains for these chunks repeatedly hit overlapping 32-bit loads "
             "from a traced VM scratch table. The first chunk also has a "

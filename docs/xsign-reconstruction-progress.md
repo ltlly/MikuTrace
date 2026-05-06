@@ -523,6 +523,23 @@ not an immutable static table; it is a traced VM scratch table. The remaining
 work is lifting the table writers themselves, not finding the consumer-side
 source buffer.
 
+Two representative table writers show that the table has mixed provenance:
+
+```text
+#14164352 writes 000000fb
+  source = 0x69f2e9fb from stat("/").st_mtim.tv_sec
+  formula = (source << 24) & 0xffffffff
+
+#14164406 writes e9f26979
+  source class = static_table_xor_ladder
+  vm-backchain summary = 6 static_memory_load_constant patterns
+  example static words = 0x90bf1d91, 0x6ddde4eb, 0x166ccf45, ...
+```
+
+So it is wrong to model the whole lhs stream as a single file timestamp or a
+single static salt. The next lifting step needs to summarize the scratch table
+writers as mixed external fields plus static-table/XOR ladder formulas.
+
 Tracing the first middle word `fbe9f269` in `call_001` found three memory hits:
 
 ```text
