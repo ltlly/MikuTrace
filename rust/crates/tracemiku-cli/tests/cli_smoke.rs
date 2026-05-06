@@ -666,6 +666,12 @@ fn output_map_defaults_to_earliest_generation_hit() {
     assert_eq!(v["selected_hit"]["first_idx"], 0);
     assert_eq!(v["hit_candidates"][0]["rank"], 0);
     assert_eq!(v["hit_candidates"][0]["addr"], "0x8000");
+    assert_eq!(v["groups"][0]["base64"]["indices"][0]["char"], "q");
+    assert_eq!(v["groups"][0]["base64"]["indices"][0]["index"], 42);
+    assert_eq!(
+        v["groups"][0]["base64"]["decoded_bytes"][0]["formula"],
+        "(i0 << 2) | (i1 >> 4)"
+    );
 
     let mut nearest_args = base_args;
     nearest_args.push("--hit-order".into());

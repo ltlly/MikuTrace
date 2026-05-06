@@ -2129,6 +2129,64 @@ fn base64_decoded_bytes(raw: &str) -> Result<Vec<u8>, base64::DecodeError> {
     engine.decode(padded.as_bytes())
 }
 
+fn base64_group_analysis(raw: &str) -> serde_json::Value {
+    let chars = raw.as_bytes();
+    let indices = chars
+        .iter()
+        .enumerate()
+        .map(|(pos, &byte)| {
+            let index = base64_char_index(byte);
+            serde_json::json!({
+                "pos": pos,
+                "char": char::from(byte).to_string(),
+                "index": index,
+                "index_hex": index.map(|idx| format!("{idx:#x}")),
+            })
+        })
+        .collect::<Vec<_>>();
+    let values = chars
+        .iter()
+        .filter_map(|&byte| base64_char_index(byte))
+        .collect::<Vec<_>>();
+    let mut decoded = Vec::new();
+    if values.len() >= 2 {
+        decoded.push(serde_json::json!({
+            "byte": 0,
+            "value_hex": format!("{:02x}", (values[0] << 2) | (values[1] >> 4)),
+            "formula": "(i0 << 2) | (i1 >> 4)",
+            "indices": [0, 1],
+        }));
+    }
+    if values.len() >= 3 && chars.get(2) != Some(&b'=') {
+        decoded.push(serde_json::json!({
+            "byte": 1,
+            "value_hex": format!("{:02x}", ((values[1] & 0x0f) << 4) | (values[2] >> 2)),
+            "formula": "((i1 & 0x0f) << 4) | (i2 >> 2)",
+            "indices": [1, 2],
+        }));
+    }
+    if values.len() >= 4 && chars.get(3) != Some(&b'=') {
+        decoded.push(serde_json::json!({
+            "byte": 2,
+            "value_hex": format!("{:02x}", ((values[2] & 0x03) << 6) | values[3]),
+            "formula": "((i2 & 0x03) << 6) | i3",
+            "indices": [2, 3],
+        }));
+    }
+    serde_json::json!({
+        "indices": indices,
+        "decoded_bytes": decoded,
+    })
+}
+
+fn base64_char_index(byte: u8) -> Option<u8> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    ALPHABET
+        .iter()
+        .position(|&item| item == byte)
+        .map(|idx| idx as u8)
+}
+
 #[derive(Debug)]
 struct OutputBacktraceOpts {
     key: Option<String>,
@@ -2507,6 +2565,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
             "group": group_idx,
             "offset": start,
             "chars": chars,
+            "base64": base64_group_analysis(chars),
             "decoded_hex": bytes_to_hex(&decoded),
             "runs": runs,
             "trees": trees,

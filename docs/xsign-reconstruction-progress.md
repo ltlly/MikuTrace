@@ -265,6 +265,10 @@ The same information is summarized under `highlights.word_loads`; table lookup
 rows are summarized under `highlights.table_lookups` with the recovered
 alphabet index when the index register is visible.
 
+`output-map` also records the Base64 math for every group under
+`base64.indices` and `base64.decoded_bytes`, so the index traces can be mapped
+directly back to payload bytes.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

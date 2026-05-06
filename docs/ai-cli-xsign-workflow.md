@@ -312,6 +312,10 @@ analysis: it picks the first full output buffer and walks backward from there.
 Use `--hit-order nearest` when you specifically want the final buffer handed to
 JNI.
 
+Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
+fields to line up a traced alphabet index, for example `i2 = 0x18`, with the
+payload byte formula such as `((i1 & 0x0f) << 4) | (i2 >> 2)`.
+
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory
 edge; with it the report also keeps the `index` register branch, which is the
