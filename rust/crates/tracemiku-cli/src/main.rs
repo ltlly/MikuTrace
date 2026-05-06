@@ -6703,6 +6703,10 @@ fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value {
         .take(64)
         .map(compact_tree_node_summary)
         .collect::<Vec<_>>();
+    let bytecode_operands = bytecode_frontiers
+        .iter()
+        .map(bytecode_operand_summary)
+        .collect::<Vec<_>>();
     let small_byte_loads = nodes
         .iter()
         .filter(|node| {
@@ -6745,8 +6749,35 @@ fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value {
         },
         "small_byte_loads": small_byte_loads,
         "bytecode_frontiers": bytecode_frontiers,
+        "bytecode_operands": bytecode_operands,
         "terminal_nodes": terminal_nodes,
     })
+}
+
+fn bytecode_operand_summary(node: &serde_json::Value) -> serde_json::Value {
+    let producer_asm = node.pointer("/producer/asm").and_then(|v| v.as_str());
+    serde_json::json!({
+        "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "depth": node.get("depth").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": node.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": node.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "offset": producer_asm.and_then(bytecode_offset_from_asm).map(|off| format!("{off:#x}")),
+        "producer_asm": node.pointer("/producer/asm").cloned().unwrap_or(serde_json::Value::Null),
+        "producer_addr": node.pointer("/producer/mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+        "consumer_asm": node.pointer("/consumer/asm").cloned().unwrap_or(serde_json::Value::Null),
+        "consumer_class": node.pointer("/consumer/class").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn bytecode_offset_from_asm(asm: &str) -> Option<u64> {
+    let hash = asm.find('#')?;
+    let tail = &asm[hash + 1..];
+    let raw = tail
+        .split(|c: char| c == ']' || c == ',' || c.is_whitespace())
+        .next()
+        .unwrap_or("")
+        .trim();
+    parse_u64_str(raw)
 }
 
 fn local_class(node: &serde_json::Value) -> Option<&str> {

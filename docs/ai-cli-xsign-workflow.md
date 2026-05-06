@@ -632,6 +632,10 @@ for the contributing alphabet indices. The table also carries
 asm, and a `continue_with` hint. An agent can immediately continue with
 `vm-backtree --idx <idx> --reg <reg>` on the operation that produced an index
 component.
+When that continuation reaches VM bytecode reads, `vm-backtree --summary`
+includes `bytecode_operands[]`, a compact list of `x21+#offset` operand reads
+with value and consuming instruction. Use this to lift repeated VM opcode
+templates rather than reading raw terminal nodes.
 
 Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
 fields to line up a traced alphabet index, for example `i2 = 0x18`, with the
