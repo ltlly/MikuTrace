@@ -261,13 +261,22 @@ rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
 
 With `--follow-frontier`, the chain still prefers `upstream.next`. If a step
 stops at a table lookup or ALU row with no direct writer, it chooses a
-non-infrastructure `frontier[]` source register, preferring small values. This
-is useful for Base64-style table lookups: the alphabet byte has no writer, but
-the table index register is usually the dataflow branch to keep chasing. Each
-row records `decision.kind` as `upstream_next`, `frontier_auto`, or `stop`.
-Recognized semantic formulas override the small-value heuristic: `udiv` follows
-the numerator, and `mod255_low_byte` follows the folded input instead of the
-small divisor or quotient.
+non-infrastructure `frontier[]` source register. Recognized semantic formulas
+override generic heuristics: `udiv` follows the numerator,
+`mod255_low_byte` follows the folded input, and `add_small_delta` follows the
+large state value instead of constants such as `1`. Shift/extract operations
+such as `lsl`, `lsr`, `asr`, and `ubfx` follow their first operand, not the
+shift amount. The remaining generic table-lookup case still prefers small
+index-like values. This is useful for Base64-style table lookups: the alphabet
+byte has no writer, but the table index register is usually the dataflow branch
+to keep chasing. Each row records `decision.kind` as `upstream_next`,
+`frontier_auto`, or `stop`.
+
+Pair loads are expanded before backtracking. A row such as
+`ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and
+`x10`, with memory addresses `base+0` and `base+8`. This prevents a chain for
+the second loaded register from incorrectly stopping at the first destination
+or treating the second destination as a source operand.
 
 For ALU merge/split rows, use `vm-backtree` instead of a linear chain:
 
@@ -407,6 +416,17 @@ kind: mod255_low_byte
 This comes from an ARM64 VM sequence where a quotient register is added back to
 the original value, and only the low byte is stored. Treat it as a collapsed
 formula and continue tracing the `input` operand.
+
+Another common VM state pattern is:
+
+```text
+kind: add_small_delta
+result == input + small_delta
+```
+
+Treat this as state advancement and continue tracing `input`. The delta is
+usually an immediate or bytecode-controlled increment, not the source of the
+cryptographic state.
 
 `vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
 non-small formulas that are still semantically important, such as:

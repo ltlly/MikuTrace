@@ -3956,7 +3956,11 @@ fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
 fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
     let local_def = step.get("local_def")?;
     let formula = row_alu_formula(local_def)?;
-    if formula.pointer("/semantic/kind").and_then(|v| v.as_str()) == Some("mod255_low_byte") {
+    if formula
+        .pointer("/semantic/input")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
         let input = formula
             .pointer("/semantic/input")
             .and_then(|v| v.as_str())?;
@@ -3973,6 +3977,23 @@ fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json:
             }
         }
         if let Some(value) = numerator.get("value").and_then(|v| v.as_str()) {
+            return frontier_next_by_value(step, value);
+        }
+    }
+    if matches!(
+        formula.get("op").and_then(|v| v.as_str()),
+        Some("lsl" | "lsr" | "asr" | "ubfx")
+    ) {
+        let input = formula
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())?;
+        if let Some(reg) = input.get("reg").and_then(|v| v.as_str()) {
+            if let Some(next) = frontier_next_by_reg(step, reg) {
+                return Some(next);
+            }
+        }
+        if let Some(value) = input.get("value").and_then(|v| v.as_str()) {
             return frontier_next_by_value(step, value);
         }
     }
@@ -4863,15 +4884,14 @@ async fn vm_backstep_value_on(
         }));
     };
     let source_key = register_value_key(&source_reg);
-    let target_defines_source = row_def_reg_key(target_row).as_deref() == Some(source_key.as_str());
+    let target_defines_source = row_defines_reg(target_row, &source_key);
     let local_def = if target_defines_source {
-        Some(target_row.clone())
+        row_for_def_reg(target_row, &source_key)
     } else {
         rows[..target_pos]
             .iter()
             .rev()
-            .find(|row| row_def_reg_key(row).as_deref() == Some(source_key.as_str()))
-            .cloned()
+            .find_map(|row| row_for_def_reg(row, &source_key))
     };
     let upstream = if let Some(def_row) = local_def.as_ref() {
         upstream_writer_for_def_on(app, def_row, lookback, max_writes).await?
@@ -4890,7 +4910,9 @@ async fn vm_backstep_value_on(
         "idx": idx,
         "source_reg": source_reg,
         "source_value": if target_defines_source {
-            target_row.pointer("/def/value_after").cloned().unwrap_or(serde_json::Value::Null)
+            row_def_entry_for_key(target_row, &source_key)
+                .and_then(|def| def.get("value_after").cloned())
+                .unwrap_or(serde_json::Value::Null)
         } else {
             record_reg_value(target_record, &source_key).cloned().unwrap_or(serde_json::Value::Null)
         },
@@ -4906,6 +4928,42 @@ fn row_def_reg_key(row: &serde_json::Value) -> Option<String> {
         .and_then(|v| v.get("reg"))
         .and_then(|v| v.as_str())
         .map(register_value_key)
+}
+
+fn row_defines_reg(row: &serde_json::Value, reg_key: &str) -> bool {
+    row_def_entry_for_key(row, reg_key).is_some()
+}
+
+fn row_for_def_reg(row: &serde_json::Value, reg_key: &str) -> Option<serde_json::Value> {
+    let def = row_def_entry_for_key(row, reg_key)?;
+    let mut out = row.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("def".to_string(), def.clone());
+        if let Some(mem_addr) = def.get("mem_addr") {
+            obj.insert("mem_addr".to_string(), mem_addr.clone());
+        }
+    }
+    Some(out)
+}
+
+fn row_def_entry_for_key(row: &serde_json::Value, reg_key: &str) -> Option<serde_json::Value> {
+    row.get("defs")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .find(|def| {
+            def.get("reg")
+                .and_then(|v| v.as_str())
+                .map(register_value_key)
+                .as_deref()
+                == Some(reg_key)
+        })
+        .cloned()
+        .or_else(|| {
+            (row_def_reg_key(row).as_deref() == Some(reg_key))
+                .then(|| row.get("def").cloned())
+                .flatten()
+        })
 }
 
 fn backstep_frontier_from_def(def_row: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -4942,22 +5000,8 @@ fn vm_row_from_record(
     let vm_off = vm_ip.and_then(|ip| inferred_base.map(|base| ip.wrapping_sub(base)));
     let vm_slot = vm_slot_from_asm(asm, rec);
     let mem_addr = mem_addr_from_asm(asm, rec);
-    let def = def_reg_from_asm(asm).map(|reg| {
-        let src = def_source_regs_from_asm(asm)
-            .into_iter()
-            .map(|src_reg| {
-                serde_json::json!({
-                    "reg": src_reg,
-                    "value": record_reg_value(rec, &src_reg).cloned().unwrap_or(serde_json::Value::Null),
-                })
-            })
-            .collect::<Vec<_>>();
-        serde_json::json!({
-            "reg": reg,
-            "src": src,
-            "value_after": next.and_then(|next| record_reg_value(next, &reg).cloned()).unwrap_or(serde_json::Value::Null),
-        })
-    });
+    let defs = def_entries_from_asm(asm, rec, next, mem_addr);
+    let def = defs.first().cloned();
     let store_src = store_source_regs_from_asm(asm)
         .into_iter()
         .map(|reg| {
@@ -4974,6 +5018,7 @@ fn vm_row_from_record(
         "asm": asm,
         "class": class,
         "def": def,
+        "defs": defs,
         "store_src": store_src,
         "vm_ip": vm_ip.map(|v| format!("{v:#x}")),
         "vm_off": vm_off.map(|v| format!("{v:#x}")),
@@ -4981,6 +5026,59 @@ fn vm_row_from_record(
         "mem_addr": mem_addr.map(|v| format!("{v:#x}")),
         "regs": rec.get("regs").cloned().unwrap_or_else(|| serde_json::json!({})),
     })
+}
+
+fn def_entries_from_asm(
+    asm: &str,
+    rec: &serde_json::Value,
+    next: Option<&serde_json::Value>,
+    mem_addr: Option<u64>,
+) -> Vec<serde_json::Value> {
+    if let Some(dest_regs) = pair_load_dest_regs_from_asm(asm) {
+        let src = memory_source_regs_from_asm(asm)
+            .into_iter()
+            .map(|src_reg| {
+                serde_json::json!({
+                    "reg": src_reg,
+                    "value": record_reg_value(rec, &src_reg).cloned().unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut offset = 0u64;
+        return dest_regs
+            .into_iter()
+            .map(|reg| {
+                let width = register_load_width(&reg);
+                let entry = serde_json::json!({
+                    "reg": reg.clone(),
+                    "src": src.clone(),
+                    "value_after": next.and_then(|next| record_reg_value(next, &reg).cloned()).unwrap_or(serde_json::Value::Null),
+                    "mem_addr": mem_addr.map(|addr| format!("{:#x}", addr.wrapping_add(offset))),
+                });
+                offset = offset.saturating_add(width);
+                entry
+            })
+            .collect();
+    }
+    def_reg_from_asm(asm)
+        .map(|reg| {
+            let src = def_source_regs_from_asm(asm)
+                .into_iter()
+                .map(|src_reg| {
+                    serde_json::json!({
+                        "reg": src_reg,
+                        "value": record_reg_value(rec, &src_reg).cloned().unwrap_or(serde_json::Value::Null),
+                    })
+                })
+                .collect::<Vec<_>>();
+            vec![serde_json::json!({
+                "reg": reg.clone(),
+                "src": src,
+                "value_after": next.and_then(|next| record_reg_value(next, &reg).cloned()).unwrap_or(serde_json::Value::Null),
+                "mem_addr": mem_addr.map(|addr| format!("{addr:#x}")),
+            })]
+        })
+        .unwrap_or_default()
 }
 
 fn vm_ops_from_rows(rows: &[serde_json::Value]) -> Vec<serde_json::Value> {
@@ -5710,7 +5808,10 @@ fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<
     let result = parse_u64_str(result)?;
     let lhs = parse_u64_str(&values[0])?;
     let rhs = parse_u64_str(&values[1])?;
-    mod255_fold_semantic(lhs, rhs, result).or_else(|| mod255_fold_semantic(rhs, lhs, result))
+    mod255_fold_semantic(lhs, rhs, result)
+        .or_else(|| mod255_fold_semantic(rhs, lhs, result))
+        .or_else(|| add_small_delta_semantic(lhs, rhs, result))
+        .or_else(|| add_small_delta_semantic(rhs, lhs, result))
 }
 
 fn mod255_fold_semantic(input: u64, quotient: u64, result: u64) -> Option<serde_json::Value> {
@@ -5730,6 +5831,19 @@ fn mod255_fold_semantic(input: u64, quotient: u64, result: u64) -> Option<serde_
         "result": format!("{result:#x}"),
         "output_byte": format!("{output_byte:#x}"),
         "expression": "(input + input / 0xff) & 0xff == input % 0xff",
+    }))
+}
+
+fn add_small_delta_semantic(input: u64, delta: u64, result: u64) -> Option<serde_json::Value> {
+    if delta > 0xfff || input <= 0xfff || input.wrapping_add(delta) != result {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "add_small_delta",
+        "input": format!("{input:#x}"),
+        "delta": format!("{delta:#x}"),
+        "result": format!("{result:#x}"),
+        "expression": "result == input + small_delta",
     }))
 }
 
@@ -5787,7 +5901,12 @@ fn classify_vm_asm(asm: &str) -> &'static str {
     if asm.starts_with("str ") || asm.starts_with("stp ") {
         return "mem-store";
     }
-    if asm.starts_with("ldr ") || asm.starts_with("ldrsw ") {
+    if asm.starts_with("ldr ")
+        || asm.starts_with("ldrsw ")
+        || asm.starts_with("ldp ")
+        || asm.starts_with("ldnp ")
+        || asm.starts_with("ldpsw ")
+    {
         return "mem-load";
     }
     if is_alu_mnemonic(asm.split_whitespace().next().unwrap_or("")) {
@@ -5893,8 +6012,26 @@ fn def_reg_from_asm(asm: &str) -> Option<String> {
         .and_then(|op| first_register_token(op))
 }
 
+fn pair_load_dest_regs_from_asm(asm: &str) -> Option<Vec<String>> {
+    let asm = asm.trim();
+    let mut parts = asm.splitn(2, char::is_whitespace);
+    let mnemonic = parts.next()?.to_ascii_lowercase();
+    if !matches!(mnemonic.as_str(), "ldp" | "ldnp" | "ldpsw") {
+        return None;
+    }
+    let regs = split_operands(parts.next()?)
+        .into_iter()
+        .take(2)
+        .filter_map(|op| first_register_token(&op))
+        .collect::<Vec<_>>();
+    (regs.len() == 2).then_some(regs)
+}
+
 fn def_source_regs_from_asm(asm: &str) -> Vec<String> {
     let asm = asm.trim();
+    if pair_load_dest_regs_from_asm(asm).is_some() {
+        return memory_source_regs_from_asm(asm);
+    }
     let Some((_, operands)) = asm.split_once(char::is_whitespace) else {
         return Vec::new();
     };
@@ -5903,6 +6040,15 @@ fn def_source_regs_from_asm(asm: &str) -> Vec<String> {
         .into_iter()
         .skip(1)
         .flat_map(|op| register_tokens(&op))
+        .filter(|reg| seen.insert(register_value_key(reg)))
+        .collect()
+}
+
+fn memory_source_regs_from_asm(asm: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    bracket_registers(&asm.to_ascii_lowercase())
+        .unwrap_or_default()
+        .into_iter()
         .filter(|reg| seen.insert(register_value_key(reg)))
         .collect()
 }
@@ -5937,7 +6083,11 @@ fn memory_access_width(asm: &str) -> u64 {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    if mnemonic.ends_with('b') {
+    if matches!(mnemonic.as_str(), "ldp" | "ldnp" | "ldpsw") {
+        pair_load_dest_regs_from_asm(asm)
+            .and_then(|regs| regs.first().map(|reg| register_load_width(reg)))
+            .unwrap_or(8)
+    } else if mnemonic.ends_with('b') {
         1
     } else if mnemonic.ends_with('h') {
         2
@@ -5950,6 +6100,14 @@ fn memory_access_width(asm: &str) -> u64 {
         } else {
             8
         }
+    }
+}
+
+fn register_load_width(reg: &str) -> u64 {
+    if reg.starts_with('w') {
+        4
+    } else {
+        8
     }
 }
 
@@ -6449,8 +6607,8 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
-        def_source_regs_from_asm, mem_addr_from_asm, memory_access_width, recognize_alu_semantic,
-        store_source_regs_from_asm, vm_slot_from_asm,
+        def_entries_from_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
+        recognize_alu_semantic, store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -6478,6 +6636,7 @@ mod tests {
             }
         });
         assert_eq!(classify_vm_asm("ldr x4, [x25, x19, lsl #3]"), "vm-reg-load");
+        assert_eq!(classify_vm_asm("ldp x9, x10, [x25, #0xc0]"), "mem-load");
         assert_eq!(
             mem_addr_from_asm("ldr x4, [x25, x19, lsl #3]", &record),
             Some(0x10c8)
@@ -6499,6 +6658,7 @@ mod tests {
         assert_eq!(memory_access_width("ldr w16, [x8, x20]"), 4);
         assert_eq!(memory_access_width("ldrsw x4, [x21, #0x18]"), 4);
         assert_eq!(memory_access_width("ldr x4, [x25, x19, lsl #3]"), 8);
+        assert_eq!(memory_access_width("ldp x9, x10, [x25, #0xc0]"), 8);
     }
 
     #[test]
@@ -6511,7 +6671,35 @@ mod tests {
             def_source_regs_from_asm("ldrb w1, [x0, x4]"),
             vec!["x0", "x4"]
         );
+        assert_eq!(
+            def_source_regs_from_asm("ldp x9, x10, [x25, #0xc0]"),
+            vec!["x25"]
+        );
         assert_eq!(def_source_regs_from_asm("lsl x5, x3, #3"), vec!["x3"]);
+    }
+
+    #[test]
+    fn expands_pair_load_defs() {
+        let rec = serde_json::json!({
+            "regs": {
+                "x25": "0x1000"
+            }
+        });
+        let next = serde_json::json!({
+            "regs": {
+                "x9": "0x1111",
+                "x10": "0x2222"
+            }
+        });
+        let defs =
+            def_entries_from_asm("ldp x9, x10, [x25, #0xc0]", &rec, Some(&next), Some(0x10c0));
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0]["reg"], serde_json::json!("x9"));
+        assert_eq!(defs[0]["value_after"], serde_json::json!("0x1111"));
+        assert_eq!(defs[0]["mem_addr"], serde_json::json!("0x10c0"));
+        assert_eq!(defs[1]["reg"], serde_json::json!("x10"));
+        assert_eq!(defs[1]["value_after"], serde_json::json!("0x2222"));
+        assert_eq!(defs[1]["mem_addr"], serde_json::json!("0x10c8"));
     }
 
     #[test]
@@ -6552,6 +6740,14 @@ mod tests {
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("mod255_low_byte"));
         assert_eq!(semantic["output_byte"], serde_json::json!("0x62"));
+        let semantic = recognize_alu_semantic(
+            "add x5, x3, x4",
+            "0x99bd5d21d7d8103",
+            &["0x99bd5d21d7d8102".to_string(), "0x1".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("add_small_delta"));
+        assert_eq!(semantic["input"], serde_json::json!("0x99bd5d21d7d8102"));
     }
 
     #[test]
@@ -6614,6 +6810,50 @@ mod tests {
         let next = choose_frontier_next(&folded).unwrap();
         assert_eq!(next["reg"], serde_json::json!("x13"));
         assert_eq!(next["src_value"], serde_json::json!("0x74ffafca73"));
+
+        let shift = serde_json::json!({
+            "local_def": {
+                "asm": "lsr w0, w13, w4",
+                "class": "alu",
+                "def": {
+                    "reg": "w0",
+                    "src": [
+                        {"reg": "w13", "value": "0x69adbccc"},
+                        {"reg": "w4", "value": "0x0"}
+                    ],
+                    "value_after": "0x69adbccc"
+                }
+            },
+            "frontier": [
+                {"idx": 40, "reg": "w13", "value": "0x69adbccc"},
+                {"idx": 40, "reg": "w4", "value": "0x0"}
+            ]
+        });
+        let next = choose_frontier_next(&shift).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("w13"));
+        assert_eq!(next["src_value"], serde_json::json!("0x69adbccc"));
+
+        let add_delta = serde_json::json!({
+            "local_def": {
+                "asm": "add x5, x3, x4",
+                "class": "alu",
+                "def": {
+                    "reg": "x5",
+                    "src": [
+                        {"reg": "x3", "value": "0x99bd5d21d7d8102"},
+                        {"reg": "x4", "value": "0x1"}
+                    ],
+                    "value_after": "0x99bd5d21d7d8103"
+                }
+            },
+            "frontier": [
+                {"idx": 50, "reg": "x3", "value": "0x99bd5d21d7d8102"},
+                {"idx": 50, "reg": "x4", "value": "0x1"}
+            ]
+        });
+        let next = choose_frontier_next(&add_delta).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x3"));
+        assert_eq!(next["src_value"], serde_json::json!("0x99bd5d21d7d8102"));
     }
 
     #[test]

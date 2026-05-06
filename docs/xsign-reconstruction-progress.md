@@ -391,6 +391,44 @@ rust/target/debug/tracemiku-cli vm-backtree <call_dir> \
 0x757524ef = 0x74ffafca73 / 0xff
 ```
 
+The `0x74ffafca73` numerator can now be chased deeper with the linear
+VM helper:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx 13946163 \
+  --reg w13 \
+  --steps 12 \
+  --lookback 1200000 \
+  --follow-frontier \
+  --summary
+```
+
+This smoke run exercises three important CLI capabilities needed for AI-driven
+result-to-input analysis:
+
+```text
+ldp x9, x10, [x25,#0xc0]   expands to separate x9/x10 memory definitions
+lsr w0, w13, w4            follows w13, not the shift register w4
+add x5, x3, x4             recognizes state + 1 as add_small_delta
+```
+
+The resulting chain no longer stops at the pair-load or follows the constant
+`1`; it continues through the larger VM state values:
+
+```text
+0xd35b7999
+<- 0x99bd5d2 + 0xc9bfa3c7
+<- 0x99bd5d21d7d8103 >> 0x20
+<- 0x99bd5d21d7d8102 + 0x1
+<- 0x99bd5d21d7d8102
+```
+
+This is still VM/digest state, not yet the final business input. The value is
+useful because it proves the CLI can keep walking through interpreter register
+loads, pair loads, shifts, and small state increments without manual register
+selection at every row.
+
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
 
