@@ -510,6 +510,34 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
     "unexplained_offsets": [0],
 }
 
+TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
+    "semantic_range": [16, 59],
+    "size": 43,
+    "samples": {
+        "diff_run1_call_001": (
+            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
+            "bfa4f43ba0444a342344c59bc569"
+        ),
+        "diff_run1_call_003": (
+            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
+            "bfa4f43ba0444a342344c59bc569"
+        ),
+        "diff_run1_call_004": (
+            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
+            "bfa4f43ba0444a342344c59bc569"
+        ),
+        "diff_run1_call_005": (
+            "fbe9f26979ecf24141f60193b34b3c510ccc029de339cec2953090237c"
+            "bfa4f43ba0444a342344c59bc569"
+        ),
+    },
+    "interpretation": (
+        "The large middle XOR lhs stream is nearly stable across diff samples; "
+        "prioritize fixed table/salt/VM literal provenance before treating it "
+        "as ASLR-derived pointer noise."
+    ),
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -568,6 +596,31 @@ def xor_lhs_run_result(run: dict) -> bytes:
     lhs = bytes.fromhex(run["lhs_hex"])
     rhs = bytes.fromhex(run["rhs_hex"])
     return bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
+
+
+def bytewise_variations(hex_by_sample: dict[str, str]) -> list[dict]:
+    byte_by_sample = {name: bytes.fromhex(raw) for name, raw in hex_by_sample.items()}
+    lengths = {len(raw) for raw in byte_by_sample.values()}
+    if len(lengths) != 1:
+        return [
+            {
+                "status": "length_mismatch",
+                "lengths": {name: len(raw) for name, raw in byte_by_sample.items()},
+            }
+        ]
+    length = next(iter(lengths))
+    out = []
+    for offset in range(length):
+        values = {raw[offset] for raw in byte_by_sample.values()}
+        if len(values) <= 1:
+            continue
+        out.append(
+            {
+                "offset": offset,
+                "values": {name: f"{raw[offset]:02x}" for name, raw in byte_by_sample.items()},
+            }
+        )
+    return out
 
 
 def aligned_tail(xsign: str) -> bytes:
@@ -703,6 +756,8 @@ def main() -> None:
         and xor_lhs_run_result(run).hex() == run["result_hex"]
         for run in xor_lhs_runs
     )
+    middle_lhs = TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN
+    middle_lhs_variations = bytewise_variations(middle_lhs["samples"])
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -921,6 +976,16 @@ def main() -> None:
                     "Trace the lhs_i stream for the 57 XOR bytes back to the "
                     "VM/hash state; the final x-sign tail itself is no longer opaque."
                 ),
+            },
+            "multi_sample_xor_lhs_middle_run": {
+                "status": "trace_observed_four_diff_samples",
+                "semantic_range": middle_lhs["semantic_range"],
+                "size": middle_lhs["size"],
+                "samples": middle_lhs["samples"],
+                "variation_count": len(middle_lhs_variations),
+                "variations": middle_lhs_variations,
+                "stable_byte_count": middle_lhs["size"] - len(middle_lhs_variations),
+                "interpretation": middle_lhs["interpretation"],
             },
             "multi_sample_mask_folds": {
                 "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",

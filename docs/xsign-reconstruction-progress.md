@@ -307,6 +307,26 @@ contiguous streams:
 [61,65): 3abf0301
 ```
 
+Cross-sample extraction over `call_001`, `call_003`, `call_004`, and `call_005`
+shows that the large middle stream is almost fixed, not ASLR-shaped pointer
+entropy:
+
+```text
+range [16,59), size 43
+call_001/call_003/call_004:
+  fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43ba0444a342344c59bc569
+call_005:
+  fbe9f26979ecf24141f60193b34b3c510ccc029de339cec2953090237cbfa4f43ba0444a342344c59bc569
+only differing run-local offset: 7, 0x95 -> 0x41
+```
+
+This changes the next search priority. The `[16,59)` `lhs` stream is more
+likely a fixed table/salt/VM literal stream with a small sample-dependent
+splice than a heap pointer stream that must be reproduced from ASLR. The
+pointer-looking byte lineage at `0x74b68bb9ec` still matters, but it is now one
+local producer path to explain, not evidence that the whole middle run is
+runtime-address-derived.
+
 So the current trace-proven call_001 tail shape is:
 
 ```text
