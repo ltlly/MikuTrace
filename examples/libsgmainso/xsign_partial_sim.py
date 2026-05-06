@@ -510,6 +510,72 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
     "unexplained_offsets": [0],
 }
 
+TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS = {
+    "command": (
+        "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
+        "--base64-tail-align-prefix AA --base64-tail-drop 1 --semantic-offset 0 "
+        "--semantic-count 8 --index-tree-depth 8 --index-tree-max-nodes 180 "
+        "--lookback 500000 --summary"
+    ),
+    "semantic_range": [0, 8],
+    "semantic_hex": "0a626105d528b91a",
+    "rows": [
+        {
+            "semantic_offset": 0,
+            "value_hex": "0a",
+            "base64_formula": "((i1 & 0x0f) << 4) | (i2 >> 2)",
+            "index_formulas": ["0x0 = 0x0a >> 0x4", "0x29 = 0x28 | 0x1"],
+        },
+        {
+            "semantic_offset": 1,
+            "value_hex": "62",
+            "base64_formula": "((i2 & 0x03) << 6) | i3",
+            "index_formulas": ["0x29 = 0x28 | 0x1", "0x22 = 0x62 & 0x3f"],
+        },
+        {
+            "semantic_offset": 2,
+            "value_hex": "61",
+            "base64_formula": "(i0 << 2) | (i1 >> 4)",
+            "index_formulas": ["0x18 = 0x61 >> 0x2", "0x10 = 0x610 & 0x30"],
+        },
+        {
+            "semantic_offset": 3,
+            "value_hex": "05",
+            "base64_formula": "((i1 & 0x0f) << 4) | (i2 >> 2)",
+            "index_formulas": ["0x10 = 0x610 & 0x30", "0x17 = 0x14 | 0x3"],
+        },
+        {
+            "semantic_offset": 4,
+            "value_hex": "d5",
+            "base64_formula": "((i2 & 0x03) << 6) | i3",
+            "index_formulas": ["0x17 = 0x14 | 0x3", "0x15 = 0xd5 & 0x3f"],
+        },
+        {
+            "semantic_offset": 5,
+            "value_hex": "28",
+            "base64_formula": "(i0 << 2) | (i1 >> 4)",
+            "index_formulas": ["0x0a = 0x28 >> 0x2", "0x0b = 0xb9 >> 0x4"],
+        },
+        {
+            "semantic_offset": 6,
+            "value_hex": "b9",
+            "base64_formula": "((i1 & 0x0f) << 4) | (i2 >> 2)",
+            "index_formulas": ["0x0b = 0xb9 >> 0x4", "0x24 = 0x2e4 & 0x3c"],
+        },
+        {
+            "semantic_offset": 7,
+            "value_hex": "1a",
+            "base64_formula": "((i2 & 0x03) << 6) | i3",
+            "index_formulas": ["0x24 = 0x2e4 & 0x3c", "0x1a = 0x1a & 0x3f"],
+        },
+    ],
+    "interpretation": (
+        "These rows prove the late Base64 index layer for semantic tail bytes "
+        "0..7. They are still bit slicing over scratch bytes, not yet proof "
+        "that those scratch bytes are final business inputs."
+    ),
+}
+
 TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
     "semantic_range": [16, 59],
     "size": 43,
@@ -966,6 +1032,13 @@ def main() -> None:
             "reconstructed_offsets": [item["semantic_offset"] for item in TRACE_TAIL_XOR_EQUATIONS],
             "reconstructed_prefix_0_7_hex": bytes(xor_reconstructed).hex(),
             "matches_semantic_prefix_0_7": bytes(xor_reconstructed) == semantic[:7],
+            "base64_payload_prefix_formulas": {
+                **TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS,
+                "matches_semantic_tail_prefix": bytes.fromhex(
+                    TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS["semantic_hex"]
+                )
+                == semantic[:8],
+            },
             "multi_sample_word_template": {
                 "formula": "tail[3:7] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]",
                 "samples": xor_word_samples,
