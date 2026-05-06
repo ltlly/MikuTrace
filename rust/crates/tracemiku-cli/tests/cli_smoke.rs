@@ -722,6 +722,48 @@ fn output_map_defaults_to_earliest_generation_hit() {
 }
 
 #[test]
+fn output_map_can_group_aligned_base64_tail() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixed = "azYBCM007xAA";
+    let tail = &STANDARD.encode([0x00, 0x0a, 0x62, 0x61, 0x05])[2..];
+    let cd = make_diff_trace_value(tmp.path(), "run1", &format!("{fixed}{tail}"));
+    let v = run_json(&[
+        "output-map".into(),
+        cd.display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--max-mem-hits".into(),
+        "0".into(),
+        "--base64-tail-start".into(),
+        fixed.len().to_string(),
+        "--base64-tail-align-prefix".into(),
+        "AA".into(),
+        "--base64-tail-drop".into(),
+        "1".into(),
+        "--groups".into(),
+        "2".into(),
+        "--summary".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["base64_context"]["mode"], "aligned_tail");
+    assert_eq!(v["base64_context"]["semantic_drop_bytes"], 1);
+    assert_eq!(v["groups"][0]["chars"], "AApi");
+    assert_eq!(v["groups"][0]["original_output_start"], fixed.len());
+    assert_eq!(v["groups"][0]["original_output_end"], fixed.len() + 2);
+    assert_eq!(
+        v["groups"][0]["decoded_payload"][0]["dropped_by_alignment"],
+        true
+    );
+    assert_eq!(v["groups"][0]["decoded_payload"][1]["semantic_offset"], 0);
+    assert_eq!(v["groups"][0]["decoded_payload"][1]["value_hex"], "0a");
+    assert_eq!(v["groups"][0]["decoded_payload"][2]["semantic_offset"], 1);
+    assert_eq!(v["groups"][0]["decoded_payload"][2]["value_hex"], "62");
+    assert_eq!(v["groups"][1]["chars"], "YQU=");
+    assert_eq!(v["groups"][1]["decoded_payload"][0]["semantic_offset"], 2);
+    assert_eq!(v["groups"][1]["decoded_payload"][0]["value_hex"], "61");
+}
+
+#[test]
 fn vm_backtree_branches_word_load_to_byte_writers() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");

@@ -68,6 +68,26 @@ buffer shape currently observed in the trace. The traceable scratch bytes for
 the first variable group are `0x0a, 0x62, 0x61, ...`, not the whole-string
 decoded bytes `a6 26 10`.
 
+Aligned-tail `output-map` form:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --group-start 0 \
+  --groups 2 \
+  --tree-depth 8 \
+  --index-tree-depth 8 \
+  --tree-frontier-with-next \
+  --summary
+```
+
+For `call_001`, this maps aligned group `0` to `AApi`, where decoded byte
+offset `0` is synthetic/dropped, semantic offsets `0` and `1` are `0x0a` and
+`0x62`; aligned group `1` starts semantic offsets `2..4` as `0x61 0x05 0xd5`.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 One copy-like structural invariant does hold:

@@ -708,6 +708,15 @@ enum Cmd {
         /// Do not percent-decode the textual output before Base64 grouping.
         #[arg(long = "no-url-decode")]
         no_url_decode: bool,
+        /// Analyze a Base64 tail beginning at this output character offset.
+        #[arg(long)]
+        base64_tail_start: Option<usize>,
+        /// Base64 characters to prepend before grouping the tail, for alignment.
+        #[arg(long, default_value = "")]
+        base64_tail_align_prefix: String,
+        /// Drop this many decoded bytes from the aligned tail before assigning semantic offsets.
+        #[arg(long, default_value_t = 0)]
+        base64_tail_drop: usize,
         /// Emit a compact AI-readable summary.
         #[arg(long)]
         summary: bool,
@@ -1641,6 +1650,9 @@ async fn main() -> anyhow::Result<()> {
             tree_frontier_with_next,
             lookback,
             no_url_decode,
+            base64_tail_start,
+            base64_tail_align_prefix,
+            base64_tail_drop,
             summary,
         }) => {
             let opts = OutputMapOpts {
@@ -1659,6 +1671,9 @@ async fn main() -> anyhow::Result<()> {
                 tree_frontier_with_next,
                 lookback,
                 url_decode: !no_url_decode,
+                base64_tail_start,
+                base64_tail_align_prefix,
+                base64_tail_drop,
                 summary,
             };
             cmd_output_map(trace_dir, opts).await
@@ -2800,6 +2815,9 @@ struct OutputMapOpts {
     tree_frontier_with_next: bool,
     lookback: usize,
     url_decode: bool,
+    base64_tail_start: Option<usize>,
+    base64_tail_align_prefix: String,
+    base64_tail_drop: usize,
     summary: bool,
 }
 
@@ -3047,6 +3065,24 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
     } else {
         source_text.to_string()
     };
+    let base64_context = base64_output_context(&mapped_text, &opts)?;
+    let grouped_text = base64_context
+        .get("grouped_text")
+        .and_then(|v| v.as_str())
+        .unwrap_or(mapped_text.as_str())
+        .to_string();
+    let align_prefix_len = base64_context
+        .get("align_prefix_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let tail_start = base64_context
+        .get("tail_start_chars")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
+    let semantic_drop = base64_context
+        .get("semantic_drop_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let find = if opts.max_mem_hits > 0 {
         let params = vec![
             ("bytes_hex", bytes_to_hex(&source.primary_bytes)),
@@ -3086,7 +3122,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         }
     }
 
-    let group_total = mapped_text.len().div_ceil(4);
+    let group_total = grouped_text.len().div_ceil(4);
     let group_end = if opts.groups == 0 {
         group_total
     } else {
@@ -3097,11 +3133,17 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
     let mut group_rows = Vec::new();
     for group_idx in opts.group_start.min(group_total)..group_end {
         let start = group_idx * 4;
-        let end = (start + 4).min(mapped_text.len());
-        let chars = &mapped_text[start..end];
+        let end = (start + 4).min(grouped_text.len());
+        let chars = &grouped_text[start..end];
         let decoded = base64_decoded_bytes(chars).unwrap_or_default();
         let base64 = base64_group_analysis(chars);
-        let runs = output_runs_overlapping(&app, &writer_runs, start, end).await?;
+        let original_range =
+            original_output_range_for_group(start, end, tail_start, align_prefix_len);
+        let runs = if let Some((orig_start, orig_end)) = original_range {
+            output_runs_overlapping(&app, &writer_runs, orig_start, orig_end).await?
+        } else {
+            Vec::new()
+        };
         let mut trees = Vec::new();
         if opts.tree_depth > 0 {
             for run in &runs {
@@ -3149,6 +3191,11 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         group_rows.push(serde_json::json!({
             "group": group_idx,
             "offset": start,
+            "end": end,
+            "original_output_start": original_range.map(|(start, _)| start),
+            "original_output_end": original_range.map(|(_, end)| end),
+            "decoded_offset_base": group_idx.saturating_mul(3),
+            "semantic_drop_bytes": semantic_drop,
             "chars": chars,
             "base64": base64,
             "base64_lookup_matches": lookup_matches,
@@ -3163,6 +3210,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "strategy": "output_base64_group_map",
         "source": source.json,
         "text_len": mapped_text.len(),
+        "base64_context": base64_context,
         "group_total": group_total,
         "selected_hit_order": opts.hit_order.as_str(),
         "selected_hit_rank": opts.hit_rank,
@@ -3182,6 +3230,60 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
     }
 }
 
+fn base64_output_context(
+    mapped_text: &str,
+    opts: &OutputMapOpts,
+) -> anyhow::Result<serde_json::Value> {
+    if let Some(tail_start) = opts.base64_tail_start {
+        let Some(tail) = mapped_text.get(tail_start..) else {
+            bail!("--base64-tail-start is not a valid boundary or is past the output text");
+        };
+        let grouped_text = format!("{}{}", opts.base64_tail_align_prefix, tail);
+        Ok(serde_json::json!({
+            "mode": "aligned_tail",
+            "tail_start_chars": tail_start,
+            "tail_chars": tail.len(),
+            "align_prefix": opts.base64_tail_align_prefix,
+            "align_prefix_chars": opts.base64_tail_align_prefix.len(),
+            "semantic_drop_bytes": opts.base64_tail_drop,
+            "grouped_text_len": grouped_text.len(),
+            "grouped_text": grouped_text,
+        }))
+    } else {
+        Ok(serde_json::json!({
+            "mode": "whole_output",
+            "tail_start_chars": serde_json::Value::Null,
+            "tail_chars": mapped_text.len(),
+            "align_prefix": "",
+            "align_prefix_chars": 0,
+            "semantic_drop_bytes": 0,
+            "grouped_text_len": mapped_text.len(),
+            "grouped_text": mapped_text,
+        }))
+    }
+}
+
+fn original_output_range_for_group(
+    grouped_start: usize,
+    grouped_end: usize,
+    tail_start: Option<usize>,
+    align_prefix_len: usize,
+) -> Option<(usize, usize)> {
+    match tail_start {
+        Some(tail_start) => {
+            if grouped_end <= align_prefix_len {
+                None
+            } else {
+                let start =
+                    tail_start.saturating_add(grouped_start.saturating_sub(align_prefix_len));
+                let end = tail_start.saturating_add(grouped_end.saturating_sub(align_prefix_len));
+                (start < end).then_some((start, end))
+            }
+        }
+        None => Some((grouped_start, grouped_end)),
+    }
+}
+
 fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
     let groups = value
         .get("groups")
@@ -3195,6 +3297,13 @@ fn output_map_summary(value: &serde_json::Value) -> serde_json::Value {
         "strategy": value.get("strategy").cloned().unwrap_or(serde_json::Value::Null),
         "source": value.get("source").cloned().unwrap_or(serde_json::Value::Null),
         "text_len": value.get("text_len").cloned().unwrap_or(serde_json::Value::Null),
+        "base64_context": {
+            "mode": value.pointer("/base64_context/mode").cloned().unwrap_or(serde_json::Value::Null),
+            "tail_start_chars": value.pointer("/base64_context/tail_start_chars").cloned().unwrap_or(serde_json::Value::Null),
+            "align_prefix": value.pointer("/base64_context/align_prefix").cloned().unwrap_or(serde_json::Value::Null),
+            "semantic_drop_bytes": value.pointer("/base64_context/semantic_drop_bytes").cloned().unwrap_or(serde_json::Value::Null),
+            "grouped_text_len": value.pointer("/base64_context/grouped_text_len").cloned().unwrap_or(serde_json::Value::Null),
+        },
         "group_total": value.get("group_total").cloned().unwrap_or(serde_json::Value::Null),
         "selected_hit_order": value.get("selected_hit_order").cloned().unwrap_or(serde_json::Value::Null),
         "selected_hit_rank": value.get("selected_hit_rank").cloned().unwrap_or(serde_json::Value::Null),
@@ -3241,6 +3350,9 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "group": group.get("group").cloned().unwrap_or(serde_json::Value::Null),
         "offset": group.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+        "end": group.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "original_output_start": group.get("original_output_start").cloned().unwrap_or(serde_json::Value::Null),
+        "original_output_end": group.get("original_output_end").cloned().unwrap_or(serde_json::Value::Null),
         "chars": group.get("chars").cloned().unwrap_or(serde_json::Value::Null),
         "decoded_hex": group.get("decoded_hex").cloned().unwrap_or(serde_json::Value::Null),
         "indices": indices,
@@ -3254,7 +3366,14 @@ fn output_map_decoded_payload_summary(
     group: &serde_json::Value,
     lookups: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
-    let group_idx = group.get("group").and_then(|v| v.as_u64()).unwrap_or(0);
+    let decoded_base = group
+        .get("decoded_offset_base")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_else(|| group.get("group").and_then(|v| v.as_u64()).unwrap_or(0) * 3);
+    let semantic_drop = group
+        .get("semantic_drop_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     group
         .pointer("/base64/decoded_bytes")
         .and_then(|v| v.as_array())
@@ -3262,6 +3381,8 @@ fn output_map_decoded_payload_summary(
         .flatten()
         .map(|item| {
             let byte_idx = item.get("byte").and_then(|v| v.as_u64()).unwrap_or(0);
+            let aligned_decoded_offset = decoded_base.saturating_add(byte_idx);
+            let semantic_offset = aligned_decoded_offset.checked_sub(semantic_drop);
             let index_sources = item
                 .get("indices")
                 .and_then(|v| v.as_array())
@@ -3276,7 +3397,10 @@ fn output_map_decoded_payload_summary(
                 })
                 .collect::<Vec<_>>();
             serde_json::json!({
-                "payload_offset": group_idx.saturating_mul(3).saturating_add(byte_idx),
+                "payload_offset": aligned_decoded_offset,
+                "aligned_decoded_offset": aligned_decoded_offset,
+                "semantic_offset": semantic_offset,
+                "dropped_by_alignment": semantic_offset.is_none(),
                 "byte_in_group": byte_idx,
                 "value_hex": item.get("value_hex").cloned().unwrap_or(serde_json::Value::Null),
                 "formula": item.get("formula").cloned().unwrap_or(serde_json::Value::Null),

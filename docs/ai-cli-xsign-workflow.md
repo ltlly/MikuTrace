@@ -395,6 +395,27 @@ rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
 Each pair then includes `base64_tail.semantic_hex`, and the top-level
 `base64_tail_diff` compares that aligned semantic tail across samples.
 
+Use the same alignment parameters with `output-map` when stepping from tail
+bytes back to trace writers:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --group-start 0 \
+  --groups 2 \
+  --tree-depth 8 \
+  --index-tree-depth 8 \
+  --tree-frontier-with-next \
+  --summary
+```
+
+In this mode `group_start` refers to the aligned tail groups. Summary rows keep
+both `aligned_decoded_offset` and `semantic_offset`; bytes before
+`--base64-tail-drop` are marked `dropped_by_alignment`.
+
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory
 edge; with it the report also keeps the `index` register branch, which is the
