@@ -545,6 +545,14 @@ So it is wrong to model the whole lhs stream as a single file timestamp or a
 single static salt. The next lifting step needs to summarize the scratch table
 writers as mixed external fields plus static-table/XOR ladder formulas.
 
+Important correction: `static_memory_load_constant` means "no writer was found
+inside the current lookback window", not proof that no writer exists anywhere
+in the trace. Re-running the same table summary with
+`--vm-chain-lookback 4000000` shows that reads from `0x7599191020+` do have
+earlier traced writers around `#11430997..#11431512`. The truly unresolved
+no-writer-in-window table reads in this probe are the `0x74fbf29xxx` values
+reached by the `ecf29541` run.
+
 The full 16-writer summary over the table is now compact enough for an AI to
 consume directly:
 
@@ -552,8 +560,8 @@ consume directly:
 scratch offsets  bytes      writer       class / first boundary
 0..4             000000fb   #14164352    stat("/") st_mtim boundary
 4..8             e9f26979   #14164406    stat boundary + static byte
-8..12            ecf29541   #14164461    static XOR ladder, 10 static loads
-12..36           f601...3b  #14164504..  static XOR ladder, 0x7599191020+
+8..12            ecf29541   #14164461    no-writer-window table ladder
+12..36           f601...3b  #14164504..  earlier VM-generated ladder values
 36..40           a0444a34   #14164924    text boundary "10.6"
 40..44           2344c59b   #14164979    text boundary "0.10"
 44..52           c569...01  #14165022..  short literal/ladder tail
@@ -563,12 +571,13 @@ Aggregate pattern counts from these 16 chains are:
 
 ```text
 memory_boundary_read        = 4
-static_memory_load_constant = 16
+static_memory_load_constant = 14
 ```
 
 This is the useful split for simulation work: the table is generated, but its
-portable inputs are a mixture of `stat("/")`, static VM constants, a short text
-buffer, and a few literal tail bytes.
+portable inputs are a mixture of `stat("/")`, no-writer-window table reads,
+earlier VM-generated ladder values, a short text buffer, and a few literal tail
+bytes.
 
 The Python reconstruction now uses this split directly:
 

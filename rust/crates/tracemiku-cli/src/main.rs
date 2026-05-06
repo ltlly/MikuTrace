@@ -7696,6 +7696,10 @@ fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_json::Value {
             "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
             "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
             "addr_hi": upstream.get("addr_hi").cloned().unwrap_or(serde_json::Value::Null),
+            "idx_lo": upstream.get("idx_lo").cloned().unwrap_or(serde_json::Value::Null),
+            "idx_hi": upstream.get("idx_hi").cloned().unwrap_or(serde_json::Value::Null),
+            "returned": upstream.get("returned").cloned().unwrap_or(serde_json::Value::Null),
+            "maybe_truncated": upstream.get("maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
             "observed_bytes_hex": upstream.get("observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
             "last_write_matches_observed": upstream.get("last_write_matches_observed").cloned().unwrap_or(serde_json::Value::Null),
             "observed_mismatches": upstream.get("observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -7878,7 +7882,18 @@ fn recognized_backchain_patterns(chain: &[serde_json::Value]) -> Vec<serde_json:
                     "addr": step.pointer("/upstream/addr").cloned().unwrap_or(serde_json::Value::Null),
                     "bytes_hex": bytes_hex,
                     "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
-                    "expression": "value loaded from memory with no prior writer in trace",
+                    "upstream_status": step.pointer("/upstream/status").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx_lo": step.pointer("/upstream/idx_lo").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx_hi": step.pointer("/upstream/idx_hi").cloned().unwrap_or(serde_json::Value::Null),
+                    "returned": step.pointer("/upstream/returned").cloned().unwrap_or(serde_json::Value::Null),
+                    "maybe_truncated": step.pointer("/upstream/maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+                    "source_boundary": if step.pointer("/upstream/idx_lo").and_then(|v| v.as_u64()).unwrap_or(0) > 0 {
+                        "lookback_window"
+                    } else {
+                        "trace_start"
+                    },
+                    "expression": "value loaded from memory with no writer found in current lookback window",
+                    "caution": "Increase --lookback before treating this as a true static/pre-trace constant",
                 }));
             }
         }
@@ -8022,6 +8037,10 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
                         "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
                 "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "idx_lo": upstream.get("idx_lo").cloned().unwrap_or(serde_json::Value::Null),
+                "idx_hi": upstream.get("idx_hi").cloned().unwrap_or(serde_json::Value::Null),
+                "returned": upstream.get("returned").cloned().unwrap_or(serde_json::Value::Null),
+                "maybe_truncated": upstream.get("maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
                 "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
                 "observed_bytes_hex": upstream.get("observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
                 "last_write_matches_observed": upstream.get("last_write_matches_observed").cloned().unwrap_or(serde_json::Value::Null),
@@ -12869,6 +12888,10 @@ mod tests {
             "upstream": {
                 "status": "not_found",
                 "addr": "0x74fbf2dc7c",
+                "idx_lo": 13520349,
+                "idx_hi": 13720349,
+                "returned": 0,
+                "maybe_truncated": false,
                 "observed_bytes_hex": "4201000a"
             }
         })];
@@ -12879,6 +12902,17 @@ mod tests {
             serde_json::json!("static_memory_load_constant")
         );
         assert_eq!(patterns[0]["bytes_hex"], serde_json::json!("4201000a"));
+        assert_eq!(
+            patterns[0]["source_boundary"],
+            serde_json::json!("lookback_window")
+        );
+        assert_eq!(patterns[0]["maybe_truncated"], serde_json::json!(false));
+        assert_eq!(
+            patterns[0]["expression"],
+            serde_json::json!(
+                "value loaded from memory with no writer found in current lookback window"
+            )
+        );
         let summary = recognized_backchain_pattern_summary(&patterns);
         assert_eq!(
             summary["static_memory_loads"][0]["value"],
