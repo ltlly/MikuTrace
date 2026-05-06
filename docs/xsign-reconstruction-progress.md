@@ -176,6 +176,15 @@ keeps chains such as `0x78d84ab4 -> 0xd84ab4 -> 0xd84ab467` on the byte that
 actually produced the observed output byte instead of drifting to a neighboring
 packed-word lane.
 
+`byte-lineage` now uses the same lane discipline for focused memory-byte
+investigations. Starting from `0x74b68bb9ec` before #14688014 in `call_001`,
+the last writer is #14165584 `strb w6, [x16, x2]`, so the next register seed is
+`x6` lane `0`. The chain then follows the matching byte of the VM slot load
+into `x13`, carries lane `0` through `lsr x13, x17, x5`, and correctly lands on
+`x17` lane `2` because the value was shifted right by `0x10` bits. This fixes a
+previous ambiguity where the same byte path stopped at the shift or fell back to
+whole-register provenance.
+
 The current Python partial simulator records the first confirmed lane-aware XOR
 equations:
 

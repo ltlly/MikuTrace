@@ -136,6 +136,26 @@ Semantic frontier selection is lane-aware too: `bitwise_or_merge` follows the
 operand that contributes the selected byte, and `lsl`/`lsr`/`asr`/`ubfx` update
 the source byte lane when the shift/extract is byte-aligned.
 
+For a focused "one byte upward" investigation, use `byte-lineage` from the
+memory byte address consumed by the next layer:
+
+```bash
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
+  --addr <byte_addr> \
+  --before-idx <consumer_idx> \
+  --depth 12 \
+  --summary
+```
+
+`byte-lineage` now preserves the source byte lane after the first last-writer
+lookup. For example, a `strb` writer seeds lane `0`; a byte inside a `str w*`
+writer seeds lane `0..3`; and a byte inside a `str x*` writer seeds lane
+`0..7`. Subsequent memory/VM-slot loads prefer the matching
+`upstream.byte_nexts[]` entry, and semantic ALU frontiers carry lane
+transformations through byte-aligned shifts and extracts. This makes it a
+better CLI primitive for the manual result-to-input workflow than whole-register
+backward taint when the output byte came from a packed word.
+
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly
 from the final JNI string:

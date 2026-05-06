@@ -6543,8 +6543,15 @@ fn compact_tree_node_summary(node: &serde_json::Value) -> serde_json::Value {
 }
 
 enum LineageSeed {
-    AddrBefore { addr: u64, before_idx: usize },
-    RegAt { idx: usize, reg: String },
+    AddrBefore {
+        addr: u64,
+        before_idx: usize,
+    },
+    RegAt {
+        idx: usize,
+        reg: String,
+        byte_lane: Option<usize>,
+    },
 }
 
 impl LineageSeed {
@@ -6555,10 +6562,15 @@ impl LineageSeed {
                 "addr": format!("{addr:#x}"),
                 "before_idx": before_idx,
             }),
-            Self::RegAt { idx, reg } => serde_json::json!({
+            Self::RegAt {
+                idx,
+                reg,
+                byte_lane,
+            } => serde_json::json!({
                 "kind": "reg_at",
                 "idx": idx,
                 "reg": reg,
+                "byte_lane": byte_lane,
             }),
         }
     }
@@ -6592,6 +6604,7 @@ async fn byte_lineage_value_on(
         match seed {
             LineageSeed::AddrBefore { addr, before_idx } => {
                 let write = last_write_of_addr_on(app, addr, before_idx).await?;
+                let source_byte_offset = source_byte_offset_for_write_at(&write, addr);
                 let next_seed = write
                     .get("writer_idx")
                     .and_then(|v| v.as_u64())
@@ -6599,12 +6612,14 @@ async fn byte_lineage_value_on(
                     .map(|(idx, reg)| LineageSeed::RegAt {
                         idx: idx as usize,
                         reg: reg.to_string(),
+                        byte_lane: source_byte_offset.map(|lane| lane as usize),
                     });
                 let next_json = next_seed.as_ref().map(LineageSeed::to_json);
                 steps.push(serde_json::json!({
                     "step": step_idx,
                     "seed": seed_json,
                     "kind": "last_write",
+                    "source_byte_offset": source_byte_offset,
                     "write": write,
                     "next": next_json,
                 }));
@@ -6617,7 +6632,11 @@ async fn byte_lineage_value_on(
                     break;
                 }
             }
-            LineageSeed::RegAt { idx, ref reg } => {
+            LineageSeed::RegAt {
+                idx,
+                ref reg,
+                byte_lane,
+            } => {
                 let backstep = vm_backstep_value_on(
                     app,
                     idx,
@@ -6628,11 +6647,12 @@ async fn byte_lineage_value_on(
                     regs.clone(),
                 )
                 .await?;
-                let (next_seed, decision) = lineage_next_from_backstep(&backstep);
+                let (next_seed, decision) = lineage_next_from_backstep(&backstep, byte_lane);
                 let next_json = next_seed.as_ref().map(LineageSeed::to_json);
                 steps.push(serde_json::json!({
                     "step": step_idx,
                     "seed": seed_json,
+                    "byte_lane": byte_lane,
                     "kind": "reg_source",
                     "backstep": compact_lineage_backstep(&backstep),
                     "decision": decision,
@@ -6677,13 +6697,26 @@ async fn last_write_of_addr_on(
 
 fn lineage_next_from_backstep(
     backstep: &serde_json::Value,
+    current_byte_lane: Option<usize>,
 ) -> (Option<LineageSeed>, serde_json::Value) {
+    if let Some(lane) = current_byte_lane {
+        if let Some(next) = choose_laned_upstream_next(backstep, lane) {
+            return (
+                lineage_seed_from_next(&next, Some(lane)),
+                serde_json::json!({
+                    "kind": "upstream_byte_lane",
+                    "byte_lane": lane,
+                    "next": next,
+                }),
+            );
+        }
+    }
     let upstream_next = backstep
         .get("upstream")
         .and_then(|v| v.get("next"))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    if let Some(seed) = lineage_seed_from_next(&upstream_next) {
+    if let Some(seed) = lineage_seed_from_next(&upstream_next, current_byte_lane) {
         return (
             Some(seed),
             serde_json::json!({
@@ -6700,7 +6733,7 @@ fn lineage_next_from_backstep(
         .unwrap_or_default();
     if byte_nexts.len() == 1 {
         let next = byte_nexts[0].clone();
-        if let Some(seed) = lineage_seed_from_next(&next) {
+        if let Some(seed) = lineage_seed_from_next(&next, current_byte_lane) {
             return (
                 Some(seed),
                 serde_json::json!({
@@ -6720,6 +6753,15 @@ fn lineage_next_from_backstep(
             }),
         );
     }
+    if let Some(frontier_next) = choose_frontier_next_for_lane(backstep, current_byte_lane) {
+        return (
+            lineage_seed_from_next(&frontier_next, current_byte_lane),
+            serde_json::json!({
+                "kind": "frontier_auto",
+                "next": frontier_next,
+            }),
+        );
+    }
     (
         None,
         serde_json::json!({
@@ -6730,10 +6772,22 @@ fn lineage_next_from_backstep(
     )
 }
 
-fn lineage_seed_from_next(next: &serde_json::Value) -> Option<LineageSeed> {
+fn lineage_seed_from_next(
+    next: &serde_json::Value,
+    fallback_byte_lane: Option<usize>,
+) -> Option<LineageSeed> {
     let idx = next.get("idx")?.as_u64()? as usize;
     let reg = next.get("reg")?.as_str()?.to_string();
-    Some(LineageSeed::RegAt { idx, reg })
+    let byte_lane = next
+        .get("source_byte_offset")
+        .and_then(|v| v.as_u64())
+        .map(|lane| lane as usize)
+        .or(fallback_byte_lane);
+    Some(LineageSeed::RegAt {
+        idx,
+        reg,
+        byte_lane,
+    })
 }
 
 fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_json::Value {
@@ -6918,6 +6972,7 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
             serde_json::json!({
                 "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": "last_write",
+                "source_byte_offset": step.get("source_byte_offset").cloned().unwrap_or(serde_json::Value::Null),
                 "addr": write.get("addr").cloned().unwrap_or(serde_json::Value::Null),
                 "writer_idx": write.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
                 "func": write.get("func").cloned().unwrap_or(serde_json::Value::Null),
@@ -7016,6 +7071,8 @@ fn compact_lineage_byte_nexts(nexts: Option<&serde_json::Value>) -> serde_json::
                 "addr": next.get("addr").cloned().unwrap_or(serde_json::Value::Null),
                 "offset": next.get("offset").cloned().unwrap_or(serde_json::Value::Null),
                 "offsets": offsets,
+                "source_byte_offset": next.get("source_byte_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "source_byte_offsets": next.get("source_byte_offsets").cloned().unwrap_or_else(|| serde_json::json!([])),
                 "reason": next.get("reason").cloned().unwrap_or(serde_json::Value::Null),
             })
         })
@@ -9824,11 +9881,12 @@ mod tests {
         byte_writer_map_output, byte_writers_from_range_writes, choose_frontier_next,
         choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
         dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm, find_hex_byte_offsets,
-        mem_addr_from_asm, memory_access_width, odd_u64_inverse, output_semantic_byte_equation,
-        output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
-        output_semantic_xor_word_templates, recognize_alu_semantic, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
-        store_source_regs_from_asm, vm_ops_state_updates, vm_slot_from_asm,
+        lineage_next_from_backstep, mem_addr_from_asm, memory_access_width, odd_u64_inverse,
+        output_semantic_byte_equation, output_semantic_byte_equation_summary,
+        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
+        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        vm_ops_state_updates, vm_slot_from_asm,
     };
 
     #[test]
@@ -10763,6 +10821,81 @@ mod tests {
         assert_eq!(lane3["selected_byte_lane"], serde_json::json!(3));
         assert_eq!(lane3["source_byte_offset"], serde_json::json!(3));
         assert_eq!(lane3["addr"], serde_json::json!("0x4003"));
+    }
+
+    #[test]
+    fn lineage_prefers_matching_byte_lane_from_upstream_writers() {
+        let write = serde_json::json!({
+            "idx": 120,
+            "pc": "0x1004",
+            "rel": "0x4",
+            "func": "sub_pack",
+            "asm": "str w16, [x2]",
+            "dst_addr": "0x4000",
+            "size": 4,
+            "src_reg": "x16",
+            "src_value": "0xd528b905",
+            "byte0": 5
+        });
+        let byte_writers = byte_writers_from_range_writes(0x4000, 4, &[write]);
+        let backstep = serde_json::json!({
+            "upstream": {
+                "next": {
+                    "idx": 120,
+                    "reg": "x16",
+                    "src_value": "0xd528b905"
+                },
+                "byte_nexts": dedupe_byte_nexts(&byte_writers)
+            }
+        });
+        let (seed, decision) = lineage_next_from_backstep(&backstep, Some(2));
+        let seed = seed.unwrap().to_json();
+        assert_eq!(decision["kind"], serde_json::json!("upstream_byte_lane"));
+        assert_eq!(seed["idx"], serde_json::json!(120));
+        assert_eq!(seed["reg"], serde_json::json!("x16"));
+        assert_eq!(seed["byte_lane"], serde_json::json!(2));
+        assert_eq!(decision["next"]["addr"], serde_json::json!("0x4002"));
+    }
+
+    #[test]
+    fn lineage_uses_byte_lane_when_following_shift_frontier() {
+        let backstep = serde_json::json!({
+            "local_def": {
+                "idx": 14165576,
+                "asm": "lsr x13, x17, x5",
+                "class": "alu",
+                "def": {
+                    "reg": "x13",
+                    "src": [
+                        {"reg": "x17", "value": "0x74b68bbdff"},
+                        {"reg": "x5", "value": "0x10"}
+                    ],
+                    "value_after": "0x74b68b"
+                }
+            },
+            "upstream": {
+                "status": "not_memory_backed"
+            },
+            "frontier": [
+                {
+                    "idx": 14165576,
+                    "reason": "local_def_source_reg",
+                    "reg": "x17",
+                    "value": "0x74b68bbdff"
+                },
+                {
+                    "idx": 14165576,
+                    "reason": "local_def_source_reg",
+                    "reg": "x5",
+                    "value": "0x10"
+                }
+            ]
+        });
+        let (seed, decision) = lineage_next_from_backstep(&backstep, Some(0));
+        let seed = seed.unwrap().to_json();
+        assert_eq!(decision["kind"], serde_json::json!("frontier_auto"));
+        assert_eq!(seed["reg"], serde_json::json!("x17"));
+        assert_eq!(seed["byte_lane"], serde_json::json!(2));
     }
 
     #[test]
