@@ -561,6 +561,24 @@ instead of looking like a complete proof.
 `vm-ops --summary` now also exposes `effects[]`, which condenses VM slot writes,
 memory stores, and control updates into short pseudocode rows for AI lifting.
 
+A recent `vm-ops --summary` probe shows why this matters for VM lifting. Around
+`#10616026`, the compact effect is:
+
+```text
+slot[18] = byte[0x753ddd7fdc] (0x7a)
+inputs: slot24 = 0x753ddd7fd0, slot25 = 0xc
+```
+
+Dumping `0x753ddd7fd0` at the consuming cursor shows the observed string-like
+buffer `QfYBk7NLPEMz...`, so offset `0xc` is byte `0x7a` (`z`). A plain latest
+writer map for that byte is not enough here: the latest traced write stores
+`0x00`, while the later read observes `0x7a`. `vm-backchain --follow-frontier`
+therefore marks this as `observed_read_without_matching_traced_write` and adds
+gap-call candidates, with the strongest current candidate at `#10612864`
+calling `libsgmainso+0x163928` over the same buffer span. Treat this as a
+trace-coverage/helper-call boundary until that helper is lifted or traced more
+deeply.
+
 The full 16-writer summary over the table is now compact enough for an AI to
 consume directly:
 

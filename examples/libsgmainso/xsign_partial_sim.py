@@ -18,6 +18,8 @@ pieces that have been proven from local libsgmainso traces:
   repeat across samples, but call_001 trace evidence shows the tail copy
   candidate is re-encoded from VM scratch bytes, not yet proven as a direct
   string memcpy.
+- one VM byte-load boundary now explains slot[18] = byte[0x753ddd7fdc]
+  (0x7a), but the producing helper call is not lifted yet.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -944,6 +946,55 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
     ],
 }
 
+TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
+    {
+        "status": "trace_boundary_one_sample",
+        "command": (
+            "tracemiku-cli vm-ops <call_dir> --start 10616026 --count 15 "
+            "--max-ops 1 --summary"
+        ),
+        "effect": "slot[18] = byte[0x753ddd7fdc] (0x7a)",
+        "consumer_idx": 10616034,
+        "consumer_asm": "ldrb w3, [x4, x20]",
+        "buffer_addr": "0x753ddd7fd0",
+        "byte_offset": 12,
+        "byte_addr": "0x753ddd7fdc",
+        "byte_value": "0x7a",
+        "ascii": "z",
+        "buffer_preview_ascii": "QfYBk7NLPEMz",
+        "upstream_status": "observed_read_without_matching_traced_write",
+        "latest_traced_writer": {
+            "idx": 10591494,
+            "asm": "str w16, [x2,x5]",
+            "byte_value": "0x00",
+        },
+        "gap_call_candidates": [
+            {
+                "idx": 10612864,
+                "target": "libsgmainso+0x163928",
+                "score": 60,
+                "span": {
+                    "base_reg": "x3",
+                    "base": "0x753ddd7fd0",
+                    "len_reg": "x2",
+                    "len": "0x19",
+                    "offset": "0xc",
+                },
+            },
+            {
+                "idx": 10612910,
+                "target": "libsgmainso+0x163944",
+                "score": 20,
+            },
+        ],
+        "interpretation": (
+            "The byte consumed by the VM is observed in memory, but the latest "
+            "traced writer does not match it. Treat this as an unlifted helper "
+            "or trace coverage boundary, not as a static byte."
+        ),
+    }
+]
+
 TRACE_CALL001_WORD_SOURCE_CLASSES = [
     {
         "semantic_range": [3, 7],
@@ -1734,6 +1785,7 @@ def main() -> None:
             },
             "xor_word_source_coverage": TRACE_XOR_WORD_SOURCE_COVERAGE,
             "scratch_table_writer_chain_summary": TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY,
+            "vm_byte_load_boundaries": TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES,
             "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,
             "multi_sample_mask_folds": {
                 "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",

@@ -46,6 +46,28 @@ rust/target/debug/tracemiku-cli --help
 rust/target/debug/tracemiku-cli taint-bwd --help
 ```
 
+## VM command scope
+
+The VM-oriented commands are generic trace-analysis helpers, not
+`libsgmainso`-specific lifters. They work by recognizing dynamic execution
+shapes that often appear in obfuscated ARM64 interpreters:
+
+- repeated slot-table loads and stores through a stable base register;
+- bytecode or immediate reads from a moving instruction pointer;
+- dispatch branches and handler transitions;
+- byte and word memory loads that feed VM slots;
+- native ALU formulas whose values are later written back to slots or scratch
+  memory.
+
+This covers many OLLVM-style opcode switch VMs, flattened switch/case handlers,
+and nested-if dispatchers when the trace exposes the slot table, bytecode
+pointer, and writes. It is deliberately not a complete VMProtect-style static
+devirtualizer. Encrypted opcodes, register-only VMs, self-modifying handlers,
+or helpers that produce buffers in untraced calls still show up as boundaries.
+In those cases the right output is a precise frontier such as
+`bytecode-read`, `observed_read_without_matching_traced_write`, or
+`no_upstream_next_or_frontier`, not a guessed algorithm.
+
 ## Output-to-writer path
 
 Convert the known signature or byte sequence to hex, then search memory:
