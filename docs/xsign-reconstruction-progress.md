@@ -341,6 +341,10 @@ That path reaches the 64-bit LCG recurrence already seen elsewhere:
 next states   = state * 0x5851f42d4c957f2d + 1 mod 2^64
 ```
 
+The CLI now also surfaces this directly as
+`recognized_pattern_summary.affine_mod64_recurrences[]`, grouping the seven
+observed transitions by multiplier and delta.
+
 The same summary now compresses the 57 XOR left-hand bytes into three
 contiguous streams:
 
