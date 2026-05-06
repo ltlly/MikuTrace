@@ -4197,9 +4197,17 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .as_array()
         .map(|templates| templates.len())
         .unwrap_or(0);
-    let xor_word_state_sources = output_semantic_xor_word_state_sources(value, &xor_word_templates);
-    let xor_word_state_source_summary =
-        output_semantic_xor_word_state_source_summary(&xor_word_templates, &xor_word_state_sources);
+    let xor_word_run_templates = output_semantic_xor_word_run_templates(&byte_equations);
+    let xor_word_run_template_count = xor_word_run_templates
+        .as_array()
+        .map(|templates| templates.len())
+        .unwrap_or(0);
+    let xor_word_state_sources =
+        output_semantic_xor_word_state_sources(value, &xor_word_run_templates);
+    let xor_word_state_source_summary = output_semantic_xor_word_state_source_summary(
+        &xor_word_run_templates,
+        &xor_word_state_sources,
+    );
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_context": value.get("semantic_context").cloned().unwrap_or(serde_json::Value::Null),
@@ -4220,6 +4228,8 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "byte_equations": byte_equations,
         "xor_word_template_count": xor_word_template_count,
         "xor_word_templates": xor_word_templates,
+        "xor_word_run_template_count": xor_word_run_template_count,
+        "xor_word_run_templates": xor_word_run_templates,
         "xor_word_state_source_summary": xor_word_state_source_summary,
         "xor_word_state_sources": xor_word_state_sources,
         "vm_chains": output_semantic_vm_chain_summaries(value),
@@ -4759,6 +4769,24 @@ fn output_semantic_xor_word_templates(equations: &serde_json::Value) -> serde_js
         }
     }
     serde_json::Value::Array(templates)
+}
+
+fn output_semantic_xor_word_run_templates(equations: &serde_json::Value) -> serde_json::Value {
+    let mut parsed = equations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(compact_byte_equation)
+        .collect::<Vec<_>>();
+    parsed.sort_by_key(|item| item.offset);
+    let chunks = semantic_xor_lhs_run_chunks(&parsed)
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| item.get("kind").and_then(|v| v.as_str()) == Some("word32"))
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(chunks)
 }
 
 fn compact_byte_equation(value: &serde_json::Value) -> Option<CompactByteEquation> {
@@ -11419,12 +11447,13 @@ mod tests {
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
-        output_semantic_byte_equation_summary, output_semantic_xor_word_state_source_summary,
-        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
-        parse_nm_symbol_line, recognize_alu_semantic, recognized_backchain_pattern_summary,
-        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
+        output_semantic_xor_word_state_source_summary, output_semantic_xor_word_state_sources,
+        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
+        recognized_backchain_pattern_summary, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
+        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_ops_state_updates,
+        vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -12196,6 +12225,14 @@ mod tests {
         assert_eq!(chunk["run_chunk"], serde_json::json!(0));
         assert_eq!(chunk["semantic_range"], serde_json::json!([3, 7]));
         assert_eq!(chunk["lhs_word_le"], serde_json::json!("0xd84ab467"));
+
+        let run_templates = output_semantic_xor_word_run_templates(&equations);
+        assert_eq!(run_templates.as_array().unwrap().len(), 1);
+        assert_eq!(run_templates[0]["run_range"], serde_json::json!([3, 7]));
+        assert_eq!(
+            run_templates[0]["lhs_word_le"],
+            serde_json::json!("0xd84ab467")
+        );
     }
 
     #[test]
