@@ -484,6 +484,35 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
             "expression": "result == byte_lane_le(source_value, source_byte_offset)",
         }
     ],
+    "input_summary": {
+        "byte_lane_sources": [
+            {
+                "source_value": 0x0A000142,
+                "offsets": [0],
+                "source_byte_offsets": [3],
+                "result_hex": "0a",
+            }
+        ],
+        "mod255_inputs": [
+            {
+                "input": 0x74BEABE59C,
+                "output_byte": 0x61,
+                "quotient": 0x7533DFC5,
+                "offsets": [2, 14, 60, 66],
+            },
+            {
+                "input": 0x74FFAFCA73,
+                "output_byte": 0x62,
+                "quotient": 0x757524EF,
+                "offsets": [1, 13, 15, 59, 65, 67],
+            },
+        ],
+        "xor_lhs_offsets": (
+            list(range(3, 13))
+            + list(range(16, 59))
+            + list(range(61, 65))
+        ),
+    },
     "xor_rhs_pattern": {
         "kind": "offset_parity_mask",
         "even_byte": 0x61,
@@ -1143,6 +1172,33 @@ def main() -> None:
                         "byte_lane_equations"
                     ]
                 ],
+                "input_summary": {
+                    "byte_lane_sources": [
+                        {
+                            "source_value": f"{item['source_value']:#x}",
+                            "offsets": item["offsets"],
+                            "source_byte_offsets": item["source_byte_offsets"],
+                            "result_hex": item["result_hex"],
+                        }
+                        for item in TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                            "input_summary"
+                        ]["byte_lane_sources"]
+                    ],
+                    "mod255_inputs": [
+                        {
+                            "input": f"{item['input']:#x}",
+                            "output_byte": f"{item['output_byte']:#x}",
+                            "quotient": f"{item['quotient']:#x}",
+                            "offsets": item["offsets"],
+                        }
+                        for item in TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                            "input_summary"
+                        ]["mod255_inputs"]
+                    ],
+                    "xor_lhs_offsets": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                        "input_summary"
+                    ]["xor_lhs_offsets"],
+                },
                 "xor_rhs_pattern": {
                     "kind": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["xor_rhs_pattern"][
                         "kind"

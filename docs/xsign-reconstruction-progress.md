@@ -306,6 +306,19 @@ The previously missing semantic offset `0` is a generic byte-lane extraction:
 tail[0] = byte_lane_le(0x0a000142, 3) = 0x0a
 ```
 
+`semantic_byte_input_summary` now gives the next upstream targets without
+manual JSON filtering:
+
+```text
+byte_lane_sources:
+  0x0a000142 lane 3 -> tail[0]
+mod255_inputs:
+  0x74beabe59c -> 0x61 at tail[2,14,60,66]
+  0x74ffafca73 -> 0x62 at tail[1,13,15,59,65,67]
+xor_lhs_offsets:
+  [3,13), [16,59), [61,65)
+```
+
 The same summary now compresses the 57 XOR left-hand bytes into three
 contiguous streams:
 
