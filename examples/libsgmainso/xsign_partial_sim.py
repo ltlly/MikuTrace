@@ -90,6 +90,7 @@ TRACE_SMALL_AFFINE = {
 }
 
 CALL001_STAT_MTIM_TV_SEC = 0x69F2E9FB
+CALL001_SCRATCH_PREFIX_SOURCE_WORD = 0x95F2EC79
 CALL001_SCRATCH_PREFIX_STATIC_BYTE = 0x79
 CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX = (
     "79ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43b"
@@ -1473,9 +1474,10 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "scratch_offset": [4, 8],
             "bytes_hex": "e9f26979",
             "writer_idx": 14164406,
-            "source_class": "stat_mtim_boundary_shift_plus_static_byte",
+            "source_class": "stat_mtim_shift_plus_ladder_low_byte",
             "boundary_addr": "0x74b68bd108",
             "boundary_bytes_hex": "fbe9f26900000000",
+            "ladder_source_word": "0x95f2ec79",
         },
         {
             "scratch_offset": [8, 12],
@@ -1798,10 +1800,11 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
             {
                 "writer_idx": 14164406,
                 "writer_bytes_hex": "e9f26979",
-                "source_class": "stat_mtim_shift_plus_static_byte",
-                "formula": "(stat('/').st_mtim.tv_sec >> 8) | (static_xor_ladder_low_byte << 24)",
+                "source_class": "stat_mtim_shift_plus_ladder_low_byte",
+                "formula": "(stat('/').st_mtim.tv_sec >> 8) | (low8(previous_ladder_slot24) << 24)",
                 "stat_component": "0x0069f2e9",
-                "static_component": "0x79000000",
+                "ladder_source_word": "0x95f2ec79",
+                "ladder_low_byte_component": "0x79000000",
             },
             {
                 "writer_idx": 14164461,
@@ -2033,6 +2036,8 @@ def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
         ),
         "stat_mtim_tv_sec": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
         "static_byte": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
+        "static_byte_source_word": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
+        "static_byte_source": "low8(previous ladder final slot24)",
         "scratch_prefix_hex": scratch.hex(),
         "expected_scratch_prefix_hex": expected_scratch.hex(),
         "semantic_lhs_prefix_hex": semantic_prefix.hex(),
@@ -2052,9 +2057,12 @@ def call001_middle_lhs_source_manifest() -> dict:
         {
             "semantic_range": [16, 21],
             "scratch_offsets": [3, 8],
-            "source_class": "formula_validated_stat_mtim_static_byte",
+            "source_class": "formula_validated_stat_mtim_ladder_low_byte",
             "bytes_hex": call001_scratch_lhs_prefix_bytes().hex(),
-            "inputs": ["stat('/').st_mtim.tv_sec", "static_byte_0x79"],
+            "inputs": [
+                "stat('/').st_mtim.tv_sec",
+                "low8(previous ladder final slot24 0x95f2ec79)",
+            ],
         }
     ]
     for item in TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY["cli_vm_source_ranges"]:
@@ -2164,9 +2172,11 @@ def current_trace_model_input_manifest() -> dict:
         },
         {
             "name": "scratch_prefix_static_byte",
-            "kind": "static_or_table_byte",
+            "kind": "vm_ladder_low_byte",
             "value": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
-            "status": "trace_value_known_source_not_portable_yet",
+            "source_word": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
+            "source": "low8(previous ladder final slot24)",
+            "status": "not_portable_until_ladder_lifted",
             "used_by": "middle_lhs[4]",
         },
         {

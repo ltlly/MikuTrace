@@ -806,6 +806,13 @@ scratch[4:8] = u32((stat_mtim >> 8) | (static_byte << 24))   = e9f26979
 semantic lhs starts at scratch+3                             = fbe9f26979
 ```
 
+The `static_byte` in that formula is no longer an independent byte input. The
+scratch-writer replay plan shows `slot[5] = 0x95f2ec79` at `#14164330`, then
+`slot[3] = lsl(slot[5], 0x18)` at `#14164374`, producing the `0x79000000`
+component. That source word is the previous ladder window's final `slot24`, so
+the byte is `low8(0x95f2ec79)`. The remaining portability work is therefore the
+ladder lift, not a separate unknown static byte.
+
 `call001_lhs_run_bytes()` now uses this prefix formula for the first five lhs
 bytes before appending the remaining traced mixed suffix, while preserving the
 existing call_001 tail reconstruction match.
@@ -814,7 +821,7 @@ The simulator also emits a machine-readable `middle_lhs_source_manifest` for
 semantic range `[16,59)`:
 
 ```text
-[16,21) formula_validated_stat_mtim_static_byte  fbe9f26979
+[16,21) formula_validated_stat_mtim_ladder_low_byte  fbe9f26979
 [21,25) vm_xor_ladder_from_static_table_seed_pending_lift ecf29541
 [25,49) traced_formula_only                     f60193b34b3c510ccc029de339cec2953090237cbfa4f43b
 [49,57) confirmed_external_text_boundary        a0444a342344c59b
@@ -1106,7 +1113,7 @@ For `call_001`, the manifest has six entries:
 ```text
 raw_prefix                  fixed_literal, portable for current samples
 stat_mtim_tv_sec            external_metadata, formula input validated
-scratch_prefix_static_byte  static_or_table_byte, source not portable yet
+scratch_prefix_static_byte  vm_ladder_low_byte, low8(previous ladder slot24)
 middle_lhs_source_segments  segmented_trace_sources, complete for call_001
 mod255_input_even           vm_state_expression, trace-proven one sample
 mod255_input_odd            vm_state_expression, trace-proven one sample
