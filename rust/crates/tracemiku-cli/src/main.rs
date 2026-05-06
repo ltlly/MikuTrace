@@ -3118,6 +3118,7 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
         .flatten()
         .map(output_map_lookup_summary)
         .collect::<Vec<_>>();
+    let decoded_payload = output_map_decoded_payload_summary(group, &lookups);
     serde_json::json!({
         "group": group.get("group").cloned().unwrap_or(serde_json::Value::Null),
         "offset": group.get("offset").cloned().unwrap_or(serde_json::Value::Null),
@@ -3125,7 +3126,86 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
         "decoded_hex": group.get("decoded_hex").cloned().unwrap_or(serde_json::Value::Null),
         "indices": indices,
         "decoded": decoded,
+        "decoded_payload": decoded_payload,
         "lookups": lookups,
+    })
+}
+
+fn output_map_decoded_payload_summary(
+    group: &serde_json::Value,
+    lookups: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let group_idx = group.get("group").and_then(|v| v.as_u64()).unwrap_or(0);
+    group
+        .pointer("/base64/decoded_bytes")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let byte_idx = item.get("byte").and_then(|v| v.as_u64()).unwrap_or(0);
+            let index_sources = item
+                .get("indices")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|idx| idx.as_u64())
+                .filter_map(|idx| {
+                    lookups
+                        .iter()
+                        .find(|lookup| lookup.get("pos").and_then(|v| v.as_u64()) == Some(idx))
+                        .map(compact_lookup_source_for_payload)
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "payload_offset": group_idx.saturating_mul(3).saturating_add(byte_idx),
+                "byte_in_group": byte_idx,
+                "value_hex": item.get("value_hex").cloned().unwrap_or(serde_json::Value::Null),
+                "formula": item.get("formula").cloned().unwrap_or(serde_json::Value::Null),
+                "index_sources": index_sources,
+            })
+        })
+        .collect()
+}
+
+fn compact_lookup_source_for_payload(lookup: &serde_json::Value) -> serde_json::Value {
+    let formulas = lookup
+        .get("matches")
+        .and_then(|v| v.as_array())
+        .and_then(|matches| matches.first())
+        .map(|first| {
+            let interesting = first
+                .get("interesting_formulas")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>();
+            let semantic = first
+                .get("semantic_formulas")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "interesting": interesting,
+                "semantic": semantic,
+            })
+        })
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "interesting": [],
+                "semantic": [],
+            })
+        });
+    serde_json::json!({
+        "pos": lookup.get("pos").cloned().unwrap_or(serde_json::Value::Null),
+        "char": lookup.get("char").cloned().unwrap_or(serde_json::Value::Null),
+        "index_hex": lookup.get("index_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "match_count": lookup.get("match_count").cloned().unwrap_or(serde_json::Value::Null),
+        "formulas": formulas,
     })
 }
 

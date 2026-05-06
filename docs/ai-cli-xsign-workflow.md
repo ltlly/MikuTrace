@@ -355,7 +355,10 @@ JNI.
 Add `--summary` when the result is meant for an AI prompt or a quick survey
 across many groups. It keeps each group's Base64 indices, decoded bytes, lookup
 match counts, and compact interesting/semantic formulas, while dropping the
-large raw backtree nodes.
+large raw backtree nodes. The summary also includes `decoded_payload[]`, which
+maps every decoded payload byte to the Base64 index sources and the formulas
+that produced those indices. This is the preferred prompt surface when walking
+from output text back toward payload construction.
 
 Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
 fields to line up a traced alphabet index, for example `i2 = 0x18`, with the
