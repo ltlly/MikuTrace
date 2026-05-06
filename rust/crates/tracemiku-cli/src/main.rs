@@ -6224,6 +6224,9 @@ fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<
 }
 
 fn mod255_fold_semantic(input: u64, quotient: u64, result: u64) -> Option<serde_json::Value> {
+    if input <= 0xff || quotient == 0 {
+        return None;
+    }
     if quotient != input / 0xff {
         return None;
     }
@@ -7230,6 +7233,12 @@ mod tests {
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("mod255_low_byte"));
         assert_eq!(semantic["output_byte"], serde_json::json!("0x62"));
+        assert!(recognize_alu_semantic(
+            "add x5, x3, x4",
+            "0x3",
+            &["0x3".to_string(), "0x0".to_string()],
+        )
+        .is_none());
         let semantic = recognize_alu_semantic(
             "add x5, x3, x4",
             "0x99bd5d21d7d8103",
