@@ -22,6 +22,64 @@ const GAP_SMALL_LEN_MAX: u64 = 0x4000;
 const BASE64_LOOKUP_TREE_DEPTH: usize = 8;
 const BASE64_LOOKUP_TREE_MAX_NODES: usize = 220;
 
+#[derive(Clone, Debug)]
+struct VmProfile {
+    ip_reg: String,
+    state_reg: String,
+    dispatch_reg: String,
+    infra_regs: HashSet<String>,
+}
+
+impl VmProfile {
+    fn new(ip_reg: String, state_reg: String, dispatch_reg: String, infra_regs: String) -> Self {
+        let ip_reg = register_value_key(&ip_reg);
+        let state_reg = register_value_key(&state_reg);
+        let dispatch_reg = register_value_key(&dispatch_reg);
+        let infra_regs = split_csv(&infra_regs)
+            .into_iter()
+            .map(|reg| register_value_key(&reg))
+            .chain([
+                "sp".to_string(),
+                "fp".to_string(),
+                "lr".to_string(),
+                ip_reg.clone(),
+                state_reg.clone(),
+                dispatch_reg.clone(),
+            ])
+            .collect();
+        Self {
+            ip_reg,
+            state_reg,
+            dispatch_reg,
+            infra_regs,
+        }
+    }
+
+    fn default_profile() -> Self {
+        Self::new(
+            "x21".to_string(),
+            "x25".to_string(),
+            "x23".to_string(),
+            "x27".to_string(),
+        )
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        let mut infra_regs = self.infra_regs.iter().cloned().collect::<Vec<_>>();
+        infra_regs.sort();
+        serde_json::json!({
+            "ip_reg": self.ip_reg,
+            "state_reg": self.state_reg,
+            "dispatch_reg": self.dispatch_reg,
+            "infra_regs": infra_regs,
+        })
+    }
+
+    fn is_infrastructure_reg(&self, reg: &str) -> bool {
+        self.infra_regs.contains(&register_value_key(reg))
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "tracemiku-cli",
@@ -467,6 +525,18 @@ enum Cmd {
         /// Let attached VM chains continue through frontier source regs.
         #[arg(long)]
         vm_chain_follow_frontier: bool,
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
     },
     /// GET /api/ollvm-detect-vm.
     OllvmDetectVm {
@@ -529,6 +599,9 @@ enum Cmd {
     /// POST /api/diff-traces.
     DiffTraces {
         traces: Vec<PathBuf>,
+        /// Output key to diff. Repeat to compare multiple keys. Defaults to all observed keys.
+        #[arg(long = "key")]
+        keys: Vec<String>,
         #[arg(long, default_value_t = false)]
         show_offsets: bool,
         #[arg(long, default_value_t = false)]
@@ -618,7 +691,7 @@ enum Cmd {
     /// List NewStringUTF output key/value pairs.
     JniOutputStrings {
         trace_dir: PathBuf,
-        /// Keep only pairs with this key, for example x-sign.
+        /// Keep only pairs with this output key, for example a header name.
         #[arg(long)]
         key: Option<String>,
         /// Keep pairs whose key or value contains this text.
@@ -632,7 +705,7 @@ enum Cmd {
         /// Trace root, run dir, or call dir. Defaults to ./traces.
         #[arg(default_value = "traces")]
         path: PathBuf,
-        /// Keep only pairs with this key, for example x-sign.
+        /// Keep only pairs with this output key, for example a header name.
         #[arg(long)]
         key: Option<String>,
         /// Keep pairs whose key or value contains this text.
@@ -669,7 +742,7 @@ enum Cmd {
     /// Build an output-to-input backward trace report for a known output.
     OutputBacktrace {
         trace_dir: PathBuf,
-        /// Start from a JNI NewStringUTF key/value pair, for example x-sign.
+        /// Start from a JNI NewStringUTF key/value pair, for example a header name.
         #[arg(long)]
         key: Option<String>,
         /// Start from an observed UTF-8 output string directly.
@@ -705,6 +778,18 @@ enum Cmd {
         /// Let attached VM chains continue through frontier source regs when a table/ALU step has no upstream writer.
         #[arg(long)]
         vm_chain_follow_frontier: bool,
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
         /// Skip backward-taint expansion and only report output/memory writers.
         #[arg(long)]
         skip_taint: bool,
@@ -718,7 +803,7 @@ enum Cmd {
     /// Compact map from textual output/Base64 groups to writer runs.
     OutputMap {
         trace_dir: PathBuf,
-        /// Start from a JNI NewStringUTF key/value pair, for example x-sign.
+        /// Start from a JNI NewStringUTF key/value pair, for example a header name.
         #[arg(long)]
         key: Option<String>,
         /// Start from an observed UTF-8 output string directly.
@@ -805,6 +890,18 @@ enum Cmd {
         /// Let semantic writer VM chains continue through frontier source regs.
         #[arg(long)]
         semantic_writer_map_vm_chain_follow_frontier: bool,
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
         /// Emit a compact AI-readable summary.
         #[arg(long)]
         summary: bool,
@@ -830,7 +927,19 @@ enum Cmd {
         /// Drop records that do not look VM-related.
         #[arg(long)]
         only_vm: bool,
-        /// Base VM IP for vm_off. Defaults to the first row's x21.
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
+        /// Base VM IP for vm_off. Defaults to the first row's --vm-ip-reg.
         #[arg(long)]
         base_ip: Option<String>,
     },
@@ -852,7 +961,19 @@ enum Cmd {
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
-        /// Base VM IP for vm_off. Defaults to the first row's x21.
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
+        /// Base VM IP for vm_off. Defaults to the first row's --vm-ip-reg.
         #[arg(long)]
         base_ip: Option<String>,
         /// Max VM op groups to return.
@@ -917,6 +1038,18 @@ enum Cmd {
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
     },
     /// Iterate vm-backstep and emit a compact backward chain.
     VmBackchain {
@@ -954,6 +1087,18 @@ enum Cmd {
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
     },
     /// Branching backward tree through dynamic VM upstream/frontier links.
     VmBacktree {
@@ -991,6 +1136,18 @@ enum Cmd {
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
         )]
         regs: String,
+        /// Register holding the VM instruction pointer in this trace/profile.
+        #[arg(long, default_value = "x21")]
+        vm_ip_reg: String,
+        /// Register holding the VM state/virtual-register base.
+        #[arg(long, default_value = "x25")]
+        vm_state_reg: String,
+        /// Register holding the dispatch table base or dispatch lookup base.
+        #[arg(long, default_value = "x23")]
+        vm_dispatch_reg: String,
+        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
+        #[arg(long, default_value = "x27")]
+        vm_infra_regs: String,
     },
     /// GET /api/jobj-history.
     JobjHistory {
@@ -1504,7 +1661,12 @@ async fn main() -> anyhow::Result<()> {
             vm_chain_runs,
             vm_chain_lookback,
             vm_chain_follow_frontier,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
         }) => {
+            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_byte_writer_map(
                 trace_dir,
                 addr,
@@ -1516,6 +1678,7 @@ async fn main() -> anyhow::Result<()> {
                 vm_chain_runs,
                 vm_chain_lookback,
                 vm_chain_follow_frontier,
+                profile,
             )
             .await
         }
@@ -1586,6 +1749,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::DiffTraces {
             traces,
+            keys,
             show_offsets,
             show_per_byte,
         }) => {
@@ -1598,6 +1762,7 @@ async fn main() -> anyhow::Result<()> {
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect::<Vec<_>>(),
+                "keys": keys,
                 "show_offsets": show_offsets,
                 "show_per_byte": show_per_byte,
             });
@@ -1748,10 +1913,16 @@ async fn main() -> anyhow::Result<()> {
             vm_chain_runs,
             vm_chain_lookback,
             vm_chain_follow_frontier,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
             skip_taint,
             no_url_decode,
             no_base64_decode,
         }) => {
+            let vm_profile =
+                VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             let opts = OutputBacktraceOpts {
                 key,
                 value,
@@ -1765,6 +1936,7 @@ async fn main() -> anyhow::Result<()> {
                 vm_chain_runs,
                 vm_chain_lookback,
                 vm_chain_follow_frontier,
+                vm_profile,
                 skip_taint,
                 url_decode: !no_url_decode,
                 base64_decode: !no_base64_decode,
@@ -1801,8 +1973,14 @@ async fn main() -> anyhow::Result<()> {
             semantic_writer_map_vm_chain_bytes,
             semantic_writer_map_vm_chain_lookback,
             semantic_writer_map_vm_chain_follow_frontier,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
             summary,
         }) => {
+            let vm_profile =
+                VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             let opts = OutputMapOpts {
                 key,
                 value,
@@ -1832,6 +2010,7 @@ async fn main() -> anyhow::Result<()> {
                 semantic_writer_map_vm_chain_bytes,
                 semantic_writer_map_vm_chain_lookback,
                 semantic_writer_map_vm_chain_follow_frontier,
+                vm_profile,
                 summary,
             };
             cmd_output_map(trace_dir, opts).await
@@ -1843,20 +2022,35 @@ async fn main() -> anyhow::Result<()> {
             count,
             regs,
             only_vm,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
             base_ip,
-        }) => cmd_vm_slice(trace_dir, start, end, count, regs, only_vm, base_ip).await,
+        }) => {
+            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            cmd_vm_slice(
+                trace_dir, start, end, count, regs, only_vm, base_ip, profile,
+            )
+            .await
+        }
         Some(Cmd::VmOps {
             trace_dir,
             start,
             end,
             count,
             regs,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
             base_ip,
             max_ops,
             summary,
         }) => {
+            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_vm_ops(
-                trace_dir, start, end, count, regs, base_ip, max_ops, summary,
+                trace_dir, start, end, count, regs, base_ip, max_ops, summary, profile,
             )
             .await
         }
@@ -1884,7 +2078,17 @@ async fn main() -> anyhow::Result<()> {
             lookback,
             max_writes,
             regs,
-        }) => cmd_vm_backstep(trace_dir, idx, reg, context, lookback, max_writes, regs).await,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
+        }) => {
+            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            cmd_vm_backstep(
+                trace_dir, idx, reg, context, lookback, max_writes, regs, profile,
+            )
+            .await
+        }
         Some(Cmd::VmBackchain {
             trace_dir,
             idx,
@@ -1897,7 +2101,12 @@ async fn main() -> anyhow::Result<()> {
             byte_lane,
             summary,
             regs,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
         }) => {
+            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_vm_backchain(
                 trace_dir,
                 idx,
@@ -1910,6 +2119,7 @@ async fn main() -> anyhow::Result<()> {
                 byte_lane,
                 regs,
                 summary,
+                profile,
             )
             .await
         }
@@ -1925,7 +2135,12 @@ async fn main() -> anyhow::Result<()> {
             frontier_with_next,
             summary,
             regs,
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_infra_regs,
         }) => {
+            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_vm_backtree(
                 trace_dir,
                 idx,
@@ -1938,6 +2153,7 @@ async fn main() -> anyhow::Result<()> {
                 frontier_with_next,
                 summary,
                 regs,
+                profile,
             )
             .await
         }
@@ -2109,6 +2325,7 @@ async fn cmd_byte_writer_map(
     vm_chain_runs: usize,
     vm_chain_lookback: usize,
     vm_chain_follow_frontier: bool,
+    vm_profile: VmProfile,
 ) -> anyhow::Result<()> {
     let addr_value =
         parse_u64_str(&addr).with_context(|| format!("invalid --addr value {addr:?}"))?;
@@ -2150,6 +2367,7 @@ async fn cmd_byte_writer_map(
             vm_chain_runs,
             vm_chain_lookback,
             vm_chain_follow_frontier,
+            &vm_profile,
         )
         .await?;
         let chain_summary = vm_chain_batch_summary(&chains);
@@ -3043,6 +3261,7 @@ async fn attach_base64_index_trees_on(
                 5000,
                 opts.tree_frontier_with_next,
                 "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28".to_string(),
+                &opts.vm_profile,
             )
             .await?;
             let summary = index_tree_summary(&tree);
@@ -3167,6 +3386,7 @@ struct OutputBacktraceOpts {
     vm_chain_runs: usize,
     vm_chain_lookback: usize,
     vm_chain_follow_frontier: bool,
+    vm_profile: VmProfile,
     skip_taint: bool,
     url_decode: bool,
     base64_decode: bool,
@@ -3202,6 +3422,7 @@ struct OutputMapOpts {
     semantic_writer_map_vm_chain_bytes: bool,
     semantic_writer_map_vm_chain_lookback: usize,
     semantic_writer_map_vm_chain_follow_frontier: bool,
+    vm_profile: VmProfile,
     summary: bool,
 }
 
@@ -3425,6 +3646,7 @@ async fn output_map_group_vm_trees(
     max_nodes: usize,
     lookback: usize,
     frontier_with_next: bool,
+    profile: &VmProfile,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     if depth == 0 {
         return Ok(Vec::new());
@@ -3461,6 +3683,7 @@ async fn output_map_group_vm_trees(
                 5000,
                 frontier_with_next,
                 "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28".to_string(),
+                profile,
             )
             .await?;
             trees.push(serde_json::json!({
@@ -3492,6 +3715,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
             vm_chain_runs: 0,
             vm_chain_lookback: opts.lookback,
             vm_chain_follow_frontier: false,
+            vm_profile: opts.vm_profile.clone(),
             skip_taint: true,
             url_decode: opts.url_decode,
             base64_decode: true,
@@ -3619,6 +3843,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
             opts.tree_max_nodes,
             opts.lookback,
             opts.tree_frontier_with_next,
+            &opts.vm_profile,
         )
         .await?;
         let hidden_lookup_trees;
@@ -3630,6 +3855,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                 BASE64_LOOKUP_TREE_MAX_NODES.max(opts.index_tree_max_nodes),
                 opts.lookback,
                 true,
+                &opts.vm_profile,
             )
             .await?;
             hidden_lookup_trees.as_slice()
@@ -3787,6 +4013,7 @@ async fn output_semantic_writer_map(
                     opts.semantic_writer_map_vm_chain_runs,
                     opts.semantic_writer_map_vm_chain_lookback,
                     opts.semantic_writer_map_vm_chain_follow_frontier,
+                    &opts.vm_profile,
                 )
                 .await?,
             )
@@ -3805,6 +4032,7 @@ async fn output_semantic_writer_map(
                     opts.semantic_writer_map_vm_chain_runs,
                     opts.semantic_writer_map_vm_chain_lookback,
                     opts.semantic_writer_map_vm_chain_follow_frontier,
+                    &opts.vm_profile,
                 )
                 .await?,
             )
@@ -5361,6 +5589,7 @@ async fn vm_chains_for_writer_runs(
             opts.vm_chain_follow_frontier,
             None,
             regs.to_string(),
+            &opts.vm_profile,
         )
         .await?;
         out.push(serde_json::json!({
@@ -5382,6 +5611,7 @@ async fn vm_chains_for_byte_writer_runs(
     max_runs: usize,
     lookback: usize,
     follow_frontier: bool,
+    profile: &VmProfile,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let regs =
         "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28";
@@ -5417,6 +5647,7 @@ async fn vm_chains_for_byte_writer_runs(
             follow_frontier,
             byte_lane_from_writer_run(run),
             regs.to_string(),
+            profile,
         )
         .await?;
         let seed_byte_lane = byte_lane_from_writer_run(run);
@@ -5449,6 +5680,7 @@ async fn vm_chains_for_byte_writer_entries(
     max_bytes: usize,
     lookback: usize,
     follow_frontier: bool,
+    profile: &VmProfile,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let regs =
         "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28";
@@ -5491,6 +5723,7 @@ async fn vm_chains_for_byte_writer_entries(
             follow_frontier,
             seed_byte_lane,
             regs.to_string(),
+            profile,
         )
         .await?;
         let byte_hex = entry
@@ -5703,15 +5936,17 @@ async fn cmd_vm_slice(
     regs: String,
     only_vm: bool,
     base_ip: Option<String>,
+    profile: VmProfile,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
     let (rows, source_returned, inferred_base) =
-        load_vm_rows(trace_dir, start, end, regs, only_vm, base_ip).await?;
+        load_vm_rows(trace_dir, start, end, regs, only_vm, base_ip, &profile).await?;
 
     print_pretty(&serde_json::json!({
         "status": "ready",
         "start": start,
         "end": end,
+        "vm_profile": profile.to_json(),
         "returned": rows.len(),
         "source_returned": source_returned,
         "only_vm": only_vm,
@@ -5729,10 +5964,11 @@ async fn cmd_vm_ops(
     base_ip: Option<String>,
     max_ops: usize,
     summary: bool,
+    profile: VmProfile,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
     let (rows, source_returned, inferred_base) =
-        load_vm_rows(trace_dir, start, end, regs, true, base_ip).await?;
+        load_vm_rows(trace_dir, start, end, regs, true, base_ip, &profile).await?;
     let all_ops = vm_ops_from_rows(&rows);
     let truncated = all_ops.len() > max_ops;
     let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
@@ -5740,6 +5976,7 @@ async fn cmd_vm_ops(
         "status": "ready",
         "start": start,
         "end": end,
+        "vm_profile": profile.to_json(),
         "source_returned": source_returned,
         "vm_rows": rows.len(),
         "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
@@ -5780,6 +6017,7 @@ fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": value.get("start").cloned().unwrap_or(serde_json::Value::Null),
         "end": value.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_profile": value.get("vm_profile").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
         "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
@@ -5899,8 +6137,10 @@ async fn load_vm_rows(
     regs: String,
     only_vm: bool,
     base_ip: Option<String>,
+    profile: &VmProfile,
 ) -> anyhow::Result<(Vec<serde_json::Value>, usize, Option<u64>)> {
     let count = end.saturating_sub(start);
+    let regs = regs_with_vm_profile(regs, profile);
     let params = vec![
         ("start", start.to_string()),
         ("count", count.to_string()),
@@ -5911,22 +6151,37 @@ async fn load_vm_rows(
         .get("records")
         .and_then(|v| v.as_array())
         .context("/api/records response missing records[]")?;
-    let inferred_base = base_ip
-        .as_deref()
-        .and_then(parse_u64_str)
-        .or_else(|| records.iter().find_map(|rec| record_reg_u64(rec, "x21")));
+    let inferred_base = base_ip.as_deref().and_then(parse_u64_str).or_else(|| {
+        records
+            .iter()
+            .find_map(|rec| record_reg_u64(rec, &profile.ip_reg))
+    });
 
     let mut rows = Vec::new();
     for (pos, rec) in records.iter().enumerate() {
         let asm = rec.get("asm").and_then(|v| v.as_str()).unwrap_or("");
-        let class = classify_vm_asm(asm);
+        let class = classify_vm_asm(asm, profile);
         if only_vm && class == "other" {
             continue;
         }
         let next = records.get(pos + 1);
-        rows.push(vm_row_from_record(rec, next, inferred_base));
+        rows.push(vm_row_from_record(rec, next, inferred_base, profile));
     }
     Ok((rows, records.len(), inferred_base))
+}
+
+fn regs_with_vm_profile(regs: String, profile: &VmProfile) -> String {
+    let mut items = split_csv(&regs);
+    let mut seen = items
+        .iter()
+        .map(|reg| register_value_key(reg))
+        .collect::<HashSet<_>>();
+    for reg in [&profile.ip_reg, &profile.state_reg, &profile.dispatch_reg] {
+        if seen.insert(reg.clone()) {
+            items.push(reg.clone());
+        }
+    }
+    items.join(",")
 }
 
 async fn cmd_vm_backstep(
@@ -5937,9 +6192,13 @@ async fn cmd_vm_backstep(
     lookback: usize,
     max_writes: usize,
     regs: String,
+    profile: VmProfile,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
-    let value = vm_backstep_value_on(&app, idx, reg, context, lookback, max_writes, regs).await?;
+    let value = vm_backstep_value_on(
+        &app, idx, reg, context, lookback, max_writes, regs, &profile,
+    )
+    .await?;
     print_pretty(&value)
 }
 
@@ -5980,6 +6239,7 @@ async fn cmd_vm_backchain(
     byte_lane: Option<usize>,
     regs: String,
     summary: bool,
+    profile: VmProfile,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
     let value = vm_backchain_value_on(
@@ -5993,6 +6253,7 @@ async fn cmd_vm_backchain(
         follow_frontier,
         byte_lane,
         regs,
+        &profile,
     )
     .await?;
     if summary {
@@ -6015,6 +6276,7 @@ async fn cmd_vm_backtree(
     frontier_with_next: bool,
     summary: bool,
     regs: String,
+    profile: VmProfile,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
     let value = vm_backtree_value_on(
@@ -6028,6 +6290,7 @@ async fn cmd_vm_backtree(
         max_writes,
         frontier_with_next,
         regs,
+        &profile,
     )
     .await?;
     if summary {
@@ -6048,6 +6311,7 @@ async fn vm_backchain_value_on(
     follow_frontier: bool,
     byte_lane: Option<usize>,
     regs: String,
+    profile: &VmProfile,
 ) -> anyhow::Result<serde_json::Value> {
     let mut current_idx = idx;
     let mut current_reg = reg.clone();
@@ -6080,6 +6344,7 @@ async fn vm_backchain_value_on(
             lookback,
             max_writes,
             regs.clone(),
+            profile,
         )
         .await?;
         let upstream_next = step
@@ -6106,7 +6371,7 @@ async fn vm_backchain_value_on(
                 }),
             )
         } else if follow_frontier {
-            match choose_frontier_next_for_lane(&step, current_byte_lane) {
+            match choose_frontier_next_for_lane(&step, current_byte_lane, profile) {
                 Some(frontier_next) => (
                     frontier_next.clone(),
                     serde_json::json!({
@@ -6171,6 +6436,7 @@ async fn vm_backchain_value_on(
             "byte_lane": byte_lane,
         },
         "follow_frontier": follow_frontier,
+        "vm_profile": profile.to_json(),
         "steps_requested": steps,
         "steps_returned": rows.len(),
         "chain": rows,
@@ -6244,12 +6510,13 @@ fn next_with_selected_byte_lane(
 
 #[cfg(test)]
 fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
-    choose_frontier_next_for_lane(step, None)
+    choose_frontier_next_for_lane(step, None, &VmProfile::default_profile())
 }
 
 fn choose_frontier_next_for_lane(
     step: &serde_json::Value,
     byte_lane: Option<usize>,
+    profile: &VmProfile,
 ) -> Option<serde_json::Value> {
     if step.pointer("/local_def/class").and_then(|v| v.as_str()) == Some("call-return") {
         return None;
@@ -6262,7 +6529,7 @@ fn choose_frontier_next_for_lane(
         .iter()
         .filter_map(|frontier| {
             let reg = frontier.get("reg")?.as_str()?;
-            if is_vm_infrastructure_reg(reg) {
+            if profile.is_infrastructure_reg(reg) {
                 return None;
             }
             let value = frontier
@@ -6535,13 +6802,6 @@ fn frontier_value_score(value: &serde_json::Value) -> u8 {
     }
 }
 
-fn is_vm_infrastructure_reg(reg: &str) -> bool {
-    matches!(
-        register_value_key(reg).as_str(),
-        "sp" | "fp" | "lr" | "x21" | "x23" | "x25" | "x27"
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn vm_backtree_value_on(
     app: &axum::Router,
@@ -6554,6 +6814,7 @@ async fn vm_backtree_value_on(
     max_writes: usize,
     frontier_with_next: bool,
     regs: String,
+    profile: &VmProfile,
 ) -> anyhow::Result<serde_json::Value> {
     let mut queue = VecDeque::new();
     queue.push_back(TreeSeed {
@@ -6592,6 +6853,7 @@ async fn vm_backtree_value_on(
             lookback,
             max_writes,
             regs.clone(),
+            profile,
         )
         .await?;
         let node_id = nodes.len();
@@ -6601,7 +6863,7 @@ async fn vm_backtree_value_on(
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         let upstream_byte_nexts = upstream_byte_nexts_from_step(&backstep);
-        let frontier_nexts = frontier_nexts_from_step(&backstep);
+        let frontier_nexts = frontier_nexts_from_step(&backstep, profile);
         let enqueue_frontiers =
             frontier_with_next || upstream_next.get("idx").and_then(|v| v.as_u64()).is_none();
         nodes.push(compact_backtree_node(
@@ -6667,6 +6929,7 @@ async fn vm_backtree_value_on(
         "depth_requested": depth,
         "max_nodes": max_nodes,
         "frontier_with_next": frontier_with_next,
+        "vm_profile": profile.to_json(),
         "nodes_returned": nodes.len(),
         "truncated": truncated || !queue.is_empty(),
         "highlights": highlights,
@@ -6914,6 +7177,7 @@ async fn byte_lineage_value_on(
                 ref reg,
                 byte_lane,
             } => {
+                let profile = VmProfile::default_profile();
                 let backstep = vm_backstep_value_on(
                     app,
                     idx,
@@ -6922,6 +7186,7 @@ async fn byte_lineage_value_on(
                     lookback,
                     max_writes,
                     regs.clone(),
+                    &profile,
                 )
                 .await?;
                 let (next_seed, decision) = lineage_next_from_backstep(&backstep, byte_lane);
@@ -7030,7 +7295,9 @@ fn lineage_next_from_backstep(
             }),
         );
     }
-    if let Some(frontier_next) = choose_frontier_next_for_lane(backstep, current_byte_lane) {
+    if let Some(frontier_next) =
+        choose_frontier_next_for_lane(backstep, current_byte_lane, &VmProfile::default_profile())
+    {
         return (
             lineage_seed_from_next(&frontier_next, current_byte_lane),
             serde_json::json!({
@@ -7449,14 +7716,17 @@ fn tree_seed_from_next(
     })
 }
 
-fn frontier_nexts_from_step(step: &serde_json::Value) -> Vec<serde_json::Value> {
+fn frontier_nexts_from_step(
+    step: &serde_json::Value,
+    profile: &VmProfile,
+) -> Vec<serde_json::Value> {
     step.get("frontier")
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
         .filter_map(|frontier| {
             let reg = frontier.get("reg")?.as_str()?;
-            if is_vm_infrastructure_reg(reg) {
+            if profile.is_infrastructure_reg(reg) {
                 return None;
             }
             Some(serde_json::json!({
@@ -7548,9 +7818,11 @@ async fn vm_backstep_value_on(
     lookback: usize,
     max_writes: usize,
     regs: String,
+    profile: &VmProfile,
 ) -> anyhow::Result<serde_json::Value> {
     let start = idx.saturating_sub(context);
     let count = context.saturating_add(3);
+    let regs = regs_with_vm_profile(regs, profile);
     let params = vec![
         ("start", start.to_string()),
         ("count", count.to_string()),
@@ -7561,11 +7833,13 @@ async fn vm_backstep_value_on(
         .get("records")
         .and_then(|v| v.as_array())
         .context("/api/records response missing records[]")?;
-    let inferred_base = records.iter().find_map(|rec| record_reg_u64(rec, "x21"));
+    let inferred_base = records
+        .iter()
+        .find_map(|rec| record_reg_u64(rec, &profile.ip_reg));
     let rows = records
         .iter()
         .enumerate()
-        .map(|(pos, rec)| vm_row_from_record(rec, records.get(pos + 1), inferred_base))
+        .map(|(pos, rec)| vm_row_from_record(rec, records.get(pos + 1), inferred_base, profile))
         .collect::<Vec<_>>();
     let target_pos = rows
         .iter()
@@ -7618,6 +7892,7 @@ async fn vm_backstep_value_on(
     Ok(serde_json::json!({
         "status": "ready",
         "idx": idx,
+        "vm_profile": profile.to_json(),
         "source_reg": source_reg,
         "source_value": if target_defines_source {
             row_def_entry_for_key(target_row, &source_key)
@@ -7787,12 +8062,13 @@ fn vm_row_from_record(
     rec: &serde_json::Value,
     next: Option<&serde_json::Value>,
     inferred_base: Option<u64>,
+    profile: &VmProfile,
 ) -> serde_json::Value {
     let asm = rec.get("asm").and_then(|v| v.as_str()).unwrap_or("");
-    let class = classify_vm_asm(asm);
-    let vm_ip = record_reg_u64(rec, "x21");
+    let class = classify_vm_asm(asm, profile);
+    let vm_ip = record_reg_u64(rec, &profile.ip_reg);
     let vm_off = vm_ip.and_then(|ip| inferred_base.map(|base| ip.wrapping_sub(base)));
-    let vm_slot = vm_slot_from_asm(asm, rec);
+    let vm_slot = vm_slot_from_asm(asm, rec, profile);
     let mem_addr = mem_addr_from_asm(asm, rec);
     let defs = def_entries_from_asm(asm, rec, next, mem_addr);
     let def = defs.first().cloned();
@@ -9791,21 +10067,23 @@ fn ascii_preview(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn classify_vm_asm(asm: &str) -> &'static str {
+fn classify_vm_asm(asm: &str, profile: &VmProfile) -> &'static str {
     let asm = asm.trim().to_ascii_lowercase();
+    let bracket_regs = bracket_registers(&asm).unwrap_or_default();
+    let bracket_base = bracket_regs.first().map(String::as_str);
     if asm.starts_with("br ") {
         return "dispatch-branch";
     }
     if asm.starts_with("blr ") {
         return "call-indirect";
     }
-    if asm.contains("[x23,") {
+    if bracket_base == Some(profile.dispatch_reg.as_str()) {
         return "dispatch-table-load";
     }
-    if asm.contains("[x21") {
+    if bracket_base == Some(profile.ip_reg.as_str()) {
         return "bytecode-read";
     }
-    if asm.contains("[x25,") {
+    if bracket_base == Some(profile.state_reg.as_str()) {
         if asm.starts_with("ldr") {
             return "vm-reg-load";
         }
@@ -10032,13 +10310,14 @@ fn register_load_width(reg: &str) -> u64 {
     }
 }
 
-fn vm_slot_from_asm(asm: &str, record: &serde_json::Value) -> Option<serde_json::Value> {
+fn vm_slot_from_asm(
+    asm: &str,
+    record: &serde_json::Value,
+    profile: &VmProfile,
+) -> Option<serde_json::Value> {
     let lower = asm.to_ascii_lowercase();
-    if !lower.contains("[x25,") {
-        return None;
-    }
     let regs = bracket_registers(&lower)?;
-    if regs.first().map(String::as_str) != Some("x25") {
+    if regs.first().map(String::as_str) != Some(profile.state_reg.as_str()) {
         return None;
     }
     let idx_reg = regs.get(1)?;
@@ -10756,7 +11035,7 @@ mod tests {
         output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
         recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol,
+        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -10776,6 +11055,7 @@ mod tests {
 
     #[test]
     fn classifies_vm_records_and_scaled_slots() {
+        let profile = VmProfile::default_profile();
         let record = serde_json::json!({
             "regs": {
                 "x25": "0x1000",
@@ -10783,20 +11063,57 @@ mod tests {
                 "x1": "0xe0",
             }
         });
-        assert_eq!(classify_vm_asm("ldr x4, [x25, x19, lsl #3]"), "vm-reg-load");
-        assert_eq!(classify_vm_asm("ldp x9, x10, [x25, #0xc0]"), "mem-load");
+        assert_eq!(
+            classify_vm_asm("ldr x4, [x25, x19, lsl #3]", &profile),
+            "vm-reg-load"
+        );
+        assert_eq!(
+            classify_vm_asm("ldp x9, x10, [x25, #0xc0]", &profile),
+            "mem-load"
+        );
         assert_eq!(
             mem_addr_from_asm("ldr x4, [x25, x19, lsl #3]", &record),
             Some(0x10c8)
         );
-        let slot = vm_slot_from_asm("ldr x4, [x25, x19, lsl #3]", &record).unwrap();
+        let slot = vm_slot_from_asm("ldr x4, [x25, x19, lsl #3]", &record, &profile).unwrap();
         assert_eq!(slot["slot"], serde_json::json!(25));
         assert_eq!(
             mem_addr_from_asm("str x3, [x25, x1]", &record),
             Some(0x10e0)
         );
-        let slot = vm_slot_from_asm("str x3, [x25, x1]", &record).unwrap();
+        let slot = vm_slot_from_asm("str x3, [x25, x1]", &record, &profile).unwrap();
         assert_eq!(slot["slot"], serde_json::json!(28));
+    }
+
+    #[test]
+    fn vm_profile_allows_non_default_role_registers() {
+        let profile = VmProfile::new(
+            "x9".to_string(),
+            "x20".to_string(),
+            "x22".to_string(),
+            "x26".to_string(),
+        );
+        let record = serde_json::json!({
+            "regs": {
+                "x20": "0x4000",
+                "x3": "0x5",
+            }
+        });
+        assert_eq!(
+            classify_vm_asm("ldrb w1, [x9, #0x4]", &profile),
+            "bytecode-read"
+        );
+        assert_eq!(
+            classify_vm_asm("ldr x1, [x22, x8, lsl #3]", &profile),
+            "dispatch-table-load"
+        );
+        assert_eq!(
+            classify_vm_asm("ldr x4, [x20, x3, lsl #3]", &profile),
+            "vm-reg-load"
+        );
+        let slot = vm_slot_from_asm("ldr x4, [x20, x3, lsl #3]", &record, &profile).unwrap();
+        assert_eq!(slot["slot"], serde_json::json!(5));
+        assert!(profile.is_infrastructure_reg("x26"));
     }
 
     #[test]
@@ -11276,6 +11593,7 @@ mod tests {
 
     #[test]
     fn frontier_auto_uses_byte_lane_for_or_merge_and_shifts() {
+        let profile = VmProfile::default_profile();
         let or_merge = serde_json::json!({
             "local_def": {
                 "asm": "orr x4, x14, x17",
@@ -11294,12 +11612,12 @@ mod tests {
                 {"idx": 90, "reg": "x17", "value": "0xd84ab4"}
             ]
         });
-        let lane1 = choose_frontier_next_for_lane(&or_merge, Some(1)).unwrap();
+        let lane1 = choose_frontier_next_for_lane(&or_merge, Some(1), &profile).unwrap();
         assert_eq!(lane1["reg"], serde_json::json!("x17"));
         assert_eq!(lane1["src_value"], serde_json::json!("0xd84ab4"));
         assert_eq!(lane1["source_byte_offset"], serde_json::json!(1));
 
-        let lane3 = choose_frontier_next_for_lane(&or_merge, Some(3)).unwrap();
+        let lane3 = choose_frontier_next_for_lane(&or_merge, Some(3), &profile).unwrap();
         assert_eq!(lane3["reg"], serde_json::json!("x14"));
         assert_eq!(lane3["src_value"], serde_json::json!("0x78000000"));
         assert_eq!(lane3["source_byte_offset"], serde_json::json!(3));
@@ -11322,7 +11640,7 @@ mod tests {
                 {"idx": 91, "reg": "w11", "value": "0x18"}
             ]
         });
-        let shifted = choose_frontier_next_for_lane(&shift_left, Some(3)).unwrap();
+        let shifted = choose_frontier_next_for_lane(&shift_left, Some(3), &profile).unwrap();
         assert_eq!(shifted["reg"], serde_json::json!("w1"));
         assert_eq!(shifted["source_byte_offset"], serde_json::json!(0));
     }
@@ -11773,10 +12091,10 @@ mod tests {
             "byte0": 0
         });
         let byte_writers = byte_writers_from_range_writes(0x4000, 4, &[stale_zero_write]);
-        let observed = 0x69f2e9fbu64.to_le_bytes();
+        let observed = 0x4433_2211u64.to_le_bytes();
         let mismatches = observed_byte_writer_mismatches(0x4000, &observed[..4], &byte_writers);
         assert_eq!(mismatches.len(), 4);
-        assert_eq!(mismatches[0]["observed_byte"], serde_json::json!("fb"));
+        assert_eq!(mismatches[0]["observed_byte"], serde_json::json!("11"));
         assert_eq!(mismatches[0]["writer_byte"], serde_json::json!("00"));
         assert_eq!(mismatches[0]["writer_idx"], serde_json::json!(120));
     }
@@ -11883,41 +12201,34 @@ mod tests {
 
     #[test]
     fn resolves_nm_symbols_by_nearest_preceding_offset() {
-        let stat = parse_nm_symbol_line("00000000000a0f5c 0000000000000038 T stat64@@LIBC")
-            .expect("parse stat symbol");
-        assert_eq!(stat.addr, 0xa0f5c);
-        assert_eq!(stat.size, Some(0x38));
-        assert_eq!(stat.name, "stat64@@LIBC");
+        let target = parse_nm_symbol_line("0000000000001200 0000000000000038 T target_func@@LIB")
+            .expect("parse symbol");
+        assert_eq!(target.addr, 0x1200);
+        assert_eq!(target.size, Some(0x38));
+        assert_eq!(target.name, "target_func@@LIB");
 
         let symbols = vec![
             ElfSymbol {
-                addr: 0x5c4fc,
+                addr: 0x1000,
                 size: Some(0x20),
                 kind: "T".to_string(),
-                name: "free@@LIBC".to_string(),
+                name: "helper_func@@LIB".to_string(),
             },
-            stat,
+            target,
         ];
-        let hit = resolve_elf_symbol_json(&symbols, 0xa0f60).unwrap();
+        let hit = resolve_elf_symbol_json(&symbols, 0x1204).unwrap();
         assert_eq!(hit["status"], serde_json::json!("nearest"));
-        assert_eq!(hit["symbol_addr"], serde_json::json!("0xa0f5c"));
+        assert_eq!(hit["symbol_addr"], serde_json::json!("0x1200"));
         assert_eq!(hit["delta"], serde_json::json!("0x4"));
-        assert_eq!(hit["name"], serde_json::json!("stat64@@LIBC"));
-        assert_eq!(hit["base_name"], serde_json::json!("stat64"));
+        assert_eq!(hit["name"], serde_json::json!("target_func@@LIB"));
+        assert_eq!(hit["base_name"], serde_json::json!("target_func"));
         assert_eq!(hit["in_symbol_range"], serde_json::json!(true));
     }
 
     #[test]
-    fn base64_decoder_accepts_unpadded_xsign_output() {
-        let decoded = base64_decoded_bytes(
-            "azYBCM007xAApiYQXVKLkaXxoOr2BiYWKai5MLGI6T9yCUYPHSKV0zba5j/4Jbr6D0UvFBHd3FllrCJShVQSWn+qcIYmFY3mFgYmFi",
-        )
-        .unwrap();
-        assert_eq!(decoded.len(), 76);
-        assert_eq!(
-            &decoded[..9],
-            &[0x6b, 0x36, 0x01, 0x08, 0xcd, 0x34, 0xef, 0x10, 0x00]
-        );
+    fn base64_decoder_accepts_unpadded_output() {
+        let decoded = base64_decoded_bytes("SGVsbG8sIHdvcmxkIQ").unwrap();
+        assert_eq!(decoded, b"Hello, world!");
     }
 }
 

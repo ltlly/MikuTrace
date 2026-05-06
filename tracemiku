@@ -12,8 +12,8 @@ import os, sys
   info     trace 元信息
 
 示例:
-  tracemiku trace --pkg com.taobao.taobao --so libsgmainso \\
-    --method doCommandNative --cmd 70102 --duration 90 --out traces/run1
+  tracemiku trace --pkg com.example.app --so libtarget.so \\
+    --method nativeEntry --duration 90 --out traces/run1
   tracemiku view traces/run1
   tracemiku api traces/run1/calls/call_001_tid1_100r_1ms /api/backtrace -p idx=100
   tracemiku query traces/run1 records --range 0..50 --regs x0,x1,x2 --json
@@ -546,6 +546,9 @@ def cmd_trace(args):
     # Load suicide-patch spec JSON (per-SO-version offset list).
     suicide_spec = None
     sps_arg = getattr(args, "suicide_patch_spec", None)
+    if bool(getattr(args, "patch_suicide", False)) and not sps_arg:
+        wlog("[!] --patch-suicide requires --suicide-patch-spec PATH")
+        raise SystemExit(2)
     if bool(getattr(args, "patch_suicide", False)) and sps_arg:
         sps_path = pathlib.Path(sps_arg)
         if not sps_path.is_absolute():
@@ -1344,13 +1347,12 @@ def main():
                            "**严禁包含 pthread/malloc/atomic** — Frida 自己用这些, attach 会崩进程. "
                            "默认空. 不需要 --trace-deep; 可用于 stat@@/stat64@@ 这类外部输出结构.")
     p_tr.add_argument("--patch-suicide", action="store_true", dest="patch_suicide",
-                      help="启用 anti-anti-frida tgkill svc → nop patching. 默认 spec = "
-                           "tools/hooks/sgmainso_6.8.260403_suicide.json (libsgmainso 6.8.260403). "
-                           "其他 SO 版本通过 --suicide-patch-spec PATH 传 JSON. 仅 --trace-deep 下生效.")
-    p_tr.add_argument("--suicide-patch-spec", default="tools/hooks/sgmainso_6.8.260403_suicide.json",
+                      help="启用 anti-anti-frida tgkill svc → nop patching. 必须通过 "
+                           "--suicide-patch-spec PATH 显式传 JSON spec. 仅 --trace-deep 下生效.")
+    p_tr.add_argument("--suicide-patch-spec", default=None,
                       dest="suicide_patch_spec",
-                      help="JSON spec for tgkill svc patches (offset list per SO version). 默认 "
-                           "= libsgmainso 6.8.260403. 给其他 SO/版本: 写新的 spec 文件.")
+                      help="JSON spec for tgkill svc patches (offset list per SO version). "
+                           "目标/版本相关 spec 放在 tools/hooks/ 或 examples/ 中, 不作为通用默认值.")
     p_tr.add_argument("--hide-rwx-maps", action="store_true", dest="hide_rwx_maps",
                       help="在 libc open/read 拦截 /proc/self/maps, 过滤 rwxp 匿名段 — 让反检测"
                            "看不到 Frida Stalker block cache 的 rwx. 通用反检测绕过, 不依赖目标 SO.")

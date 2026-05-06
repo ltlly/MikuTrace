@@ -23,7 +23,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
         cd.join("jni_hooks.jsonl"),
         [
             r#"{"trace_idx":1,"id":"GetStringUTFChars","ret":"hello"}"#,
-            r#"{"trace_idx":5,"id":"NewStringUTF","args":{"bytes":"x-sign"}}"#,
+            r#"{"trace_idx":5,"id":"NewStringUTF","args":{"bytes":"signature"}}"#,
             "not json",
         ]
         .join("\n"),

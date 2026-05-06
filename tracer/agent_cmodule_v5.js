@@ -465,7 +465,7 @@ function flushExtWriteEvents() {
 //
 // 偏移随 SO 版本变, 因此走 spec-driven: host 通过 opts.suicidePatchSpec 传 JSON,
 // 描述 `[ {offset, ...}, ... ]`. 没传 spec 时不做任何 patch — 不再硬编码任何
-// SO 版本的偏移. 现成 spec 在 tools/hooks/sgmainso_6.8.260403_suicide.json.
+// SO 版本的偏移. 目标相关 spec 放在 tools/hooks/ 或 examples/ 中.
 
 // ─────────── B3: 隐藏 RWX 匿名页 from /proc/self/maps reads ────────────────
 //
@@ -1148,7 +1148,7 @@ function installFnHook(fp, onInsn) {
                 if (STATE.hideRwxMaps) {
                     try { installRwxMapsHider(); } catch (e) { log(`[hide-rwx-maps][!] ${e}`); }
                 }
-                // Patch sgmainso obfuscated tgkill thunks BEFORE Stalker.follow
+                // Patch configured obfuscated tgkill thunks BEFORE Stalker.follow
                 // creates RWX block-cache pages that anti-debug would notice.
                 // Only does anything when STATE.patchSuicide is set (CLI: --patch-suicide).
                 if (STATE.patchSuicide) {

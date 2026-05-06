@@ -24,7 +24,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("meta.json"), r#"{"records":1}"#).unwrap();
     fs::write(
         cd.join("jni_hooks.jsonl"),
-        r#"{"trace_idx":0,"id":"NewStringUTF","args":{"bytes":"x-sign"}}"#,
+        r#"{"trace_idx":0,"id":"NewStringUTF","args":{"bytes":"signature"}}"#,
     )
     .unwrap();
     fs::write(
@@ -55,7 +55,7 @@ async fn auto_phase_reports_jni_and_crypto_phases() {
     let phases = v["phases"].as_array().unwrap();
     assert!(phases
         .iter()
-        .any(|p| p["phase"] == "jni_output" && p["info"] == "NewStringUTF 'x-sign'"));
+        .any(|p| p["phase"] == "jni_output" && p["info"] == "NewStringUTF 'signature'"));
     assert!(phases
         .iter()
         .any(|p| p["phase"] == "sha1_init" && p["info"] == "IV pattern at 0x7000"));

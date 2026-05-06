@@ -293,7 +293,7 @@ mod tests {
         samples.insert("sp".to_string(), 0x7000_i64);
         let f = FuncIR {
             id: "F0".to_string(),
-            name: "doCommandNative".to_string(),
+            name: "nativeEntry".to_string(),
             entry_idx: 0,
             exit_idx: 100,
             exec_count: 1,
@@ -311,10 +311,7 @@ mod tests {
             ..Default::default()
         };
         let md = render_func_md(&f, "hot");
-        assert!(
-            md.contains("# F0 `doCommandNative`"),
-            "missing header in {md}"
-        );
+        assert!(md.contains("# F0 `nativeEntry`"), "missing header in {md}");
         assert!(
             md.contains("- trace idx: 0..100"),
             "missing trace idx line: {md}"
@@ -403,7 +400,7 @@ mod tests {
             cmd: Some(42),
             fns: vec![FuncIR {
                 id: "F0".to_string(),
-                name: "doCommandNative".to_string(),
+                name: "nativeEntry".to_string(),
                 entry_idx: 0,
                 exit_idx: 99,
                 blocks: vec![BlockIR::default(), BlockIR::default()],
@@ -419,7 +416,7 @@ mod tests {
         assert!(md.contains("- method: `f`"));
         assert!(md.contains("## Functions (1)"));
         assert!(md.contains("| [F0](fns/F0.md) |"));
-        assert!(md.contains("| `doCommandNative` |"));
+        assert!(md.contains("| `nativeEntry` |"));
         assert!(md.contains(" 2 |"), "blocks count missing: {md}");
         assert!(md.contains(" 0..99 |"));
     }

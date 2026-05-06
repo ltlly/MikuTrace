@@ -1,6 +1,6 @@
 //! POST /api/diff-traces.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use axum::extract::State;
@@ -13,11 +13,11 @@ use serde_json::{json, Value};
 
 use crate::state::AppState;
 
-const HEADERS: [&str; 4] = ["x-mini-wua", "x-umt", "x-sgext", "x-sign"];
-
 #[derive(Debug, Deserialize)]
 pub struct DiffTracesRequest {
     pub traces: Vec<String>,
+    #[serde(default)]
+    pub keys: Vec<String>,
     #[serde(default)]
     pub show_offsets: bool,
     #[serde(default)]
@@ -59,11 +59,12 @@ fn diff_traces_response(req: DiffTracesRequest) -> Result<DiffTracesResponse, St
         all_outputs.push(outputs);
     }
 
+    let selected_keys = selected_output_keys(&req.keys, &all_outputs);
     let mut headers = BTreeMap::new();
-    for header in HEADERS {
+    for header in selected_keys {
         let binaries: Vec<Option<&[u8]>> = all_outputs
             .iter()
-            .map(|outputs| outputs.get(header).and_then(|o| o.binary.as_deref()))
+            .map(|outputs| outputs.get(&header).and_then(|o| o.binary.as_deref()))
             .collect();
         if binaries.iter().any(Option::is_none) {
             let per_trace_lens: Vec<Option<usize>> =
@@ -75,7 +76,7 @@ fn diff_traces_response(req: DiffTracesRequest) -> Result<DiffTracesResponse, St
             continue;
         }
         let binaries: Vec<&[u8]> = binaries.into_iter().map(Option::unwrap).collect();
-        headers.insert(header.to_string(), diff_header(&binaries, &req));
+        headers.insert(header, diff_header(&binaries, &req));
     }
 
     Ok(DiffTracesResponse {
@@ -83,6 +84,28 @@ fn diff_traces_response(req: DiffTracesRequest) -> Result<DiffTracesResponse, St
         n_traces: all_outputs.len(),
         headers,
     })
+}
+
+fn selected_output_keys(
+    requested: &[String],
+    all_outputs: &[HashMap<String, OutputValue>],
+) -> Vec<String> {
+    if requested.is_empty() {
+        return all_outputs
+            .iter()
+            .flat_map(|outputs| outputs.keys().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    }
+    let mut seen = HashSet::new();
+    requested
+        .iter()
+        .filter_map(|key| {
+            let key = key.trim();
+            (!key.is_empty() && seen.insert(key.to_string())).then(|| key.to_string())
+        })
+        .collect()
 }
 
 fn extract_outputs(trace_dir: &Path) -> Option<HashMap<String, OutputValue>> {
@@ -142,7 +165,7 @@ fn extract_outputs(trace_dir: &Path) -> Option<HashMap<String, OutputValue>> {
         else {
             continue;
         };
-        if !HEADERS.contains(&header) || idx + 1 >= new_strings.len() {
+        if idx + 1 >= new_strings.len() {
             continue;
         }
         let Some(raw) = new_strings[idx + 1]

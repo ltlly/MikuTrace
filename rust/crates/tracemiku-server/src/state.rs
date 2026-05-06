@@ -668,8 +668,8 @@ fn parse_known_offsets(call_dir: &std::path::Path) -> Option<HashMap<u64, String
 /// known_offsets dict. Static entries from per-call meta.json WIN on
 /// collision (don't override curated names with examples ones).
 ///
-/// `so_name` is the module basename without `.so` suffix (e.g., "libsgmainso"
-/// for "libsgmainso.so").
+/// `so_name` is the module basename without `.so` suffix (e.g., "libtarget"
+/// for "libtarget.so").
 fn parse_examples_known_offsets(
     repo_root: &std::path::Path,
     so_name: &str,
