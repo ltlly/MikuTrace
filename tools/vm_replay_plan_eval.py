@@ -462,6 +462,39 @@ def auto_seeded_replay_summary(
     }
 
 
+def seed_lineage_commands(
+    plan: dict[str, Any],
+    suggestions: dict[int, dict[str, Any]],
+    call_dir: str | None,
+    slot_base: str | None,
+    before_idx: int | None,
+    depth: int,
+    lookback: int,
+) -> list[dict[str, Any]]:
+    base = parse_int(slot_base) if slot_base else None
+    if base is None:
+        return []
+    trace_dir = call_dir or "<call_dir>"
+    idx = before_idx if before_idx is not None else int(plan.get("start") or 0)
+    out = []
+    for slot, suggestion in sorted(suggestions.items()):
+        addr = base + slot * 8
+        out.append(
+            {
+                "slot": slot,
+                "suggested_value": suggestion.get("value"),
+                "addr": f"{addr:#x}",
+                "command": (
+                    "tracemiku-cli byte-lineage "
+                    f"{trace_dir} --addr {addr:#x} --before-idx {idx} "
+                    f"--depth {depth} --lookback {lookback} --compact"
+                ),
+                "caution": "This proves the suggested initial slot value, not the whole replay.",
+            }
+        )
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-mem", action="append", default=[], metavar="ADDR:SIZE")
@@ -491,6 +524,21 @@ def main() -> int:
             "independent lineage proof."
         ),
     )
+    parser.add_argument(
+        "--seed-lineage-call-dir",
+        help="Call directory to use when emitting seed lineage command strings.",
+    )
+    parser.add_argument(
+        "--seed-lineage-base",
+        help="VM slot memory base for command hints; slot address is base + slot*8.",
+    )
+    parser.add_argument(
+        "--seed-lineage-before-idx",
+        type=int,
+        help="Trace index for seed lineage command hints. Defaults to replay plan start.",
+    )
+    parser.add_argument("--seed-lineage-depth", type=int, default=80)
+    parser.add_argument("--seed-lineage-lookback", type=int, default=5_000_000)
     args = parser.parse_args()
     plan = json.load(sys.stdin)
     if args.emit_python:
@@ -504,6 +552,17 @@ def main() -> int:
         summary["auto_seeded_replay"] = auto_seeded_replay_summary(
             plan, args.seed_slot, args.dump_mem
         )
+    commands = seed_lineage_commands(
+        plan,
+        state.seed_suggestions,
+        args.seed_lineage_call_dir,
+        args.seed_lineage_base,
+        args.seed_lineage_before_idx,
+        args.seed_lineage_depth,
+        args.seed_lineage_lookback,
+    )
+    if commands:
+        summary["seed_lineage_commands"] = commands
     json.dump(summary, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0

@@ -898,6 +898,10 @@ six formula-derived seed suggestions and replays with `trusted_effects=0`,
 trace. On the `[21,25)` ladder window it applies five suggestions and replays
 to final `slot24=0x95f2ec79` with no observed fallbacks. These suggestions are
 still evidence to prove, not portable inputs by themselves.
+When passed `--seed-lineage-base 0x77445994a0`, the same tool emits direct
+`seed_lineage_commands[]`; for example slot26 maps to `0x7744599570`, matching
+the earlier manual `byte-lineage` probe. This keeps the next proof step
+machine-readable for AI agents.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:

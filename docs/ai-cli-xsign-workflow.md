@@ -112,6 +112,7 @@ For AI use, treat the output categories as contracts:
 | `source_byte_load` | A byte/word input to the VM operation. Follow it with `byte-lineage` when it is not yet a known table, literal, or app/device input. |
 | `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
 | `vm_replay_plan_eval.py --auto-seed-suggestions` | Runs a trusted pass, applies formula-derived seed suggestions, then reports a second no-trust replay. Use this to remove mechanical fallback noise before proving each seed. |
+| `seed_lineage_commands[]` | Optional command hints emitted when `--seed-lineage-base` is supplied. They turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, memory boundaries, and next actions. Use it before requesting the full chain. |
 | `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
@@ -152,6 +153,21 @@ If `auto_seeded_replay.summary.trusted_effects == 0`, the window can be replayed
 without observed fallbacks once its initial seeds are supplied. Those seeds are
 still not portable until `byte-lineage`, `mem-dump`, or an external metadata
 probe proves their source.
+
+For register-file VMs where slot `N` lives at `slot_base + N*8`, emit the next
+lineage commands directly:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops <call_dir> \
+  --start <idx> --end <idx> \
+  --replay-plan --max-ops 400 \
+| uv run python tools/vm_replay_plan_eval.py \
+  --seed-slot 0=0 \
+  --seed-lineage-base <slot_base> \
+  --seed-lineage-call-dir <call_dir>
+```
+
+The resulting `seed_lineage_commands[]` are proof tasks, not conclusions.
 
 ## Output-to-writer path
 
