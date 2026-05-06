@@ -1683,9 +1683,9 @@ def current_trace_model_input_manifest() -> dict:
     entries = [
         {
             "name": "raw_prefix",
-            "kind": "trace_observed_literal",
+            "kind": "fixed_literal",
             "value": TRACE_FIXED_PREFIX_WRITER_MAP["raw_prefix"],
-            "status": "observed_raw_text_not_decoded_semantics",
+            "status": "portable_for_current_samples_semantics_open",
             "used_by": "xsign[0:12]",
         },
         {
@@ -1804,7 +1804,6 @@ def completion_audit() -> dict:
         ],
         "blocking_gaps": [
             "Replace middle_lhs traced_formula_only/static/table segments with portable formulas or declared external inputs.",
-            "Resolve raw 12-character prefix semantics or intentionally model it as protocol literal.",
             "Validate VM opcode implementations over full scratch table and semantic tail source windows, not just samples.",
             "Prove how LCG/time-derived state feeds every payload byte, not only selected mod255 inputs.",
         ],
@@ -2524,10 +2523,6 @@ def main() -> None:
             (
                 "portable formulas or external inputs for the word_source_only "
                 "XOR lhs chunks"
-            ),
-            (
-                "semantic meaning of the fixed 12-character raw prefix; trace "
-                "now proves it as raw text, not as directly observed decoded bytes"
             ),
             (
                 "validated Python VM opcode implementations for the scratch "

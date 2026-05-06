@@ -828,7 +828,7 @@ The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 
 ```text
-raw_prefix                  trace_observed_literal
+raw_prefix                  fixed_literal, portable for current samples
 stat_mtim_tv_sec            external_metadata, formula input validated
 scratch_prefix_static_byte  static_or_table_byte, source not portable yet
 middle_lhs_source_segments  segmented_trace_sources, complete for call_001
@@ -841,8 +841,9 @@ portable algorithm: eliminate or parameterize every non-portable manifest entry.
 
 `fixed_prefix_model` now confirms that every current sample uses the same
 12-character raw prefix `azYBCM007xAA`. Trace evidence still shows zero direct
-hits for the decoded prefix bytes, so the simulator policy is to emit the raw
-prefix literally while keeping its deeper semantics open.
+hits for the decoded prefix bytes. The simulator now treats the raw prefix as a
+fixed literal that is portable for current samples, while keeping deeper
+semantics open as non-blocking documentation debt.
 
 `current_trace_model_simulation` now makes the current boundary explicit:
 
