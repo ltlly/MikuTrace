@@ -458,6 +458,29 @@ TRACE_CALL_001_BYTE_LANE_STATE_SOURCE = {
     "state_add_result": 0x783E786F,
 }
 
+TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
+    "command": (
+        "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
+        "--base64-tail-align-prefix AA --base64-tail-drop 1 --semantic-offset 0 "
+        "--semantic-count 68 --semantic-writer-map --semantic-writer-map-vm-chain-bytes "
+        "--semantic-writer-map-vm-chain-steps 16 --semantic-writer-map-vm-chain-runs 68 "
+        "--semantic-writer-map-vm-chain-follow-frontier --summary"
+    ),
+    "byte_equation_count": 67,
+    "covered_range": [1, 68],
+    "kind_counts": {
+        "mod255_low_byte": 10,
+        "xor_mix": 57,
+    },
+    "xor_rhs_pattern": {
+        "kind": "offset_parity_mask",
+        "even_byte": 0x61,
+        "odd_byte": 0x62,
+        "matched_offsets": 57,
+    },
+    "unexplained_offsets": [0],
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -828,6 +851,33 @@ def main() -> None:
                     == byte_lane_source["source_word"],
                 },
                 "matches_state_digest_word_1": byte_lane_source["source_word"] == state_words_be[1],
+            },
+            "call_001_full_byte_equation_summary": {
+                "status": "trace_proven_one_sample",
+                "command": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["command"],
+                "byte_equation_count": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                    "byte_equation_count"
+                ],
+                "covered_range": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["covered_range"],
+                "kind_counts": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["kind_counts"],
+                "xor_rhs_pattern": {
+                    "kind": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["xor_rhs_pattern"][
+                        "kind"
+                    ],
+                    "even_byte": f"{TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY['xor_rhs_pattern']['even_byte']:#x}",
+                    "odd_byte": f"{TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY['xor_rhs_pattern']['odd_byte']:#x}",
+                    "matched_offsets": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                        "xor_rhs_pattern"
+                    ]["matched_offsets"],
+                    "formula": "tail[i] xor rhs is 0x61 for even semantic offsets and 0x62 for odd offsets",
+                },
+                "unexplained_offsets": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                    "unexplained_offsets"
+                ],
+                "next_problem": (
+                    "Trace the lhs_i stream for the 57 XOR bytes back to the "
+                    "VM/hash state; the final x-sign tail itself is no longer opaque."
+                ),
             },
             "multi_sample_mask_folds": {
                 "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",

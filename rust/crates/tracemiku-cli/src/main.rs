@@ -3892,6 +3892,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_seed_mode": value.get("vm_chain_seed_mode").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
+        "byte_equation_summary": output_semantic_byte_equation_summary(&byte_equations),
         "byte_equations": byte_equations,
         "xor_word_templates": xor_word_templates,
         "xor_word_state_sources": output_semantic_xor_word_state_sources(value, &xor_word_templates),
@@ -3908,6 +3909,88 @@ fn output_semantic_byte_equations(value: &serde_json::Value) -> serde_json::Valu
         .filter_map(output_semantic_byte_equation)
         .collect::<Vec<_>>();
     serde_json::Value::Array(equations)
+}
+
+fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde_json::Value {
+    let mut parsed = equations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(compact_byte_equation)
+        .collect::<Vec<_>>();
+    parsed.sort_by_key(|item| item.offset);
+    let mut kind_counts = BTreeMap::<String, usize>::new();
+    for item in &parsed {
+        *kind_counts.entry(item.kind.clone()).or_insert(0) += 1;
+    }
+    let covered_offsets = parsed
+        .iter()
+        .map(|item| serde_json::json!(item.offset))
+        .collect::<Vec<_>>();
+    let min_offset = parsed.first().map(|item| item.offset);
+    let max_offset = parsed.last().map(|item| item.offset);
+    let missing_offsets = match (min_offset, max_offset) {
+        (Some(lo), Some(hi)) => (lo..=hi)
+            .filter(|offset| !parsed.iter().any(|item| item.offset == *offset))
+            .map(|offset| serde_json::json!(offset))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    serde_json::json!({
+        "count": parsed.len(),
+        "covered_offsets": covered_offsets,
+        "covered_range": match (min_offset, max_offset) {
+            (Some(lo), Some(hi)) => serde_json::json!([lo, hi + 1]),
+            _ => serde_json::Value::Null,
+        },
+        "missing_offsets_in_covered_range": missing_offsets,
+        "kind_counts": kind_counts
+            .into_iter()
+            .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+            .collect::<Vec<_>>(),
+        "xor_rhs_pattern": semantic_xor_rhs_offset_pattern(&parsed),
+    })
+}
+
+fn semantic_xor_rhs_offset_pattern(equations: &[CompactByteEquation]) -> serde_json::Value {
+    let xor_items = equations
+        .iter()
+        .filter(|item| item.kind == "xor_mix")
+        .filter_map(|item| item.rhs.map(|rhs| (item.offset, (rhs & 0xff) as u8)))
+        .collect::<Vec<_>>();
+    if xor_items.is_empty() {
+        return serde_json::Value::Null;
+    }
+    let mut even = Vec::<u8>::new();
+    let mut odd = Vec::<u8>::new();
+    for (offset, rhs) in &xor_items {
+        let values = if offset % 2 == 0 { &mut even } else { &mut odd };
+        if !values.contains(rhs) {
+            values.push(*rhs);
+        }
+    }
+    let values_to_json = |values: &[u8]| {
+        values
+            .iter()
+            .map(|value| serde_json::json!(format!("{value:#x}")))
+            .collect::<Vec<_>>()
+    };
+    if even.len() == 1 && odd.len() == 1 {
+        serde_json::json!({
+            "kind": "offset_parity_mask",
+            "formula": "xor rhs = even_byte when semantic offset is even, odd_byte when semantic offset is odd",
+            "even_byte": format!("{:#x}", even[0]),
+            "odd_byte": format!("{:#x}", odd[0]),
+            "matched_offsets": xor_items.len(),
+        })
+    } else {
+        serde_json::json!({
+            "kind": "mixed_rhs_values",
+            "even_values": values_to_json(&even),
+            "odd_values": values_to_json(&odd),
+            "matched_offsets": xor_items.len(),
+        })
+    }
 }
 
 fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json::Value> {
@@ -9674,10 +9757,10 @@ mod tests {
         choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
         dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm, find_hex_byte_offsets,
         mem_addr_from_asm, memory_access_width, odd_u64_inverse, output_semantic_byte_equation,
-        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
-        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm,
+        output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
+        output_semantic_xor_word_templates, recognize_alu_semantic, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
+        store_source_regs_from_asm, vm_ops_state_updates, vm_slot_from_asm,
     };
 
     #[test]
@@ -10275,6 +10358,50 @@ mod tests {
             serde_json::json!([1, 2])
         );
         assert_eq!(first["result_bytes_hex"], serde_json::json!("05d528b9"));
+    }
+
+    #[test]
+    fn summarizes_byte_equation_parity_masks() {
+        let equations = serde_json::json!([
+            {
+                "offset": 1,
+                "kind": "mod255_low_byte",
+                "output_byte": "0x62",
+                "result": "0x62"
+            },
+            {
+                "offset": 3,
+                "kind": "xor_mix",
+                "lhs": "0x67",
+                "rhs": "0x62",
+                "result": "0x05"
+            },
+            {
+                "offset": 4,
+                "kind": "xor_mix",
+                "lhs": "0xb4",
+                "rhs": "0x61",
+                "result": "0xd5"
+            }
+        ]);
+        let summary = output_semantic_byte_equation_summary(&equations);
+        assert_eq!(summary["count"], serde_json::json!(3));
+        assert_eq!(
+            summary["missing_offsets_in_covered_range"],
+            serde_json::json!([2])
+        );
+        assert_eq!(
+            summary["xor_rhs_pattern"]["kind"],
+            serde_json::json!("offset_parity_mask")
+        );
+        assert_eq!(
+            summary["xor_rhs_pattern"]["odd_byte"],
+            serde_json::json!("0x62")
+        );
+        assert_eq!(
+            summary["xor_rhs_pattern"]["even_byte"],
+            serde_json::json!("0x61")
+        );
     }
 
     #[test]

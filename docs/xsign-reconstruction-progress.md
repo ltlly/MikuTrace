@@ -277,6 +277,30 @@ state_update     = #14678176 add x13, x8, x12
 low32(0x561d4e18 + 0x22212a57) = 0x783e786f
 ```
 
+A full 68-byte byte-lane scan with 16 backchain steps is enough to classify the
+output formulas for almost the whole call_001 semantic tail:
+
+```text
+byte_equation_summary.count = 67
+covered_range               = [1, 68)
+kind_counts                 = mod255_low_byte: 10, xor_mix: 57
+xor_rhs_pattern             = offset parity mask
+even offsets                = xor rhs 0x61
+odd offsets                 = xor rhs 0x62
+```
+
+So the current trace-proven call_001 tail shape is:
+
+```text
+tail[0] = 0x0a                      # not yet explained by this summary
+tail[i] = mod255_low_byte(input_i)   # 10 known mask/fold positions
+tail[i] = lhs_i ^ (i & 1 ? 0x62 : 0x61)
+```
+
+The remaining reconstruction problem is now narrower: trace the `lhs_i` stream
+for the 57 XOR bytes back to its generating VM/hash state, instead of treating
+the final x-sign tail as opaque bytes.
+
 For `call_001`, the state word is now traced one layer further. The XOR
 template uses `state_word_le = 0xd84ab467`, which is the little-endian view of
 the bytes loaded from `0x67b44ad8`. That word is read at #14678409 from

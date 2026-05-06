@@ -192,6 +192,11 @@ rust/target/debug/tracemiku-cli output-map <call_dir> \
 The summary marks this with `semantic_writer_map.vm_chain_seed_mode = "bytes"`.
 Use it after run-level triage has found a packed region; it is intentionally
 opt-in because it may run one backchain per byte.
+For long tails, read `semantic_writer_map.byte_equation_summary` before the
+full `byte_equations[]` array. It reports coverage, kind counts, and common
+XOR mask structure such as an offset-parity mask (`even_byte = 0x61`,
+`odd_byte = 0x62`), which is usually the compact form an AI agent should carry
+into the simulator.
 
 When four consecutive byte equations are XORs, the summary additionally emits
 `semantic_writer_map.xor_word_templates[]`. This is designed for the manual
