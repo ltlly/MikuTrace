@@ -557,6 +557,12 @@ TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
             "stale_writer_idx": 13979551,
             "stale_writer_asm": "str x6, [x19, x20]",
             "stale_writer_src_value": 0x0,
+            "touching_addr_with_bytes": {
+                "addr": "0x74b68bd108",
+                "cursor": 13980730,
+                "before": [{"idx": 13979551, "kind": "w", "byte": 0x00}],
+                "after": [{"idx": 13980730, "kind": "r", "byte": 0xFB}],
+            },
             "interpretation": (
                 "The chain reaches an observed memory value that is not explained "
                 "by the latest traced write; stop here instead of following the "

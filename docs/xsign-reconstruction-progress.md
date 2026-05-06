@@ -357,6 +357,19 @@ there. Current interpretation: the first middle word crosses a trace coverage
 boundary or untraced memory producer; following the stale zero write is
 incorrect.
 
+`idxs-touching-addr --with-bytes` confirms the byte-level discontinuity for the
+first byte:
+
+```text
+addr 0x74b68bd108, cursor #13980730
+before: #13979551 w byte=0x00
+after:  #13980730 r byte=0xfb
+```
+
+Without `--with-bytes`, the same command stays cheap and returns only idx/kind;
+with the flag it blocks for MemShadow and exposes the observed byte values that
+are needed to distinguish stale traced writes from true memory contents.
+
 So the current trace-proven call_001 tail shape is:
 
 ```text

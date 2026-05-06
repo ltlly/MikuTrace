@@ -111,10 +111,31 @@ async fn last_write_of_addr_reports_writer_context() {
 #[tokio::test]
 async fn touching_addr_splits_reads_and_writes_around_cursor() {
     let (_tmp, cd) = synth_call_dir();
-    let v = get_json(cd, "/api/idxs-touching-addr?addr=0x7000&cursor=1&limit=10").await;
+    let v = get_json(
+        cd.clone(),
+        "/api/idxs-touching-addr?addr=0x7000&cursor=1&limit=10",
+    )
+    .await;
     assert_eq!(v["status"], "ready");
     assert_eq!(v["before"], serde_json::json!([{"idx":0,"kind":"w"}]));
     assert_eq!(v["after"], serde_json::json!([{"idx":1,"kind":"r"}]));
+    assert_eq!(v["total_before"], 1);
+    assert_eq!(v["total_after"], 1);
+
+    let v = get_json(
+        cd,
+        "/api/idxs-touching-addr?addr=0x7000&cursor=1&limit=10&with_bytes=true",
+    )
+    .await;
+    assert_eq!(v["status"], "ready");
+    assert_eq!(
+        v["before"],
+        serde_json::json!([{"idx":0,"kind":"w","byte":104}])
+    );
+    assert_eq!(
+        v["after"],
+        serde_json::json!([{"idx":1,"kind":"r","byte":104}])
+    );
     assert_eq!(v["total_before"], 1);
     assert_eq!(v["total_after"], 1);
 }

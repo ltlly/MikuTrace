@@ -473,6 +473,8 @@ pub struct TouchingAddrQuery {
     pub cursor: usize,
     #[serde(default = "default_addr_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub with_bytes: bool,
 }
 
 fn default_addr_limit() -> usize {
@@ -483,6 +485,8 @@ fn default_addr_limit() -> usize {
 pub struct TouchingAddrEntry {
     pub idx: usize,
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte: Option<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -525,25 +529,13 @@ fn idxs_touching_addr_response(
     q: TouchingAddrQuery,
 ) -> TouchingAddrResponse {
     let addr = parse_int(&q.addr).unwrap_or(0);
-    let mut entries: Vec<TouchingAddrEntry> = if let Some(mem) = inner.memshadow_if_ready() {
-        mem.bytes
-            .get(&addr)
-            .map(|events| {
-                events
-                    .iter()
-                    .filter_map(|ev| {
-                        let kind = if ev.kind == "r" {
-                            "r"
-                        } else if ev.kind == "w" || ev.kind == "x" {
-                            "w"
-                        } else {
-                            return None;
-                        };
-                        Some(TouchingAddrEntry { idx: ev.idx, kind })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+    let mem = if q.with_bytes {
+        Some(inner.memshadow())
+    } else {
+        inner.memshadow_if_ready()
+    };
+    let mut entries: Vec<TouchingAddrEntry> = if let Some(mem) = mem {
+        touching_addr_entries_from_memshadow(mem, addr, q.with_bytes)
     } else {
         touching_addr_entries_from_index(inner, addr)
     };
@@ -565,6 +557,35 @@ fn idxs_touching_addr_response(
     }
 }
 
+fn touching_addr_entries_from_memshadow(
+    mem: &tracemiku_core::prelude::MemShadow,
+    addr: u64,
+    include_byte: bool,
+) -> Vec<TouchingAddrEntry> {
+    mem.bytes
+        .get(&addr)
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(|ev| {
+                    let kind = if ev.kind == "r" {
+                        "r"
+                    } else if ev.kind == "w" || ev.kind == "x" {
+                        "w"
+                    } else {
+                        return None;
+                    };
+                    Some(TouchingAddrEntry {
+                        idx: ev.idx,
+                        kind,
+                        byte: include_byte.then_some(ev.byte),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 fn touching_addr_entries_from_index(
     inner: &crate::state::AppStateInner,
     addr: u64,
@@ -577,6 +598,7 @@ fn touching_addr_entries_from_index(
         .map(|m| TouchingAddrEntry {
             idx: m.idx,
             kind: "w",
+            byte: None,
         })
         .chain(
             inner
@@ -587,6 +609,7 @@ fn touching_addr_entries_from_index(
                 .map(|m| TouchingAddrEntry {
                     idx: m.idx,
                     kind: "r",
+                    byte: None,
                 }),
         )
         .collect()

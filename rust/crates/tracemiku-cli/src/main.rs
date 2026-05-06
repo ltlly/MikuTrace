@@ -296,6 +296,9 @@ enum Cmd {
         cursor: usize,
         #[arg(long, default_value_t = 30)]
         limit: usize,
+        /// Include byte values from MemShadow, blocking to load/build it if needed.
+        #[arg(long)]
+        with_bytes: bool,
     },
     /// GET /api/idxs-touching-range.
     IdxsTouchingRange {
@@ -1303,11 +1306,13 @@ async fn main() -> anyhow::Result<()> {
             addr,
             cursor,
             limit,
+            with_bytes,
         }) => {
             let params = vec![
                 ("addr", addr),
                 ("cursor", cursor.to_string()),
                 ("limit", limit.to_string()),
+                ("with_bytes", with_bytes.to_string()),
             ];
             route_get_json(trace_dir, route_path("/api/idxs-touching-addr", &params)).await
         }

@@ -165,6 +165,20 @@ write, preexisting mapped data, a syscall/JNI side effect, or a trace coverage
 gap. Do not keep following the stale traced write just because it is the latest
 write in the index.
 
+To inspect the surrounding per-byte read/write history for one address, use:
+
+```bash
+rust/target/debug/tracemiku-cli idxs-touching-addr <call_dir> \
+  --addr <byte_addr> \
+  --cursor <idx> \
+  --limit 20 \
+  --with-bytes
+```
+
+`--with-bytes` may block while loading/building MemShadow, but it lets an AI
+agent distinguish "latest traced write" from "last observed read value" when a
+scratch address is reused.
+
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly
 from the final JNI string:
