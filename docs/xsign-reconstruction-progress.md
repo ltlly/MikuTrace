@@ -131,7 +131,21 @@ rust/target/debug/tracemiku-cli byte-writer-map \
 ```
 
 This keeps one JSON document containing the output bytes, writer chunking, and
-the first layer of result-to-input backchains.
+the first layer of result-to-input backchains. A short `--vm-chain-steps 10`
+run over all current `call_001` writer runs reports:
+
+```text
+32 writer runs
+mod255_low_byte: 7
+xor_identity: 6
+ubfx: 12
+shift_right: 12
+add_small_delta: 2
+```
+
+This confirms two active classes in the semantic tail: packed-word byte
+extraction for the middle 4-byte runs, and modulo-255 byte generation for
+several single-byte tail positions including the repeated `62 61 62` suffix.
 
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.

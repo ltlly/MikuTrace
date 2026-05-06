@@ -104,7 +104,11 @@ rust/target/debug/tracemiku-cli byte-writer-map <call_dir> \
 
 The added `vm_chains[]` entries are intentionally summaries. They are meant to
 rank which byte or run should be investigated next, not to replace a focused
-`vm-backchain`/`vm-backtree` run when a branch point matters.
+`vm-backchain`/`vm-backtree` run when a branch point matters. The top-level
+`vm_chain_summary.semantic_kind_counts[]` shows whether the selected runs are
+mostly Base64 bit slicing (`ubfx`/`shift_right`), byte normalization
+(`xor_identity`), modulo folding (`mod255_low_byte`), or another repeated
+template.
 
 ## Backward dataflow path
 

@@ -2048,7 +2048,9 @@ async fn cmd_byte_writer_map(
             vm_chain_follow_frontier,
         )
         .await?;
+        let chain_summary = vm_chain_batch_summary(&chains);
         if let Some(obj) = output.as_object_mut() {
+            obj.insert("vm_chain_summary".to_string(), chain_summary);
             obj.insert("vm_chains".to_string(), serde_json::Value::Array(chains));
         }
     }
@@ -4267,6 +4269,48 @@ async fn vm_chains_for_byte_writer_runs(
         }));
     }
     Ok(out)
+}
+
+fn vm_chain_batch_summary(chains: &[serde_json::Value]) -> serde_json::Value {
+    let mut semantic_counts = BTreeMap::<String, usize>::new();
+    let mut pattern_counts = BTreeMap::<String, usize>::new();
+    for chain in chains {
+        if let Some(semantics) = chain
+            .pointer("/chain/recognized_semantics")
+            .and_then(|v| v.as_array())
+        {
+            for item in semantics {
+                if let Some(kind) = item
+                    .get("semantic")
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|v| v.as_str())
+                {
+                    *semantic_counts.entry(kind.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        if let Some(patterns) = chain
+            .pointer("/chain/recognized_patterns")
+            .and_then(|v| v.as_array())
+        {
+            for item in patterns {
+                if let Some(kind) = item.get("kind").and_then(|v| v.as_str()) {
+                    *pattern_counts.entry(kind.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    serde_json::json!({
+        "chain_count": chains.len(),
+        "semantic_kind_counts": semantic_counts
+            .into_iter()
+            .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+            .collect::<Vec<_>>(),
+        "pattern_counts": pattern_counts
+            .into_iter()
+            .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 fn push_taint_seed(
