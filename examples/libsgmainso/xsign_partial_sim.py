@@ -2589,16 +2589,28 @@ def python_vm_replay_plan_eval_summary() -> dict:
 def vm_replay_seed_provenance_summary() -> dict:
     return {
         "status": "partial_seed_lineage",
+        "tool": "tracemiku-cli byte-lineage --compact",
         "scratch_writer_window": {
             "slot29": {
+                "command": (
+                    "tracemiku-cli byte-lineage <call_dir> "
+                    "--addr 0x7744599588 --before-idx 14164280 "
+                    "--depth 12 --lookback 5000000 --compact"
+                ),
                 "value": "0x37",
                 "writer_idx": 14164256,
                 "writer_asm": "str x5, [x25, x6, lsl #3]",
                 "formula": "0x37 = 0x38 + 0xffffffffffffffff",
                 "upstream": "0xffffffffffffffff is read as a VM bytecode literal at #14164253",
+                "terminal": "no_local_def at VM bytecode IP base",
                 "portable_status": "bytecode_literal",
             },
             "slot25": {
+                "command": (
+                    "tracemiku-cli byte-lineage <call_dir> "
+                    "--addr 0x7744599568 --before-idx 14164280 "
+                    "--depth 12 --lookback 5000000 --compact"
+                ),
                 "value": "0x74b68bcc1c",
                 "writer_idx": 14164103,
                 "writer_asm": "stp x9, x10, [x25, #0xc0]",
@@ -2607,6 +2619,11 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "0x74b68bcc10"
                 ),
                 "frontier": "observed_read_without_matching_traced_write",
+                "boundary": {
+                    "addr": "0x7744599578",
+                    "observed_bytes_hex": "1ccc8bb674000000",
+                    "gap_call_count_total": 1,
+                },
                 "portable_status": "not_proven",
             },
         },

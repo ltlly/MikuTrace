@@ -965,16 +965,19 @@ Follow-up seed lineage probes show the current boundary more precisely:
 
 ```text
 scratch slot29 before #14164280:
+  command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact
   slot29 = 0x37
   writer #14164256: str x5, [x25, x6, lsl #3]
   local formula: 0x37 = 0x38 + 0xffffffffffffffff
   upstream: 0xffffffffffffffff is a VM bytecode literal read at #14164253
 
 scratch slot25 before #14164280:
+  command: byte-lineage --addr 0x7744599568 --before-idx 14164280 --compact
   slot25 = 0x74b68bcc1c
   writer #14164103: stp x9, x10, [x25, #0xc0]
   loaded from slot9, then slot26, then byte memory around 0x74b68bcc10
   frontier: observed_read_without_matching_traced_write on slot27/memory state
+  boundary: addr 0x7744599578, observed 1ccc8bb674000000, gap calls 1
 ```
 
 So `slot29` is no longer a semantic unknown. `slot25` is still a real algorithm

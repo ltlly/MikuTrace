@@ -97,6 +97,7 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> --start <idx> --end <idx> --re
 rust/target/debug/tracemiku-cli vm-backchain <call_dir> --idx <idx> --reg <reg>
 rust/target/debug/tracemiku-cli vm-backtree <call_dir> --idx <idx> --reg <reg>
 rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr <addr> --before-idx <idx> --summary
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr <addr> --before-idx <idx> --compact
 ```
 
 For AI use, treat the output categories as contracts:
@@ -108,6 +109,7 @@ For AI use, treat the output categories as contracts:
 | `python_with_values` | A concrete, value-filled expression. It is good for verification, but must be parameterized before calling it an algorithm. |
 | `source_byte_load` | A byte/word input to the VM operation. Follow it with `byte-lineage` when it is not yet a known table, literal, or app/device input. |
 | `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
+| `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, memory boundaries, and next actions. Use it before requesting the full chain. |
 | `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
 | `observed_read_without_matching_traced_write` frontier | Memory was read with no matching earlier traced write. This usually means pre-trace initialization, an untraced helper, mmap/file input, JNI/framework state, or a trace gap. |
 | `no_local_def` frontier | The selected register value was already live at the search boundary or came from code the current local def search did not cover. Increase lookback, switch to memory lineage, or mark it as an explicit input. |
@@ -214,7 +216,7 @@ rust/target/debug/tracemiku-cli byte-lineage <call_dir> \
   --addr <byte_addr> \
   --before-idx <consumer_idx> \
   --depth 12 \
-  --summary
+  --compact
 ```
 
 `byte-lineage` now preserves the source byte lane after the first last-writer
@@ -242,10 +244,12 @@ In `vm-backchain --summary`, the same condition is surfaced under
 `recognized_pattern_summary.memory_boundary_reads[]`. Use this compact field
 first when an AI needs to decide whether a chain can continue automatically or
 needs a wider trace / external metadata hook.
-In `byte-lineage --summary`, the equivalent compact entry is
+In `byte-lineage --summary`, the equivalent entry is
 `memory_boundaries[]`, which promotes the terminal step, register value, and
 upstream observed bytes / gap-call evidence without requiring a scan of the
-full `chain[]`.
+full `chain[]`. Prefer `byte-lineage --compact` for automated AI loops: it
+omits the full chain entirely and emits only `path[]`, `recognized_semantics[]`,
+`memory_boundaries[]`, `terminal`, and `next_actions[]`.
 
 For this boundary case, `vm-backstep` / `byte-lineage` also include
 `upstream.gap_call_candidates`. The scan covers the trace-index gap between the
