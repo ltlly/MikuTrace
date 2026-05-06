@@ -3842,6 +3842,47 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "writer_run_count": writer_run_count,
         "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_chains": output_semantic_vm_chain_summaries(value),
+    })
+}
+
+fn output_semantic_vm_chain_summaries(value: &serde_json::Value) -> serde_json::Value {
+    let chains = value
+        .get("vm_chains")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(output_semantic_vm_chain_summary)
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(chains)
+}
+
+fn output_semantic_vm_chain_summary(item: &serde_json::Value) -> serde_json::Value {
+    let semantics = item
+        .pointer("/chain/recognized_semantics")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let semantic_kinds = semantics
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("semantic")
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str())
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "start_offset": item.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "end_offset": item.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
+        "size": item.get("size").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": item.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "ascii": item.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+        "writer_idx": item.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+        "seed": item.get("seed").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic_kinds": semantic_kinds,
+        "recognized_semantics": semantics,
     })
 }
 

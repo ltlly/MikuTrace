@@ -135,7 +135,10 @@ the final textual output, and uses that writer index as the exclusive `idx_hi`
 for the semantic byte map. This reproduces the manual "final x-sign -> decoded
 tail -> last writers -> upstream chain" workflow without hand-picking the
 pre-encoding cutoff index. If the buffer layout differs, override the cutoff
-with `--semantic-writer-map-idx-hi`.
+with `--semantic-writer-map-idx-hi`. In `--summary` mode,
+`semantic_writer_map.vm_chains[]` stays compact and lists each writer run's
+`semantic_kinds`, so an AI agent can choose the next unexplained byte range
+without reading the full trace-shaped JSON.
 
 ## Backward dataflow path
 
