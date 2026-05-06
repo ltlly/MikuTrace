@@ -1586,6 +1586,17 @@ def validate_scratch_vm_opcode_samples() -> dict:
     }
 
 
+def call001_scratch_lhs_prefix_bytes() -> bytes:
+    word0 = vm_lsl(CALL001_STAT_MTIM_TV_SEC, 0x18, 32)
+    word1 = vm_orr(
+        vm_lsr(CALL001_STAT_MTIM_TV_SEC, 0x8, 32),
+        vm_lsl(CALL001_SCRATCH_PREFIX_STATIC_BYTE, 0x18, 32),
+        32,
+    )
+    scratch = word32_le_bytes(word0) + word32_le_bytes(word1)
+    return scratch[3:8]
+
+
 def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
     word0 = vm_lsl(CALL001_STAT_MTIM_TV_SEC, 0x18, 32)
     word1 = vm_orr(
@@ -1610,6 +1621,7 @@ def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
         "expected_scratch_prefix_hex": expected_scratch.hex(),
         "semantic_lhs_prefix_hex": semantic_prefix.hex(),
         "expected_semantic_lhs_prefix_hex": expected_semantic_prefix.hex(),
+        "feeds_call001_lhs_run_bytes": True,
         "matches": scratch == expected_scratch
         and semantic_prefix == expected_semantic_prefix,
     }
@@ -1649,9 +1661,9 @@ def call001_lhs_run_bytes(run: dict) -> bytes:
     if "lhs_hex" in run:
         return bytes.fromhex(run["lhs_hex"])
     if run.get("source") == "stat_mtim_le_plus_mixed_suffix":
-        return word32_le_bytes(CALL001_STAT_MTIM_TV_SEC) + bytes.fromhex(
+        return call001_scratch_lhs_prefix_bytes() + bytes.fromhex(
             CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX
-        )
+        )[1:]
     raise ValueError(f"unsupported lhs run source: {run}")
 
 

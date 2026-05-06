@@ -806,6 +806,10 @@ scratch[4:8] = u32((stat_mtim >> 8) | (static_byte << 24))   = e9f26979
 semantic lhs starts at scratch+3                             = fbe9f26979
 ```
 
+`call001_lhs_run_bytes()` now uses this prefix formula for the first five lhs
+bytes before appending the remaining traced mixed suffix, while preserving the
+existing call_001 tail reconstruction match.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and
