@@ -824,7 +824,7 @@ semantic range `[16,59)`:
 [16,21) formula_validated_stat_mtim_ladder_low_byte  fbe9f26979
 [21,25) vm_xor_ladder_from_static_table_seed_pending_lift ecf29541
 [25,49) traced_formula_only                     f60193b34b3c510ccc029de339cec2953090237cbfa4f43b
-[49,57) confirmed_external_text_boundary        a0444a342344c59b
+[49,57) confirmed_app_version_text_boundary     a0444a342344c59b
 [57,59) traced_formula_only                     c569
 ```
 
@@ -898,8 +898,11 @@ lineage stop                          observed_read_without_matching_traced_writ
 ```
 
 The latest traced write to `0x756649a2d0` does not match the observed bytes, so
-the portable replay should treat this as an explicit external text parameter
-until a hook labels the producer more precisely.
+the portable replay should treat this as an explicit external text parameter.
+On the current device, `adb shell dumpsys package com.taobao.taobao` reports
+`versionName=10.60.10`, and `docs/frida-codeslab-patch.md` records the same
+test target version. This boundary is therefore best modelled as Android
+package/app version text, not opaque VM state.
 
 The remaining formula-only scratch writer range also has a compact replay view:
 
@@ -1108,11 +1111,12 @@ base+0x6d0 = 0x66063bca  bytes ca3b066600000000
 ```
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
-For `call_001`, the manifest has six entries:
+For `call_001`, the manifest has seven entries:
 
 ```text
 raw_prefix                  fixed_literal, portable for current samples
-stat_mtim_tv_sec            external_metadata, formula input validated
+stat_mtim_tv_sec            external_parameter, stat('/').st_mtim.tv_sec
+app_versionName             external_parameter, Android versionName
 scratch_prefix_static_byte  vm_ladder_low_byte, low8(previous ladder slot24)
 middle_lhs_source_segments  segmented_trace_sources, complete for call_001
 mod255_input_even           vm_state_expression, trace-proven one sample
@@ -1157,7 +1161,7 @@ Those opaque inputs now include next CLI probes in the JSON output:
 ```text
 [21,25) vm_xor_ladder_static_seed -> vm-ops --replay-plan implementation
 [25,49), [57,59) traced_formula_only -> vm-ops --replay-plan implementation
-[49,57) external_text_boundary -> semantic role label / replay parameter
+[49,57) app_versionName boundary -> explicit replay parameter
 ```
 
 The script now emits `completion_audit` with four success criteria:

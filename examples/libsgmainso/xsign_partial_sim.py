@@ -1529,7 +1529,10 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "scratch_offset": [36, 44],
             "bytes_hex": "a0444a342344c59b",
             "writer_idxs": [14164924, 14164979],
-            "source_class": "external_text_boundary_ladder",
+            "source_class": "app_version_text_boundary_ladder",
+            "semantic_role": "android_package_versionName",
+            "package_name": "com.taobao.taobao",
+            "versionName": "10.60.10",
             "boundary_reads": [
                 {
                     "addr": "0x756649a2d0",
@@ -1543,7 +1546,7 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 },
             ],
             "lineage_confirmation": {
-                "status": "confirmed_external_text_boundary",
+                "status": "confirmed_app_version_text_boundary",
                 "commands": [
                     (
                         "tracemiku-cli byte-lineage <call_dir> "
@@ -1585,9 +1588,8 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 "interpretation": (
                     "Both four-byte words flow from observed text bytes at "
                     "0x756649a2d0. The latest traced write to that address "
-                    "does not match the observed bytes, so model this as an "
-                    "external text input unless a future hook labels the "
-                    "producer more precisely."
+                    "does not match the observed bytes, and the text matches "
+                    "the Android package versionName."
                 ),
             },
         },
@@ -1832,6 +1834,9 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
         "semantic_range": [52, 56],
         "source_status": "word_source_only",
         "class": "memory_boundary_read_text",
+        "semantic_role": "android_package_versionName",
+        "package_name": "com.taobao.taobao",
+        "versionName": "10.60.10",
         "addr": "0x756649a2d4",
         "bytes_hex": "302e3130",
         "ascii": "0.10",
@@ -1842,8 +1847,8 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
         "last_write_idx": 14062790,
         "interpretation": (
             "Observed bytes do not match the latest traced write. The current "
-            "MemShadow cursor shows this as a substring of the external-looking "
-            "text buffer '10.60.10^^'."
+            "MemShadow cursor shows this as a substring of '10.60.10^^', and "
+            "adb dumpsys package com.taobao.taobao reports versionName=10.60.10."
         ),
     },
     {
@@ -2093,7 +2098,10 @@ def call001_middle_lhs_source_manifest() -> dict:
                     if run.get("scratch_offset") == [36, 44]
                 )
                 row["original_source_class"] = row["source_class"]
-                row["source_class"] = "confirmed_external_text_boundary"
+                row["source_class"] = "confirmed_app_version_text_boundary"
+                row["semantic_role"] = "android_package_versionName"
+                row["package_name"] = "com.taobao.taobao"
+                row["versionName"] = "10.60.10"
                 row["lineage_confirmation"] = boundary_run["lineage_confirmation"]
         if item["source_class"] == "static_memory_load_constant":
             row["static_memory_load_count"] = item.get("static_memory_load_count")
@@ -2165,10 +2173,19 @@ def current_trace_model_input_manifest() -> dict:
         },
         {
             "name": "stat_mtim_tv_sec",
-            "kind": "external_metadata",
+            "kind": "external_parameter",
             "value": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
-            "status": "formula_input_validated_for_middle_lhs_prefix",
+            "source": "stat('/').st_mtim.tv_sec",
+            "status": "parameterized_external_input",
             "used_by": "middle_lhs[0:4] via scratch writer",
+        },
+        {
+            "name": "app_versionName",
+            "kind": "external_parameter",
+            "value": "10.60.10",
+            "source": "adb dumpsys package com.taobao.taobao versionName",
+            "status": "parameterized_external_input",
+            "used_by": "middle_lhs[49:57]",
         },
         {
             "name": "scratch_prefix_static_byte",
@@ -2210,7 +2227,7 @@ def current_trace_model_input_manifest() -> dict:
             {
                 entry["kind"]
                 for entry in entries
-                if "not" in entry["status"] or entry["kind"].startswith("external")
+                if "not" in entry["status"] or "pending" in entry["status"]
             }
         ),
     }
@@ -2276,16 +2293,16 @@ def parameterized_simulation_contract() -> dict:
             {
                 "name": "middle_lhs_external_text_boundary",
                 "semantic_range": [49, 57],
-                "status": "confirmed_external_text_input_pending_semantic_label",
+                "status": "confirmed_app_versionName_parameter",
                 "observed_ascii": "10.60.10",
+                "semantic_role": "android_package_versionName",
                 "source": (
                     "TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY.runs"
                     "[scratch_offset=36..44].lineage_confirmation"
                 ),
                 "goal": (
-                    "Name the semantic role of the external text input "
-                    "(for example version/config/device string) or expose it "
-                    "as an explicit replay parameter."
+                    "Pass app/package version as an explicit replay parameter "
+                    "instead of embedding trace bytes."
                 ),
             },
         ],
