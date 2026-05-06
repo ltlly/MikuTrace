@@ -1088,6 +1088,83 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "Python opcodes, not merely finding the upstream VM bytecode."
         ),
     },
+    "scratch_writer_compact_probe": {
+        "command": (
+            "tracemiku-cli vm-ops <call_dir> --start 14164280 "
+            "--end 14165320 --compact --max-ops 400"
+        ),
+        "source_returned": 1040,
+        "effect_count": 110,
+        "compact_template_count": 24,
+        "key_templates": [
+            {
+                "count": 12,
+                "signature": (
+                    "bc[0x2:1,0x5:1,0x8:8,0x10:2] "
+                    "effects[memory_store:literal:none]"
+                ),
+                "python_with_roles": "mem[addr] = slot[bc_0x5_u8]",
+                "samples": [
+                    "mem[0x74b68bbe04] = 0x7969f2e9",
+                    "mem[0x74b68bbe08] = 0x4195f2ec",
+                    "mem[0x74b68bbe0c] = 0xb39301f6",
+                ],
+            },
+            {
+                "count": 14,
+                "signature": (
+                    "bc[0x2:1,0x6:1,0x8:8,0x10:2] "
+                    "effects[slot_write:formula:add]"
+                ),
+                "python_with_roles": (
+                    "slot[bc_0x2_u8] = add(slot[bc_0x6_u8], "
+                    "bc_0x8_u64, bc_0x10_u16)"
+                ),
+                "samples": [
+                    "slot[25] = 0x74b68bcc2c = 0x74b68bcc1c + 0x10",
+                    "slot[28] = 0x74b68bbe10 = 0x74b68bbe00 + 0x10",
+                    "slot[29] = 0x27 = 0x37 + 0xfffffffffffffff0",
+                ],
+            },
+            {
+                "count": 9,
+                "signature": (
+                    "bc[0x3:1,0x4:1,0x5:1,0x10:2] "
+                    "effects[slot_write:formula:orr]"
+                ),
+                "python_with_roles": (
+                    "slot[bc_0x3_u8] = orr(slot[bc_0x3_u8], "
+                    "slot[bc_0x4_u8], slot[bc_0x5_u8], bc_0x10_u16)"
+                ),
+                "samples": [
+                    "slot[2] = 0xfb000000 = 0xfb000000 | 0x0",
+                    "slot[2] = 0x7969f2e9 = 0x79000000 | 0x69f2e9",
+                    "slot[3] = 0x4195f2ec = 0x41000000 | 0x95f2ec",
+                ],
+            },
+            {
+                "count": 5,
+                "signature": (
+                    "bc[0x2:1,0x2:1,0x3:1,0x4:1,0x5:1,0x8:4,0xc:4,0x20:2] "
+                    "effects[slot_write:formula:orr,slot_write:formula:lsr,"
+                    "slot_write:formula:lsl]"
+                ),
+                "python_with_roles": (
+                    "combined bitfield ladder over slot[bc_0x2_u8]"
+                ),
+                "samples": [
+                    "slot[3] = 0x79000000 = 0x95f2ec79 << 0x18",
+                    "slot[5] = 0x41000000 = 0x9301f641 << 0x18",
+                    "slot[3] = 0xe3000000 = 0xc2ce39e3 << 0x18",
+                ],
+            },
+        ],
+        "interpretation": (
+            "The formula-only scratch writer range has a generic compact "
+            "replay-template view. It is now ready for a Python replay pass "
+            "that applies compact_templates in dynamic op order."
+        ),
+    },
     "middle_lhs_trace_produced_table_word_probe": {
         "command": (
             "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe08 "
@@ -1991,6 +2068,17 @@ def call001_middle_lhs_source_manifest() -> dict:
                 }
         if item["source_class"] == "traced_formula_only":
             row["writer_idxs"] = item.get("writer_idxs")
+            compact_probe = TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY[
+                "scratch_writer_compact_probe"
+            ]
+            row["vm_ops_compact_probe"] = {
+                "command": compact_probe["command"],
+                "source_returned": compact_probe["source_returned"],
+                "effect_count": compact_probe["effect_count"],
+                "compact_template_count": compact_probe["compact_template_count"],
+                "key_templates": compact_probe["key_templates"],
+                "interpretation": compact_probe["interpretation"],
+            }
         segments.append(row)
     covered = sum(item["semantic_range"][1] - item["semantic_range"][0] for item in segments)
     return {
@@ -2118,7 +2206,7 @@ def parameterized_simulation_contract() -> dict:
                 "semantic_ranges": [[25, 49], [57, 59]],
                 "next_cli": (
                     "tracemiku-cli vm-ops <call_dir> --start 14164280 --end 14165320 "
-                    "--summary --effects-only --max-ops 200"
+                    "--compact --max-ops 400"
                 ),
                 "goal": "Lift role-bound scratch writer templates into full Python opcode replay.",
             },

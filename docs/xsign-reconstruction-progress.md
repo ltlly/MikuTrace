@@ -885,6 +885,22 @@ The latest traced write to `0x756649a2d0` does not match the observed bytes, so
 the portable replay should treat this as an explicit external text parameter
 until a hook labels the producer more precisely.
 
+The remaining formula-only scratch writer range also has a compact replay view:
+
+```text
+tracemiku-cli vm-ops <call_dir> --start 14164280 --end 14165320 \
+  --compact --max-ops 400
+
+source_returned=1040, effect_count=110, compact_template_count=24
+mem[addr] = slot[bc_0x5_u8]
+slot[bc_0x2_u8] = add(slot[bc_0x6_u8], bc_0x8_u64, bc_0x10_u16)
+slot[bc_0x3_u8] = orr(slot[bc_0x3_u8], slot[bc_0x4_u8], slot[bc_0x5_u8], bc_0x10_u16)
+combined bitfield ladder over slot[bc_0x2_u8]
+```
+
+This shifts `[25,49)` and `[57,59)` from "need trace evidence" to "need Python
+replay implementation from compact templates".
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 
@@ -934,7 +950,7 @@ Those opaque inputs now include next CLI probes in the JSON output:
 
 ```text
 [21,25) vm_xor_ladder_static_seed -> vm-ops --compact replay
-[25,49), [57,59) traced_formula_only -> vm-ops role-bound replay
+[25,49), [57,59) traced_formula_only -> vm-ops --compact replay implementation
 [49,57) external_text_boundary -> semantic role label / replay parameter
 ```
 
