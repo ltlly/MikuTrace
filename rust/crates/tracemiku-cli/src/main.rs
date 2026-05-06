@@ -4562,6 +4562,47 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
             _ => {}
         }
     }
+    output_semantic_byte_lane_equation(item, offset, bytes_hex, byte)
+}
+
+fn output_semantic_byte_lane_equation(
+    item: &serde_json::Value,
+    offset: serde_json::Value,
+    bytes_hex: &str,
+    byte: u8,
+) -> Option<serde_json::Value> {
+    let steps = item.pointer("/chain/chain").and_then(|v| v.as_array())?;
+    for entry in steps {
+        let next = entry.get("next").unwrap_or(&serde_json::Value::Null);
+        if next.get("reason").and_then(|v| v.as_str()) != Some("memory_load_byte") {
+            continue;
+        }
+        let source_byte_offset = next.get("source_byte_offset").and_then(value_as_u64)?;
+        if source_byte_offset >= 8 {
+            continue;
+        }
+        let src_value = next.get("src_value").and_then(value_as_u64)?;
+        if src_value <= 0xff {
+            continue;
+        }
+        let result = ((src_value >> (source_byte_offset * 8)) & 0xff) as u8;
+        if result != byte {
+            continue;
+        }
+        return Some(serde_json::json!({
+            "offset": offset,
+            "bytes_hex": bytes_hex,
+            "kind": "byte_lane_extract",
+            "step": entry.get("step").cloned().unwrap_or(serde_json::Value::Null),
+            "idx": entry.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "asm": entry.pointer("/local_def/asm").or_else(|| entry.pointer("/target/asm")).cloned().unwrap_or(serde_json::Value::Null),
+            "source_value": format!("{src_value:#x}"),
+            "source_byte_offset": source_byte_offset,
+            "result": format!("{result:#x}"),
+            "expression": "result == byte_lane_le(source_value, source_byte_offset)",
+            "matches_first_byte": true,
+        }));
+    }
     None
 }
 
@@ -11749,6 +11790,38 @@ mod tests {
         let equation = output_semantic_byte_equation(&item).unwrap();
         assert_eq!(equation["offset"], serde_json::json!(4));
         assert_eq!(equation["kind"], serde_json::json!("xor_mix"));
+        assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn extracts_byte_lane_equation_from_word_load_chain() {
+        let item = serde_json::json!({
+            "start_offset": 0,
+            "bytes_hex": "0a",
+            "chain": {
+                "recognized_semantics": [],
+                "chain": [
+                    {
+                        "step": 5,
+                        "idx": 13781975,
+                        "local_def": {
+                            "asm": "ldrb w1, [x0, x4]"
+                        },
+                        "next": {
+                            "reason": "memory_load_byte",
+                            "source_byte_offset": 3,
+                            "src_value": "0xa000142"
+                        }
+                    }
+                ]
+            }
+        });
+        let equation = output_semantic_byte_equation(&item).unwrap();
+        assert_eq!(equation["offset"], serde_json::json!(0));
+        assert_eq!(equation["kind"], serde_json::json!("byte_lane_extract"));
+        assert_eq!(equation["source_value"], serde_json::json!("0xa000142"));
+        assert_eq!(equation["source_byte_offset"], serde_json::json!(3));
+        assert_eq!(equation["result"], serde_json::json!("0xa"));
         assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
     }
 
