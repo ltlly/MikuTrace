@@ -6417,6 +6417,7 @@ fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
         "bytecode_reads": bytecode_reads,
         "vm_slot_reads": op.get("vm_slot_reads").cloned().unwrap_or_else(|| serde_json::json!([])),
         "vm_slot_writes": op.get("vm_slot_writes").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "small_byte_loads": op.get("small_byte_loads").cloned().unwrap_or_else(|| serde_json::json!([])),
         "memory_stores": op.get("memory_stores").cloned().unwrap_or_else(|| serde_json::json!([])),
         "alu_formulas": alu_formulas,
         "effects": vm_op_effect_summaries(op),
@@ -6442,19 +6443,32 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         let formula = matching_formula_for_value(&formulas, &value);
+        let source_byte_load = matching_byte_load_for_value(
+            op.get("small_byte_loads")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten(),
+            &value,
+        );
         let slot = write
             .get("slot")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        let pseudocode = format!(
-            "slot[{}] = {}",
-            json_display(&slot),
-            formula
-                .as_ref()
-                .and_then(|f| f.get("expression"))
-                .map(json_display)
-                .unwrap_or_else(|| json_display(&value))
-        );
+        let rhs = formula
+            .as_ref()
+            .and_then(|f| f.get("expression"))
+            .map(json_display)
+            .or_else(|| {
+                source_byte_load.as_ref().map(|load| {
+                    format!(
+                        "byte[{}] ({})",
+                        json_display(load.get("mem_addr").unwrap_or(&serde_json::Value::Null)),
+                        json_display(load.get("value").unwrap_or(&serde_json::Value::Null))
+                    )
+                })
+            })
+            .unwrap_or_else(|| json_display(&value));
+        let pseudocode = format!("slot[{}] = {}", json_display(&slot), rhs);
         effects.push(serde_json::json!({
             "kind": "slot_write",
             "idx": write.get("idx").cloned().unwrap_or(serde_json::Value::Null),
@@ -6462,6 +6476,7 @@ fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
             "value": value,
             "pseudocode": pseudocode,
             "formula": formula.unwrap_or(serde_json::Value::Null),
+            "source_byte_load": source_byte_load.unwrap_or(serde_json::Value::Null),
             "inputs": op.get("vm_slot_reads").cloned().unwrap_or_else(|| serde_json::json!([])),
         }));
     }
@@ -6579,6 +6594,16 @@ fn source_slot_for_value<'a>(
     let wanted = json_u64(value)?;
     reads
         .find(|read| read.get("value").and_then(json_u64) == Some(wanted))
+        .cloned()
+}
+
+fn matching_byte_load_for_value<'a>(
+    mut loads: impl Iterator<Item = &'a serde_json::Value>,
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let wanted = json_u64(value)?;
+    loads
+        .find(|load| load.get("value").and_then(json_u64) == Some(wanted))
         .cloned()
 }
 
@@ -13132,6 +13157,33 @@ mod tests {
         assert_eq!(
             effects[0]["formula"]["semantic"]["kind"],
             serde_json::json!("add_small_delta")
+        );
+    }
+
+    #[test]
+    fn summarizes_vm_op_byte_load_effects() {
+        let op = serde_json::json!({
+            "vm_slot_reads": [
+                {"slot": 24, "value": "0x753ddd7fd0"},
+                {"slot": 25, "value": "0xc"}
+            ],
+            "vm_slot_writes": [
+                {"idx": 10616037, "slot": 18, "value": "0x7a"}
+            ],
+            "small_byte_loads": [
+                {"idx": 10616034, "mem_addr": "0x753ddd7fdc", "value": "0x7a"}
+            ],
+            "memory_stores": [],
+            "alu_formulas": []
+        });
+        let effects = vm_op_effect_summaries(&op);
+        assert_eq!(
+            effects[0]["pseudocode"],
+            serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
+        );
+        assert_eq!(
+            effects[0]["source_byte_load"]["idx"],
+            serde_json::json!(10616034)
         );
     }
 

@@ -799,7 +799,7 @@ dispatches, semantic formula counts, compact ALU formulas, and `effects[]`
 without the full record-shaped payload. `effects[]` is the shortest prompt
 surface for VM lifting: it turns slot writes, memory stores, and control steps
 into pseudocode such as `slot[19] = 0x39 = 0x7a + 0xffffffffffffffbf` or
-`mem[0x...] = low8(slot[18])`.
+`slot[18] = byte[0x...] (0x7a)`.
 
 For a specific scratch byte, use `byte-lineage` to automate the repeated
 last-write/backstep loop:
