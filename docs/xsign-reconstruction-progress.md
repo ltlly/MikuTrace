@@ -915,7 +915,10 @@ roles such as `pointer_base` and `delta`, so this evidence survives the compact
 AI-facing view. Slot26 still reaches VM bytecode after a chain of small integer
 states, and slot28 still loops through the `0x74b68bb9a0` base-pointer copy
 chain at depth 180. That confirms the remaining issue is initial VM state/base
-semantics, not missing replay mechanics.
+semantics, not missing replay mechanics. The compact slot28 probe now also
+reports `repeated_values`: `0x74b68bb9a0` appears 69 times in an 80-step
+lineage, while `0x74b68bbdff` appears 7 times. That turns the prior
+`depth_limit` into an explicit copy-loop/stable-base signal for the next proof.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1024,6 +1027,7 @@ scratch slot28 before #14164280:
   slot28 = 0x74b68bbe00
   writer #14164235: str x5, [x25, x6, lsl #3]
   pointer chain: 0x74b68bb9a0 + 0x200 + 0x25f + 1, then depth_limit
+  repeated_values: 0x74b68bb9a0 appears 69 times in an 80-step compact probe
 
 scratch slot29 before #14164280:
   command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact

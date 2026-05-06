@@ -9415,7 +9415,9 @@ fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde_json::Valu
         .get("stop_reason")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    let next_actions = compact_lineage_next_actions(&memory_boundaries, &terminal, &semantics);
+    let repeated_values = compact_lineage_repeated_values(&chain);
+    let next_actions =
+        compact_lineage_next_actions(&memory_boundaries, &terminal, &semantics, &repeated_values);
     serde_json::json!({
         "status": summary.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": summary.get("start").cloned().unwrap_or(serde_json::Value::Null),
@@ -9423,6 +9425,7 @@ fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde_json::Valu
         "steps_returned": summary.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
         "terminal": terminal,
         "recognized_semantics": semantics,
+        "repeated_values": repeated_values,
         "memory_boundaries": memory_boundaries,
         "path": chain,
         "next_actions": next_actions,
@@ -9623,6 +9626,7 @@ fn compact_lineage_next_actions(
     memory_boundaries: &[serde_json::Value],
     terminal: &serde_json::Value,
     semantics: &serde_json::Value,
+    repeated_values: &serde_json::Value,
 ) -> serde_json::Value {
     let mut actions = Vec::new();
     if !memory_boundaries.is_empty() {
@@ -9653,7 +9657,54 @@ fn compact_lineage_next_actions(
             "lift recognized formula semantics into a replay template and replace concrete values with inputs"
         ));
     }
+    if terminal.get("kind").and_then(|v| v.as_str()) == Some("depth_limit")
+        && repeated_values
+            .as_array()
+            .is_some_and(|values| !values.is_empty())
+    {
+        actions.push(serde_json::json!(
+            "inspect repeated_values; repeated pointer/state values usually indicate a copy loop or stable VM base"
+        ));
+    }
     serde_json::Value::Array(actions)
+}
+
+fn compact_lineage_repeated_values(chain: &[serde_json::Value]) -> serde_json::Value {
+    let mut counts = BTreeMap::<String, (usize, u64, u64)>::new();
+    for step in chain {
+        let Some(value) = step.get("value").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let step_idx = step.get("step").and_then(|v| v.as_u64()).unwrap_or(0);
+        counts
+            .entry(value.to_string())
+            .and_modify(|entry| {
+                entry.0 += 1;
+                entry.2 = step_idx;
+            })
+            .or_insert((1, step_idx, step_idx));
+    }
+    let mut repeated = counts
+        .into_iter()
+        .filter(|(_, (count, _, _))| *count > 1)
+        .map(|(value, (count, first_step, last_step))| {
+            serde_json::json!({
+                "value": value,
+                "count": count,
+                "first_step": first_step,
+                "last_step": last_step,
+            })
+        })
+        .collect::<Vec<_>>();
+    repeated.sort_by(|a, b| {
+        let acount = a.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let bcount = b.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        bcount.cmp(&acount)
+    });
+    if repeated.len() > 8 {
+        repeated.truncate(8);
+    }
+    serde_json::Value::Array(repeated)
 }
 
 fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
@@ -16817,6 +16868,72 @@ mod tests {
             serde_json::json!("pointer_base")
         );
         assert_eq!(compact["operands"][1]["role"], serde_json::json!("delta"));
+    }
+
+    #[test]
+    fn byte_lineage_compact_summary_reports_repeated_values() {
+        let lineage = serde_json::json!({
+            "status": "ready",
+            "start": {"addr": "0x4000", "before_idx": 200},
+            "depth_requested": 2,
+            "steps_returned": 2,
+            "stop_reason": {"kind": "depth_limit"},
+            "steps": [
+                {
+                    "step": 0,
+                    "kind": "reg_source",
+                    "seed": {"kind": "reg_at", "idx": 200, "reg": "x8"},
+                    "backstep": {
+                        "idx": 200,
+                        "source_reg": "x8",
+                        "source_value": "0x74b68bb9a0",
+                        "target": {"idx": 200, "asm": "str x8, [x25]", "class": "vm-reg-store"},
+                        "local_def": {
+                            "idx": 199,
+                            "asm": "orr x8, x0, x1",
+                            "class": "alu",
+                            "formula": {
+                                "op": "orr",
+                                "expression": "0x74b68bb9a0 = 0x0 | 0x74b68bb9a0"
+                            }
+                        },
+                        "upstream": {"status": "not_memory_backed"}
+                    },
+                    "decision": {"kind": "frontier_auto"},
+                    "next": {"idx": 190, "reg": "x1"}
+                },
+                {
+                    "step": 1,
+                    "kind": "reg_source",
+                    "seed": {"kind": "reg_at", "idx": 190, "reg": "x1"},
+                    "backstep": {
+                        "idx": 190,
+                        "source_reg": "x1",
+                        "source_value": "0x74b68bb9a0",
+                        "target": {"idx": 190, "asm": "str x1, [x25]", "class": "vm-reg-store"},
+                        "local_def": {
+                            "idx": 189,
+                            "asm": "ldr x1, [x25, #0xa0]",
+                            "class": "vm-reg-load",
+                            "vm_slot": {"slot": 20}
+                        },
+                        "upstream": {"status": "ready", "addr": "0x7744599548"}
+                    },
+                    "decision": {"kind": "upstream_next"},
+                    "next": {"idx": 180, "reg": "x1"}
+                }
+            ]
+        });
+        let compact = byte_lineage_compact_summary(&lineage);
+        assert_eq!(
+            compact["repeated_values"][0]["value"],
+            serde_json::json!("0x74b68bb9a0")
+        );
+        assert!(compact["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action.as_str().unwrap_or("").contains("repeated_values")));
     }
 
     #[test]

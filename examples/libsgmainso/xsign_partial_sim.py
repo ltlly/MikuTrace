@@ -2691,8 +2691,23 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "0x74b68bb9a0 + 0x200 + 0x25f + 1 with repeated "
                     "identity masks"
                 ),
-                "terminal": "depth_limit on VM pointer source after 80 compact steps",
-                "portable_status": "not_proven",
+                "repeated_values": [
+                    {
+                        "value": "0x74b68bb9a0",
+                        "count": 69,
+                        "first_step": 11,
+                        "last_step": 79,
+                        "interpretation": "stable pointer base copied through the VM state",
+                    },
+                    {
+                        "value": "0x74b68bbdff",
+                        "count": 7,
+                        "first_step": 2,
+                        "last_step": 8,
+                    },
+                ],
+                "terminal": "depth_limit, but repeated_values now identify the stable base",
+                "portable_status": "stable_base_pointer_not_proven",
             },
             "slot25": {
                 "command": (
@@ -2836,6 +2851,7 @@ def completion_audit() -> dict:
                     "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",
                     "byte-lineage --compact formula operands label pointer_base and delta",
+                    "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
                 ],
                 "status": "substantially_available",
             },
