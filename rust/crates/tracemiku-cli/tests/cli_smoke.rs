@@ -906,6 +906,24 @@ fn vm_ops_groups_rows_by_vm_ip() {
     assert_eq!(op["vm_slot_writes"][0]["slot"], 3);
     assert_eq!(op["vm_slot_writes"][0]["value"], "0xaa");
     assert_eq!(op["dispatches"][0]["idx"], 4);
+
+    let chunked = run_json(&[
+        "vm-ops".into(),
+        cd.display().to_string(),
+        "--start".into(),
+        "0".into(),
+        "--end".into(),
+        "5".into(),
+        "--chunk-size".into(),
+        "2".into(),
+        "--summary".into(),
+    ]);
+    assert_eq!(chunked["source_requested"], 5);
+    assert_eq!(chunked["source_returned"], 5);
+    assert_eq!(chunked["source_maybe_truncated"], false);
+    assert_eq!(chunked["source_chunks"], 3);
+    assert_eq!(chunked["vm_base_ip"], "0x5000");
+    assert_eq!(chunked["ops_returned"], 1);
 }
 
 #[test]

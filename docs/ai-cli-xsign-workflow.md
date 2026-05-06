@@ -827,6 +827,13 @@ surface for VM lifting: it turns slot writes, memory stores, and control steps
 into pseudocode such as `slot[19] = 0x39 = 0x7a + 0xffffffffffffffbf` or
 `slot[18] = byte[0x...] (0x7a)`.
 
+For large VM windows, `vm-ops` automatically splits `/api/records` reads into
+bounded chunks while preserving one overlap row for next-row register values.
+The summary exposes `source_requested`, `source_returned`, `source_chunks`,
+`chunk_size`, and `source_maybe_truncated`. Leave the default chunking enabled
+for AI scans; use `--chunk-size 0` only to reproduce legacy single-request
+behavior or to debug server-side caps.
+
 For larger windows, add `--effects-only`:
 
 ```bash
@@ -837,11 +844,11 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> \
   --effects-only
 ```
 
-This drops per-op details and promotes `effects[]`, `byte_load_effects[]`, and
-`state_updates[]` to the top level. Always check `source_maybe_truncated`: the
-underlying records endpoint is capped, so a wide `--start/--end` window may
-need to be split into smaller chunks before concluding that a byte-load or
-writer is absent.
+This drops per-op details and promotes `effects[]`, `byte_load_effects[]`,
+`memory_store_effects[]`, and `state_updates[]` to the top level. Always check
+`source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is still
+too large for the records cap and the window must be split further before
+concluding that a byte-load or writer is absent.
 
 For a specific scratch byte, use `byte-lineage` to automate the repeated
 last-write/backstep loop:

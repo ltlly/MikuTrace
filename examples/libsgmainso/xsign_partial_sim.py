@@ -970,6 +970,24 @@ TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
             {"idx": 10616034, "addr": "0x753ddd7fdc", "value": "0x7a", "ascii": "z"},
         ],
         "observed_stream_ascii": "QfYBk7NLPFEMz",
+        "wide_window_probe": {
+            "command": (
+                "tracemiku-cli vm-ops <call_dir> --start 10613240 "
+                "--end 10616100 --summary --effects-only --max-ops 500"
+            ),
+            "source_requested": 2860,
+            "source_returned": 2860,
+            "source_chunks": 4,
+            "chunk_size": 900,
+            "source_maybe_truncated": False,
+            "byte_load_effect_count": 13,
+            "legacy_single_request": {
+                "command_suffix": "--chunk-size 0",
+                "source_returned": 1000,
+                "source_maybe_truncated": True,
+                "byte_load_effect_count": 5,
+            },
+        },
         "consumer_idx": 10616034,
         "consumer_asm": "ldrb w3, [x4, x20]",
         "buffer_addr": "0x753ddd7fd0",

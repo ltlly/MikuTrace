@@ -988,6 +988,9 @@ enum Cmd {
         /// Max VM op groups to return.
         #[arg(long, default_value_t = 80)]
         max_ops: usize,
+        /// Max records per /api/records request. Use 0 to keep the old single-request behavior.
+        #[arg(long, default_value_t = 900)]
+        chunk_size: usize,
         /// Emit a compact AI-readable summary.
         #[arg(long)]
         summary: bool,
@@ -2068,6 +2071,7 @@ async fn main() -> anyhow::Result<()> {
             vm_infra_regs,
             base_ip,
             max_ops,
+            chunk_size,
             summary,
             effects_only,
         }) => {
@@ -2080,6 +2084,7 @@ async fn main() -> anyhow::Result<()> {
                 regs,
                 base_ip,
                 max_ops,
+                chunk_size,
                 summary,
                 effects_only,
                 profile,
@@ -6324,15 +6329,18 @@ async fn cmd_vm_ops(
     regs: String,
     base_ip: Option<String>,
     max_ops: usize,
+    chunk_size: usize,
     summary: bool,
     effects_only: bool,
     profile: VmProfile,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
-    let (rows, source_returned, inferred_base) =
-        load_vm_rows(trace_dir, start, end, regs, true, base_ip, &profile).await?;
+    let loaded = load_vm_rows_chunked(
+        trace_dir, start, end, regs, true, base_ip, &profile, chunk_size,
+    )
+    .await?;
     let source_requested = end.saturating_sub(start);
-    let all_ops = vm_ops_from_rows(&rows);
+    let all_ops = vm_ops_from_rows(&loaded.rows);
     let truncated = all_ops.len() > max_ops;
     let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
     let output = serde_json::json!({
@@ -6341,10 +6349,12 @@ async fn cmd_vm_ops(
         "end": end,
         "vm_profile": profile.to_json(),
         "source_requested": source_requested,
-        "source_returned": source_returned,
-        "source_maybe_truncated": source_returned < source_requested,
-        "vm_rows": rows.len(),
-        "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
+        "source_returned": loaded.source_returned,
+        "source_maybe_truncated": loaded.source_maybe_truncated,
+        "source_chunks": loaded.chunks,
+        "chunk_size": chunk_size,
+        "vm_rows": loaded.rows.len(),
+        "vm_base_ip": loaded.inferred_base.map(|v| format!("{v:#x}")),
         "ops_returned": ops.len(),
         "truncated": truncated,
         "ops": ops,
@@ -6374,6 +6384,8 @@ fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
         "source_requested": value.get("source_requested").cloned().unwrap_or(serde_json::Value::Null),
         "source_returned": value.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
         "source_maybe_truncated": value.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "source_chunks": value.get("source_chunks").cloned().unwrap_or(serde_json::Value::Null),
+        "chunk_size": value.get("chunk_size").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
         "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
@@ -6394,6 +6406,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         .collect::<Vec<_>>();
     let mut effects = Vec::new();
     let mut byte_load_effects = Vec::new();
+    let mut memory_store_effects = Vec::new();
     for op in &ops {
         let idx_start = op
             .get("idx_start")
@@ -6421,6 +6434,9 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
             {
                 byte_load_effects.push(compact.clone());
             }
+            if compact.get("kind").and_then(|v| v.as_str()) == Some("memory_store") {
+                memory_store_effects.push(compact.clone());
+            }
             effects.push(compact);
         }
     }
@@ -6432,15 +6448,19 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "source_requested": value.get("source_requested").cloned().unwrap_or(serde_json::Value::Null),
         "source_returned": value.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
         "source_maybe_truncated": value.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "source_chunks": value.get("source_chunks").cloned().unwrap_or(serde_json::Value::Null),
+        "chunk_size": value.get("chunk_size").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
         "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
         "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
         "effect_count": effects.len(),
         "byte_load_effect_count": byte_load_effects.len(),
+        "memory_store_effect_count": memory_store_effects.len(),
         "semantic_counts": vm_ops_semantic_counts(&ops),
         "state_updates": vm_ops_state_updates(&ops),
         "byte_load_effects": byte_load_effects,
+        "memory_store_effects": memory_store_effects,
         "effects": effects,
     })
 }
@@ -6760,6 +6780,100 @@ fn memory_store_src_with_value(
         .iter()
         .find(|src| src.get("value").and_then(|v| v.as_str()) == Some(value))
         .cloned()
+}
+
+struct LoadedVmRows {
+    rows: Vec<serde_json::Value>,
+    source_returned: usize,
+    source_maybe_truncated: bool,
+    chunks: usize,
+    inferred_base: Option<u64>,
+}
+
+async fn load_vm_rows_chunked(
+    trace_dir: PathBuf,
+    start: usize,
+    end: usize,
+    regs: String,
+    only_vm: bool,
+    base_ip: Option<String>,
+    profile: &VmProfile,
+    chunk_size: usize,
+) -> anyhow::Result<LoadedVmRows> {
+    let total = end.saturating_sub(start);
+    if total == 0 {
+        return Ok(LoadedVmRows {
+            rows: Vec::new(),
+            source_returned: 0,
+            source_maybe_truncated: false,
+            chunks: 0,
+            inferred_base: base_ip.as_deref().and_then(parse_u64_str),
+        });
+    }
+
+    let effective_chunk_size = if chunk_size == 0 {
+        total
+    } else {
+        chunk_size.max(1)
+    };
+    let mut cursor = start;
+    let mut rows = Vec::new();
+    let mut source_returned = 0usize;
+    let mut source_maybe_truncated = false;
+    let mut chunks = 0usize;
+    let mut inferred_base = base_ip.as_deref().and_then(parse_u64_str);
+    let mut base_arg = base_ip;
+
+    while cursor < end {
+        let chunk_end = cursor.saturating_add(effective_chunk_size).min(end);
+        let request_end = if chunk_end < end {
+            chunk_end.saturating_add(1)
+        } else {
+            chunk_end
+        };
+        let requested = request_end.saturating_sub(cursor);
+        let non_overlap_requested = chunk_end.saturating_sub(cursor);
+        let (mut chunk_rows, returned, chunk_base) = load_vm_rows(
+            trace_dir.clone(),
+            cursor,
+            request_end,
+            regs.clone(),
+            only_vm,
+            base_arg.clone(),
+            profile,
+        )
+        .await?;
+        chunks += 1;
+        source_returned += returned.min(non_overlap_requested);
+        if returned < requested {
+            source_maybe_truncated = true;
+        }
+        if inferred_base.is_none() {
+            inferred_base = chunk_base;
+            if let Some(base) = chunk_base {
+                base_arg = Some(format!("{base:#x}"));
+            }
+        }
+        chunk_rows.retain(|row| {
+            row.get("idx")
+                .and_then(|v| v.as_u64())
+                .map(|idx| {
+                    let idx = idx as usize;
+                    idx >= cursor && idx < chunk_end
+                })
+                .unwrap_or(false)
+        });
+        rows.extend(chunk_rows);
+        cursor = chunk_end;
+    }
+
+    Ok(LoadedVmRows {
+        rows,
+        source_returned,
+        source_maybe_truncated,
+        chunks,
+        inferred_base,
+    })
 }
 
 async fn load_vm_rows(
@@ -13520,16 +13634,24 @@ mod tests {
                     "small_byte_loads": [
                         {"idx": 10616034, "mem_addr": "0x753ddd7fdc", "value": "0x7a"}
                     ],
-                    "memory_stores": [],
+                    "memory_stores": [
+                        {
+                            "idx": 10616038,
+                            "class": "mem-store",
+                            "mem_addr": "0x753ddd7fd0",
+                            "store_src": [{"reg": "x1", "value": "0xab"}]
+                        }
+                    ],
                     "alu_formulas": []
                 }
             ]
         });
         let summary = vm_ops_effects_only_summary(&output);
         assert!(summary.get("ops").is_none());
-        assert_eq!(summary["effect_count"], serde_json::json!(1));
+        assert_eq!(summary["effect_count"], serde_json::json!(2));
         assert_eq!(summary["source_maybe_truncated"], serde_json::json!(false));
         assert_eq!(summary["byte_load_effect_count"], serde_json::json!(1));
+        assert_eq!(summary["memory_store_effect_count"], serde_json::json!(1));
         assert_eq!(
             summary["effects"][0]["pseudocode"],
             serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
@@ -13541,6 +13663,10 @@ mod tests {
         assert_eq!(
             summary["byte_load_effects"][0]["source_byte_load"]["idx"],
             serde_json::json!(10616034)
+        );
+        assert_eq!(
+            summary["memory_store_effects"][0]["pseudocode"],
+            serde_json::json!("mem[0x753ddd7fd0] = 0xab")
         );
     }
 

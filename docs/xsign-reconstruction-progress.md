@@ -602,9 +602,12 @@ VM loop shows the full observed byte-load sequence:
 
 This reconstructs the observed stream `QfYBk7NLPFEMz` at the VM-consumer layer.
 It does not explain who produced that buffer. A wide single `vm-ops` request
-previously hid later byte loads because the records source was capped; the CLI
-now exposes `source_requested`, `source_returned`, and
-`source_maybe_truncated` in both summary modes.
+previously hid later byte loads because the records source was capped. `vm-ops`
+now chunks large windows automatically: the same `#10613240..#10616100` probe
+returns `source_requested=2860`, `source_returned=2860`, `source_chunks=4`,
+`source_maybe_truncated=false`, and all 13 `byte_load_effects[]`. Passing
+`--chunk-size 0` reproduces the old single-request cap
+(`source_returned=1000`, `source_maybe_truncated=true`, 5 byte loads).
 
 A later probe over the same buffer shows why the index window matters. Around
 `#11454867..#11455168`, the VM writes zeroes back into
