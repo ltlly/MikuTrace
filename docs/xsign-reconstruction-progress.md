@@ -224,6 +224,22 @@ call_004:           state=0x84e5092b masks=1b54 -> 305dfed0
 call_005:           state=0x6f4484fa masks=95c5 -> 6f41d1aa
 ```
 
+For `call_001`, the state word is now traced one layer further. The XOR
+template uses `state_word_le = 0xd84ab467`, which is the little-endian view of
+the bytes loaded from `0x67b44ad8`. That word is read at #14678409 from
+`0x74b68bb6a8`; the last writer before the read is #14678167
+`str w1, [x19, x6]` with `src_value = 0x267b44ad8`, whose low 32 bits are
+`0x67b44ad8`. The producing ALU op is #14678154:
+
+```text
+low32(0x1b57feb14 + 0xb2345fc4) = 0x67b44ad8
+bswap32(0x67b44ad8) = 0xd84ab467
+```
+
+`vm-ops --summary` now labels this as `add32_mix` even when the native `add x`
+full result is wider than 32 bits and the following store truncates through
+`str w*`.
+
 The mask bytes themselves are also cross-sample `mod255_low_byte` folds:
 
 ```text

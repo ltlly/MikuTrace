@@ -114,6 +114,12 @@ state addition, `add_known_constant` for recognized IV/constants such as MD5,
 and `and_identity`/`or_identity` for masking or merging operations that
 preserve the value being chased.
 
+`add32_mix` is intentionally low-32-aware. VM handlers may compute with native
+`add x*` registers and only later write the low word with `str w*`; in that
+case the semantic object includes `lhs_low32`, `rhs_low32`, and
+`result_low32`. Treat `result_low32` as the value that flows into subsequent
+word stores and byte extraction.
+
 Byte writer maps are little-endian lane-aware. Each `bytes[]` entry and
 single-byte writer run carries `source_byte_offset`, and each compact
 `vm_chains[]` seed includes `byte_lane`. This matters when a final output byte

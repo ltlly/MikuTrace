@@ -344,6 +344,22 @@ TRACE_MULTI_SAMPLE_MASK_FOLDS = {
     },
 }
 
+TRACE_CALL_001_STATE_WORD_SOURCE = {
+    "state_buffer_addr": "0x74b68bb6a8",
+    "state_word_loaded_idx": 14678409,
+    "state_word_loaded_value": 0x67B44AD8,
+    "state_word_writer_idx": 14678167,
+    "state_word_writer_asm": "str w1, [x19, x6]",
+    "state_word_writer_src_value": 0x267B44AD8,
+    "state_add_idx": 14678154,
+    "state_add_asm": "add x13, x8, x12",
+    "state_add_lhs": 0x1B57FEB14,
+    "state_add_rhs": 0xB2345FC4,
+    "previous_state_writer_idx": 14635558,
+    "previous_state_word": 0xB2345FC4,
+    "round_accumulator": 0xB57FEB14,
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -380,6 +396,10 @@ def xor_mix(lhs: int, rhs: int) -> int:
 
 def word32_le_bytes(value: int) -> bytes:
     return int(value & 0xFFFFFFFF).to_bytes(4, "little")
+
+
+def bswap32(value: int) -> int:
+    return int.from_bytes(int(value & 0xFFFFFFFF).to_bytes(4, "big"), "little")
 
 
 def xor_word_tail_bytes(state_word: int, mask_a: int, mask_b: int) -> bytes:
@@ -486,6 +506,10 @@ def main() -> None:
             "tail2_expected": f"{tail[2]:#x}",
             "tail2_matches": computed_tail2 == tail[2],
         }
+    state_source = TRACE_CALL_001_STATE_WORD_SOURCE
+    state_source_add_low32 = (state_source["state_add_lhs"] + state_source["state_add_rhs"]) & 0xFFFFFFFF
+    state_source_loaded = state_source["state_word_loaded_value"] & 0xFFFFFFFF
+    state_source_word_le = bswap32(state_source_loaded)
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -614,6 +638,34 @@ def main() -> None:
                 "formula": "tail[3:7] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]",
                 "samples": xor_word_samples,
                 "all_match": all(item["matches_trace"] for item in xor_word_samples.values()),
+            },
+            "call_001_state_word_source": {
+                "status": "trace_proven_one_sample",
+                "state_buffer_addr": state_source["state_buffer_addr"],
+                "loaded_idx": state_source["state_word_loaded_idx"],
+                "loaded_word_be": f"{state_source_loaded:#x}",
+                "template_state_word_le": f"{state_source_word_le:#x}",
+                "matches_template_state_word": state_source_word_le
+                == TRACE_MULTI_SAMPLE_XOR_WORDS["diff_run1_call_001"]["state_word_le"],
+                "writer_idx": state_source["state_word_writer_idx"],
+                "writer_asm": state_source["state_word_writer_asm"],
+                "writer_src_value": f"{state_source['state_word_writer_src_value']:#x}",
+                "writer_low32": f"{state_source['state_word_writer_src_value'] & 0xFFFFFFFF:#x}",
+                "state_add": {
+                    "idx": state_source["state_add_idx"],
+                    "asm": state_source["state_add_asm"],
+                    "lhs": f"{state_source['state_add_lhs']:#x}",
+                    "lhs_low32": f"{state_source['state_add_lhs'] & 0xFFFFFFFF:#x}",
+                    "rhs": f"{state_source['state_add_rhs']:#x}",
+                    "rhs_low32": f"{state_source['state_add_rhs'] & 0xFFFFFFFF:#x}",
+                    "computed_low32": f"{state_source_add_low32:#x}",
+                    "matches_loaded_word": state_source_add_low32 == state_source_loaded,
+                },
+                "interpretation": (
+                    "tail[3:7] uses the big-endian byte order of a 32-bit state "
+                    "word loaded from the hash/state buffer; the tail template "
+                    "stores those bytes as word32_le(bswap32(state_word_be))."
+                ),
             },
             "multi_sample_mask_folds": {
                 "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",

@@ -8449,7 +8449,10 @@ fn add_known_constant_semantic(
 }
 
 fn add32_mix_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::Value> {
-    if lhs > u32::MAX as u64 || rhs > u32::MAX as u64 || result > u32::MAX as u64 {
+    if !is_plausible_u32_mix_value(lhs)
+        || !is_plausible_u32_mix_value(rhs)
+        || !is_plausible_u32_mix_value(result)
+    {
         return None;
     }
     if lhs <= 0xff && rhs <= 0xff && result <= 0xff {
@@ -8458,14 +8461,24 @@ fn add32_mix_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::Val
     if (lhs as u32).wrapping_add(rhs as u32) != result as u32 {
         return None;
     }
+    let lhs_low32 = lhs as u32;
+    let rhs_low32 = rhs as u32;
+    let result_low32 = result as u32;
     Some(serde_json::json!({
         "kind": "add32_mix",
         "lhs": format!("{lhs:#x}"),
         "rhs": format!("{rhs:#x}"),
         "result": format!("{result:#x}"),
+        "lhs_low32": format!("{lhs_low32:#x}"),
+        "rhs_low32": format!("{rhs_low32:#x}"),
+        "result_low32": format!("{result_low32:#x}"),
         "modulus": "2^32",
-        "expression": "result == (lhs + rhs) mod 2^32",
+        "expression": "low32(result) == (low32(lhs) + low32(rhs)) mod 2^32",
     }))
+}
+
+fn is_plausible_u32_mix_value(value: u64) -> bool {
+    value <= 0xf_ffff_ffff
 }
 
 fn known_algorithm_constant_name(value: u64) -> Option<&'static str> {
@@ -9584,6 +9597,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("add32_mix"));
+        let semantic = recognize_alu_semantic(
+            "add x13, x8, x12",
+            "0x267b44ad8",
+            &["0x1b57feb14".to_string(), "0xb2345fc4".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("add32_mix"));
+        assert_eq!(semantic["result_low32"], serde_json::json!("0x67b44ad8"));
     }
 
     #[test]
