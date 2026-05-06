@@ -907,10 +907,15 @@ direct `seed_lineage_commands[]` without a manually supplied slot base; for
 example slot26 maps to `0x7744599570`, matching the earlier manual
 `byte-lineage` probe. This keeps the next proof step machine-readable for AI
 agents.
-Running those deeper seed probes on the scratch-writer window moves slot25 to a
-`no_local_def` frontier after reconstructing pointer fragments, while slot26
-and slot28 still hit depth limits after 80 compact steps. That confirms the
-remaining issue is initial VM state semantics, not missing replay mechanics.
+Running those deeper seed probes on the scratch-writer window moves slot25 from
+an opaque pointer into a visible pointer expression:
+`0x74b68bcc1c = 0x74b68bb9a0 + 0x127c`, where the `0x127c` delta comes from a
+VM bytecode read. `byte-lineage --compact` now keeps formula operands with
+roles such as `pointer_base` and `delta`, so this evidence survives the compact
+AI-facing view. Slot26 still reaches VM bytecode after a chain of small integer
+states, and slot28 still loops through the `0x74b68bb9a0` base-pointer copy
+chain at depth 180. That confirms the remaining issue is initial VM state/base
+semantics, not missing replay mechanics.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1031,8 +1036,12 @@ scratch slot25 before #14164280:
   command: byte-lineage --addr 0x7744599568 --before-idx 14164280 --compact
   slot25 = 0x74b68bcc1c
   writer #14164103: stp x9, x10, [x25, #0xc0]
-  loaded from slot9, then slot26, then byte memory around 0x74b68bcc10
-  18 compact steps end at no_local_def on VM bytecode IP 0x74fbf72380
+  pointer expression: 0x74b68bcc1c = 0x74b68bb9a0 + 0x127c
+  compact formula operands:
+    x13 = 0x74b68bb9a0 role pointer_base
+    x14 = 0x127c       role delta
+  delta source: VM bytecode read around #14159863..#14159865
+  remaining boundary: prove or parameterize pointer_base 0x74b68bb9a0
 
 [21,25) ladder slot8 around #14017046:
   no longer an initial seed after fixed-offset pair slot handling

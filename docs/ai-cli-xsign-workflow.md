@@ -115,7 +115,8 @@ For AI use, treat the output categories as contracts:
 | `vm_state_base` | First observed VM state/register-file base in `vm-ops` output. `vm_replay_plan_eval.py` uses it for seed proof commands when available. |
 | `seed_lineage_commands[]` | Optional command hints that turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
-| `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, memory boundaries, and next actions. Use it before requesting the full chain. |
+| `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, compact formula operands, memory boundaries, and next actions. Use it before requesting the full chain. |
+| `local_def.formula.operands[].role` | Generic operand hint for compact formulas. For pointer-shaped `add`, roles such as `pointer_base` and `delta` expose both sides of `base + offset` instead of forcing the chain to follow only one byte lane. |
 | `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
 | `observed_read_without_matching_traced_write` frontier | Memory was read with no matching earlier traced write. This usually means pre-trace initialization, an untraced helper, mmap/file input, JNI/framework state, or a trace gap. |
 | `no_local_def` frontier | The selected register value was already live at the search boundary or came from code the current local def search did not cover. Increase lookback, switch to memory lineage, or mark it as an explicit input. |

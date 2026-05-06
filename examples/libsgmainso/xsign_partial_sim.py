@@ -2698,17 +2698,19 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "command": (
                     "tracemiku-cli byte-lineage <call_dir> "
                     "--addr 0x7744599568 --before-idx 14164280 "
-                    "--depth 12 --lookback 5000000 --compact"
+                    "--depth 24 --lookback 5000000 --compact"
                 ),
                 "value": "0x74b68bcc1c",
                 "writer_idx": 14164103,
                 "writer_asm": "stp x9, x10, [x25, #0xc0]",
                 "lineage": (
-                    "18-step compact lineage reconstructs pointer bytes via "
-                    "bitwise OR merges, then stops at a local-def frontier"
+                    "compact lineage now exposes the pointer expression "
+                    "0x74b68bcc1c = 0x74b68bb9a0 + 0x127c; formula operands "
+                    "label x13 as pointer_base and x14 as delta"
                 ),
-                "terminal": "no_local_def after deeper seed-lineage probe",
-                "portable_status": "not_proven",
+                "delta_source": "0x127c comes from a VM bytecode read around #14159863..#14159865",
+                "remaining_boundary": "pointer_base 0x74b68bb9a0 is not yet proven",
+                "portable_status": "base_pointer_not_proven",
             },
         },
         "middle_lhs_ladder_window": {
@@ -2833,6 +2835,7 @@ def completion_audit() -> dict:
                     "vm_replay_plan_eval.py --auto-seed-suggestions separates seed gaps from replay logic",
                     "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",
+                    "byte-lineage --compact formula operands label pointer_base and delta",
                 ],
                 "status": "substantially_available",
             },
@@ -2882,8 +2885,9 @@ def completion_audit() -> dict:
         "blocking_gaps": [
             (
                 "Prove or parameterize the remaining VM seed semantics: "
-                "scratch-writer slot25/26/28 and ladder slot24/26 still carry "
-                "not_proven or static-table/allocator boundaries."
+                "scratch-writer slot25 delta is now bytecode-backed but its "
+                "pointer base remains open; slot26/28 and ladder slot24/26 "
+                "still carry VM-base, static-table, or allocator boundaries."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "

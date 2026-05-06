@@ -9495,7 +9495,87 @@ fn compact_lineage_formula(formula: Option<&serde_json::Value>) -> serde_json::V
         "op": formula.get("op").cloned().unwrap_or(serde_json::Value::Null),
         "expression": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_kind": formula.pointer("/semantic/kind").cloned().unwrap_or(serde_json::Value::Null),
+        "operands": compact_lineage_formula_operands(formula),
     })
+}
+
+fn compact_lineage_formula_operands(formula: &serde_json::Value) -> serde_json::Value {
+    let op = formula.get("op").and_then(|v| v.as_str()).unwrap_or("");
+    let operands = formula
+        .get("operands")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    serde_json::Value::Array(
+        operands
+            .iter()
+            .enumerate()
+            .map(|(idx, operand)| {
+                let value = operand
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_u64_str);
+                serde_json::json!({
+                    "idx": idx,
+                    "reg": operand.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "value": operand.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    "role": compact_formula_operand_role(op, idx, value, &operands),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn compact_formula_operand_role(
+    op: &str,
+    idx: usize,
+    value: Option<u64>,
+    operands: &[serde_json::Value],
+) -> &'static str {
+    match op {
+        "add" => {
+            let other = operands
+                .iter()
+                .enumerate()
+                .find(|(other_idx, _)| *other_idx != idx)
+                .and_then(|(_, operand)| operand_value_u64(operand));
+            match (value, other) {
+                (Some(value), Some(other))
+                    if looks_like_pointer(value) && looks_like_delta(other) =>
+                {
+                    "pointer_base"
+                }
+                (Some(value), Some(other))
+                    if looks_like_delta(value) && looks_like_pointer(other) =>
+                {
+                    "delta"
+                }
+                _ => "operand",
+            }
+        }
+        "lsl" | "lsr" | "asr" => {
+            if idx == 0 {
+                "input"
+            } else {
+                "shift"
+            }
+        }
+        "ubfx" => match idx {
+            0 => "input",
+            1 => "lsb",
+            2 => "width",
+            _ => "operand",
+        },
+        _ => "operand",
+    }
+}
+
+fn looks_like_pointer(value: u64) -> bool {
+    value >= 0x1_0000_0000
+}
+
+fn looks_like_delta(value: u64) -> bool {
+    value <= 0x1_0000
 }
 
 fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde_json::Value {
@@ -14104,10 +14184,10 @@ mod tests {
         byte_lineage_compact_summary, byte_lineage_summary, byte_writer_map_output,
         byte_writer_map_summary, byte_writer_vm_source_ranges, byte_writers_from_range_writes,
         choose_frontier_next, choose_frontier_next_for_lane, choose_laned_upstream_next,
-        classify_vm_asm, compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
-        def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
-        gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
-        mem_dump_summary, memory_access_width, merge_missing_meta_field,
+        classify_vm_asm, compact_gap_call_candidates, compact_lineage_formula, dedupe_byte_nexts,
+        def_entries_from_asm, def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes,
+        find_hex_byte_offsets, gap_call_candidate_from_record, lineage_next_from_backstep,
+        mem_addr_from_asm, mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
         output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
@@ -16674,7 +16754,11 @@ mod tests {
                             "formula": {
                                 "op": "eor",
                                 "expression": "0x69f2e9fb = 0x1 ^ 0x69f2e9fa",
-                                "semantic": {"kind": "xor_mix"}
+                                "semantic": {"kind": "xor_mix"},
+                                "operands": [
+                                    {"reg": "x9", "value": "0x1"},
+                                    {"reg": "x10", "value": "0x69f2e9fa"}
+                                ]
                             }
                         },
                         "upstream": {
@@ -16702,6 +16786,10 @@ mod tests {
             serde_json::json!("xor_mix")
         );
         assert_eq!(
+            compact["path"][0]["local_def"]["formula"]["operands"][0]["reg"],
+            serde_json::json!("x9")
+        );
+        assert_eq!(
             compact["memory_boundaries"][0]["observed_bytes_hex"],
             serde_json::json!("fbe9f26900000000")
         );
@@ -16710,6 +16798,25 @@ mod tests {
             serde_json::json!(2)
         );
         assert!(compact["next_actions"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn compact_lineage_formula_labels_pointer_add_operands() {
+        let formula = serde_json::json!({
+            "op": "add",
+            "expression": "0x74b68bcc1c = 0x74b68bb9a0 + 0x127c",
+            "semantic": {"kind": "add_small_delta"},
+            "operands": [
+                {"reg": "x13", "value": "0x74b68bb9a0"},
+                {"reg": "x14", "value": "0x127c"}
+            ]
+        });
+        let compact = compact_lineage_formula(Some(&formula));
+        assert_eq!(
+            compact["operands"][0]["role"],
+            serde_json::json!("pointer_base")
+        );
+        assert_eq!(compact["operands"][1]["role"], serde_json::json!("delta"));
     }
 
     #[test]
