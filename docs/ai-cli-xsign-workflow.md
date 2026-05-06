@@ -117,6 +117,7 @@ For AI use, treat the output categories as contracts:
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, compact formula operands, memory boundaries, and next actions. Use it before requesting the full chain. |
 | `local_def.formula.operands[].role` | Generic operand hint for compact formulas. For pointer-shaped `add`, roles such as `pointer_base` and `delta` expose both sides of `base + offset`; `delta` includes small positive values and small two's-complement negative offsets. |
+| `local_def.call_return` | Explicit call-return boundary for `x0` values. It records the call idx, direct or indirect target value, return value, argument registers, and how many non-def rows were skipped between the call and the consumer. |
 | `repeated_values[]` | Compact count of values seen multiple times in the lineage path. A repeated pointer/state value near a depth limit usually means a copy loop or stable VM base that should be proven once rather than chased through every move. |
 | `pointer_transitions[]` | Compact list of pointer-shaped formula transitions found in the lineage path. It keeps `pointer_base + delta` rows plus pointer-shaped `sub_small_delta` and `align_down_mask` rows, so an AI agent can read a long base-pointer migration without scanning every copy step. |
 | `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
@@ -718,9 +719,11 @@ With `--follow-frontier`, the chain still prefers `upstream.next`. If a step
 stops at a table lookup or ALU row with no direct writer, it chooses a
 non-infrastructure `frontier[]` source register. Recognized semantic formulas
 override generic heuristics: `udiv` follows the numerator,
-`mod255_low_byte` follows the folded input, and `add_small_delta` follows the
-large state value instead of constants such as `1`. `sub_small_delta` does the
-same for `sub reg, reg, #imm`, and `align_down_mask` recognizes
+`mod255_low_byte` follows the folded input, pointer-shaped `add` follows the
+`pointer_base` operand before small immediates or offsets, and
+`add_small_delta` follows the large state value instead of constants such as
+`1`. `sub_small_delta` does the same for `sub reg, reg, #imm`, and
+`align_down_mask` recognizes
 `and reg, reg, #0xffff...fff0`-style pointer alignment. When these operations
 write back to the same register they read, the next seed is moved to the trace
 index before the current write so the chain does not self-cycle.
@@ -738,13 +741,14 @@ only frontier is a register such as `x23`, the chain still follows it. This is
 important around indirect calls where a return value may be saved through a
 callee-saved register before being written into a VM slot.
 
-Call returns are explicit boundaries. If a value in `x0` is consumed immediately
-after `bl`/`blr`, `vm-backstep` emits a `local_def.class = call-return` row
-instead of attributing the value to an older pre-call definition of `x0`. The
-row includes the call idx, call target register/value, return value, and
-argument registers `x0..x7`. Linear `vm-backchain --follow-frontier` stops at
-this boundary; use the call target and args to decide whether the value came
-from an external helper, a JNI/runtime callback, or an untraced function.
+Call returns are explicit boundaries. If a value in `x0` is consumed after
+`bl`/`blr`, `vm-backstep` scans backward past intervening rows that do not define
+`x0` and emits a `local_def.class = call-return` row instead of attributing the
+value to an older pre-call definition of `x0`. The row includes the call idx,
+direct or indirect call target value, return value, argument registers `x0..x7`,
+and `intervening_rows`. Linear `vm-backchain --follow-frontier` stops at this
+boundary; use the call target and args to decide whether the value came from an
+external helper, a JNI/runtime callback, or an untraced function.
 
 If a process maps file is available, resolve indirect call targets with:
 

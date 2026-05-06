@@ -8527,6 +8527,11 @@ fn choose_semantic_frontier_next(
     ) {
         let operands = formula.get("operands").and_then(|v| v.as_array())?;
         if operands.len() >= 2 {
+            if formula.get("op").and_then(|v| v.as_str()) == Some("add") {
+                if let Some(input) = choose_pointer_add_operand(operands) {
+                    return next_for_formula_operand(step, input, byte_lane);
+                }
+            }
             if formula.get("op").and_then(|v| v.as_str()) == Some("orr") {
                 if let Some(lane) = byte_lane {
                     if let Some(input) =
@@ -8587,6 +8592,17 @@ fn choose_semantic_frontier_next(
         return next_for_formula_operand(step, input, source_lane.or(byte_lane));
     }
     None
+}
+
+fn choose_pointer_add_operand(operands: &[serde_json::Value]) -> Option<&serde_json::Value> {
+    operands.iter().enumerate().find_map(|(idx, operand)| {
+        let value = operand
+            .get("value")
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str);
+        (compact_formula_operand_role("add", idx, value, operands) == "pointer_base")
+            .then_some(operand)
+    })
 }
 
 fn choose_or_operand_for_lane<'a>(
@@ -9629,7 +9645,7 @@ fn looks_like_pointer(value: u64) -> bool {
 }
 
 fn looks_like_delta(value: u64) -> bool {
-    value <= 0x1_0000 || value >= u64::MAX - 0x1_0000
+    value <= 0x10_0000 || value >= u64::MAX - 0x10_0000
 }
 
 fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde_json::Value {
@@ -9646,6 +9662,7 @@ fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde
         "target_value": call_return.get("target_value").cloned().unwrap_or(serde_json::Value::Null),
         "return_reg": call_return.get("return_reg").cloned().unwrap_or(serde_json::Value::Null),
         "return_value": call_return.get("return_value").cloned().unwrap_or(serde_json::Value::Null),
+        "intervening_rows": call_return.get("intervening_rows").cloned().unwrap_or(serde_json::Value::Null),
         "args": call_return.get("args").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
 }
@@ -10541,17 +10558,30 @@ fn call_return_def_from_previous_call(
     if source_key != "x0" || target_pos == 0 {
         return None;
     }
-    let call_row = rows.get(target_pos - 1)?;
-    let call_record = records.get(target_pos - 1)?;
-    let asm = call_row.get("asm").and_then(|v| v.as_str())?.trim();
-    if !is_call_asm(asm) {
+    let call_pos = (0..target_pos).rev().find(|pos| {
+        let row = &rows[*pos];
+        if row_defines_reg(row, source_key) {
+            return false;
+        }
+        row.get("asm")
+            .and_then(|v| v.as_str())
+            .is_some_and(is_call_asm)
+    })?;
+    if rows[call_pos + 1..target_pos]
+        .iter()
+        .any(|row| row_defines_reg(row, source_key))
+    {
         return None;
     }
+    let call_row = rows.get(call_pos)?;
+    let call_record = records.get(call_pos)?;
+    let asm = call_row.get("asm").and_then(|v| v.as_str())?.trim();
     let target_reg = indirect_call_target_reg(asm);
     let target_value = target_reg
         .as_deref()
         .and_then(|reg| record_reg_value(call_record, reg))
         .cloned()
+        .or_else(|| direct_call_target_value(asm).map(serde_json::Value::String))
         .unwrap_or(serde_json::Value::Null);
     let args = ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"]
         .into_iter()
@@ -10592,6 +10622,7 @@ fn call_return_def_from_previous_call(
                 "target_reg": target_reg,
                 "target_value": target_value,
                 "args": args,
+                "intervening_rows": target_pos.saturating_sub(call_pos + 1),
                 "note": "x0 changed across a call; do not attribute it to pre-call local definitions",
             }),
         );
@@ -10613,6 +10644,17 @@ fn indirect_call_target_reg(asm: &str) -> Option<String> {
         .next()
         .and_then(|operands| split_operands(operands).first().cloned())
         .and_then(|op| first_register_token(&op))
+}
+
+fn direct_call_target_value(asm: &str) -> Option<String> {
+    let mut parts = asm.trim().splitn(2, char::is_whitespace);
+    if parts.next()? != "bl" {
+        return None;
+    }
+    parts
+        .next()
+        .and_then(|operands| split_operands(operands).first().cloned())
+        .and_then(|op| immediate_operand_value(&op))
 }
 
 fn row_defines_reg(row: &serde_json::Value, reg_key: &str) -> bool {
@@ -13515,7 +13557,10 @@ fn def_reg_from_asm(asm: &str) -> Option<String> {
     let mut parts = asm.splitn(2, char::is_whitespace);
     let mnemonic = parts.next()?.to_ascii_lowercase();
     if mnemonic.starts_with('b')
-        || matches!(mnemonic.as_str(), "ret" | "cmp" | "cmn" | "tst")
+        || matches!(
+            mnemonic.as_str(),
+            "ret" | "cmp" | "cmn" | "tst" | "ccmp" | "ccmn" | "cbz" | "cbnz" | "tbz" | "tbnz"
+        )
         || !store_source_regs_from_asm(asm).is_empty()
     {
         return None;
@@ -14409,12 +14454,12 @@ mod tests {
         adjust_self_def_formula_next, alu_expression_from_asm, base64_decoded_bytes,
         byte_lane_from_writer_map_entry, byte_lineage_compact_summary, byte_lineage_summary,
         byte_writer_map_output, byte_writer_map_summary, byte_writer_vm_source_ranges,
-        byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
-        choose_laned_upstream_next, classify_vm_asm, compact_gap_call_candidates,
-        compact_lineage_formula, dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm,
-        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
-        gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
-        mem_dump_summary, memory_access_width, merge_missing_meta_field,
+        byte_writers_from_range_writes, call_return_def_from_previous_call, choose_frontier_next,
+        choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
+        compact_gap_call_candidates, compact_lineage_formula, dedupe_byte_nexts,
+        def_entries_from_asm, def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes,
+        find_hex_byte_offsets, gap_call_candidate_from_record, lineage_next_from_backstep,
+        mem_addr_from_asm, mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
         output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
@@ -14737,6 +14782,41 @@ mod tests {
             vec!["x25"]
         );
         assert_eq!(def_source_regs_from_asm("lsl x5, x3, #3"), vec!["x3"]);
+        assert!(
+            def_entries_from_asm("cbz x0, #0x1234", &serde_json::json!({}), None, None).is_empty()
+        );
+        assert!(
+            def_entries_from_asm("tbnz w8, #0, #0x1234", &serde_json::json!({}), None, None)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn call_return_boundary_scans_past_non_def_uses() {
+        let rows = vec![
+            serde_json::json!({"idx": 10, "asm": "bl #0x7601bcbd60"}),
+            serde_json::json!({"idx": 11, "asm": "br x17"}),
+            serde_json::json!({"idx": 12, "asm": "cbz x0, #0x7601bb6240"}),
+            serde_json::json!({"idx": 13, "asm": "cmp w8, #2"}),
+            serde_json::json!({"idx": 14, "asm": "add x8, x0, x20"}),
+        ];
+        let records = vec![
+            serde_json::json!({"idx": 10, "regs": {"x0": "0x40000", "x1": "0x1000"}}),
+            serde_json::json!({"idx": 11, "regs": {"x0": "0x74b687edc0"}}),
+            serde_json::json!({"idx": 12, "regs": {"x0": "0x74b687edc0"}}),
+            serde_json::json!({"idx": 13, "regs": {"x0": "0x74b687edc0"}}),
+            serde_json::json!({"idx": 14, "regs": {"x0": "0x74b687edc0"}}),
+        ];
+        let row =
+            call_return_def_from_previous_call(&rows, &records, 4, "x0", &records[4]).unwrap();
+        assert_eq!(row["class"], serde_json::json!("call-return"));
+        assert_eq!(row["call_return"]["call_idx"], serde_json::json!(10));
+        assert_eq!(
+            row["call_return"]["target_value"],
+            serde_json::json!("0x7601bcbd60")
+        );
+        assert_eq!(row["call_return"]["intervening_rows"], serde_json::json!(3));
+        assert_eq!(row["def"]["value_after"], serde_json::json!("0x74b687edc0"));
     }
 
     #[test]
@@ -15236,6 +15316,29 @@ mod tests {
             next["reason"],
             serde_json::json!("self_def_input_before_idx")
         );
+
+        let pointer_add = serde_json::json!({
+            "local_def": {
+                "idx": 7375_u64,
+                "asm": "add x8, x0, x20",
+                "class": "alu",
+                "def": {
+                    "reg": "x8",
+                    "src": [
+                        {"reg": "x0", "value": "0x74b687edc0"},
+                        {"reg": "x20", "value": "0x40000"}
+                    ],
+                    "value_after": "0x74b68bedc0"
+                }
+            },
+            "frontier": [
+                {"idx": 7375_u64, "reg": "x0", "value": "0x74b687edc0"},
+                {"idx": 7361_u64, "reg": "x20", "value": "0x40000"}
+            ]
+        });
+        let next = choose_frontier_next(&pointer_add).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x0"));
+        assert_eq!(next["src_value"], serde_json::json!("0x74b687edc0"));
     }
 
     #[test]
@@ -17167,6 +17270,21 @@ mod tests {
             compact["operands"][1]["role"],
             serde_json::json!("pointer_base")
         );
+
+        let formula = serde_json::json!({
+            "op": "add",
+            "expression": "0x74b68bedc0 = 0x74b687edc0 + 0x40000",
+            "operands": [
+                {"reg": "x0", "value": "0x74b687edc0"},
+                {"reg": "x20", "value": "0x40000"}
+            ]
+        });
+        let compact = compact_lineage_formula(Some(&formula));
+        assert_eq!(
+            compact["operands"][0]["role"],
+            serde_json::json!("pointer_base")
+        );
+        assert_eq!(compact["operands"][1]["role"], serde_json::json!("delta"));
     }
 
     #[test]
@@ -17328,6 +17446,7 @@ mod tests {
                                 "target_value": "0x787beb9718",
                                 "return_reg": "x0",
                                 "return_value": "0x7599191120",
+                                "intervening_rows": 2,
                                 "args": [{"reg": "x0", "value": "0x12"}]
                             }
                         },
@@ -17345,6 +17464,10 @@ mod tests {
         assert_eq!(
             compact["path"][0]["local_def"]["call_return"]["target_value"],
             serde_json::json!("0x787beb9718")
+        );
+        assert_eq!(
+            compact["path"][0]["local_def"]["call_return"]["intervening_rows"],
+            serde_json::json!(2)
         );
         assert!(compact["next_actions"]
             .as_array()

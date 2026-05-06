@@ -2734,15 +2734,37 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "0x74b68bd9d0 = 0x74b68bda80 - 0xb0",
                     "0x74b68bda80 = 0x74b68bdb40 - 0xc0",
                     "0x74b68bdb40 = 0x74b68bde20 - 0x2e0",
+                    "0x74b68bed40 = 0x74b68bedc0 - 0x80",
+                    "0x74b68bedc0 = 0x74b687edc0 + 0x40000",
                 ],
                 "next_repeated_base": {
                     "value": "0x74b68bde20",
                     "count_205_steps": 28,
                     "count_320_steps": 143,
-                    "portable_status": "not_proven",
+                    "portable_status": "resolved_to_heap_allocation_boundary",
                 },
-                "terminal": "depth_limit, but repeated_values now identify deeper copied bases",
-                "portable_status": "deeper_base_pointer_not_proven",
+                "heap_allocation_boundary": {
+                    "first_slot30_writer_idx": 34902,
+                    "first_slot30_writer_asm": "str x11, [x25, #0xf0]",
+                    "call_idx": 7364,
+                    "call_asm": "bl #0x7601bcbd60",
+                    "target_value": "0x7601bcbd60",
+                    "resolved_target": "libc.so+0x5c718 = malloc@@LIBC",
+                    "size_arg_x0": "0x40000",
+                    "return_value": "0x74b687edc0",
+                    "intervening_rows": 10,
+                    "evidence": (
+                        "byte-lineage --compact follows pointer-shaped add "
+                        "through the pointer_base operand and stops at an x0 "
+                        "call-return boundary; resolve-elf-symbol maps the "
+                        "thunk target to malloc"
+                    ),
+                },
+                "allocation_pointer_expression": (
+                    "0x74b68bedc0 = malloc(0x40000) + 0x40000"
+                ),
+                "terminal": "call_return_boundary at malloc(0x40000)",
+                "portable_status": "heap_scratch_allocation_boundary",
             },
             "slot25": {
                 "command": (
@@ -2852,8 +2874,9 @@ def vm_replay_seed_provenance_summary() -> dict:
         "interpretation": (
             "After fixing pair-store slot handling, slot8 is computed inside "
             "the ladder replay window instead of being an initial seed. The "
-            "open portable-algorithm work is concentrated in scratch slot25/28 "
-            "pointer provenance plus ladder slot24/26."
+            "open portable-algorithm work is concentrated in scratch slot25 "
+            "pointer provenance, heap-allocation parameterization for slot28, "
+            "and ladder slot24/26."
         ),
     }
 
@@ -2937,8 +2960,10 @@ def completion_audit() -> dict:
             (
                 "Prove or parameterize the remaining VM seed semantics: "
                 "scratch-writer slot25 delta is now bytecode-backed but its "
-                "pointer base remains open; slot26/28 and ladder slot24/26 "
-                "still carry VM-base, static-table, or allocator boundaries."
+                "pointer base remains open; scratch-writer slot28 reaches a "
+                "malloc-backed heap scratch boundary; slot26 and ladder "
+                "slot24/26 still carry VM-base, static-table, or allocator "
+                "boundaries."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "

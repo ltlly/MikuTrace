@@ -954,10 +954,24 @@ A 205-step slot28/base probe compresses the pointer migration into:
 0x74b68bdb40 = 0x74b68bde20 - 0x2e0
 ```
 
-The same compact view reports `0x74b68bde20` as the next dominant repeated
-base (`count=28` in 205 steps, `count=143` in 320 steps). This is progress on
-tooling and evidence compression, but `0x74b68bde20` is still not proven back
-to a portable input/table allocation.
+The same compact view reported `0x74b68bde20` as the next dominant repeated
+base (`count=28` in 205 steps, `count=143` in 320 steps). Chasing the first
+slot30 write of that value moves it out of the VM copy loop and into an
+allocator boundary:
+
+```text
+#34902 str x11, [x25, #0xf0] writes 0x74b68bde20
+0x74b68bed40 = 0x74b68bedc0 - 0x80
+0x74b68bedc0 = 0x74b687edc0 + 0x40000
+#7364 bl #0x7601bcbd60 returns x0 = 0x74b687edc0
+call target resolves through libc.so+0x5c718 = malloc@@LIBC
+call arg x0 = 0x40000
+```
+
+This turns the slot28 deep base into heap scratch provenance rather than a
+missing portable arithmetic input. The portable model should parameterize it as
+`malloc(0x40000)`-derived state, or prove that later operations cancel the ASLR
+address, instead of trying to reproduce the concrete pointer value.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1081,6 +1095,11 @@ scratch slot28 before #14164280:
     0x74b68bd9d0 = 0x74b68bda80 - 0xb0
     0x74b68bda80 = 0x74b68bdb40 - 0xc0
     0x74b68bdb40 = 0x74b68bde20 - 0x2e0
+    0x74b68bedc0 = malloc(0x40000) + 0x40000
+  allocation boundary:
+    #7364 bl #0x7601bcbd60 -> x0=0x74b687edc0
+    target: libc.so+0x5c718 = malloc@@LIBC
+    args: x0=0x40000
 
 scratch slot29 before #14164280:
   command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact
