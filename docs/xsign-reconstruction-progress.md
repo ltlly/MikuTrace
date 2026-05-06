@@ -715,6 +715,29 @@ This closes the prompt-surface gap for VM-IP stops: an AI can move from a
 byte-writer formula-only range into a compact VM operation window without
 loading the full per-op payload.
 
+Expanding the same probe to cover all current formula-only stops:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --start 10613140 \
+  --end 10620150 \
+  --summary \
+  --effects-only \
+  --max-ops 400
+```
+
+returns `op_template_count=34` with a highest-frequency template:
+
+```text
+count     = 49
+signature = bc[0x3:1,0x5:1,0x8:4,0x10:2] effects[slot_write:formula:ubfx]
+operands  = 0x3, 0x5, 0x8, 0x10
+```
+
+This is the next lift target for the `[12,35)` VM ladder: convert these repeated
+bytecode operand layouts plus effect shapes into portable Python VM templates.
+
 The Python reconstruction now uses this split directly:
 
 ```text

@@ -6649,7 +6649,8 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
                 .get("width")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
-            let key = format!("{}:{}", json_display(&offset), json_display(&width));
+            let (offset_key, width_key) = bytecode_read_sort_key(read);
+            let key = format!("{offset_key:016x}:{width_key:016x}");
             let operand =
                 group
                     .bytecode_operands
@@ -6735,13 +6736,14 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
 }
 
 fn vm_op_template_signature(op: &serde_json::Value) -> String {
-    let bytecode = op
+    let mut bytecode_parts = op
         .get("bytecode_reads")
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
         .map(|read| {
-            format!(
+            let (offset_key, width_key) = bytecode_read_sort_key(read);
+            let text = format!(
                 "{}:{}",
                 read.get("offset")
                     .map(json_display)
@@ -6749,8 +6751,14 @@ fn vm_op_template_signature(op: &serde_json::Value) -> String {
                 read.get("width")
                     .map(json_display)
                     .unwrap_or_else(|| "null".to_string())
-            )
+            );
+            (offset_key, width_key, text)
         })
+        .collect::<Vec<_>>();
+    bytecode_parts.sort_by_key(|(offset, width, _)| (*offset, *width));
+    let bytecode = bytecode_parts
+        .into_iter()
+        .map(|(_, _, text)| text)
         .collect::<Vec<_>>()
         .join(",");
     let effects = op
@@ -6762,6 +6770,15 @@ fn vm_op_template_signature(op: &serde_json::Value) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("bc[{bytecode}] effects[{effects}]")
+}
+
+fn bytecode_read_sort_key(read: &serde_json::Value) -> (u64, u64) {
+    let offset = read
+        .get("offset")
+        .and_then(value_as_u64)
+        .unwrap_or(u64::MAX);
+    let width = read.get("width").and_then(value_as_u64).unwrap_or(u64::MAX);
+    (offset, width)
 }
 
 fn vm_op_effect_signature(effect: &serde_json::Value) -> String {
