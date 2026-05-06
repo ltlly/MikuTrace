@@ -62,11 +62,33 @@ async fn mem_dump_returns_count_bytes() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["status"], "ready");
     assert_eq!(v["count"].as_u64().unwrap(), 8);
+    assert!(v["cursor"].is_null());
     let bs = v["bytes"].as_array().unwrap();
     assert_eq!(bs.len(), 8);
     assert_eq!(bs[0]["byte"].as_u64().unwrap(), b'h' as u64);
     assert_eq!(bs[0]["kind"].as_str().unwrap(), "w");
     assert!(bs[0]["src_idx"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn mem_dump_accepts_cursor() {
+    let (_tmp, cd) = synth_call_dir_with_string();
+    let app = tracemiku_server::build_router(cd).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/mem-dump?addr=0x7000&count=8&cursor=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["cursor"].as_u64().unwrap(), 0);
+    assert_eq!(v["bytes"][0]["byte"].as_u64().unwrap(), b'h' as u64);
+    assert_eq!(v["bytes"][0]["src_idx"].as_u64().unwrap(), 0);
 }
 
 #[tokio::test]

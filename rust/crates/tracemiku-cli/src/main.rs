@@ -287,6 +287,8 @@ enum Cmd {
         addr: String,
         #[arg(long, default_value_t = 256)]
         count: usize,
+        #[arg(long)]
+        cursor: Option<u64>,
     },
     /// GET /api/last-write-of-addr.
     LastWriteOfAddr {
@@ -1298,8 +1300,12 @@ async fn main() -> anyhow::Result<()> {
             trace_dir,
             addr,
             count,
+            cursor,
         }) => {
-            let params = vec![("addr", addr), ("count", count.to_string())];
+            let mut params = vec![("addr", addr), ("count", count.to_string())];
+            if let Some(cursor) = cursor {
+                params.push(("cursor", cursor.to_string()));
+            }
             route_get_json(trace_dir, route_path("/api/mem-dump", &params)).await
         }
         Some(Cmd::LastWriteOfAddr {

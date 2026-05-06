@@ -191,6 +191,20 @@ rust/target/debug/tracemiku-cli idxs-touching-addr <call_dir> \
 agent distinguish "latest traced write" from "last observed read value" when a
 scratch address is reused.
 
+To dump a byte range as of a specific trace index, use `mem-dump --cursor`.
+Without `--cursor`, it shows the final MemShadow state:
+
+```bash
+rust/target/debug/tracemiku-cli mem-dump <call_dir> \
+  --addr <addr> \
+  --count 128 \
+  --cursor <idx>
+```
+
+This is useful for external-call parameters, such as reading a C string or
+output structure around the call boundary rather than after the buffer has been
+reused later in the trace.
+
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly
 from the final JNI string:

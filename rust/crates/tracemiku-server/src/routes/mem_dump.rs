@@ -15,6 +15,8 @@ pub struct MemDumpQuery {
     pub addr: String,
     #[serde(default = "default_count")]
     pub count: usize,
+    #[serde(default)]
+    pub cursor: Option<u64>,
 }
 
 fn default_count() -> usize {
@@ -38,6 +40,7 @@ pub struct MemDumpResponse {
     pub status: &'static str,
     pub addr: String,
     pub count: usize,
+    pub cursor: Option<u64>,
     pub bytes: Vec<MemDumpByte>,
 }
 
@@ -67,14 +70,16 @@ fn mem_dump_response(
                 status,
                 addr: q.addr,
                 count,
+                cursor: q.cursor,
                 bytes: Vec::new(),
             });
         }
     };
     let mut bytes = Vec::with_capacity(count);
+    let cursor = q.cursor.unwrap_or(u64::MAX);
     for i in 0..count {
         let a = start + i as u64;
-        let (byte, kind, src) = mem.byte_at(a, u64::MAX);
+        let (byte, kind, src) = mem.byte_at(a, cursor);
         bytes.push(MemDumpByte {
             addr: format!("{a:#x}"),
             byte,
@@ -86,6 +91,7 @@ fn mem_dump_response(
         status: "ready",
         addr: q.addr,
         count,
+        cursor: q.cursor,
         bytes,
     })
 }
