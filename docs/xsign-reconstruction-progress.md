@@ -242,6 +242,41 @@ call_004:           source_word_be=0x2b09e584 add_idx=6918544
 call_005:           source_word_be=0xfa84446f add_idx=6960242
 ```
 
+The run-level chain is good for finding the first template, but packed `str w*`
+regions need byte-lane expansion to keep walking later words. The current
+validated form is:
+
+```bash
+rust/target/debug/tracemiku-cli output-map \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --semantic-offset 7 \
+  --semantic-count 32 \
+  --semantic-writer-map \
+  --semantic-writer-map-vm-chain-bytes \
+  --semantic-writer-map-vm-chain-steps 55 \
+  --semantic-writer-map-vm-chain-runs 32 \
+  --semantic-writer-map-vm-chain-follow-frontier \
+  --summary
+```
+
+That command emits 32 continuous `byte_equations[]` instead of only the old
+`0,4,8,...` run starts. It also links the next confirmed call_001 XOR word to
+the second state update:
+
+```text
+selected semantic offset 7, local range [0,4)
+lhs_word_le      = 0x6f783e78
+source_word      = 0x783e786f
+source_word_match= bswap_lhs_word_le
+word_extract     = #14678516 lsr w14, w13, w11
+state_update     = #14678176 add x13, x8, x12
+low32(0x561d4e18 + 0x22212a57) = 0x783e786f
+```
+
 For `call_001`, the state word is now traced one layer further. The XOR
 template uses `state_word_le = 0xd84ab467`, which is the little-endian view of
 the bytes loaded from `0x67b44ad8`. That word is read at #14678409 from

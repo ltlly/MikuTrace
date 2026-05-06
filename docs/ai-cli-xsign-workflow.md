@@ -166,6 +166,33 @@ without reading the full trace-shaped JSON. The same summary also emits
 such as `xor_mix` and `mod255_low_byte`; this is the first place to look when
 building a Python simulator from trace evidence.
 
+Packed stores need one extra switch. By default the semantic writer map expands
+coalesced `writer_runs[]`, which is fast and good for triage. When a 32-bit
+`str w*` produced several output bytes and each byte lane must be explained,
+add `--semantic-writer-map-vm-chain-bytes`. This seeds each VM backchain from
+the corresponding `bytes[]` entry and preserves its little-endian
+`source_byte_offset` as `seed.byte_lane`:
+
+```bash
+rust/target/debug/tracemiku-cli output-map <call_dir> \
+  --key x-sign \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1 \
+  --semantic-offset 7 \
+  --semantic-count 32 \
+  --semantic-writer-map \
+  --semantic-writer-map-vm-chain-bytes \
+  --semantic-writer-map-vm-chain-steps 55 \
+  --semantic-writer-map-vm-chain-runs 32 \
+  --semantic-writer-map-vm-chain-follow-frontier \
+  --summary
+```
+
+The summary marks this with `semantic_writer_map.vm_chain_seed_mode = "bytes"`.
+Use it after run-level triage has found a packed region; it is intentionally
+opt-in because it may run one backchain per byte.
+
 When four consecutive byte equations are XORs, the summary additionally emits
 `semantic_writer_map.xor_word_templates[]`. This is designed for the manual
 "start from generated x-sign and walk upward" flow: it turns rows like
@@ -191,7 +218,11 @@ Example shape:
 When the selected VM backchain reaches the word source, the same summary emits
 `semantic_writer_map.xor_word_state_sources[]`. This links the XOR word to the
 byte-extraction instruction and the upstream `add32_mix` state update, for
-example `source_word_be = 0x67b44ad8` and `result_low32 = 0x67b44ad8`.
+example `source_word = 0x67b44ad8` and `result_low32 = 0x67b44ad8`.
+`source_word_match` records whether the source matched `lhs_word_le` directly
+or through `bswap_lhs_word_le`. Entries are emitted only when the chain also
+reaches a concrete `add32_mix` state update, so this field is suitable for
+feeding the Python simulator rather than just listing sliding XOR windows.
 
 ## Backward dataflow path
 

@@ -434,6 +434,30 @@ TRACE_CALL_001_STATE_WORD_SOURCE = {
     ],
 }
 
+TRACE_CALL_001_BYTE_LANE_STATE_SOURCE = {
+    "command": (
+        "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
+        "--base64-tail-align-prefix AA --base64-tail-drop 1 --semantic-offset 7 "
+        "--semantic-count 32 --semantic-writer-map --semantic-writer-map-vm-chain-bytes "
+        "--semantic-writer-map-vm-chain-steps 55 --semantic-writer-map-vm-chain-runs 32 "
+        "--semantic-writer-map-vm-chain-follow-frontier --summary"
+    ),
+    "vm_chain_seed_mode": "bytes",
+    "byte_equation_count": 32,
+    "selected_semantic_offset": 7,
+    "local_semantic_range": [0, 4],
+    "lhs_word_le": 0x6F783E78,
+    "source_word": 0x783E786F,
+    "source_word_match": "bswap_lhs_word_le",
+    "word_extract_idx": 14678516,
+    "word_extract_asm": "lsr w14, w13, w11",
+    "state_add_idx": 14678176,
+    "state_add_asm": "add x13, x8, x12",
+    "state_add_lhs": 0x561D4E18,
+    "state_add_rhs": 0x22212A57,
+    "state_add_result": 0x783E786F,
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -611,6 +635,10 @@ def main() -> None:
     ]
     state_words_be = [item["result"] & 0xFFFFFFFF for item in state_source["state_updates"]]
     state_digest_be = b"".join(value.to_bytes(4, "big") for value in state_words_be)
+    byte_lane_source = TRACE_CALL_001_BYTE_LANE_STATE_SOURCE
+    byte_lane_source_low32 = (
+        byte_lane_source["state_add_lhs"] + byte_lane_source["state_add_rhs"]
+    ) & 0xFFFFFFFF
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -775,6 +803,31 @@ def main() -> None:
                     "word loaded from the hash/state buffer; the tail template "
                     "stores those bytes as word32_le(bswap32(state_word_be))."
                 ),
+            },
+            "call_001_byte_lane_state_source": {
+                "status": "trace_proven_one_sample",
+                "command": byte_lane_source["command"],
+                "vm_chain_seed_mode": byte_lane_source["vm_chain_seed_mode"],
+                "byte_equation_count": byte_lane_source["byte_equation_count"],
+                "selected_semantic_offset": byte_lane_source["selected_semantic_offset"],
+                "local_semantic_range": byte_lane_source["local_semantic_range"],
+                "lhs_word_le": f"{byte_lane_source['lhs_word_le']:#x}",
+                "source_word": f"{byte_lane_source['source_word']:#x}",
+                "source_word_match": byte_lane_source["source_word_match"],
+                "word_extract": {
+                    "idx": byte_lane_source["word_extract_idx"],
+                    "asm": byte_lane_source["word_extract_asm"],
+                },
+                "state_add": {
+                    "idx": byte_lane_source["state_add_idx"],
+                    "asm": byte_lane_source["state_add_asm"],
+                    "lhs": f"{byte_lane_source['state_add_lhs']:#x}",
+                    "rhs": f"{byte_lane_source['state_add_rhs']:#x}",
+                    "computed_low32": f"{byte_lane_source_low32:#x}",
+                    "matches_source_word": byte_lane_source_low32
+                    == byte_lane_source["source_word"],
+                },
+                "matches_state_digest_word_1": byte_lane_source["source_word"] == state_words_be[1],
             },
             "multi_sample_mask_folds": {
                 "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",
