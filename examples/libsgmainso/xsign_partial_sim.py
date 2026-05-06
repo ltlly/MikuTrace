@@ -851,14 +851,19 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
     {
         "semantic_range": [52, 56],
         "source_status": "word_source_only",
-        "class": "memory_boundary_read",
+        "class": "memory_boundary_read_text",
         "addr": "0x756649a2d4",
         "bytes_hex": "302e3130",
+        "ascii": "0.10",
+        "container_addr": "0x756649a2d0",
+        "container_c_string": "10.60.10^^",
+        "container_offset": 4,
         "load_idx": 14082315,
         "last_write_idx": 14062790,
         "interpretation": (
-            "Observed bytes do not match the latest traced write. Treat this as "
-            "a trace coverage or external data boundary, not as a stale pointer write."
+            "Observed bytes do not match the latest traced write. The current "
+            "MemShadow cursor shows this as a substring of the external-looking "
+            "text buffer '10.60.10^^'."
         ),
     },
     {

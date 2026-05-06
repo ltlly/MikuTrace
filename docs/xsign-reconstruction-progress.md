@@ -608,6 +608,28 @@ last write = #14062790 str x0, [x19]
 This lets an AI stop at the right boundary and ask for a wider trace, boundary
 hook, or external metadata instead of following a stale pointer-shaped write.
 
+Dumping the containing buffer at the same cursor shows that this boundary is a
+substring of a short ASCII value:
+
+```bash
+rust/target/debug/tracemiku-cli mem-dump \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --addr 0x756649a2d0 \
+  --count 32 \
+  --cursor 14082315 \
+  --cstr
+```
+
+Result:
+
+```text
+c_string = "10.60.10^^"
+addr 0x756649a2d4 = substring offset 4 = "0.10"
+```
+
+So the `[52,56)` word-source path now has an external text boundary candidate,
+not just an unexplained stale-write mismatch.
+
 So the current trace-proven call_001 tail shape is:
 
 ```text
