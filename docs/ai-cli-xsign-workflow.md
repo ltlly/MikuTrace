@@ -380,6 +380,21 @@ explicitly before interpreting bytes. For the current libsgmainso samples, the
 first variable tail begins at offset 2, so `base64_decode("AA" + tail)[1:]`
 matches the scratch byte stream seen by trace backtracking.
 
+The scan command can emit this aligned-tail view directly:
+
+```bash
+rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
+  --key x-sign \
+  --decode-url \
+  --diff-base64 \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1
+```
+
+Each pair then includes `base64_tail.semantic_hex`, and the top-level
+`base64_tail_diff` compares that aligned semantic tail across samples.
+
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory
 edge; with it the report also keeps the `index` register branch, which is the

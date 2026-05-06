@@ -596,6 +596,15 @@ enum Cmd {
         /// Include byte-level diff across decoded Base64 outputs.
         #[arg(long)]
         diff_base64: bool,
+        /// Analyze a Base64 tail beginning at this output character offset.
+        #[arg(long)]
+        base64_tail_start: Option<usize>,
+        /// Base64 characters to prepend before decoding the tail, for alignment.
+        #[arg(long, default_value = "")]
+        base64_tail_align_prefix: String,
+        /// Drop this many decoded bytes from the aligned tail before diffing.
+        #[arg(long, default_value_t = 0)]
+        base64_tail_drop: usize,
         /// Include this many recent GetStringUTFChars strings before each output.
         #[arg(long, default_value_t = 0)]
         prior_inputs: usize,
@@ -1560,6 +1569,9 @@ async fn main() -> anyhow::Result<()> {
             decode_base64,
             decode_base64_full,
             diff_base64,
+            base64_tail_start,
+            base64_tail_align_prefix,
+            base64_tail_drop,
             prior_inputs,
         }) => cmd_scan_jni_output_strings(
             path,
@@ -1570,6 +1582,9 @@ async fn main() -> anyhow::Result<()> {
             decode_base64,
             decode_base64_full,
             diff_base64,
+            base64_tail_start,
+            base64_tail_align_prefix,
+            base64_tail_drop,
             prior_inputs,
         ),
         Some(Cmd::OutputBacktrace {
@@ -2038,6 +2053,9 @@ fn cmd_scan_jni_output_strings(
     decode_base64: bool,
     decode_base64_full: bool,
     diff_base64: bool,
+    base64_tail_start: Option<usize>,
+    base64_tail_align_prefix: String,
+    base64_tail_drop: usize,
     prior_inputs: usize,
 ) -> anyhow::Result<()> {
     let hook_files = find_jni_hook_files(&path)?;
@@ -2090,6 +2108,19 @@ fn cmd_scan_jni_output_strings(
                     .unwrap_or(value_text);
                 row["base64"] = base64_summary(base64_text, decode_base64_full || diff_base64);
             }
+            if let Some(tail_start) = base64_tail_start {
+                let base64_text = row
+                    .get("url_decoded")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(value_text);
+                row["base64_tail"] = base64_tail_summary(
+                    base64_text,
+                    tail_start,
+                    &base64_tail_align_prefix,
+                    base64_tail_drop,
+                    decode_base64_full || diff_base64,
+                );
+            }
             if prior_inputs > 0 {
                 let value_idx = pair[1].get("idx").and_then(|v| v.as_u64());
                 row["prior_inputs"] = serde_json::Value::Array(prior_get_string_inputs(
@@ -2108,6 +2139,8 @@ fn cmd_scan_jni_output_strings(
         }
     }
     let base64_diff = diff_base64.then(|| decoded_base64_diff(&pairs));
+    let base64_tail_diff =
+        (diff_base64 && base64_tail_start.is_some()).then(|| decoded_base64_tail_diff(&pairs));
     let mut out = serde_json::json!({
         "status": "ready",
         "path": path.display().to_string(),
@@ -2119,6 +2152,9 @@ fn cmd_scan_jni_output_strings(
     });
     if let Some(diff) = base64_diff {
         out["base64_diff"] = diff;
+    }
+    if let Some(diff) = base64_tail_diff {
+        out["base64_tail_diff"] = diff;
     }
     print_pretty(&out)
 }
@@ -2244,6 +2280,64 @@ fn base64_summary(raw: &str, include_full_hex: bool) -> serde_json::Value {
     }
 }
 
+fn base64_tail_summary(
+    raw: &str,
+    tail_start: usize,
+    align_prefix: &str,
+    drop_bytes: usize,
+    include_full_hex: bool,
+) -> serde_json::Value {
+    let Some(tail) = raw.get(tail_start..) else {
+        return serde_json::json!({
+            "ok": false,
+            "error": "tail_start is not a valid UTF-8 boundary or is past end",
+            "tail_start_chars": tail_start,
+        });
+    };
+    let aligned = format!("{align_prefix}{tail}");
+    match base64_decoded_bytes(&aligned) {
+        Ok(bytes) => {
+            if drop_bytes > bytes.len() {
+                return serde_json::json!({
+                    "ok": false,
+                    "error": "drop_bytes exceeds aligned decoded length",
+                    "tail_start_chars": tail_start,
+                    "tail_chars": tail.len(),
+                    "align_prefix": align_prefix,
+                    "drop_bytes": drop_bytes,
+                    "aligned_decoded_len": bytes.len(),
+                });
+            }
+            let semantic = &bytes[drop_bytes..];
+            let mut summary = serde_json::json!({
+                "ok": true,
+                "tail_start_chars": tail_start,
+                "tail_chars": tail.len(),
+                "align_prefix": align_prefix,
+                "drop_bytes": drop_bytes,
+                "aligned_decoded_len": bytes.len(),
+                "semantic_len": semantic.len(),
+                "aligned_prefix_hex": bytes_to_hex(&bytes[..bytes.len().min(16)]),
+                "semantic_prefix_hex": bytes_to_hex(&semantic[..semantic.len().min(16)]),
+                "semantic_suffix_hex": bytes_to_hex(&semantic[semantic.len().saturating_sub(16)..]),
+            });
+            if include_full_hex {
+                summary["aligned_decoded_hex"] = serde_json::Value::String(bytes_to_hex(&bytes));
+                summary["semantic_hex"] = serde_json::Value::String(bytes_to_hex(semantic));
+            }
+            summary
+        }
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "error": err.to_string(),
+            "tail_start_chars": tail_start,
+            "tail_chars": tail.len(),
+            "align_prefix": align_prefix,
+            "drop_bytes": drop_bytes,
+        }),
+    }
+}
+
 fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
     let samples = pairs
         .iter()
@@ -2257,6 +2351,30 @@ fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
             Some((sample, pair, bytes))
         })
         .collect::<Vec<_>>();
+    decoded_byte_samples_diff(samples)
+}
+
+fn decoded_base64_tail_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
+    let samples = pairs
+        .iter()
+        .enumerate()
+        .filter_map(|(sample, pair)| {
+            let decoded_hex = pair
+                .get("base64_tail")
+                .and_then(|v| v.get("semantic_hex"))
+                .and_then(|v| v.as_str())?;
+            let bytes = parse_hex_bytes_cli(decoded_hex).ok()?;
+            Some((sample, pair, bytes))
+        })
+        .collect::<Vec<_>>();
+    let mut diff = decoded_byte_samples_diff(samples);
+    diff["source"] = serde_json::json!("base64_tail.semantic_hex");
+    diff
+}
+
+fn decoded_byte_samples_diff(
+    samples: Vec<(usize, &serde_json::Value, Vec<u8>)>,
+) -> serde_json::Value {
     if samples.is_empty() {
         return serde_json::json!({
             "status": "no-decoded-samples",

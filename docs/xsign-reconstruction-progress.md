@@ -51,6 +51,18 @@ base64_decode("AA" + tail) = 00 0a 62 61 05 d5 28 b9 ...
 semantic tail              =    0a 62 61 05 d5 28 b9 ...
 ```
 
+CLI form:
+
+```bash
+rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
+  --key x-sign \
+  --decode-url \
+  --diff-base64 \
+  --base64-tail-start 12 \
+  --base64-tail-align-prefix AA \
+  --base64-tail-drop 1
+```
+
 The whole-string 76-byte decode is still useful for diffing, but it is not the
 buffer shape currently observed in the trace. The traceable scratch bytes for
 the first variable group are `0x0a, 0x62, 0x61, ...`, not the whole-string

@@ -88,6 +88,10 @@ fn run_json(args: &[String]) -> serde_json::Value {
 }
 
 fn make_diff_trace(root: &std::path::Path, name: &str, x_sign: &[u8]) -> PathBuf {
+    make_diff_trace_value(root, name, &STANDARD.encode(x_sign))
+}
+
+fn make_diff_trace_value(root: &std::path::Path, name: &str, value: &str) -> PathBuf {
     let dir = root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
     let mut buf = vec![0u8; 272];
@@ -95,10 +99,9 @@ fn make_diff_trace(root: &std::path::Path, name: &str, x_sign: &[u8]) -> PathBuf
     buf[268..272].copy_from_slice(&0xd503201fu32.to_le_bytes());
     std::fs::write(dir.join("trace.bin"), &buf).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"records":1}"#).unwrap();
-    let encoded = STANDARD.encode(x_sign);
     let events = [
         serde_json::json!({"id":"NewStringUTF","trace_idx":1,"args":{"bytes":"x-sign"}}),
-        serde_json::json!({"id":"NewStringUTF","trace_idx":2,"args":{"bytes":encoded}}),
+        serde_json::json!({"id":"NewStringUTF","trace_idx":2,"args":{"bytes":value}}),
     ];
     std::fs::write(
         dir.join("jni_hooks.jsonl"),
@@ -920,6 +923,40 @@ fn scan_jni_output_strings_diffs_decoded_base64_outputs() {
         serde_json::json!(["0xcc", "0xee"])
     );
     assert_eq!(v["pairs"][0]["base64"]["decoded_hex"], "aabbccdd");
+}
+
+#[test]
+fn scan_jni_output_strings_aligns_base64_tail_for_diffing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixed = "azYBCM007xAA";
+    let tail1 = &STANDARD.encode([0x00, 0x0a, 0x62, 0x61, 0x05])[2..];
+    let tail2 = &STANDARD.encode([0x00, 0x0a, 0x63, 0x61, 0x05])[2..];
+    let _cd1 = make_diff_trace_value(tmp.path(), "run1", &format!("{fixed}{tail1}"));
+    let _cd2 = make_diff_trace_value(tmp.path(), "run2", &format!("{fixed}{tail2}"));
+    let v = run_json(&[
+        "scan-jni-output-strings".into(),
+        tmp.path().display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--diff-base64".into(),
+        "--base64-tail-start".into(),
+        fixed.len().to_string(),
+        "--base64-tail-align-prefix".into(),
+        "AA".into(),
+        "--base64-tail-drop".into(),
+        "1".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["pairs"][0]["base64_tail"]["semantic_hex"], "0a626105");
+    assert_eq!(v["pairs"][1]["base64_tail"]["semantic_hex"], "0a636105");
+    assert_eq!(v["base64_tail_diff"]["status"], "ready");
+    assert_eq!(v["base64_tail_diff"]["source"], "base64_tail.semantic_hex");
+    assert_eq!(v["base64_tail_diff"]["stable_ranges"][0]["hex"], "0a");
+    assert_eq!(v["base64_tail_diff"]["per_byte"][1]["kind"], "VARIABLE");
+    assert_eq!(
+        v["base64_tail_diff"]["per_byte"][1]["values"],
+        serde_json::json!(["0x62", "0x63"])
+    );
 }
 
 #[test]
