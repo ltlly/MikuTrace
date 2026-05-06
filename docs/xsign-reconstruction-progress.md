@@ -495,6 +495,17 @@ This is close to the input timestamp string `1777710018`, but not identical
 with the native `time()` result unless a wider trace shows additional writes to
 the same VM slot before this call.
 
+The confirmed pieces are captured in a runnable partial simulator:
+
+```bash
+uv run python examples/libsgmainso/xsign_partial_sim.py
+```
+
+It verifies the standard Base64 decode, the `time()`-seeded LCG sequence above,
+the `mod255_low_byte` fold for the `0x62` byte, and the first variable Base64
+index `p`. It deliberately reports `complete_algorithm = false` until the full
+76-byte payload construction is recovered.
+
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
 
