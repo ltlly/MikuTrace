@@ -321,6 +321,29 @@ TRACE_MULTI_SAMPLE_XOR_WORDS = {
     },
 }
 
+TRACE_MULTI_SAMPLE_MASK_FOLDS = {
+    "diff_run1_truncated_call_006": {
+        "tail1_input": 0x750A2E58B4,
+        "tail2_input": 0x75294D862F,
+    },
+    "diff_run1_call_001": {
+        "tail1_input": 0x74FFAFCA73,
+        "tail2_input": 0x74BEABE59C,
+    },
+    "diff_run1_call_003": {
+        "tail1_input": 0x753D0189F6,
+        "tail2_input": 0x757A6F4E0C,
+    },
+    "diff_run1_call_004": {
+        "tail1_input": 0x7502282E4D,
+        "tail2_input": 0x74D57E8EFC,
+    },
+    "diff_run1_call_005": {
+        "tail1_input": 0x75A8D92776,
+        "tail2_input": 0x75011196A7,
+    },
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -447,6 +470,21 @@ def main() -> None:
             "expected_tail_3_7": tail[3:7].hex(),
             "matches_trace": computed == tail[3:7],
             "source": item["source"],
+        }
+    mask_fold_samples = {}
+    for name, item in TRACE_MULTI_SAMPLE_MASK_FOLDS.items():
+        tail = sample_tails[name]
+        computed_tail1 = mod255_low_byte(item["tail1_input"])
+        computed_tail2 = mod255_low_byte(item["tail2_input"])
+        mask_fold_samples[name] = {
+            "tail1_input": f"{item['tail1_input']:#x}",
+            "tail1_computed": f"{computed_tail1:#x}",
+            "tail1_expected": f"{tail[1]:#x}",
+            "tail1_matches": computed_tail1 == tail[1],
+            "tail2_input": f"{item['tail2_input']:#x}",
+            "tail2_computed": f"{computed_tail2:#x}",
+            "tail2_expected": f"{tail[2]:#x}",
+            "tail2_matches": computed_tail2 == tail[2],
         }
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -576,6 +614,14 @@ def main() -> None:
                 "formula": "tail[3:7] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]",
                 "samples": xor_word_samples,
                 "all_match": all(item["matches_trace"] for item in xor_word_samples.values()),
+            },
+            "multi_sample_mask_folds": {
+                "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",
+                "samples": mask_fold_samples,
+                "all_match": all(
+                    item["tail1_matches"] and item["tail2_matches"]
+                    for item in mask_fold_samples.values()
+                ),
             },
             "upstream_lane_note": (
                 "Offsets 4..6 require byte-lane-aware OR/shift/extract tracking; "

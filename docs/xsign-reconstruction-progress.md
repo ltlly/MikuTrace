@@ -207,6 +207,15 @@ call_004:           state=0x84e5092b masks=1b54 -> 305dfed0
 call_005:           state=0x6f4484fa masks=95c5 -> 6f41d1aa
 ```
 
+The mask bytes themselves are also cross-sample `mod255_low_byte` folds:
+
+```text
+tail[1], tail[2] = (input + input // 0xff) & 0xff
+```
+
+The simulator records the two fold inputs for each sample and verifies all
+five pairs against the observed semantic tail.
+
 Crypto cross-check:
 
 ```bash
