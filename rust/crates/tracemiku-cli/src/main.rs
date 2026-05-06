@@ -3459,6 +3459,13 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
         .map(output_map_lookup_summary)
         .collect::<Vec<_>>();
     let decoded_payload = output_map_decoded_payload_summary(group, &lookups);
+    let trees = group
+        .get("trees")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(output_map_tree_summary)
+        .collect::<Vec<_>>();
     serde_json::json!({
         "group": group.get("group").cloned().unwrap_or(serde_json::Value::Null),
         "offset": group.get("offset").cloned().unwrap_or(serde_json::Value::Null),
@@ -3471,6 +3478,18 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
         "decoded": decoded,
         "decoded_payload": decoded_payload,
         "lookups": lookups,
+        "trees": trees,
+    })
+}
+
+fn output_map_tree_summary(item: &serde_json::Value) -> serde_json::Value {
+    let tree = item
+        .get("tree")
+        .map(vm_backtree_summary)
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "seed": item.get("seed").cloned().unwrap_or(serde_json::Value::Null),
+        "tree": tree,
     })
 }
 
@@ -6528,7 +6547,7 @@ fn highlight_alu_formula(node: &serde_json::Value) -> Option<serde_json::Value> 
     let mnemonic = asm.split_whitespace().next()?.to_ascii_lowercase();
     if !matches!(
         mnemonic.as_str(),
-        "orr" | "and" | "lsl" | "lsr" | "add" | "sub" | "ubfx" | "udiv"
+        "orr" | "eor" | "and" | "lsl" | "lsr" | "add" | "sub" | "ubfx" | "udiv"
     ) {
         return None;
     }
@@ -6578,7 +6597,7 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
     let mnemonic = parts.next()?.to_ascii_lowercase();
     let operands = parts.next().map(split_operands).unwrap_or_default();
     match mnemonic.as_str() {
-        "orr" | "and" | "add" | "sub" | "mul" if values.len() >= 2 => {
+        "orr" | "eor" | "and" | "add" | "sub" | "mul" if values.len() >= 2 => {
             if mnemonic == "mul" {
                 return Some(format!(
                     "{result} = ({} * {}) mod 2^64",
@@ -6587,6 +6606,7 @@ fn alu_expression_from_asm(asm: &str, result: &str, values: &[String]) -> Option
             }
             let op = match mnemonic.as_str() {
                 "orr" => "|",
+                "eor" => "^",
                 "and" => "&",
                 "add" => "+",
                 "sub" => "-",
@@ -6639,6 +6659,10 @@ fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<
             let (lhs, rhs) = parse_binary_values(values)?;
             bitwise_or_merge_semantic(lhs, rhs, result)
         }
+        "eor" => {
+            let (lhs, rhs) = parse_binary_values(values)?;
+            xor_identity_semantic(lhs, rhs, result)
+        }
         "lsl" | "lsr" | "asr" => {
             let input = values.first().and_then(|value| parse_u64_str(value))?;
             let shift = shift_amount_from_asm_or_values(asm, values)?;
@@ -6661,6 +6685,21 @@ fn parse_binary_values(values: &[String]) -> Option<(u64, u64)> {
         parse_u64_str(values.first()?)?,
         parse_u64_str(values.get(1)?)?,
     ))
+}
+
+fn xor_identity_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::Value> {
+    let input = match (lhs, rhs) {
+        (lhs, 0) if lhs != 0 && result == lhs => lhs,
+        (0, rhs) if rhs != 0 && result == rhs => rhs,
+        _ => return None,
+    };
+    Some(serde_json::json!({
+        "kind": "xor_identity",
+        "input": format!("{input:#x}"),
+        "zero_operand": "0x0",
+        "result": format!("{result:#x}"),
+        "expression": "result == input ^ 0",
+    }))
 }
 
 fn mod255_fold_semantic(input: u64, quotient: u64, result: u64) -> Option<serde_json::Value> {
@@ -7844,6 +7883,14 @@ mod tests {
             recognize_alu_semantic("lsl w16, w2, #2", "0x28", &["0xa".to_string()]).unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("shift_left"));
         assert_eq!(semantic["shift"], serde_json::json!("0x2"));
+        let semantic = recognize_alu_semantic(
+            "eor x16, x20, x5",
+            "0x62",
+            &["0x0".to_string(), "0x62".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("xor_identity"));
+        assert_eq!(semantic["input"], serde_json::json!("0x62"));
     }
 
     #[test]
@@ -8014,6 +8061,28 @@ mod tests {
         let next = choose_frontier_next(&add_identity).unwrap();
         assert_eq!(next["reg"], serde_json::json!("x8"));
         assert_eq!(next["src_value"], serde_json::json!("0xc87"));
+
+        let eor_identity = serde_json::json!({
+            "local_def": {
+                "asm": "eor x16, x20, x5",
+                "class": "alu",
+                "def": {
+                    "reg": "x16",
+                    "src": [
+                        {"reg": "x20", "value": "0x0"},
+                        {"reg": "x5", "value": "0x62"}
+                    ],
+                    "value_after": "0x62"
+                }
+            },
+            "frontier": [
+                {"idx": 80, "reg": "x20", "value": "0x0"},
+                {"idx": 80, "reg": "x5", "value": "0x62"}
+            ]
+        });
+        let next = choose_frontier_next(&eor_identity).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x5"));
+        assert_eq!(next["src_value"], serde_json::json!("0x62"));
     }
 
     #[test]
