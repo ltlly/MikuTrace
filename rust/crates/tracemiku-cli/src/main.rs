@@ -4644,6 +4644,7 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
         .flatten()
         .map(output_map_tree_summary)
         .collect::<Vec<_>>();
+    let payload_formula_table = output_map_payload_formula_table(&decoded_payload);
     serde_json::json!({
         "group": group.get("group").cloned().unwrap_or(serde_json::Value::Null),
         "offset": group.get("offset").cloned().unwrap_or(serde_json::Value::Null),
@@ -4655,6 +4656,7 @@ fn output_map_group_summary(group: &serde_json::Value) -> serde_json::Value {
         "indices": indices,
         "decoded": decoded,
         "decoded_payload": decoded_payload,
+        "payload_formula_table": payload_formula_table,
         "lookups": lookups,
         "trees": trees,
     })
@@ -4716,6 +4718,59 @@ fn output_map_decoded_payload_summary(
                 "index_sources": index_sources,
             })
         })
+        .collect()
+}
+
+fn output_map_payload_formula_table(
+    decoded_payload: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    decoded_payload
+        .iter()
+        .filter(|row| {
+            row.get("dropped_by_alignment")
+                .and_then(|v| v.as_bool())
+                != Some(true)
+        })
+        .map(|row| {
+            let index_sources = row
+                .get("index_sources")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .map(|source| {
+                    serde_json::json!({
+                        "pos": source.get("pos").cloned().unwrap_or(serde_json::Value::Null),
+                        "char": source.get("char").cloned().unwrap_or(serde_json::Value::Null),
+                        "index_hex": source.get("index_hex").cloned().unwrap_or(serde_json::Value::Null),
+                        "match_count": source.get("match_count").cloned().unwrap_or(serde_json::Value::Null),
+                        "interesting": formula_expression_list(source.pointer("/formulas/interesting")),
+                        "semantic": formula_expression_list(source.pointer("/formulas/semantic")),
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "semantic_offset": row.get("semantic_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "payload_offset": row.get("payload_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "value_hex": row.get("value_hex").cloned().unwrap_or(serde_json::Value::Null),
+                "base64_formula": row.get("formula").cloned().unwrap_or(serde_json::Value::Null),
+                "index_sources": index_sources,
+            })
+        })
+        .collect()
+}
+
+fn formula_expression_list(value: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    value
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|formula| {
+            formula
+                .get("expression")
+                .cloned()
+                .or_else(|| formula.get("asm").cloned())
+        })
+        .take(4)
         .collect()
 }
 

@@ -625,6 +625,9 @@ large raw backtree nodes. The summary also includes `decoded_payload[]`, which
 maps every decoded payload byte to the Base64 index sources and the formulas
 that produced those indices. This is the preferred prompt surface when walking
 from output text back toward payload construction.
+For an even flatter prompt input, use `payload_formula_table[]`: each row is one
+decoded payload byte with its Base64 byte formula plus compact expression lists
+for the contributing alphabet indices.
 
 Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
 fields to line up a traced alphabet index, for example `i2 = 0x18`, with the
