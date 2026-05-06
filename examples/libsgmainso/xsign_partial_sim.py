@@ -551,6 +551,36 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
     "unexplained_offsets": [],
 }
 
+TRACE_MOD255_INPUT_LCG_CHAIN = {
+    "status": "trace_proven_one_sample",
+    "command": (
+        "tracemiku-cli vm-backchain <call_dir> --idx 13946345 --reg x13 "
+        "--steps 45 --follow-frontier --summary"
+    ),
+    "semantic_offset": 1,
+    "mod255_input": 0x74FFAFCA73,
+    "output_byte": 0x62,
+    "chain_head": [
+        "0x74ffafca73 = 0x74ffafbdec + 0xc87",
+        "0x74ffafbdec = 0x69adbccc | 0x74b68bb9a4",
+        "0x69adbccc = (0xd35b7999 >> 1) & 0xffffffff",
+        "0xd35b7999 = low32(0x099bd5d2 + 0xc9bfa3c7)",
+        "0x099bd5d2 = 0x99bd5d21d7d8103 >> 0x20",
+    ],
+    "lcg_multiplier": LCG_MULT,
+    "lcg_increment": LCG_INC,
+    "lcg_states_seen": [
+        0x99BD5D21D7D8103,
+        0xDD1841BEA148764A,
+        0x52C36263893DA50D,
+        0x5036F3354BED40BC,
+        0xC4FCFFE67B71F087,
+        0x4B1654CDFCB8F65E,
+        0x7988B092011B51F1,
+        0x9A7BE8B46D894FB0,
+    ],
+}
+
 TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS = {
     "command": (
         "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
@@ -1220,6 +1250,20 @@ def main() -> None:
                     "VM/hash state; the final x-sign tail itself is no longer opaque."
                 ),
             },
+            "call_001_mod255_input_lcg_chain": {
+                "status": TRACE_MOD255_INPUT_LCG_CHAIN["status"],
+                "command": TRACE_MOD255_INPUT_LCG_CHAIN["command"],
+                "semantic_offset": TRACE_MOD255_INPUT_LCG_CHAIN["semantic_offset"],
+                "mod255_input": f"{TRACE_MOD255_INPUT_LCG_CHAIN['mod255_input']:#x}",
+                "output_byte": f"{TRACE_MOD255_INPUT_LCG_CHAIN['output_byte']:#x}",
+                "chain_head": TRACE_MOD255_INPUT_LCG_CHAIN["chain_head"],
+                "lcg_multiplier": f"{TRACE_MOD255_INPUT_LCG_CHAIN['lcg_multiplier']:#x}",
+                "lcg_increment": TRACE_MOD255_INPUT_LCG_CHAIN["lcg_increment"],
+                "lcg_states_seen": [
+                    f"{state:#x}"
+                    for state in TRACE_MOD255_INPUT_LCG_CHAIN["lcg_states_seen"]
+                ],
+            },
             "multi_sample_xor_lhs_middle_run": {
                 "status": "trace_observed_four_diff_samples",
                 "semantic_range": middle_lhs["semantic_range"],
@@ -1273,7 +1317,7 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "upstream sources for the XOR lhs stream, byte-lane source words, and mod255 inputs",
+            "remaining upstream sources for the XOR lhs stream, byte-lane source words, and the second mod255 input",
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",

@@ -319,6 +319,28 @@ xor_lhs_offsets:
   [3,13), [16,59), [61,65)
 ```
 
+The first `0x62` mod255 input can be chased with the now-indexed byte equation:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
+  --idx 13946345 \
+  --reg x13 \
+  --steps 45 \
+  --follow-frontier \
+  --summary
+```
+
+That path reaches the 64-bit LCG recurrence already seen elsewhere:
+
+```text
+0x74ffafca73 = 0x74ffafbdec + 0xc87
+0x74ffafbdec = 0x69adbccc | 0x74b68bb9a4
+0x69adbccc    = (0xd35b7999 >> 1) & 0xffffffff
+0xd35b7999    = low32(0x099bd5d2 + 0xc9bfa3c7)
+0x099bd5d2    = 0x99bd5d21d7d8103 >> 0x20
+next states   = state * 0x5851f42d4c957f2d + 1 mod 2^64
+```
+
 The same summary now compresses the 57 XOR left-hand bytes into three
 contiguous streams:
 
