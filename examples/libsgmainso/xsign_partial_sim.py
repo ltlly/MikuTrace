@@ -2586,6 +2586,38 @@ def python_vm_replay_plan_eval_summary() -> dict:
     }
 
 
+def vm_replay_seed_provenance_summary() -> dict:
+    return {
+        "status": "partial_seed_lineage",
+        "scratch_writer_window": {
+            "slot29": {
+                "value": "0x37",
+                "writer_idx": 14164256,
+                "writer_asm": "str x5, [x25, x6, lsl #3]",
+                "formula": "0x37 = 0x38 + 0xffffffffffffffff",
+                "upstream": "0xffffffffffffffff is read as a VM bytecode literal at #14164253",
+                "portable_status": "bytecode_literal",
+            },
+            "slot25": {
+                "value": "0x74b68bcc1c",
+                "writer_idx": 14164103,
+                "writer_asm": "stp x9, x10, [x25, #0xc0]",
+                "lineage": (
+                    "loaded from slot9, then slot26, then byte memory around "
+                    "0x74b68bcc10"
+                ),
+                "frontier": "observed_read_without_matching_traced_write",
+                "portable_status": "not_proven",
+            },
+        },
+        "interpretation": (
+            "slot29 is now explainable as bytecode-literal arithmetic. slot25 "
+            "still names a trace scratch/table pointer whose portable origin "
+            "requires more lineage or a broader trace."
+        ),
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -2604,6 +2636,7 @@ def completion_audit() -> dict:
                     "vm-ops effects python_with_values",
                     "byte-writer-map vm_source_ranges and stops",
                     "tools/vm_replay_plan_eval.py evaluates replay-plan JSON",
+                    "vm_replay_seed_provenance_summary records proven and open seeds",
                 ],
                 "status": "substantially_available",
             },
@@ -2637,7 +2670,7 @@ def completion_audit() -> dict:
             },
         ],
         "blocking_gaps": [
-            "Replace replay evaluator observed-value fallbacks with portable initial slot/table inputs.",
+            "Replace remaining replay evaluator observed-value fallbacks with portable initial slot/table inputs.",
             "Lift replay-plan steps into maintained Python algorithm code instead of a trace-bound evaluator.",
             "Prove how LCG/time-derived state feeds every payload byte, not only selected mod255 inputs.",
         ],
@@ -2951,6 +2984,7 @@ def main() -> None:
     helper_coverage = python_semantic_helper_coverage()
     multi_sample_coverage = multi_sample_formula_coverage(sample_tails)
     replay_eval_summary = python_vm_replay_plan_eval_summary()
+    seed_provenance_summary = vm_replay_seed_provenance_summary()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -3076,6 +3110,7 @@ def main() -> None:
         "semantic_byte_source_model": byte_source_model,
         "python_semantic_helper_coverage": helper_coverage,
         "python_vm_replay_plan_eval_summary": replay_eval_summary,
+        "vm_replay_seed_provenance_summary": seed_provenance_summary,
         "tail_repeat_trace_evidence": [
             {
                 **item,

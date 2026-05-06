@@ -961,6 +961,26 @@ example, it can infer `slot25=0x74b68bcc1c` from
 `slot[25] = 0x74b68bcc2c = 0x74b68bcc1c + 0x10`, and `slot26=0x1f7b3460` from
 `slot[29] = 0x60 = 0x1f7b3460 & 0xff`.
 
+Follow-up seed lineage probes show the current boundary more precisely:
+
+```text
+scratch slot29 before #14164280:
+  slot29 = 0x37
+  writer #14164256: str x5, [x25, x6, lsl #3]
+  local formula: 0x37 = 0x38 + 0xffffffffffffffff
+  upstream: 0xffffffffffffffff is a VM bytecode literal read at #14164253
+
+scratch slot25 before #14164280:
+  slot25 = 0x74b68bcc1c
+  writer #14164103: stp x9, x10, [x25, #0xc0]
+  loaded from slot9, then slot26, then byte memory around 0x74b68bcc10
+  frontier: observed_read_without_matching_traced_write on slot27/memory state
+```
+
+So `slot29` is no longer a semantic unknown. `slot25` is still a real algorithm
+frontier: it names a scratch/table pointer inside the trace, but its portable
+origin is not yet proven.
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 

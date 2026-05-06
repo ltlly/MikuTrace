@@ -68,6 +68,54 @@ In those cases the right output is a precise frontier such as
 `bytecode-read`, `observed_read_without_matching_traced_write`, or
 `no_upstream_next_or_frontier`, not a guessed algorithm.
 
+### VM variant coverage
+
+The current VM CLI layer is dynamic and evidence-driven. It does not assume a
+fixed opcode format, dispatcher table, handler count, target SO, APK package,
+or x-sign-specific buffer. A VM profile is only the small set of runtime
+register roles needed to interpret the trace window, usually the VM instruction
+pointer, VM state/register-file base, and optional infrastructure registers.
+
+| Variant shape | Expected result |
+| --- | --- |
+| Register-file VM with slot loads/stores through a stable base register | Strong coverage. `vm-slice`, `vm-ops`, `vm-backchain`, `vm-backtree`, and `byte-lineage` can expose slot reads/writes, bytecode reads, ALU formulas, and scratch stores. |
+| OLLVM-style opcode switch or computed-goto dispatcher | Good dynamic coverage when the executed handler stream is present. The CLI groups by VM IP/dispatch context instead of relying on static CFG recovery. |
+| Flattened switch/case without an explicit VM bytecode stream | Partial coverage. The same commands still help if state variables, table loads, and scratch writes are visible, but the output is a dataflow slice rather than a decoded opcode listing. |
+| Nested-if dispatcher | Partial coverage. Dynamic traces hide untaken paths, so the CLI explains the executed path and marks missing branches as outside the trace. |
+| Table-driven bytecode with encrypted immediates decoded in trace | Good coverage after the decode store/load appears in the trace. The useful frontier is the decoded bytecode read, not the original encrypted table. |
+| Register-only VM with no memory-backed slot table | Limited coverage. Register taint and formulas still work, but VM slot abstractions and memory replay plans will be sparse. |
+| VMProtect/Themida-style virtualization with encrypted handlers, self-modifying code, or helper calls outside the traced window | Boundary coverage only. The tool should report frontiers such as untraced calls, observed reads without matching writes, or bytecode reads; a separate multi-trace or lifter workflow is required. |
+
+Use these commands as a generic lifting assist, not as a universal
+devirtualizer:
+
+```bash
+rust/target/debug/tracemiku-cli vm-slice <call_dir> --start <idx> --end <idx>
+rust/target/debug/tracemiku-cli vm-ops <call_dir> --start <idx> --end <idx> --summary
+rust/target/debug/tracemiku-cli vm-ops <call_dir> --start <idx> --end <idx> --compact
+rust/target/debug/tracemiku-cli vm-ops <call_dir> --start <idx> --end <idx> --replay-plan
+rust/target/debug/tracemiku-cli vm-backchain <call_dir> --idx <idx> --reg <reg>
+rust/target/debug/tracemiku-cli vm-backtree <call_dir> --idx <idx> --reg <reg>
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr <addr> --before-idx <idx> --summary
+```
+
+For AI use, treat the output categories as contracts:
+
+| Output | Meaning |
+| --- | --- |
+| `op_templates[]` / `compact_templates[]` | Repeated dynamic handler shapes. These are candidates for reusable Python opcode templates. |
+| `replay_steps[]` | Ordered effects that can be executed by a replay script for the observed trace window. |
+| `python_with_values` | A concrete, value-filled expression. It is good for verification, but must be parameterized before calling it an algorithm. |
+| `source_byte_load` | A byte/word input to the VM operation. Follow it with `byte-lineage` when it is not yet a known table, literal, or app/device input. |
+| `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
+| `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
+| `observed_read_without_matching_traced_write` frontier | Memory was read with no matching earlier traced write. This usually means pre-trace initialization, an untraced helper, mmap/file input, JNI/framework state, or a trace gap. |
+| `no_local_def` frontier | The selected register value was already live at the search boundary or came from code the current local def search did not cover. Increase lookback, switch to memory lineage, or mark it as an explicit input. |
+
+Do not add target-specific VM commands for one SO. If a new variant needs
+additional recognition, add a generic signal, such as a new formula kind, a
+new frontier kind, or a configurable VM profile field.
+
 ## Output-to-writer path
 
 Convert the known signature or byte sequence to hex, then search memory:
