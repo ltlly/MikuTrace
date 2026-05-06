@@ -573,11 +573,13 @@ Dumping `0x753ddd7fd0` at the consuming cursor shows the observed string-like
 buffer `QfYBk7NLPEMz...`, so offset `0xc` is byte `0x7a` (`z`). A plain latest
 writer map for that byte is not enough here: the latest traced write stores
 `0x00`, while the later read observes `0x7a`. `vm-backchain --follow-frontier`
-therefore marks this as `observed_read_without_matching_traced_write` and adds
-gap-call candidates, with the strongest current candidate at `#10612864`
-calling `libsgmainso+0x163928` over the same buffer span. Treat this as a
-trace-coverage/helper-call boundary until that helper is lifted or traced more
-deeply.
+therefore marks this as `observed_read_without_matching_traced_write`. The gap
+scan still lists `#10612864 -> libsgmainso+0x163928` and
+`#10612910 -> libsgmainso+0x163944` because their arguments cover the buffer,
+but the traced callees return without writing the target range. The CLI now
+marks both as `traced_callee_no_target_write` and lowers their score, so this
+is still a trace-coverage/preexisting-buffer boundary rather than a proven
+helper producer.
 
 Using `vm-ops --summary --effects-only` in capped chunks over the surrounding
 VM loop shows the full observed byte-load sequence:

@@ -988,7 +988,9 @@ TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
             {
                 "idx": 10612864,
                 "target": "libsgmainso+0x163928",
-                "score": 60,
+                "score": 10,
+                "score_adjustment_trace_write": -50,
+                "callee_trace_status": "traced_callee_no_target_write",
                 "span": {
                     "base_reg": "x3",
                     "base": "0x753ddd7fd0",
@@ -1000,13 +1002,17 @@ TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
             {
                 "idx": 10612910,
                 "target": "libsgmainso+0x163944",
-                "score": 20,
+                "score": -30,
+                "score_adjustment_trace_write": -50,
+                "callee_trace_status": "traced_callee_no_target_write",
             },
         ],
         "interpretation": (
             "The byte consumed by the VM is observed in memory, but the latest "
-            "traced writer does not match it. Treat this as an unlifted helper "
-            "or trace coverage boundary, not as a static byte."
+            "traced writer does not match it. Gap-call candidates cover the "
+            "buffer by argument span but their traced callees do not write the "
+            "target range, so treat this as a trace coverage or preexisting "
+            "buffer boundary, not as a static byte or proven helper output."
         ),
     }
 ]

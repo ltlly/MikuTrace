@@ -203,6 +203,10 @@ for example `arg_offsets: [{"reg":"x1","offset":"0x58"}]` means the observed
 address lies at `x1 + 0x58` at that call boundary. If symbols are available,
 resolve the module offset to distinguish a true output writer such as
 `stat/stat64` from a later unrelated call such as `free`.
+For calls inside the traced primary module, also check `callee_trace.status`.
+`traced_callee_no_target_write` means the argument span looked plausible, but
+the traced callee returned without writing the target range; treat that as a
+weak hint, not as a producer.
 
 To inspect the surrounding per-byte read/write history for one address, use:
 

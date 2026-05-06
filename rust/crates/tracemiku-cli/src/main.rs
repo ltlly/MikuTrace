@@ -8409,6 +8409,8 @@ fn compact_gap_call_candidates(value: Option<&serde_json::Value>) -> serde_json:
                 "span_matches": candidate.get("span_matches").cloned().unwrap_or_else(|| serde_json::json!([])),
                 "near_regs": candidate.get("near_regs").cloned().unwrap_or_else(|| serde_json::json!([])),
                 "score": candidate.get("score").cloned().unwrap_or(serde_json::Value::Null),
+                "score_adjustment_trace_write": candidate.get("score_adjustment_trace_write").cloned().unwrap_or(serde_json::Value::Null),
+                "callee_trace": candidate.get("callee_trace").cloned().unwrap_or(serde_json::Value::Null),
             })
         })
         .collect::<Vec<_>>();
@@ -9379,6 +9381,7 @@ async fn gap_call_candidates_for_mismatch_on(
     let meta = route_get_json_value_on(app, "/api/meta".to_string()).await?;
     let primary = primary_module_bounds(&meta);
     let mut candidates = Vec::new();
+    let mut gap_records = Vec::new();
     let mut cursor = scan_start;
     let mut fetched = 0usize;
 
@@ -9403,6 +9406,7 @@ async fn gap_call_candidates_for_mismatch_on(
             break;
         }
         fetched = fetched.saturating_add(records.len());
+        gap_records.extend(records.iter().cloned());
         for record in &records {
             if let Some(candidate) =
                 gap_call_candidate_from_record(record, &meta, primary.as_ref(), addr)
@@ -9424,6 +9428,9 @@ async fn gap_call_candidates_for_mismatch_on(
     }
 
     let candidate_count_total = candidates.len();
+    for candidate in &mut candidates {
+        enrich_gap_call_candidate_trace_writes(candidate, &gap_records, addr);
+    }
     candidates.sort_by(|a, b| {
         let ascore = a.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
         let bscore = b.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -9449,6 +9456,148 @@ async fn gap_call_candidates_for_mismatch_on(
         "candidate_count_returned": candidates.len(),
         "candidates": candidates,
     }))
+}
+
+fn enrich_gap_call_candidate_trace_writes(
+    candidate: &mut serde_json::Value,
+    records: &[serde_json::Value],
+    addr: u64,
+) {
+    if candidate
+        .get("external_to_primary")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        if let Some(obj) = candidate.as_object_mut() {
+            obj.insert(
+                "callee_trace".to_string(),
+                serde_json::json!({ "status": "external_or_untraced" }),
+            );
+        }
+        return;
+    }
+    let Some(call_idx) = candidate
+        .get("idx")
+        .and_then(|v| v.as_u64())
+        .map(|idx| idx as usize)
+    else {
+        return;
+    };
+    let Some(call_pc) = candidate
+        .get("pc")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+    else {
+        return;
+    };
+    let return_pc = call_pc.wrapping_add(4);
+    let mut rows = 0usize;
+    let mut return_idx = None;
+    let mut target_writes = Vec::new();
+    for record in records {
+        let Some(idx) = record
+            .get("idx")
+            .and_then(|v| v.as_u64())
+            .map(|idx| idx as usize)
+        else {
+            continue;
+        };
+        if idx <= call_idx {
+            continue;
+        }
+        if record
+            .get("pc")
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str)
+            == Some(return_pc)
+        {
+            return_idx = Some(idx);
+            break;
+        }
+        rows = rows.saturating_add(1);
+        if let Some(write) = store_touch_for_addr(record, addr) {
+            target_writes.push(write);
+        }
+    }
+    let status = if !target_writes.is_empty() {
+        "traced_callee_target_write"
+    } else if return_idx.is_some() {
+        "traced_callee_no_target_write"
+    } else {
+        "traced_callee_return_not_seen"
+    };
+    let score_adjustment = match status {
+        "traced_callee_target_write" => 80,
+        "traced_callee_no_target_write" => -50,
+        _ => 0,
+    };
+    if let Some(obj) = candidate.as_object_mut() {
+        let score = obj.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        obj.insert(
+            "score".to_string(),
+            serde_json::Value::from(score.saturating_add(score_adjustment)),
+        );
+        obj.insert(
+            "score_adjustment_trace_write".to_string(),
+            serde_json::Value::from(score_adjustment),
+        );
+        obj.insert(
+            "callee_trace".to_string(),
+            serde_json::json!({
+                "status": status,
+                "rows": rows,
+                "return_pc": format!("{return_pc:#x}"),
+                "return_idx": return_idx,
+                "target_writes": target_writes,
+            }),
+        );
+    }
+}
+
+fn store_touch_for_addr(record: &serde_json::Value, addr: u64) -> Option<serde_json::Value> {
+    let asm = record.get("asm").and_then(|v| v.as_str()).unwrap_or("");
+    let source_regs = store_source_regs_from_asm(asm);
+    if source_regs.is_empty() {
+        return None;
+    }
+    let mem_addr = mem_addr_from_asm(asm, record)?;
+    let width = store_access_width(asm, &source_regs);
+    let end = mem_addr.saturating_add(width);
+    if !(mem_addr..end).contains(&addr) {
+        return None;
+    }
+    Some(serde_json::json!({
+        "idx": record.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": asm,
+        "mem_addr": format!("{mem_addr:#x}"),
+        "width": width,
+        "offset": addr.saturating_sub(mem_addr),
+    }))
+}
+
+fn store_access_width(asm: &str, source_regs: &[String]) -> u64 {
+    let mnemonic = asm
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(mnemonic.as_str(), "stp" | "stnp" | "stxp" | "stlxp") {
+        return source_regs
+            .iter()
+            .map(|reg| register_load_width(reg))
+            .sum::<u64>()
+            .max(1);
+    }
+    if mnemonic.ends_with('b') {
+        return 1;
+    }
+    if mnemonic.ends_with('h') {
+        return 2;
+    }
+    source_regs
+        .first()
+        .map(|reg| register_load_width(reg))
+        .unwrap_or_else(|| memory_access_width(asm))
 }
 
 fn gap_call_candidate_from_record(
@@ -11970,18 +12119,18 @@ mod tests {
         byte_writer_map_output, byte_writer_map_summary, byte_writers_from_range_writes,
         choose_frontier_next, choose_frontier_next_for_lane, choose_laned_upstream_next,
         classify_vm_asm, compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
-        def_source_regs_from_asm, find_hex_byte_offsets, gap_call_candidate_from_record,
-        lineage_next_from_backstep, mem_addr_from_asm, mem_dump_summary, memory_access_width,
-        observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
-        output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
-        output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
-        output_semantic_xor_word_state_source_summary, output_semantic_xor_word_state_sources,
-        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
-        recognized_backchain_pattern_summary, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
-        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_backchain_stop_summary,
-        vm_op_effect_summaries, vm_ops_effects_only_summary, vm_ops_state_updates,
-        vm_slot_from_asm, ElfSymbol, VmProfile,
+        def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
+        mem_dump_summary, memory_access_width, observed_byte_writer_mismatches, odd_u64_inverse,
+        output_map_summary, output_semantic_byte_equation,
+        output_semantic_byte_equation_input_summary, output_semantic_byte_equation_summary,
+        output_semantic_xor_word_run_templates, output_semantic_xor_word_state_source_summary,
+        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
+        parse_nm_symbol_line, recognize_alu_semantic, recognized_backchain_pattern_summary,
+        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        store_touch_for_addr, vm_backchain_stop_summary, vm_op_effect_summaries,
+        vm_ops_effects_only_summary, vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -12127,6 +12276,76 @@ mod tests {
             compact.pointer("/candidates/0/target_module/offset"),
             Some(&serde_json::json!("0x1120"))
         );
+    }
+
+    #[test]
+    fn enriches_internal_gap_call_without_target_write_as_weak() {
+        let mut candidate = serde_json::json!({
+            "idx": 10,
+            "pc": "0x1500",
+            "asm": "bl #0x1600",
+            "external_to_primary": false,
+            "score": 60,
+        });
+        let records = vec![
+            serde_json::json!({"idx": 10, "pc": "0x1500", "asm": "bl #0x1600", "regs": {}}),
+            serde_json::json!({"idx": 11, "pc": "0x1600", "asm": "stp x29, x30, [sp, #-0x20]!", "regs": {"sp": "0x7000"}}),
+            serde_json::json!({"idx": 12, "pc": "0x1604", "asm": "ret", "regs": {}}),
+            serde_json::json!({"idx": 13, "pc": "0x1504", "asm": "mov x0, x0", "regs": {}}),
+        ];
+        enrich_gap_call_candidate_trace_writes(&mut candidate, &records, 0x6058);
+        assert_eq!(
+            candidate["callee_trace"]["status"],
+            serde_json::json!("traced_callee_no_target_write")
+        );
+        assert_eq!(
+            candidate["score_adjustment_trace_write"],
+            serde_json::json!(-50)
+        );
+        assert_eq!(candidate["score"], serde_json::json!(10));
+        let compact = compact_gap_call_candidates(Some(&serde_json::json!({
+            "status": "ready",
+            "candidates": [candidate],
+        })));
+        assert_eq!(
+            compact["candidates"][0]["callee_trace"]["status"],
+            serde_json::json!("traced_callee_no_target_write")
+        );
+    }
+
+    #[test]
+    fn enriches_internal_gap_call_with_target_write() {
+        let mut candidate = serde_json::json!({
+            "idx": 10,
+            "pc": "0x1500",
+            "asm": "bl #0x1600",
+            "external_to_primary": false,
+            "score": 20,
+        });
+        let records = vec![
+            serde_json::json!({"idx": 10, "pc": "0x1500", "asm": "bl #0x1600", "regs": {"x3": "0x6050"}}),
+            serde_json::json!({"idx": 11, "pc": "0x1600", "asm": "strb w1, [x3, #8]", "regs": {"x1": "0x51", "x3": "0x6050"}}),
+            serde_json::json!({"idx": 12, "pc": "0x1604", "asm": "ret", "regs": {}}),
+            serde_json::json!({"idx": 13, "pc": "0x1504", "asm": "mov x0, x0", "regs": {}}),
+        ];
+        enrich_gap_call_candidate_trace_writes(&mut candidate, &records, 0x6058);
+        assert_eq!(
+            candidate["callee_trace"]["status"],
+            serde_json::json!("traced_callee_target_write")
+        );
+        assert_eq!(
+            candidate["score_adjustment_trace_write"],
+            serde_json::json!(80)
+        );
+        assert_eq!(candidate["score"], serde_json::json!(100));
+        assert_eq!(
+            candidate["callee_trace"]["target_writes"][0]["idx"],
+            serde_json::json!(11)
+        );
+
+        let touch = store_touch_for_addr(&records[1], 0x6058).unwrap();
+        assert_eq!(touch["width"], serde_json::json!(1));
+        assert_eq!(touch["offset"], serde_json::json!(0));
     }
 
     #[test]
