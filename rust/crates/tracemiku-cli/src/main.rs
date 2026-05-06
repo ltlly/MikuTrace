@@ -2179,6 +2179,59 @@ fn base64_group_analysis(raw: &str) -> serde_json::Value {
     })
 }
 
+fn base64_lookup_matches(
+    base64: &serde_json::Value,
+    trees: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let lookups = trees
+        .iter()
+        .flat_map(|tree| {
+            tree.get("tree")
+                .and_then(|v| v.get("highlights"))
+                .and_then(|v| v.get("table_lookups"))
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    base64
+        .get("indices")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|index| {
+            let ch = index.get("char").and_then(|v| v.as_str()).unwrap_or("");
+            let index_hex = index
+                .get("index_hex")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let matches = lookups
+                .iter()
+                .filter(|lookup| {
+                    lookup.get("char").and_then(|v| v.as_str()) == Some(ch)
+                        && lookup.get("index_value").and_then(|v| v.as_str()) == Some(index_hex)
+                })
+                .map(|lookup| {
+                    serde_json::json!({
+                        "idx": lookup.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                        "reg": lookup.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                        "index_reg": lookup.get("index_reg").cloned().unwrap_or(serde_json::Value::Null),
+                        "base_value": lookup.get("base_value").cloned().unwrap_or(serde_json::Value::Null),
+                        "node": lookup.get("node").cloned().unwrap_or(serde_json::Value::Null),
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "pos": index.get("pos").cloned().unwrap_or(serde_json::Value::Null),
+                "char": ch,
+                "index": index.get("index").cloned().unwrap_or(serde_json::Value::Null),
+                "index_hex": index_hex,
+                "matches": matches,
+            })
+        })
+        .collect()
+}
+
 fn base64_char_index(byte: u8) -> Option<u8> {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     ALPHABET
@@ -2520,6 +2573,7 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         let end = (start + 4).min(mapped_text.len());
         let chars = &mapped_text[start..end];
         let decoded = base64_decoded_bytes(chars).unwrap_or_default();
+        let base64 = base64_group_analysis(chars);
         let runs = output_runs_overlapping(&app, &writer_runs, start, end).await?;
         let mut trees = Vec::new();
         if opts.tree_depth > 0 {
@@ -2561,11 +2615,13 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                 }
             }
         }
+        let lookup_matches = base64_lookup_matches(&base64, &trees);
         group_rows.push(serde_json::json!({
             "group": group_idx,
             "offset": start,
             "chars": chars,
-            "base64": base64_group_analysis(chars),
+            "base64": base64,
+            "base64_lookup_matches": lookup_matches,
             "decoded_hex": bytes_to_hex(&decoded),
             "runs": runs,
             "trees": trees,

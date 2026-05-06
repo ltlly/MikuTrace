@@ -315,6 +315,9 @@ JNI.
 Each group also includes `base64.indices` and `base64.decoded_bytes`. Use these
 fields to line up a traced alphabet index, for example `i2 = 0x18`, with the
 payload byte formula such as `((i1 & 0x0f) << 4) | (i2 >> 2)`.
+When a tree is attached, `base64_lookup_matches` maps each character in the
+current group to the concrete `ldrb alphabet[index]` trace idx and index
+register.
 
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory

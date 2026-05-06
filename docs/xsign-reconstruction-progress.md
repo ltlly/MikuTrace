@@ -267,7 +267,10 @@ alphabet index when the index register is visible.
 
 `output-map` also records the Base64 math for every group under
 `base64.indices` and `base64.decoded_bytes`, so the index traces can be mapped
-directly back to payload bytes.
+directly back to payload bytes. With a tree attached, `base64_lookup_matches`
+maps the current group characters to concrete alphabet lookup trace idxs; for
+`piYQ` this resolves `p/i/Y/Q` to idxs
+`14731087/14731131/14731228/14731327`.
 
 ## Next target
 
