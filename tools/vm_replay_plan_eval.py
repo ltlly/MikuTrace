@@ -29,6 +29,7 @@ class ReplayState:
     unresolved_reads: list[dict[str, Any]] = field(default_factory=list)
     writes: list[dict[str, Any]] = field(default_factory=list)
     trusted_writes: list[dict[str, Any]] = field(default_factory=list)
+    seed_suggestions: dict[int, dict[str, Any]] = field(default_factory=dict)
     seeded_slots: dict[int, int] = field(default_factory=dict)
 
 
@@ -211,12 +212,16 @@ def apply_effect(effect: dict[str, Any], state: ReplayState, trust_observed: boo
         computed = observed
         if computed is not None:
             state.trusted_effects += 1
+            suggestions = seed_suggestions(effect, text)
+            for suggestion in suggestions:
+                slot = int(suggestion["slot"])
+                state.seed_suggestions.setdefault(slot, suggestion)
             state.trusted_writes.append(
                 {
                     "idx": effect.get("idx"),
                     "value": f"{computed:#x}",
                     "python_with_values": text,
-                    "seed_suggestions": seed_suggestions(effect, text),
+                    "seed_suggestions": suggestions,
                 }
             )
     elif computed is not None:
@@ -310,6 +315,9 @@ def summarize(plan: dict[str, Any], state: ReplayState, dump_specs: list[str]) -
         "skipped_effects": state.skipped_effects,
         "unresolved_read_count": len(state.unresolved_reads),
         "unresolved_reads_preview": state.unresolved_reads[:20],
+        "seed_suggestions": [
+            state.seed_suggestions[slot] for slot in sorted(state.seed_suggestions)
+        ],
         "trusted_writes_preview": state.trusted_writes[:20],
         "slot_count": len(state.slots),
         "seeded_slots": {
