@@ -2478,7 +2478,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "extend mod255 parity proof to repeated mask offsets",
+            "prove semantic offset 0 static byte across samples",
             "lift trace_literal_lhs_hex word runs into state/table formulas",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
         ],
@@ -2561,8 +2561,31 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[1:3],
             }
         )
+    odd_repeat_offsets = [13, 15, 59, 65, 67]
+    even_repeat_offsets = [14, 60, 66]
+    repeated_mask_rows = []
+    for name, tail in sample_tails.items():
+        odd_matches = all(tail[offset] == tail[1] for offset in odd_repeat_offsets)
+        even_matches = all(tail[offset] == tail[2] for offset in even_repeat_offsets)
+        repeated_mask_rows.append(
+            {
+                "sample": name,
+                "odd_source_offset": 1,
+                "odd_repeated_offsets": odd_repeat_offsets,
+                "odd_value": f"{tail[1]:#x}",
+                "odd_matches": odd_matches,
+                "even_source_offset": 2,
+                "even_repeated_offsets": even_repeat_offsets,
+                "even_value": f"{tail[2]:#x}",
+                "even_matches": even_matches,
+                "matches": odd_matches and even_matches,
+            }
+        )
     all_rows = tail_3_7 + mask_fold_rows
     covered_samples = sorted({row["sample"] for row in all_rows})
+    covered_offsets = sorted(
+        set([1, 2, 3, 4, 5, 6] + odd_repeat_offsets + even_repeat_offsets)
+    )
     return {
         "status": "partial_multi_sample_formula_coverage",
         "available_sample_count": len(sample_tails),
@@ -2571,13 +2594,23 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "formula_ranges": [
             {"semantic_range": [1, 3], "kind": "mod255_low_byte_pair"},
             {"semantic_range": [3, 7], "kind": "xor_word_tail_bytes"},
+            {
+                "semantic_offsets": sorted(odd_repeat_offsets + even_repeat_offsets),
+                "kind": "repeated_mod255_parity_mask",
+            },
         ],
-        "covered_semantic_offsets": [1, 2, 3, 4, 5, 6],
-        "covered_byte_count": 6,
+        "covered_semantic_offsets": covered_offsets,
+        "covered_byte_count": len(covered_offsets),
         "tail_3_7": tail_3_7,
         "mask_fold_1_3": mask_fold_rows,
-        "all_match": all(row["matches"] for row in all_rows),
-        "coverage_note": "Only semantic offsets 1..6 are formula-checked across samples.",
+        "repeated_mask_offsets": repeated_mask_rows,
+        "repeated_mask_all_samples_match": all(row["matches"] for row in repeated_mask_rows),
+        "all_match": all(row["matches"] for row in all_rows + repeated_mask_rows),
+        "coverage_note": (
+            "Offsets 1..6 are formula-checked for the diff samples; repeated "
+            "mod255 parity masks expand structural coverage to offsets "
+            f"{covered_offsets} across all available samples."
+        ),
     }
 
 
@@ -3067,7 +3100,7 @@ def completion_audit() -> dict:
                 "id": "multi_sample_generalization",
                 "requirement": "Python formulas explain multiple libsgmainso trace samples.",
                 "evidence": [
-                    "multi_sample_formula_coverage covers semantic offsets 1..6 for 5 samples",
+                    "multi_sample_formula_coverage covers semantic offsets 1..6 for 5 samples and repeated mod255 mask offsets across all samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3089,9 +3122,9 @@ def completion_audit() -> dict:
                 "instead of relying on trace-bound replay summaries."
             ),
             (
-                "Expand multi-sample formula coverage beyond semantic offsets "
-                "1..6 and prove how LCG/time-derived state feeds every payload "
-                "byte."
+                "Expand multi-sample formula coverage beyond the 14 currently "
+                "covered semantic offsets and prove how LCG/time-derived state "
+                "feeds every payload byte."
             ),
         ],
         "goal_complete": False,
