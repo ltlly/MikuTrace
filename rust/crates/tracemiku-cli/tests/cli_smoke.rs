@@ -1002,6 +1002,39 @@ fn scan_jni_output_strings_aligns_base64_tail_for_diffing() {
 }
 
 #[test]
+fn scan_jni_output_strings_reports_tail_repeat_candidates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixed = "azYBCM007xAA";
+    let tail1 = &STANDARD.encode([0x00, 0x0a, 0xaa, 0xbb, 0xcc, 0xdd, 0xaa, 0xbb, 0xcc])[2..];
+    let tail2 = &STANDARD.encode([0x00, 0x0a, 0x11, 0x22, 0x33, 0x44, 0x11, 0x22, 0x33])[2..];
+    let _cd1 = make_diff_trace_value(tmp.path(), "run1", &format!("{fixed}{tail1}"));
+    let _cd2 = make_diff_trace_value(tmp.path(), "run2", &format!("{fixed}{tail2}"));
+    let v = run_json(&[
+        "scan-jni-output-strings".into(),
+        tmp.path().display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--diff-base64".into(),
+        "--base64-tail-start".into(),
+        fixed.len().to_string(),
+        "--base64-tail-align-prefix".into(),
+        "AA".into(),
+        "--base64-tail-drop".into(),
+        "1".into(),
+    ]);
+    let repeats = v["base64_tail_diff"]["repeated_ranges_all_samples"]
+        .as_array()
+        .unwrap();
+    assert!(repeats.iter().any(|row| {
+        row["src_start"] == 1
+            && row["src_end"] == 4
+            && row["dst_start"] == 5
+            && row["dst_end"] == 8
+            && row["length"] == 3
+    }));
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[

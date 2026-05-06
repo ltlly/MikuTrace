@@ -90,7 +90,8 @@ offset `0` is synthetic/dropped, semantic offsets `0` and `1` are `0x0a` and
 
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
-One copy-like structural invariant does hold:
+The CLI reports one copy-like structural invariant under
+`base64_tail_diff.repeated_ranges_all_samples[]`:
 
 ```text
 tail[65:68] == tail[13:16]

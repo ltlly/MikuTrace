@@ -393,7 +393,10 @@ rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
 ```
 
 Each pair then includes `base64_tail.semantic_hex`, and the top-level
-`base64_tail_diff` compares that aligned semantic tail across samples.
+`base64_tail_diff` compares that aligned semantic tail across samples. It also
+reports `repeated_ranges_all_samples[]`, which highlights byte ranges that are
+equal at two offsets in every sample. Treat those as copy candidates until a
+trace backchain confirms the producer.
 
 Use the same alignment parameters with `output-map` when stepping from tail
 bytes back to trace writers:

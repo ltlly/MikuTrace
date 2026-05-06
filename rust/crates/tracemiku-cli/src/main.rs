@@ -2486,6 +2486,7 @@ fn decoded_byte_samples_diff(
             })
         })
         .collect::<Vec<_>>();
+    let repeated_ranges = repeated_ranges_all_samples(&samples, 3, 64);
     serde_json::json!({
         "status": "ready",
         "sample_count": samples.len(),
@@ -2499,9 +2500,74 @@ fn decoded_byte_samples_diff(
         "stable_ranges": stable_range_rows,
         "variable_ranges": variable_ranges,
         "first_variable": first_variable,
+        "repeated_ranges_all_samples": repeated_ranges,
         "per_byte": per_byte,
         "samples": sample_rows,
     })
+}
+
+fn repeated_ranges_all_samples(
+    samples: &[(usize, &serde_json::Value, Vec<u8>)],
+    min_len: usize,
+    max_rows: usize,
+) -> Vec<serde_json::Value> {
+    let Some(compared_len) = samples.iter().map(|(_, _, bytes)| bytes.len()).min() else {
+        return Vec::new();
+    };
+    let mut rows = Vec::new();
+    for src in 0..compared_len {
+        for dst in src + 1..compared_len {
+            if src > 0
+                && dst > 0
+                && samples
+                    .iter()
+                    .all(|(_, _, bytes)| bytes[src - 1] == bytes[dst - 1])
+            {
+                continue;
+            }
+            let mut len = 0usize;
+            while src + len < compared_len
+                && dst + len < compared_len
+                && samples
+                    .iter()
+                    .all(|(_, _, bytes)| bytes[src + len] == bytes[dst + len])
+            {
+                len += 1;
+            }
+            if len < min_len {
+                continue;
+            }
+            let examples = samples
+                .iter()
+                .take(4)
+                .map(|(sample, pair, bytes)| {
+                    serde_json::json!({
+                        "sample": sample,
+                        "call_dir": pair.get("call_dir").cloned().unwrap_or(serde_json::Value::Null),
+                        "src_hex": bytes_to_hex(&bytes[src..src + len]),
+                        "dst_hex": bytes_to_hex(&bytes[dst..dst + len]),
+                    })
+                })
+                .collect::<Vec<_>>();
+            rows.push(serde_json::json!({
+                "src_start": src,
+                "src_end": src + len,
+                "dst_start": dst,
+                "dst_end": dst + len,
+                "length": len,
+                "examples": examples,
+            }));
+        }
+    }
+    rows.sort_by_key(|row| {
+        (
+            std::cmp::Reverse(row.get("length").and_then(|v| v.as_u64()).unwrap_or(0)),
+            row.get("src_start").and_then(|v| v.as_u64()).unwrap_or(0),
+            row.get("dst_start").and_then(|v| v.as_u64()).unwrap_or(0),
+        )
+    });
+    rows.truncate(max_rows);
+    rows
 }
 
 fn stable_ranges(offsets: &[usize]) -> Vec<(usize, usize)> {
