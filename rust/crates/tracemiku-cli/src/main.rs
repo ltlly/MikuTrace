@@ -9417,6 +9417,7 @@ fn compact_lineage_path_step(step: &serde_json::Value) -> serde_json::Value {
                     "vm_slot": local_def.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
                     "mem_addr": local_def.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
                     "formula": compact_lineage_formula(local_def.get("formula")),
+                    "call_return": compact_lineage_call_return(local_def.get("call_return")),
                 },
                 "upstream": {
                     "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
@@ -9450,6 +9451,24 @@ fn compact_lineage_formula(formula: Option<&serde_json::Value>) -> serde_json::V
         "op": formula.get("op").cloned().unwrap_or(serde_json::Value::Null),
         "expression": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_kind": formula.pointer("/semantic/kind").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(call_return) = call_return else {
+        return serde_json::Value::Null;
+    };
+    if call_return.is_null() {
+        return serde_json::Value::Null;
+    }
+    serde_json::json!({
+        "call_idx": call_return.get("call_idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": call_return.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "target_reg": call_return.get("target_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "target_value": call_return.get("target_value").cloned().unwrap_or(serde_json::Value::Null),
+        "return_reg": call_return.get("return_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "return_value": call_return.get("return_value").cloned().unwrap_or(serde_json::Value::Null),
+        "args": call_return.get("args").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
 }
 
@@ -9494,6 +9513,11 @@ fn compact_lineage_next_actions(
     {
         actions.push(serde_json::json!(
             "increase --context/--lookback or switch to a memory seed if the value should be trace-derived"
+        ));
+    }
+    if terminal.get("upstream_status").and_then(|v| v.as_str()) == Some("call_return_boundary") {
+        actions.push(serde_json::json!(
+            "inspect the compact call_return target and args, then trace or summarize the callee"
         ));
     }
     if semantics.as_array().is_some_and(|rows| !rows.is_empty()) {
@@ -16397,6 +16421,66 @@ mod tests {
             serde_json::json!(2)
         );
         assert!(compact["next_actions"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn byte_lineage_compact_summary_keeps_call_return() {
+        let lineage = serde_json::json!({
+            "status": "ready",
+            "start": {"addr": "0x4000", "before_idx": 200},
+            "depth_requested": 4,
+            "steps_returned": 1,
+            "stop_reason": {
+                "kind": "terminal",
+                "decision": {
+                    "kind": "stop",
+                    "upstream_status": "call_return_boundary"
+                }
+            },
+            "steps": [
+                {
+                    "step": 0,
+                    "kind": "reg_source",
+                    "seed": {"kind": "reg_at", "idx": 201, "reg": "x0"},
+                    "backstep": {
+                        "idx": 201,
+                        "source_reg": "x0",
+                        "source_value": "0x7599191120",
+                        "target": {"idx": 201, "asm": "mov x23, x0", "class": "alu"},
+                        "local_def": {
+                            "idx": 200,
+                            "asm": "blr x22",
+                            "class": "call-return",
+                            "call_return": {
+                                "call_idx": 200,
+                                "asm": "blr x22",
+                                "target_reg": "x22",
+                                "target_value": "0x787beb9718",
+                                "return_reg": "x0",
+                                "return_value": "0x7599191120",
+                                "args": [{"reg": "x0", "value": "0x12"}]
+                            }
+                        },
+                        "upstream": {"status": "call_return_boundary"}
+                    },
+                    "decision": {
+                        "kind": "stop",
+                        "upstream_status": "call_return_boundary"
+                    },
+                    "next": null
+                }
+            ]
+        });
+        let compact = byte_lineage_compact_summary(&lineage);
+        assert_eq!(
+            compact["path"][0]["local_def"]["call_return"]["target_value"],
+            serde_json::json!("0x787beb9718")
+        );
+        assert!(compact["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action.as_str().unwrap_or("").contains("callee")));
     }
 
     #[test]

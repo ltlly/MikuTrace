@@ -2667,6 +2667,22 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "value": "0x7599191126",
                 "lineage": "six +1 increments from a call-return value 0x7599191120",
                 "frontier": "call_return_boundary at #14009734 blr x22",
+                "call_return": {
+                    "target_reg": "x22",
+                    "target_value": "0x787beb9718",
+                    "return_reg": "x0",
+                    "return_value": "0x7599191120",
+                    "args": {
+                        "x0": "0x12",
+                        "x1": "0x0",
+                        "x2": "0x8",
+                        "x3": "0x753dc62680",
+                        "x4": "0x0",
+                        "x5": "0x18",
+                        "x6": "0x74b68bd0c4",
+                        "x7": "0x2c",
+                    },
+                },
                 "portable_status": "not_proven",
             },
             "slot25": {

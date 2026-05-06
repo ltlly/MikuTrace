@@ -1007,6 +1007,9 @@ scratch slot25 before #14164280:
 [21,25) ladder slot24 before #14015880:
   slot24 is six +1 increments from 0x7599191120
   lineage ends at call_return_boundary #14009734: blr x22
+  target x22=0x787beb9718, return x0=0x7599191120
+  args: x0=0x12, x1=0, x2=8, x3=0x753dc62680,
+        x4=0, x5=0x18, x6=0x74b68bd0c4, x7=0x2c
 
 [21,25) ladder slot25/28 before #14015880:
   slot25 = 0xb = 0xffffffffffffffff + 0xc
