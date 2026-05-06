@@ -3,12 +3,13 @@
 This is intentionally not the full x-sign algorithm yet. It captures only the
 pieces that have been proven from local libsgmainso traces:
 
-- final x-sign text is standard Base64 over a 76-byte payload;
+- final x-sign text is valid Base64, but the variable tail after the fixed
+  12-character prefix is also an unaligned Base64 slice;
 - one upstream VM state chain is seeded by libc time();
 - that chain uses state = state * 0x5851f42d4c957f2d + 1 mod 2^64;
 - two output byte paths fold 64-bit states with (x + x / 0xff) & 0xff;
-- Base64 group "piYQ" is built from scratch bytes including 0x0a, 0x62,
-  and 0x61.
+- Base64 group "piYQ" is built from the aligned tail scratch bytes
+  0x0a, 0x62, and 0x61.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -25,6 +26,8 @@ MASK64 = (1 << 64) - 1
 BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 LCG_MULT = 0x5851F42D4C957F2D
 LCG_INC = 1
+FIXED_PREFIX_CHARS = 12
+TAIL_ALIGNMENT_PREFIX = "AA"
 
 CALL_001_XSIGN = (
     "azYBCM007xAApiYQXVKLkaXxoOr2BiYWKai5MLGI6T9yCUYPHSKV0zba5j/4Jbr6D0UvFBHd3FllrCJShVQSWn+qcIYmFY3mFgYmFi"
@@ -67,6 +70,10 @@ def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
 
 
+def b64encode_unpadded(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii").rstrip("=")
+
+
 def lcg_next(state: int) -> int:
     return (state * LCG_MULT + LCG_INC) & MASK64
 
@@ -106,6 +113,10 @@ def base64_i3(byte2: int) -> int:
 
 def main() -> None:
     payload = b64decode_unpadded(CALL_001_XSIGN)
+    tail_chars = CALL_001_XSIGN[FIXED_PREFIX_CHARS:]
+    aligned_tail = b64decode_unpadded(TAIL_ALIGNMENT_PREFIX + tail_chars)
+    semantic_tail = aligned_tail[1:]
+    reencoded_tail = b64encode_unpadded(aligned_tail)
     lcg_states = lcg_sequence(TRACE_TIME_RET, len(TRACE_LCG_STATES))
     folds = [
         {
@@ -123,11 +134,13 @@ def main() -> None:
         TRACE_SMALL_AFFINE["delta"],
     )
 
-    # Trace-proven first variable group: "piYQ" decodes to a6 26 10.
+    # Trace-proven first variable group: the x-sign tail starts at Base64
+    # character offset 2 of the aligned scratch stream.
     group = CALL_001_XSIGN[12:16]
     decoded_group = b64decode_unpadded(group)
     index_p_from_payload = base64_i0(decoded_group[0])
-    index_p_from_trace_scratch = ((0x0A << 2) & 0x3F) | (0x62 >> 6)
+    scratch0, scratch1, scratch2, scratch3 = semantic_tail[:4]
+    index_p_from_trace_scratch = base64_i2(scratch0, scratch1)
     indices_from_payload = [
         base64_i0(decoded_group[0]),
         base64_i1(decoded_group[0], decoded_group[1]),
@@ -135,10 +148,10 @@ def main() -> None:
         base64_i3(decoded_group[2]),
     ]
     indices_from_trace_scratch = [
-        ((0x0A << 2) & 0x3F) | (0x62 >> 6),
-        0x62 & 0x3F,
-        0x61 >> 2,
-        0x10,
+        base64_i2(scratch0, scratch1),
+        base64_i3(scratch1),
+        base64_i0(scratch2),
+        base64_i1(scratch2, scratch3),
     ]
 
     report = {
@@ -146,6 +159,17 @@ def main() -> None:
         "xsign_len": len(CALL_001_XSIGN),
         "payload_len": len(payload),
         "payload_prefix_hex": payload[:16].hex(),
+        "tail_alignment": {
+            "fixed_prefix_chars": FIXED_PREFIX_CHARS,
+            "variable_tail_chars": len(tail_chars),
+            "synthetic_prefix": TAIL_ALIGNMENT_PREFIX,
+            "aligned_tail_len": len(aligned_tail),
+            "aligned_tail_prefix_hex": aligned_tail[:16].hex(),
+            "semantic_tail_prefix_hex": semantic_tail[:16].hex(),
+            "reencoded_tail_prefix": reencoded_tail[:18],
+            "tail_reencodes_xsign_tail_from_char_2": reencoded_tail[2:] == tail_chars,
+            "note": "The first aligned byte is synthetic; semantic tracing starts at aligned_tail[1].",
+        },
         "time_seed": {
             "hex": f"{TRACE_TIME_RET:#x}",
             "unix": TRACE_TIME_RET,
@@ -169,6 +193,9 @@ def main() -> None:
         "base64_group_3": {
             "chars": group,
             "decoded_hex": decoded_group.hex(),
+            "aligned_tail_bytes_hex": bytes([scratch0, scratch1, scratch2, scratch3]).hex(),
+            "aligned_tail_formula": "chars == base64(aligned_tail)[2:6]",
+            "tail_group_matches": reencoded_tail[2:6] == group,
             "indices_from_payload": [f"{value:#x}" for value in indices_from_payload],
             "indices_from_trace_scratch": [f"{value:#x}" for value in indices_from_trace_scratch],
             "payload_i0": f"{index_p_from_payload:#x}",
@@ -178,7 +205,8 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "full 76-byte payload construction",
+            "full semantic tail construction after the synthetic alignment byte",
+            "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "all VM bytecode templates feeding Base64 indexes",
             "role of the LCG/time state in every payload byte",
         ],

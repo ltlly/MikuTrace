@@ -373,6 +373,13 @@ ALU formulas suitable for prompt input, and
 `index_summary.semantic_formulas`, a lower-noise list of recognized operations
 such as bitmask extraction, shifts, OR merges, modular folds, and state updates.
 
+Do not assume the whole-string Base64 decode is always the semantic generation
+buffer. Some x-sign-like formats concatenate a fixed Base64 prefix with a tail
+that begins at a non-zero Base64 character offset. In that case, align the tail
+explicitly before interpreting bytes. For the current libsgmainso samples, the
+first variable tail begins at offset 2, so `base64_decode("AA" + tail)[1:]`
+matches the scratch byte stream seen by trace backtracking.
+
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory
 edge; with it the report also keeps the `index` register branch, which is the

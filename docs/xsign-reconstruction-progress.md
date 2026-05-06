@@ -21,7 +21,7 @@ rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
 Observed across six local samples:
 
 - raw x-sign length after URL decode: 102 bytes.
-- base64-decoded payload length: 76 bytes.
+- whole-string Base64 decode length: 76 bytes.
 - common decoded prefix: `6b360108cd34ef1000`.
 - `base64_diff.stable_ranges` reports this as a half-open byte range
   `[0,9)`.
@@ -32,15 +32,29 @@ Observed across six local samples:
   raw payload buffer in `call_001`; current evidence points to incremental
   Base64/string assembly rather than a single observed pre-encode buffer.
 
-Example decoded payload prefix/suffix:
+Example whole-string decoded prefix/suffix:
 
 ```text
 6b360108cd34ef1000a626105d528b91...
 ...8554125a7faa708626158de616062616
 ```
 
-The fixed prefix strongly suggests the final x-sign string is standard Base64
-over a 76-byte binary payload, with a fixed 9-byte binary header.
+The full x-sign is valid Base64, but trace evidence shows the variable section
+after the fixed 12-character prefix is assembled as an unaligned Base64 slice.
+For semantic reconstruction, prepend `AA` to the variable tail and ignore the
+first synthetic decoded byte:
+
+```text
+x-sign                     = azYBCM007xAA || piYQXVKL...
+tail                       = piYQXVKL...
+base64_decode("AA" + tail) = 00 0a 62 61 05 d5 28 b9 ...
+semantic tail              =    0a 62 61 05 d5 28 b9 ...
+```
+
+The whole-string 76-byte decode is still useful for diffing, but it is not the
+buffer shape currently observed in the trace. The traceable scratch bytes for
+the first variable group are `0x0a, 0x62, 0x61, ...`, not the whole-string
+decoded bytes `a6 26 10`.
 
 ## Output buffer chain
 
