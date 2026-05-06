@@ -241,6 +241,7 @@ rust/target/debug/tracemiku-cli output-map <call_dir> \
   --group-start 3 \
   --groups 1 \
   --tree-depth 8 \
+  --tree-max-nodes 220 \
   --tree-frontier-with-next \
   --lookback 500000
 ```
@@ -271,6 +272,8 @@ directly back to payload bytes. With a tree attached, `base64_lookup_matches`
 maps the current group characters to concrete alphabet lookup trace idxs; for
 `piYQ` this resolves `p/i/Y/Q` to idxs
 `14731087/14731131/14731228/14731327`.
+Use `--index-tree-depth` to attach bounded provenance trees for those index
+registers without running four separate commands.
 
 ## Next target
 

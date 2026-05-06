@@ -674,8 +674,14 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         tree_depth: usize,
         /// Max nodes per attached VM backtree.
-        #[arg(long, default_value_t = 40)]
+        #[arg(long, default_value_t = 120)]
         tree_max_nodes: usize,
+        /// Attach VM backtrees to matched Base64 alphabet index registers. 0 disables.
+        #[arg(long, default_value_t = 0)]
+        index_tree_depth: usize,
+        /// Max nodes per attached Base64 index VM backtree.
+        #[arg(long, default_value_t = 80)]
+        index_tree_max_nodes: usize,
         /// Include frontier source-reg branches even when a tree node has an upstream memory edge.
         #[arg(long = "tree-frontier-with-next")]
         tree_frontier_with_next: bool,
@@ -1537,6 +1543,8 @@ async fn main() -> anyhow::Result<()> {
             groups,
             tree_depth,
             tree_max_nodes,
+            index_tree_depth,
+            index_tree_max_nodes,
             tree_frontier_with_next,
             lookback,
             no_url_decode,
@@ -1552,6 +1560,8 @@ async fn main() -> anyhow::Result<()> {
                 groups,
                 tree_depth,
                 tree_max_nodes,
+                index_tree_depth,
+                index_tree_max_nodes,
                 tree_frontier_with_next,
                 lookback,
                 url_decode: !no_url_decode,
@@ -2232,6 +2242,43 @@ fn base64_lookup_matches(
         .collect()
 }
 
+async fn attach_base64_index_trees_on(
+    app: &axum::Router,
+    lookup_matches: &mut [serde_json::Value],
+    opts: &OutputMapOpts,
+) -> anyhow::Result<()> {
+    for row in lookup_matches {
+        let Some(matches) = row.get_mut("matches").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for lookup in matches {
+            let Some(idx) = lookup.get("idx").and_then(|v| v.as_u64()) else {
+                continue;
+            };
+            let Some(reg) = lookup.get("index_reg").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let tree = vm_backtree_value_on(
+                app,
+                idx as usize,
+                Some(reg.to_string()),
+                opts.index_tree_depth,
+                opts.index_tree_max_nodes,
+                120,
+                opts.lookback,
+                5000,
+                opts.tree_frontier_with_next,
+                "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27".to_string(),
+            )
+            .await?;
+            if let Some(obj) = lookup.as_object_mut() {
+                obj.insert("index_tree".to_string(), tree);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn base64_char_index(byte: u8) -> Option<u8> {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     ALPHABET
@@ -2271,6 +2318,8 @@ struct OutputMapOpts {
     groups: usize,
     tree_depth: usize,
     tree_max_nodes: usize,
+    index_tree_depth: usize,
+    index_tree_max_nodes: usize,
     tree_frontier_with_next: bool,
     lookback: usize,
     url_decode: bool,
@@ -2615,7 +2664,10 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
                 }
             }
         }
-        let lookup_matches = base64_lookup_matches(&base64, &trees);
+        let mut lookup_matches = base64_lookup_matches(&base64, &trees);
+        if opts.index_tree_depth > 0 {
+            attach_base64_index_trees_on(&app, &mut lookup_matches, &opts).await?;
+        }
         group_rows.push(serde_json::json!({
             "group": group_idx,
             "offset": start,
@@ -2637,6 +2689,8 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         "selected_hit_order": opts.hit_order.as_str(),
         "selected_hit_rank": opts.hit_rank,
         "tree_frontier_with_next": opts.tree_frontier_with_next,
+        "index_tree_depth": opts.index_tree_depth,
+        "index_tree_max_nodes": opts.index_tree_max_nodes,
         "hit_candidates": hit_candidates,
         "selected_hit": selected_hit,
         "selected_range": selected_range,
