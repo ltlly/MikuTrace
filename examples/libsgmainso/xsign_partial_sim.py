@@ -867,6 +867,26 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
     },
 ]
 
+CALL001_XOR_LHS_RUNS = [
+    {
+        "range": [3, 13],
+        "lhs_hex": "67b44ad8783e786fcd01",
+    },
+    {
+        "range": [16, 59],
+        "lhs_hex": (
+            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
+            "bfa4f43ba0444a342344c59bc569"
+        ),
+    },
+    {
+        "range": [61, 65],
+        "lhs_hex": "3abf0301",
+    },
+]
+
+CALL001_MOD255_MASK_OFFSETS = [1, 2, 13, 14, 15, 59, 60, 65, 66, 67]
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -925,6 +945,27 @@ def xor_lhs_run_result(run: dict) -> bytes:
     lhs = bytes.fromhex(run["lhs_hex"])
     rhs = bytes.fromhex(run["rhs_hex"])
     return bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
+
+
+def trace_mask_byte_for_semantic_offset(offset: int) -> int:
+    if offset % 2 == 0:
+        return mod255_low_byte(0x74BEABE59C)
+    return mod255_low_byte(0x74FFAFCA73)
+
+
+def reconstruct_call001_semantic_tail_from_trace_formulas() -> bytes:
+    out = bytearray(68)
+    out[0] = (0x0A000142 >> 24) & 0xFF
+    for offset in CALL001_MOD255_MASK_OFFSETS:
+        out[offset] = trace_mask_byte_for_semantic_offset(offset)
+    for run in CALL001_XOR_LHS_RUNS:
+        start, end = run["range"]
+        lhs = bytes.fromhex(run["lhs_hex"])
+        if len(lhs) != end - start:
+            raise ValueError(f"bad lhs length for range {run['range']}")
+        for idx, lhs_byte in enumerate(lhs, start=start):
+            out[idx] = xor_mix(lhs_byte, trace_mask_byte_for_semantic_offset(idx))
+    return bytes(out)
 
 
 def bytewise_variations(hex_by_sample: dict[str, str]) -> list[dict]:
@@ -1020,6 +1061,11 @@ def main() -> None:
         for name, xsign in SAMPLE_XSIGNS.items()
     }
     expected_semantic = bytes.fromhex(CALL_001_SEMANTIC_TAIL_HEX)
+    formula_semantic = reconstruct_call001_semantic_tail_from_trace_formulas()
+    formula_xsign = xsign_from_semantic_tail(
+        urllib.parse.unquote(CALL_001_XSIGN)[:FIXED_PREFIX_CHARS],
+        formula_semantic,
+    )
     lcg_states = lcg_sequence(TRACE_TIME_RET, len(TRACE_LCG_STATES))
     folds = [
         {
@@ -1266,6 +1312,23 @@ def main() -> None:
         ],
         "tail_xor_equations": {
             "status": "partial_trace_equations",
+            "call_001_formula_reconstruction": {
+                "status": "complete_from_trace_formula_inputs",
+                "semantic_tail_hex": formula_semantic.hex(),
+                "semantic_tail_matches_trace": formula_semantic == expected_semantic,
+                "xsign_matches_trace": formula_xsign == urllib.parse.unquote(CALL_001_XSIGN),
+                "formula_classes": [
+                    "byte_lane_extract",
+                    "mod255_low_byte",
+                    "xor_lhs_run ^ parity_mask",
+                ],
+                "note": (
+                    "This reconstructs the observed call_001 output from traced "
+                    "formula inputs. It is not yet a portable x-sign algorithm "
+                    "because several lhs runs are still trace constants or "
+                    "external-data boundaries."
+                ),
+            },
             "equations": xor_equations,
             "reconstructed_offsets": [item["semantic_offset"] for item in TRACE_TAIL_XOR_EQUATIONS],
             "reconstructed_prefix_0_7_hex": bytes(xor_reconstructed).hex(),

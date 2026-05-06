@@ -104,6 +104,22 @@ This holds for all current local samples. The remaining work is therefore not
 Base64 reconstruction; it is deriving the semantic tail bytes and raw prefix
 meaning from portable upstream inputs.
 
+The simulator also reconstructs `call_001`'s 68-byte semantic tail from the
+current trace formula classes instead of directly trusting the final byte
+string:
+
+```text
+tail[0]        = byte_lane_le(0x0a000142, 3)
+mask byte      = mod255_low_byte(input)
+XOR ranges     = lhs_run ^ parity_mask
+formula output = observed semantic tail
+full x-sign    = raw_prefix + base64(00 || formula_output)[2:]
+```
+
+This verifies the output equation layer end-to-end for one sample. It is still
+not a portable algorithm because the large `lhs_run` inputs include
+trace-constant and external-boundary values.
+
 Aligned-tail `output-map` form:
 
 ```bash
