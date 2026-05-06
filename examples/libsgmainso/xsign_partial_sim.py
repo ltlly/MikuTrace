@@ -1748,6 +1748,49 @@ def current_trace_model_input_manifest() -> dict:
     }
 
 
+def parameterized_simulation_contract() -> dict:
+    return {
+        "status": "replay_contract_available",
+        "can_reproduce_call001_when_inputs_supplied": True,
+        "required_inputs": [
+            {
+                "name": "raw_prefix",
+                "kind": "fixed_literal",
+                "source": "fixed_prefix_model.prefix",
+            },
+            {
+                "name": "semantic_byte0_source_value",
+                "kind": "static_word",
+                "source": "TRACE_BYTE_LANE_STATIC_SOURCE.source_value",
+            },
+            {
+                "name": "mod255_even_input",
+                "kind": "vm_state_expression",
+                "source": "TRACE_MOD255_INPUT_SMALL_AFFINE_CHAIN.mod255_input",
+            },
+            {
+                "name": "mod255_odd_input",
+                "kind": "vm_state_expression",
+                "source": "TRACE_MOD255_INPUT_LCG_CHAIN.mod255_input",
+            },
+            {
+                "name": "xor_lhs_runs",
+                "kind": "mixed_formula_and_segment_inputs",
+                "source": "CALL001_XOR_LHS_RUNS + middle_lhs_source_manifest",
+            },
+        ],
+        "opaque_or_nonportable_inputs": [
+            "middle_lhs static_memory_load_constant segment",
+            "middle_lhs traced_formula_only segments",
+            "middle_lhs memory_boundary_read text segment",
+        ],
+        "not_an_algorithm_because": (
+            "The contract still accepts segmented trace-derived lhs inputs "
+            "instead of deriving them from portable app/device state."
+        ),
+    }
+
+
 def fixed_prefix_model() -> dict:
     prefixes = {
         name: urllib.parse.unquote(xsign)[:FIXED_PREFIX_CHARS]
@@ -2296,6 +2339,7 @@ def main() -> None:
     scratch_lhs_prefix_formula = reconstruct_call001_scratch_lhs_prefix_from_sources()
     middle_lhs_source_manifest = call001_middle_lhs_source_manifest()
     input_manifest = current_trace_model_input_manifest()
+    replay_contract = parameterized_simulation_contract()
     current_trace_model_simulation = simulate_call001_xsign_current_trace_model()
     prefix_model = fixed_prefix_model()
     rhs_mask_model = xor_rhs_mask_model()
@@ -2411,6 +2455,7 @@ def main() -> None:
             "states_hex": [f"{value:#x}" for value in lcg_states],
         },
         "current_trace_model_input_manifest": input_manifest,
+        "parameterized_simulation_contract": replay_contract,
         "current_trace_model_simulation": current_trace_model_simulation,
         "completion_audit": audit,
         "small_affine": {

@@ -856,6 +856,20 @@ portable_algorithm_ready false
 So Python can reproduce `call_001` from the trace-derived formulas and manifest,
 but this is still not the final portable x-sign algorithm.
 
+`parameterized_simulation_contract` now records the replay boundary. Given five
+input groups, the Python model can reproduce `call_001`:
+
+```text
+raw_prefix
+semantic_byte0_source_value
+mod255_even_input
+mod255_odd_input
+xor_lhs_runs
+```
+
+The contract is not a recovered algorithm because `xor_lhs_runs` still contains
+opaque/non-portable middle-lhs segments.
+
 The script now emits `completion_audit` with four success criteria:
 
 ```text
