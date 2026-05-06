@@ -19,6 +19,8 @@ const GAP_SCAN_MAX_CANDIDATES: usize = 12;
 const GAP_ARG_STRUCT_SPAN: u64 = 0x400;
 const GAP_NEAR_REG_SPAN: u64 = 0x100;
 const GAP_SMALL_LEN_MAX: u64 = 0x4000;
+const BASE64_LOOKUP_TREE_DEPTH: usize = 8;
+const BASE64_LOOKUP_TREE_MAX_NODES: usize = 220;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -754,7 +756,8 @@ enum Cmd {
         /// Max nodes per attached VM backtree.
         #[arg(long, default_value_t = 120)]
         tree_max_nodes: usize,
-        /// Attach VM backtrees to matched Base64 alphabet index registers. 0 disables.
+        /// Attach VM backtrees to matched Base64 alphabet index registers. If --tree-depth is 0,
+        /// output-map builds hidden lookup trees to find alphabet table lookups first.
         #[arg(long, default_value_t = 0)]
         index_tree_depth: usize,
         /// Max nodes per attached Base64 index VM backtree.
@@ -3414,6 +3417,64 @@ async fn cmd_output_backtrace(trace_dir: PathBuf, opts: OutputBacktraceOpts) -> 
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn output_map_group_vm_trees(
+    app: &axum::Router,
+    runs: &[serde_json::Value],
+    depth: usize,
+    max_nodes: usize,
+    lookback: usize,
+    frontier_with_next: bool,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    if depth == 0 {
+        return Ok(Vec::new());
+    }
+    let mut trees = Vec::new();
+    let mut seen_tree_seeds = HashSet::new();
+    for run in runs {
+        if let Some(seed) = run
+            .get("writer_seeds")
+            .and_then(|v| v.as_array())
+            .and_then(|seeds| {
+                seeds.iter().find(|seed| {
+                    seed.get("kind").and_then(|v| v.as_str()) == Some("memory_writer_src_reg")
+                })
+            })
+        {
+            let Some(idx) = seed.get("start").and_then(|v| v.as_u64()) else {
+                continue;
+            };
+            let Some(reg) = seed.get("reg").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if !seen_tree_seeds.insert((idx, reg.to_string())) {
+                continue;
+            }
+            let tree = vm_backtree_value_on(
+                app,
+                idx as usize,
+                Some(reg.to_string()),
+                depth,
+                max_nodes,
+                120,
+                lookback,
+                5000,
+                frontier_with_next,
+                "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28".to_string(),
+            )
+            .await?;
+            trees.push(serde_json::json!({
+                "seed": seed,
+                "tree": tree,
+            }));
+            if trees.len() >= 8 {
+                break;
+            }
+        }
+    }
+    Ok(trees)
+}
+
 async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
     let source = resolve_output_source(
@@ -3551,53 +3612,31 @@ async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Resu
         } else {
             Vec::new()
         };
-        let mut trees = Vec::new();
-        if opts.tree_depth > 0 {
-            let mut seen_tree_seeds = HashSet::new();
-            for run in &runs {
-                if let Some(seed) =
-                    run.get("writer_seeds")
-                        .and_then(|v| v.as_array())
-                        .and_then(|seeds| {
-                            seeds.iter().find(|seed| {
-                                seed.get("kind").and_then(|v| v.as_str())
-                                    == Some("memory_writer_src_reg")
-                            })
-                        })
-                {
-                    let Some(idx) = seed.get("start").and_then(|v| v.as_u64()) else {
-                        continue;
-                    };
-                    let Some(reg) = seed.get("reg").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
-                    if !seen_tree_seeds.insert((idx, reg.to_string())) {
-                        continue;
-                    }
-                    let tree = vm_backtree_value_on(
-                        &app,
-                        idx as usize,
-                        Some(reg.to_string()),
-                        opts.tree_depth,
-                        opts.tree_max_nodes,
-                        120,
-                        opts.lookback,
-                        5000,
-                        opts.tree_frontier_with_next,
-                        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28".to_string(),
-                    )
-                    .await?;
-                    trees.push(serde_json::json!({
-                        "seed": seed,
-                        "tree": tree,
-                    }));
-                    if trees.len() >= 8 {
-                        break;
-                    }
-                }
-            }
-        }
-        let mut lookup_matches = base64_lookup_matches(&base64, &trees);
+        let trees = output_map_group_vm_trees(
+            &app,
+            &runs,
+            opts.tree_depth,
+            opts.tree_max_nodes,
+            opts.lookback,
+            opts.tree_frontier_with_next,
+        )
+        .await?;
+        let hidden_lookup_trees;
+        let lookup_trees = if opts.index_tree_depth > 0 && trees.is_empty() {
+            hidden_lookup_trees = output_map_group_vm_trees(
+                &app,
+                &runs,
+                BASE64_LOOKUP_TREE_DEPTH,
+                BASE64_LOOKUP_TREE_MAX_NODES.max(opts.index_tree_max_nodes),
+                opts.lookback,
+                true,
+            )
+            .await?;
+            hidden_lookup_trees.as_slice()
+        } else {
+            trees.as_slice()
+        };
+        let mut lookup_matches = base64_lookup_matches(&base64, lookup_trees);
         if opts.index_tree_depth > 0 {
             attach_base64_index_trees_on(&app, &mut lookup_matches, &opts).await?;
         }

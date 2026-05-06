@@ -638,6 +638,9 @@ payload bit construction. Each attached match also has
 ALU formulas suitable for prompt input, and
 `index_summary.semantic_formulas`, a lower-noise list of recognized operations
 such as bitmask extraction, shifts, OR merges, modular folds, and state updates.
+If `--index-tree-depth` is set without `--tree-depth`, `output-map` now builds
+hidden lookup trees automatically so the command does not silently return
+`match_count: 0` for every Base64 character.
 
 Do not assume the whole-string Base64 decode is always the semantic generation
 buffer. Some x-sign-like formats concatenate a fixed Base64 prefix with a tail
