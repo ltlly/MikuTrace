@@ -881,10 +881,12 @@ for quick lifting. Each template also exposes `template_operands[]` and
 or `vm_ip = add(vm_ip, bc_0x8_u64)`. Treat these sketches as generic lifting
 starting points. `template_operands[].roles[]` aggregates observed parameter
 roles such as `src_slot`, `dst_slot`, `control_operand`, and
-`bytecode_operand`, while `effect_shapes[]` and `sample_ops[]` hold the exact
-per-op evidence. Use the role counts to choose likely source/destination
-bindings, then confirm on `sample_ops[]` before turning a skeleton into a
-simulator opcode.
+`bytecode_operand`, while `template_skeletons[].python_with_roles` applies the
+strongest role hints directly, for example
+`slot[bc_0x5_u8] = ubfx(slot[bc_0x3_u8], bc_0x8_u32, bc_0x10_u16)`.
+`effect_shapes[]` and `sample_ops[]` still hold the exact per-op evidence. Use
+the role-bound sketch as the starting point, then confirm on `sample_ops[]`
+before turning a skeleton into a simulator opcode.
 `op_effects[]` and `op_templates[]` are the compact surfaces for VM-IP stop
 points from `byte-writer-map --summary.vm_source_ranges[].stops[]`. Always
 check `source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is

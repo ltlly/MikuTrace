@@ -737,6 +737,7 @@ shape     = slot_write:formula:ubfx
 inputs    = slot19 x44, slot20 x5
 outputs   = slot19 x27, slot20 x22
 skeleton = slot[dst] = ubfx(slot_srcs, bc_0x3_u8, bc_0x5_u8, bc_0x8_u32, bc_0x10_u16)
+bound    = slot[bc_0x5_u8] = ubfx(slot[bc_0x3_u8], bc_0x8_u32, bc_0x10_u16)
 roles     = bc_0x3_u8 src_slot x49/dst_slot x32; bc_0x5_u8 dst_slot x49/src_slot x32
 ```
 
@@ -745,7 +746,9 @@ The narrow VM-IP stop probe now also emits the control-flow skeleton
 `bc[0x8:8] effects[control:formula:add]`, with `bc_0x8_u64` marked as a
 `control_operand`. These skeletons are intentionally shape-only: exact slot
 role binding still comes from `template_operands[].roles[]`, `effect_shapes[]`,
-and `sample_ops[]`. The next lift target for the `[12,35)` VM ladder is to
+and `sample_ops[]`. `python_with_roles` applies the strongest role counts into a
+direct opcode sketch, but still needs confirmation against samples before it is
+treated as semantics. The next lift target for the `[12,35)` VM ladder is to
 convert these repeated bytecode operand layouts plus effect shapes into portable
 Python VM templates.
 

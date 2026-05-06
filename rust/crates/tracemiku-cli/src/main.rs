@@ -6838,6 +6838,13 @@ fn vm_op_template_skeletons(
                 &shape.formula_op,
                 &operand_names,
             );
+            let (role_binding, python_with_roles) = vm_op_template_role_binding(
+                &shape.kind,
+                &source,
+                &shape.formula_op,
+                template_operands,
+                &python,
+            );
             serde_json::json!({
                 "signature": shape.signature.clone(),
                 "kind": shape.kind.clone(),
@@ -6845,6 +6852,8 @@ fn vm_op_template_skeletons(
                 "formula_op": shape.formula_op.clone(),
                 "count": shape.count,
                 "python": python,
+                "python_with_roles": python_with_roles,
+                "role_binding": role_binding,
                 "bytecode_operands": operand_names.clone(),
                 "binding": "shape_only",
             })
@@ -6904,6 +6913,116 @@ fn vm_op_template_args(operand_names: &[String], include_slot_srcs: bool) -> Str
     }
     args.extend(operand_names.iter().cloned());
     args.join(", ")
+}
+
+fn vm_op_template_role_binding(
+    kind: &str,
+    source: &str,
+    formula_op: &str,
+    template_operands: &[serde_json::Value],
+    fallback_python: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let dst_slots = best_template_operands_for_role(template_operands, "dst_slot");
+    let src_slots = best_template_operands_for_role(template_operands, "src_slot");
+    let control_operands = best_template_operands_for_role(template_operands, "control_operand");
+    let mut bound_names = BTreeSet::new();
+    bound_names.extend(dst_slots.iter().cloned());
+    bound_names.extend(src_slots.iter().cloned());
+    bound_names.extend(control_operands.iter().cloned());
+    let extra_operands = template_operands
+        .iter()
+        .filter_map(|operand| operand.get("name").and_then(|v| v.as_str()))
+        .filter(|name| !bound_names.contains(*name))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let python = match (kind, source, formula_op) {
+        ("slot_write", "formula", op) if op != "none" && !dst_slots.is_empty() => {
+            let dst = &dst_slots[0];
+            let mut args = if src_slots.is_empty() {
+                vec!["slot_srcs".to_string()]
+            } else {
+                src_slots
+                    .iter()
+                    .map(|name| format!("slot[{name}]"))
+                    .collect::<Vec<_>>()
+            };
+            args.extend(extra_operands.iter().cloned());
+            Some(format!("slot[{dst}] = {op}({})", args.join(", ")))
+        }
+        ("slot_write", "byte_load", _) if !dst_slots.is_empty() => {
+            Some(format!("slot[{}] = byte_load(addr_expr)", dst_slots[0]))
+        }
+        ("memory_store", "formula", op) if op != "none" => {
+            let mut args = if src_slots.is_empty() {
+                vec!["src_value".to_string()]
+            } else {
+                src_slots
+                    .iter()
+                    .map(|name| format!("slot[{name}]"))
+                    .collect::<Vec<_>>()
+            };
+            args.extend(extra_operands.iter().cloned());
+            Some(format!("mem[addr] = {op}({})", args.join(", ")))
+        }
+        ("memory_store", _, _) if !src_slots.is_empty() => {
+            Some(format!("mem[addr] = slot[{}]", src_slots[0]))
+        }
+        ("control", "formula", op) if op != "none" => {
+            let args = if control_operands.is_empty() {
+                extra_operands.clone()
+            } else {
+                control_operands.clone()
+            };
+            if args.is_empty() {
+                Some(format!("vm_ip = {op}(vm_ip)"))
+            } else {
+                Some(format!("vm_ip = {op}(vm_ip, {})", args.join(", ")))
+            }
+        }
+        _ => None,
+    };
+    (
+        serde_json::json!({
+            "dst_slots": dst_slots,
+            "src_slots": src_slots,
+            "control_operands": control_operands,
+            "extra_operands": extra_operands,
+        }),
+        python
+            .map(serde_json::Value::String)
+            .unwrap_or_else(|| serde_json::Value::String(fallback_python.to_string())),
+    )
+}
+
+fn best_template_operands_for_role(
+    template_operands: &[serde_json::Value],
+    role: &str,
+) -> Vec<String> {
+    let mut candidates = template_operands
+        .iter()
+        .filter_map(|operand| {
+            let name = operand.get("name").and_then(|v| v.as_str())?;
+            let best_count = operand
+                .get("roles")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter(|item| item.get("role").and_then(|v| v.as_str()) == Some(role))
+                .filter_map(|item| item.get("count").and_then(|v| v.as_u64()))
+                .max()
+                .unwrap_or(0);
+            (best_count > 0).then_some((best_count, name.to_string()))
+        })
+        .collect::<Vec<_>>();
+    let Some(max_count) = candidates.iter().map(|(count, _)| *count).max() else {
+        return Vec::new();
+    };
+    candidates.retain(|(count, _)| *count == max_count);
+    candidates.sort_by(|(_, lhs), (_, rhs)| lhs.cmp(rhs));
+    candidates
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect::<Vec<_>>()
 }
 
 fn add_vm_op_template_operand_roles(group: &mut VmOpTemplateGroup, op: &serde_json::Value) {
@@ -15041,6 +15160,8 @@ mod tests {
             .iter()
             .any(|skeleton| {
                 skeleton["python"] == serde_json::json!("slot[dst] = byte_load(addr_expr)")
+                    && skeleton["python_with_roles"]
+                        == serde_json::json!("slot[bc_0x5_u8] = byte_load(addr_expr)")
                     && skeleton["binding"] == serde_json::json!("shape_only")
             }));
         let control_template = templates
@@ -15067,6 +15188,14 @@ mod tests {
         assert_eq!(
             control_template["template_skeletons"][0]["python"],
             serde_json::json!("vm_ip = add(vm_ip, bc_0x8_u64)")
+        );
+        assert_eq!(
+            control_template["template_skeletons"][0]["python_with_roles"],
+            serde_json::json!("vm_ip = add(vm_ip, bc_0x8_u64)")
+        );
+        assert_eq!(
+            control_template["template_skeletons"][0]["role_binding"]["control_operands"][0],
+            serde_json::json!("bc_0x8_u64")
         );
         assert_eq!(
             control_template["effect_shapes"][0]["formula_op"],

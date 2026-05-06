@@ -963,6 +963,7 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "bytecode_value": "0x9",
             "template_signature": "bc[0x8:8] effects[control:formula:add]",
             "template_skeleton": "vm_ip = add(vm_ip, bc_0x8_u64)",
+            "template_skeleton_with_roles": "vm_ip = add(vm_ip, bc_0x8_u64)",
             "template_operand_roles": {
                 "bc_0x8_u64": [{"role": "control_operand", "count": 1}],
             },
@@ -1006,6 +1007,10 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 "slot[dst] = ubfx(slot_srcs, bc_0x3_u8, bc_0x5_u8, "
                 "bc_0x8_u32, bc_0x10_u16)"
             ),
+            "template_skeleton_with_roles": (
+                "slot[bc_0x5_u8] = ubfx(slot[bc_0x3_u8], "
+                "bc_0x8_u32, bc_0x10_u16)"
+            ),
             "effect_shape": {
                 "kind": "slot_write",
                 "formula_op": "ubfx",
@@ -1019,7 +1024,8 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "slot write and is now directly visible without scanning raw ops. "
             "Template effect_shapes expose input/output slot roles for lifting, "
             "template_operands.roles adds aggregate parameter-role hints, and "
-            "template_skeletons provide shape-only Python starting points."
+            "template_skeletons provide shape-only plus role-bound Python "
+            "starting points."
         ),
     },
     "interpretation": (
