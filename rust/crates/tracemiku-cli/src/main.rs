@@ -6502,6 +6502,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
     let mut memory_store_effects = Vec::new();
     let mut control_effects = Vec::new();
     let mut bytecode_reads = Vec::new();
+    let mut op_effects = Vec::new();
     for op in &ops {
         let idx_start = op
             .get("idx_start")
@@ -6511,6 +6512,8 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
             .get("idx_end")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+        let mut op_bytecode_reads = Vec::new();
+        let mut op_effect_list = Vec::new();
         for read in op
             .get("bytecode_reads")
             .and_then(|v| v.as_array())
@@ -6522,6 +6525,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
                 obj.insert("op_idx_start".to_string(), idx_start.clone());
                 obj.insert("op_idx_end".to_string(), idx_end.clone());
             }
+            op_bytecode_reads.push(compact.clone());
             bytecode_reads.push(compact);
         }
         for effect in op
@@ -6548,7 +6552,17 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
             if compact.get("kind").and_then(|v| v.as_str()) == Some("control") {
                 control_effects.push(compact.clone());
             }
+            op_effect_list.push(compact.clone());
             effects.push(compact);
+        }
+        if !op_bytecode_reads.is_empty() || !op_effect_list.is_empty() {
+            op_effects.push(serde_json::json!({
+                "idx_start": idx_start,
+                "idx_end": idx_end,
+                "dispatches": op.get("dispatches").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "bytecode_reads": op_bytecode_reads,
+                "effects": op_effect_list,
+            }));
         }
     }
     serde_json::json!({
@@ -6576,6 +6590,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "memory_store_effects": memory_store_effects,
         "control_effects": control_effects,
         "bytecode_reads": bytecode_reads,
+        "op_effects": op_effects,
         "effects": effects,
     })
 }
@@ -14396,6 +14411,15 @@ mod tests {
         assert_eq!(
             summary["control_effects"][0]["idx"],
             serde_json::json!(10616043)
+        );
+        assert_eq!(summary["op_effects"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            summary["op_effects"][1]["bytecode_reads"][0]["value"],
+            serde_json::json!("0x9")
+        );
+        assert_eq!(
+            summary["op_effects"][1]["effects"][0]["kind"],
+            serde_json::json!("control")
         );
     }
 

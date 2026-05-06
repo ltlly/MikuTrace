@@ -964,7 +964,7 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
         "interpretation": (
             "Formula-only byte-writer chains that stop at x21 can be continued "
             "as VM operation windows. The compact effects-only view now keeps "
-            "bytecode reads and control effects at top level."
+            "bytecode reads, control effects, and joined op_effects at top level."
         ),
     },
     "interpretation": (
