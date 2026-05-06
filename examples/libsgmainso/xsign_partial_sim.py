@@ -1739,6 +1739,29 @@ def current_trace_model_input_manifest() -> dict:
     }
 
 
+def fixed_prefix_model() -> dict:
+    prefixes = {
+        name: urllib.parse.unquote(xsign)[:FIXED_PREFIX_CHARS]
+        for name, xsign in SAMPLE_XSIGNS.items()
+    }
+    unique_prefixes = sorted(set(prefixes.values()))
+    return {
+        "status": "fixed_literal_model",
+        "prefix_len": FIXED_PREFIX_CHARS,
+        "prefix": unique_prefixes[0] if len(unique_prefixes) == 1 else None,
+        "all_samples_same": len(unique_prefixes) == 1,
+        "sample_prefixes": prefixes,
+        "trace_writer_status": TRACE_FIXED_PREFIX_WRITER_MAP["status"],
+        "decoded_prefix_direct_trace_hits": TRACE_FIXED_PREFIX_WRITER_MAP[
+            "decoded_prefix_direct_trace_hits"
+        ],
+        "simulation_policy": (
+            "emit raw prefix literally; decoded-prefix semantics remain unknown"
+        ),
+        "portable_for_current_samples": len(unique_prefixes) == 1,
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -2088,6 +2111,7 @@ def main() -> None:
     middle_lhs_source_manifest = call001_middle_lhs_source_manifest()
     input_manifest = current_trace_model_input_manifest()
     current_trace_model_simulation = simulate_call001_xsign_current_trace_model()
+    prefix_model = fixed_prefix_model()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -2162,6 +2186,7 @@ def main() -> None:
             },
         },
         "fixed_prefix_writer_map": TRACE_FIXED_PREFIX_WRITER_MAP,
+        "fixed_prefix_model": prefix_model,
         "multi_sample_writer_maps": TRACE_MULTI_SAMPLE_WRITER_MAPS,
         "crypto_evidence": TRACE_CRYPTO_EVIDENCE,
         "multi_sample_tail_structure": {

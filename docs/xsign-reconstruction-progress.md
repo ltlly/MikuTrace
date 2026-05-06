@@ -839,6 +839,11 @@ mod255_input_odd            vm_state_expression, trace-proven one sample
 This is the checklist for turning the current trace replay model into a
 portable algorithm: eliminate or parameterize every non-portable manifest entry.
 
+`fixed_prefix_model` now confirms that every current sample uses the same
+12-character raw prefix `azYBCM007xAA`. Trace evidence still shows zero direct
+hits for the decoded prefix bytes, so the simulator policy is to emit the raw
+prefix literally while keeping its deeper semantics open.
+
 `current_trace_model_simulation` now makes the current boundary explicit:
 
 ```text
