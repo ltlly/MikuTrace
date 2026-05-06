@@ -6419,8 +6419,180 @@ fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
         "vm_slot_writes": op.get("vm_slot_writes").cloned().unwrap_or_else(|| serde_json::json!([])),
         "memory_stores": op.get("memory_stores").cloned().unwrap_or_else(|| serde_json::json!([])),
         "alu_formulas": alu_formulas,
+        "effects": vm_op_effect_summaries(op),
         "dispatches": op.get("dispatches").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
+}
+
+fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut effects = Vec::new();
+    let formulas = op
+        .get("alu_formulas")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for write in op
+        .get("vm_slot_writes")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let value = write
+            .get("value")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let formula = matching_formula_for_value(&formulas, &value);
+        let slot = write
+            .get("slot")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let pseudocode = format!(
+            "slot[{}] = {}",
+            json_display(&slot),
+            formula
+                .as_ref()
+                .and_then(|f| f.get("expression"))
+                .map(json_display)
+                .unwrap_or_else(|| json_display(&value))
+        );
+        effects.push(serde_json::json!({
+            "kind": "slot_write",
+            "idx": write.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "slot": slot,
+            "value": value,
+            "pseudocode": pseudocode,
+            "formula": formula.unwrap_or(serde_json::Value::Null),
+            "inputs": op.get("vm_slot_reads").cloned().unwrap_or_else(|| serde_json::json!([])),
+        }));
+    }
+    for store in op
+        .get("memory_stores")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let src = store
+            .get("store_src")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let src_value = src.get("value").cloned().unwrap_or(serde_json::Value::Null);
+        let src_slot = source_slot_for_value(
+            op.get("vm_slot_reads")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten(),
+            &src_value,
+        );
+        if is_probable_vm_infra_store(store, src_slot.as_ref(), &src) {
+            continue;
+        }
+        let pseudocode = if store.get("class").and_then(|v| v.as_str()) == Some("byte-store") {
+            if let Some(slot) = src_slot.as_ref().and_then(|slot| slot.get("slot")) {
+                format!(
+                    "mem[{}] = low8(slot[{}])",
+                    json_display(store.get("mem_addr").unwrap_or(&serde_json::Value::Null)),
+                    json_display(slot)
+                )
+            } else {
+                format!(
+                    "mem[{}] = low8({})",
+                    json_display(store.get("mem_addr").unwrap_or(&serde_json::Value::Null)),
+                    json_display(&src_value)
+                )
+            }
+        } else {
+            format!(
+                "mem[{}] = {}",
+                json_display(store.get("mem_addr").unwrap_or(&serde_json::Value::Null)),
+                json_display(&src_value)
+            )
+        };
+        effects.push(serde_json::json!({
+            "kind": "memory_store",
+            "idx": store.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "class": store.get("class").cloned().unwrap_or(serde_json::Value::Null),
+            "addr": store.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+            "src": src,
+            "source_slot": src_slot.unwrap_or(serde_json::Value::Null),
+            "pseudocode": pseudocode,
+        }));
+    }
+    if effects.is_empty() {
+        if let Some(formula) = formulas.iter().find(|formula| {
+            formula
+                .get("asm")
+                .and_then(|v| v.as_str())
+                .map(|asm| asm.contains("x21"))
+                .unwrap_or(false)
+        }) {
+            effects.push(serde_json::json!({
+                "kind": "control",
+                "idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "pseudocode": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
+                "formula": formula,
+            }));
+        }
+    }
+    effects
+}
+
+fn is_probable_vm_infra_store(
+    store: &serde_json::Value,
+    src_slot: Option<&serde_json::Value>,
+    src: &serde_json::Value,
+) -> bool {
+    if store.get("class").and_then(|v| v.as_str()) != Some("mem-store") {
+        return false;
+    }
+    if src_slot.is_some() {
+        return false;
+    }
+    matches!(
+        src.get("reg").and_then(|v| v.as_str()),
+        Some("x21" | "x23" | "x25" | "x27" | "sp" | "fp" | "lr")
+    )
+}
+
+fn matching_formula_for_value(
+    formulas: &[serde_json::Value],
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let wanted = json_u64(value)?;
+    formulas
+        .iter()
+        .find(|formula| {
+            formula
+                .pointer("/semantic/result")
+                .and_then(json_u64)
+                .or_else(|| formula.get("expression").and_then(expression_lhs_u64))
+                == Some(wanted)
+        })
+        .cloned()
+}
+
+fn source_slot_for_value<'a>(
+    mut reads: impl Iterator<Item = &'a serde_json::Value>,
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let wanted = json_u64(value)?;
+    reads
+        .find(|read| read.get("value").and_then(json_u64) == Some(wanted))
+        .cloned()
+}
+
+fn expression_lhs_u64(value: &serde_json::Value) -> Option<u64> {
+    let text = value.as_str()?;
+    let lhs = text.split('=').next()?.trim();
+    parse_u64_str(lhs)
+}
+
+fn json_display(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
 }
 
 fn vm_ops_state_updates(ops: &[serde_json::Value]) -> serde_json::Value {
@@ -11696,7 +11868,7 @@ mod tests {
         recognized_backchain_pattern_summary, recognized_backchain_patterns,
         resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
         source_byte_offset_for_write_at, store_source_regs_from_asm, vm_backchain_stop_summary,
-        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        vm_op_effect_summaries, vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -12926,6 +13098,41 @@ mod tests {
             serde_json::json!("no_upstream_next_or_frontier")
         );
         assert_eq!(stop["target"]["class"], serde_json::json!("bytecode-read"));
+    }
+
+    #[test]
+    fn summarizes_vm_op_slot_write_effects() {
+        let op = serde_json::json!({
+            "vm_slot_reads": [
+                {"slot": 18, "value": "0x7a"}
+            ],
+            "vm_slot_writes": [
+                {"idx": 10616058, "slot": 19, "value": "0x39"}
+            ],
+            "memory_stores": [],
+            "alu_formulas": [
+                {
+                    "idx": 10616056,
+                    "asm": "add x2, x0, x1",
+                    "expression": "0x39 = 0x7a + 0xffffffffffffffbf",
+                    "semantic": {
+                        "kind": "add_small_delta",
+                        "result": "0x39"
+                    }
+                }
+            ]
+        });
+        let effects = vm_op_effect_summaries(&op);
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0]["kind"], serde_json::json!("slot_write"));
+        assert_eq!(
+            effects[0]["pseudocode"],
+            serde_json::json!("slot[19] = 0x39 = 0x7a + 0xffffffffffffffbf")
+        );
+        assert_eq!(
+            effects[0]["formula"]["semantic"]["kind"],
+            serde_json::json!("add_small_delta")
+        );
     }
 
     #[test]

@@ -795,8 +795,11 @@ into a compact sequence such as "load byte 0x0a into slot 16", "load byte 0x62
 into slot 17", "compute 0x29 = (0x0a << 2) | (0x62 >> 6)", and "lookup Base64
 char p".
 Use `--summary` for AI analysis windows; it keeps slot traffic, bytecode reads,
-dispatches, semantic formula counts, and compact ALU formulas without the full
-record-shaped payload.
+dispatches, semantic formula counts, compact ALU formulas, and `effects[]`
+without the full record-shaped payload. `effects[]` is the shortest prompt
+surface for VM lifting: it turns slot writes, memory stores, and control steps
+into pseudocode such as `slot[19] = 0x39 = 0x7a + 0xffffffffffffffbf` or
+`mem[0x...] = low8(slot[18])`.
 
 For a specific scratch byte, use `byte-lineage` to automate the repeated
 last-write/backstep loop:

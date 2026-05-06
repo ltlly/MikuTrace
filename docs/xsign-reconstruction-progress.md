@@ -558,6 +558,8 @@ The CLI summary now carries the window metadata (`idx_lo`, `idx_hi`,
 loads. `vm-backchain --summary` also exposes `stop`, so a chain that ends at a
 VM bytecode read reports the final row and `no_upstream_next_or_frontier`
 instead of looking like a complete proof.
+`vm-ops --summary` now also exposes `effects[]`, which condenses VM slot writes,
+memory stores, and control updates into short pseudocode rows for AI lifting.
 
 The full 16-writer summary over the table is now compact enough for an AI to
 consume directly:
