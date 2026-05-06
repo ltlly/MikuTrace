@@ -840,12 +840,22 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
     {
         "semantic_range": [16, 52],
         "source_status": "word_source_only",
-        "class": "scratch_static_load_windows",
-        "static_load_addr_range": "0x74b68bbe04..0x74b68bbe28",
+        "class": "vm_scratch_lhs_table",
+        "scratch_addr_range": "0x74b68bbe00..0x74b68bbe34",
+        "scratch_bytes_hex": (
+            "000000fbe9f26979ecf29541f60193b34b3c510ccc029de339cec295"
+            "3090237cbfa4f43ba0444a342344c59bc56900003abf0301"
+        ),
+        "writer_map_status": {
+            "matched_writes": 23,
+            "writer_runs": 16,
+            "truncated": False,
+        },
         "note": (
             "Backchains for these chunks repeatedly hit overlapping 32-bit loads "
-            "from the same scratch/static region; the first chunk also has a "
-            "stat.st_mtim.tv_sec boundary candidate recorded separately."
+            "from a traced VM scratch table. The first chunk also has a "
+            "stat.st_mtim.tv_sec boundary candidate recorded separately; the table "
+            "writer formulas still need to be lifted into portable inputs."
         ),
     },
     {
@@ -869,9 +879,10 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
     {
         "semantic_range": [61, 65],
         "source_status": "word_source_only",
-        "class": "static_memory_load_constant",
+        "class": "vm_scratch_lhs_table_tail",
         "addr": "0x74b68bbe30",
         "bytes_hex": "3abf0301",
+        "writer_idxs": [14165215, 14165225, 14165246, 14165276],
     },
 ]
 

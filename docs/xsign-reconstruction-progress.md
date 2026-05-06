@@ -497,6 +497,32 @@ pointer-looking byte lineage at `0x74b68bb9ec` still matters, but it is now one
 local producer path to explain, not evidence that the whole middle run is
 runtime-address-derived.
 
+Dumping the source region at the later consumer cursor shows the large lhs
+stream as one VM scratch table:
+
+```bash
+rust/target/debug/tracemiku-cli mem-dump \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --addr 0x74b68bbe00 \
+  --count 64 \
+  --cursor 14695600 \
+  --summary
+```
+
+Relevant bytes:
+
+```text
+000000fb e9f26979 ecf29541 f60193b3 4b3c510c cc029de3
+39cec295 3090237c bfa4f43b a0444a34 2344c59b c5690000
+3abf0301
+```
+
+`byte-writer-map --summary` over `0x74b68bbe00..0x74b68bbe34` reports
+`matched=23`, `truncated=false`, and 16 compact writer runs. So this region is
+not an immutable static table; it is a traced VM scratch table. The remaining
+work is lifting the table writers themselves, not finding the consumer-side
+source buffer.
+
 Tracing the first middle word `fbe9f269` in `call_001` found three memory hits:
 
 ```text
