@@ -25,6 +25,8 @@ Observed across six local samples:
 - common decoded prefix: `6b360108cd34ef1000`.
 - `base64_diff.stable_ranges` reports this as a half-open byte range
   `[0,9)`.
+- `base64_diff.first_variable.output_map_args` points to Base64 group `3`, the
+  first group after the fixed header.
 - corresponding raw base64 prefix: `azYBCM007x`.
 - Searching the trace for the decoded payload prefix did not find a contiguous
   raw payload buffer in `call_001`; current evidence points to incremental

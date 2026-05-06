@@ -762,6 +762,34 @@ fn scan_jni_output_strings_diffs_decoded_base64_outputs() {
             {"start": 3, "end": 4, "length": 1, "hex": "dd"},
         ])
     );
+    assert_eq!(
+        v["base64_diff"]["variable_ranges"],
+        serde_json::json!([
+            {
+                "start": 2,
+                "end": 3,
+                "length": 1,
+                "base64_group_start": 0,
+                "base64_group_end": 1,
+                "base64_groups": 1,
+                "base64_char_start": 0,
+                "base64_char_end": 4,
+            },
+        ])
+    );
+    assert_eq!(
+        v["base64_diff"]["first_variable"],
+        serde_json::json!({
+            "off": 2,
+            "base64_group": 0,
+            "base64_char_start": 0,
+            "base64_char_end": 4,
+            "output_map_args": {
+                "group_start": 0,
+                "groups": 1,
+            },
+        })
+    );
     assert_eq!(v["base64_diff"]["per_byte"][2]["kind"], "VARIABLE");
     assert_eq!(
         v["base64_diff"]["per_byte"][2]["values"],

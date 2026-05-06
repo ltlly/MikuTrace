@@ -2176,6 +2176,7 @@ fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
         .unwrap_or(0);
     let mut per_byte = Vec::new();
     let mut stable_offsets = Vec::new();
+    let mut variable_offsets = Vec::new();
     for off in 0..min_len {
         let mut values = samples
             .iter()
@@ -2191,6 +2192,7 @@ fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
                 "value": format!("{:#x}", values[0]),
             }));
         } else {
+            variable_offsets.push(off);
             per_byte.push(serde_json::json!({
                 "off": off,
                 "kind": "VARIABLE",
@@ -2198,7 +2200,7 @@ fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
             }));
         }
     }
-    let stable_ranges = stable_ranges(&stable_offsets)
+    let stable_range_rows = stable_ranges(&stable_offsets)
         .into_iter()
         .map(|(start, end)| {
             let bytes = &samples[0].2[start..end];
@@ -2210,6 +2212,36 @@ fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
             })
         })
         .collect::<Vec<_>>();
+    let variable_ranges = stable_ranges(&variable_offsets)
+        .into_iter()
+        .map(|(start, end)| {
+            let group_start = start / 3;
+            let group_end = end.div_ceil(3);
+            serde_json::json!({
+                "start": start,
+                "end": end,
+                "length": end - start,
+                "base64_group_start": group_start,
+                "base64_group_end": group_end,
+                "base64_groups": group_end.saturating_sub(group_start),
+                "base64_char_start": group_start * 4,
+                "base64_char_end": group_end * 4,
+            })
+        })
+        .collect::<Vec<_>>();
+    let first_variable = variable_offsets.first().map(|off| {
+        let group = off / 3;
+        serde_json::json!({
+            "off": off,
+            "base64_group": group,
+            "base64_char_start": group * 4,
+            "base64_char_end": (group + 1) * 4,
+            "output_map_args": {
+                "group_start": group,
+                "groups": 1,
+            },
+        })
+    });
     let sample_rows = samples
         .iter()
         .map(|(sample, pair, bytes)| {
@@ -2232,7 +2264,9 @@ fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
         "range_semantics": "[start,end)",
         "stable_count": stable_offsets.len(),
         "variable_count": min_len.saturating_sub(stable_offsets.len()),
-        "stable_ranges": stable_ranges,
+        "stable_ranges": stable_range_rows,
+        "variable_ranges": variable_ranges,
+        "first_variable": first_variable,
         "per_byte": per_byte,
         "samples": sample_rows,
     })

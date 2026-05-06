@@ -361,10 +361,12 @@ commands on selected calls. `--decode-base64-full` includes the full decoded
 payload hex for small signature payloads, which makes byte-level multi-sample
 diffing straightforward. `--diff-base64` adds `base64_diff`, including
 `stable_ranges` as half-open byte ranges `[start,end)`, per-byte stable/variable
-classification, and the decoded payload for each sample. Use this to choose
-which x-sign bytes to trace: stable header bytes are useful for identifying
-format constants, while variable ranges are usually better seeds for recovering
-the request-specific algorithm.
+classification, `variable_ranges`, `first_variable`, and the decoded payload for
+each sample. `first_variable.output_map_args` can be passed directly to
+`output-map --group-start ... --groups ...` to start from the first changing
+Base64 group. Stable header bytes are useful for identifying format constants,
+while variable ranges are usually better seeds for recovering the
+request-specific algorithm.
 
 Use `string-provenance` when a string table entry or discovered byte sequence
 looks like the x-sign, an input token, timestamp, app key, device id, or encoded
