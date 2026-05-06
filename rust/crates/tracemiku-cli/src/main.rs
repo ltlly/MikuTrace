@@ -2271,12 +2271,85 @@ async fn attach_base64_index_trees_on(
                 "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x23,x25,x27".to_string(),
             )
             .await?;
+            let summary = index_tree_summary(&tree);
             if let Some(obj) = lookup.as_object_mut() {
+                obj.insert("index_summary".to_string(), summary);
                 obj.insert("index_tree".to_string(), tree);
             }
         }
     }
     Ok(())
+}
+
+fn index_tree_summary(tree: &serde_json::Value) -> serde_json::Value {
+    let interesting_formulas = tree
+        .get("highlights")
+        .and_then(|v| v.get("alu_formulas"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|formula| {
+            formula
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str)
+                .is_some_and(|value| value <= 0x3f)
+                && formula_operands_below(formula, 0xfff)
+                && !formula_is_low_signal(formula)
+        })
+        .take(16)
+        .cloned()
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "interesting_formulas": interesting_formulas,
+    })
+}
+
+fn formula_is_low_signal(formula: &serde_json::Value) -> bool {
+    let op = formula.get("op").and_then(|v| v.as_str()).unwrap_or("");
+    let value = formula
+        .get("value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str);
+    let operands = formula
+        .get("operands")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|operand| {
+            operand
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str)
+        })
+        .collect::<Vec<_>>();
+    match op {
+        "ubfx" => formula
+            .get("expression")
+            .and_then(|v| v.as_str())
+            .is_some_and(|expr| expr.contains(", 0x0, 0x20)")),
+        "lsl" | "lsr" => operands.get(1).copied() == Some(0),
+        "orr" | "add" => operands
+            .iter()
+            .enumerate()
+            .any(|(idx, &operand)| operand == 0 && operands.get(1 - idx).copied() == value),
+        _ => value == Some(0),
+    }
+}
+
+fn formula_operands_below(formula: &serde_json::Value, max_value: u64) -> bool {
+    formula
+        .get("operands")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|operand| {
+            operand
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str)
+        })
+        .all(|value| value <= max_value)
 }
 
 fn base64_char_index(byte: u8) -> Option<u8> {
