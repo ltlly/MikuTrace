@@ -839,6 +839,17 @@ mod255_input_odd            vm_state_expression, trace-proven one sample
 This is the checklist for turning the current trace replay model into a
 portable algorithm: eliminate or parameterize every non-portable manifest entry.
 
+`current_trace_model_simulation` now makes the current boundary explicit:
+
+```text
+status                  trace_bound_simulation
+matches_trace           true
+portable_algorithm_ready false
+```
+
+So Python can reproduce `call_001` from the trace-derived formulas and manifest,
+but this is still not the final portable x-sign algorithm.
+
 So the remaining blocker is no longer "find the upstream VM bytecode" for this
 range. The blocker is validating each role-bound skeleton against `sample_ops[]`
 and implementing portable Python opcode semantics for the scratch table and

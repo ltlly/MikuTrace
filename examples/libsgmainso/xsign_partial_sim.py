@@ -1800,6 +1800,22 @@ def reconstruct_call001_semantic_tail_from_trace_formulas() -> bytes:
     return bytes(out)
 
 
+def simulate_call001_xsign_current_trace_model() -> dict:
+    prefix = urllib.parse.unquote(CALL_001_XSIGN)[:FIXED_PREFIX_CHARS]
+    semantic = reconstruct_call001_semantic_tail_from_trace_formulas()
+    xsign = xsign_from_semantic_tail(prefix, semantic)
+    expected = urllib.parse.unquote(CALL_001_XSIGN)
+    return {
+        "status": "trace_bound_simulation",
+        "xsign": xsign,
+        "expected": expected,
+        "matches_trace": xsign == expected,
+        "semantic_tail_hex": semantic.hex(),
+        "uses_current_trace_model_input_manifest": True,
+        "portable_algorithm_ready": False,
+    }
+
+
 def bytewise_variations(hex_by_sample: dict[str, str]) -> list[dict]:
     byte_by_sample = {name: bytes.fromhex(raw) for name, raw in hex_by_sample.items()}
     lengths = {len(raw) for raw in byte_by_sample.values()}
@@ -2021,6 +2037,7 @@ def main() -> None:
     scratch_lhs_prefix_formula = reconstruct_call001_scratch_lhs_prefix_from_sources()
     middle_lhs_source_manifest = call001_middle_lhs_source_manifest()
     input_manifest = current_trace_model_input_manifest()
+    current_trace_model_simulation = simulate_call001_xsign_current_trace_model()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -2127,6 +2144,7 @@ def main() -> None:
             "states_hex": [f"{value:#x}" for value in lcg_states],
         },
         "current_trace_model_input_manifest": input_manifest,
+        "current_trace_model_simulation": current_trace_model_simulation,
         "small_affine": {
             "previous_state": f"{TRACE_SMALL_AFFINE['previous_state']:#x}",
             "multiplier": f"{TRACE_SMALL_AFFINE['multiplier']:#x}",
