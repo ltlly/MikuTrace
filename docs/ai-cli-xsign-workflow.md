@@ -165,6 +165,18 @@ write, preexisting mapped data, a syscall/JNI side effect, or a trace coverage
 gap. Do not keep following the stale traced write just because it is the latest
 write in the index.
 
+For this boundary case, `vm-backstep` / `byte-lineage` also include
+`upstream.gap_call_candidates`. The scan covers the trace-index gap between the
+last traced write and the observed read, then ranks calls whose target is
+outside the primary traced module or whose argument registers point near the
+target address. Use `target_module.name + target_module.offset` plus
+`arg_offsets[]` to decide whether an external library call plausibly produced
+the bytes. A common pattern is a libc/JNI function writing an output structure:
+for example `arg_offsets: [{"reg":"x1","offset":"0x58"}]` means the observed
+address lies at `x1 + 0x58` at that call boundary. If symbols are available,
+resolve the module offset to distinguish a true output writer such as
+`stat/stat64` from a later unrelated call such as `free`.
+
 To inspect the surrounding per-byte read/write history for one address, use:
 
 ```bash

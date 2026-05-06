@@ -10,6 +10,15 @@ use clap::{Parser, Subcommand, ValueEnum};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+const GAP_SCAN_REGS: &str =
+    "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp";
+const GAP_SCAN_CHUNK: usize = 500;
+const GAP_SCAN_MAX_RECORDS: usize = 5000;
+const GAP_SCAN_MAX_CANDIDATES: usize = 12;
+const GAP_ARG_STRUCT_SPAN: u64 = 0x400;
+const GAP_NEAR_REG_SPAN: u64 = 0x100;
+const GAP_SMALL_LEN_MAX: u64 = 0x4000;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "tracemiku-cli",
@@ -6893,6 +6902,7 @@ fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_json::Value {
             "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
             "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
             "byte_nexts": upstream.get("byte_nexts").cloned().unwrap_or_else(|| serde_json::json!([])),
+            "gap_call_candidates": compact_gap_call_candidates(upstream.get("gap_call_candidates")),
         },
         "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
@@ -7092,6 +7102,7 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
                 "observed_mismatches": upstream.get("observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
                 "last_write": compact_lineage_last_write(upstream.get("last_write")),
                 "byte_nexts": compact_lineage_byte_nexts(upstream.get("byte_nexts")),
+                "gap_call_candidates": compact_gap_call_candidates(upstream.get("gap_call_candidates")),
             },
                     "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
                     "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
@@ -7117,6 +7128,43 @@ fn compact_lineage_row_for_summary(row: Option<&serde_json::Value>) -> serde_jso
         "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
         "formula": row.get("formula").cloned().unwrap_or(serde_json::Value::Null),
         "call_return": row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn compact_gap_call_candidates(value: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(value) = value else {
+        return serde_json::Value::Null;
+    };
+    if value.is_null() {
+        return serde_json::Value::Null;
+    }
+    let candidates = value
+        .get("candidates")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .take(8)
+        .map(|candidate| {
+            serde_json::json!({
+                "idx": candidate.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": candidate.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "target_addr": candidate.get("target_addr").cloned().unwrap_or(serde_json::Value::Null),
+                "target_module": candidate.get("target_module").cloned().unwrap_or(serde_json::Value::Null),
+                "external_to_primary": candidate.get("external_to_primary").cloned().unwrap_or(serde_json::Value::Null),
+                "arg_offsets": candidate.get("arg_offsets").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "span_matches": candidate.get("span_matches").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "near_regs": candidate.get("near_regs").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "score": candidate.get("score").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "scan_idx_lo": value.get("scan_idx_lo").cloned().unwrap_or(serde_json::Value::Null),
+        "scan_idx_hi": value.get("scan_idx_hi").cloned().unwrap_or(serde_json::Value::Null),
+        "candidate_count_total": value.get("candidate_count_total").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated_by_record_cap": value.get("truncated_by_record_cap").cloned().unwrap_or(serde_json::Value::Null),
+        "candidates": candidates,
     })
 }
 
@@ -7992,6 +8040,17 @@ async fn upstream_writer_for_def_on(
     } else {
         "not_found"
     };
+    let gap_call_candidates = if status == "observed_read_without_matching_traced_write" {
+        match gap_call_candidates_for_mismatch_on(app, addr, idx, last_write.as_ref()).await {
+            Ok(value) => value,
+            Err(err) => serde_json::json!({
+                "status": "error",
+                "error": err.to_string(),
+            }),
+        }
+    } else {
+        serde_json::Value::Null
+    };
     Ok(serde_json::json!({
         "status": status,
         "kind": kind,
@@ -8008,6 +8067,7 @@ async fn upstream_writer_for_def_on(
         "writes_tail": writes_tail,
         "byte_writers": byte_writers,
         "byte_nexts": byte_nexts,
+        "gap_call_candidates": gap_call_candidates,
         "next": matches_observed.then(|| last_write.as_ref().and_then(|write| {
             Some(serde_json::json!({
                 "idx": write.get("idx")?,
@@ -8016,6 +8076,319 @@ async fn upstream_writer_for_def_on(
             }))
         })).flatten(),
     }))
+}
+
+async fn gap_call_candidates_for_mismatch_on(
+    app: &axum::Router,
+    addr: u64,
+    read_idx: usize,
+    last_write: Option<&serde_json::Value>,
+) -> anyhow::Result<serde_json::Value> {
+    let Some(last_write_idx) = last_write
+        .and_then(|write| write.get("idx"))
+        .and_then(|v| v.as_u64())
+        .map(|idx| idx as usize)
+    else {
+        return Ok(serde_json::json!({
+            "status": "no_last_write",
+            "addr": format!("{addr:#x}"),
+            "read_idx": read_idx,
+            "candidates": [],
+        }));
+    };
+    if last_write_idx >= read_idx {
+        return Ok(serde_json::json!({
+            "status": "empty_gap",
+            "addr": format!("{addr:#x}"),
+            "read_idx": read_idx,
+            "last_write_idx": last_write_idx,
+            "candidates": [],
+        }));
+    }
+
+    let requested_scan_start = last_write_idx.saturating_add(1);
+    let gap_len = read_idx.saturating_sub(requested_scan_start);
+    let (scan_start, truncated_by_record_cap) = if gap_len > GAP_SCAN_MAX_RECORDS {
+        (read_idx.saturating_sub(GAP_SCAN_MAX_RECORDS), true)
+    } else {
+        (requested_scan_start, false)
+    };
+    let meta = route_get_json_value_on(app, "/api/meta".to_string()).await?;
+    let primary = primary_module_bounds(&meta);
+    let mut candidates = Vec::new();
+    let mut cursor = scan_start;
+    let mut fetched = 0usize;
+
+    while cursor < read_idx {
+        let count = read_idx.saturating_sub(cursor).min(GAP_SCAN_CHUNK);
+        if count == 0 {
+            break;
+        }
+        let params = vec![
+            ("start", cursor.to_string()),
+            ("count", count.to_string()),
+            ("regs", GAP_SCAN_REGS.to_string()),
+            ("fields", "idx,pc,func,asm,regs".to_string()),
+        ];
+        let response = route_get_json_value_on(app, route_path("/api/records", &params)).await?;
+        let records = response
+            .get("records")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if records.is_empty() {
+            break;
+        }
+        fetched = fetched.saturating_add(records.len());
+        for record in &records {
+            if let Some(candidate) =
+                gap_call_candidate_from_record(record, &meta, primary.as_ref(), addr)
+            {
+                candidates.push(candidate);
+            }
+        }
+        let last_idx = records
+            .last()
+            .and_then(|record| record.get("idx"))
+            .and_then(|v| v.as_u64())
+            .map(|idx| idx as usize);
+        cursor = last_idx
+            .map(|idx| idx.saturating_add(1))
+            .unwrap_or_else(|| cursor.saturating_add(records.len()));
+        if records.len() < count {
+            break;
+        }
+    }
+
+    let candidate_count_total = candidates.len();
+    candidates.sort_by(|a, b| {
+        let ascore = a.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bscore = b.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        let aidx = a.get("idx").and_then(|v| v.as_u64()).unwrap_or(0);
+        let bidx = b.get("idx").and_then(|v| v.as_u64()).unwrap_or(0);
+        bscore.cmp(&ascore).then_with(|| aidx.cmp(&bidx))
+    });
+    if candidates.len() > GAP_SCAN_MAX_CANDIDATES {
+        candidates.truncate(GAP_SCAN_MAX_CANDIDATES);
+    }
+
+    Ok(serde_json::json!({
+        "status": "ready",
+        "addr": format!("{addr:#x}"),
+        "read_idx": read_idx,
+        "last_write_idx": last_write_idx,
+        "scan_idx_lo": scan_start,
+        "scan_idx_hi": read_idx,
+        "requested_scan_idx_lo": requested_scan_start,
+        "fetched_records": fetched,
+        "truncated_by_record_cap": truncated_by_record_cap,
+        "candidate_count_total": candidate_count_total,
+        "candidate_count_returned": candidates.len(),
+        "candidates": candidates,
+    }))
+}
+
+fn gap_call_candidate_from_record(
+    record: &serde_json::Value,
+    meta: &serde_json::Value,
+    primary: Option<&(u64, u64, String)>,
+    addr: u64,
+) -> Option<serde_json::Value> {
+    let asm = record.get("asm").and_then(|v| v.as_str()).unwrap_or("");
+    let (call_kind, target_addr) = call_target_from_asm_record(asm, record)?;
+    let target_module = module_for_addr(meta, target_addr);
+    let external_to_primary = primary
+        .map(|(start, end, _)| target_addr < *start || target_addr >= *end)
+        .unwrap_or(false);
+    let arg_offsets = call_arg_offsets(record, addr);
+    let span_matches = call_arg_span_matches(record, addr);
+    let near_regs = call_near_regs(record, addr);
+
+    if !external_to_primary
+        && arg_offsets.is_empty()
+        && span_matches.is_empty()
+        && near_regs.is_empty()
+    {
+        return None;
+    }
+
+    let mut score = 0i64;
+    if external_to_primary {
+        score += 1000;
+    }
+    score += (span_matches.len() as i64) * 40;
+    score += (arg_offsets.len() as i64) * 16;
+    score += (near_regs.len() as i64) * 4;
+    if target_module
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|name| name.contains("libc"))
+        .unwrap_or(false)
+    {
+        score += 6;
+    }
+
+    let args = (0..=7)
+        .map(|idx| {
+            let reg = format!("x{idx}");
+            serde_json::json!({
+                "reg": reg,
+                "value": record_reg_value(record, &reg)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Some(serde_json::json!({
+        "idx": record.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "pc": record.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+        "func": record.get("func").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": asm,
+        "call_kind": call_kind,
+        "target_addr": format!("{target_addr:#x}"),
+        "target_module": target_module,
+        "external_to_primary": external_to_primary,
+        "arg_offsets": arg_offsets,
+        "span_matches": span_matches,
+        "near_regs": near_regs,
+        "args": args,
+        "score": score,
+    }))
+}
+
+fn call_target_from_asm_record(asm: &str, record: &serde_json::Value) -> Option<(String, u64)> {
+    let mut parts = asm.trim().split_whitespace();
+    let op = parts.next()?;
+    match op {
+        "bl" => {
+            let operand = parts.next()?.trim_start_matches('#').trim_end_matches(',');
+            parse_u64_str(operand).map(|target| ("bl".to_string(), target))
+        }
+        "blr" => {
+            let reg = parts.next()?.trim_end_matches(',');
+            record_reg_u64(record, reg).map(|target| ("blr".to_string(), target))
+        }
+        _ => None,
+    }
+}
+
+fn call_arg_offsets(record: &serde_json::Value, addr: u64) -> Vec<serde_json::Value> {
+    (0..=7)
+        .filter_map(|idx| {
+            let reg = format!("x{idx}");
+            let value = record_reg_u64(record, &reg)?;
+            let offset = addr.checked_sub(value)?;
+            (offset <= GAP_ARG_STRUCT_SPAN).then(|| {
+                serde_json::json!({
+                    "reg": reg,
+                    "base": format!("{value:#x}"),
+                    "offset": format!("{offset:#x}"),
+                    "addr": format!("{addr:#x}"),
+                })
+            })
+        })
+        .collect()
+}
+
+fn call_arg_span_matches(record: &serde_json::Value, addr: u64) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    const PAIRS: &[(usize, usize)] = &[(0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (3, 2)];
+    for (base_idx, len_idx) in PAIRS {
+        let base_reg = format!("x{base_idx}");
+        let Some(base) = record_reg_u64(record, &base_reg) else {
+            continue;
+        };
+        let len_reg = format!("x{len_idx}");
+        let Some(len) = record_reg_u64(record, &len_reg) else {
+            continue;
+        };
+        if len == 0 || len > GAP_SMALL_LEN_MAX {
+            continue;
+        }
+        let end = base.saturating_add(len);
+        if addr >= base && addr < end {
+            out.push(serde_json::json!({
+                "base_reg": base_reg,
+                "base": format!("{base:#x}"),
+                "len_reg": len_reg,
+                "len": format!("{len:#x}"),
+                "offset": format!("{:#x}", addr.saturating_sub(base)),
+            }));
+        }
+    }
+    out
+}
+
+fn call_near_regs(record: &serde_json::Value, addr: u64) -> Vec<serde_json::Value> {
+    const REGS: &[&str] = &[
+        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x19", "x20", "x21", "x22", "x23", "x25",
+    ];
+    REGS.iter()
+        .filter_map(|reg| {
+            let value = record_reg_u64(record, reg)?;
+            let delta = value.abs_diff(addr);
+            (delta <= GAP_NEAR_REG_SPAN).then(|| {
+                let signed = if value <= addr {
+                    format!("+{:#x}", addr - value)
+                } else {
+                    format!("-{:#x}", value - addr)
+                };
+                serde_json::json!({
+                    "reg": reg,
+                    "value": format!("{value:#x}"),
+                    "delta_to_addr": signed,
+                })
+            })
+        })
+        .collect()
+}
+
+fn primary_module_bounds(meta: &serde_json::Value) -> Option<(u64, u64, String)> {
+    let module = meta.get("module")?;
+    module_bounds(module)
+}
+
+fn module_bounds(module: &serde_json::Value) -> Option<(u64, u64, String)> {
+    let base = module.get("base").and_then(json_u64)?;
+    let end = module.get("end").and_then(json_u64).or_else(|| {
+        module
+            .get("size")
+            .and_then(json_u64)
+            .map(|size| base.saturating_add(size))
+    })?;
+    let name = module
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((base, end, name))
+}
+
+fn module_for_addr(meta: &serde_json::Value, addr: u64) -> serde_json::Value {
+    let Some(modules) = meta.get("modules").and_then(|v| v.as_array()) else {
+        return serde_json::Value::Null;
+    };
+    for module in modules {
+        let Some((base, end, name)) = module_bounds(module) else {
+            continue;
+        };
+        if addr >= base && addr < end {
+            return serde_json::json!({
+                "name": name,
+                "base": format!("{base:#x}"),
+                "end": format!("{end:#x}"),
+                "offset": format!("{:#x}", addr.saturating_sub(base)),
+            });
+        }
+    }
+    serde_json::Value::Null
+}
+
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(parse_u64_str))
 }
 
 fn observed_load_bytes(def_row: &serde_json::Value, size: u64) -> Option<Vec<u8>> {
@@ -10037,7 +10410,8 @@ mod tests {
         alu_expression_from_asm, base64_decoded_bytes, byte_lane_from_writer_map_entry,
         byte_writer_map_output, byte_writers_from_range_writes, choose_frontier_next,
         choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
-        dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm, find_hex_byte_offsets,
+        compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
+        def_source_regs_from_asm, find_hex_byte_offsets, gap_call_candidate_from_record,
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_semantic_byte_equation,
         output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
@@ -10094,6 +10468,63 @@ mod tests {
         assert_eq!(memory_access_width("ldrsw x4, [x21, #0x18]"), 4);
         assert_eq!(memory_access_width("ldr x4, [x25, x19, lsl #3]"), 8);
         assert_eq!(memory_access_width("ldp x9, x10, [x25, #0xc0]"), 8);
+    }
+
+    #[test]
+    fn detects_external_gap_call_candidates() {
+        let meta = serde_json::json!({
+            "module": {"name": "libtarget.so", "base": "0x1000", "end": "0x2000"},
+            "modules": [
+                {"name": "libtarget.so", "base": "0x1000", "end": "0x2000"},
+                {"name": "libc.so", "base": "0x7000", "end": "0x9000"}
+            ]
+        });
+        let record = serde_json::json!({
+            "idx": 42,
+            "pc": "0x1500",
+            "func": "sub_500",
+            "asm": "blr x22",
+            "regs": {
+                "x0": "0x5000",
+                "x1": "0x6000",
+                "x2": "0x8",
+                "x3": "0x0",
+                "x4": "0x0",
+                "x5": "0x0",
+                "x6": "0x0",
+                "x7": "0x0",
+                "x22": "0x8120"
+            }
+        });
+        let primary = super::primary_module_bounds(&meta);
+        let candidate =
+            gap_call_candidate_from_record(&record, &meta, primary.as_ref(), 0x6058).unwrap();
+        assert_eq!(candidate["external_to_primary"], serde_json::json!(true));
+        assert_eq!(
+            candidate.pointer("/target_module/name"),
+            Some(&serde_json::json!("libc.so"))
+        );
+        assert_eq!(
+            candidate.pointer("/arg_offsets/0/reg"),
+            Some(&serde_json::json!("x1"))
+        );
+        assert_eq!(
+            candidate.pointer("/arg_offsets/0/offset"),
+            Some(&serde_json::json!("0x58"))
+        );
+
+        let compact = compact_gap_call_candidates(Some(&serde_json::json!({
+            "status": "ready",
+            "scan_idx_lo": 40,
+            "scan_idx_hi": 50,
+            "candidate_count_total": 1,
+            "truncated_by_record_cap": false,
+            "candidates": [candidate]
+        })));
+        assert_eq!(
+            compact.pointer("/candidates/0/target_module/offset"),
+            Some(&serde_json::json!("0x1120"))
+        );
     }
 
     #[test]

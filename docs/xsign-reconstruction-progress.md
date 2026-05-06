@@ -370,6 +370,36 @@ Without `--with-bytes`, the same command stays cheap and returns only idx/kind;
 with the flag it blocks for MemShadow and exposes the observed byte values that
 are needed to distinguish stale traced writes from true memory contents.
 
+The discontinuity is now explained by the gap-call scan attached to
+`vm-backstep`. For the same load:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backstep \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --idx 13980732 \
+  --reg x8 \
+  --context 160 \
+  --lookback 300000 \
+  --max-writes 8000
+```
+
+`upstream.gap_call_candidates.candidates[0]` is:
+
+```text
+#13980120 blr x22 -> libc.so+0xa0f5c
+x1 = 0x74b68bd0b0
+target addr 0x74b68bd108 = x1 + 0x58
+```
+
+Resolving that device libc offset gives `stat/stat64`. So the first middle
+word `fbe9f269` is most likely bytes from a `struct stat` output buffer written
+inside libc, outside the current instruction-level trace coverage. The next
+candidate `#13980660 libc.so+0x5c4fc` resolves to `free`, and is a later
+near-pointer false positive rather than the producer. This is a useful
+reconstruction boundary: the simulator should model this word as data supplied
+by the stat output structure, or collect the corresponding file metadata, not
+as a value produced by the stale traced zero store.
+
 So the current trace-proven call_001 tail shape is:
 
 ```text
