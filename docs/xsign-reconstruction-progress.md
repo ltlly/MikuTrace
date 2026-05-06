@@ -275,6 +275,22 @@ maps the current group characters to concrete alphabet lookup trace idxs; for
 Use `--index-tree-depth` to attach bounded provenance trees for those index
 registers without running four separate commands.
 
+Important caveat from the first index-tree pass: these lookup idxs are already
+past the alphabet table, but still inside a Base64 scratch/window layer. For
+example, the `p` lookup (`index 0x29`) is built as:
+
+```text
+0x28 = 0x0a << 2
+0x01 = 0x62 >> 6
+0x29 = 0x28 | 0x01
+```
+
+This is a valid Base64 6-bit construction, but the input bytes shown here are
+scratch/window bytes. They must still be traced further before treating them as
+business payload fields. The VM writes overlapping 4-character windows, so a
+character reused in final group `piYQ` may have been generated in a neighboring
+window such as `ApiY`.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next
