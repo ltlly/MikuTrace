@@ -981,6 +981,10 @@ def semantic_tail(xsign: str) -> bytes:
     return aligned_tail(xsign)[1:]
 
 
+def xsign_from_semantic_tail(raw_prefix: str, tail: bytes) -> str:
+    return raw_prefix + b64encode_unpadded(b"\x00" + tail)[2:]
+
+
 def base64_i0(byte0: int) -> int:
     return (byte0 >> 2) & 0x3F
 
@@ -1004,6 +1008,17 @@ def main() -> None:
     semantic = aligned[1:]
     sample_tails = {name: semantic_tail(xsign) for name, xsign in SAMPLE_XSIGNS.items()}
     reencoded_tail = b64encode_unpadded(aligned)
+    reconstructed_call001 = xsign_from_semantic_tail(
+        urllib.parse.unquote(CALL_001_XSIGN)[:FIXED_PREFIX_CHARS],
+        semantic,
+    )
+    multi_sample_reencoded = {
+        name: xsign_from_semantic_tail(
+            urllib.parse.unquote(xsign)[:FIXED_PREFIX_CHARS],
+            sample_tails[name],
+        )
+        for name, xsign in SAMPLE_XSIGNS.items()
+    }
     expected_semantic = bytes.fromhex(CALL_001_SEMANTIC_TAIL_HEX)
     lcg_states = lcg_sequence(TRACE_TIME_RET, len(TRACE_LCG_STATES))
     folds = [
@@ -1161,6 +1176,12 @@ def main() -> None:
             "semantic_tail_matches_writer_map": semantic == expected_semantic,
             "reencoded_tail_prefix": reencoded_tail[:18],
             "tail_reencodes_xsign_tail_from_char_2": reencoded_tail[2:] == tail_chars,
+            "reconstructed_call_001_xsign_matches": reconstructed_call001
+            == urllib.parse.unquote(CALL_001_XSIGN),
+            "multi_sample_reencode_all_match": all(
+                multi_sample_reencoded[name] == urllib.parse.unquote(xsign)
+                for name, xsign in SAMPLE_XSIGNS.items()
+            ),
             "note": "The first aligned byte is synthetic; semantic tracing starts at aligned_tail[1].",
         },
         "semantic_tail_writer_map": {

@@ -94,6 +94,16 @@ So the current simulator boundary is the raw 12-character prefix, not a
 directly observed nine-byte pre-Base64 header. The semantic meaning of that
 prefix is still unresolved, but the storage form is no longer ambiguous.
 
+The Python simulator now verifies the output encoding layer separately:
+
+```text
+xsign == raw_prefix + base64(00 || semantic_tail)[2:]
+```
+
+This holds for all current local samples. The remaining work is therefore not
+Base64 reconstruction; it is deriving the semantic tail bytes and raw prefix
+meaning from portable upstream inputs.
+
 Aligned-tail `output-map` form:
 
 ```bash
