@@ -747,10 +747,11 @@ The narrow VM-IP stop probe now also emits the control-flow skeleton
 `control_operand`. These skeletons are intentionally shape-only: exact slot
 role binding still comes from `template_operands[].roles[]`, `effect_shapes[]`,
 and `sample_ops[]`. `python_with_roles` applies the strongest role counts into a
-direct opcode sketch, but still needs confirmation against samples before it is
-treated as semantics. The next lift target for the `[12,35)` VM ladder is to
-convert these repeated bytecode operand layouts plus effect shapes into portable
-Python VM templates.
+direct opcode sketch, and per-op `bytecode_reads[].name` lets the sketch be
+instantiated with concrete bytecode values from each `op_effects[]` row. It
+still needs confirmation against samples before it is treated as semantics. The
+next lift target for the `[12,35)` VM ladder is to convert these repeated
+bytecode operand layouts plus effect shapes into portable Python VM templates.
 
 The Python reconstruction now uses this split directly:
 

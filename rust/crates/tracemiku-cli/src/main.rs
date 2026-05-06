@@ -7321,10 +7321,13 @@ fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
         .into_iter()
         .flatten()
         .map(|item| {
+            let offset = item.get("offset").cloned().unwrap_or(serde_json::Value::Null);
+            let width = item.get("width").cloned().unwrap_or(serde_json::Value::Null);
             serde_json::json!({
                 "idx": item.get("idx").cloned().unwrap_or(serde_json::Value::Null),
-                "offset": item.get("offset").cloned().unwrap_or(serde_json::Value::Null),
-                "width": item.get("width").cloned().unwrap_or(serde_json::Value::Null),
+                "name": bytecode_operand_param_name(&offset, &width),
+                "offset": offset,
+                "width": width,
                 "bytes_le_hex": item.get("bytes_le_hex").cloned().unwrap_or(serde_json::Value::Null),
                 "value": item.get("value").cloned().unwrap_or(serde_json::Value::Null),
             })
@@ -15116,6 +15119,10 @@ mod tests {
             serde_json::json!("0x9")
         );
         assert_eq!(
+            summary["bytecode_reads"][2]["name"],
+            serde_json::json!("bc_0x8_u64")
+        );
+        assert_eq!(
             summary["control_effects"][0]["idx"],
             serde_json::json!(10616043)
         );
@@ -15123,6 +15130,10 @@ mod tests {
         assert_eq!(
             summary["op_effects"][1]["bytecode_reads"][0]["value"],
             serde_json::json!("0x9")
+        );
+        assert_eq!(
+            summary["op_effects"][1]["bytecode_reads"][0]["name"],
+            serde_json::json!("bc_0x8_u64")
         );
         assert_eq!(
             summary["op_effects"][1]["effects"][0]["kind"],
