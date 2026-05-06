@@ -1342,7 +1342,7 @@ def main():
     p_tr.add_argument("--boundary-diff-patterns", default=None, dest="boundary_diff_patterns",
                       help="逗号分隔, 在这些函数装 Interceptor 抓内存写 (boundary ptr-diff). "
                            "**严禁包含 pthread/malloc/atomic** — Frida 自己用这些, attach 会崩进程. "
-                           "默认空. 仅 --trace-deep 下生效.")
+                           "默认空. 不需要 --trace-deep; 可用于 stat@@/stat64@@ 这类外部输出结构.")
     p_tr.add_argument("--patch-suicide", action="store_true", dest="patch_suicide",
                       help="启用 anti-anti-frida tgkill svc → nop patching. 默认 spec = "
                            "tools/hooks/sgmainso_6.8.260403_suicide.json (libsgmainso 6.8.260403). "

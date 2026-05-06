@@ -112,9 +112,11 @@ Rust core / server / CLI 共用此格式, mode (v3/v5/js) 不影响 record 物�
 
 默认 trace 只 instrument 主 SO + `--include-so` 指定的列表. Deep 模式反过来 — 全
 模块 instrument, **per-symbol** `Stalker.exclude` hostile 函数 (linker / libdl /
-某些 libc atomic), 同时在 hostile 边界用 Interceptor 做 ptr-diff 把传参指针指向
-的内存变化抓回来, 写入 `external_writes.bin` (17B 记录 `<Q attr_idx><Q addr><B byte>`)
-给 viewer MemShadow 重建. 这样系统 .so 调用既不污染 trace.bin, 又不丢内存写副作用.
+某些 libc atomic). Boundary diff 是独立能力: `--boundary-diff-patterns` 会在匹配
+符号上用 Interceptor 做 ptr-diff, 把传参指针指向的内存变化抓回来, 写入
+`external_writes.bin` (17B 记录 `<Q attr_idx><Q addr><B byte>`) 给 viewer
+MemShadow 重建. 它不需要 `--trace-deep`; 非 deep 模式下目标函数所在模块仍会
+Stalker.exclude, 只额外挂 Interceptor 抓外部写副作用.
 
 ```js
 // agent_cmodule_v5.js 关键变量
@@ -125,7 +127,8 @@ DEEP_KEEP_EXCL = ["linker","linker64","libdl.so"]  // 任何模式下都 exclude
 
 **坑**: `DEFAULT_BOUNDARY_DIFF_PATTERNS` 千万别塞 `pthread_*` / `malloc` /
 `__atomic_*` — Frida Interceptor 会自递归 SIGABRT (Frida 自己内部就用这些).
-所以默认空, host 显式传哪些就跟哪些.
+所以默认空, host 显式传哪些就跟哪些. 对 x-sign 这类路径/文件元数据输入,
+优先传精确版本化片段, 例如 `--boundary-diff-patterns stat@@,stat64@@,fstatat@@`.
 
 ## JSON-driven JNI hooks (Task #56)
 

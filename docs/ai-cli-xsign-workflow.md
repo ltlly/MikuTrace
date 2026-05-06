@@ -549,6 +549,18 @@ output bytes that the traced code later reads. On Android AArch64,
 `fbe9f26900000000` is the little-endian mtime seconds field, not a stale traced
 zero store.
 
+For a fresh capture, keep normal tracing and add a narrow boundary-diff hook
+instead of enabling full `--trace-deep`:
+
+```bash
+./tracemiku trace ... \
+  --boundary-diff-patterns stat@@,stat64@@,fstatat@@,fstatat64@@,lstat@@,lstat64@@
+```
+
+This records changed bytes under `external_writes.bin`, which MemShadow exposes
+as `kind: "x"` writes. It lets `byte-lineage` continue through external stat
+output bytes without following stale in-module writes.
+
 Pair loads are expanded before backtracking. A row such as
 `ldp x9, x10, [x25,#0xc0]` contributes separate definitions for `x9` and
 `x10`, with memory addresses `base+0` and `base+8`. This prevents a chain for

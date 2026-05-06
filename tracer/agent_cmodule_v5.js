@@ -71,10 +71,14 @@ const STALKER_EXCLUDE_PATTERNS = [
 // on pthread_mutex_lock / malloc / __atomic_* causes self-recursion in Frida's
 // own machinery → process crashes during attach.
 //
-// Default = empty. Opt-in via --boundary-diff-patterns. Safe candidates (these
-// are leaf-ish ART helpers that Frida internals don't reach):
+// Default = empty. Opt-in via --boundary-diff-patterns. This can run without
+// --trace-deep: the matching excluded-module symbol stays excluded from
+// Stalker, but Interceptor snapshots pointer args on entry/exit and reports
+// changed bytes as external writes. Safe candidates (these are leaf-ish ART
+// helpers or libc file-stat helpers that Frida internals don't reach):
 //   - "art::Thread::DecodeJObject"   // read-only ptr decode
 //   - "art::JNI::Get*"               // get-side JNI helpers
+//   - "stat", "stat64", "fstatat", "fstatat64", "lstat", "lstat64"
 // memcpy/memmove are NOT safe — they may be ifunc-resolved + Frida's
 // readByteArray internally calls them.
 const DEFAULT_BOUNDARY_DIFF_PATTERNS = [];
@@ -257,6 +261,24 @@ function ensureFlushTimer() {
     }
 }
 
+function collectBoundaryDiffSymbols(m, diffPatterns) {
+    if (!diffPatterns || diffPatterns.length === 0) return 0;
+    let n = 0;
+    try {
+        for (const sym of m.enumerateSymbols()) {
+            if (!sym.address || sym.address.isNull()) continue;
+            if (!diffPatterns.some(p => sym.name.indexOf(p) !== -1)) continue;
+            STATE.diffSyms.push({
+                addr: sym.address, name: sym.name, mod: m.name,
+            });
+            n++;
+        }
+    } catch (e) {
+        log(`[!] enumSymbols ${m.name} for boundary-diff failed: ${e}`);
+    }
+    return n;
+}
+
 function applyExcludesOnce() {
     if (STATE.excluded) return;
     const userIncl = STATE.includeSoPatterns || [];
@@ -279,13 +301,11 @@ function applyExcludesOnce() {
                 // matches for safe Interceptor.attach later (must be a strict
                 // subset — Frida internals call pthread/malloc, attaching there
                 // crashes the process).
-                let perModStalker = 0, perModDiff = 0;
+                let perModStalker = 0;
                 try {
                     for (const sym of m.enumerateSymbols()) {
                         if (!sym.address || sym.address.isNull()) continue;
                         const isStalkerEx = stalkerPatterns.some(p => sym.name.indexOf(p) !== -1);
-                        const isDiff = diffPatterns.length > 0 &&
-                                       diffPatterns.some(p => sym.name.indexOf(p) !== -1);
                         if (isStalkerEx) {
                             const symSize = sym.size || 4096;
                             try {
@@ -293,20 +313,19 @@ function applyExcludesOnce() {
                                 perModStalker++;
                             } catch (_) {}
                         }
-                        if (isDiff) {
-                            STATE.diffSyms.push({
-                                addr: sym.address, name: sym.name, mod: m.name,
-                            });
-                            perModDiff++;
-                        }
                     }
                 } catch (e) { log(`[!] enumSymbols ${m.name} failed: ${e}`); }
+                const perModDiff = collectBoundaryDiffSymbols(m, diffPatterns);
                 stalkerOnly += perModStalker;
                 diffTargets += perModDiff;
                 log(`[+] deep: ${m.name} kept; stalker-excl=${perModStalker} diff-targets=${perModDiff}`);
                 continue;
             }
             // Not deep, or module on DEEP_KEEP_EXCL: full module exclude
+            const perModDiff = collectBoundaryDiffSymbols(m, diffPatterns);
+            diffTargets += perModDiff;
+            if (perModDiff > 0)
+                log(`[+] boundary-diff: ${m.name} diff-targets=${perModDiff} (module remains Stalker-excluded)`);
             if (matchesUser(m.name))
                 log(`[!] WARN: --include-so matched ${m.name}, but it is HARD_EXCL (atomic deadlock risk); skipping`);
             try { Stalker.exclude({base: m.base, size: m.size}); nMod++; hard++; } catch (_) {}
@@ -317,7 +336,7 @@ function applyExcludesOnce() {
     }
     log(`[+] Stalker.exclude: modules=${nMod} (hard=${hard} soft=${soft}, user-kept=${user_kept}); ` +
         `deep=${deep} stalker-only-syms=${stalkerOnly} diff-targets=${diffTargets}`);
-    if (deep && STATE.diffSyms.length > 0) installBoundaryDiffHooksOnce();
+    if (STATE.diffSyms.length > 0) installBoundaryDiffHooksOnce();
     STATE.excluded = true;
 }
 
