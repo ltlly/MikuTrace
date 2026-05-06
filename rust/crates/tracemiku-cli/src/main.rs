@@ -591,6 +591,9 @@ enum Cmd {
         /// Include full base64 decoded hex. Useful for small signature payload diffing.
         #[arg(long)]
         decode_base64_full: bool,
+        /// Include byte-level diff across decoded Base64 outputs.
+        #[arg(long)]
+        diff_base64: bool,
         /// Include this many recent GetStringUTFChars strings before each output.
         #[arg(long, default_value_t = 0)]
         prior_inputs: usize,
@@ -1488,6 +1491,7 @@ async fn main() -> anyhow::Result<()> {
             decode_url,
             decode_base64,
             decode_base64_full,
+            diff_base64,
             prior_inputs,
         }) => cmd_scan_jni_output_strings(
             path,
@@ -1497,6 +1501,7 @@ async fn main() -> anyhow::Result<()> {
             decode_url,
             decode_base64,
             decode_base64_full,
+            diff_base64,
             prior_inputs,
         ),
         Some(Cmd::OutputBacktrace {
@@ -1933,6 +1938,7 @@ fn cmd_scan_jni_output_strings(
     decode_url: bool,
     decode_base64: bool,
     decode_base64_full: bool,
+    diff_base64: bool,
     prior_inputs: usize,
 ) -> anyhow::Result<()> {
     let hook_files = find_jni_hook_files(&path)?;
@@ -1978,12 +1984,12 @@ fn cmd_scan_jni_output_strings(
                     row["url_decoded_len"] = serde_json::json!(decoded.len());
                 }
             }
-            if decode_base64 {
+            if decode_base64 || diff_base64 {
                 let base64_text = row
                     .get("url_decoded")
                     .and_then(|v| v.as_str())
                     .unwrap_or(value_text);
-                row["base64"] = base64_summary(base64_text, decode_base64_full);
+                row["base64"] = base64_summary(base64_text, decode_base64_full || diff_base64);
             }
             if prior_inputs > 0 {
                 let value_idx = pair[1].get("idx").and_then(|v| v.as_u64());
@@ -2002,7 +2008,8 @@ fn cmd_scan_jni_output_strings(
             break;
         }
     }
-    print_pretty(&serde_json::json!({
+    let base64_diff = diff_base64.then(|| decoded_base64_diff(&pairs));
+    let mut out = serde_json::json!({
         "status": "ready",
         "path": path.display().to_string(),
         "hook_files": hook_files.len(),
@@ -2010,7 +2017,11 @@ fn cmd_scan_jni_output_strings(
         "count": pairs.len(),
         "truncated": limit != 0 && pairs.len() >= limit,
         "pairs": pairs,
-    }))
+    });
+    if let Some(diff) = base64_diff {
+        out["base64_diff"] = diff;
+    }
+    print_pretty(&out)
 }
 
 fn find_jni_hook_files(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
@@ -2132,6 +2143,117 @@ fn base64_summary(raw: &str, include_full_hex: bool) -> serde_json::Value {
             "error": err.to_string(),
         }),
     }
+}
+
+fn decoded_base64_diff(pairs: &[serde_json::Value]) -> serde_json::Value {
+    let samples = pairs
+        .iter()
+        .enumerate()
+        .filter_map(|(sample, pair)| {
+            let decoded_hex = pair
+                .get("base64")
+                .and_then(|v| v.get("decoded_hex"))
+                .and_then(|v| v.as_str())?;
+            let bytes = parse_hex_bytes_cli(decoded_hex).ok()?;
+            Some((sample, pair, bytes))
+        })
+        .collect::<Vec<_>>();
+    if samples.is_empty() {
+        return serde_json::json!({
+            "status": "no-decoded-samples",
+            "sample_count": 0,
+        });
+    }
+    let min_len = samples
+        .iter()
+        .map(|(_, _, bytes)| bytes.len())
+        .min()
+        .unwrap_or(0);
+    let max_len = samples
+        .iter()
+        .map(|(_, _, bytes)| bytes.len())
+        .max()
+        .unwrap_or(0);
+    let mut per_byte = Vec::new();
+    let mut stable_offsets = Vec::new();
+    for off in 0..min_len {
+        let mut values = samples
+            .iter()
+            .map(|(_, _, bytes)| bytes[off])
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        if values.len() == 1 {
+            stable_offsets.push(off);
+            per_byte.push(serde_json::json!({
+                "off": off,
+                "kind": "STABLE",
+                "value": format!("{:#x}", values[0]),
+            }));
+        } else {
+            per_byte.push(serde_json::json!({
+                "off": off,
+                "kind": "VARIABLE",
+                "values": values.iter().map(|v| format!("{v:#x}")).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    let stable_ranges = stable_ranges(&stable_offsets)
+        .into_iter()
+        .map(|(start, end)| {
+            let bytes = &samples[0].2[start..end];
+            serde_json::json!({
+                "start": start,
+                "end": end,
+                "length": end - start,
+                "hex": bytes_to_hex(bytes),
+            })
+        })
+        .collect::<Vec<_>>();
+    let sample_rows = samples
+        .iter()
+        .map(|(sample, pair, bytes)| {
+            serde_json::json!({
+                "sample": sample,
+                "call_dir": pair.get("call_dir").cloned().unwrap_or(serde_json::Value::Null),
+                "value_idx": pair.get("value_idx").cloned().unwrap_or(serde_json::Value::Null),
+                "decoded_len": bytes.len(),
+                "decoded_hex": bytes_to_hex(bytes),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": "ready",
+        "sample_count": samples.len(),
+        "min_len": min_len,
+        "max_len": max_len,
+        "compared_len": min_len,
+        "length_variable": min_len != max_len,
+        "range_semantics": "[start,end)",
+        "stable_count": stable_offsets.len(),
+        "variable_count": min_len.saturating_sub(stable_offsets.len()),
+        "stable_ranges": stable_ranges,
+        "per_byte": per_byte,
+        "samples": sample_rows,
+    })
+}
+
+fn stable_ranges(offsets: &[usize]) -> Vec<(usize, usize)> {
+    if offsets.is_empty() {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let mut start = offsets[0];
+    let mut prev = offsets[0];
+    for &off in offsets.iter().skip(1) {
+        if off != prev + 1 {
+            ranges.push((start, prev + 1));
+            start = off;
+        }
+        prev = off;
+    }
+    ranges.push((start, prev + 1));
+    ranges
 }
 
 fn base64_decoded_bytes(raw: &str) -> Result<Vec<u8>, base64::DecodeError> {

@@ -13,6 +13,7 @@ rust/target/debug/tracemiku-cli scan-jni-output-strings traces \
   --decode-url \
   --decode-base64 \
   --decode-base64-full \
+  --diff-base64 \
   --prior-inputs 80 \
   --limit 20
 ```
@@ -22,6 +23,8 @@ Observed across six local samples:
 - raw x-sign length after URL decode: 102 bytes.
 - base64-decoded payload length: 76 bytes.
 - common decoded prefix: `6b360108cd34ef1000`.
+- `base64_diff.stable_ranges` reports this as a half-open byte range
+  `[0,9)`.
 - corresponding raw base64 prefix: `azYBCM007x`.
 - Searching the trace for the decoded payload prefix did not find a contiguous
   raw payload buffer in `call_001`; current evidence points to incremental

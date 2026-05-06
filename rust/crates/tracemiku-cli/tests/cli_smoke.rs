@@ -736,6 +736,41 @@ fn scan_jni_output_strings_reads_hooks_without_trace_load() {
 }
 
 #[test]
+fn scan_jni_output_strings_diffs_decoded_base64_outputs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _cd1 = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let _cd2 = make_diff_trace(tmp.path(), "run2", &[0xaa, 0xbb, 0xee, 0xdd]);
+    let v = run_json(&[
+        "scan-jni-output-strings".into(),
+        tmp.path().display().to_string(),
+        "--key".into(),
+        "x-sign".into(),
+        "--diff-base64".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["base64_diff"]["status"], "ready");
+    assert_eq!(v["base64_diff"]["sample_count"], 2);
+    assert_eq!(v["base64_diff"]["compared_len"], 4);
+    assert_eq!(v["base64_diff"]["range_semantics"], "[start,end)");
+    assert_eq!(v["base64_diff"]["stable_count"], 3);
+    assert_eq!(v["base64_diff"]["variable_count"], 1);
+    assert_eq!(
+        v["base64_diff"]["stable_ranges"],
+        serde_json::json!([
+            {"start": 0, "end": 2, "length": 2, "hex": "aabb"},
+            {"start": 3, "end": 4, "length": 1, "hex": "dd"},
+        ])
+    );
+    assert_eq!(v["base64_diff"]["per_byte"][2]["kind"], "VARIABLE");
+    assert_eq!(
+        v["base64_diff"]["per_byte"][2]["values"],
+        serde_json::json!(["0xcc", "0xee"])
+    );
+    assert_eq!(v["pairs"][0]["base64"]["decoded_hex"], "aabbccdd");
+}
+
+#[test]
 fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
