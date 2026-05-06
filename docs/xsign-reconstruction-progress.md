@@ -151,6 +151,29 @@ Deeper selected chains also expose MD5-like 32-bit state operations, including
 `add_known_constant` with `md5_iv_a = 0x67452301`, `add32_mix`, 32-bit
 `shift_left`, `and_identity`, and `or_identity`.
 
+Crypto cross-check:
+
+```bash
+rust/target/debug/tracemiku-cli crypto-scan \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms
+```
+
+The same VM bytecode window contains MD5/SHA1 IV words:
+
+```text
+MD5_A/SHA1_H0 0x67452301 at 0x74fbf3ae98 first_idx=14590463
+MD5_B/SHA1_H1 0xefcdab89 at 0x74fbf3aeb8 first_idx=14590471
+SHA1_H2/MD5_C 0x98badcfe at 0x74fbf3aef8 first_idx=14590500
+MD5_D/SHA1_H3 0x10325476 at 0x74fbf3af18 first_idx=14590508
+```
+
+The records around `14590463..14590522` show the VM loading these constants
+from bytecode and packing them into VM slots, e.g. `0xefcdab8967452301` and
+`0x1032547698badcfe`. This supports an MD5-like state component in the output
+tail generation. It is not yet a full proof that the final x-sign contains a
+standard MD5 digest, because the 16-byte `hash-finalize-detect` candidates still
+need to be connected byte-for-byte to the semantic tail.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under

@@ -125,6 +125,61 @@ TRACE_TAIL_WRITER_MAP = {
     ],
 }
 
+TRACE_CRYPTO_EVIDENCE = {
+    "status": "candidate_component",
+    "note": "MD5/SHA1 IV constants are loaded in the same VM bytecode window, but final digest linkage is not proven yet.",
+    "iv_hits": [
+        {
+            "name": "MD5_A/SHA1_H0",
+            "value": "0x67452301",
+            "addr": "0x74fbf3ae98",
+            "first_idx": 14590463,
+        },
+        {
+            "name": "MD5_B/SHA1_H1",
+            "value": "0xefcdab89",
+            "addr": "0x74fbf3aeb8",
+            "first_idx": 14590471,
+        },
+        {
+            "name": "MD5_C/SHA1_H2",
+            "value": "0x98badcfe",
+            "addr": "0x74fbf3aef8",
+            "first_idx": 14590500,
+        },
+        {
+            "name": "MD5_D/SHA1_H3",
+            "value": "0x10325476",
+            "addr": "0x74fbf3af18",
+            "first_idx": 14590508,
+        },
+    ],
+    "packed_vm_values": [
+        "0xefcdab8967452301",
+        "0x1032547698badcfe",
+    ],
+    "hash_finalize_md5_candidates": [
+        {
+            "addr": "0x74b68bc770",
+            "enter_idx": 13749400,
+            "exit_idx": 13749442,
+            "size": 16,
+        },
+        {
+            "addr": "0x74b68bc780",
+            "enter_idx": 13749456,
+            "exit_idx": 13749466,
+            "size": 16,
+        },
+        {
+            "addr": "0x74b68bca08",
+            "enter_idx": 13750906,
+            "exit_idx": 13750912,
+            "size": 16,
+        },
+    ],
+}
+
 TRACE_TAIL_REPEAT_EVIDENCE = [
     {
         "semantic_offset": 65,
@@ -280,6 +335,7 @@ def main() -> None:
                 "--vm-chain-runs 34 --vm-chain-follow-frontier"
             ),
         },
+        "crypto_evidence": TRACE_CRYPTO_EVIDENCE,
         "multi_sample_tail_structure": {
             "samples": len(sample_tails),
             "tail_lengths": sorted({len(tail) for tail in sample_tails.values()}),
