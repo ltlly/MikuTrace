@@ -733,6 +733,9 @@ returns `op_template_count=34` with a highest-frequency template:
 count     = 49
 signature = bc[0x3:1,0x5:1,0x8:4,0x10:2] effects[slot_write:formula:ubfx]
 operands  = 0x3, 0x5, 0x8, 0x10
+shape     = slot_write:formula:ubfx
+inputs    = slot19 x44, slot20 x5
+outputs   = slot19 x27, slot20 x22
 ```
 
 This is the next lift target for the `[12,35)` VM ladder: convert these repeated

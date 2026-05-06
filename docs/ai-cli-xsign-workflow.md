@@ -872,8 +872,9 @@ This drops per-op details and promotes `effects[]`, `byte_load_effects[]`,
 `state_updates[]` to the top level. It also keeps compact `op_effects[]`, one
 row per VM instruction with that op's bytecode operands, dispatches, and
 effects already joined. `op_templates[]` groups repeated op shapes by bytecode
-operand layout and effect kind, keeping sampled operands and effects for quick
-lifting. `op_effects[]` and `op_templates[]` are the compact surfaces for VM-IP
+operand layout and effect kind, keeping sampled operands, aggregate
+`effect_shapes[]`, input slots, output slots/addresses, and pseudocode samples
+for quick lifting. `op_effects[]` and `op_templates[]` are the compact surfaces for VM-IP
 stop points from `byte-writer-map --summary.vm_source_ranges[].stops[]`. Always check
 `source_maybe_truncated`: if it is `true`, the selected `--chunk-size` is still
 too large for the records cap and the window must be split further before

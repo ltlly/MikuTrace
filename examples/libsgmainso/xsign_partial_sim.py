@@ -980,11 +980,18 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "count": 49,
             "signature": "bc[0x3:1,0x5:1,0x8:4,0x10:2] effects[slot_write:formula:ubfx]",
             "operand_offsets": ["0x3", "0x5", "0x8", "0x10"],
+            "effect_shape": {
+                "kind": "slot_write",
+                "formula_op": "ubfx",
+                "input_slots": [{"value": 19, "count": 44}, {"value": 20, "count": 5}],
+                "output_slots": [{"value": 19, "count": 27}, {"value": 20, "count": 22}],
+            },
         },
         "interpretation": (
             "The formula-only VM ladder window has repeated opcode shapes. "
             "The highest-frequency template is a bytecode-operand-driven UBFX "
-            "slot write and is now directly visible without scanning raw ops."
+            "slot write and is now directly visible without scanning raw ops. "
+            "Template effect_shapes expose input/output slot roles for lifting."
         ),
     },
     "interpretation": (

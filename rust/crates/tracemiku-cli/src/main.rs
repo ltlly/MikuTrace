@@ -6604,6 +6604,7 @@ struct VmOpTemplateGroup {
     count: usize,
     bytecode_operands: BTreeMap<String, VmOpTemplateOperand>,
     effect_kind_counts: BTreeMap<String, usize>,
+    effect_shapes: BTreeMap<String, VmOpTemplateEffectShape>,
     sample_ops: Vec<serde_json::Value>,
 }
 
@@ -6618,6 +6619,23 @@ struct VmOpTemplateOperand {
 struct VmOpTemplateOperandValue {
     value: serde_json::Value,
     bytes_le_hex: serde_json::Value,
+    count: usize,
+}
+
+#[derive(Debug, Default)]
+struct VmOpTemplateEffectShape {
+    signature: String,
+    kind: String,
+    formula_op: String,
+    count: usize,
+    output_values: BTreeMap<String, CountedJsonValue>,
+    input_slots: BTreeMap<String, CountedJsonValue>,
+    pseudocode_samples: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Default)]
+struct CountedJsonValue {
+    value: serde_json::Value,
     count: usize,
 }
 
@@ -6693,6 +6711,7 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
                 .effect_kind_counts
                 .entry(kind.to_string())
                 .or_insert(0) += 1;
+            add_vm_op_template_effect_shape(group, effect);
         }
     }
     groups
@@ -6729,9 +6748,90 @@ fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
                     .into_iter()
                     .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
                     .collect::<Vec<_>>(),
+                "effect_shapes": group.effect_shapes
+                    .into_values()
+                    .map(VmOpTemplateEffectShape::into_json)
+                    .collect::<Vec<_>>(),
                 "sample_ops": group.sample_ops,
             })
         })
+        .collect()
+}
+
+impl VmOpTemplateEffectShape {
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "signature": self.signature,
+            "kind": self.kind,
+            "formula_op": self.formula_op,
+            "count": self.count,
+            "output_values": counted_values_json(self.output_values),
+            "input_slots": counted_values_json(self.input_slots),
+            "pseudocode_samples": self.pseudocode_samples,
+        })
+    }
+}
+
+fn add_vm_op_template_effect_shape(group: &mut VmOpTemplateGroup, effect: &serde_json::Value) {
+    let signature = vm_op_effect_signature(effect);
+    let kind = effect
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let formula_op = effect
+        .get("formula")
+        .and_then(|v| v.get("op"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none")
+        .to_string();
+    let shape = group
+        .effect_shapes
+        .entry(signature.clone())
+        .or_insert_with(|| VmOpTemplateEffectShape {
+            signature,
+            kind,
+            formula_op,
+            ..VmOpTemplateEffectShape::default()
+        });
+    shape.count += 1;
+    if let Some(slot) = effect.get("slot") {
+        add_counted_json_value(&mut shape.output_values, slot.clone());
+    } else if let Some(addr) = effect.get("addr") {
+        add_counted_json_value(&mut shape.output_values, addr.clone());
+    }
+    for input in effect
+        .get("inputs")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        if let Some(slot) = input.get("slot") {
+            add_counted_json_value(&mut shape.input_slots, slot.clone());
+        }
+    }
+    if shape.pseudocode_samples.len() < 3 {
+        shape.pseudocode_samples.push(
+            effect
+                .get("pseudocode")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+}
+
+fn add_counted_json_value(map: &mut BTreeMap<String, CountedJsonValue>, value: serde_json::Value) {
+    let key = json_display(&value);
+    let entry = map
+        .entry(key)
+        .or_insert_with(|| CountedJsonValue { value, count: 0 });
+    entry.count += 1;
+}
+
+fn counted_values_json(values: BTreeMap<String, CountedJsonValue>) -> Vec<serde_json::Value> {
+    values
+        .into_values()
+        .map(|item| serde_json::json!({ "value": item.value, "count": item.count }))
         .collect()
 }
 
@@ -14646,6 +14746,14 @@ mod tests {
         assert_eq!(
             control_template["bytecode_operands"][0]["values"][0]["value"],
             serde_json::json!("0x9")
+        );
+        assert_eq!(
+            control_template["effect_shapes"][0]["formula_op"],
+            serde_json::json!("add")
+        );
+        assert_eq!(
+            control_template["effect_shapes"][0]["pseudocode_samples"][0],
+            serde_json::json!("0x200 = 0x100 + 0x9")
         );
     }
 
