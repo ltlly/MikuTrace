@@ -5109,6 +5109,7 @@ fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
             .into_iter()
             .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
             .collect::<Vec<_>>(),
+        "state_updates": vm_ops_state_updates(&ops),
         "ops": ops,
     })
 }
@@ -5155,6 +5156,61 @@ fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
         "alu_formulas": alu_formulas,
         "dispatches": op.get("dispatches").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
+}
+
+fn vm_ops_state_updates(ops: &[serde_json::Value]) -> serde_json::Value {
+    let mut updates = Vec::new();
+    for (idx, op) in ops.iter().enumerate() {
+        let formulas = op
+            .get("alu_formulas")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter(|formula| {
+                formula.pointer("/semantic/kind").and_then(|v| v.as_str()) == Some("add32_mix")
+            });
+        for formula in formulas {
+            let Some(result) = formula.pointer("/semantic/result").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            for candidate in ops.iter().skip(idx).take(3) {
+                let stores = candidate
+                    .get("memory_stores")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten();
+                for store in stores {
+                    let Some(src) = memory_store_src_with_value(store, result) else {
+                        continue;
+                    };
+                    updates.push(serde_json::json!({
+                        "formula_op_start": op.get("idx_start").cloned().unwrap_or(serde_json::Value::Null),
+                        "formula_idx": formula.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                        "formula_asm": formula.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                        "semantic": formula.get("semantic").cloned().unwrap_or(serde_json::Value::Null),
+                        "store_op_start": candidate.get("idx_start").cloned().unwrap_or(serde_json::Value::Null),
+                        "store_idx": store.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                        "store_asm": store.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                        "store_addr": store.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+                        "store_src": src,
+                    }));
+                }
+            }
+        }
+    }
+    serde_json::Value::Array(updates)
+}
+
+fn memory_store_src_with_value(
+    store: &serde_json::Value,
+    value: &str,
+) -> Option<serde_json::Value> {
+    store
+        .get("store_src")?
+        .as_array()?
+        .iter()
+        .find(|src| src.get("value").and_then(|v| v.as_str()) == Some(value))
+        .cloned()
 }
 
 async fn load_vm_rows(
@@ -9338,7 +9394,7 @@ mod tests {
         odd_u64_inverse, output_semantic_byte_equation, output_semantic_xor_word_templates,
         recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_slot_from_asm,
+        vm_ops_state_updates, vm_slot_from_asm,
     };
 
     #[test]
@@ -9936,6 +9992,50 @@ mod tests {
             serde_json::json!([1, 2])
         );
         assert_eq!(first["result_bytes_hex"], serde_json::json!("05d528b9"));
+    }
+
+    #[test]
+    fn pairs_vm_state_update_formula_with_following_store() {
+        let ops = vec![
+            serde_json::json!({
+                "idx_start": 14678147,
+                "alu_formulas": [
+                    {
+                        "idx": 14678154,
+                        "asm": "add x13, x8, x12",
+                        "semantic": {
+                            "kind": "add32_mix",
+                            "result": "0x267b44ad8",
+                            "result_low32": "0x67b44ad8"
+                        }
+                    }
+                ],
+                "memory_stores": []
+            }),
+            serde_json::json!({
+                "idx_start": 14678158,
+                "alu_formulas": [],
+                "memory_stores": [
+                    {
+                        "idx": 14678167,
+                        "asm": "str w1, [x19, x6]",
+                        "mem_addr": "0x74b68bb6a8",
+                        "store_src": [
+                            {"reg": "w1", "value": "0x267b44ad8"}
+                        ]
+                    }
+                ]
+            }),
+        ];
+        let updates = vm_ops_state_updates(&ops);
+        let first = updates.as_array().unwrap().first().unwrap();
+        assert_eq!(first["formula_idx"], serde_json::json!(14678154));
+        assert_eq!(first["store_idx"], serde_json::json!(14678167));
+        assert_eq!(first["store_addr"], serde_json::json!("0x74b68bb6a8"));
+        assert_eq!(
+            first["semantic"]["result_low32"],
+            serde_json::json!("0x67b44ad8")
+        );
     }
 
     #[test]

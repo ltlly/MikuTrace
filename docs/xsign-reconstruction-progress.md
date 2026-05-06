@@ -238,7 +238,8 @@ bswap32(0x67b44ad8) = 0xd84ab467
 
 `vm-ops --summary` now labels this as `add32_mix` even when the native `add x`
 full result is wider than 32 bits and the following store truncates through
-`str w*`.
+`str w*`. The same summary now pairs this formula with the following state
+buffer store under `state_updates[]`.
 
 The mask bytes themselves are also cross-sample `mod255_low_byte` folds:
 
