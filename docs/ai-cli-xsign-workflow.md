@@ -328,6 +328,14 @@ This is useful for external-call parameters, such as reading a C string or
 output structure around the call boundary rather than after the buffer has been
 reused later in the trace.
 
+`mem-dump --summary` also emits `words_le64[]` for aligned, fully observed
+8-byte little-endian chunks. Use this when a lineage stops at a
+`memory_not_found_boundary` that looks like a static/preinitialized VM table:
+dump the suspected base once, then let the AI consume `offset`, `addr`,
+`value`, and `bytes_hex` instead of reassembling individual bytes manually.
+Chunks containing unknown bytes are omitted, so these entries should be treated
+as observed constants rather than guessed table words.
+
 For a pointer argument that should be a C string, add `--cstr`; it emits
 `c_string`, `nul_offset`, and whether the terminator was observed:
 

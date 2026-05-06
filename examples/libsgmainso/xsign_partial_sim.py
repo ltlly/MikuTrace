@@ -2727,6 +2727,11 @@ def vm_replay_seed_provenance_summary() -> dict:
                     {"table_offset": "0x6d0", "addr": "0x74fbf29860", "value": "0x66063bca"},
                     {"table_offset": "0x600", "addr": "0x74fbf29790", "value": "0x9b64c2b0"},
                 ],
+                "table_dump_tool": (
+                    "tracemiku-cli mem-dump <call_dir> "
+                    "--addr 0x74fbf29190 --count 2048 --summary"
+                ),
+                "table_dump_summary_field": "words_le64",
                 "portable_status": "static_table_boundary",
             },
             "slot28": {
@@ -2766,6 +2771,7 @@ def completion_audit() -> dict:
                     "vm_replay_seed_provenance_summary records proven and open seeds",
                     "resolve-trace-addr resolves call targets through parent run module metadata",
                     "byte-lineage default stack registers preserve sp/fp/lr stack-slot chains",
+                    "mem-dump --summary words_le64 exposes aligned static-table seeds",
                 ],
                 "status": "substantially_available",
             },

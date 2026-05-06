@@ -11946,6 +11946,7 @@ fn mem_dump_summary(response: &serde_json::Value, cstr: bool) -> serde_json::Val
                 .unwrap_or_else(|| ".".to_string())
         })
         .collect::<String>();
+    let words_le64 = mem_dump_known_le_words(&bytes, &byte_values, 8);
     let nul_offset = byte_values.iter().position(|byte| matches!(byte, Some(0)));
     let c_string = if cstr {
         let raw = byte_values
@@ -11965,6 +11966,7 @@ fn mem_dump_summary(response: &serde_json::Value, cstr: bool) -> serde_json::Val
         "known_byte_count": known_count,
         "bytes_hex": bytes_hex,
         "ascii": ascii,
+        "words_le64": words_le64,
         "c_string": c_string,
         "c_string_terminated": if cstr {
             serde_json::Value::Bool(nul_offset.is_some())
@@ -11975,6 +11977,47 @@ fn mem_dump_summary(response: &serde_json::Value, cstr: bool) -> serde_json::Val
             .map(serde_json::Value::from)
             .unwrap_or(serde_json::Value::Null),
     })
+}
+
+fn mem_dump_known_le_words(
+    entries: &[serde_json::Value],
+    byte_values: &[Option<u8>],
+    width: usize,
+) -> Vec<serde_json::Value> {
+    if width == 0 {
+        return Vec::new();
+    }
+    byte_values
+        .chunks(width)
+        .enumerate()
+        .filter_map(|(chunk_idx, chunk)| {
+            if chunk.len() != width || chunk.iter().any(Option::is_none) {
+                return None;
+            }
+            let offset = chunk_idx * width;
+            let addr = entries
+                .get(offset)
+                .and_then(|entry| entry.get("addr"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let mut value = 0u64;
+            let mut bytes = Vec::with_capacity(width);
+            for (idx, byte) in chunk.iter().enumerate() {
+                let byte = byte.unwrap_or(0);
+                bytes.push(byte);
+                if idx < 8 {
+                    value |= (byte as u64) << (idx * 8);
+                }
+            }
+            Some(serde_json::json!({
+                "offset": offset,
+                "addr": addr,
+                "width": width,
+                "value": format!("{value:#x}"),
+                "bytes_hex": bytes_to_hex(&bytes),
+            }))
+        })
+        .collect()
 }
 
 async fn hash_candidate_byte_map(
@@ -16255,6 +16298,47 @@ mod tests {
         assert_eq!(summary["c_string"], serde_json::json!("/"));
         assert_eq!(summary["c_string_terminated"], serde_json::json!(true));
         assert_eq!(summary["nul_offset"], serde_json::json!(1));
+    }
+
+    #[test]
+    fn summarizes_mem_dump_known_little_endian_words() {
+        let response = serde_json::json!({
+            "status": "ready",
+            "addr": "0x2000",
+            "count": 16,
+            "cursor": 20,
+            "bytes": [
+                {"addr": "0x2000", "byte": 1},
+                {"addr": "0x2001", "byte": 2},
+                {"addr": "0x2002", "byte": 3},
+                {"addr": "0x2003", "byte": 4},
+                {"addr": "0x2004", "byte": 5},
+                {"addr": "0x2005", "byte": 6},
+                {"addr": "0x2006", "byte": 7},
+                {"addr": "0x2007", "byte": 8},
+                {"addr": "0x2008", "byte": null},
+                {"addr": "0x2009", "byte": 10},
+                {"addr": "0x200a", "byte": 11},
+                {"addr": "0x200b", "byte": 12},
+                {"addr": "0x200c", "byte": 13},
+                {"addr": "0x200d", "byte": 14},
+                {"addr": "0x200e", "byte": 15},
+                {"addr": "0x200f", "byte": 16}
+            ]
+        });
+        let summary = mem_dump_summary(&response, false);
+        assert_eq!(
+            summary["words_le64"],
+            serde_json::json!([
+                {
+                    "offset": 0,
+                    "addr": "0x2000",
+                    "width": 8,
+                    "value": "0x807060504030201",
+                    "bytes_hex": "0102030405060708"
+                }
+            ])
+        );
     }
 
     #[test]

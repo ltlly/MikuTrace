@@ -1080,6 +1080,25 @@ slot26 = 0x1f7b3460
 
 So the next portable work is table extraction/labelling and cross-sample
 validation for these static-table words, not just increasing lineage depth.
+`mem-dump --summary` now exposes aligned, fully known little-endian words in
+`words_le64[]`, which makes this table boundary directly machine-readable:
+
+```bash
+rust/target/debug/tracemiku-cli mem-dump \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --addr 0x74fbf29190 \
+  --count 2048 \
+  --summary
+```
+
+Relevant words from the current trace:
+
+```text
+base+0x508 = 0xa1d1937e  bytes 7e93d1a100000000
+base+0x600 = 0x9b64c2b0  bytes b0c2649b00000000
+base+0x698 = 0x1fda836e  bytes 6e83da1f00000000
+base+0x6d0 = 0x66063bca  bytes ca3b066600000000
+```
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
