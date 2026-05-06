@@ -855,7 +855,8 @@ So this segment is trace-produced by a VM XOR/shift/mask ladder over static
 table seeds, not a confirmed external input. The next open question is lifting
 that ladder into portable Python opcode replay or a compact formula.
 
-`vm-ops --compact` now makes this ladder directly AI-readable:
+`vm-ops --compact` makes this ladder directly AI-readable, and
+`vm-ops --replay-plan` preserves dynamic order for direct Python translation:
 
 ```text
 tracemiku-cli vm-ops <call_dir> --start 14015880 --end 14017110 \
@@ -866,6 +867,14 @@ slot[bc_0x3_u8] = byte_load(addr_expr)
 slot[bc_0x2_u8] = and(slot[bc_0x4_u8], bc_0x8_u64, bc_0x10_u16)
 slot[bc_0x3_u8] = lsr(slot[bc_0x3_u8], slot[bc_0x7_u8], bc_0x8_u64, bc_0x10_u16)
 slot[bc_0x5_u8] = eor(slot[bc_0x4_u8], slot[bc_0x5_u8], slot[bc_0x6_u8], bc_0x10_u16)
+
+tracemiku-cli vm-ops <call_dir> --start 14015880 --end 14017110 \
+  --replay-plan --max-ops 400
+
+replay_step_count=113
+slot[29] = and(slot[26], 0xff)
+slot[28] = eor(slot[29], slot[28])
+slot[28] = lsl(slot[28], 0x3)
 ```
 
 This is a generic CLI improvement: it is not tied to `libsgmainso`, but it turns
@@ -889,13 +898,20 @@ The remaining formula-only scratch writer range also has a compact replay view:
 
 ```text
 tracemiku-cli vm-ops <call_dir> --start 14164280 --end 14165320 \
-  --compact --max-ops 400
+  --replay-plan --max-ops 400
 
 source_returned=1040, effect_count=110, compact_template_count=24
+replay_step_count=80
 mem[addr] = slot[bc_0x5_u8]
 slot[bc_0x2_u8] = add(slot[bc_0x6_u8], bc_0x8_u64, bc_0x10_u16)
 slot[bc_0x3_u8] = orr(slot[bc_0x3_u8], slot[bc_0x4_u8], slot[bc_0x5_u8], bc_0x10_u16)
 combined bitfield ladder over slot[bc_0x2_u8]
+first replay steps:
+  slot[25] = add(slot[25], 0x10)
+  slot[3] = 0x69f2e9fb
+  slot[2] = and(slot[2], 0x9)
+  slot[2] = lsr(slot[2], 0x8)
+  slot[4] = lsl(slot[3], 0x18)
 ```
 
 This shifts `[25,49)` and `[57,59)` from "need trace evidence" to "need Python
@@ -949,8 +965,8 @@ opaque/non-portable middle-lhs segments.
 Those opaque inputs now include next CLI probes in the JSON output:
 
 ```text
-[21,25) vm_xor_ladder_static_seed -> vm-ops --compact replay
-[25,49), [57,59) traced_formula_only -> vm-ops --compact replay implementation
+[21,25) vm_xor_ladder_static_seed -> vm-ops --replay-plan implementation
+[25,49), [57,59) traced_formula_only -> vm-ops --replay-plan implementation
 [49,57) external_text_boundary -> semantic role label / replay parameter
 ```
 

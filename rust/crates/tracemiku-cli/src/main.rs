@@ -1005,6 +1005,9 @@ enum Cmd {
         /// Emit a minimal replay-oriented template summary for AI agents.
         #[arg(long)]
         compact: bool,
+        /// Emit ordered compact replay steps plus template skeletons.
+        #[arg(long)]
+        replay_plan: bool,
     },
     /// Follow a single byte backward through memory writes and VM source registers.
     ByteLineage {
@@ -2090,6 +2093,7 @@ async fn main() -> anyhow::Result<()> {
             summary,
             effects_only,
             compact,
+            replay_plan,
         }) => {
             let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_vm_ops(
@@ -2104,6 +2108,7 @@ async fn main() -> anyhow::Result<()> {
                 summary,
                 effects_only,
                 compact,
+                replay_plan,
                 profile,
             )
             .await
@@ -6431,6 +6436,7 @@ async fn cmd_vm_ops(
     summary: bool,
     effects_only: bool,
     compact: bool,
+    replay_plan: bool,
     profile: VmProfile,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
@@ -6458,7 +6464,9 @@ async fn cmd_vm_ops(
         "truncated": truncated,
         "ops": ops,
     });
-    if compact {
+    if replay_plan {
+        print_pretty(&vm_ops_replay_plan_summary(&output))
+    } else if compact {
         print_pretty(&vm_ops_compact_replay_summary(&output))
     } else if effects_only {
         print_pretty(&vm_ops_effects_only_summary(&output))
@@ -6686,6 +6694,111 @@ fn vm_op_compact_template(template: &serde_json::Value) -> serde_json::Value {
         "template_operands": template.get("template_operands").cloned().unwrap_or(serde_json::Value::Null),
         "skeletons": skeletons,
         "effect_shapes": effect_shapes,
+    })
+}
+
+fn vm_ops_replay_plan_summary(value: &serde_json::Value) -> serde_json::Value {
+    let summary = vm_ops_effects_only_summary(value);
+    let compact = vm_ops_compact_replay_summary(value);
+    let replay_steps = summary
+        .get("op_effects")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(vm_op_replay_step)
+        .filter(|step| {
+            step.get("effects")
+                .and_then(|v| v.as_array())
+                .map(|effects| !effects.is_empty())
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": summary.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": summary.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "end": summary.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_profile": summary.get("vm_profile").cloned().unwrap_or(serde_json::Value::Null),
+        "source_requested": summary.get("source_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "source_returned": summary.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "source_maybe_truncated": summary.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_rows": summary.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "ops_returned": summary.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated": summary.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "effect_count": summary.get("effect_count").cloned().unwrap_or(serde_json::Value::Null),
+        "op_template_count": summary.get("op_template_count").cloned().unwrap_or(serde_json::Value::Null),
+        "compact_templates": compact.get("compact_templates").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "replay_step_count": replay_steps.len(),
+        "replay_steps": replay_steps,
+    })
+}
+
+fn vm_op_replay_step(op: &serde_json::Value) -> serde_json::Value {
+    let bytecode_reads = op
+        .get("bytecode_reads")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|read| {
+            serde_json::json!({
+                "name": read.get("name").cloned().unwrap_or(serde_json::Value::Null),
+                "offset": read.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+                "width": read.get("width").cloned().unwrap_or(serde_json::Value::Null),
+                "value": read.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "bytes_le_hex": read.get("bytes_le_hex").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let effects = op
+        .get("effects")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(vm_op_replay_effect)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "idx_start": op.get("idx_start").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_end": op.get("idx_end").cloned().unwrap_or(serde_json::Value::Null),
+        "bytecode_reads": bytecode_reads,
+        "effects": effects,
+    })
+}
+
+fn vm_op_replay_effect(effect: &serde_json::Value) -> serde_json::Value {
+    let formula = effect.get("formula").unwrap_or(&serde_json::Value::Null);
+    let source_byte_load = effect
+        .get("source_byte_load")
+        .unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "idx": effect.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "kind": effect.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+        "slot": effect.get("slot").cloned().unwrap_or(serde_json::Value::Null),
+        "addr": effect.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+        "value": effect.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "pseudocode": effect.get("pseudocode").cloned().unwrap_or(serde_json::Value::Null),
+        "python_with_values": effect.get("python_with_values").cloned().unwrap_or(serde_json::Value::Null),
+        "formula": if formula.is_null() {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!({
+                "op": formula.get("op").cloned().unwrap_or(serde_json::Value::Null),
+                "expression": formula.get("expression").cloned().unwrap_or(serde_json::Value::Null),
+                "semantic_kind": formula
+                    .get("semantic")
+                    .and_then(|v| v.get("kind"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            })
+        },
+        "source_byte_load": if source_byte_load.is_null() {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!({
+                "mem_addr": source_byte_load.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+                "value": source_byte_load.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "byte_hex": source_byte_load.get("byte_hex").cloned().unwrap_or(serde_json::Value::Null),
+                "ascii": source_byte_load.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        },
     })
 }
 
@@ -13566,8 +13679,8 @@ mod tests {
         recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
         store_touch_for_addr, vm_backchain_stop_summary, vm_op_effect_summaries,
-        vm_ops_compact_replay_summary, vm_ops_effects_only_summary, vm_ops_state_updates,
-        vm_slot_from_asm, ElfSymbol, VmProfile,
+        vm_ops_compact_replay_summary, vm_ops_effects_only_summary, vm_ops_replay_plan_summary,
+        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -15476,6 +15589,23 @@ mod tests {
             .iter()
             .flat_map(|shape| shape["samples"].as_array().into_iter().flatten())
             .any(|sample| sample == &serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")));
+
+        let replay_plan = vm_ops_replay_plan_summary(&output);
+        assert!(replay_plan.get("effects").is_none());
+        assert!(replay_plan.get("op_effects").is_none());
+        assert_eq!(replay_plan["replay_step_count"], serde_json::json!(2));
+        assert_eq!(
+            replay_plan["replay_steps"][0]["effects"][0]["python_with_values"],
+            serde_json::json!("slot[18] = byte_load(0x753ddd7fdc)")
+        );
+        assert_eq!(
+            replay_plan["replay_steps"][0]["effects"][0]["source_byte_load"]["mem_addr"],
+            serde_json::json!("0x753ddd7fdc")
+        );
+        assert_eq!(
+            replay_plan["replay_steps"][1]["effects"][0]["formula"]["op"],
+            serde_json::json!("add")
+        );
     }
 
     #[test]

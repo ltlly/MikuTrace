@@ -1165,6 +1165,30 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
             "that applies compact_templates in dynamic op order."
         ),
     },
+    "scratch_writer_replay_plan_probe": {
+        "command": (
+            "tracemiku-cli vm-ops <call_dir> --start 14164280 "
+            "--end 14165320 --replay-plan --max-ops 400"
+        ),
+        "source_returned": 1040,
+        "effect_count": 110,
+        "replay_step_count": 80,
+        "compact_template_count": 24,
+        "first_steps": [
+            "slot[25] = add(slot[25], 0x10)",
+            "slot[3] = 0x69f2e9fb",
+            "slot[2] = and(slot[2], 0x9)",
+            "slot[2] = lsr(slot[2], 0x8)",
+            "slot[4] = lsl(slot[3], 0x18)",
+            "slot[5] = 0x95f2ec79",
+            "slot[2] = orr(slot[4], slot[2])",
+        ],
+        "interpretation": (
+            "This is the preferred input for turning the scratch writer range "
+            "into a trace-faithful Python replay: templates describe opcode "
+            "shapes, replay_steps preserve dynamic order."
+        ),
+    },
     "middle_lhs_trace_produced_table_word_probe": {
         "command": (
             "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe08 "
@@ -1390,6 +1414,28 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 "agent to turn this window into a replay function: it exposes "
                 "the repeated byte-load, mask, shift, and XOR opcode shapes "
                 "without the full per-op payload."
+            ),
+        },
+        "vm_ops_replay_plan_probe": {
+            "command": (
+                "tracemiku-cli vm-ops <call_dir> --start 14015880 "
+                "--end 14017110 --replay-plan --max-ops 400"
+            ),
+            "source_returned": 1230,
+            "effect_count": 127,
+            "replay_step_count": 113,
+            "compact_template_count": 15,
+            "first_steps": [
+                "slot[29] = and(slot[26], 0xff)",
+                "slot[28] = eor(slot[29], slot[28])",
+                "slot[28] = lsl(slot[28], 0x3)",
+                "slot[28] = 0x90bf1d91",
+                "slot[26] = lsr(slot[26], 0x8)",
+            ],
+            "interpretation": (
+                "The replay plan preserves dynamic op order while keeping "
+                "only bytecode operands and python_with_values effects, so it "
+                "is the preferred CLI input for implementing the Python replay."
             ),
         },
         "interpretation": (
@@ -2064,6 +2110,9 @@ def call001_middle_lhs_source_manifest() -> dict:
                     "vm_ops_compact_lift_probe": refined_probe[
                         "vm_ops_compact_lift_probe"
                     ],
+                    "vm_ops_replay_plan_probe": refined_probe[
+                        "vm_ops_replay_plan_probe"
+                    ],
                     "interpretation": refined_probe["interpretation"],
                 }
         if item["source_class"] == "traced_formula_only":
@@ -2079,6 +2128,10 @@ def call001_middle_lhs_source_manifest() -> dict:
                 "key_templates": compact_probe["key_templates"],
                 "interpretation": compact_probe["interpretation"],
             }
+            replay_plan_probe = TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY[
+                "scratch_writer_replay_plan_probe"
+            ]
+            row["vm_ops_replay_plan_probe"] = replay_plan_probe
         segments.append(row)
     covered = sum(item["semantic_range"][1] - item["semantic_range"][0] for item in segments)
     return {
@@ -2194,7 +2247,7 @@ def parameterized_simulation_contract() -> dict:
                 ),
                 "next_cli": (
                     "tracemiku-cli vm-ops <call_dir> --start 14015880 "
-                    "--end 14017110 --compact --max-ops 400"
+                    "--end 14017110 --replay-plan --max-ops 400"
                 ),
                 "goal": (
                     "Lift the repeated XOR/shift/mask ladder over static "
@@ -2206,7 +2259,7 @@ def parameterized_simulation_contract() -> dict:
                 "semantic_ranges": [[25, 49], [57, 59]],
                 "next_cli": (
                     "tracemiku-cli vm-ops <call_dir> --start 14164280 --end 14165320 "
-                    "--compact --max-ops 400"
+                    "--replay-plan --max-ops 400"
                 ),
                 "goal": "Lift role-bound scratch writer templates into full Python opcode replay.",
             },
