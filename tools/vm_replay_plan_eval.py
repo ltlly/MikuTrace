@@ -471,7 +471,7 @@ def seed_lineage_commands(
     depth: int,
     lookback: int,
 ) -> list[dict[str, Any]]:
-    base = parse_int(slot_base) if slot_base else None
+    base = parse_int(slot_base) if slot_base else parse_value(plan.get("vm_state_base"))
     if base is None:
         return []
     trace_dir = call_dir or "<call_dir>"
@@ -530,7 +530,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--seed-lineage-base",
-        help="VM slot memory base for command hints; slot address is base + slot*8.",
+        help=(
+            "VM slot memory base for command hints; slot address is base + slot*8. "
+            "Defaults to replay-plan vm_state_base when available."
+        ),
     )
     parser.add_argument(
         "--seed-lineage-before-idx",

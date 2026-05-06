@@ -2564,8 +2564,8 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "caution": "seed suggestions are not portable until lineage-proven",
             },
             "seed_lineage_command_status": (
-                "--seed-lineage-base 0x77445994a0 emits byte-lineage commands; "
-                "slot26 maps to 0x7744599570"
+                "vm_state_base=0x77445994a0 lets seed_lineage_commands emit "
+                "byte-lineage commands automatically; slot26 maps to 0x7744599570"
             ),
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
@@ -2825,6 +2825,7 @@ def completion_audit() -> dict:
                     "mem-dump --summary words_le64 exposes aligned static-table seeds",
                     "vm_replay_plan_eval.py --emit-python emits editable replay skeletons",
                     "vm_replay_plan_eval.py --auto-seed-suggestions separates seed gaps from replay logic",
+                    "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",
                 ],
                 "status": "substantially_available",

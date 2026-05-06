@@ -6462,6 +6462,7 @@ async fn cmd_vm_ops(
     let all_ops = vm_ops_from_rows(&loaded.rows);
     let truncated = all_ops.len() > max_ops;
     let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
+    let vm_state_base = vm_state_base_from_rows(&loaded.rows, &profile);
     let output = serde_json::json!({
         "status": "ready",
         "start": start,
@@ -6474,6 +6475,7 @@ async fn cmd_vm_ops(
         "chunk_size": chunk_size,
         "vm_rows": loaded.rows.len(),
         "vm_base_ip": loaded.inferred_base.map(|v| format!("{v:#x}")),
+        "vm_state_base": vm_state_base.map(|v| format!("{v:#x}")),
         "ops_returned": ops.len(),
         "truncated": truncated,
         "ops": ops,
@@ -6511,6 +6513,7 @@ fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
         "chunk_size": value.get("chunk_size").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
         "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_state_base": value.get("vm_state_base").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
         "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_counts": vm_ops_semantic_counts(&ops),
@@ -6608,6 +6611,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "chunk_size": value.get("chunk_size").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": value.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
         "vm_base_ip": value.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_state_base": value.get("vm_state_base").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": value.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
         "truncated": value.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
         "effect_count": effects.len(),
@@ -6649,6 +6653,7 @@ fn vm_ops_compact_replay_summary(value: &serde_json::Value) -> serde_json::Value
         "chunk_size": summary.get("chunk_size").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": summary.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
         "vm_base_ip": summary.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_state_base": summary.get("vm_state_base").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": summary.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
         "truncated": summary.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
         "effect_count": summary.get("effect_count").cloned().unwrap_or(serde_json::Value::Null),
@@ -6736,6 +6741,7 @@ fn vm_ops_replay_plan_summary(value: &serde_json::Value) -> serde_json::Value {
         "source_returned": summary.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
         "source_maybe_truncated": summary.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
         "vm_rows": summary.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_state_base": summary.get("vm_state_base").cloned().unwrap_or(serde_json::Value::Null),
         "ops_returned": summary.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
         "truncated": summary.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
         "effect_count": summary.get("effect_count").cloned().unwrap_or(serde_json::Value::Null),
@@ -8095,6 +8101,14 @@ fn regs_with_vm_profile(regs: String, profile: &VmProfile) -> String {
         }
     }
     items.join(",")
+}
+
+fn vm_state_base_from_rows(rows: &[serde_json::Value], profile: &VmProfile) -> Option<u64> {
+    rows.iter().find_map(|row| {
+        row.get("regs")
+            .and_then(|regs| regs.get(profile.state_reg.as_str()))
+            .and_then(json_u64)
+    })
 }
 
 async fn cmd_vm_backstep(
@@ -15854,6 +15868,7 @@ mod tests {
             "source_returned": 15,
             "source_maybe_truncated": false,
             "vm_rows": 15,
+            "vm_state_base": "0x77445994a0",
             "ops_returned": 1,
             "truncated": false,
             "ops": [
@@ -15927,6 +15942,7 @@ mod tests {
         assert!(summary.get("ops").is_none());
         assert_eq!(summary["effect_count"], serde_json::json!(3));
         assert_eq!(summary["source_maybe_truncated"], serde_json::json!(false));
+        assert_eq!(summary["vm_state_base"], serde_json::json!("0x77445994a0"));
         assert_eq!(summary["byte_load_effect_count"], serde_json::json!(1));
         assert_eq!(summary["memory_store_effect_count"], serde_json::json!(1));
         assert_eq!(summary["control_effect_count"], serde_json::json!(1));
@@ -16068,6 +16084,7 @@ mod tests {
         assert!(compact.get("op_effects").is_none());
         assert!(compact.get("op_templates").is_none());
         assert_eq!(compact["effect_count"], serde_json::json!(3));
+        assert_eq!(compact["vm_state_base"], serde_json::json!("0x77445994a0"));
         assert_eq!(compact["compact_template_count"], serde_json::json!(2));
         let compact_templates = compact["compact_templates"].as_array().unwrap();
         let compact_byte_load = compact_templates
@@ -16097,6 +16114,10 @@ mod tests {
         assert!(replay_plan.get("effects").is_none());
         assert!(replay_plan.get("op_effects").is_none());
         assert_eq!(replay_plan["replay_step_count"], serde_json::json!(2));
+        assert_eq!(
+            replay_plan["vm_state_base"],
+            serde_json::json!("0x77445994a0")
+        );
         assert_eq!(
             replay_plan["replay_steps"][0]["effects"][0]["python_with_values"],
             serde_json::json!("slot[18] = byte_load(0x753ddd7fdc)")
