@@ -815,7 +815,7 @@ semantic range `[16,59)`:
 
 ```text
 [16,21) formula_validated_stat_mtim_static_byte  fbe9f26979
-[21,25) static_memory_load_constant             ecf29541
+[21,25) trace_produced_table_word_pending_upstream ecf29541
 [25,49) traced_formula_only                     f60193b34b3c510ccc029de339cec2953090237cbfa4f43b
 [49,57) memory_boundary_read                    a0444a342344c59b
 [57,59) traced_formula_only                     c569
@@ -823,6 +823,23 @@ semantic range `[16,59)`:
 
 This covers 43/43 middle lhs bytes and keeps the remaining work segment-scoped
 instead of one opaque hex blob.
+
+A targeted lineage probe refined the old `[21,25)` static/no-writer label:
+
+```text
+tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe08 \
+  --before-idx 14164462 --depth 80 --lookback 5000000 --summary
+
+#14164461 str w16, [x2, x5] writes ecf29541 / 0x4195f2ec
+0x4195f2ec = 0x41000000 | 0x95f2ec
+0x95f2ec   = ubfx(0x95f2ec, 0x0, 0x20)
+0x95f2ec   = 0x95f2ec79 >> 0x8
+#14019868 str w1, [x19, x6] writes 79ecf295 at 0x74b68bcc24
+```
+
+So this segment is trace-produced, not a confirmed static table constant. The
+next open question is the upstream source of `#14019868`: portable formula, VM
+table value, or external input.
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
@@ -872,7 +889,7 @@ opaque/non-portable middle-lhs segments.
 Those opaque inputs now include next CLI probes in the JSON output:
 
 ```text
-[21,25) static_memory_load_constant -> byte-lineage depth/lookback probe
+[21,25) trace_produced_table_word -> byte-lineage upstream #14019868
 [25,49), [57,59) traced_formula_only -> vm-ops role-bound replay
 [49,57) memory_boundary_text -> byte-lineage boundary confirmation
 ```
