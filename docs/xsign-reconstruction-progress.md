@@ -855,6 +855,22 @@ So this segment is trace-produced by a VM XOR/shift/mask ladder over static
 table seeds, not a confirmed external input. The next open question is lifting
 that ladder into portable Python opcode replay or a compact formula.
 
+`vm-ops --compact` now makes this ladder directly AI-readable:
+
+```text
+tracemiku-cli vm-ops <call_dir> --start 14015880 --end 14017110 \
+  --compact --max-ops 400
+
+source_returned=1230, effect_count=127, compact_template_count=15
+slot[bc_0x3_u8] = byte_load(addr_expr)
+slot[bc_0x2_u8] = and(slot[bc_0x4_u8], bc_0x8_u64, bc_0x10_u16)
+slot[bc_0x3_u8] = lsr(slot[bc_0x3_u8], slot[bc_0x7_u8], bc_0x8_u64, bc_0x10_u16)
+slot[bc_0x5_u8] = eor(slot[bc_0x4_u8], slot[bc_0x5_u8], slot[bc_0x6_u8], bc_0x10_u16)
+```
+
+This is a generic CLI improvement: it is not tied to `libsgmainso`, but it turns
+large VM windows into a short replay-template list an agent can consume.
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 
@@ -903,7 +919,7 @@ opaque/non-portable middle-lhs segments.
 Those opaque inputs now include next CLI probes in the JSON output:
 
 ```text
-[21,25) vm_xor_ladder_static_seed -> vm-ops role-bound replay
+[21,25) vm_xor_ladder_static_seed -> vm-ops --compact replay
 [25,49), [57,59) traced_formula_only -> vm-ops role-bound replay
 [49,57) memory_boundary_text -> byte-lineage boundary confirmation
 ```

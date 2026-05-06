@@ -1002,6 +1002,9 @@ enum Cmd {
         /// With --summary, emit only top-level effects and state updates.
         #[arg(long)]
         effects_only: bool,
+        /// Emit a minimal replay-oriented template summary for AI agents.
+        #[arg(long)]
+        compact: bool,
     },
     /// Follow a single byte backward through memory writes and VM source registers.
     ByteLineage {
@@ -2086,6 +2089,7 @@ async fn main() -> anyhow::Result<()> {
             chunk_size,
             summary,
             effects_only,
+            compact,
         }) => {
             let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
             cmd_vm_ops(
@@ -2099,6 +2103,7 @@ async fn main() -> anyhow::Result<()> {
                 chunk_size,
                 summary,
                 effects_only,
+                compact,
                 profile,
             )
             .await
@@ -6425,6 +6430,7 @@ async fn cmd_vm_ops(
     chunk_size: usize,
     summary: bool,
     effects_only: bool,
+    compact: bool,
     profile: VmProfile,
 ) -> anyhow::Result<()> {
     let end = end.unwrap_or_else(|| start.saturating_add(count));
@@ -6452,7 +6458,9 @@ async fn cmd_vm_ops(
         "truncated": truncated,
         "ops": ops,
     });
-    if effects_only {
+    if compact {
+        print_pretty(&vm_ops_compact_replay_summary(&output))
+    } else if effects_only {
         print_pretty(&vm_ops_effects_only_summary(&output))
     } else if summary {
         print_pretty(&vm_ops_output_summary(&output))
@@ -6595,6 +6603,89 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "op_effects": op_effects,
         "op_templates": op_templates,
         "effects": effects,
+    })
+}
+
+fn vm_ops_compact_replay_summary(value: &serde_json::Value) -> serde_json::Value {
+    let summary = vm_ops_effects_only_summary(value);
+    let compact_templates = summary
+        .get("op_templates")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(vm_op_compact_template)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": summary.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": summary.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "end": summary.get("end").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_profile": summary.get("vm_profile").cloned().unwrap_or(serde_json::Value::Null),
+        "source_requested": summary.get("source_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "source_returned": summary.get("source_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "source_maybe_truncated": summary.get("source_maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "source_chunks": summary.get("source_chunks").cloned().unwrap_or(serde_json::Value::Null),
+        "chunk_size": summary.get("chunk_size").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_rows": summary.get("vm_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_base_ip": summary.get("vm_base_ip").cloned().unwrap_or(serde_json::Value::Null),
+        "ops_returned": summary.get("ops_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "truncated": summary.get("truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "effect_count": summary.get("effect_count").cloned().unwrap_or(serde_json::Value::Null),
+        "byte_load_effect_count": summary.get("byte_load_effect_count").cloned().unwrap_or(serde_json::Value::Null),
+        "memory_store_effect_count": summary.get("memory_store_effect_count").cloned().unwrap_or(serde_json::Value::Null),
+        "control_effect_count": summary.get("control_effect_count").cloned().unwrap_or(serde_json::Value::Null),
+        "bytecode_read_count": summary.get("bytecode_read_count").cloned().unwrap_or(serde_json::Value::Null),
+        "op_template_count": summary.get("op_template_count").cloned().unwrap_or(serde_json::Value::Null),
+        "semantic_counts": summary.get("semantic_counts").cloned().unwrap_or(serde_json::Value::Null),
+        "state_updates": summary.get("state_updates").cloned().unwrap_or(serde_json::Value::Null),
+        "compact_template_count": compact_templates.len(),
+        "compact_templates": compact_templates,
+    })
+}
+
+fn vm_op_compact_template(template: &serde_json::Value) -> serde_json::Value {
+    let skeletons = template
+        .get("template_skeletons")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|skeleton| {
+            serde_json::json!({
+                "python": skeleton.get("python").cloned().unwrap_or(serde_json::Value::Null),
+                "python_with_roles": skeleton.get("python_with_roles").cloned().unwrap_or(serde_json::Value::Null),
+                "role_binding": skeleton.get("role_binding").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let effect_shapes = template
+        .get("effect_shapes")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|shape| {
+            let samples = shape
+                .get("pseudocode_samples")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "signature": shape.get("signature").cloned().unwrap_or(serde_json::Value::Null),
+                "kind": shape.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+                "formula_op": shape.get("formula_op").cloned().unwrap_or(serde_json::Value::Null),
+                "count": shape.get("count").cloned().unwrap_or(serde_json::Value::Null),
+                "samples": samples,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "signature": template.get("signature").cloned().unwrap_or(serde_json::Value::Null),
+        "count": template.get("count").cloned().unwrap_or(serde_json::Value::Null),
+        "effect_kind_counts": template.get("effect_kind_counts").cloned().unwrap_or(serde_json::Value::Null),
+        "template_operands": template.get("template_operands").cloned().unwrap_or(serde_json::Value::Null),
+        "skeletons": skeletons,
+        "effect_shapes": effect_shapes,
     })
 }
 
@@ -13475,7 +13566,8 @@ mod tests {
         recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
         store_touch_for_addr, vm_backchain_stop_summary, vm_op_effect_summaries,
-        vm_ops_effects_only_summary, vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        vm_ops_compact_replay_summary, vm_ops_effects_only_summary, vm_ops_state_updates,
+        vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -15354,6 +15446,36 @@ mod tests {
             control_template["effect_shapes"][0]["pseudocode_samples"][0],
             serde_json::json!("0x200 = 0x100 + 0x9")
         );
+
+        let compact = vm_ops_compact_replay_summary(&output);
+        assert!(compact.get("effects").is_none());
+        assert!(compact.get("op_effects").is_none());
+        assert!(compact.get("op_templates").is_none());
+        assert_eq!(compact["effect_count"], serde_json::json!(3));
+        assert_eq!(compact["compact_template_count"], serde_json::json!(2));
+        let compact_templates = compact["compact_templates"].as_array().unwrap();
+        let compact_byte_load = compact_templates
+            .iter()
+            .find(|template| {
+                template["signature"]
+                    .as_str()
+                    .is_some_and(|signature| signature.contains("slot_write:byte_load:none"))
+            })
+            .unwrap();
+        assert!(compact_byte_load["skeletons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skeleton| {
+                skeleton["python_with_roles"]
+                    == serde_json::json!("slot[bc_0x5_u8] = byte_load(addr_expr)")
+            }));
+        assert!(compact_byte_load["effect_shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|shape| shape["samples"].as_array().into_iter().flatten())
+            .any(|sample| sample == &serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")));
     }
 
     #[test]

@@ -1221,6 +1221,100 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
                 "without a compact replay formula."
             ),
         },
+        "vm_ops_compact_lift_probe": {
+            "command": (
+                "tracemiku-cli vm-ops <call_dir> --start 14015880 "
+                "--end 14017110 --compact --max-ops 400"
+            ),
+            "source_returned": 1230,
+            "effect_count": 127,
+            "compact_template_count": 15,
+            "key_templates": [
+                {
+                    "count": 10,
+                    "signature": (
+                        "bc[0x0:2,0x2:1,0x3:1,0x6:1,0x10:2] "
+                        "effects[slot_write:byte_load:none]"
+                    ),
+                    "python_with_roles": (
+                        "slot[bc_0x3_u8] = byte_load(addr_expr)"
+                    ),
+                    "samples": [
+                        "slot[28] = byte[0x7599191127] (0x62)",
+                        "slot[28] = byte[0x7599191128] (0x61)",
+                        "slot[28] = byte[0x7599191129] (0x6f)",
+                    ],
+                },
+                {
+                    "count": 1,
+                    "signature": (
+                        "bc[0x2:1,0x3:1,0x4:1,0x10:2] "
+                        "effects[slot_write:formula:eor]"
+                    ),
+                    "python_with_roles": (
+                        "slot[bc_0x2_u8] = eor(slot[bc_0x2_u8], "
+                        "slot[bc_0x3_u8], slot[bc_0x4_u8], bc_0x10_u16)"
+                    ),
+                    "samples": [
+                        "slot[24] = 0x95f2ec79 = 0x90d2d669 ^ 0x5203a10",
+                    ],
+                },
+                {
+                    "count": 11,
+                    "signature": (
+                        "bc[0x2:1,0x4:1,0x8:8,0x10:2] "
+                        "effects[slot_write:formula:and]"
+                    ),
+                    "python_with_roles": (
+                        "slot[bc_0x2_u8] = and(slot[bc_0x4_u8], "
+                        "bc_0x8_u64, bc_0x10_u16)"
+                    ),
+                    "samples": [
+                        "slot[29] = 0x60 = 0x1f7b3460 & 0xff",
+                        "slot[29] = 0xa5 = 0x90a066a5 & 0xff",
+                        "slot[29] = 0x75 = 0x590f775 & 0xff",
+                    ],
+                },
+                {
+                    "count": 11,
+                    "signature": (
+                        "bc[0x3:1,0x7:1,0x8:8,0x10:2] "
+                        "effects[slot_write:formula:lsr]"
+                    ),
+                    "python_with_roles": (
+                        "slot[bc_0x3_u8] = lsr(slot[bc_0x3_u8], "
+                        "slot[bc_0x7_u8], bc_0x8_u64, bc_0x10_u16)"
+                    ),
+                    "samples": [
+                        "slot[26] = 0x1f7b34 = 0x1f7b3460 >> 0x8",
+                        "slot[26] = 0x90a066 = 0x90a066a5 >> 0x8",
+                        "slot[26] = 0x590f7 = 0x590f775 >> 0x8",
+                    ],
+                },
+                {
+                    "count": 22,
+                    "signature": (
+                        "bc[0x4:1,0x5:1,0x6:1,0x10:2] "
+                        "effects[slot_write:formula:eor]"
+                    ),
+                    "python_with_roles": (
+                        "slot[bc_0x5_u8] = eor(slot[bc_0x4_u8], "
+                        "slot[bc_0x5_u8], slot[bc_0x6_u8], bc_0x10_u16)"
+                    ),
+                    "samples": [
+                        "slot[28] = 0xf = 0x60 ^ 0x6f",
+                        "slot[26] = 0x90a066a5 = 0x90bf1d91 ^ 0x1f7b34",
+                        "slot[28] = 0xc7 = 0xa5 ^ 0x62",
+                    ],
+                },
+            ],
+            "interpretation": (
+                "The generic compact VM summary is concise enough for an AI "
+                "agent to turn this window into a replay function: it exposes "
+                "the repeated byte-load, mask, shift, and XOR opcode shapes "
+                "without the full per-op payload."
+            ),
+        },
         "interpretation": (
             "A direct byte-lineage probe from the scratch writer reaches an "
             "earlier traced memory writer, then a deeper probe shows that "
@@ -1831,6 +1925,9 @@ def call001_middle_lhs_source_manifest() -> dict:
                     "upstream_lineage_probe": refined_probe[
                         "upstream_lineage_probe"
                     ],
+                    "vm_ops_compact_lift_probe": refined_probe[
+                        "vm_ops_compact_lift_probe"
+                    ],
                     "interpretation": refined_probe["interpretation"],
                 }
         if item["source_class"] == "traced_formula_only":
@@ -1950,7 +2047,7 @@ def parameterized_simulation_contract() -> dict:
                 ),
                 "next_cli": (
                     "tracemiku-cli vm-ops <call_dir> --start 14015880 "
-                    "--end 14017110 --summary --effects-only --max-ops 400"
+                    "--end 14017110 --compact --max-ops 400"
                 ),
                 "goal": (
                     "Lift the repeated XOR/shift/mask ladder over static "
