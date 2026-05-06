@@ -4197,6 +4197,9 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .as_array()
         .map(|templates| templates.len())
         .unwrap_or(0);
+    let xor_word_state_sources = output_semantic_xor_word_state_sources(value, &xor_word_templates);
+    let xor_word_state_source_summary =
+        output_semantic_xor_word_state_source_summary(&xor_word_templates, &xor_word_state_sources);
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "semantic_context": value.get("semantic_context").cloned().unwrap_or(serde_json::Value::Null),
@@ -4217,7 +4220,8 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "byte_equations": byte_equations,
         "xor_word_template_count": xor_word_template_count,
         "xor_word_templates": xor_word_templates,
-        "xor_word_state_sources": output_semantic_xor_word_state_sources(value, &xor_word_templates),
+        "xor_word_state_source_summary": xor_word_state_source_summary,
+        "xor_word_state_sources": xor_word_state_sources,
         "vm_chains": output_semantic_vm_chain_summaries(value),
     })
 }
@@ -4923,6 +4927,51 @@ fn output_semantic_xor_word_state_sources(
         }));
     }
     serde_json::Value::Array(sources)
+}
+
+fn output_semantic_xor_word_state_source_summary(
+    templates: &serde_json::Value,
+    sources: &serde_json::Value,
+) -> serde_json::Value {
+    let templates = templates.as_array().cloned().unwrap_or_default();
+    let sources = sources.as_array().cloned().unwrap_or_default();
+    let source_starts = sources
+        .iter()
+        .filter_map(|source| {
+            source
+                .get("semantic_range")
+                .and_then(|v| v.as_array())
+                .and_then(|range| range.first())
+                .and_then(value_as_u64)
+        })
+        .collect::<HashSet<_>>();
+    let missing_templates = templates
+        .iter()
+        .filter_map(|template| {
+            let range = template.get("semantic_range")?.as_array()?;
+            let start = range.first().and_then(value_as_u64)?;
+            if source_starts.contains(&start) {
+                return None;
+            }
+            Some(serde_json::json!({
+                "semantic_range": template.get("semantic_range").cloned().unwrap_or(serde_json::Value::Null),
+                "lhs_word_le": template.get("lhs_word_le").cloned().unwrap_or(serde_json::Value::Null),
+            }))
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "template_count": templates.len(),
+        "source_count": sources.len(),
+        "missing_count": missing_templates.len(),
+        "coverage_status": if templates.is_empty() {
+            "no_xor_word_templates"
+        } else if missing_templates.is_empty() {
+            "complete"
+        } else {
+            "partial"
+        },
+        "missing_templates": missing_templates,
+    })
 }
 
 fn xor_word_source_from_semantics(
@@ -11370,12 +11419,12 @@ mod tests {
         lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
-        output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
-        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
-        recognized_backchain_pattern_summary, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
-        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_ops_state_updates,
-        vm_slot_from_asm, ElfSymbol, VmProfile,
+        output_semantic_byte_equation_summary, output_semantic_xor_word_state_source_summary,
+        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
+        parse_nm_symbol_line, recognize_alu_semantic, recognized_backchain_pattern_summary,
+        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -12386,6 +12435,26 @@ mod tests {
         let first = sources.as_array().unwrap().first().unwrap();
         assert_eq!(first["source_word_be"], serde_json::json!("0x67b44ad8"));
         assert_eq!(first["state_update"]["idx"], serde_json::json!(14678154));
+    }
+
+    #[test]
+    fn summarizes_xor_word_state_source_coverage() {
+        let templates = serde_json::json!([
+            {"semantic_range": [0, 4], "lhs_word_le": "0x6f783e78"},
+            {"semantic_range": [4, 8], "lhs_word_le": "0xb9f37778"}
+        ]);
+        let sources = serde_json::json!([
+            {"semantic_range": [0, 4], "source_word_be": "0x783e786f"}
+        ]);
+        let summary = output_semantic_xor_word_state_source_summary(&templates, &sources);
+        assert_eq!(summary["template_count"], serde_json::json!(2));
+        assert_eq!(summary["source_count"], serde_json::json!(1));
+        assert_eq!(summary["missing_count"], serde_json::json!(1));
+        assert_eq!(summary["coverage_status"], serde_json::json!("partial"));
+        assert_eq!(
+            summary["missing_templates"][0]["semantic_range"],
+            serde_json::json!([4, 8])
+        );
     }
 
     #[test]
