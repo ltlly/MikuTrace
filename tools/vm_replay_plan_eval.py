@@ -272,12 +272,23 @@ def parse_seed_slot(spec: str) -> tuple[int, int]:
     return int(slot_text, 0), int(value_text, 0)
 
 
+def parse_seed_slots(seed_slots: list[str]) -> dict[int, int]:
+    seeds = {}
+    for spec in seed_slots:
+        slot, value = parse_seed_slot(spec)
+        seeds[slot] = value & MASK64
+    return seeds
+
+
+def seed_specs_from_map(seeds: dict[int, int]) -> list[str]:
+    return [f"{slot}={value:#x}" for slot, value in sorted(seeds.items())]
+
+
 def replay_plan(
     plan: dict[str, Any], trust_observed: bool, seed_slots: list[str]
 ) -> ReplayState:
     state = ReplayState()
-    for spec in seed_slots:
-        slot, value = parse_seed_slot(spec)
+    for slot, value in parse_seed_slots(seed_slots).items():
         state.slots[slot] = value & MASK64
         state.seeded_slots[slot] = value & MASK64
     for step in plan.get("replay_steps", []):
@@ -422,6 +433,35 @@ def summarize(plan: dict[str, Any], state: ReplayState, dump_specs: list[str]) -
     }
 
 
+def auto_seeded_replay_summary(
+    plan: dict[str, Any], seed_slots: list[str], dump_specs: list[str]
+) -> dict[str, Any]:
+    trusted_pass = replay_plan(plan, trust_observed=True, seed_slots=seed_slots)
+    seeds = parse_seed_slots(seed_slots)
+    applied = []
+    for slot, suggestion in sorted(trusted_pass.seed_suggestions.items()):
+        if slot in seeds:
+            continue
+        value = parse_value(suggestion.get("value"))
+        if value is None:
+            continue
+        seeds[slot] = value & MASK64
+        applied.append(suggestion)
+    replay = replay_plan(
+        plan, trust_observed=False, seed_slots=seed_specs_from_map(seeds)
+    )
+    return {
+        "status": "ready",
+        "caution": (
+            "Seed suggestions are derived from observed fallback formulas. "
+            "Use this to remove mechanical fallback noise, then prove each "
+            "seed with lineage before treating the replay as portable."
+        ),
+        "applied_seed_suggestions": applied,
+        "summary": summarize(plan, replay, dump_specs),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-mem", action="append", default=[], metavar="ADDR:SIZE")
@@ -442,6 +482,15 @@ def main() -> int:
         action="store_true",
         help="Emit a standalone Python replay skeleton instead of executing the plan.",
     )
+    parser.add_argument(
+        "--auto-seed-suggestions",
+        action="store_true",
+        help=(
+            "Run a trusted first pass, apply formula-derived seed_suggestions, "
+            "then report a second no-trust replay. Suggestions still require "
+            "independent lineage proof."
+        ),
+    )
     args = parser.parse_args()
     plan = json.load(sys.stdin)
     if args.emit_python:
@@ -450,7 +499,12 @@ def main() -> int:
     state = replay_plan(
         plan, trust_observed=not args.no_trust_observed, seed_slots=args.seed_slot
     )
-    json.dump(summarize(plan, state, args.dump_mem), sys.stdout, indent=2, sort_keys=True)
+    summary = summarize(plan, state, args.dump_mem)
+    if args.auto_seed_suggestions:
+        summary["auto_seeded_replay"] = auto_seeded_replay_summary(
+            plan, args.seed_slot, args.dump_mem
+        )
+    json.dump(summary, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
 

@@ -2518,7 +2518,8 @@ def python_vm_replay_plan_eval_summary() -> dict:
         "status": "trace_bound_replay_eval_available",
         "tool": "tools/vm_replay_plan_eval.py",
         "seed_suggestion_status": (
-            "trusted fallback records include formula-derived seed_suggestions"
+            "trusted fallback records include formula-derived seed_suggestions; "
+            "--auto-seed-suggestions can apply them into a second no-trust replay"
         ),
         "scratch_writer_window": {
             "command": (
@@ -2554,6 +2555,13 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "trusted_effects": 0,
                 "unresolved_read_count": 0,
                 "scratch_dump_matches": True,
+            },
+            "auto_seeded_replay": {
+                "applied_seed_suggestion_count": 6,
+                "trusted_effects": 0,
+                "unresolved_read_count": 0,
+                "scratch_dump_matches": True,
+                "caution": "seed suggestions are not portable until lineage-proven",
             },
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
@@ -2598,6 +2606,13 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "trusted_effects": 0,
                 "unresolved_read_count": 0,
                 "final_slot24": "0x95f2ec79",
+            },
+            "auto_seeded_replay": {
+                "applied_seed_suggestion_count": 5,
+                "trusted_effects": 0,
+                "unresolved_read_count": 0,
+                "final_slot24": "0x95f2ec79",
+                "caution": "seed suggestions are not portable until lineage-proven",
             },
             "final_observed_slot24": "0x95f2ec79",
         },
@@ -2800,6 +2815,7 @@ def completion_audit() -> dict:
                     "byte-lineage default stack registers preserve sp/fp/lr stack-slot chains",
                     "mem-dump --summary words_le64 exposes aligned static-table seeds",
                     "vm_replay_plan_eval.py --emit-python emits editable replay skeletons",
+                    "vm_replay_plan_eval.py --auto-seed-suggestions separates seed gaps from replay logic",
                 ],
                 "status": "substantially_available",
             },

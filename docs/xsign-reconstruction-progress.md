@@ -891,6 +891,13 @@ JSON into an editable Python replay skeleton. That skeleton keeps trace-index
 comments and generic `slots`/`mem` operations, but it remains a trace replay
 until every literal/byte-load input is replaced by a proven table, app metadata,
 or device/environment parameter.
+`tools/vm_replay_plan_eval.py --auto-seed-suggestions` also distinguishes
+mechanical seed gaps from missing logic. On the scratch-writer window it applies
+six formula-derived seed suggestions and replays with `trusted_effects=0`,
+`unresolved_read_count=0`, and the 52-byte scratch dump still matching the
+trace. On the `[21,25)` ladder window it applies five suggestions and replays
+to final `slot24=0x95f2ec79` with no observed fallbacks. These suggestions are
+still evidence to prove, not portable inputs by themselves.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:

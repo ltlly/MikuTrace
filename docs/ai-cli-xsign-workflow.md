@@ -111,6 +111,7 @@ For AI use, treat the output categories as contracts:
 | `python_with_values` | A concrete, value-filled expression. It is good for verification, but must be parameterized before calling it an algorithm. |
 | `source_byte_load` | A byte/word input to the VM operation. Follow it with `byte-lineage` when it is not yet a known table, literal, or app/device input. |
 | `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
+| `vm_replay_plan_eval.py --auto-seed-suggestions` | Runs a trusted pass, applies formula-derived seed suggestions, then reports a second no-trust replay. Use this to remove mechanical fallback noise before proving each seed. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, memory boundaries, and next actions. Use it before requesting the full chain. |
 | `bytecode-read` frontier | The trace reached VM bytecode or an immediate. This is a good stopping point for opcode-template lifting. |
@@ -134,6 +135,23 @@ The generated code keeps trace index comments and generic helper calls such as
 `vm_eor`, `vm_lsr`, and `store_le`. Replace literal or `byte_load` inputs with
 proven table/app/device parameters before promoting it from trace replay to a
 portable simulator.
+
+When the evaluator reports trusted fallbacks, first separate mechanical seed
+gaps from real missing logic:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops <call_dir> \
+  --start <idx> --end <idx> \
+  --replay-plan --max-ops 400 \
+| uv run python tools/vm_replay_plan_eval.py \
+  --seed-slot 0=0 \
+  --auto-seed-suggestions
+```
+
+If `auto_seeded_replay.summary.trusted_effects == 0`, the window can be replayed
+without observed fallbacks once its initial seeds are supplied. Those seeds are
+still not portable until `byte-lineage`, `mem-dump`, or an external metadata
+probe proves their source.
 
 ## Output-to-writer path
 
