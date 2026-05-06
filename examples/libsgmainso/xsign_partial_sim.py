@@ -2706,8 +2706,15 @@ def vm_replay_seed_provenance_summary() -> dict:
                         "last_step": 8,
                     },
                 ],
+                "earlier_base_expression": {
+                    "expression": "0x74b68bb9a0 = 0x74b68bd4c0 + 0xffffffffffffe4e0",
+                    "pointer_base": "0x74b68bd4c0",
+                    "signed_delta": "-0x1b20",
+                    "delta_source": "VM bytecode read",
+                    "evidence": "byte-lineage --compact labels x8 as pointer_base and x7 as delta",
+                },
                 "terminal": "depth_limit, but repeated_values now identify the stable base",
-                "portable_status": "stable_base_pointer_not_proven",
+                "portable_status": "next_base_pointer_not_proven",
             },
             "slot25": {
                 "command": (

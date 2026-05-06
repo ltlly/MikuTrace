@@ -919,6 +919,10 @@ semantics, not missing replay mechanics. The compact slot28 probe now also
 reports `repeated_values`: `0x74b68bb9a0` appears 69 times in an 80-step
 lineage, while `0x74b68bbdff` appears 7 times. That turns the prior
 `depth_limit` into an explicit copy-loop/stable-base signal for the next proof.
+Chasing the earlier slot20 writer shows the same base as pointer arithmetic:
+`0x74b68bb9a0 = 0x74b68bd4c0 + 0xffffffffffffe4e0`, i.e.
+`0x74b68bd4c0 - 0x1b20`. The signed delta is VM-bytecode-backed, while
+`0x74b68bd4c0` remains the next pointer-base boundary.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1028,6 +1032,9 @@ scratch slot28 before #14164280:
   writer #14164235: str x5, [x25, x6, lsl #3]
   pointer chain: 0x74b68bb9a0 + 0x200 + 0x25f + 1, then depth_limit
   repeated_values: 0x74b68bb9a0 appears 69 times in an 80-step compact probe
+  earlier base expression:
+    0x74b68bb9a0 = 0x74b68bd4c0 + 0xffffffffffffe4e0
+    operand roles: x8 pointer_base, x7 signed delta (-0x1b20)
 
 scratch slot29 before #14164280:
   command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact

@@ -9578,7 +9578,7 @@ fn looks_like_pointer(value: u64) -> bool {
 }
 
 fn looks_like_delta(value: u64) -> bool {
-    value <= 0x1_0000
+    value <= 0x1_0000 || value >= u64::MAX - 0x1_0000
 }
 
 fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde_json::Value {
@@ -16868,6 +16868,21 @@ mod tests {
             serde_json::json!("pointer_base")
         );
         assert_eq!(compact["operands"][1]["role"], serde_json::json!("delta"));
+
+        let formula = serde_json::json!({
+            "op": "add",
+            "expression": "0x74b68bb9a0 = 0xffffffffffffe4e0 + 0x74b68bd4c0",
+            "operands": [
+                {"reg": "x7", "value": "0xffffffffffffe4e0"},
+                {"reg": "x8", "value": "0x74b68bd4c0"}
+            ]
+        });
+        let compact = compact_lineage_formula(Some(&formula));
+        assert_eq!(compact["operands"][0]["role"], serde_json::json!("delta"));
+        assert_eq!(
+            compact["operands"][1]["role"],
+            serde_json::json!("pointer_base")
+        );
     }
 
     #[test]
