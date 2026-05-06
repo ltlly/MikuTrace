@@ -2430,6 +2430,61 @@ def semantic_byte_source_model() -> dict:
     }
 
 
+def semantic_source_key(row: dict) -> str:
+    if row["kind"] == "xor_mix":
+        return f"xor_lhs:{row.get('lhs_source', 'unknown')}"
+    if row["kind"] == "mod255_low_byte":
+        return f"mod255:{row.get('rhs_parity', 'unknown')}"
+    return row.get("source") or row["kind"]
+
+
+def contiguous_ranges(offsets: list[int]) -> list[list[int]]:
+    if not offsets:
+        return []
+    ranges = []
+    start = prev = offsets[0]
+    for offset in offsets[1:]:
+        if offset == prev + 1:
+            prev = offset
+            continue
+        ranges.append([start, prev + 1])
+        start = prev = offset
+    ranges.append([start, prev + 1])
+    return ranges
+
+
+def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
+    coverage = multi_sample_formula_coverage(sample_tails)
+    covered = set(coverage["covered_semantic_offsets"])
+    rows = semantic_byte_source_model()["rows"]
+    by_source: dict[str, list[int]] = {}
+    for row in rows:
+        offset = row["offset"]
+        if offset in covered:
+            continue
+        by_source.setdefault(semantic_source_key(row), []).append(offset)
+    groups = [
+        {
+            "source": source,
+            "ranges": contiguous_ranges(offsets),
+            "offsets": offsets,
+            "byte_count": len(offsets),
+        }
+        for source, offsets in sorted(by_source.items(), key=lambda item: item[1][0])
+    ]
+    return {
+        "status": "next_proof_plan",
+        "covered_offsets": sorted(covered),
+        "uncovered_count": sum(group["byte_count"] for group in groups),
+        "groups": groups,
+        "recommended_order": [
+            "extend mod255 parity proof to repeated mask offsets",
+            "lift trace_literal_lhs_hex word runs into state/table formulas",
+            "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
+        ],
+    }
+
+
 def python_semantic_helper_coverage() -> dict:
     helpers = [
         "byte_lane_le",
@@ -3015,6 +3070,7 @@ def completion_audit() -> dict:
                     "multi_sample_formula_coverage covers semantic offsets 1..6 for 5 samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
+                    "multi_sample_next_proof_plan groups uncovered offsets by source class",
                 ],
                 "status": "weakly_covered",
             },
@@ -3378,6 +3434,7 @@ def main() -> None:
     byte_source_model = semantic_byte_source_model()
     helper_coverage = python_semantic_helper_coverage()
     multi_sample_coverage = multi_sample_formula_coverage(sample_tails)
+    multi_sample_next_plan = multi_sample_next_proof_plan(sample_tails)
     replay_eval_summary = python_vm_replay_plan_eval_summary()
     seed_provenance_summary = vm_replay_seed_provenance_summary()
     audit = completion_audit()
@@ -3477,6 +3534,7 @@ def main() -> None:
             "trace_note": "Repeated bytes are equality evidence only; call_001 currently shows re-encoding through VM scratch/Base64, not direct string memcpy.",
         },
         "multi_sample_formula_coverage": multi_sample_coverage,
+        "multi_sample_next_proof_plan": multi_sample_next_plan,
         "time_seed": {
             "hex": f"{TRACE_TIME_RET:#x}",
             "unix": TRACE_TIME_RET,
