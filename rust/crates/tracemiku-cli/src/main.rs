@@ -423,6 +423,20 @@ enum Cmd {
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
+    /// Expand memory writes into the latest writer for each byte in a buffer.
+    ByteWriterMap {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long)]
+        size: u64,
+        #[arg(long, default_value_t = 0)]
+        idx_lo: usize,
+        #[arg(long, default_value_t = -1)]
+        idx_hi: isize,
+        #[arg(long, default_value_t = 5000)]
+        max: usize,
+    },
     /// GET /api/ollvm-detect-vm.
     OllvmDetectVm {
         trace_dir: PathBuf,
@@ -1396,6 +1410,14 @@ async fn main() -> anyhow::Result<()> {
             }
             route_get_json(trace_dir, route_path("/api/mem-writes-in-range", &params)).await
         }
+        Some(Cmd::ByteWriterMap {
+            trace_dir,
+            addr,
+            size,
+            idx_lo,
+            idx_hi,
+            max,
+        }) => cmd_byte_writer_map(trace_dir, addr, size, idx_lo, idx_hi, max).await,
         Some(Cmd::OllvmDetectVm {
             trace_dir,
             min_entries,
@@ -1940,6 +1962,39 @@ async fn route_get_json_value_on(
     }
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     Ok(value)
+}
+
+async fn cmd_byte_writer_map(
+    trace_dir: PathBuf,
+    addr: String,
+    size: u64,
+    idx_lo: usize,
+    idx_hi: isize,
+    max: usize,
+) -> anyhow::Result<()> {
+    let addr_value =
+        parse_u64_str(&addr).with_context(|| format!("invalid --addr value {addr:?}"))?;
+    if size == 0 {
+        bail!("byte-writer-map requires --size > 0");
+    }
+    let size_usize = usize::try_from(size).context("--size does not fit in usize")?;
+    if size_usize > 1_000_000 {
+        bail!("byte-writer-map refuses buffers larger than 1,000,000 bytes");
+    }
+    let addr_hi = addr_value
+        .checked_add(size)
+        .context("--addr + --size overflowed u64")?;
+    let params = vec![
+        ("idx_lo", idx_lo.to_string()),
+        ("idx_hi", idx_hi.to_string()),
+        ("addr_lo", format!("{addr_value:#x}")),
+        ("addr_hi", format!("{addr_hi:#x}")),
+        ("max", max.to_string()),
+    ];
+    let response =
+        route_get_json_value(trace_dir, route_path("/api/mem-writes-in-range", &params)).await?;
+    let output = byte_writer_map_output(addr_value, size_usize, &response);
+    print_pretty(&output)
 }
 
 async fn cmd_api(
@@ -6315,6 +6370,283 @@ fn byte_writers_from_range_writes(
     out
 }
 
+fn byte_writer_map_output(
+    addr: u64,
+    size: usize,
+    response: &serde_json::Value,
+) -> serde_json::Value {
+    let writes = response
+        .get("writes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let bytes = byte_writer_map_entries_from_range_writes(addr, size, &writes);
+    let missing_offsets = bytes
+        .iter()
+        .filter(|entry| entry.get("status").and_then(|v| v.as_str()) != Some("ready"))
+        .filter_map(|entry| entry.get("offset").cloned())
+        .collect::<Vec<_>>();
+    let byte_values = bytes
+        .iter()
+        .map(|entry| {
+            entry
+                .get("byte_hex")
+                .and_then(|v| v.as_str())
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        })
+        .collect::<Vec<_>>();
+    let bytes_hex = if byte_values.iter().all(Option::is_some) {
+        Some(
+            byte_values
+                .iter()
+                .flatten()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        )
+    } else {
+        None
+    };
+    let ascii = byte_values
+        .iter()
+        .map(|byte| {
+            byte.and_then(printable_ascii_char)
+                .unwrap_or_else(|| ".".to_string())
+        })
+        .collect::<String>();
+    let truncated = response
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    serde_json::json!({
+        "status": if missing_offsets.is_empty() && !truncated { "ready" } else { "partial" },
+        "addr": format!("{addr:#x}"),
+        "size": size,
+        "idx_range": response.get("idx_range").cloned().unwrap_or(serde_json::Value::Null),
+        "source": {
+            "endpoint": "/api/mem-writes-in-range",
+            "matched": response.get("matched").cloned().unwrap_or(serde_json::Value::Null),
+            "returned": response.get("returned").cloned().unwrap_or(serde_json::Value::Null),
+            "truncated": truncated,
+        },
+        "complete": missing_offsets.is_empty() && !truncated,
+        "bytes_hex": bytes_hex,
+        "ascii": ascii,
+        "missing_offsets": missing_offsets,
+        "writer_runs": byte_writer_runs(&bytes),
+        "bytes": bytes,
+        "warning": if truncated {
+            serde_json::Value::String(
+                "source writes were truncated; increase --max or narrow --idx-lo/--idx-hi before trusting latest writers".to_string(),
+            )
+        } else {
+            serde_json::Value::Null
+        },
+    })
+}
+
+fn byte_writer_map_entries_from_range_writes(
+    addr: u64,
+    size: usize,
+    writes: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let mut latest: Vec<Option<serde_json::Value>> = vec![None; size];
+    for write in writes {
+        let Some(start) = write
+            .get("dst_addr")
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str)
+        else {
+            continue;
+        };
+        let write_size = write.get("size").and_then(|v| v.as_u64()).unwrap_or(1);
+        let Some(write_end) = start.checked_add(write_size) else {
+            continue;
+        };
+        let Some(range_end) = addr.checked_add(size as u64) else {
+            continue;
+        };
+        let overlap_start = start.max(addr);
+        let overlap_end = write_end.min(range_end);
+        if overlap_start >= overlap_end {
+            continue;
+        }
+        for byte_addr in overlap_start..overlap_end {
+            let offset = (byte_addr - addr) as usize;
+            latest[offset] = Some(write.clone());
+        }
+    }
+
+    latest
+        .into_iter()
+        .enumerate()
+        .map(|(offset, write)| byte_writer_map_entry(addr + offset as u64, offset, write))
+        .collect()
+}
+
+fn byte_writer_map_entry(
+    byte_addr: u64,
+    offset: usize,
+    last_write: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let byte = last_write
+        .as_ref()
+        .and_then(|write| source_byte_for_write_at(write, byte_addr));
+    let source_byte_offset = last_write.as_ref().and_then(|write| {
+        write
+            .get("dst_addr")
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str)
+            .map(|start| byte_addr.saturating_sub(start))
+    });
+    let next = last_write.as_ref().and_then(|write| {
+        Some(serde_json::json!({
+            "idx": write.get("idx")?,
+            "reg": write.get("src_reg")?,
+            "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+            "reason": "buffer_byte_last_writer",
+            "offset": offset,
+            "addr": format!("{byte_addr:#x}"),
+            "byte_hex": byte.map(|b| format!("{b:02x}")),
+        }))
+    });
+    serde_json::json!({
+        "offset": offset,
+        "addr": format!("{byte_addr:#x}"),
+        "status": if last_write.is_some() && byte.is_some() { "ready" } else { "not_found" },
+        "byte_hex": byte.map(|b| format!("{b:02x}")),
+        "ascii": byte.and_then(printable_ascii_char),
+        "source_byte_offset": source_byte_offset,
+        "writer": last_write,
+        "next": next,
+    })
+}
+
+fn source_byte_for_write_at(write: &serde_json::Value, byte_addr: u64) -> Option<u8> {
+    let start = write
+        .get("dst_addr")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)?;
+    let size = write.get("size").and_then(|v| v.as_u64()).unwrap_or(1);
+    if byte_addr < start || byte_addr >= start.saturating_add(size) {
+        return None;
+    }
+    let offset = byte_addr - start;
+    let shift = offset.checked_mul(8)?;
+    if shift >= 64 {
+        return None;
+    }
+    let value = write
+        .get("src_value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)?;
+    Some(((value >> shift) & 0xff) as u8)
+}
+
+fn byte_writer_runs(bytes: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut runs = Vec::new();
+    let mut current: Option<ByteWriterRun> = None;
+    for entry in bytes {
+        let Some(byte_hex) = entry.get("byte_hex").and_then(|v| v.as_str()) else {
+            if let Some(run) = current.take() {
+                runs.push(run.into_json());
+            }
+            continue;
+        };
+        let Some(writer) = entry.get("writer").filter(|v| !v.is_null()) else {
+            if let Some(run) = current.take() {
+                runs.push(run.into_json());
+            }
+            continue;
+        };
+        let offset = entry
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_default() as usize;
+        let identity = byte_writer_identity(writer);
+        if let Some(run) = current.as_mut() {
+            if run.identity == identity && run.end_offset + 1 == offset {
+                run.end_offset = offset;
+                run.bytes_hex.push_str(byte_hex);
+                run.ascii.push_str(
+                    &u8::from_str_radix(byte_hex, 16)
+                        .ok()
+                        .and_then(printable_ascii_char)
+                        .unwrap_or_else(|| ".".to_string()),
+                );
+                continue;
+            }
+            runs.push(current.take().unwrap().into_json());
+        }
+        current = Some(ByteWriterRun {
+            identity,
+            start_offset: offset,
+            end_offset: offset,
+            bytes_hex: byte_hex.to_string(),
+            ascii: u8::from_str_radix(byte_hex, 16)
+                .ok()
+                .and_then(printable_ascii_char)
+                .unwrap_or_else(|| ".".to_string()),
+            writer: writer.clone(),
+        });
+    }
+    if let Some(run) = current {
+        runs.push(run.into_json());
+    }
+    runs
+}
+
+#[derive(Debug)]
+struct ByteWriterRun {
+    identity: String,
+    start_offset: usize,
+    end_offset: usize,
+    bytes_hex: String,
+    ascii: String,
+    writer: serde_json::Value,
+}
+
+impl ByteWriterRun {
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "start_offset": self.start_offset,
+            "end_offset": self.end_offset,
+            "size": self.end_offset.saturating_sub(self.start_offset) + 1,
+            "bytes_hex": self.bytes_hex,
+            "ascii": self.ascii,
+            "writer": self.writer,
+        })
+    }
+}
+
+fn byte_writer_identity(writer: &serde_json::Value) -> String {
+    [
+        writer
+            .get("idx")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.to_string()),
+        writer
+            .get("dst_addr")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        writer
+            .get("size")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.to_string()),
+        writer
+            .get("src_reg")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        writer
+            .get("src_value")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("|")
+}
+
 fn byte_writer_entry(
     offset: u64,
     byte_addr: u64,
@@ -7680,10 +8012,11 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
-        def_entries_from_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
-        odd_u64_inverse, recognize_alu_semantic, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, store_source_regs_from_asm, vm_slot_from_asm,
+        alu_expression_from_asm, base64_decoded_bytes, byte_writer_map_output,
+        choose_frontier_next, classify_vm_asm, def_entries_from_asm, def_source_regs_from_asm,
+        mem_addr_from_asm, memory_access_width, odd_u64_inverse, recognize_alu_semantic,
+        recognized_backchain_patterns, resolve_addr_in_maps_text, source_byte_for_write_at,
+        store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -8144,6 +8477,82 @@ mod tests {
         assert_eq!(inverse, 0xc097ef87329e28a5);
         assert_eq!(multiplier.wrapping_mul(inverse), 1);
         assert!(odd_u64_inverse(2).is_none());
+    }
+
+    #[test]
+    fn expands_byte_writer_map_from_little_endian_writes() {
+        let response = serde_json::json!({
+            "idx_range": [100, 300],
+            "matched": 3,
+            "returned": 3,
+            "truncated": false,
+            "writes": [
+                {
+                    "idx": 110,
+                    "pc": "0x1000",
+                    "rel": "0x0",
+                    "func": "sub_old",
+                    "asm": "strb w0, [x1]",
+                    "dst_addr": "0x2001",
+                    "size": 1,
+                    "src_reg": "x0",
+                    "src_value": "0xaa",
+                    "byte0": 170
+                },
+                {
+                    "idx": 120,
+                    "pc": "0x1004",
+                    "rel": "0x4",
+                    "func": "sub_pack",
+                    "asm": "str w16, [x2]",
+                    "dst_addr": "0x2000",
+                    "size": 4,
+                    "src_reg": "x16",
+                    "src_value": "0x616260af",
+                    "byte0": 175
+                },
+                {
+                    "idx": 130,
+                    "pc": "0x1008",
+                    "rel": "0x8",
+                    "func": "sub_tail",
+                    "asm": "strb w19, [x8, x14]",
+                    "dst_addr": "0x2004",
+                    "size": 1,
+                    "src_reg": "x19",
+                    "src_value": "0x62",
+                    "byte0": 98
+                }
+            ]
+        });
+        let out = byte_writer_map_output(0x2000, 5, &response);
+        assert_eq!(out["status"], serde_json::json!("ready"));
+        assert_eq!(out["bytes_hex"], serde_json::json!("af60626162"));
+        assert_eq!(out["bytes"][1]["byte_hex"], serde_json::json!("60"));
+        assert_eq!(out["bytes"][1]["source_byte_offset"], serde_json::json!(1));
+        assert_eq!(
+            out["writer_runs"][0]["bytes_hex"],
+            serde_json::json!("af606261")
+        );
+        assert_eq!(
+            out["writer_runs"][0]["writer"]["idx"],
+            serde_json::json!(120)
+        );
+        assert_eq!(out["writer_runs"][1]["bytes_hex"], serde_json::json!("62"));
+    }
+
+    #[test]
+    fn extracts_source_byte_for_byte_addresses_inside_word_write() {
+        let write = serde_json::json!({
+            "dst_addr": "0x3000",
+            "size": 4,
+            "src_value": "0xd528b905"
+        });
+        assert_eq!(source_byte_for_write_at(&write, 0x3000), Some(0x05));
+        assert_eq!(source_byte_for_write_at(&write, 0x3001), Some(0xb9));
+        assert_eq!(source_byte_for_write_at(&write, 0x3002), Some(0x28));
+        assert_eq!(source_byte_for_write_at(&write, 0x3003), Some(0xd5));
+        assert_eq!(source_byte_for_write_at(&write, 0x3004), None);
     }
 
     #[test]

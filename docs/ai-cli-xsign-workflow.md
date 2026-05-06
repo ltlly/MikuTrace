@@ -70,6 +70,26 @@ For each candidate address range, list writes that produced bytes there:
 The `writes[]` rows include `idx`, `asm`, `src_reg`, `src_value`, `dst_addr`,
 and `func`. Use `src_reg` and `idx` as the seed for backward taint.
 
+When the output buffer is already known, prefer the byte-oriented wrapper. It
+expands overlapping word stores into one latest writer per byte, using
+little-endian source values, and also emits compact `writer_runs[]`:
+
+```bash
+rust/target/debug/tracemiku-cli byte-writer-map <call_dir> \
+  --addr <buffer_addr> \
+  --size <byte_count> \
+  --idx-lo 0 \
+  --idx-hi <before_output_overwrite_idx> \
+  --max 5000
+```
+
+This is useful when the same scratch address is later reused for the final
+string copy. Set `--idx-hi` just before the consumer/encoder reads the buffer;
+otherwise the "latest writer" may be a later overwrite of the same address.
+For AI reasoning, start from `writer_runs[]` to classify chunks, then use the
+per-byte `bytes[]` entries for offsets that need deeper `vm-backchain` or
+`byte-lineage` work.
+
 ## Backward dataflow path
 
 Trace register provenance from a writer or suspicious finalizer instruction:

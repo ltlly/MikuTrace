@@ -91,6 +91,31 @@ For direct byte-oriented work, `--semantic-offset 65 --semantic-count 3` selects
 aligned group `22` and reports `tail[65:68] = 62 61 62` without manual Base64
 group arithmetic.
 
+The semantic tail scratch buffer can now be mapped directly from bytes to their
+latest trace writers:
+
+```bash
+rust/target/debug/tracemiku-cli byte-writer-map \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --addr 0x74b68bcc1d \
+  --size 68 \
+  --idx-hi 14739000 \
+  --max 300
+```
+
+The validated `call_001` result is complete (`matched=228`, `returned=228`,
+`truncated=false`) and reconstructs the 68-byte semantic tail:
+
+```text
+0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460f1d2295d336dae63ff825bafa0f452f1411dddc5965ac22528554125a7faa708626158de6160626162
+```
+
+Its `writer_runs[]` view shows the useful chunking: early bytes are mostly
+single `strb` writes, offsets `7..54` are packed 32-bit `str w*` writes, and
+offsets `55..67` return to byte stores. This is the compact entry point for
+the result-to-input strategy: select each output byte or 4-byte run, then chase
+its writer source register with `vm-backchain` or `byte-lineage`.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under
