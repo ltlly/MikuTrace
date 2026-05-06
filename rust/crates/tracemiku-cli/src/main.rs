@@ -141,6 +141,8 @@ enum Cmd {
     },
     /// Resolve an address against a saved /proc/<pid>/maps file.
     ResolveMapAddr { maps_file: PathBuf, addr: String },
+    /// Resolve an address against trace meta module ranges.
+    ResolveTraceAddr { trace_dir: PathBuf, addr: String },
     /// Resolve an ELF/shared-library virtual offset to the nearest symbol.
     ResolveElfSymbol { elf_file: PathBuf, offset: String },
     /// GET /api/records.
@@ -935,7 +937,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
         /// Drop records that do not look VM-related.
@@ -972,7 +974,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
@@ -1033,7 +1035,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
         /// Emit a compact AI-readable summary instead of the full step payload.
@@ -1064,7 +1066,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
@@ -1113,7 +1115,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
@@ -1162,7 +1164,7 @@ enum Cmd {
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
-            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28"
+            default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
@@ -1247,6 +1249,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Cmd::List { path, dir, json }) => cmd_list(path, dir, json),
         Some(Cmd::Info { path, json }) => cmd_info(path, json),
         Some(Cmd::ResolveMapAddr { maps_file, addr }) => cmd_resolve_map_addr(maps_file, addr),
+        Some(Cmd::ResolveTraceAddr { trace_dir, addr }) => cmd_resolve_trace_addr(trace_dir, addr),
         Some(Cmd::ResolveElfSymbol { elf_file, offset }) => {
             cmd_resolve_elf_symbol(elf_file, offset)
         }
@@ -5823,10 +5826,16 @@ fn register_value_key(reg: &str) -> String {
     let reg = reg.to_ascii_lowercase();
     if let Some(rest) = reg.strip_prefix('w') {
         if rest.parse::<u8>().is_ok() {
-            return format!("x{rest}");
+            return match rest {
+                "29" => "fp".to_string(),
+                "30" => "lr".to_string(),
+                _ => format!("x{rest}"),
+            };
         }
     }
     match reg.as_str() {
+        "x29" => "fp".to_string(),
+        "x30" => "lr".to_string(),
         "wsp" => "sp".to_string(),
         "wzr" => "xzr".to_string(),
         other => other.to_string(),
@@ -9206,6 +9215,24 @@ fn lineage_next_from_backstep(
     let upstream_status = backstep
         .pointer("/upstream/status")
         .and_then(|v| v.as_str());
+    if upstream_status == Some("not_found") {
+        return (
+            None,
+            serde_json::json!({
+                "kind": "memory_not_found_boundary",
+                "upstream_status": "not_found",
+                "upstream": {
+                    "addr": backstep.pointer("/upstream/addr").cloned().unwrap_or(serde_json::Value::Null),
+                    "addr_hi": backstep.pointer("/upstream/addr_hi").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx_lo": backstep.pointer("/upstream/idx_lo").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx_hi": backstep.pointer("/upstream/idx_hi").cloned().unwrap_or(serde_json::Value::Null),
+                    "observed_bytes_hex": backstep.pointer("/upstream/observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+                    "returned": backstep.pointer("/upstream/returned").cloned().unwrap_or(serde_json::Value::Null),
+                    "maybe_truncated": backstep.pointer("/upstream/maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+                },
+            }),
+        );
+    }
     if upstream_status == Some("observed_read_without_matching_traced_write") {
         return (
             None,
@@ -9318,9 +9345,11 @@ fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::Value {
         .iter()
         .filter_map(|step| {
             let decision = step.get("decision")?;
-            if decision.get("kind").and_then(|v| v.as_str())
-                != Some("observed_read_without_matching_traced_write")
-            {
+            let kind = decision.get("kind").and_then(|v| v.as_str());
+            if !matches!(
+                kind,
+                Some("observed_read_without_matching_traced_write" | "memory_not_found_boundary")
+            ) {
                 return None;
             }
             Some(serde_json::json!({
@@ -9328,6 +9357,7 @@ fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::Value {
                 "idx": step.get("idx").cloned().unwrap_or(serde_json::Value::Null),
                 "reg": step.get("reg").cloned().unwrap_or(serde_json::Value::Null),
                 "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "kind": kind,
                 "upstream": decision.get("upstream").cloned().unwrap_or(serde_json::Value::Null),
             }))
         })
@@ -9474,12 +9504,16 @@ fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde
 
 fn compact_lineage_memory_boundary(step: &serde_json::Value) -> Option<serde_json::Value> {
     let decision_kind = step.pointer("/decision/kind").and_then(|v| v.as_str())?;
-    if decision_kind != "observed_read_without_matching_traced_write" {
+    if !matches!(
+        decision_kind,
+        "observed_read_without_matching_traced_write" | "memory_not_found_boundary"
+    ) {
         return None;
     }
     let upstream = step.get("upstream").unwrap_or(&serde_json::Value::Null);
     Some(serde_json::json!({
         "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "kind": decision_kind,
         "idx": step.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "reg": step.get("reg").cloned().unwrap_or(serde_json::Value::Null),
         "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
@@ -13582,6 +13616,28 @@ fn cmd_resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<()> 
     print_pretty(&out)
 }
 
+fn cmd_resolve_trace_addr(trace_dir: PathBuf, addr: String) -> anyhow::Result<()> {
+    let addr = parse_u64_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
+    let meta = enriched_trace_meta(&trace_dir);
+    let module = module_for_addr(&meta, addr);
+    if module.is_null() {
+        print_pretty(&serde_json::json!({
+            "status": "miss",
+            "addr": format!("{addr:#x}"),
+            "trace_dir": trace_dir.display().to_string(),
+            "modules": meta.get("modules").and_then(|v| v.as_array()).map(|m| m.len()).unwrap_or(0),
+        }))
+    } else {
+        print_pretty(&serde_json::json!({
+            "status": "hit",
+            "addr": format!("{addr:#x}"),
+            "trace_dir": trace_dir.display().to_string(),
+            "module": module,
+            "primary_module": meta.get("module").cloned().unwrap_or(serde_json::Value::Null),
+        }))
+    }
+}
+
 fn cmd_resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<()> {
     let offset = parse_u64_str(&offset).with_context(|| format!("invalid offset: {offset}"))?;
     let (tool, symbols) = elf_symbols_from_nm(&elf_file)
@@ -13772,7 +13828,7 @@ fn elf_symbol_base_name(name: &str) -> String {
 }
 
 fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
-    let meta = read_json_opt(&path.join("meta.json"));
+    let meta = enriched_trace_meta(path);
     let trace = tracemiku_core::prelude::Trace::load(path)?;
     let n = trace.len();
     let mut first_pc = None;
@@ -13804,6 +13860,8 @@ fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
         "records": n,
         "ms": meta.get("ms").cloned().unwrap_or(serde_json::Value::Null),
         "retval": meta.get("retval").cloned().unwrap_or(serde_json::Value::Null),
+        "module": meta.get("module").cloned().unwrap_or(serde_json::Value::Null),
+        "modules_count": meta.get("modules").and_then(|v| v.as_array()).map(|items| items.len()).unwrap_or(0),
         "truncated": truncated,
         "last_insn_is_ret": last_insn_is_ret,
         "first_pc": first_pc,
@@ -13812,6 +13870,34 @@ fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
         "is_complete": complete,
         "rec_per_sec": rec_per_sec,
     }))
+}
+
+fn enriched_trace_meta(path: &Path) -> serde_json::Value {
+    let mut meta = read_json_opt(&path.join("meta.json"));
+    if path.join("trace.bin").is_file() {
+        if let Some(run_dir) = path.parent().and_then(|calls_dir| calls_dir.parent()) {
+            let parent = read_json_opt(&run_dir.join("meta.json"));
+            merge_missing_meta_field(&mut meta, &parent, "module");
+            merge_missing_meta_field(&mut meta, &parent, "modules");
+            merge_missing_meta_field(&mut meta, &parent, "pkg");
+            merge_missing_meta_field(&mut meta, &parent, "so");
+            merge_missing_meta_field(&mut meta, &parent, "method");
+            merge_missing_meta_field(&mut meta, &parent, "cmd");
+        }
+    }
+    meta
+}
+
+fn merge_missing_meta_field(meta: &mut serde_json::Value, parent: &serde_json::Value, key: &str) {
+    let should_fill = meta
+        .get(key)
+        .map(|value| value.is_null() || value.as_array().is_some_and(|items| items.is_empty()))
+        .unwrap_or(true);
+    if should_fill {
+        if let Some(value) = parent.get(key) {
+            meta[key] = value.clone();
+        }
+    }
 }
 
 fn read_json_opt(path: &Path) -> serde_json::Value {
@@ -13961,13 +14047,14 @@ mod tests {
         classify_vm_asm, compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
         gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
-        mem_dump_summary, memory_access_width, observed_byte_writer_mismatches, odd_u64_inverse,
-        output_map_summary, output_semantic_byte_equation,
-        output_semantic_byte_equation_input_summary, output_semantic_byte_equation_summary,
-        output_semantic_xor_word_run_templates, output_semantic_xor_word_state_source_summary,
-        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
-        parse_nm_symbol_line, recognize_alu_semantic, recognized_backchain_pattern_summary,
-        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
+        mem_dump_summary, memory_access_width, merge_missing_meta_field,
+        observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
+        output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
+        output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
+        output_semantic_xor_word_state_source_summary, output_semantic_xor_word_state_sources,
+        output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
+        recognized_backchain_pattern_summary, recognized_backchain_patterns, record_reg_u64,
+        register_value_key, resolve_addr_in_maps_text, resolve_elf_symbol_json,
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
         store_touch_for_addr, vm_backchain_stop_summary, vm_op_effect_summaries,
         vm_ops_compact_replay_summary, vm_ops_effects_only_summary, vm_ops_replay_plan_summary,
@@ -13987,6 +14074,55 @@ mod tests {
         );
         assert_eq!(store_source_regs_from_asm("stxr w0, x1, [x2]"), vec!["x1"]);
         assert!(store_source_regs_from_asm("ldr x0, [x1]").is_empty());
+    }
+
+    #[test]
+    fn register_value_key_matches_canonical_frame_aliases() {
+        assert_eq!(register_value_key("x29"), "fp");
+        assert_eq!(register_value_key("w29"), "fp");
+        assert_eq!(register_value_key("x30"), "lr");
+        assert_eq!(register_value_key("w30"), "lr");
+        assert_eq!(register_value_key("wsp"), "sp");
+        assert_eq!(register_value_key("w8"), "x8");
+    }
+
+    #[test]
+    fn mem_addr_from_asm_uses_stack_and_frame_aliases() {
+        let record = serde_json::json!({
+            "regs": {
+                "sp": "0x7000",
+                "fp": "0x7100",
+                "x1": "0x20",
+            }
+        });
+        assert_eq!(
+            mem_addr_from_asm("ldr x8, [sp, #0x10]", &record),
+            Some(0x7010)
+        );
+        assert_eq!(
+            mem_addr_from_asm("ldr x8, [x29, #0x18]", &record),
+            Some(0x7118)
+        );
+        assert_eq!(record_reg_u64(&record, "x29"), Some(0x7100));
+    }
+
+    #[test]
+    fn merge_missing_meta_field_keeps_call_specific_values() {
+        let mut meta = serde_json::json!({
+            "callIdx": 1,
+            "modules": []
+        });
+        let parent = serde_json::json!({
+            "module": {"name": "libtarget.so", "base": "0x1000", "size": 0x2000},
+            "modules": [{"name": "libc.so", "base": "0x7000", "size": 0x1000}],
+            "callIdx": 99
+        });
+        merge_missing_meta_field(&mut meta, &parent, "module");
+        merge_missing_meta_field(&mut meta, &parent, "modules");
+        merge_missing_meta_field(&mut meta, &parent, "callIdx");
+        assert_eq!(meta["module"]["name"], serde_json::json!("libtarget.so"));
+        assert_eq!(meta["modules"].as_array().unwrap().len(), 1);
+        assert_eq!(meta["callIdx"], serde_json::json!(1));
     }
 
     #[test]
@@ -16293,6 +16429,51 @@ mod tests {
         assert_eq!(
             decision["upstream"]["gap_call_candidates"]["candidate_count_total"],
             serde_json::json!(1)
+        );
+    }
+
+    #[test]
+    fn lineage_stops_at_missing_memory_writer_before_frontier() {
+        let backstep = serde_json::json!({
+            "local_def": {
+                "idx": 14009402,
+                "asm": "ldr x8, [x8]",
+                "class": "mem-load",
+                "def": {
+                    "reg": "x8",
+                    "src": [{"reg": "x8", "value": "0x74fbf7e650"}],
+                    "value_after": "0x74fbe99650"
+                }
+            },
+            "upstream": {
+                "status": "not_found",
+                "addr": "0x74fbf7e650",
+                "addr_hi": "0x74fbf7e658",
+                "idx_lo": 9009402,
+                "idx_hi": 14009402,
+                "observed_bytes_hex": "5096e9fb74000000",
+                "returned": 0,
+                "maybe_truncated": false
+            },
+            "frontier": [
+                {
+                    "idx": 14009402,
+                    "reason": "local_def_source_reg",
+                    "reg": "x8",
+                    "value": "0x74fbf7e650"
+                }
+            ]
+        });
+        let (seed, decision) = lineage_next_from_backstep(&backstep, Some(0));
+        assert!(seed.is_none());
+        assert_eq!(
+            decision["kind"],
+            serde_json::json!("memory_not_found_boundary")
+        );
+        assert_eq!(decision["upstream_status"], serde_json::json!("not_found"));
+        assert_eq!(
+            decision["upstream"]["observed_bytes_hex"],
+            serde_json::json!("5096e9fb74000000")
         );
     }
 

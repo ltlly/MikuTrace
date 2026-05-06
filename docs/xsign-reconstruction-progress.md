@@ -1008,6 +1008,8 @@ scratch slot25 before #14164280:
   slot24 is six +1 increments from 0x7599191120
   lineage ends at call_return_boundary #14009734: blr x22
   target x22=0x787beb9718, return x0=0x7599191120
+  resolve-trace-addr => libc.so+0x5c718
+  resolve-elf-symbol on device libc.so => malloc@@LIBC
   args: x0=0x12, x1=0, x2=8, x3=0x753dc62680,
         x4=0, x5=0x18, x6=0x74b68bd0c4, x7=0x2c
 
@@ -1025,6 +1027,36 @@ So the seed problem is no longer one undifferentiated fallback bucket. The
 pair-store fixes removed a false `slot8` seed and false observed-read
 boundaries. The remaining hard parts are scratch pointer provenance
 (`slot25/28`) and ladder chains (`slot24/26`).
+
+The `slot24` chain now has a concrete external identity: it is derived from
+`malloc(0x12)` in Android `libc.so`, not an unknown libsgmainso helper.
+
+```bash
+tracemiku-cli resolve-trace-addr <call_dir> 0x787beb9718
+# libc.so+0x5c718
+
+tracemiku-cli resolve-elf-symbol /tmp/tracemiku-device-libs/libc.so 0x5c718
+# malloc@@LIBC
+```
+
+`byte-lineage` also now includes `sp/fp/lr` in its default register set and
+stops at missing memory writers before auto-following address-base frontiers.
+The function-pointer source path for the call is therefore AI-readable without
+manual register overrides:
+
+```text
+0x7522b48b98 stack slot
+  <- #14009410 str x8, [sp,#0x68]
+  <- #14009405 ldr x8, [sp,#0x10]
+  <- #14009402 ldr x8, [x8]
+terminal: memory_not_found_boundary at 0x74fbf7e650
+observed bytes: 50 96 e9 fb 74 00 00 00
+```
+
+This turns `slot24` into an allocator-pointer boundary. A portable Python model
+must either parameterize allocator-derived pointer values or prove that later
+VM operations cancel them out across samples; it should not treat
+`0x7599191120` as a stable constant.
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:

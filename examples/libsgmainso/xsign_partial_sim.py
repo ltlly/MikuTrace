@@ -2665,11 +2665,14 @@ def vm_replay_seed_provenance_summary() -> dict:
             },
             "slot24": {
                 "value": "0x7599191126",
-                "lineage": "six +1 increments from a call-return value 0x7599191120",
+                "lineage": "six +1 increments from malloc(0x12) return value 0x7599191120",
                 "frontier": "call_return_boundary at #14009734 blr x22",
                 "call_return": {
                     "target_reg": "x22",
                     "target_value": "0x787beb9718",
+                    "target_module": "libc.so",
+                    "target_offset": "0x5c718",
+                    "target_symbol": "malloc@@LIBC",
                     "return_reg": "x0",
                     "return_value": "0x7599191120",
                     "args": {
@@ -2683,7 +2686,18 @@ def vm_replay_seed_provenance_summary() -> dict:
                         "x7": "0x2c",
                     },
                 },
-                "portable_status": "not_proven",
+                "target_pointer_lineage": {
+                    "tool": "tracemiku-cli byte-lineage --compact",
+                    "stack_slot": "0x7522b48b98",
+                    "terminal": "memory_not_found_boundary at 0x74fbf7e650",
+                    "observed_bytes_hex": "5096e9fb74000000",
+                    "interpretation": (
+                        "the indirect call target is loaded from a preexisting "
+                        "function table; resolve-trace-addr maps it to libc.so, "
+                        "and resolve-elf-symbol maps libc+0x5c718 to malloc"
+                    ),
+                },
+                "portable_status": "allocator_pointer_boundary",
             },
             "slot25": {
                 "value": "0xb",
@@ -2732,6 +2746,8 @@ def completion_audit() -> dict:
                     "byte-writer-map vm_source_ranges and stops",
                     "tools/vm_replay_plan_eval.py evaluates replay-plan JSON",
                     "vm_replay_seed_provenance_summary records proven and open seeds",
+                    "resolve-trace-addr resolves call targets through parent run module metadata",
+                    "byte-lineage default stack registers preserve sp/fp/lr stack-slot chains",
                 ],
                 "status": "substantially_available",
             },

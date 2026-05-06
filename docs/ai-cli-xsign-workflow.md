@@ -29,6 +29,8 @@ Use the typed wrappers for common routes:
 ./tracemiku info <call_dir> --json
 ./tracemiku api <call_dir> /api/meta
 ./tracemiku api <call_dir> /api/query -p kind=records -p q=ret -p limit=50
+./tracemiku resolve-trace-addr <call_dir> 0x787beb9718
+./tracemiku resolve-elf-symbol /path/to/libc.so 0x5c718
 ```
 
 For every Rust web API, use the generic escape hatch:
@@ -250,6 +252,13 @@ upstream observed bytes / gap-call evidence without requiring a scan of the
 full `chain[]`. Prefer `byte-lineage --compact` for automated AI loops: it
 omits the full chain entirely and emits only `path[]`, `recognized_semantics[]`,
 `memory_boundaries[]`, `terminal`, and `next_actions[]`.
+
+`byte-lineage`, `vm-backstep`, `vm-backchain`, and `vm-backtree` request
+`sp/fp/lr` by default. This is intentional: result-to-input work often crosses
+stack argument spill slots and frame-pointer locals before reaching the real
+producer. If a chain reaches `memory_not_found_boundary`, stop and classify the
+loaded memory/table address instead of following the address-base register; that
+base usually explains where the table lives, not the value that was loaded.
 
 For this boundary case, `vm-backstep` / `byte-lineage` also include
 `upstream.gap_call_candidates`. The scan covers the trace-index gap between the
