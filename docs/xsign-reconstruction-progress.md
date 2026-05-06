@@ -374,6 +374,23 @@ now the upstream `x13` value (`0x74ffafca73`): it must be traced further to
 classify whether it is payload state, digest state, pointer-derived state, or a
 table constant.
 
+Tracing the paired quotient register confirms the fold:
+
+```bash
+rust/target/debug/tracemiku-cli vm-backtree <call_dir> \
+  --idx 13946345 \
+  --reg x14 \
+  --depth 4 \
+  --frontier-with-next \
+  --summary
+```
+
+`highlights.semantic_formulas[]` reports:
+
+```text
+0x757524ef = 0x74ffafca73 / 0xff
+```
+
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
 

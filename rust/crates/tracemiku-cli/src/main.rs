@@ -2536,6 +2536,14 @@ async fn attach_base64_index_trees_on(
 }
 
 fn index_tree_summary(tree: &serde_json::Value) -> serde_json::Value {
+    let formulas = tree
+        .get("highlights")
+        .and_then(|v| v.get("alu_formulas"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
     let interesting_formulas = tree
         .get("highlights")
         .and_then(|v| v.get("alu_formulas"))
@@ -2554,8 +2562,18 @@ fn index_tree_summary(tree: &serde_json::Value) -> serde_json::Value {
         .take(16)
         .cloned()
         .collect::<Vec<_>>();
+    let semantic_formulas = formulas
+        .iter()
+        .filter(|formula| {
+            formula.get("semantic").is_some()
+                || formula.get("op").and_then(|v| v.as_str()) == Some("udiv")
+        })
+        .take(16)
+        .cloned()
+        .collect::<Vec<_>>();
     serde_json::json!({
         "interesting_formulas": interesting_formulas,
+        "semantic_formulas": semantic_formulas,
     })
 }
 
@@ -4087,8 +4105,14 @@ fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let interesting_formulas = index_tree_summary(tree)
+    let formula_summary = index_tree_summary(tree);
+    let interesting_formulas = formula_summary
         .get("interesting_formulas")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let semantic_formulas = formula_summary
+        .get("semantic_formulas")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
@@ -4142,6 +4166,7 @@ fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value {
             "word_loads": tree.pointer("/highlights/word_loads").cloned().unwrap_or_else(|| serde_json::json!([])),
             "table_lookups": tree.pointer("/highlights/table_lookups").cloned().unwrap_or_else(|| serde_json::json!([])),
             "interesting_formulas": interesting_formulas,
+            "semantic_formulas": semantic_formulas,
         },
         "small_byte_loads": small_byte_loads,
         "bytecode_frontiers": bytecode_frontiers,
@@ -4174,6 +4199,7 @@ fn compact_tree_node_summary(node: &serde_json::Value) -> serde_json::Value {
             "func": node.pointer("/local_def/func").cloned().unwrap_or(serde_json::Value::Null),
             "pc": node.pointer("/local_def/pc").cloned().unwrap_or(serde_json::Value::Null),
             "mem_addr": node.pointer("/local_def/mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+            "formula": node.pointer("/local_def/formula").cloned().unwrap_or(serde_json::Value::Null),
         },
         "consumer": {
             "asm": node.pointer("/target/asm").cloned().unwrap_or(serde_json::Value::Null),
@@ -5477,7 +5503,7 @@ fn highlight_alu_formula(node: &serde_json::Value) -> Option<serde_json::Value> 
     let mnemonic = asm.split_whitespace().next()?.to_ascii_lowercase();
     if !matches!(
         mnemonic.as_str(),
-        "orr" | "and" | "lsl" | "lsr" | "add" | "sub" | "ubfx"
+        "orr" | "and" | "lsl" | "lsr" | "add" | "sub" | "ubfx" | "udiv"
     ) {
         return None;
     }

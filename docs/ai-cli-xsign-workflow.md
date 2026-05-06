@@ -402,6 +402,13 @@ This comes from an ARM64 VM sequence where a quotient register is added back to
 the original value, and only the low byte is stored. Treat it as a collapsed
 formula and continue tracing the `input` operand.
 
+`vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
+non-small formulas that are still semantically important, such as:
+
+```text
+0x757524ef = 0x74ffafca73 / 0xff
+```
+
 For a shorter AI prompt, use `highlights.word_loads` and
 `highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses
 byte writers into `ascii`/`bytes_hex`; `table_lookups` reports the Base64
