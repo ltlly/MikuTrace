@@ -7661,6 +7661,7 @@ fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
         })
         .collect::<Vec<_>>();
     let recognized_patterns = recognized_backchain_patterns(&chain);
+    let recognized_pattern_summary = recognized_backchain_pattern_summary(&recognized_patterns);
     serde_json::json!({
         "status": backchain.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": backchain.get("start").cloned().unwrap_or(serde_json::Value::Null),
@@ -7669,7 +7670,76 @@ fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
         "steps_returned": backchain.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
         "recognized_semantics": recognized_semantics,
         "recognized_patterns": recognized_patterns,
+        "recognized_pattern_summary": recognized_pattern_summary,
         "chain": chain,
+    })
+}
+
+#[derive(Debug, Default)]
+struct AffinePatternGroup {
+    multiplier: String,
+    delta: String,
+    multiplier_inverse: serde_json::Value,
+    multiplier_odd: serde_json::Value,
+    transitions: Vec<serde_json::Value>,
+}
+
+fn recognized_backchain_pattern_summary(patterns: &[serde_json::Value]) -> serde_json::Value {
+    let mut affine = BTreeMap::<String, AffinePatternGroup>::new();
+    let mut kind_counts = BTreeMap::<String, usize>::new();
+    for pattern in patterns {
+        let Some(kind) = pattern.get("kind").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        *kind_counts.entry(kind.to_string()).or_insert(0) += 1;
+        if kind != "affine_mod64_state_step" {
+            continue;
+        }
+        let Some(multiplier) = pattern.get("multiplier").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(delta) = pattern.get("delta").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let key = format!("{multiplier}|{delta}");
+        let group = affine.entry(key).or_insert_with(|| AffinePatternGroup {
+            multiplier: multiplier.to_string(),
+            delta: delta.to_string(),
+            multiplier_inverse: pattern
+                .get("multiplier_inverse")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            multiplier_odd: pattern
+                .get("multiplier_odd")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            ..AffinePatternGroup::default()
+        });
+        group.transitions.push(serde_json::json!({
+            "add_step": pattern.get("add_step").cloned().unwrap_or(serde_json::Value::Null),
+            "mul_step": pattern.get("mul_step").cloned().unwrap_or(serde_json::Value::Null),
+            "previous_state": pattern.get("previous_state").cloned().unwrap_or(serde_json::Value::Null),
+            "state": pattern.get("state").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
+    serde_json::json!({
+        "kind_counts": kind_counts
+            .into_iter()
+            .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+            .collect::<Vec<_>>(),
+        "affine_mod64_recurrences": affine
+            .into_values()
+            .map(|group| serde_json::json!({
+                "kind": "affine_mod64_recurrence",
+                "count": group.transitions.len(),
+                "multiplier": group.multiplier,
+                "delta": group.delta,
+                "multiplier_inverse": group.multiplier_inverse,
+                "multiplier_odd": group.multiplier_odd,
+                "expression": "state == (previous_state * multiplier + delta) mod 2^64",
+                "transitions": group.transitions,
+            }))
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -11277,9 +11347,10 @@ mod tests {
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
         output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
         output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
-        recognized_backchain_patterns, resolve_addr_in_maps_text, resolve_elf_symbol_json,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        recognized_backchain_pattern_summary, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, resolve_elf_symbol_json, source_byte_for_write_at,
+        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_ops_state_updates,
+        vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -12386,6 +12457,19 @@ mod tests {
             serde_json::json!("0xc097ef87329e28a5")
         );
         assert_eq!(patterns[0]["delta"], serde_json::json!("0x1"));
+        let summary = recognized_backchain_pattern_summary(&patterns);
+        assert_eq!(
+            summary["affine_mod64_recurrences"][0]["count"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            summary["affine_mod64_recurrences"][0]["multiplier"],
+            serde_json::json!("0x5851f42d4c957f2d")
+        );
+        assert_eq!(
+            summary["affine_mod64_recurrences"][0]["transitions"][0]["state"],
+            serde_json::json!("0x52c36263893da50d")
+        );
     }
 
     #[test]
