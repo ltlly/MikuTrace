@@ -17,7 +17,7 @@ fn loads_empty_trace_zero_records() {
 }
 
 #[test]
-fn rejects_truncated_trace_bin() {
+fn ignores_partial_trailing_record() {
     use std::fs::OpenOptions;
     use std::io::Write;
     let fix = common::synth_trace_dir(3);
@@ -29,12 +29,10 @@ fn rejects_truncated_trace_bin() {
     f.write_all(b"\x00\x01\x02\x03\x04").unwrap();
     drop(f);
 
-    let err = Trace::load(&fix.call_dir).expect_err("truncated trace must fail");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("not a multiple of 272") || msg.contains("REC_SIZE"),
-        "error should explain layout violation, got: {msg}"
-    );
+    let trace = Trace::load(&fix.call_dir).expect("partial trailing record is ignored");
+    assert_eq!(trace.len(), 3);
+    assert_eq!(trace.raw().len(), 3 * REC_SIZE);
+    assert_eq!(trace.record(2).pc, 0x100008);
 }
 
 #[test]

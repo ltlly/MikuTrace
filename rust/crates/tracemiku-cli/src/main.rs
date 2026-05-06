@@ -506,6 +506,8 @@ enum Cmd {
         addr_hi: Option<String>,
         #[arg(long)]
         src_byte: Option<String>,
+        #[arg(long)]
+        with_external: bool,
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
@@ -1663,12 +1665,14 @@ async fn main() -> anyhow::Result<()> {
             addr_lo,
             addr_hi,
             src_byte,
+            with_external,
             max,
         }) => {
             let mut params = vec![
                 ("idx_lo", idx_lo.to_string()),
                 ("idx_hi", idx_hi.to_string()),
                 ("max", max.to_string()),
+                ("with_external", with_external.to_string()),
             ];
             if let Some(addr_lo) = addr_lo {
                 params.push(("addr_lo", addr_lo));

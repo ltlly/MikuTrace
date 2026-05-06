@@ -613,13 +613,20 @@ For a fresh capture, keep normal tracing and add a narrow boundary-diff hook
 instead of enabling full `--trace-deep`:
 
 ```bash
-./tracemiku trace ... \
+uv run python tracemiku trace --launch ... \
   --boundary-diff-patterns stat@@,stat64@@,fstatat@@,fstatat64@@,lstat@@,lstat64@@
 ```
 
-This records changed bytes under `external_writes.bin`, which Rust MemShadow v4
+Use `--launch` when the app should be restarted without clearing data. It does
+`force-stop + monkey` and attaches as soon as the PID appears, unlike
+`--cold-launch` which also runs `pm clear`.
+
+This records changed bytes under `external_writes.bin`, which Rust MemShadow v5
 loads as `kind: "x"` writes. It lets `byte-lineage` continue through external
 stat output bytes without following stale in-module writes.
+The `@@` suffix is intentional: the agent treats `stat@@` as "exact `stat` or
+versioned `stat@@...`", so the same command works across Bionic builds that do
+or do not expose version suffixes.
 For direct probes, `last-write-of-addr --with-external` and
 `/api/last-write-of-addr?with_external=true` use the same MemShadow-backed view;
 the default last-write route keeps the faster trace-index-only path.

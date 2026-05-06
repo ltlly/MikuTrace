@@ -32,7 +32,7 @@ Single-user prototype, no compatibility constraints, AI doing all implementation
 - `tools/hooks/*.json` (JNI specs, suicide patches, type anchors) — format stable
 - `examples/<so>/known_offsets.json` — format stable
 - **trace.bin 272B record format + per-call dir layout + meta.json schema** — frozen contract; capture writes them, analysis reads them
-- Sidecar formats (`.memshadow.v2.npz`) — analysis-side, may need migration; bumped to `.memshadow.v4.bin` (Rust-native binary, includes boundary-diff external writes); old sidecars regenerable, no migration needed in prototype phase
+- Sidecar formats (`.memshadow.v2.npz`) — analysis-side, may need migration; bumped to `.memshadow.v5.bin` (Rust-native binary, includes boundary-diff external writes); old sidecars regenerable, no migration needed in prototype phase
 
 ### What is consciously deleted
 - `viewer/app.py` (legacy terminal UI) — already frozen, drop entirely
@@ -345,7 +345,7 @@ LLM-side `viewer/decompiler/llm_*.py` (prompt builder, model adapters) gets port
 | D7 | Test strategy | cargo test + 1 real-trace integration + transient per-module parity scripts | Single-user prototype; full snapshot golden corpus is overkill |
 | D8 | Sidecar lifecycle | Lazy spawn, alive for server lifetime, 3-retry on crash | Simple, low overhead; avoids spawn cost on every BN request |
 | D9 | Trace format | Frozen — capture writes 272B record + meta.json + per-call dir; analysis only reads | Capture not in scope; format is the contract |
-| D10 | Sidecar files (.memshadow.v4.bin) | Bumped, no migration | Prototype, single user — old sidecars regenerable from trace |
+| D10 | Sidecar files (.memshadow.v5.bin) | Bumped, no migration | Prototype, single user — old sidecars regenerable from trace |
 | D11 | Old Python webui | Delete at M7, no v1/v2 coexistence | No external users; reference role ends at parity |
 | D12 | Old Python viewer SDK | Delete at M7; future Python access via PyO3 binding if ever needed | Prototype phase; YAGNI |
 | D13 | Path of frontend dist serving | Rust server serves `frontend/dist/` as static | One binary deploy; `vite build` step in M7 release |
@@ -400,7 +400,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `taint.py` (`--through-mem`, `--data-only`) | `tracemiku-core::taint` | ✅ M3-γ | through_mem byte-overlap via MemShadow.latest_write_idx_strict_before. data_only filters addressing-only regs; default exclude={sp,fp,lr} when caller doesn't override. 2 colocated tests pin both flags. |
 | `taint.py` (`--cross-fn-call` frame_depth annotation) | `tracemiku-core::taint` | ✅ M3-γ | `build_frame_depth_map` shipped (M3-β); cross_fn_call query param now wired through both endpoints → `frame_depth: Option<u32>` row field with skip_serializing_if. 2 integration tests pin presence/absence. |
 | (future) **semantic cross-fn taint propagation** (ABI arg tracking, caller-saved kill, callee→caller return flow) | `tracemiku-core::taint::cross_fn` | ⏸ | Brand-new feature; needs its own design. Python never implemented this; the Python TODO note "全量 propagation 待真机" referred to *this*, not to frame_depth annotation. Do after v2 cutover and after real-trace need is documented. |
-| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | ✅ M3-λ | core port (BTreeMap byte index, build/byte_at/find_strings/hex_dump) plus Rust-native `trace.bin.memshadow.v4.bin` sidecar. Boundary-diff `external_writes.bin` records are loaded as `kind="x"` writes. Stale/corrupt sidecars are ignored and regenerated; Python v2 `.npz` is not migrated. |
+| `memshadow.py` (sparse byte map + .npz sidecar) | `tracemiku-core::memshadow` | ✅ M3-λ | core port (BTreeMap byte index, build/byte_at/find_strings/hex_dump) plus Rust-native `trace.bin.memshadow.v5.bin` sidecar. Boundary-diff `external_writes.bin` records are loaded as `kind="x"` writes. Stale/corrupt sidecars are ignored and regenerated; Python v2 `.npz` is not migrated. |
 | `symbols.py` (SymbolMap, ModuleResolver, build_from_trace) | `tracemiku-core::symbols` | 🟡 M2-γ: SymbolMap + ModuleResolver + build_from_trace done; auto_known_offsets M2-δ | sorted-Vec + binary-search via partition_point |
 | `symbols.py::load_ida_symbols` | `tracemiku-core::symbols` | ⏸ | IDA JSON import; rare path |
 | `symbols.py::auto_known_offsets` | `tracemiku-core::symbols` | ✅ M2-ε | bl-target heuristic + examples/<so>/known_offsets.json overlay; merged into AppState symbols with priority: static > examples > auto |
@@ -446,7 +446,7 @@ Updated as milestones land. Initial state at design freeze: nothing implemented 
 | `stats` | ✅ M2-α | trace metadata JSON |
 | `records`, `record` | ✅ M3-μ | REST-backed wrappers for `/api/records` and `/api/record/{idx}` |
 | `functions`, `cfg`, `cfg-svg`, `call-tree` | ✅ M3-μ | REST-backed wrappers for shipped server endpoints |
-| `strings`, `mem-dump` | ✅ M3-μ | REST-backed wrappers; MemShadow v4 sidecar load-or-build |
+| `strings`, `mem-dump` | ✅ M3-μ | REST-backed wrappers; MemShadow v5 sidecar load-or-build |
 | `dec-summary`, `dec-fn` | ✅ M3-μ | REST-backed wrappers for TraceIR markdown routes |
 | `idxs-for-pc` | ✅ M3-ξ | REST-backed wrapper for `/api/idxs-for-pc` |
 | `search-pc` | ✅ M3-χ | legacy all-hit PC list shape |
@@ -580,7 +580,7 @@ All listed in §5 plus this exhaustive map of every endpoint currently in `webui
 | Python `tests/test_*.py` (815 tests) | ✅ M7-β | deleted after Rust/server/frontend suites covered v2 runtime |
 | `tests/conftest.py` (synth fixtures) | ⛔ → ❌ | Fixtures rewritten as Rust `tests/common/fixtures.rs` |
 | `traces/debug_minimal/` real-trace fixture | ⛔ | Filesystem-only; reused as M0 perf baseline + cargo integration test |
-| `.memshadow.v2.npz` sidecar | ✅ M3-λ | Replaced by Rust-native `trace.bin.memshadow.v4.bin`; old Python `.npz` sidecars are ignored/regenerable |
+| `.memshadow.v2.npz` sidecar | ✅ M3-λ | Replaced by Rust-native `trace.bin.memshadow.v5.bin`; old Python `.npz` sidecars are ignored/regenerable |
 | `tools/hooks/*.json` JNI/suicide/type-anchor specs | ⛔ | Format frozen, parsed by both old + new |
 | `examples/<so>/known_offsets.json` | ⛔ | Format frozen |
 | `examples/llm_cookbook.py` | ❌ | Python SDK demo; deleted at M7 |

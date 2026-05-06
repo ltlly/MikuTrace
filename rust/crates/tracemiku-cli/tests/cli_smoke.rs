@@ -400,6 +400,39 @@ fn memory_query_wrappers_use_server_wire_shape() {
         "idxs-touching-addr".into(),
         cd.display().to_string(),
         "--addr".into(),
+        "0x7002".into(),
+        "--cursor".into(),
+        "3".into(),
+        "--with-bytes".into(),
+    ]);
+    assert_eq!(
+        v["before"][0],
+        serde_json::json!({"idx":2,"kind":"x","byte":88})
+    );
+
+    let v = run_json(&[
+        "mem-writes-in-range".into(),
+        cd.display().to_string(),
+        "--idx-lo".into(),
+        "0".into(),
+        "--idx-hi".into(),
+        "3".into(),
+        "--addr-lo".into(),
+        "0x7002".into(),
+        "--addr-hi".into(),
+        "0x7003".into(),
+        "--with-external".into(),
+    ]);
+    assert!(v["writes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["idx"] == 2 && row["write_kind"] == "x"));
+
+    let v = run_json(&[
+        "idxs-touching-addr".into(),
+        cd.display().to_string(),
+        "--addr".into(),
         "0x7000".into(),
         "--cursor".into(),
         "1".into(),

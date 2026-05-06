@@ -788,12 +788,41 @@ This lets an AI stop at the right boundary and ask for a wider trace, boundary
 hook, or external metadata instead of following a stale pointer-shaped write.
 
 Rust MemShadow now loads boundary-diff `external_writes.bin` records into the
-v4 sidecar as `kind="x"` writes. A new capture with
+v5 sidecar as `kind="x"` writes. A new capture with
 `--boundary-diff-patterns stat@@,stat64@@,fstatat@@,fstatat64@@,lstat@@,lstat64@@`
 should therefore let `byte-lineage` and `mem-writes-in-range` continue through
 the stat output structure instead of stopping at this boundary. Direct
 last-write probes should pass `--with-external` to include these external
 events.
+
+The first real boundary-diff x-sign capture is:
+
+```text
+traces/boundary_stat_launch2/calls/call_001_tid11945_8882256r_7389ms
+records=8,882,256 truncated=false dropped=0
+x-sign value_idx=8,881,466
+external_writes.bin = 192 raw events before de-duplication
+```
+
+The capture used `uv run python tracemiku trace --launch ...` so the app was
+restarted without `pm clear`. The agent attached before `libsgmainso` loaded,
+installed six libc boundary-diff targets, and recorded `ext-write +192`.
+`stat@@` matching now covers both exact Bionic names such as `stat` and
+versioned names such as `stat@@LIBC`; duplicate aliases at the same address are
+deduplicated in the agent, and MemShadow v5 also deduplicates identical
+`(idx, addr, byte)` external events when reading older captures.
+
+Concrete validation from that capture:
+
+```bash
+rust/target/debug/tracemiku-cli last-write-of-addr \
+  traces/boundary_stat_launch2/calls/call_001_tid11945_8882256r_7389ms \
+  --addr 0x75807e47c0 --before-idx 7570600 --with-external
+```
+
+returns `write_kind="x"`, `writer_idx=7570507`, and `src_value="0xfb"`.
+`idxs-touching-addr --with-bytes` preserves the same event kind as `x`, so an
+AI can distinguish boundary bytes from normal traced stores.
 
 Dumping the containing buffer at the same cursor shows that this boundary is a
 substring of a short ASCII value:

@@ -129,6 +129,8 @@ DEEP_KEEP_EXCL = ["linker","linker64","libdl.so"]  // 任何模式下都 exclude
 `__atomic_*` — Frida Interceptor 会自递归 SIGABRT (Frida 自己内部就用这些).
 所以默认空, host 显式传哪些就跟哪些. 对 x-sign 这类路径/文件元数据输入,
 优先传精确版本化片段, 例如 `--boundary-diff-patterns stat@@,stat64@@,fstatat@@`.
+`@@` 后缀会同时匹配 Bionic 的未版本化符号 `stat` 和带版本后缀的
+`stat@@LIBC`, 避免退化成过宽的 `stat` 子串匹配。
 
 ## JSON-driven JNI hooks (Task #56)
 

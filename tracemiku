@@ -118,6 +118,31 @@ def _cold_launch_start(pkg, max_pid_wait=15):
     raise RuntimeError(f"cold-launch {pkg} 拿不到 pid 超时 {max_pid_wait}s")
 
 
+def _launch_start(pkg, max_pid_wait=15):
+    """force-stop + monkey 拉起, 不清应用数据, 等 pid 出现就返回.
+    用于需要尽早 attach 但不能 `pm clear` 破坏登录/本地状态的场景.
+    """
+    import time
+    print(f"[launch] force-stop {pkg} (no pm clear)", flush=True)
+    subprocess.run(["adb", "shell", "am", "force-stop", pkg], capture_output=True)
+    time.sleep(0.5)
+    print("[launch] monkey 拉起", flush=True)
+    subprocess.run(
+        ["adb", "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"],
+        capture_output=True,
+    )
+    t0 = time.time()
+    while time.time() - t0 < max_pid_wait:
+        r = subprocess.run(["adb", "shell", "pidof", pkg], capture_output=True, text=True)
+        s = r.stdout.strip()
+        if s:
+            pid = int(s.split()[0])
+            print(f"[launch] pid={pid} ({int(time.time()-t0)}s)", flush=True)
+            return pid
+        time.sleep(0.25)
+    raise RuntimeError(f"launch {pkg} 拿不到 pid 超时 {max_pid_wait}s")
+
+
 def _drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
     """在已拉起的 app 上自动点'同意' + 等首页. 用于 _cold_launch_start 之后. """
     import re, time
@@ -173,6 +198,16 @@ def cmd_trace(args):
     import signal, threading
     cold_pid = None
     consent_thread = None
+    launch_pid = None
+    if getattr(args, "launch", False) and getattr(args, "cold_launch", False):
+        print("[!] --launch and --cold-launch are mutually exclusive", file=sys.stderr)
+        return 2
+    if getattr(args, "launch", False) and args.pkg:
+        try:
+            launch_pid = _launch_start(args.pkg)
+        except Exception as e:
+            print(f"[!] launch 失败: {e}")
+            return 2
     if getattr(args, "cold_launch", False) and args.pkg:
         try:
             cold_pid = _cold_launch_start(args.pkg)
@@ -586,6 +621,8 @@ def cmd_trace(args):
     pid = None
     if args.attach_pid:
         pid = args.attach_pid
+    elif launch_pid is not None:
+        pid = launch_pid
     elif cold_pid is not None:
         pid = cold_pid     # cold-launch 已拿到 pid, 直接用 (尽快 attach 避免 anti-debug 起来)
     elif args.pkg:
@@ -1388,6 +1425,8 @@ def main():
     p_tr.add_argument("--mode", choices=["js", "cmodule", "cmodule-v3"], default="cmodule",
                       help="trace 实现: js=JS callout (~30K rec/s); cmodule=CModule native (10x+, 默认); "
                            "cmodule-v3=回归对比 baseline (CModule + send blob, 仅基准用)")
+    p_tr.add_argument("--launch", action="store_true",
+                      help="非破坏式启动 app: force-stop+monkey 后立刻 attach, 不执行 pm clear/隐私同意自动化")
     p_tr.add_argument("--cold-launch", action="store_true",
                       help="冷启动 app 前自动 force-stop+pm clear+monkey+点'同意' (隐私协议自动化, 多 app 通用)")
     p_tr.add_argument("--home-markers", default=None,

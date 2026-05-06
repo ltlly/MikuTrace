@@ -146,6 +146,7 @@ fn memshadow_loads_external_writes_as_x_events() {
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
     append_external_write(&cd, 1, 0x7002, b'X');
+    append_external_write(&cd, 1, 0x7002, b'X');
     let trace = Trace::load(&cd).unwrap();
     let mem = MemShadow::build_from_trace(&trace);
 
@@ -163,10 +164,19 @@ fn memshadow_loads_external_writes_as_x_events() {
         .writes
         .iter()
         .any(|rec| rec.idx == 1 && rec.addr == 0x7002 && rec.value == b'X' as u64));
+    assert_eq!(
+        mem.bytes
+            .get(&0x7002)
+            .unwrap()
+            .iter()
+            .filter(|ev| ev.kind == "x")
+            .count(),
+        1
+    );
 }
 
 #[test]
-fn memshadow_v4_sidecar_roundtrip_preserves_shadow() {
+fn memshadow_v5_sidecar_roundtrip_preserves_shadow() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -183,7 +193,7 @@ fn memshadow_v4_sidecar_roundtrip_preserves_shadow() {
 }
 
 #[test]
-fn memshadow_v4_sidecar_stale_trace_size_rebuilds() {
+fn memshadow_v5_sidecar_stale_trace_size_rebuilds() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -203,7 +213,7 @@ fn memshadow_v4_sidecar_stale_trace_size_rebuilds() {
 }
 
 #[test]
-fn memshadow_v4_corrupt_sidecar_is_ignored() {
+fn memshadow_v5_corrupt_sidecar_is_ignored() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();

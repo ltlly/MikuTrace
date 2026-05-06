@@ -263,11 +263,15 @@ function ensureFlushTimer() {
 
 function collectBoundaryDiffSymbols(m, diffPatterns) {
     if (!diffPatterns || diffPatterns.length === 0) return 0;
+    if (!STATE.diffSymAddrs) STATE.diffSymAddrs = {};
     let n = 0;
     try {
         for (const sym of m.enumerateSymbols()) {
             if (!sym.address || sym.address.isNull()) continue;
-            if (!diffPatterns.some(p => sym.name.indexOf(p) !== -1)) continue;
+            if (!diffPatterns.some(p => symbolMatchesBoundaryPattern(sym.name, p))) continue;
+            const key = sym.address.toString();
+            if (STATE.diffSymAddrs[key]) continue;
+            STATE.diffSymAddrs[key] = true;
             STATE.diffSyms.push({
                 addr: sym.address, name: sym.name, mod: m.name,
             });
@@ -279,6 +283,15 @@ function collectBoundaryDiffSymbols(m, diffPatterns) {
     return n;
 }
 
+function symbolMatchesBoundaryPattern(name, pat) {
+    if (!pat) return false;
+    if (pat.endsWith("@@")) {
+        const stem = pat.slice(0, -2);
+        return name === stem || name.indexOf(stem + "@@") !== -1;
+    }
+    return name.indexOf(pat) !== -1;
+}
+
 function applyExcludesOnce() {
     if (STATE.excluded) return;
     const userIncl = STATE.includeSoPatterns || [];
@@ -287,6 +300,7 @@ function applyExcludesOnce() {
     const stalkerPatterns = STATE.stalkerExcludePatterns || STALKER_EXCLUDE_PATTERNS;
     const diffPatterns = STATE.boundaryDiffPatterns || DEFAULT_BOUNDARY_DIFF_PATTERNS;
     STATE.diffSyms = [];     // syms to Interceptor.attach (boundary-diff only)
+    STATE.diffSymAddrs = {};
     let nMod = 0, hard = 0, soft = 0, user_kept = 0, stalkerOnly = 0, diffTargets = 0;
 
     for (const m of Process.enumerateModules()) {
@@ -1155,8 +1169,12 @@ function installFnHook(fp, onInsn) {
                     try { patchSgmainsoSuicide(); } catch (e) { log(`[patch-suicide][!] ${e}`); }
                 }
                 applyExcludesOnce();
-                // Cache writable rw- ranges for boundary-diff ptr classification
-                if (STATE.deepTrace) refreshWritableRanges();
+                // Cache writable rw- ranges for boundary-diff ptr classification.
+                // Boundary-diff is independent from --trace-deep, so refresh
+                // whenever diff hooks were installed.
+                if (STATE.deepTrace || (STATE.diffSyms && STATE.diffSyms.length > 0)) {
+                    refreshWritableRanges();
+                }
                 // Hook libart JNI string fns once we're in a thread that has JNIEnv.
                 // Interceptor (not Stalker) — safe even though libart is HARD_EXCL.
                 try { installJniStringHooksOnce(); } catch(_){}

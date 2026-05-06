@@ -172,6 +172,22 @@ async fn touching_addr_splits_reads_and_writes_around_cursor() {
 }
 
 #[tokio::test]
+async fn touching_addr_with_bytes_preserves_external_write_kind() {
+    let (_tmp, cd) = synth_call_dir();
+    append_external_write(&cd, 2, 0x7002, b'X');
+    let v = get_json(
+        cd,
+        "/api/idxs-touching-addr?addr=0x7002&cursor=3&limit=10&with_bytes=true",
+    )
+    .await;
+    assert_eq!(v["status"], "ready");
+    assert_eq!(
+        v["before"][0],
+        serde_json::json!({"idx":2,"kind":"x","byte":88})
+    );
+}
+
+#[tokio::test]
 async fn touching_range_counts_overlapping_reads_and_writes() {
     let (_tmp, cd) = synth_call_dir();
     let v = get_json(
@@ -199,8 +215,29 @@ async fn mem_writes_in_range_reports_write_details() {
     assert_eq!(v["returned"], 1);
     assert_eq!(v["truncated"], false);
     assert_eq!(v["writes"][0]["idx"], 0);
+    assert_eq!(v["writes"][0]["write_kind"], "w");
     assert_eq!(v["writes"][0]["dst_addr"], "0x7000");
     assert_eq!(v["writes"][0]["src_reg"], "x0");
+}
+
+#[tokio::test]
+async fn mem_writes_in_range_can_include_external_writes() {
+    let (_tmp, cd) = synth_call_dir();
+    append_external_write(&cd, 2, 0x7002, b'X');
+    let v = get_json(
+        cd,
+        "/api/mem-writes-in-range?idx_lo=0&idx_hi=3&addr_lo=0x7002&addr_hi=0x7003&max=5&with_external=true",
+    )
+    .await;
+    assert_eq!(v["matched"], 2);
+    assert!(v["writes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["idx"] == 2
+            && row["write_kind"] == "x"
+            && row["src_value"] == "0x58"
+            && row["src_reg"] == serde_json::Value::Null));
 }
 
 #[tokio::test]

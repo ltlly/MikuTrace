@@ -1,6 +1,6 @@
 //! Sparse byte-level memory shadow built from a trace.
 //!
-//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v4 binary
+//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v5 binary
 //! sidecar for fast reloads on large traces.
 //!
 //! Each instruction has full register state captured BEFORE its execution.
@@ -17,7 +17,7 @@
 //! source_idx)` returns the latest event with `idx <= t`, or `(None, "??",
 //! None)` if no event yet.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::thread;
@@ -48,9 +48,9 @@ pub struct MemRec {
     pub value: u64,
 }
 
-const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV4\0\0";
-const SIDECAR_VERSION: u32 = 4;
-pub const SIDECAR_SUFFIX: &str = ".memshadow.v4.bin";
+const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV5\0\0";
+const SIDECAR_VERSION: u32 = 5;
+pub const SIDECAR_SUFFIX: &str = ".memshadow.v5.bin";
 const EXTERNAL_WRITES_FILE: &str = "external_writes.bin";
 const EXTERNAL_WRITE_RECORD_SIZE: usize = 17;
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -69,12 +69,12 @@ pub struct MemShadow {
 }
 
 impl MemShadow {
-    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v4.bin`.
+    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v5.bin`.
     pub fn sidecar_path(trace: &Trace) -> PathBuf {
         trace.call_dir().join(format!("trace.bin{SIDECAR_SUFFIX}"))
     }
 
-    /// Load from a valid v4 sidecar when possible; otherwise cold-build and
+    /// Load from a valid v5 sidecar when possible; otherwise cold-build and
     /// best-effort save. Corrupt/stale sidecars are ignored.
     pub fn load_or_build(trace: &Trace) -> Self {
         if let Some(mem) = Self::try_load_sidecar(trace) {
@@ -125,7 +125,7 @@ impl MemShadow {
         mem
     }
 
-    /// Try to load `<call_dir>/trace.bin.memshadow.v4.bin`.
+    /// Try to load `<call_dir>/trace.bin.memshadow.v5.bin`.
     ///
     /// Returns `None` for miss, stale trace size, schema mismatch, or corrupt
     /// content. Callers that want a ready MemShadow should use
@@ -134,7 +134,7 @@ impl MemShadow {
         Self::read_sidecar(trace).ok()
     }
 
-    /// Save this shadow as v4 binary sidecar. Writes to a temp file in the
+    /// Save this shadow as v5 binary sidecar. Writes to a temp file in the
     /// call directory and then atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
         let path = Self::sidecar_path(trace);
@@ -142,7 +142,7 @@ impl MemShadow {
             "{}.tmp.{}",
             path.file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or("trace.bin.memshadow.v4.bin"),
+                .unwrap_or("trace.bin.memshadow.v5.bin"),
             std::process::id()
         );
         let tmp_path = path.with_file_name(tmp_name);
@@ -431,6 +431,7 @@ fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
     let Ok(raw) = std::fs::read(path) else {
         return;
     };
+    let mut seen: BTreeSet<(usize, u64, u8)> = BTreeSet::new();
     for chunk in raw.chunks_exact(EXTERNAL_WRITE_RECORD_SIZE) {
         let idx_u64 = u64::from_le_bytes(chunk[0..8].try_into().unwrap());
         let Ok(idx) = usize::try_from(idx_u64) else {
@@ -438,6 +439,9 @@ fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
         };
         let addr = u64::from_le_bytes(chunk[8..16].try_into().unwrap());
         let byte = chunk[16];
+        if !seen.insert((idx, addr, byte)) {
+            continue;
+        }
         mem.writes.push(MemRec {
             idx,
             addr,

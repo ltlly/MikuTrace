@@ -243,6 +243,8 @@ pub struct MemWritesInRangeQuery {
     pub idx_lo: usize,
     #[serde(default = "default_idx_hi")]
     pub idx_hi: isize,
+    #[serde(default)]
+    pub with_external: bool,
     pub src_byte: Option<String>,
     pub addr_lo: Option<String>,
     pub addr_hi: Option<String>,
@@ -261,6 +263,7 @@ fn default_writes_max() -> usize {
 #[derive(Debug, Serialize)]
 pub struct MemWriteRow {
     pub idx: usize,
+    pub write_kind: &'static str,
     pub pc: String,
     pub rel: Option<String>,
     pub func: Option<String>,
@@ -313,7 +316,8 @@ fn mem_writes_in_range_response(
     let src_byte = parse_optional_int("src_byte", &q.src_byte)?.map(|v| (v & 0xff) as u8);
     let max = effective_writes_max(q.max);
     let base = primary_base(&inner.meta);
-    if let (Some(src_byte), Some(memshadow)) = (src_byte, inner.memshadow_if_ready()) {
+    if q.with_external || src_byte.is_some() {
+        let memshadow = inner.memshadow();
         return Ok(mem_writes_in_range_from_memshadow(
             inner, max, lo, hi, addr_lo, addr_hi, src_byte, base, memshadow,
         ));
@@ -353,6 +357,7 @@ fn mem_writes_in_range_response(
         let (func_name, _) = inner.symbols.lookup(record.pc);
         rows.push(MemWriteRow {
             idx: write.idx,
+            write_kind: "w",
             pc: format!("{:#x}", record.pc),
             rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
             func: (func_name != "?").then_some(func_name),
@@ -384,7 +389,7 @@ fn mem_writes_in_range_from_memshadow(
     hi: usize,
     addr_lo: Option<u64>,
     addr_hi: Option<u64>,
-    src_byte: u8,
+    src_byte: Option<u8>,
     base: Option<u64>,
     memshadow: &tracemiku_core::prelude::MemShadow,
 ) -> MemWritesInRangeResponse {
@@ -396,7 +401,7 @@ fn mem_writes_in_range_from_memshadow(
         if !matches_addr_filter(write.addr, write.size, addr_lo, addr_hi) {
             continue;
         }
-        if (write.value & 0xff) as u8 != src_byte {
+        if src_byte.is_some_and(|b| (write.value & 0xff) as u8 != b) {
             continue;
         }
         matched += 1;
@@ -406,10 +411,14 @@ fn mem_writes_in_range_from_memshadow(
 
         let record = inner.trace.record(write.idx);
         let decoded = decode(record.pc, record.inst);
-        let src_reg = source_reg_for_write_at(&decoded, &record, write.addr);
+        let writer_kind = mem_write_kind_at(memshadow, write.addr, write.idx).unwrap_or("w");
+        let src_reg = (writer_kind != "x")
+            .then(|| source_reg_for_write_at(&decoded, &record, write.addr))
+            .flatten();
         let (func_name, _) = inner.symbols.lookup(record.pc);
         rows.push(MemWriteRow {
             idx: write.idx,
+            write_kind: writer_kind,
             pc: format!("{:#x}", record.pc),
             rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
             func: (func_name != "?").then_some(func_name),
@@ -652,10 +661,8 @@ fn touching_addr_entries_from_memshadow(
             events
                 .iter()
                 .filter_map(|ev| {
-                    let kind = if ev.kind == "r" {
-                        "r"
-                    } else if ev.kind == "w" || ev.kind == "x" {
-                        "w"
+                    let kind = if ev.kind == "r" || ev.kind == "w" || ev.kind == "x" {
+                        ev.kind
                     } else {
                         return None;
                     };
