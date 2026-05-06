@@ -954,17 +954,20 @@ TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY = {
         ),
         "bytecode_read_count": 44,
         "control_effect_count": 1,
+        "op_template_count": 12,
         "first_control": {
             "idx": 10613174,
             "pseudocode": "0x75ebae5970 = 0x75ebae58e0 + 0x9",
             "bytecode_read_idx": 10613173,
             "bytecode_offset": "0x8",
             "bytecode_value": "0x9",
+            "template_signature": "bc[0x8:8] effects[control:formula:add]",
         },
         "interpretation": (
             "Formula-only byte-writer chains that stop at x21 can be continued "
             "as VM operation windows. The compact effects-only view now keeps "
-            "bytecode reads, control effects, and joined op_effects at top level."
+            "bytecode reads, control effects, joined op_effects, and grouped "
+            "op_templates at top level."
         ),
     },
     "interpretation": (

@@ -701,8 +701,9 @@ rust/target/debug/tracemiku-cli vm-ops \
   --max-ops 20
 ```
 
-returns `bytecode_read_count=44` and `control_effect_count=1`. The first
-control step is:
+returns `bytecode_read_count=44`, `control_effect_count=1`, and
+`op_template_count=12`. The first control template is
+`bc[0x8:8] effects[control:formula:add]`:
 
 ```text
 #10613173 bytecode[+0x8] = 0x9

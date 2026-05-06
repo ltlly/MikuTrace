@@ -6565,6 +6565,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
             }));
         }
     }
+    let op_templates = vm_op_templates(&op_effects);
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": value.get("start").cloned().unwrap_or(serde_json::Value::Null),
@@ -6584,6 +6585,7 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "memory_store_effect_count": memory_store_effects.len(),
         "control_effect_count": control_effects.len(),
         "bytecode_read_count": bytecode_reads.len(),
+        "op_template_count": op_templates.len(),
         "semantic_counts": vm_ops_semantic_counts(&ops),
         "state_updates": vm_ops_state_updates(&ops),
         "byte_load_effects": byte_load_effects,
@@ -6591,8 +6593,199 @@ fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
         "control_effects": control_effects,
         "bytecode_reads": bytecode_reads,
         "op_effects": op_effects,
+        "op_templates": op_templates,
         "effects": effects,
     })
+}
+
+#[derive(Debug, Default)]
+struct VmOpTemplateGroup {
+    signature: String,
+    count: usize,
+    bytecode_operands: BTreeMap<String, VmOpTemplateOperand>,
+    effect_kind_counts: BTreeMap<String, usize>,
+    sample_ops: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Default)]
+struct VmOpTemplateOperand {
+    offset: serde_json::Value,
+    width: serde_json::Value,
+    values: BTreeMap<String, VmOpTemplateOperandValue>,
+}
+
+#[derive(Debug, Default)]
+struct VmOpTemplateOperandValue {
+    value: serde_json::Value,
+    bytes_le_hex: serde_json::Value,
+    count: usize,
+}
+
+fn vm_op_templates(op_effects: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut groups = BTreeMap::<String, VmOpTemplateGroup>::new();
+    for op in op_effects {
+        let signature = vm_op_template_signature(op);
+        let group = groups
+            .entry(signature.clone())
+            .or_insert_with(|| VmOpTemplateGroup {
+                signature,
+                ..VmOpTemplateGroup::default()
+            });
+        group.count += 1;
+        if group.sample_ops.len() < 3 {
+            group.sample_ops.push(op.clone());
+        }
+        for read in op
+            .get("bytecode_reads")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let offset = read
+                .get("offset")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let width = read
+                .get("width")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let key = format!("{}:{}", json_display(&offset), json_display(&width));
+            let operand =
+                group
+                    .bytecode_operands
+                    .entry(key)
+                    .or_insert_with(|| VmOpTemplateOperand {
+                        offset,
+                        width,
+                        ..VmOpTemplateOperand::default()
+                    });
+            let value = read
+                .get("value")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let value_key = json_display(&value);
+            let entry =
+                operand
+                    .values
+                    .entry(value_key)
+                    .or_insert_with(|| VmOpTemplateOperandValue {
+                        value,
+                        bytes_le_hex: read
+                            .get("bytes_le_hex")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        count: 0,
+                    });
+            entry.count += 1;
+        }
+        for effect in op
+            .get("effects")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let kind = effect
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            *group
+                .effect_kind_counts
+                .entry(kind.to_string())
+                .or_insert(0) += 1;
+        }
+    }
+    groups
+        .into_values()
+        .map(|group| {
+            let bytecode_operands = group
+                .bytecode_operands
+                .into_values()
+                .map(|operand| {
+                    let values = operand
+                        .values
+                        .into_values()
+                        .take(8)
+                        .map(|value| {
+                            serde_json::json!({
+                                "value": value.value,
+                                "bytes_le_hex": value.bytes_le_hex,
+                                "count": value.count,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    serde_json::json!({
+                        "offset": operand.offset,
+                        "width": operand.width,
+                        "values": values,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "signature": group.signature,
+                "count": group.count,
+                "bytecode_operands": bytecode_operands,
+                "effect_kind_counts": group.effect_kind_counts
+                    .into_iter()
+                    .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+                    .collect::<Vec<_>>(),
+                "sample_ops": group.sample_ops,
+            })
+        })
+        .collect()
+}
+
+fn vm_op_template_signature(op: &serde_json::Value) -> String {
+    let bytecode = op
+        .get("bytecode_reads")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(|read| {
+            format!(
+                "{}:{}",
+                read.get("offset")
+                    .map(json_display)
+                    .unwrap_or_else(|| "null".to_string()),
+                read.get("width")
+                    .map(json_display)
+                    .unwrap_or_else(|| "null".to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let effects = op
+        .get("effects")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(vm_op_effect_signature)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("bc[{bytecode}] effects[{effects}]")
+}
+
+fn vm_op_effect_signature(effect: &serde_json::Value) -> String {
+    let kind = effect
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let formula_op = effect
+        .get("formula")
+        .and_then(|v| v.get("op"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+    let source = if effect
+        .get("source_byte_load")
+        .map(|v| !v.is_null())
+        .unwrap_or(false)
+    {
+        "byte_load"
+    } else if formula_op != "none" {
+        "formula"
+    } else {
+        "literal"
+    };
+    format!("{kind}:{source}:{formula_op}")
 }
 
 fn vm_ops_semantic_counts(ops: &[serde_json::Value]) -> Vec<serde_json::Value> {
@@ -14374,7 +14567,8 @@ mod tests {
                         {
                             "idx": 10616043,
                             "asm": "add x21, x21, x6, lsl #4",
-                            "expression": "0x200 = 0x100 + 0x9"
+                            "expression": "0x200 = 0x100 + 0x9",
+                            "op": "add"
                         }
                     ]
                 }
@@ -14388,6 +14582,7 @@ mod tests {
         assert_eq!(summary["memory_store_effect_count"], serde_json::json!(1));
         assert_eq!(summary["control_effect_count"], serde_json::json!(1));
         assert_eq!(summary["bytecode_read_count"], serde_json::json!(2));
+        assert_eq!(summary["op_template_count"], serde_json::json!(2));
         assert_eq!(
             summary["effects"][0]["pseudocode"],
             serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
@@ -14420,6 +14615,20 @@ mod tests {
         assert_eq!(
             summary["op_effects"][1]["effects"][0]["kind"],
             serde_json::json!("control")
+        );
+        let templates = summary["op_templates"].as_array().unwrap();
+        let control_template = templates
+            .iter()
+            .find(|template| {
+                template
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|signature| signature.contains("control:formula:add"))
+            })
+            .unwrap();
+        assert_eq!(
+            control_template["bytecode_operands"][0]["values"][0]["value"],
+            serde_json::json!("0x9")
         );
     }
 
