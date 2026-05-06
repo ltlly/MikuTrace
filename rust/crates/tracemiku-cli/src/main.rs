@@ -3497,6 +3497,7 @@ async fn vm_backtree_value_on(
             }
         }
     }
+    let highlights = vm_backtree_highlights(&nodes);
     Ok(serde_json::json!({
         "status": "ready",
         "start": {
@@ -3508,6 +3509,7 @@ async fn vm_backtree_value_on(
         "frontier_with_next": frontier_with_next,
         "nodes_returned": nodes.len(),
         "truncated": truncated || !queue.is_empty(),
+        "highlights": highlights,
         "nodes": nodes,
     }))
 }
@@ -4014,6 +4016,140 @@ fn mem_write_touches_addr(write: &serde_json::Value, addr: u64) -> bool {
     };
     let size = write.get("size").and_then(|v| v.as_u64()).unwrap_or(1);
     addr >= start && addr < start.saturating_add(size)
+}
+
+fn vm_backtree_highlights(nodes: &[serde_json::Value]) -> serde_json::Value {
+    let word_loads = nodes
+        .iter()
+        .filter_map(highlight_word_load)
+        .collect::<Vec<_>>();
+    let table_lookups = nodes
+        .iter()
+        .filter_map(highlight_table_lookup)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "word_loads": word_loads,
+        "table_lookups": table_lookups,
+    })
+}
+
+fn highlight_word_load(node: &serde_json::Value) -> Option<serde_json::Value> {
+    let local = node.get("local_def")?;
+    let asm = local.get("asm")?.as_str()?;
+    if !asm.trim_start().starts_with("ldr w") {
+        return None;
+    }
+    let byte_nexts = node
+        .get("upstream")?
+        .get("byte_nexts")?
+        .as_array()
+        .filter(|items| items.len() > 1)?;
+    let mut byte_sources = Vec::new();
+    for next in byte_nexts {
+        let offsets = next
+            .get("offsets")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_else(|| {
+                vec![next
+                    .get("offset")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null)]
+            });
+        for offset_value in offsets {
+            let offset = offset_value.as_u64().unwrap_or(0);
+            let src_value = next
+                .get("src_value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str);
+            let byte = src_value.map(|v| (v & 0xff) as u8);
+            byte_sources.push(serde_json::json!({
+                "offset": offset,
+                "addr": next.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "idx": next.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "reg": next.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                "src_value": next.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "byte_hex": byte.map(|b| format!("{b:02x}")),
+                "ascii": byte.and_then(printable_ascii_char),
+            }));
+        }
+    }
+    byte_sources.sort_by_key(|source| {
+        source
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(u64::MAX)
+    });
+    let bytes = byte_sources
+        .iter()
+        .filter_map(|source| {
+            source
+                .get("byte_hex")
+                .and_then(|v| v.as_str())
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        })
+        .collect::<Vec<_>>();
+    Some(serde_json::json!({
+        "node": node.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": node.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "value": node.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": asm,
+        "bytes_hex": bytes_to_hex(&bytes),
+        "ascii": ascii_preview(&bytes),
+        "byte_sources": byte_sources,
+    }))
+}
+
+fn highlight_table_lookup(node: &serde_json::Value) -> Option<serde_json::Value> {
+    let local = node.get("local_def")?;
+    if local.get("class").and_then(|v| v.as_str()) != Some("byte-load") {
+        return None;
+    }
+    let asm = local.get("asm")?.as_str()?;
+    if !asm.contains('[') {
+        return None;
+    }
+    let index = node
+        .get("frontier_nexts")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .filter_map(|next| {
+            let value = next
+                .get("src_value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str)?;
+            (value <= 0x3f).then_some((next, value))
+        })
+        .min_by_key(|(_, value)| *value)?;
+    let char_value = node
+        .get("value")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)
+        .map(|v| (v & 0xff) as u8);
+    Some(serde_json::json!({
+        "node": node.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "idx": node.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "reg": node.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": asm,
+        "char_hex": char_value.map(|b| format!("{b:02x}")),
+        "char": char_value.and_then(printable_ascii_char),
+        "index_reg": index.0.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+        "index_value": format!("{:#x}", index.1),
+    }))
+}
+
+fn printable_ascii_char(byte: u8) -> Option<String> {
+    byte.is_ascii_graphic()
+        .then(|| char::from(byte).to_string())
+        .or_else(|| (byte == b' ').then(|| " ".to_string()))
+}
+
+fn ascii_preview(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&byte| printable_ascii_char(byte).unwrap_or_else(|| ".".to_string()))
+        .collect()
 }
 
 fn classify_vm_asm(asm: &str) -> &'static str {

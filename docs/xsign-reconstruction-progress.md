@@ -261,6 +261,10 @@ byte writers for `Q/X/V/K`, and the load that produces `0x59697041` expands to
 `A/p/i/Y`. This is the level needed to keep walking from generated Base64 text
 back toward payload bit indexes.
 
+The same information is summarized under `highlights.word_loads`; table lookup
+rows are summarized under `highlights.table_lookups` with the recovered
+alphabet index when the index register is visible.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next

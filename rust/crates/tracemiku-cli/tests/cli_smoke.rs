@@ -702,6 +702,8 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
     assert_eq!(byte_nexts[3]["idx"], 3);
     assert_eq!(byte_nexts[3]["src_value"], "0x44");
     assert_eq!(byte_nexts[3]["offsets"], serde_json::json!([3]));
+    assert_eq!(v["highlights"]["word_loads"][0]["ascii"], "ABCD");
+    assert_eq!(v["highlights"]["word_loads"][0]["bytes_hex"], "41424344");
 }
 
 #[test]

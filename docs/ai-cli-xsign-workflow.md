@@ -323,6 +323,11 @@ independent character sources that make up the loaded word. This matters for
 the x-sign Base64 stage because the VM often builds overlapping 4-character
 windows and then combines them with `lsl`/`lsr`/`orr`.
 
+For a shorter AI prompt, use `highlights.word_loads` and
+`highlights.table_lookups` in the `vm-backtree` JSON. `word_loads` condenses
+byte writers into `ascii`/`bytes_hex`; `table_lookups` reports the Base64
+character and the small alphabet index register when it can identify one.
+
 For multi-trace discovery, avoid loading every trace. Scan JNI hook logs first:
 
 ```bash
