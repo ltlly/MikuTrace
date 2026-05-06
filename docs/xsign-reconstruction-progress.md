@@ -1201,6 +1201,14 @@ multi_sample_generalization  weakly_covered
 The audit intentionally keeps `goal_complete=false` until the portable algorithm
 and multi-sample formula coverage are real, not inferred from trace replay.
 
+The VM CLI work itself is now considered a usable generic surface rather than a
+target-specific x-sign shortcut. It handles register-file VM windows, dynamic
+opcode/handler grouping, compact effect summaries, replay-plan generation,
+seed-suggestion triage, and seed-lineage command emission. The remaining
+problem is algorithm recovery: proving or parameterizing the live VM seeds,
+static/table boundaries, app metadata, and time/device inputs so the Python
+model no longer depends on observed trace bytes.
+
 `multi_sample_formula_coverage` now makes the cross-sample boundary explicit:
 
 ```text

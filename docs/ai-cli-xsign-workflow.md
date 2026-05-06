@@ -173,6 +173,26 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> \
 
 The resulting `seed_lineage_commands[]` are proof tasks, not conclusions.
 
+### Current VM CLI closure boundary
+
+For the current libsgmainso investigation, the VM CLI layer is strong enough to
+serve as an AI-facing analysis surface:
+
+- it can turn dynamic VM windows into grouped op templates, compact effects,
+  ordered replay plans, and editable Python skeletons;
+- it can separate replay mechanics from unknown initial state by using
+  `--auto-seed-suggestions`;
+- it can emit next-step `byte-lineage` commands for seed proof work when the VM
+  state base is visible;
+- it can explain the observed call_001 scratch writer window without
+  target-specific commands.
+
+That is not the same as a recovered portable x-sign algorithm. A replay skeleton
+is complete only for the traced window and supplied seeds. Before treating it as
+algorithm code, every suggested slot, observed byte load, table word, app
+version string, time/device input, and trace-frontier value must be promoted to
+an explicit parameter or a proven derivation.
+
 ## Output-to-writer path
 
 Convert the known signature or byte sequence to hex, then search memory:

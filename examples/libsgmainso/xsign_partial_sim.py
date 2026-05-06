@@ -2837,6 +2837,20 @@ def completion_audit() -> dict:
                 "status": "substantially_available",
             },
             {
+                "id": "generic_vm_scope",
+                "requirement": (
+                    "VM-oriented CLI commands remain generic dynamic-trace "
+                    "helpers, not libsgmainso- or x-sign-specific tools."
+                ),
+                "evidence": [
+                    "vm profiles only name runtime role registers such as vm_ip and vm_state",
+                    "op_templates and replay_steps are derived from observed slot/memory effects",
+                    "seed_lineage_commands are proof prompts, not target-specific conclusions",
+                    "docs/ai-cli-xsign-workflow.md records VM variant coverage and boundaries",
+                ],
+                "status": "documented_and_enforced_by_current_design",
+            },
+            {
                 "id": "trace_bound_python_sim",
                 "requirement": "Python reproduces at least call_001 x-sign from trace-derived formulas.",
                 "evidence": [
