@@ -56,6 +56,17 @@ buffer shape currently observed in the trace. The traceable scratch bytes for
 the first variable group are `0x0a, 0x62, 0x61, ...`, not the whole-string
 decoded bytes `a6 26 10`.
 
+Across the six current samples, the aligned semantic tail has length 68. Tail
+offset `0` is always `0x0a`; all other offsets vary in the current sample set.
+One copy-like structural invariant does hold:
+
+```text
+tail[65:68] == tail[13:16]
+```
+
+Examples: `626162 -> 626162` in `call_001`, `95c595 -> 95c595` in
+`call_005`, and `47ae47 -> 47ae47` in the JNI-only sample.
+
 ## Output buffer chain
 
 For `traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms`:

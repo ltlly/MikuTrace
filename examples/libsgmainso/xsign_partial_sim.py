@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import urllib.parse
 
 
 MASK64 = (1 << 64) - 1
@@ -32,6 +33,15 @@ TAIL_ALIGNMENT_PREFIX = "AA"
 CALL_001_XSIGN = (
     "azYBCM007xAApiYQXVKLkaXxoOr2BiYWKai5MLGI6T9yCUYPHSKV0zba5j/4Jbr6D0UvFBHd3FllrCJShVQSWn+qcIYmFY3mFgYmFi"
 )
+
+SAMPLE_XSIGNS = {
+    "diff_run1_truncated_call_006": "azYBCM007xAAq6ob9x25o0UaJH1qe6obpaU1PT2FZTL+BMoCkS8Z3rrXajJ0KDb3g0ijGZ3QUFTpoa5fCVmeV/On/IuqGA8bmguqG6",
+    "diff_run1_call_001": CALL_001_XSIGN,
+    "diff_run1_call_003": "azYBCM007xAAo0uUzOxwDBWNAUjLo0uTRC3UtdwNhLofjCuKcKf4Vltfi7qVoNd/YsBCkXxYsdwIKU/X6NF/3xIvHQNLkOGDe4NLk0",
+    "diff_run1_call_004": "azYBCM007xAAobVDBd/tCgTJ7jwFAbVBuv8qZyLfemjhXtVYjnUGhKWNdWhrcimtnBK8Q4KKTw72+7EFFgOBDez949G1QhKhhVG1Qb",
+    "diff_run1_call_005": "azYBCM007xAAqVxW9B0aoS9pUvJ8CVxZU+fDf8vHk3AIRjxAZ23vnEyVnHCCasC1dQpVW2uSphYf41gd/xtoFQXlCslcWvZpbHlcWV",
+    "jni_only_call_001": "azYBCM007xAApHrmlCyZkzRvMUHKxHrkdVrlwu16tc0u%2Bxr9QdDJIWoous2k1%2BYIU7dz5k0vgKs5Xn6g2aZOqCNYLHR660L0SsR65H",
+}
 
 TRACE_TIME_RET = 0x69F5B3CB
 TRACE_LCG_STATES = [
@@ -95,6 +105,16 @@ def affine_mod64(previous_state: int, multiplier: int, delta: int) -> int:
     return (previous_state * multiplier + delta) & MASK64
 
 
+def aligned_tail(xsign: str) -> bytes:
+    xsign = urllib.parse.unquote(xsign)
+    tail_chars = xsign[FIXED_PREFIX_CHARS:]
+    return b64decode_unpadded(TAIL_ALIGNMENT_PREFIX + tail_chars)
+
+
+def semantic_tail(xsign: str) -> bytes:
+    return aligned_tail(xsign)[1:]
+
+
 def base64_i0(byte0: int) -> int:
     return (byte0 >> 2) & 0x3F
 
@@ -113,10 +133,11 @@ def base64_i3(byte2: int) -> int:
 
 def main() -> None:
     payload = b64decode_unpadded(CALL_001_XSIGN)
-    tail_chars = CALL_001_XSIGN[FIXED_PREFIX_CHARS:]
-    aligned_tail = b64decode_unpadded(TAIL_ALIGNMENT_PREFIX + tail_chars)
-    semantic_tail = aligned_tail[1:]
-    reencoded_tail = b64encode_unpadded(aligned_tail)
+    tail_chars = urllib.parse.unquote(CALL_001_XSIGN)[FIXED_PREFIX_CHARS:]
+    aligned = aligned_tail(CALL_001_XSIGN)
+    semantic = aligned[1:]
+    sample_tails = {name: semantic_tail(xsign) for name, xsign in SAMPLE_XSIGNS.items()}
+    reencoded_tail = b64encode_unpadded(aligned)
     lcg_states = lcg_sequence(TRACE_TIME_RET, len(TRACE_LCG_STATES))
     folds = [
         {
@@ -139,7 +160,7 @@ def main() -> None:
     group = CALL_001_XSIGN[12:16]
     decoded_group = b64decode_unpadded(group)
     index_p_from_payload = base64_i0(decoded_group[0])
-    scratch0, scratch1, scratch2, scratch3 = semantic_tail[:4]
+    scratch0, scratch1, scratch2, scratch3 = semantic[:4]
     index_p_from_trace_scratch = base64_i2(scratch0, scratch1)
     indices_from_payload = [
         base64_i0(decoded_group[0]),
@@ -163,12 +184,30 @@ def main() -> None:
             "fixed_prefix_chars": FIXED_PREFIX_CHARS,
             "variable_tail_chars": len(tail_chars),
             "synthetic_prefix": TAIL_ALIGNMENT_PREFIX,
-            "aligned_tail_len": len(aligned_tail),
-            "aligned_tail_prefix_hex": aligned_tail[:16].hex(),
-            "semantic_tail_prefix_hex": semantic_tail[:16].hex(),
+            "aligned_tail_len": len(aligned),
+            "aligned_tail_prefix_hex": aligned[:16].hex(),
+            "semantic_tail_prefix_hex": semantic[:16].hex(),
             "reencoded_tail_prefix": reencoded_tail[:18],
             "tail_reencodes_xsign_tail_from_char_2": reencoded_tail[2:] == tail_chars,
             "note": "The first aligned byte is synthetic; semantic tracing starts at aligned_tail[1].",
+        },
+        "multi_sample_tail_structure": {
+            "samples": len(sample_tails),
+            "tail_lengths": sorted({len(tail) for tail in sample_tails.values()}),
+            "stable_tail_offsets": [
+                offset
+                for offset in range(min(len(tail) for tail in sample_tails.values()))
+                if len({tail[offset] for tail in sample_tails.values()}) == 1
+            ],
+            "tail0_value": f"{next(iter(sample_tails.values()))[0]:#x}",
+            "copy_13_16_to_65_68_all": all(tail[13:16] == tail[65:68] for tail in sample_tails.values()),
+            "copy_examples": {
+                name: {
+                    "tail_13_16": tail[13:16].hex(),
+                    "tail_65_68": tail[65:68].hex(),
+                }
+                for name, tail in sample_tails.items()
+            },
         },
         "time_seed": {
             "hex": f"{TRACE_TIME_RET:#x}",
