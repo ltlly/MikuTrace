@@ -407,6 +407,16 @@ lhs bytes       = fbe9f269
 result bytes    = 9a8b930b
 ```
 
+`xor_word_state_source_summary` now uses these run-aligned chunks instead of
+sliding windows. For the selected `semantic-offset 7, semantic-count 32,
+vm-chain-steps 55` probe, the source coverage is:
+
+```text
+run-aligned templates = 6
+state sources found   = 1
+missing chunks        = 5
+```
+
 Cross-sample extraction over `call_001`, `call_003`, `call_004`, and `call_005`
 shows that the large middle stream is almost fixed, not ASLR-shaped pointer
 entropy:
