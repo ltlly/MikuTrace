@@ -466,12 +466,24 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
         "--semantic-writer-map-vm-chain-steps 16 --semantic-writer-map-vm-chain-runs 68 "
         "--semantic-writer-map-vm-chain-follow-frontier --summary"
     ),
-    "byte_equation_count": 67,
-    "covered_range": [1, 68],
+    "byte_equation_count": 68,
+    "requested_range": [0, 68],
+    "requested_coverage_status": "complete_in_requested_range",
+    "covered_range": [0, 68],
     "kind_counts": {
+        "byte_lane_extract": 1,
         "mod255_low_byte": 10,
         "xor_mix": 57,
     },
+    "byte_lane_equations": [
+        {
+            "offset": 0,
+            "source_value": 0x0A000142,
+            "source_byte_offset": 3,
+            "result": 0x0A,
+            "expression": "result == byte_lane_le(source_value, source_byte_offset)",
+        }
+    ],
     "xor_rhs_pattern": {
         "kind": "offset_parity_mask",
         "even_byte": 0x61,
@@ -507,7 +519,7 @@ TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY = {
             "result_hex": "58de6160",
         },
     ],
-    "unexplained_offsets": [0],
+    "unexplained_offsets": [],
 }
 
 TRACE_BASE64_PAYLOAD_PREFIX_FORMULAS = {
@@ -1111,8 +1123,26 @@ def main() -> None:
                 "byte_equation_count": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
                     "byte_equation_count"
                 ],
+                "requested_range": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                    "requested_range"
+                ],
+                "requested_coverage_status": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                    "requested_coverage_status"
+                ],
                 "covered_range": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["covered_range"],
                 "kind_counts": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["kind_counts"],
+                "byte_lane_equations": [
+                    {
+                        "offset": item["offset"],
+                        "source_value": f"{item['source_value']:#x}",
+                        "source_byte_offset": item["source_byte_offset"],
+                        "result": f"{item['result']:#x}",
+                        "expression": item["expression"],
+                    }
+                    for item in TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY[
+                        "byte_lane_equations"
+                    ]
+                ],
                 "xor_rhs_pattern": {
                     "kind": TRACE_CALL_001_FULL_BYTE_EQUATION_SUMMARY["xor_rhs_pattern"][
                         "kind"
@@ -1187,7 +1217,7 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "full semantic tail construction from the XOR lhs stream and mod255 inputs",
+            "upstream sources for the XOR lhs stream, byte-lane source words, and mod255 inputs",
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",

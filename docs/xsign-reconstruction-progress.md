@@ -286,16 +286,24 @@ state_update     = #14678176 add x13, x8, x12
 low32(0x561d4e18 + 0x22212a57) = 0x783e786f
 ```
 
-A full 68-byte byte-lane scan with 16 backchain steps is enough to classify the
-output formulas for almost the whole call_001 semantic tail:
+A full 68-byte byte-lane scan with 16 backchain steps is now enough to classify
+the output formulas for the whole call_001 semantic tail:
 
 ```text
-byte_equation_summary.count = 67
-covered_range               = [1, 68)
-kind_counts                 = mod255_low_byte: 10, xor_mix: 57
+requested_range             = [0, 68)
+requested_coverage_status   = complete_in_requested_range
+byte_equation_summary.count = 68
+covered_range               = [0, 68)
+kind_counts                 = byte_lane_extract: 1, mod255_low_byte: 10, xor_mix: 57
 xor_rhs_pattern             = offset parity mask
 even offsets                = xor rhs 0x61
 odd offsets                 = xor rhs 0x62
+```
+
+The previously missing semantic offset `0` is a generic byte-lane extraction:
+
+```text
+tail[0] = byte_lane_le(0x0a000142, 3) = 0x0a
 ```
 
 The same summary now compresses the 57 XOR left-hand bytes into three
@@ -1097,8 +1105,9 @@ Q: 0x10 = 0x610 & 0x30
 Running the same compact view over semantic offsets `0..68` now returns 68
 `payload_formula_table` rows and no missing semantic offsets. That proves the
 late Base64 index layer for the whole aligned 68-byte semantic tail. The
-remaining unknown is the upstream construction of the semantic bytes
-themselves, especially the XOR lhs stream and the mod255/LCG inputs.
+remaining unknown is the upstream construction of the semantic byte equation
+inputs themselves, especially the XOR lhs stream, the byte-lane source words,
+and the mod255/LCG inputs.
 
 ## Next target
 
