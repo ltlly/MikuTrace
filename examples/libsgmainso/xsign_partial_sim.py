@@ -623,6 +623,25 @@ def bytewise_variations(hex_by_sample: dict[str, str]) -> list[dict]:
     return out
 
 
+def xor_lhs_word_chunks(raw_hex: str, semantic_start: int) -> list[dict]:
+    data = bytes.fromhex(raw_hex)
+    chunks = []
+    for offset in range(0, len(data), 4):
+        chunk = data[offset : offset + 4]
+        row = {
+            "semantic_range": [semantic_start + offset, semantic_start + offset + len(chunk)],
+            "size": len(chunk),
+            "lhs_hex": chunk.hex(),
+        }
+        if len(chunk) == 4:
+            row["kind"] = "word32"
+            row["lhs_word_le"] = f"{int.from_bytes(chunk, 'little'):#010x}"
+        else:
+            row["kind"] = "tail_bytes"
+        chunks.append(row)
+    return chunks
+
+
 def aligned_tail(xsign: str) -> bytes:
     xsign = urllib.parse.unquote(xsign)
     tail_chars = xsign[FIXED_PREFIX_CHARS:]
@@ -758,6 +777,24 @@ def main() -> None:
     )
     middle_lhs = TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN
     middle_lhs_variations = bytewise_variations(middle_lhs["samples"])
+    middle_lhs_chunks_by_sample = {
+        name: xor_lhs_word_chunks(raw, middle_lhs["semantic_range"][0])
+        for name, raw in middle_lhs["samples"].items()
+    }
+    middle_lhs_call001_chunks = middle_lhs_chunks_by_sample["diff_run1_call_001"]
+    middle_lhs_word_chunk_variations = [
+        {
+            "chunk": chunk_idx,
+            "semantic_range": middle_lhs_call001_chunks[chunk_idx]["semantic_range"],
+            "values": {
+                name: chunks[chunk_idx]["lhs_hex"]
+                for name, chunks in middle_lhs_chunks_by_sample.items()
+            },
+        }
+        for chunk_idx in range(len(middle_lhs_call001_chunks))
+        if len({chunks[chunk_idx]["lhs_hex"] for chunks in middle_lhs_chunks_by_sample.values()})
+        > 1
+    ]
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -985,6 +1022,8 @@ def main() -> None:
                 "variation_count": len(middle_lhs_variations),
                 "variations": middle_lhs_variations,
                 "stable_byte_count": middle_lhs["size"] - len(middle_lhs_variations),
+                "word_chunks_call_001": middle_lhs_call001_chunks,
+                "word_chunk_variations": middle_lhs_word_chunk_variations,
                 "interpretation": middle_lhs["interpretation"],
             },
             "multi_sample_mask_folds": {
