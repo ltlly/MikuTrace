@@ -7551,7 +7551,7 @@ fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<
     let result = parse_u64_str(result)?;
     match mnemonic.as_str() {
         "add" => {
-            let (lhs, rhs) = parse_binary_values(values)?;
+            let (lhs, rhs) = parse_binary_values_or_immediate(asm, values)?;
             mod255_fold_semantic(lhs, rhs, result)
                 .or_else(|| mod255_fold_semantic(rhs, lhs, result))
                 .or_else(|| add_known_constant_semantic(lhs, rhs, result))
@@ -7561,21 +7561,21 @@ fn recognize_alu_semantic(asm: &str, result: &str, values: &[String]) -> Option<
                 .or_else(|| add32_mix_semantic(lhs, rhs, result))
         }
         "and" => {
-            let (lhs, rhs) = parse_binary_values(values)?;
-            bitmask_extract_semantic(lhs, rhs, result)
-                .or_else(|| bitmask_extract_semantic(rhs, lhs, result))
-                .or_else(|| and_identity_semantic(lhs, rhs, result))
+            let (lhs, rhs) = parse_binary_values_or_immediate(asm, values)?;
+            and_identity_semantic(lhs, rhs, result)
                 .or_else(|| and_identity_semantic(rhs, lhs, result))
+                .or_else(|| bitmask_extract_semantic(lhs, rhs, result))
+                .or_else(|| bitmask_extract_semantic(rhs, lhs, result))
         }
         "orr" => {
-            let (lhs, rhs) = parse_binary_values(values)?;
+            let (lhs, rhs) = parse_binary_values_or_immediate(asm, values)?;
             or_identity_semantic(lhs, rhs, result)
                 .or_else(|| or_identity_semantic(rhs, lhs, result))
                 .or_else(|| bitwise_or_merge_semantic(lhs, rhs, result))
         }
         "eor" => {
-            let (lhs, rhs) = parse_binary_values(values)?;
-            xor_identity_semantic(lhs, rhs, result)
+            let (lhs, rhs) = parse_binary_values_or_immediate(asm, values)?;
+            xor_identity_semantic(lhs, rhs, result).or_else(|| xor_mix_semantic(lhs, rhs, result))
         }
         "lsl" | "lsr" | "asr" => {
             let input = values.first().and_then(|value| parse_u64_str(value))?;
@@ -7601,6 +7601,26 @@ fn parse_binary_values(values: &[String]) -> Option<(u64, u64)> {
     ))
 }
 
+fn parse_binary_values_or_immediate(asm: &str, values: &[String]) -> Option<(u64, u64)> {
+    parse_binary_values(values).or_else(|| {
+        Some((
+            parse_u64_str(values.first()?)?,
+            last_immediate_operand_u64(asm)?,
+        ))
+    })
+}
+
+fn last_immediate_operand_u64(asm: &str) -> Option<u64> {
+    asm.split_once(char::is_whitespace)
+        .map(|(_, operands)| split_operands(operands))
+        .into_iter()
+        .flatten()
+        .skip(1)
+        .filter_map(|op| immediate_operand_value(&op))
+        .filter_map(|value| parse_u64_str(&value))
+        .last()
+}
+
 fn xor_identity_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::Value> {
     let input = match (lhs, rhs) {
         (lhs, 0) if lhs != 0 && result == lhs => lhs,
@@ -7616,8 +7636,21 @@ fn xor_identity_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::
     }))
 }
 
+fn xor_mix_semantic(lhs: u64, rhs: u64, result: u64) -> Option<serde_json::Value> {
+    if lhs == 0 || rhs == 0 || (lhs ^ rhs) != result {
+        return None;
+    }
+    Some(serde_json::json!({
+        "kind": "xor_mix",
+        "lhs": format!("{lhs:#x}"),
+        "rhs": format!("{rhs:#x}"),
+        "result": format!("{result:#x}"),
+        "expression": "result == lhs ^ rhs",
+    }))
+}
+
 fn and_identity_semantic(input: u64, mask: u64, result: u64) -> Option<serde_json::Value> {
-    if input == 0 || input & mask != result || result != input {
+    if input == 0 || mask <= 0xfff || input & mask != result || result != input {
         return None;
     }
     Some(serde_json::json!({
@@ -8925,6 +8958,14 @@ mod tests {
         assert_eq!(semantic["kind"], serde_json::json!("xor_identity"));
         assert_eq!(semantic["input"], serde_json::json!("0x62"));
         let semantic = recognize_alu_semantic(
+            "eor x16, x20, x5",
+            "0x5",
+            &["0x67".to_string(), "0x62".to_string()],
+        )
+        .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("xor_mix"));
+        assert_eq!(semantic["lhs"], serde_json::json!("0x67"));
+        let semantic = recognize_alu_semantic(
             "orr x5, x1, x2",
             "0x561d4e18",
             &["0x0".to_string(), "0x561d4e18".to_string()],
@@ -8939,6 +8980,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(semantic["kind"], serde_json::json!("and_identity"));
+        let semantic =
+            recognize_alu_semantic("and x2, x16, #0xffffffff", "0x1a", &["0x1a".to_string()])
+                .unwrap();
+        assert_eq!(semantic["kind"], serde_json::json!("and_identity"));
+        assert_eq!(semantic["mask"], serde_json::json!("0xffffffff"));
         let semantic = recognize_alu_semantic(
             "add x13, x8, x12",
             "0x1b2345fc4",

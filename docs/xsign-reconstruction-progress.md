@@ -139,13 +139,15 @@ run over all current `call_001` writer runs reports:
 bitwise_or_merge: 13
 mod255_low_byte: 7
 xor_identity: 6
+xor_mix: 23
 ubfx: 12
 shift_right: 12
 add_small_delta: 2
 ```
 
-This confirms two active classes in the semantic tail: packed-word byte
-extraction for the middle 4-byte runs, and modulo-255 byte generation for
+This confirms three active classes in the semantic tail: XOR byte mixing and
+normalization for many single-byte staging writes, packed-word byte extraction
+for the middle 4-byte runs, and modulo-255 byte generation for
 several single-byte tail positions including the repeated `62 61 62` suffix.
 Deeper selected chains also expose MD5-like 32-bit state operations, including
 `add_known_constant` with `md5_iv_a = 0x67452301`, `add32_mix`, 32-bit

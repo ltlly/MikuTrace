@@ -102,6 +102,7 @@ TRACE_TAIL_WRITER_MAP = {
         "shift_right": 12,
         "ubfx": 12,
         "xor_identity": 6,
+        "xor_mix": 23,
     },
     "classes": [
         {

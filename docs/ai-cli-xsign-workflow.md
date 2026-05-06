@@ -109,9 +109,10 @@ rank which byte or run should be investigated next, not to replace a focused
 mostly Base64 bit slicing (`ubfx`/`shift_right`), byte normalization
 (`xor_identity`), modulo folding (`mod255_low_byte`), or another repeated
 template. Other useful labels include `bitwise_or_merge` for packed-word
-assembly, `add32_mix` for 32-bit state addition, `add_known_constant` for
-recognized IV/constants such as MD5, and `and_identity`/`or_identity` for
-masking or merging operations that preserve the value being chased.
+assembly, `xor_mix` for non-trivial XOR byte mixing, `add32_mix` for 32-bit
+state addition, `add_known_constant` for recognized IV/constants such as MD5,
+and `and_identity`/`or_identity` for masking or merging operations that
+preserve the value being chased.
 
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly
