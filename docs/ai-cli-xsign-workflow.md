@@ -239,12 +239,15 @@ Use `vm-backchain` when the next hop should be followed automatically:
 rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
   --idx <writer_idx> \
   --reg <source_reg> \
-  --steps 8
+  --steps 8 \
+  --summary
 ```
 
-This emits an ordered `chain[]` of `vm-backstep` results. It is intentionally
-linear: for multi-byte memory loads, inspect `writes_tail` and branch manually
-when different output bytes have different writers.
+This emits an ordered `chain[]` of `vm-backstep` results. `--summary` avoids
+full register dumps and large `writes_tail[]` payloads, while keeping local
+definitions, compact upstream writes, frontiers, and formulas. The command is
+intentionally linear: for multi-byte memory loads, inspect the full output or
+use `vm-backtree` when different output bytes have different writers.
 
 When following a final encoded output backward, enable frontier following:
 
@@ -262,6 +265,9 @@ non-infrastructure `frontier[]` source register, preferring small values. This
 is useful for Base64-style table lookups: the alphabet byte has no writer, but
 the table index register is usually the dataflow branch to keep chasing. Each
 row records `decision.kind` as `upstream_next`, `frontier_auto`, or `stop`.
+Recognized semantic formulas override the small-value heuristic: `udiv` follows
+the numerator, and `mod255_low_byte` follows the folded input instead of the
+small divisor or quotient.
 
 For ALU merge/split rows, use `vm-backtree` instead of a linear chain:
 

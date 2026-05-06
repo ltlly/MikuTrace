@@ -828,6 +828,9 @@ enum Cmd {
         /// Continue through a chosen frontier source reg when upstream.next is unavailable.
         #[arg(long)]
         follow_frontier: bool,
+        /// Emit a compact AI-readable summary instead of the full step payload.
+        #[arg(long)]
+        summary: bool,
         /// Comma-separated registers to request from /api/records.
         #[arg(
             long,
@@ -1689,6 +1692,7 @@ async fn main() -> anyhow::Result<()> {
             lookback,
             max_writes,
             follow_frontier,
+            summary,
             regs,
         }) => {
             cmd_vm_backchain(
@@ -1701,6 +1705,7 @@ async fn main() -> anyhow::Result<()> {
                 max_writes,
                 follow_frontier,
                 regs,
+                summary,
             )
             .await
         }
@@ -3749,6 +3754,7 @@ async fn cmd_vm_backchain(
     max_writes: usize,
     follow_frontier: bool,
     regs: String,
+    summary: bool,
 ) -> anyhow::Result<()> {
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
     let value = vm_backchain_value_on(
@@ -3763,7 +3769,11 @@ async fn cmd_vm_backchain(
         regs,
     )
     .await?;
-    print_pretty(&value)
+    if summary {
+        print_pretty(&vm_backchain_summary(&value))
+    } else {
+        print_pretty(&value)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3918,6 +3928,9 @@ async fn vm_backchain_value_on(
 }
 
 fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
+    if let Some(next) = choose_semantic_frontier_next(step) {
+        return Some(next);
+    }
     let mut candidates = step
         .get("frontier")?
         .as_array()?
@@ -3937,6 +3950,52 @@ fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(score, _)| *score);
     let (_, frontier) = candidates.first()?;
+    frontier_to_next(frontier)
+}
+
+fn choose_semantic_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
+    let local_def = step.get("local_def")?;
+    let formula = row_alu_formula(local_def)?;
+    if formula.pointer("/semantic/kind").and_then(|v| v.as_str()) == Some("mod255_low_byte") {
+        let input = formula
+            .pointer("/semantic/input")
+            .and_then(|v| v.as_str())?;
+        return frontier_next_by_value(step, input);
+    }
+    if formula.get("op").and_then(|v| v.as_str()) == Some("udiv") {
+        let numerator = formula
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())?;
+        if let Some(reg) = numerator.get("reg").and_then(|v| v.as_str()) {
+            if let Some(next) = frontier_next_by_reg(step, reg) {
+                return Some(next);
+            }
+        }
+        if let Some(value) = numerator.get("value").and_then(|v| v.as_str()) {
+            return frontier_next_by_value(step, value);
+        }
+    }
+    None
+}
+
+fn frontier_next_by_reg(step: &serde_json::Value, reg: &str) -> Option<serde_json::Value> {
+    step.get("frontier")?
+        .as_array()?
+        .iter()
+        .find(|frontier| frontier.get("reg").and_then(|v| v.as_str()) == Some(reg))
+        .and_then(frontier_to_next)
+}
+
+fn frontier_next_by_value(step: &serde_json::Value, value: &str) -> Option<serde_json::Value> {
+    step.get("frontier")?
+        .as_array()?
+        .iter()
+        .find(|frontier| frontier.get("value").and_then(|v| v.as_str()) == Some(value))
+        .and_then(frontier_to_next)
+}
+
+fn frontier_to_next(frontier: &serde_json::Value) -> Option<serde_json::Value> {
     Some(serde_json::json!({
         "idx": frontier.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "reg": frontier.get("reg").cloned().unwrap_or(serde_json::Value::Null),
@@ -4461,6 +4520,55 @@ fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::Value {
         "recognized_semantics": recognized_semantics,
         "chain": chain,
     })
+}
+
+fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
+    let chain = backchain
+        .get("chain")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .map(compact_backchain_summary_step)
+        .collect::<Vec<_>>();
+    let recognized_semantics = chain
+        .iter()
+        .filter_map(|step| {
+            step.pointer("/local_def/formula/semantic")
+                .cloned()
+                .map(|semantic| {
+                    serde_json::json!({
+                        "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                        "idx": step.pointer("/local_def/idx").cloned().unwrap_or(serde_json::Value::Null),
+                        "asm": step.pointer("/local_def/asm").cloned().unwrap_or(serde_json::Value::Null),
+                        "semantic": semantic,
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": backchain.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "start": backchain.get("start").cloned().unwrap_or(serde_json::Value::Null),
+        "follow_frontier": backchain.get("follow_frontier").cloned().unwrap_or(serde_json::Value::Null),
+        "steps_requested": backchain.get("steps_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "steps_returned": backchain.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
+        "recognized_semantics": recognized_semantics,
+        "chain": chain,
+    })
+}
+
+fn compact_backchain_summary_step(step: &serde_json::Value) -> serde_json::Value {
+    let compact = step
+        .get("backstep")
+        .map(compact_lineage_backstep)
+        .unwrap_or(serde_json::Value::Null);
+    let lineage_step = serde_json::json!({
+        "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "kind": "reg_source",
+        "backstep": compact,
+        "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
+        "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
+    });
+    compact_lineage_summary_step(&lineage_step)
 }
 
 fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
@@ -5098,11 +5206,17 @@ fn row_alu_formula(row: &serde_json::Value) -> Option<serde_json::Value> {
         .map(str::to_string)
         .collect::<Vec<_>>();
     let expression = alu_expression_from_asm(asm, result, &operand_values)?;
+    let op = asm
+        .split_whitespace()
+        .next()
+        .map(|mnemonic| mnemonic.to_ascii_lowercase())
+        .unwrap_or_default();
     let mut formula = serde_json::json!({
         "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "asm": asm,
         "reg": row.pointer("/def/reg").cloned().unwrap_or(serde_json::Value::Null),
         "value": result,
+        "op": op,
         "expression": expression,
         "operands": operands,
     });
@@ -6453,6 +6567,53 @@ mod tests {
         assert_eq!(next["idx"], serde_json::json!(10));
         assert_eq!(next["reg"], serde_json::json!("x20"));
         assert_eq!(next["src_value"], serde_json::json!("0x18"));
+    }
+
+    #[test]
+    fn frontier_auto_prefers_semantic_alu_inputs() {
+        let udiv = serde_json::json!({
+            "local_def": {
+                "asm": "udiv x1, x19, x6",
+                "class": "alu",
+                "def": {
+                    "reg": "x1",
+                    "src": [
+                        {"reg": "x19", "value": "0x74ffafca73"},
+                        {"reg": "x6", "value": "0xff"}
+                    ],
+                    "value_after": "0x757524ef"
+                }
+            },
+            "frontier": [
+                {"idx": 20, "reg": "x19", "value": "0x74ffafca73"},
+                {"idx": 20, "reg": "x6", "value": "0xff"}
+            ]
+        });
+        let next = choose_frontier_next(&udiv).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x19"));
+        assert_eq!(next["src_value"], serde_json::json!("0x74ffafca73"));
+
+        let folded = serde_json::json!({
+            "local_def": {
+                "asm": "add x15, x13, x14",
+                "class": "alu",
+                "def": {
+                    "reg": "x15",
+                    "src": [
+                        {"reg": "x13", "value": "0x74ffafca73"},
+                        {"reg": "x14", "value": "0x757524ef"}
+                    ],
+                    "value_after": "0x757524ef62"
+                }
+            },
+            "frontier": [
+                {"idx": 30, "reg": "x13", "value": "0x74ffafca73"},
+                {"idx": 30, "reg": "x14", "value": "0x757524ef"}
+            ]
+        });
+        let next = choose_frontier_next(&folded).unwrap();
+        assert_eq!(next["reg"], serde_json::json!("x13"));
+        assert_eq!(next["src_value"], serde_json::json!("0x74ffafca73"));
     }
 
     #[test]
