@@ -4653,10 +4653,12 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
                     "bytes_hex": bytes_hex,
                     "kind": "xor_mix",
                     "step": entry.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx": entry.get("idx").cloned().unwrap_or(serde_json::Value::Null),
                     "asm": entry.get("asm").cloned().unwrap_or(serde_json::Value::Null),
                     "lhs": semantic.get("lhs").cloned().unwrap_or(serde_json::Value::Null),
                     "rhs": semantic.get("rhs").cloned().unwrap_or(serde_json::Value::Null),
                     "result": semantic.get("result").cloned().unwrap_or(serde_json::Value::Null),
+                    "expression": "result == (lhs ^ rhs) & 0xff",
                     "matches_first_byte": (result & 0xff) as u8 == byte,
                 }));
             }
@@ -4670,10 +4672,13 @@ fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json:
                     "bytes_hex": bytes_hex,
                     "kind": "mod255_low_byte",
                     "step": entry.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx": entry.get("idx").cloned().unwrap_or(serde_json::Value::Null),
                     "asm": entry.get("asm").cloned().unwrap_or(serde_json::Value::Null),
                     "input": semantic.get("input").cloned().unwrap_or(serde_json::Value::Null),
                     "quotient": semantic.get("quotient").cloned().unwrap_or(serde_json::Value::Null),
                     "output_byte": semantic.get("output_byte").cloned().unwrap_or(serde_json::Value::Null),
+                    "result": semantic.get("output_byte").cloned().unwrap_or(serde_json::Value::Null),
+                    "expression": "result == (input + floor(input / 0xff)) & 0xff",
                     "matches_first_byte": (output_byte & 0xff) as u8 == byte,
                 }));
             }
@@ -11908,6 +11913,11 @@ mod tests {
         let equation = output_semantic_byte_equation(&item).unwrap();
         assert_eq!(equation["offset"], serde_json::json!(4));
         assert_eq!(equation["kind"], serde_json::json!("xor_mix"));
+        assert_eq!(equation["idx"], serde_json::json!(14704232));
+        assert_eq!(
+            equation["expression"],
+            serde_json::json!("result == (lhs ^ rhs) & 0xff")
+        );
         assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
     }
 
@@ -11940,6 +11950,39 @@ mod tests {
         assert_eq!(equation["source_value"], serde_json::json!("0xa000142"));
         assert_eq!(equation["source_byte_offset"], serde_json::json!(3));
         assert_eq!(equation["result"], serde_json::json!("0xa"));
+        assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn extracts_mod255_byte_equation_with_trace_idx() {
+        let item = serde_json::json!({
+            "start_offset": 1,
+            "bytes_hex": "62",
+            "chain": {
+                "recognized_semantics": [
+                    {
+                        "step": 3,
+                        "idx": 14712345,
+                        "asm": "add x15, x13, x14",
+                        "semantic": {
+                            "kind": "mod255_low_byte",
+                            "input": "0x74ffafca73",
+                            "quotient": "0x757524ef",
+                            "output_byte": "0x62"
+                        }
+                    }
+                ]
+            }
+        });
+        let equation = output_semantic_byte_equation(&item).unwrap();
+        assert_eq!(equation["offset"], serde_json::json!(1));
+        assert_eq!(equation["kind"], serde_json::json!("mod255_low_byte"));
+        assert_eq!(equation["idx"], serde_json::json!(14712345));
+        assert_eq!(equation["result"], serde_json::json!("0x62"));
+        assert_eq!(
+            equation["expression"],
+            serde_json::json!("result == (input + floor(input / 0xff)) & 0xff")
+        );
         assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
     }
 
