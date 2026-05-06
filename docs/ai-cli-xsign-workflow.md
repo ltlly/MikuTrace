@@ -439,7 +439,12 @@ When one operand is an odd repeated constant and the next row is
 `add_small_delta`, the pair is likely an LCG-like state update. Use
 `vm-backtree` if both multiplicands must be preserved; use linear
 `vm-backchain --follow-frontier` when the goal is to continue chasing the state
-operand.
+operand. `vm-backchain --summary` reports these adjacent multiply/add pairs
+under `recognized_patterns[]` as `affine_mod64_state_step`:
+
+```text
+state == (previous_state * multiplier + delta) mod 2^64
+```
 
 `vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
 non-small formulas that are still semantically important, such as:

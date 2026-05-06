@@ -4566,6 +4566,7 @@ fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
                 })
         })
         .collect::<Vec<_>>();
+    let recognized_patterns = recognized_backchain_patterns(&chain);
     serde_json::json!({
         "status": backchain.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": backchain.get("start").cloned().unwrap_or(serde_json::Value::Null),
@@ -4573,8 +4574,57 @@ fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
         "steps_requested": backchain.get("steps_requested").cloned().unwrap_or(serde_json::Value::Null),
         "steps_returned": backchain.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
         "recognized_semantics": recognized_semantics,
+        "recognized_patterns": recognized_patterns,
         "chain": chain,
     })
+}
+
+fn recognized_backchain_patterns(chain: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut patterns = Vec::new();
+    for (idx, step) in chain.iter().enumerate() {
+        let semantic = step.pointer("/local_def/formula/semantic");
+        if semantic
+            .and_then(|v| v.get("kind"))
+            .and_then(|v| v.as_str())
+            != Some("add_small_delta")
+        {
+            continue;
+        }
+        let Some(add_semantic) = semantic else {
+            continue;
+        };
+        let Some(add_input) = add_semantic.get("input").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(mul_step) = chain.iter().skip(idx + 1).find(|candidate| {
+            let semantic = candidate.pointer("/local_def/formula/semantic");
+            semantic
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str())
+                == Some("mul_mod64")
+                && semantic
+                    .and_then(|v| v.get("result"))
+                    .and_then(|v| v.as_str())
+                    == Some(add_input)
+        }) else {
+            continue;
+        };
+        let Some(mul_semantic) = mul_step.pointer("/local_def/formula/semantic") else {
+            continue;
+        };
+        patterns.push(serde_json::json!({
+            "kind": "affine_mod64_state_step",
+            "add_step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+            "mul_step": mul_step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+            "state": add_semantic.get("result").cloned().unwrap_or(serde_json::Value::Null),
+            "previous_state": mul_semantic.get("lhs").cloned().unwrap_or(serde_json::Value::Null),
+            "multiplier": mul_semantic.get("rhs").cloned().unwrap_or(serde_json::Value::Null),
+            "delta": add_semantic.get("delta").cloned().unwrap_or(serde_json::Value::Null),
+            "multiplier_odd": mul_semantic.get("rhs_odd").cloned().unwrap_or(serde_json::Value::Null),
+            "expression": "state == (previous_state * multiplier + delta) mod 2^64",
+        }));
+    }
+    patterns
 }
 
 fn compact_backchain_summary_step(step: &serde_json::Value) -> serde_json::Value {
@@ -6634,7 +6684,8 @@ mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, choose_frontier_next, classify_vm_asm,
         def_entries_from_asm, def_source_regs_from_asm, mem_addr_from_asm, memory_access_width,
-        recognize_alu_semantic, store_source_regs_from_asm, vm_slot_from_asm,
+        recognize_alu_semantic, recognized_backchain_patterns, store_source_regs_from_asm,
+        vm_slot_from_asm,
     };
 
     #[test]
@@ -6905,6 +6956,54 @@ mod tests {
         let next = choose_frontier_next(&add_delta).unwrap();
         assert_eq!(next["reg"], serde_json::json!("x3"));
         assert_eq!(next["src_value"], serde_json::json!("0x99bd5d21d7d8102"));
+    }
+
+    #[test]
+    fn recognizes_affine_mod64_state_steps() {
+        let chain = vec![
+            serde_json::json!({
+                "step": 0,
+                "local_def": {
+                    "formula": {
+                        "semantic": {
+                            "kind": "add_small_delta",
+                            "input": "0x52c36263893da50c",
+                            "delta": "0x1",
+                            "result": "0x52c36263893da50d"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "step": 1,
+                "local_def": {
+                    "formula": {
+                        "semantic": {
+                            "kind": "mul_mod64",
+                            "lhs": "0x5036f3354bed40bc",
+                            "rhs": "0x5851f42d4c957f2d",
+                            "result": "0x52c36263893da50c",
+                            "rhs_odd": true
+                        }
+                    }
+                }
+            }),
+        ];
+        let patterns = recognized_backchain_patterns(&chain);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(
+            patterns[0]["kind"],
+            serde_json::json!("affine_mod64_state_step")
+        );
+        assert_eq!(
+            patterns[0]["previous_state"],
+            serde_json::json!("0x5036f3354bed40bc")
+        );
+        assert_eq!(
+            patterns[0]["multiplier"],
+            serde_json::json!("0x5851f42d4c957f2d")
+        );
+        assert_eq!(patterns[0]["delta"], serde_json::json!("0x1"));
     }
 
     #[test]

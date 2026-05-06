@@ -436,8 +436,11 @@ A longer continuation shows a repeated update shape:
 state = (state * 0x5851f42d4c957f2d + 1) mod 2^64
 ```
 
-This should be treated as a candidate PRNG/digest-state transition until more
-surrounding bytecode proves its exact role.
+`vm-backchain --summary` now reports these adjacent multiply/add pairs under
+`recognized_patterns[].kind = affine_mod64_state_step`, with the previous
+state, multiplier, delta, and odd-multiplier flag. This should be treated as a
+candidate PRNG/digest-state transition until more surrounding bytecode proves
+its exact role.
 
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
