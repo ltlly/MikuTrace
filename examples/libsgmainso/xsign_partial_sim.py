@@ -2510,6 +2510,21 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "slot[29] = add(slot[29], 0xfffffffffffffff0) -> 0x27",
                 "slot[26] = sub(slot[26], slot[27]) -> 0x18",
             ],
+            "fully_seeded_replay": {
+                "seeded_slots": {
+                    "0": "0x0",
+                    "2": "0x1",
+                    "25": "0x74b68bcc1c",
+                    "26": "0x38",
+                    "27": "0x20",
+                    "28": "0x74b68bbe00",
+                    "29": "0x37",
+                },
+                "computed_effects": 105,
+                "trusted_effects": 0,
+                "unresolved_read_count": 0,
+                "scratch_dump_matches": True,
+            },
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
                 "size": 52,
@@ -2542,14 +2557,28 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "slot[24] = add(slot[24], 0x1) -> 0x7599191127",
                 "slot[24] = eor(slot[8], slot[24]) -> 0x95f2ec79",
             ],
+            "fully_seeded_replay": {
+                "seeded_slots": {
+                    "0": "0x0",
+                    "8": "0x90d2d669",
+                    "24": "0x7599191126",
+                    "25": "0xb",
+                    "26": "0x1f7b3460",
+                    "28": "0x6f",
+                },
+                "computed_effects": 114,
+                "trusted_effects": 0,
+                "unresolved_read_count": 0,
+                "final_slot24": "0x95f2ec79",
+            },
             "final_observed_slot24": "0x95f2ec79",
         },
         "interpretation": (
             "The generic replay-plan evaluator can reconstruct the full "
-            "call_001 scratch table bytes from ordered VM effects, but it "
-            "still falls back to observed trace values for a small set of "
-            "missing initial slot/table inputs. This is trace-bound replay, "
-            "not yet a portable algorithm."
+            "call_001 scratch table bytes from ordered VM effects. With "
+            "explicit trace-derived seed slots, both active windows replay "
+            "with zero observed-value fallbacks. These seeds still need "
+            "portable provenance before this becomes an algorithm."
         ),
     }
 

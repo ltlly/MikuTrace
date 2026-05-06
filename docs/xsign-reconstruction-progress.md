@@ -937,6 +937,25 @@ initial slot/table values. With `--seed-slot 0=0`, both active replay windows ar
 down to six unresolved slot reads each. That keeps this as trace-bound replay
 rather than a portable x-sign algorithm.
 
+Those remaining reads can be eliminated by explicitly seeding the initial VM
+slots inferred from the trace:
+
+```text
+scratch writer seeds:
+slot0=0, slot2=1, slot25=0x74b68bcc1c, slot26=0x38,
+slot27=0x20, slot28=0x74b68bbe00, slot29=0x37
+=> trusted_effects=0, unresolved_read_count=0, scratch dump still matches
+
+[21,25) ladder seeds:
+slot0=0, slot8=0x90d2d669, slot24=0x7599191126,
+slot25=0xb, slot26=0x1f7b3460, slot28=0x6f
+=> trusted_effects=0, unresolved_read_count=0, final slot24=0x95f2ec79
+```
+
+The replay engine can now compute these windows without observed-value
+fallbacks. The remaining algorithm work is provenance for these seed values and
+multi-sample validation.
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 
