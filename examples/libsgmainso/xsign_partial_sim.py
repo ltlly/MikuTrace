@@ -267,6 +267,37 @@ TRACE_TAIL_REPEAT_EVIDENCE = [
     },
 ]
 
+TRACE_TAIL_XOR_EQUATIONS = [
+    {
+        "semantic_offset": 3,
+        "lhs": 0x67,
+        "rhs": 0x62,
+        "expected": 0x05,
+        "source": "lane-aware vm-backchain step 4",
+    },
+    {
+        "semantic_offset": 4,
+        "lhs": 0xB4,
+        "rhs": 0x61,
+        "expected": 0xD5,
+        "source": "lane-aware vm-backchain step 4",
+    },
+    {
+        "semantic_offset": 5,
+        "lhs": 0x4A,
+        "rhs": 0x62,
+        "expected": 0x28,
+        "source": "lane-aware vm-backchain step 4",
+    },
+    {
+        "semantic_offset": 6,
+        "lhs": 0xD8,
+        "rhs": 0x61,
+        "expected": 0xB9,
+        "source": "lane-aware vm-backchain step 4",
+    },
+]
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -295,6 +326,10 @@ def mod255_low_byte(value: int) -> int:
 
 def affine_mod64(previous_state: int, multiplier: int, delta: int) -> int:
     return (previous_state * multiplier + delta) & MASK64
+
+
+def xor_mix(lhs: int, rhs: int) -> int:
+    return (lhs ^ rhs) & 0xFF
 
 
 def aligned_tail(xsign: str) -> bytes:
@@ -347,6 +382,20 @@ def main() -> None:
         TRACE_SMALL_AFFINE["multiplier"],
         TRACE_SMALL_AFFINE["delta"],
     )
+    xor_equations = [
+        {
+            **item,
+            "lhs": f"{item['lhs']:#x}",
+            "rhs": f"{item['rhs']:#x}",
+            "computed": f"{xor_mix(item['lhs'], item['rhs']):#x}",
+            "expected": f"{item['expected']:#x}",
+            "matches_trace": xor_mix(item["lhs"], item["rhs"]) == item["expected"],
+        }
+        for item in TRACE_TAIL_XOR_EQUATIONS
+    ]
+    xor_reconstructed = bytearray(semantic[:7])
+    for item in TRACE_TAIL_XOR_EQUATIONS:
+        xor_reconstructed[item["semantic_offset"]] = xor_mix(item["lhs"], item["rhs"])
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
     # character offset 2 of the aligned scratch stream.
@@ -465,6 +514,17 @@ def main() -> None:
             }
             for item in TRACE_TAIL_REPEAT_EVIDENCE
         ],
+        "tail_xor_equations": {
+            "status": "partial_trace_equations",
+            "equations": xor_equations,
+            "reconstructed_offsets": [item["semantic_offset"] for item in TRACE_TAIL_XOR_EQUATIONS],
+            "reconstructed_prefix_0_7_hex": bytes(xor_reconstructed).hex(),
+            "matches_semantic_prefix_0_7": bytes(xor_reconstructed) == semantic[:7],
+            "upstream_lane_note": (
+                "Offsets 4..6 require byte-lane-aware OR/shift/extract tracking; "
+                "otherwise the chain can drift into neighboring packed-word bytes."
+            ),
+        },
         "base64_group_3": {
             "chars": group,
             "decoded_hex": decoded_group.hex(),
@@ -480,7 +540,7 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "full semantic tail construction after the synthetic alignment byte",
+            "full semantic tail construction after the currently proven XOR/mod255 fragments",
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "all VM bytecode templates feeding Base64 indexes",
             "role of the LCG/time state in every payload byte",

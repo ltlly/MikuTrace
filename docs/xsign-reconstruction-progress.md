@@ -176,6 +176,16 @@ keeps chains such as `0x78d84ab4 -> 0xd84ab4 -> 0xd84ab467` on the byte that
 actually produced the observed output byte instead of drifting to a neighboring
 packed-word lane.
 
+The current Python partial simulator records the first confirmed lane-aware XOR
+equations:
+
+```text
+tail[3] = 0x67 ^ 0x62 = 0x05
+tail[4] = 0xb4 ^ 0x61 = 0xd5
+tail[5] = 0x4a ^ 0x62 = 0x28
+tail[6] = 0xd8 ^ 0x61 = 0xb9
+```
+
 Crypto cross-check:
 
 ```bash
