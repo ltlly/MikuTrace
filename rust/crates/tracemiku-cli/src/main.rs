@@ -6882,6 +6882,9 @@ fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_json::Value {
             "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
             "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
             "addr_hi": upstream.get("addr_hi").cloned().unwrap_or(serde_json::Value::Null),
+            "observed_bytes_hex": upstream.get("observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+            "last_write_matches_observed": upstream.get("last_write_matches_observed").cloned().unwrap_or(serde_json::Value::Null),
+            "observed_mismatches": upstream.get("observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
             "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
             "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
             "byte_nexts": upstream.get("byte_nexts").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -7065,27 +7068,30 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
             let backstep = step.get("backstep").unwrap_or(&serde_json::Value::Null);
             let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
             serde_json::json!({
-                "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
-                "seed": step.get("seed").cloned().unwrap_or(serde_json::Value::Null),
-                "byte_lane": step.get("byte_lane").cloned().unwrap_or(serde_json::Value::Null),
-                "kind": "reg_source",
-                "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
-                "reg": backstep.get("source_reg").cloned().unwrap_or(serde_json::Value::Null),
-                "value": backstep.get("source_value").cloned().unwrap_or(serde_json::Value::Null),
-                "target": compact_lineage_row_for_summary(backstep.get("target")),
-                "local_def": compact_lineage_row_for_summary(backstep.get("local_def")),
-                "upstream": {
-                    "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
-                    "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
-                    "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
-                    "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
-                    "last_write": compact_lineage_last_write(upstream.get("last_write")),
-                    "byte_nexts": compact_lineage_byte_nexts(upstream.get("byte_nexts")),
-                },
-                "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
-                "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
-                "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
-            })
+                    "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                    "seed": step.get("seed").cloned().unwrap_or(serde_json::Value::Null),
+                    "byte_lane": step.get("byte_lane").cloned().unwrap_or(serde_json::Value::Null),
+                    "kind": "reg_source",
+                    "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "reg": backstep.get("source_reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "value": backstep.get("source_value").cloned().unwrap_or(serde_json::Value::Null),
+                    "target": compact_lineage_row_for_summary(backstep.get("target")),
+                    "local_def": compact_lineage_row_for_summary(backstep.get("local_def")),
+                    "upstream": {
+                        "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
+                "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+                "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "next": upstream.get("next").cloned().unwrap_or(serde_json::Value::Null),
+                "observed_bytes_hex": upstream.get("observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+                "last_write_matches_observed": upstream.get("last_write_matches_observed").cloned().unwrap_or(serde_json::Value::Null),
+                "observed_mismatches": upstream.get("observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "last_write": compact_lineage_last_write(upstream.get("last_write")),
+                "byte_nexts": compact_lineage_byte_nexts(upstream.get("byte_nexts")),
+            },
+                    "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
+                    "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
+                    "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
+                })
         }
         _ => step.clone(),
     }
@@ -7265,6 +7271,9 @@ fn compact_backtree_node(
             "kind": upstream.get("kind").cloned().unwrap_or(serde_json::Value::Null),
             "addr": upstream.get("addr").cloned().unwrap_or(serde_json::Value::Null),
             "next": upstream_next,
+            "observed_bytes_hex": upstream.get("observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+            "last_write_matches_observed": upstream.get("last_write_matches_observed").cloned().unwrap_or(serde_json::Value::Null),
+            "observed_mismatches": upstream.get("observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
             "byte_nexts": upstream_byte_nexts,
             "byte_writers": upstream.get("byte_writers").cloned().unwrap_or_else(|| serde_json::json!([])),
             "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
@@ -7944,7 +7953,17 @@ async fn upstream_writer_for_def_on(
     } else {
         byte_writers_from_range_writes(addr, size, &writes)
     };
-    let byte_nexts = dedupe_byte_nexts(&byte_writers);
+    let observed_bytes = observed_load_bytes(def_row, size);
+    let observed_mismatches = observed_bytes
+        .as_deref()
+        .map(|bytes| observed_byte_writer_mismatches(addr, bytes, &byte_writers))
+        .unwrap_or_default();
+    let matches_observed = observed_mismatches.is_empty();
+    let byte_nexts = if matches_observed {
+        dedupe_byte_nexts(&byte_writers)
+    } else {
+        Vec::new()
+    };
     let last_write = if range_truncated {
         byte_writers
             .first()
@@ -7961,8 +7980,15 @@ async fn upstream_writer_for_def_on(
         .into_iter()
         .rev()
         .collect::<Vec<_>>();
+    let status = if last_write.is_some() && matches_observed {
+        "ready"
+    } else if last_write.is_some() {
+        "observed_read_without_matching_traced_write"
+    } else {
+        "not_found"
+    };
     Ok(serde_json::json!({
-        "status": if last_write.is_some() { "ready" } else { "not_found" },
+        "status": status,
         "kind": kind,
         "addr": format!("{addr:#x}"),
         "addr_hi": format!("{addr_hi:#x}"),
@@ -7970,18 +7996,64 @@ async fn upstream_writer_for_def_on(
         "idx_hi": idx_hi,
         "returned": writes.len(),
         "maybe_truncated": range_truncated,
+        "observed_bytes_hex": observed_bytes.as_ref().map(|bytes| bytes_to_hex(bytes)),
+        "last_write_matches_observed": matches_observed,
+        "observed_mismatches": observed_mismatches,
         "last_write": last_write,
         "writes_tail": writes_tail,
         "byte_writers": byte_writers,
         "byte_nexts": byte_nexts,
-        "next": last_write.as_ref().and_then(|write| {
+        "next": matches_observed.then(|| last_write.as_ref().and_then(|write| {
             Some(serde_json::json!({
                 "idx": write.get("idx")?,
                 "reg": write.get("src_reg")?,
                 "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
             }))
-        }),
+        })).flatten(),
     }))
+}
+
+fn observed_load_bytes(def_row: &serde_json::Value, size: u64) -> Option<Vec<u8>> {
+    let value = def_row
+        .pointer("/def/value_after")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)?;
+    let width = (size as usize).min(8);
+    Some(value.to_le_bytes()[..width].to_vec())
+}
+
+fn observed_byte_writer_mismatches(
+    addr: u64,
+    observed_bytes: &[u8],
+    byte_writers: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    observed_bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, observed)| {
+            let writer = byte_writers.iter().find(|writer| {
+                writer.get("offset").and_then(|v| v.as_u64()) == Some(offset as u64)
+            });
+            let writer_byte =
+                writer
+                    .and_then(|writer| writer.get("last_write"))
+                    .and_then(|write| {
+                        source_byte_for_write_at(write, addr.saturating_add(offset as u64))
+                    });
+            (writer_byte != Some(*observed)).then(|| {
+                serde_json::json!({
+                    "offset": offset,
+                    "addr": format!("{:#x}", addr.saturating_add(offset as u64)),
+                    "observed_byte": format!("{observed:02x}"),
+                    "writer_byte": writer_byte.map(|byte| format!("{byte:02x}")),
+                    "writer_idx": writer
+                        .and_then(|writer| writer.pointer("/last_write/idx"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                })
+            })
+        })
+        .collect()
 }
 
 async fn exact_byte_writers_for_load_on(
@@ -9961,12 +10033,12 @@ mod tests {
         byte_writer_map_output, byte_writers_from_range_writes, choose_frontier_next,
         choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
         dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm, find_hex_byte_offsets,
-        lineage_next_from_backstep, mem_addr_from_asm, memory_access_width, odd_u64_inverse,
-        output_semantic_byte_equation, output_semantic_byte_equation_summary,
-        output_semantic_xor_word_state_sources, output_semantic_xor_word_templates,
-        recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
-        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        vm_ops_state_updates, vm_slot_from_asm,
+        lineage_next_from_backstep, mem_addr_from_asm, memory_access_width,
+        observed_byte_writer_mismatches, odd_u64_inverse, output_semantic_byte_equation,
+        output_semantic_byte_equation_summary, output_semantic_xor_word_state_sources,
+        output_semantic_xor_word_templates, recognize_alu_semantic, recognized_backchain_patterns,
+        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
+        store_source_regs_from_asm, vm_ops_state_updates, vm_slot_from_asm,
     };
 
     #[test]
@@ -10909,6 +10981,29 @@ mod tests {
         assert_eq!(lane3["selected_byte_lane"], serde_json::json!(3));
         assert_eq!(lane3["source_byte_offset"], serde_json::json!(3));
         assert_eq!(lane3["addr"], serde_json::json!("0x4003"));
+    }
+
+    #[test]
+    fn detects_observed_load_bytes_that_do_not_match_traced_writers() {
+        let stale_zero_write = serde_json::json!({
+            "idx": 120,
+            "pc": "0x1004",
+            "rel": "0x4",
+            "func": "sub_stale",
+            "asm": "str x6, [x19, x20]",
+            "dst_addr": "0x4000",
+            "size": 8,
+            "src_reg": "x6",
+            "src_value": "0x0",
+            "byte0": 0
+        });
+        let byte_writers = byte_writers_from_range_writes(0x4000, 4, &[stale_zero_write]);
+        let observed = 0x69f2e9fbu64.to_le_bytes();
+        let mismatches = observed_byte_writer_mismatches(0x4000, &observed[..4], &byte_writers);
+        assert_eq!(mismatches.len(), 4);
+        assert_eq!(mismatches[0]["observed_byte"], serde_json::json!("fb"));
+        assert_eq!(mismatches[0]["writer_byte"], serde_json::json!("00"));
+        assert_eq!(mismatches[0]["writer_idx"], serde_json::json!(120));
     }
 
     #[test]

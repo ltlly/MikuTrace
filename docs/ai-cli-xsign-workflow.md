@@ -156,6 +156,15 @@ transformations through byte-aligned shifts and extracts. This makes it a
 better CLI primitive for the manual result-to-input workflow than whole-register
 backward taint when the output byte came from a packed word.
 
+When a traced memory load's observed value does not match the latest traced
+write to that address, the CLI marks the upstream as
+`observed_read_without_matching_traced_write`, emits `observed_bytes_hex` and
+`observed_mismatches[]`, and suppresses automatic `next` / `byte_nexts`.
+Treat this as an analysis boundary: the value may come from an untraced library
+write, preexisting mapped data, a syscall/JNI side effect, or a trace coverage
+gap. Do not keep following the stale traced write just because it is the latest
+write in the index.
+
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly
 from the final JNI string:

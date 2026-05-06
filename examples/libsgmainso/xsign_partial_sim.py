@@ -536,6 +536,34 @@ TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
         "prioritize fixed table/salt/VM literal provenance before treating it "
         "as ASLR-derived pointer noise."
     ),
+    "call_001_first_word_source": {
+        "lhs_bytes_hex": "fbe9f269",
+        "lhs_word_le": 0x69F2E9FB,
+        "memory_hits": [
+            {"addr": "0x74b68bbe03", "first_idx": 14691056},
+            {"addr": "0x74b68bc00c", "first_idx": 14700861},
+            {"addr": "0x74fbf31b48", "first_idx": 14089060},
+        ],
+        "earliest_writer_idx": 13980743,
+        "earliest_writer_asm": "str w1, [x19, x6]",
+        "earliest_writer_addr": "0x74fbf31b48",
+        "earliest_writer_src_value": 0x69F2E9FB,
+        "boundary": {
+            "status": "observed_read_without_matching_traced_write",
+            "load_idx": 13980730,
+            "load_asm": "ldr x8, [x1, x5]",
+            "load_addr": "0x74b68bd108",
+            "observed_bytes_hex": "fbe9f26900000000",
+            "stale_writer_idx": 13979551,
+            "stale_writer_asm": "str x6, [x19, x20]",
+            "stale_writer_src_value": 0x0,
+            "interpretation": (
+                "The chain reaches an observed memory value that is not explained "
+                "by the latest traced write; stop here instead of following the "
+                "stale zero write."
+            ),
+        },
+    },
 }
 
 
@@ -1024,6 +1052,19 @@ def main() -> None:
                 "stable_byte_count": middle_lhs["size"] - len(middle_lhs_variations),
                 "word_chunks_call_001": middle_lhs_call001_chunks,
                 "word_chunk_variations": middle_lhs_word_chunk_variations,
+                "call_001_first_word_source": {
+                    **middle_lhs["call_001_first_word_source"],
+                    "lhs_word_le": f"{middle_lhs['call_001_first_word_source']['lhs_word_le']:#x}",
+                    "earliest_writer_src_value": (
+                        f"{middle_lhs['call_001_first_word_source']['earliest_writer_src_value']:#x}"
+                    ),
+                    "boundary": {
+                        **middle_lhs["call_001_first_word_source"]["boundary"],
+                        "stale_writer_src_value": (
+                            f"{middle_lhs['call_001_first_word_source']['boundary']['stale_writer_src_value']:#x}"
+                        ),
+                    },
+                },
                 "interpretation": middle_lhs["interpretation"],
             },
             "multi_sample_mask_folds": {

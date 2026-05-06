@@ -338,6 +338,25 @@ pointer-looking byte lineage at `0x74b68bb9ec` still matters, but it is now one
 local producer path to explain, not evidence that the whole middle run is
 runtime-address-derived.
 
+Tracing the first middle word `fbe9f269` in `call_001` found three memory hits:
+
+```text
+0x74b68bbe03 first_idx=14691056
+0x74b68bc00c first_idx=14700861
+0x74fbf31b48 first_idx=14089060
+```
+
+The earliest hit is written at #13980743 by `str w1, [x19, x6]` with
+`src_value=0x69f2e9fb`, so this is not a static read-only table byte-for-byte.
+However the producing chain reaches #13980730 `ldr x8, [x1, x5]` from
+`0x74b68bd108`, where the observed load bytes are `fbe9f26900000000` while the
+latest traced write to that address is #13979551 `str x6, [x19, x20]` with
+`src_value=0x0`. The CLI now marks this as
+`observed_read_without_matching_traced_write` and stops the automatic chain
+there. Current interpretation: the first middle word crosses a trace coverage
+boundary or untraced memory producer; following the stale zero write is
+incorrect.
+
 So the current trace-proven call_001 tail shape is:
 
 ```text
