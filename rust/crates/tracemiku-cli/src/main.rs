@@ -3847,8 +3847,85 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "writer_run_count": writer_run_count,
         "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
+        "byte_equations": output_semantic_byte_equations(value),
         "vm_chains": output_semantic_vm_chain_summaries(value),
     })
+}
+
+fn output_semantic_byte_equations(value: &serde_json::Value) -> serde_json::Value {
+    let equations = value
+        .get("vm_chains")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(output_semantic_byte_equation)
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(equations)
+}
+
+fn output_semantic_byte_equation(item: &serde_json::Value) -> Option<serde_json::Value> {
+    let offset = item
+        .get("start_offset")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let bytes_hex = item.get("bytes_hex").and_then(|v| v.as_str())?;
+    let byte = first_hex_byte(bytes_hex)?;
+    let semantics = item
+        .pointer("/chain/recognized_semantics")
+        .and_then(|v| v.as_array())?;
+    for entry in semantics {
+        let semantic = entry.get("semantic")?;
+        let kind = semantic.get("kind").and_then(|v| v.as_str())?;
+        match kind {
+            "xor_mix" => {
+                let result = semantic
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_u64_str)?;
+                return Some(serde_json::json!({
+                    "offset": offset,
+                    "bytes_hex": bytes_hex,
+                    "kind": "xor_mix",
+                    "step": entry.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                    "asm": entry.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                    "lhs": semantic.get("lhs").cloned().unwrap_or(serde_json::Value::Null),
+                    "rhs": semantic.get("rhs").cloned().unwrap_or(serde_json::Value::Null),
+                    "result": semantic.get("result").cloned().unwrap_or(serde_json::Value::Null),
+                    "matches_first_byte": (result & 0xff) as u8 == byte,
+                }));
+            }
+            "mod255_low_byte" => {
+                let output_byte = semantic
+                    .get("output_byte")
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_u64_str)?;
+                return Some(serde_json::json!({
+                    "offset": offset,
+                    "bytes_hex": bytes_hex,
+                    "kind": "mod255_low_byte",
+                    "step": entry.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                    "asm": entry.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                    "input": semantic.get("input").cloned().unwrap_or(serde_json::Value::Null),
+                    "quotient": semantic.get("quotient").cloned().unwrap_or(serde_json::Value::Null),
+                    "output_byte": semantic.get("output_byte").cloned().unwrap_or(serde_json::Value::Null),
+                    "matches_first_byte": (output_byte & 0xff) as u8 == byte,
+                }));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn first_hex_byte(hex: &str) -> Option<u8> {
+    let compact = hex
+        .chars()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .collect::<String>();
+    if compact.len() < 2 {
+        return None;
+    }
+    u8::from_str_radix(&compact[..2], 16).ok()
 }
 
 fn output_semantic_vm_chain_summaries(value: &serde_json::Value) -> serde_json::Value {
@@ -9011,9 +9088,9 @@ mod tests {
         byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
         choose_laned_upstream_next, classify_vm_asm, dedupe_byte_nexts, def_entries_from_asm,
         def_source_regs_from_asm, find_hex_byte_offsets, mem_addr_from_asm, memory_access_width,
-        odd_u64_inverse, recognize_alu_semantic, recognized_backchain_patterns,
-        resolve_addr_in_maps_text, source_byte_for_write_at, source_byte_offset_for_write_at,
-        store_source_regs_from_asm, vm_slot_from_asm,
+        odd_u64_inverse, output_semantic_byte_equation, recognize_alu_semantic,
+        recognized_backchain_patterns, resolve_addr_in_maps_text, source_byte_for_write_at,
+        source_byte_offset_for_write_at, store_source_regs_from_asm, vm_slot_from_asm,
     };
 
     #[test]
@@ -9517,6 +9594,33 @@ mod tests {
         let shifted = choose_frontier_next_for_lane(&shift_left, Some(3)).unwrap();
         assert_eq!(shifted["reg"], serde_json::json!("w1"));
         assert_eq!(shifted["source_byte_offset"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn extracts_compact_byte_equations_from_semantic_chains() {
+        let item = serde_json::json!({
+            "start_offset": 4,
+            "bytes_hex": "d5",
+            "chain": {
+                "recognized_semantics": [
+                    {
+                        "step": 4,
+                        "idx": 14704232,
+                        "asm": "eor x16, x20, x5",
+                        "semantic": {
+                            "kind": "xor_mix",
+                            "lhs": "0xb4",
+                            "rhs": "0x61",
+                            "result": "0xd5"
+                        }
+                    }
+                ]
+            }
+        });
+        let equation = output_semantic_byte_equation(&item).unwrap();
+        assert_eq!(equation["offset"], serde_json::json!(4));
+        assert_eq!(equation["kind"], serde_json::json!("xor_mix"));
+        assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
     }
 
     #[test]

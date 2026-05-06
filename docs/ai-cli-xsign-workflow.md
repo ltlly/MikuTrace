@@ -150,7 +150,10 @@ pre-encoding cutoff index. If the buffer layout differs, override the cutoff
 with `--semantic-writer-map-idx-hi`. In `--summary` mode,
 `semantic_writer_map.vm_chains[]` stays compact and lists each writer run's
 `semantic_kinds`, so an AI agent can choose the next unexplained byte range
-without reading the full trace-shaped JSON.
+without reading the full trace-shaped JSON. The same summary also emits
+`semantic_writer_map.byte_equations[]` for directly recognized byte formulas
+such as `xor_mix` and `mod255_low_byte`; this is the first place to look when
+building a Python simulator from trace evidence.
 
 ## Backward dataflow path
 

@@ -186,6 +186,10 @@ tail[5] = 0x4a ^ 0x62 = 0x28
 tail[6] = 0xd8 ^ 0x61 = 0xb9
 ```
 
+These are now emitted directly by `output-map --summary` under
+`semantic_writer_map.byte_equations[]`, together with the adjacent
+`mod255_low_byte` equations for `tail[1]` and `tail[2]`.
+
 Crypto cross-check:
 
 ```bash
