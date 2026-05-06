@@ -7687,11 +7687,16 @@ struct AffinePatternGroup {
 fn recognized_backchain_pattern_summary(patterns: &[serde_json::Value]) -> serde_json::Value {
     let mut affine = BTreeMap::<String, AffinePatternGroup>::new();
     let mut kind_counts = BTreeMap::<String, usize>::new();
+    let mut static_memory_loads = Vec::new();
     for pattern in patterns {
         let Some(kind) = pattern.get("kind").and_then(|v| v.as_str()) else {
             continue;
         };
         *kind_counts.entry(kind.to_string()).or_insert(0) += 1;
+        if kind == "static_memory_load_constant" {
+            static_memory_loads.push(pattern.clone());
+            continue;
+        }
         if kind != "affine_mod64_state_step" {
             continue;
         }
@@ -7740,12 +7745,32 @@ fn recognized_backchain_pattern_summary(patterns: &[serde_json::Value]) -> serde
                 "transitions": group.transitions,
             }))
             .collect::<Vec<_>>(),
+        "static_memory_loads": static_memory_loads,
     })
 }
 
 fn recognized_backchain_patterns(chain: &[serde_json::Value]) -> Vec<serde_json::Value> {
     let mut patterns = Vec::new();
     for (idx, step) in chain.iter().enumerate() {
+        if step.pointer("/local_def/class").and_then(|v| v.as_str()) == Some("mem-load")
+            && step.pointer("/upstream/status").and_then(|v| v.as_str()) == Some("not_found")
+        {
+            if let Some(bytes_hex) = step
+                .pointer("/upstream/observed_bytes_hex")
+                .and_then(|v| v.as_str())
+            {
+                patterns.push(serde_json::json!({
+                    "kind": "static_memory_load_constant",
+                    "step": step.get("step").cloned().unwrap_or_else(|| serde_json::json!(idx)),
+                    "idx": step.pointer("/local_def/idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "asm": step.pointer("/local_def/asm").cloned().unwrap_or(serde_json::Value::Null),
+                    "addr": step.pointer("/upstream/addr").cloned().unwrap_or(serde_json::Value::Null),
+                    "bytes_hex": bytes_hex,
+                    "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    "expression": "value loaded from memory with no prior writer in trace",
+                }));
+            }
+        }
         let semantic = step.pointer("/local_def/formula/semantic");
         if semantic
             .and_then(|v| v.get("kind"))
@@ -12479,6 +12504,37 @@ mod tests {
         assert_eq!(inverse, 0xc097ef87329e28a5);
         assert_eq!(multiplier.wrapping_mul(inverse), 1);
         assert!(odd_u64_inverse(2).is_none());
+    }
+
+    #[test]
+    fn recognizes_static_memory_load_constants() {
+        let chain = vec![serde_json::json!({
+            "step": 7,
+            "idx": 13720349,
+            "value": "0xa000142",
+            "local_def": {
+                "idx": 13720346,
+                "asm": "ldr w16, [x8, x20]",
+                "class": "mem-load"
+            },
+            "upstream": {
+                "status": "not_found",
+                "addr": "0x74fbf2dc7c",
+                "observed_bytes_hex": "4201000a"
+            }
+        })];
+        let patterns = recognized_backchain_patterns(&chain);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(
+            patterns[0]["kind"],
+            serde_json::json!("static_memory_load_constant")
+        );
+        assert_eq!(patterns[0]["bytes_hex"], serde_json::json!("4201000a"));
+        let summary = recognized_backchain_pattern_summary(&patterns);
+        assert_eq!(
+            summary["static_memory_loads"][0]["value"],
+            serde_json::json!("0xa000142")
+        );
     }
 
     #[test]
