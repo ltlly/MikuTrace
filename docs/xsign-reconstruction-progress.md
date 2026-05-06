@@ -523,7 +523,7 @@ not an immutable static table; it is a traced VM scratch table. The remaining
 work is lifting the table writers themselves, not finding the consumer-side
 source buffer.
 
-Two representative table writers show that the table has mixed provenance:
+Representative table writers show that the table has mixed provenance:
 
 ```text
 #14164352 writes 000000fb
@@ -534,17 +534,47 @@ Two representative table writers show that the table has mixed provenance:
   formula = (stat("/").st_mtim.tv_sec >> 8) | (static_xor_ladder_low_byte << 24)
   stat component   = 0x0069f2e9
   static component = 0x79000000
+
+#14164461 writes ecf29541
+  shape = (previous_ladder_word >> 8) | ((next_ladder_word & 0xff) << 24)
+  first static load in the expanded chain:
+    0x74fbf29208 -> 0x90bf1d91
 ```
 
 So it is wrong to model the whole lhs stream as a single file timestamp or a
 single static salt. The next lifting step needs to summarize the scratch table
 writers as mixed external fields plus static-table/XOR ladder formulas.
 
+The full 16-writer summary over the table is now compact enough for an AI to
+consume directly:
+
+```text
+scratch offsets  bytes      writer       class / first boundary
+0..4             000000fb   #14164352    stat("/") st_mtim boundary
+4..8             e9f26979   #14164406    stat boundary + static byte
+8..12            ecf29541   #14164461    static XOR ladder, 10 static loads
+12..36           f601...3b  #14164504..  static XOR ladder, 0x7599191020+
+36..40           a0444a34   #14164924    text boundary "10.6"
+40..44           2344c59b   #14164979    text boundary "0.10"
+44..52           c569...01  #14165022..  short literal/ladder tail
+```
+
+Aggregate pattern counts from these 16 chains are:
+
+```text
+memory_boundary_read        = 4
+static_memory_load_constant = 16
+```
+
+This is the useful split for simulation work: the table is generated, but its
+portable inputs are a mixture of `stat("/")`, static VM constants, a short text
+buffer, and a few literal tail bytes.
+
 The Python reconstruction now uses this split directly:
 
 ```text
 middle_lhs[0:4]  = word32_le(stat("/").st_mtim.tv_sec)
-middle_lhs[4:43] = traced static/xor-ladder suffix
+middle_lhs[4:43] = traced mixed suffix from static/text/literal VM sources
 ```
 
 Tracing the first middle word `fbe9f269` in `call_001` found three memory hits:
