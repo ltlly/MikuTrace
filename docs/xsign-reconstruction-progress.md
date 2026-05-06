@@ -310,12 +310,44 @@ Y  0x18 = 0x61 >> 0x2
 Q  0x10 = 0x610 & 0x30
 ```
 
+`vm-ops` now collapses the interpreter rows by `x21`/`vm_ip`, which makes the
+same path readable as VM operations. For the first variable group in `call_001`
+(`piYQ`, decoded `a6 26 10`), the relevant segment is:
+
+```text
+vm_off 0x10: load byte [0x74b68bcc1d] = 0x0a -> slot16
+vm_off 0x20: load byte [0x74b68bcc1e] = 0x62 -> slot17
+vm_off 0x30: slot16 = 0x0a << 2 = 0x28
+vm_off 0x40: slot17 = 0x62 >> 6 = 0x01
+vm_off 0x60: slot16 = 0x28 | 0x01 = 0x29
+vm_off 0x80: alphabet[0x29] = 'p'
+```
+
+The byte sources are still scratch/window bytes:
+
+```text
+0x62:
+  0x74b68bbcff --strb@13946358--> 0x74b68bcc1e
+  source op: slot2 = 0x74ffafca73 + 0x757524ef = 0x757524ef62
+
+0x0a:
+  0x74b68bd069 --strb@14717321--> slot29
+  slot29 --strb@14719759--> 0x74b68bcc1d
+```
+
+This confirms the Base64 stage is standard, but the current source bytes are
+not yet business payload fields; they are copied through VM-managed scratch
+buffers before alphabet lookup.
+
 ## Next target
 
 The remaining unknown is the 76-byte binary payload before Base64. The next
 work item is to trace Base64 table index registers back to payload bytes and
 record the VM bytecode pattern that maps three payload bytes into four alphabet
-indexes. Once that mapping is isolated, the Python simulator should implement:
+indexes. The immediate next target is to follow the `0x0a`/`0x62` scratch byte
+lineage one level earlier until it reaches either a JNI input byte, a hash
+digest/finalizer output, a fixed table, or a bytecode immediate. Once that
+mapping is isolated, the Python simulator should implement:
 
 1. build the 76-byte payload,
 2. standard Base64 encode it,
