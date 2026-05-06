@@ -90,6 +90,22 @@ For AI reasoning, start from `writer_runs[]` to classify chunks, then use the
 per-byte `bytes[]` entries for offsets that need deeper `vm-backchain` or
 `byte-lineage` work.
 
+To attach the first few upstream chains in one command:
+
+```bash
+rust/target/debug/tracemiku-cli byte-writer-map <call_dir> \
+  --addr <buffer_addr> \
+  --size <byte_count> \
+  --idx-hi <before_output_overwrite_idx> \
+  --vm-chain-steps 16 \
+  --vm-chain-runs 8 \
+  --vm-chain-follow-frontier
+```
+
+The added `vm_chains[]` entries are intentionally summaries. They are meant to
+rank which byte or run should be investigated next, not to replace a focused
+`vm-backchain`/`vm-backtree` run when a branch point matters.
+
 ## Backward dataflow path
 
 Trace register provenance from a writer or suspicious finalizer instruction:

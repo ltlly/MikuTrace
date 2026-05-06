@@ -436,6 +436,18 @@ enum Cmd {
         idx_hi: isize,
         #[arg(long, default_value_t = 5000)]
         max: usize,
+        /// Attach VM backchains for this many steps per selected writer run. 0 disables.
+        #[arg(long, default_value_t = 0)]
+        vm_chain_steps: usize,
+        /// Max writer runs to expand with VM backchains.
+        #[arg(long, default_value_t = 6)]
+        vm_chain_runs: usize,
+        /// Lookback window for each VM backchain step.
+        #[arg(long, default_value_t = 1800000)]
+        vm_chain_lookback: usize,
+        /// Let attached VM chains continue through frontier source regs.
+        #[arg(long)]
+        vm_chain_follow_frontier: bool,
     },
     /// GET /api/ollvm-detect-vm.
     OllvmDetectVm {
@@ -1417,7 +1429,25 @@ async fn main() -> anyhow::Result<()> {
             idx_lo,
             idx_hi,
             max,
-        }) => cmd_byte_writer_map(trace_dir, addr, size, idx_lo, idx_hi, max).await,
+            vm_chain_steps,
+            vm_chain_runs,
+            vm_chain_lookback,
+            vm_chain_follow_frontier,
+        }) => {
+            cmd_byte_writer_map(
+                trace_dir,
+                addr,
+                size,
+                idx_lo,
+                idx_hi,
+                max,
+                vm_chain_steps,
+                vm_chain_runs,
+                vm_chain_lookback,
+                vm_chain_follow_frontier,
+            )
+            .await
+        }
         Some(Cmd::OllvmDetectVm {
             trace_dir,
             min_entries,
@@ -1971,6 +2001,10 @@ async fn cmd_byte_writer_map(
     idx_lo: usize,
     idx_hi: isize,
     max: usize,
+    vm_chain_steps: usize,
+    vm_chain_runs: usize,
+    vm_chain_lookback: usize,
+    vm_chain_follow_frontier: bool,
 ) -> anyhow::Result<()> {
     let addr_value =
         parse_u64_str(&addr).with_context(|| format!("invalid --addr value {addr:?}"))?;
@@ -1991,9 +2025,33 @@ async fn cmd_byte_writer_map(
         ("addr_hi", format!("{addr_hi:#x}")),
         ("max", max.to_string()),
     ];
-    let response =
-        route_get_json_value(trace_dir, route_path("/api/mem-writes-in-range", &params)).await?;
-    let output = byte_writer_map_output(addr_value, size_usize, &response);
+    let path = route_path("/api/mem-writes-in-range", &params);
+    let app = if vm_chain_steps > 0 && vm_chain_runs > 0 {
+        tracemiku_server::build_router_with_memshadow(trace_dir)?
+    } else {
+        build_cli_router(trace_dir, &path, None)?
+    };
+    let response = route_get_json_value_on(&app, path).await?;
+    let mut output = byte_writer_map_output(addr_value, size_usize, &response);
+    if vm_chain_steps > 0 && vm_chain_runs > 0 {
+        let runs = output
+            .get("writer_runs")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let chains = vm_chains_for_byte_writer_runs(
+            &app,
+            &runs,
+            vm_chain_steps,
+            vm_chain_runs,
+            vm_chain_lookback,
+            vm_chain_follow_frontier,
+        )
+        .await?;
+        if let Some(obj) = output.as_object_mut() {
+            obj.insert("vm_chains".to_string(), serde_json::Value::Array(chains));
+        }
+    }
     print_pretty(&output)
 }
 
@@ -4143,6 +4201,69 @@ async fn vm_chains_for_writer_runs(
             "writer_idx": run.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
             "seed": seed_value,
             "chain": chain,
+        }));
+    }
+    Ok(out)
+}
+
+async fn vm_chains_for_byte_writer_runs(
+    app: &axum::Router,
+    writer_runs: &[serde_json::Value],
+    steps: usize,
+    max_runs: usize,
+    lookback: usize,
+    follow_frontier: bool,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let regs =
+        "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28";
+    let mut out = Vec::new();
+    for run in writer_runs.iter().take(max_runs) {
+        let writer = run.get("writer").unwrap_or(&serde_json::Value::Null);
+        let Some(idx) = writer.get("idx").and_then(|v| v.as_u64()) else {
+            out.push(serde_json::json!({
+                "start_offset": run.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "end_offset": run.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "status": "no_writer_idx",
+            }));
+            continue;
+        };
+        let Some(reg) = writer.get("src_reg").and_then(|v| v.as_str()) else {
+            out.push(serde_json::json!({
+                "start_offset": run.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "end_offset": run.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
+                "writer_idx": idx,
+                "status": "no_source_reg",
+                "writer": writer,
+            }));
+            continue;
+        };
+        let chain = vm_backchain_value_on(
+            app,
+            idx as usize,
+            Some(reg.to_string()),
+            steps,
+            120,
+            lookback,
+            5000,
+            follow_frontier,
+            regs.to_string(),
+        )
+        .await?;
+        out.push(serde_json::json!({
+            "start_offset": run.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
+            "end_offset": run.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
+            "size": run.get("size").cloned().unwrap_or(serde_json::Value::Null),
+            "bytes_hex": run.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+            "ascii": run.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+            "writer_idx": idx,
+            "seed": {
+                "idx": idx,
+                "reg": reg,
+                "src_value": writer.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": writer.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "func": writer.get("func").cloned().unwrap_or(serde_json::Value::Null),
+            },
+            "chain": vm_backchain_summary(&chain),
         }));
     }
     Ok(out)

@@ -116,6 +116,23 @@ offsets `55..67` return to byte stores. This is the compact entry point for
 the result-to-input strategy: select each output byte or 4-byte run, then chase
 its writer source register with `vm-backchain` or `byte-lineage`.
 
+For quick triage, attach upstream summaries to the first runs:
+
+```bash
+rust/target/debug/tracemiku-cli byte-writer-map \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --addr 0x74b68bcc1d \
+  --size 68 \
+  --idx-hi 14739000 \
+  --max 300 \
+  --vm-chain-steps 16 \
+  --vm-chain-runs 6 \
+  --vm-chain-follow-frontier
+```
+
+This keeps one JSON document containing the output bytes, writer chunking, and
+the first layer of result-to-input backchains.
+
 Across the six current samples, the aligned semantic tail has length 68. Tail
 offset `0` is always `0x0a`; all other offsets vary in the current sample set.
 The CLI reports one repeat/copy-candidate structural invariant under
