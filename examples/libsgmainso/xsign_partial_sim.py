@@ -6,8 +6,9 @@ pieces that have been proven from local libsgmainso traces:
 - final x-sign text is standard Base64 over a 76-byte payload;
 - one upstream VM state chain is seeded by libc time();
 - that chain uses state = state * 0x5851f42d4c957f2d + 1 mod 2^64;
-- one output byte path folds a 64-bit state with (x + x / 0xff) & 0xff;
-- Base64 index 'p' in group "piYQ" is built from bytes 0x0a and 0x62.
+- two output byte paths fold 64-bit states with (x + x / 0xff) & 0xff;
+- Base64 group "piYQ" is built from scratch bytes including 0x0a, 0x62,
+  and 0x61.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -41,6 +42,26 @@ TRACE_LCG_STATES = [
     0x99BD5D21D7D8103,
 ]
 
+TRACE_FOLDS = [
+    {
+        "name": "scratch_0x62",
+        "input": 0x74FFAFCA73,
+        "expected": 0x62,
+    },
+    {
+        "name": "scratch_0x61",
+        "input": 0x74BEABE59C,
+        "expected": 0x61,
+    },
+]
+
+TRACE_SMALL_AFFINE = {
+    "previous_state": 0xC87,
+    "multiplier": 0x3,
+    "delta": 0x13,
+    "expected_state": 0x25A8,
+}
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -63,6 +84,10 @@ def mod255_low_byte(value: int) -> int:
     return (value + value // 0xFF) & 0xFF
 
 
+def affine_mod64(previous_state: int, multiplier: int, delta: int) -> int:
+    return (previous_state * multiplier + delta) & MASK64
+
+
 def base64_i0(byte0: int) -> int:
     return (byte0 >> 2) & 0x3F
 
@@ -82,14 +107,39 @@ def base64_i3(byte2: int) -> int:
 def main() -> None:
     payload = b64decode_unpadded(CALL_001_XSIGN)
     lcg_states = lcg_sequence(TRACE_TIME_RET, len(TRACE_LCG_STATES))
-    fold_input = 0x74FFAFCA73
-    folded_byte = mod255_low_byte(fold_input)
+    folds = [
+        {
+            "name": item["name"],
+            "input": f"{item['input']:#x}",
+            "computed": f"{mod255_low_byte(item['input']):#x}",
+            "expected_trace_byte": f"{item['expected']:#x}",
+            "matches_trace": mod255_low_byte(item["input"]) == item["expected"],
+        }
+        for item in TRACE_FOLDS
+    ]
+    small_affine_state = affine_mod64(
+        TRACE_SMALL_AFFINE["previous_state"],
+        TRACE_SMALL_AFFINE["multiplier"],
+        TRACE_SMALL_AFFINE["delta"],
+    )
 
     # Trace-proven first variable group: "piYQ" decodes to a6 26 10.
     group = CALL_001_XSIGN[12:16]
     decoded_group = b64decode_unpadded(group)
     index_p_from_payload = base64_i0(decoded_group[0])
     index_p_from_trace_scratch = ((0x0A << 2) & 0x3F) | (0x62 >> 6)
+    indices_from_payload = [
+        base64_i0(decoded_group[0]),
+        base64_i1(decoded_group[0], decoded_group[1]),
+        base64_i2(decoded_group[1], decoded_group[2]),
+        base64_i3(decoded_group[2]),
+    ]
+    indices_from_trace_scratch = [
+        ((0x0A << 2) & 0x3F) | (0x62 >> 6),
+        0x62 & 0x3F,
+        0x61 >> 2,
+        0x10,
+    ]
 
     report = {
         "status": "partial",
@@ -107,19 +157,24 @@ def main() -> None:
             "matches_trace": lcg_states == TRACE_LCG_STATES,
             "states_hex": [f"{value:#x}" for value in lcg_states],
         },
-        "mod255_low_byte": {
-            "input": f"{fold_input:#x}",
-            "computed": f"{folded_byte:#x}",
-            "expected_trace_byte": "0x62",
-            "matches_trace": folded_byte == 0x62,
+        "small_affine": {
+            "previous_state": f"{TRACE_SMALL_AFFINE['previous_state']:#x}",
+            "multiplier": f"{TRACE_SMALL_AFFINE['multiplier']:#x}",
+            "delta": f"{TRACE_SMALL_AFFINE['delta']:#x}",
+            "computed": f"{small_affine_state:#x}",
+            "expected_state": f"{TRACE_SMALL_AFFINE['expected_state']:#x}",
+            "matches_trace": small_affine_state == TRACE_SMALL_AFFINE["expected_state"],
         },
+        "mod255_low_byte": folds,
         "base64_group_3": {
             "chars": group,
             "decoded_hex": decoded_group.hex(),
+            "indices_from_payload": [f"{value:#x}" for value in indices_from_payload],
+            "indices_from_trace_scratch": [f"{value:#x}" for value in indices_from_trace_scratch],
             "payload_i0": f"{index_p_from_payload:#x}",
             "trace_scratch_i0": f"{index_p_from_trace_scratch:#x}",
             "char_from_trace_index": BASE64_ALPHABET[index_p_from_trace_scratch],
-            "matches_trace": index_p_from_payload == index_p_from_trace_scratch == BASE64_ALPHABET.index("p"),
+            "matches_trace": indices_from_payload == indices_from_trace_scratch,
         },
         "complete_algorithm": False,
         "missing": [

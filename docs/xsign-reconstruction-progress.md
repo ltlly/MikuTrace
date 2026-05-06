@@ -502,9 +502,10 @@ uv run python examples/libsgmainso/xsign_partial_sim.py
 ```
 
 It verifies the standard Base64 decode, the `time()`-seeded LCG sequence above,
-the `mod255_low_byte` fold for the `0x62` byte, and the first variable Base64
-index `p`. It deliberately reports `complete_algorithm = false` until the full
-76-byte payload construction is recovered.
+the `mod255_low_byte` folds for the `0x62` and `0x61` scratch bytes, the small
+`0xc87 * 3 + 0x13 = 0x25a8` affine fragment, and the first variable Base64
+group `piYQ`. It deliberately reports `complete_algorithm = false` until the
+full 76-byte payload construction is recovered.
 
 For the paired `0x0a` byte feeding the same Base64 index, a deeper lineage run
 reaches a copied word value rather than an ALU merge:
