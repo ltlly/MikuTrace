@@ -9465,6 +9465,7 @@ fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde_json::Valu
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let repeated_values = compact_lineage_repeated_values(&chain);
+    let pointer_transitions = compact_lineage_pointer_transitions(&chain);
     let next_actions =
         compact_lineage_next_actions(&memory_boundaries, &terminal, &semantics, &repeated_values);
     serde_json::json!({
@@ -9475,6 +9476,7 @@ fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde_json::Valu
         "terminal": terminal,
         "recognized_semantics": semantics,
         "repeated_values": repeated_values,
+        "pointer_transitions": pointer_transitions,
         "memory_boundaries": memory_boundaries,
         "path": chain,
         "next_actions": next_actions,
@@ -9756,6 +9758,87 @@ fn compact_lineage_repeated_values(chain: &[serde_json::Value]) -> serde_json::V
         repeated.truncate(8);
     }
     serde_json::Value::Array(repeated)
+}
+
+fn compact_lineage_pointer_transitions(chain: &[serde_json::Value]) -> serde_json::Value {
+    let mut by_expression = BTreeMap::<String, serde_json::Value>::new();
+    for step in chain {
+        let Some(formula) = step.pointer("/local_def/formula").filter(|v| !v.is_null()) else {
+            continue;
+        };
+        let semantic_kind = formula
+            .get("semantic_kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let pointer_delta = compact_formula_operand_by_role(formula, "pointer_base")
+            .zip(compact_formula_operand_by_role(formula, "delta"));
+        let semantic_pointer = matches!(semantic_kind, "align_down_mask" | "sub_small_delta")
+            && step
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(parse_u64_str)
+                .is_some_and(looks_like_pointer);
+        if pointer_delta.is_none() && !semantic_pointer {
+            continue;
+        }
+        let expression = formula
+            .get("expression")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if expression.is_empty() {
+            continue;
+        }
+        let step_idx = step.get("step").and_then(|v| v.as_u64()).unwrap_or(0);
+        let row = by_expression.entry(expression.clone()).or_insert_with(|| {
+            let mut item = serde_json::json!({
+                "first_step": step_idx,
+                "last_step": step_idx,
+                "count": 0,
+                "idx": step.pointer("/local_def/idx").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": step.pointer("/local_def/asm").cloned().unwrap_or(serde_json::Value::Null),
+                "op": formula.get("op").cloned().unwrap_or(serde_json::Value::Null),
+                "semantic_kind": formula.get("semantic_kind").cloned().unwrap_or(serde_json::Value::Null),
+                "result": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                "expression": expression,
+            });
+            if let Some((base, delta)) = pointer_delta {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert(
+                        "pointer_base".to_string(),
+                        base.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    );
+                    obj.insert(
+                        "delta".to_string(),
+                        delta.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    );
+                }
+            }
+            item
+        });
+        if let Some(obj) = row.as_object_mut() {
+            let count = obj.get("count").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
+            obj.insert("count".to_string(), serde_json::json!(count));
+            obj.insert("last_step".to_string(), serde_json::json!(step_idx));
+        }
+    }
+    let mut rows = by_expression.into_values().collect::<Vec<_>>();
+    rows.sort_by_key(|row| row.get("first_step").and_then(|v| v.as_u64()).unwrap_or(0));
+    if rows.len() > 16 {
+        rows.truncate(16);
+    }
+    serde_json::Value::Array(rows)
+}
+
+fn compact_formula_operand_by_role<'a>(
+    formula: &'a serde_json::Value,
+    role: &str,
+) -> Option<&'a serde_json::Value> {
+    formula
+        .get("operands")?
+        .as_array()?
+        .iter()
+        .find(|operand| operand.get("role").and_then(|v| v.as_str()) == Some(role))
 }
 
 fn vm_backchain_summary(backchain: &serde_json::Value) -> serde_json::Value {
@@ -17083,6 +17166,59 @@ mod tests {
         assert_eq!(
             compact["operands"][1]["role"],
             serde_json::json!("pointer_base")
+        );
+    }
+
+    #[test]
+    fn byte_lineage_compact_summary_reports_pointer_transitions() {
+        let lineage = serde_json::json!({
+            "status": "ready",
+            "start": {"addr": "0x4000", "before_idx": 200},
+            "depth_requested": 4,
+            "steps_returned": 1,
+            "stop_reason": {"kind": "depth_limit"},
+            "steps": [
+                {
+                    "step": 0,
+                    "kind": "reg_source",
+                    "seed": {"kind": "reg_at", "idx": 200, "reg": "x16"},
+                    "backstep": {
+                        "idx": 200,
+                        "source_reg": "x16",
+                        "source_value": "0x74b68bd4c0",
+                        "target": {"idx": 200, "asm": "str x16, [x25]", "class": "vm-reg-store"},
+                        "local_def": {
+                            "idx": 199,
+                            "asm": "add x16, x11, x2",
+                            "class": "alu",
+                            "formula": {
+                                "op": "add",
+                                "expression": "0x74b68bd4c0 = 0x74b68bd6d0 + 0xfffffffffffffdf0",
+                                "operands": [
+                                    {"reg": "x11", "value": "0x74b68bd6d0"},
+                                    {"reg": "x2", "value": "0xfffffffffffffdf0"}
+                                ]
+                            }
+                        },
+                        "upstream": {"status": "not_memory_backed"}
+                    },
+                    "decision": {"kind": "frontier_auto"},
+                    "next": {"idx": 199, "reg": "x11"}
+                }
+            ]
+        });
+        let compact = byte_lineage_compact_summary(&lineage);
+        assert_eq!(
+            compact["pointer_transitions"][0]["expression"],
+            serde_json::json!("0x74b68bd4c0 = 0x74b68bd6d0 + 0xfffffffffffffdf0")
+        );
+        assert_eq!(
+            compact["pointer_transitions"][0]["pointer_base"],
+            serde_json::json!("0x74b68bd6d0")
+        );
+        assert_eq!(
+            compact["pointer_transitions"][0]["delta"],
+            serde_json::json!("0xfffffffffffffdf0")
         );
     }
 

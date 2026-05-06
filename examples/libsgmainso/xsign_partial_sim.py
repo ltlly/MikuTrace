@@ -2727,6 +2727,20 @@ def vm_replay_seed_provenance_summary() -> dict:
                         "beyond this layer"
                     ),
                 },
+                "pointer_transitions": [
+                    "0x74b68bd750 = 0x74b68bd7d0 - 0x80",
+                    "0x74b68bd7d0 = 0x74b68bd920 - 0x150",
+                    "0x74b68bd920 = 0x74b68bd9d0 - 0xb0",
+                    "0x74b68bd9d0 = 0x74b68bda80 - 0xb0",
+                    "0x74b68bda80 = 0x74b68bdb40 - 0xc0",
+                    "0x74b68bdb40 = 0x74b68bde20 - 0x2e0",
+                ],
+                "next_repeated_base": {
+                    "value": "0x74b68bde20",
+                    "count_205_steps": 28,
+                    "count_320_steps": 143,
+                    "portable_status": "not_proven",
+                },
                 "terminal": "depth_limit, but repeated_values now identify deeper copied bases",
                 "portable_status": "deeper_base_pointer_not_proven",
             },

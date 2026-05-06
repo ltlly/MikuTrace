@@ -938,7 +938,26 @@ seed to the trace index before a self-defining in-place ALU write, so the chain
 continues past `and/sub reg, reg, #imm` instead of reporting a false cycle.
 The wider probe currently stops at `depth_limit` on further copied pointer
 values such as `0x74b68bd7d0`, `0x74b68bda80`, and `0x74b68bdb40`; these remain
-base-pointer provenance to prove, not portable semantics.
+base-pointer provenance to prove, not portable semantics. To make that usable
+for AI agents, `byte-lineage --compact` now also emits `pointer_transitions[]`.
+A 205-step slot28/base probe compresses the pointer migration into:
+
+```text
+0x74b68bd4c0 = 0x74b68bd6d0 - 0x210
+0x74b68bd6d0 = align16(0x74b68bd6df)
+0x74b68bd6df = 0x74b68bd750 - 0x71
+0x74b68bd750 = 0x74b68bd7d0 - 0x80
+0x74b68bd7d0 = 0x74b68bd920 - 0x150
+0x74b68bd920 = 0x74b68bd9d0 - 0xb0
+0x74b68bd9d0 = 0x74b68bda80 - 0xb0
+0x74b68bda80 = 0x74b68bdb40 - 0xc0
+0x74b68bdb40 = 0x74b68bde20 - 0x2e0
+```
+
+The same compact view reports `0x74b68bde20` as the next dominant repeated
+base (`count=28` in 205 steps, `count=143` in 320 steps). This is progress on
+tooling and evidence compression, but `0x74b68bde20` is still not proven back
+to a portable input/table allocation.
 
 The `[49,57)` segment is now confirmed as an external text boundary rather than
 an unresolved VM source:
@@ -1055,6 +1074,13 @@ scratch slot28 before #14164280:
     0x74b68bd4c0 = 0x74b68bd6d0 + 0xfffffffffffffdf0
     0x74b68bd6d0 = align16(0x74b68bd750 - 0x71)
     semantics: sub_small_delta + align_down_mask
+  pointer_transitions summary continues:
+    0x74b68bd750 = 0x74b68bd7d0 - 0x80
+    0x74b68bd7d0 = 0x74b68bd920 - 0x150
+    0x74b68bd920 = 0x74b68bd9d0 - 0xb0
+    0x74b68bd9d0 = 0x74b68bda80 - 0xb0
+    0x74b68bda80 = 0x74b68bdb40 - 0xc0
+    0x74b68bdb40 = 0x74b68bde20 - 0x2e0
 
 scratch slot29 before #14164280:
   command: byte-lineage --addr 0x7744599588 --before-idx 14164280 --compact
