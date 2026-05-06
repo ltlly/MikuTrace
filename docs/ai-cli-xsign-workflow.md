@@ -165,6 +165,11 @@ write, preexisting mapped data, a syscall/JNI side effect, or a trace coverage
 gap. Do not keep following the stale traced write just because it is the latest
 write in the index.
 
+In `vm-backchain --summary`, the same condition is surfaced under
+`recognized_pattern_summary.memory_boundary_reads[]`. Use this compact field
+first when an AI needs to decide whether a chain can continue automatically or
+needs a wider trace / external metadata hook.
+
 For this boundary case, `vm-backstep` / `byte-lineage` also include
 `upstream.gap_call_candidates`. The scan covers the trace-index gap between the
 last traced write and the observed read, then ranks calls whose target is

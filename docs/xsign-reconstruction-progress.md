@@ -408,14 +408,22 @@ result bytes    = 9a8b930b
 ```
 
 `xor_word_state_source_summary` now uses these run-aligned chunks instead of
-sliding windows. For the selected `semantic-offset 7, semantic-count 32,
-vm-chain-steps 55` probe, the source coverage is:
+sliding windows. With the full semantic tail probe, the source coverage is now
+complete:
 
 ```text
-run-aligned templates = 6
-state sources found   = 1
-missing chunks        = 5
+semantic range        = [0,68)
+run-aligned templates = 13
+state sources found   = 13
+missing chunks        = 0
+source_status counts  = state_update_found: 2, word_source_only: 11
 ```
+
+This does not mean the full algorithm is recovered. It means every word-sized
+XOR `lhs` chunk now has a concrete trace source candidate. The first two chunks
+in `[3,11)` reach SHA1-like state updates; most later chunks are still
+`word_source_only`, where the trace proves the word value but the portable
+upstream formula or external input is not fully derived yet.
 
 Cross-sample extraction over `call_001`, `call_003`, `call_004`, and `call_005`
 shows that the large middle stream is almost fixed, not ASLR-shaped pointer
@@ -514,6 +522,23 @@ near-pointer false positive rather than the producer. This is a useful
 reconstruction boundary: the simulator should model this word as data supplied
 by the stat output structure, or collect the corresponding file metadata, not
 as a value produced by the stale traced zero store.
+
+As of the current CLI, `vm-backchain --summary` lifts these discontinuities into
+`recognized_pattern_summary.memory_boundary_reads[]`. This is the generic
+counterpart to `static_memory_loads[]`: it marks a memory load whose observed
+bytes do not match the latest traced writer. For example the `[52,56)` source
+chain now reports:
+
+```text
+kind       = memory_boundary_read
+addr       = 0x756649a2d4
+bytes      = 30 2e 31 30
+load       = #14082315 ldr w19, [x14, x13]
+last write = #14062790 str x0, [x19]
+```
+
+This lets an AI stop at the right boundary and ask for a wider trace, boundary
+hook, or external metadata instead of following a stale pointer-shaped write.
 
 So the current trace-proven call_001 tail shape is:
 

@@ -7768,6 +7768,7 @@ fn recognized_backchain_pattern_summary(patterns: &[serde_json::Value]) -> serde
     let mut affine = BTreeMap::<String, AffinePatternGroup>::new();
     let mut kind_counts = BTreeMap::<String, usize>::new();
     let mut static_memory_loads = Vec::new();
+    let mut memory_boundary_reads = Vec::new();
     for pattern in patterns {
         let Some(kind) = pattern.get("kind").and_then(|v| v.as_str()) else {
             continue;
@@ -7775,6 +7776,10 @@ fn recognized_backchain_pattern_summary(patterns: &[serde_json::Value]) -> serde
         *kind_counts.entry(kind.to_string()).or_insert(0) += 1;
         if kind == "static_memory_load_constant" {
             static_memory_loads.push(pattern.clone());
+            continue;
+        }
+        if kind == "memory_boundary_read" {
+            memory_boundary_reads.push(pattern.clone());
             continue;
         }
         if kind != "affine_mod64_state_step" {
@@ -7826,6 +7831,7 @@ fn recognized_backchain_pattern_summary(patterns: &[serde_json::Value]) -> serde
             }))
             .collect::<Vec<_>>(),
         "static_memory_loads": static_memory_loads,
+        "memory_boundary_reads": memory_boundary_reads,
     })
 }
 
@@ -7848,6 +7854,31 @@ fn recognized_backchain_patterns(chain: &[serde_json::Value]) -> Vec<serde_json:
                     "bytes_hex": bytes_hex,
                     "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
                     "expression": "value loaded from memory with no prior writer in trace",
+                }));
+            }
+        }
+        if step.pointer("/local_def/class").and_then(|v| v.as_str()) == Some("mem-load")
+            && step.pointer("/upstream/status").and_then(|v| v.as_str())
+                == Some("observed_read_without_matching_traced_write")
+        {
+            if let Some(bytes_hex) = step
+                .pointer("/upstream/observed_bytes_hex")
+                .and_then(|v| v.as_str())
+            {
+                patterns.push(serde_json::json!({
+                    "kind": "memory_boundary_read",
+                    "step": step.get("step").cloned().unwrap_or_else(|| serde_json::json!(idx)),
+                    "idx": step.pointer("/local_def/idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "asm": step.pointer("/local_def/asm").cloned().unwrap_or(serde_json::Value::Null),
+                    "addr": step.pointer("/upstream/addr").cloned().unwrap_or(serde_json::Value::Null),
+                    "bytes_hex": bytes_hex,
+                    "value": step.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    "last_write": step.pointer("/upstream/last_write").cloned().unwrap_or(serde_json::Value::Null),
+                    "observed_mismatches": step
+                        .pointer("/upstream/observed_mismatches")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([])),
+                    "expression": "value loaded from memory but latest traced write does not explain observed bytes",
                 }));
             }
         }
@@ -12687,6 +12718,43 @@ mod tests {
         assert_eq!(
             summary["static_memory_loads"][0]["value"],
             serde_json::json!("0xa000142")
+        );
+    }
+
+    #[test]
+    fn recognizes_memory_boundary_reads() {
+        let chain = vec![serde_json::json!({
+            "step": 16,
+            "idx": 14082318,
+            "value": "0x30312e30",
+            "local_def": {
+                "idx": 14082318,
+                "asm": "ldr w19, [x14, x13]",
+                "class": "mem-load"
+            },
+            "upstream": {
+                "status": "observed_read_without_matching_traced_write",
+                "addr": "0x756649a2d4",
+                "observed_bytes_hex": "302e3130",
+                "observed_mismatches": [{"offset": 0, "observed": 0x30, "last_write": 0x30}],
+                "last_write": {
+                    "idx": 14062790,
+                    "asm": "str x0, [x19]",
+                    "src_value": "0x756649a730"
+                }
+            }
+        })];
+        let patterns = recognized_backchain_patterns(&chain);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(
+            patterns[0]["kind"],
+            serde_json::json!("memory_boundary_read")
+        );
+        assert_eq!(patterns[0]["bytes_hex"], serde_json::json!("302e3130"));
+        let summary = recognized_backchain_pattern_summary(&patterns);
+        assert_eq!(
+            summary["memory_boundary_reads"][0]["addr"],
+            serde_json::json!("0x756649a2d4")
         );
     }
 

@@ -754,6 +754,79 @@ TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
     },
 }
 
+TRACE_XOR_WORD_SOURCE_COVERAGE = {
+    "command": (
+        "tracemiku-cli output-map <call_dir> --key x-sign --base64-tail-start 12 "
+        "--base64-tail-align-prefix AA --base64-tail-drop 1 --semantic-offset 0 "
+        "--semantic-count 68 --semantic-writer-map "
+        "--semantic-writer-map-vm-chain-bytes --semantic-writer-map-vm-chain-steps 90 "
+        "--semantic-writer-map-vm-chain-runs 68 --semantic-writer-map-vm-chain-follow-frontier "
+        "--summary"
+    ),
+    "coverage_status": "complete",
+    "template_count": 13,
+    "source_count": 13,
+    "missing_count": 0,
+    "source_status_counts": {
+        "state_update_found": 2,
+        "word_source_only": 11,
+    },
+    "interpretation": (
+        "Every word-sized XOR lhs chunk has a trace source candidate. This is "
+        "source coverage, not portable formula coverage: most middle/tail chunks "
+        "still need their word_source_only upstream classified as static table, "
+        "external metadata, or a wider-trace boundary."
+    ),
+}
+
+TRACE_CALL001_WORD_SOURCE_CLASSES = [
+    {
+        "semantic_range": [3, 7],
+        "source_status": "state_update_found",
+        "source_word": "0x67b44ad8",
+        "class": "sha1_like_state_word",
+        "state_update_idx": 14678154,
+    },
+    {
+        "semantic_range": [7, 11],
+        "source_status": "state_update_found",
+        "source_word": "0x783e786f",
+        "class": "sha1_like_state_word",
+        "state_update_idx": 14678176,
+    },
+    {
+        "semantic_range": [16, 52],
+        "source_status": "word_source_only",
+        "class": "scratch_static_load_windows",
+        "static_load_addr_range": "0x74b68bbe04..0x74b68bbe28",
+        "note": (
+            "Backchains for these chunks repeatedly hit overlapping 32-bit loads "
+            "from the same scratch/static region; the first chunk also has a "
+            "stat.st_mtim.tv_sec boundary candidate recorded separately."
+        ),
+    },
+    {
+        "semantic_range": [52, 56],
+        "source_status": "word_source_only",
+        "class": "memory_boundary_read",
+        "addr": "0x756649a2d4",
+        "bytes_hex": "302e3130",
+        "load_idx": 14082315,
+        "last_write_idx": 14062790,
+        "interpretation": (
+            "Observed bytes do not match the latest traced write. Treat this as "
+            "a trace coverage or external data boundary, not as a stale pointer write."
+        ),
+    },
+    {
+        "semantic_range": [61, 65],
+        "source_status": "word_source_only",
+        "class": "static_memory_load_constant",
+        "addr": "0x74b68bbe30",
+        "bytes_hex": "3abf0301",
+    },
+]
+
 
 def b64decode_unpadded(raw: str) -> bytes:
     return base64.b64decode(raw + "=" * ((4 - len(raw) % 4) % 4))
@@ -1350,6 +1423,8 @@ def main() -> None:
                 },
                 "interpretation": middle_lhs["interpretation"],
             },
+            "xor_word_source_coverage": TRACE_XOR_WORD_SOURCE_COVERAGE,
+            "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,
             "multi_sample_mask_folds": {
                 "formula": "tail[1], tail[2] = (input + input // 0xff) & 0xff",
                 "samples": mask_fold_samples,
@@ -1378,7 +1453,10 @@ def main() -> None:
         },
         "complete_algorithm": False,
         "missing": [
-            "remaining upstream sources for the XOR lhs stream",
+            (
+                "portable formulas or external inputs for the word_source_only "
+                "XOR lhs chunks"
+            ),
             "meaning of the fixed 12-character prefix / 9 decoded bytes",
             "upstream VM bytecode templates feeding the semantic tail byte sources",
             "role of the LCG/time state in every payload byte",
