@@ -6971,6 +6971,7 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
             let write = step.get("write").unwrap_or(&serde_json::Value::Null);
             serde_json::json!({
                 "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "seed": step.get("seed").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": "last_write",
                 "source_byte_offset": step.get("source_byte_offset").cloned().unwrap_or(serde_json::Value::Null),
                 "addr": write.get("addr").cloned().unwrap_or(serde_json::Value::Null),
@@ -6987,6 +6988,7 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
             let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
             serde_json::json!({
                 "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "seed": step.get("seed").cloned().unwrap_or(serde_json::Value::Null),
                 "byte_lane": step.get("byte_lane").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": "reg_source",
                 "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
