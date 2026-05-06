@@ -533,9 +533,24 @@ chain reaches a smaller affine step:
 ```
 
 `vm-backchain --follow-frontier` now follows `0xc87` rather than the small
-multiplier `3`. The next layer currently enters repeated zero-valued `and` and
-VM-slot loads, so more boolean/mask-aware summarization is still needed before
-this branch can be treated as a real input or constant.
+multiplier `3`, and identity additions such as `0xc87 = 0xc87 + 0` continue on
+the non-zero source instead of falling into zero-valued side branches. The next
+layer reaches VM bytecode/frontier values such as `0x7` and the `x21` bytecode
+pointer; this branch is still not recovered far enough to label it as a real
+input or fixed constant.
+
+The Base64 index summaries now also label the bit operations directly. For the
+first variable group, the compact `output-map --summary` view reports:
+
+```text
+p: 0x29 = (0x28 & 0x3c) | (0x62 >> 0x6)
+i: 0x22 = 0x62 & 0x3f
+Y: 0x18 = 0x61 >> 0x2
+Q: 0x10 = 0x610 & 0x30
+```
+
+Those are trace summaries of the alphabet indices, not yet proof of the full
+76-byte payload construction.
 
 ## Next target
 

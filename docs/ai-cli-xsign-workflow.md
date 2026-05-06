@@ -369,7 +369,9 @@ register. Add `--index-tree-depth N` to attach a second tree from each matched
 index register, which is the shortest path from the Base64 text layer toward
 payload bit construction. Each attached match also has
 `index_summary.interesting_formulas`, a compact filtered list of small-value
-ALU formulas suitable for prompt input.
+ALU formulas suitable for prompt input, and
+`index_summary.semantic_formulas`, a lower-noise list of recognized operations
+such as bitmask extraction, shifts, OR merges, modular folds, and state updates.
 
 When the tree reaches a table lookup such as `ldrb w3, [alphabet, index]`,
 add `--tree-frontier-with-next`. Without it the tree follows the table memory
@@ -490,7 +492,23 @@ walking into constants such as `3` when the trace contains `state * 3 + 0x13`
 style bytecode arithmetic.
 
 `vm-backtree --summary` also includes `highlights.semantic_formulas[]` for
-non-small formulas that are still semantically important, such as:
+formulas that are easier to consume as semantics than as raw ARM64. Base64 index
+construction commonly shows up as:
+
+```text
+kind: bitmask_extract
+result == input & mask
+
+kind: shift_right
+result == input >> shift
+
+kind: bitwise_or_merge
+result == lhs | rhs
+```
+
+Low-value identity rows such as `ubfx(x, 0, 32)` and `x >> 0` are filtered out
+of the semantic summary. Non-small formulas that are still important are kept,
+such as:
 
 ```text
 0x757524ef = 0x74ffafca73 / 0xff
