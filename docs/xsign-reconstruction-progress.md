@@ -531,14 +531,21 @@ Two representative table writers show that the table has mixed provenance:
   formula = (source << 24) & 0xffffffff
 
 #14164406 writes e9f26979
-  source class = static_table_xor_ladder
-  vm-backchain summary = 6 static_memory_load_constant patterns
-  example static words = 0x90bf1d91, 0x6ddde4eb, 0x166ccf45, ...
+  formula = (stat("/").st_mtim.tv_sec >> 8) | (static_xor_ladder_low_byte << 24)
+  stat component   = 0x0069f2e9
+  static component = 0x79000000
 ```
 
 So it is wrong to model the whole lhs stream as a single file timestamp or a
 single static salt. The next lifting step needs to summarize the scratch table
 writers as mixed external fields plus static-table/XOR ladder formulas.
+
+The Python reconstruction now uses this split directly:
+
+```text
+middle_lhs[0:4]  = word32_le(stat("/").st_mtim.tv_sec)
+middle_lhs[4:43] = traced static/xor-ladder suffix
+```
 
 Tracing the first middle word `fbe9f269` in `call_001` found three memory hits:
 

@@ -83,6 +83,12 @@ TRACE_SMALL_AFFINE = {
     "expected_state": 0x25A8,
 }
 
+CALL001_STAT_MTIM_TV_SEC = 0x69F2E9FB
+CALL001_MIDDLE_LHS_STATIC_SUFFIX_HEX = (
+    "79ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43b"
+    "a0444a342344c59bc569"
+)
+
 CALL_001_SEMANTIC_TAIL_HEX = (
     "0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460"
     "f1d2295d336dae63ff825bafa0f452f1411dddc5965ac22528554125"
@@ -862,16 +868,10 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
             {
                 "writer_idx": 14164406,
                 "writer_bytes_hex": "e9f26979",
-                "source_class": "static_table_xor_ladder",
-                "static_load_count": 6,
-                "terminal_static_values": [
-                    "0x90bf1d91",
-                    "0x6ddde4eb",
-                    "0x166ccf45",
-                    "0x706af48f",
-                    "0x2eb40d81",
-                    "0x71b18589",
-                ],
+                "source_class": "stat_mtim_shift_plus_static_byte",
+                "formula": "(stat('/').st_mtim.tv_sec >> 8) | (static_xor_ladder_low_byte << 24)",
+                "stat_component": "0x0069f2e9",
+                "static_component": "0x79000000",
             },
         ],
         "note": (
@@ -916,10 +916,7 @@ CALL001_XOR_LHS_RUNS = [
     },
     {
         "range": [16, 59],
-        "lhs_hex": (
-            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
-            "bfa4f43ba0444a342344c59bc569"
-        ),
+        "source": "stat_mtim_le_plus_static_suffix",
     },
     {
         "range": [61, 65],
@@ -989,6 +986,16 @@ def xor_lhs_run_result(run: dict) -> bytes:
     return bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
 
 
+def call001_lhs_run_bytes(run: dict) -> bytes:
+    if "lhs_hex" in run:
+        return bytes.fromhex(run["lhs_hex"])
+    if run.get("source") == "stat_mtim_le_plus_static_suffix":
+        return word32_le_bytes(CALL001_STAT_MTIM_TV_SEC) + bytes.fromhex(
+            CALL001_MIDDLE_LHS_STATIC_SUFFIX_HEX
+        )
+    raise ValueError(f"unsupported lhs run source: {run}")
+
+
 def trace_mask_byte_for_semantic_offset(offset: int) -> int:
     if offset % 2 == 0:
         return mod255_low_byte(0x74BEABE59C)
@@ -1002,7 +1009,7 @@ def reconstruct_call001_semantic_tail_from_trace_formulas() -> bytes:
         out[offset] = trace_mask_byte_for_semantic_offset(offset)
     for run in CALL001_XOR_LHS_RUNS:
         start, end = run["range"]
-        lhs = bytes.fromhex(run["lhs_hex"])
+        lhs = call001_lhs_run_bytes(run)
         if len(lhs) != end - start:
             raise ValueError(f"bad lhs length for range {run['range']}")
         for idx, lhs_byte in enumerate(lhs, start=start):
@@ -1362,8 +1369,13 @@ def main() -> None:
                 "formula_classes": [
                     "byte_lane_extract",
                     "mod255_low_byte",
+                    "stat('/').st_mtim.tv_sec little-endian bytes",
                     "xor_lhs_run ^ parity_mask",
                 ],
+                "formula_inputs": {
+                    "stat_mtim_tv_sec": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
+                    "middle_lhs_static_suffix_hex": CALL001_MIDDLE_LHS_STATIC_SUFFIX_HEX,
+                },
                 "note": (
                     "This reconstructs the observed call_001 output from traced "
                     "formula inputs. It is not yet a portable x-sign algorithm "
