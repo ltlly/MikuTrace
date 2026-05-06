@@ -2547,29 +2547,27 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "uv run python tools/vm_replay_plan_eval.py --seed-slot 0=0"
             ),
             "seeded_slots": {"0": "0x0"},
-            "computed_effects": 108,
-            "trusted_effects": 6,
+            "computed_effects": 122,
+            "trusted_effects": 5,
             "skipped_effects": 14,
-            "unresolved_read_count": 6,
-            "remaining_missing_slots": [26, 28, 25, 24, 8],
+            "unresolved_read_count": 5,
+            "remaining_missing_slots": [26, 28, 25, 24],
             "trusted_writes": [
                 "slot[29] = and(slot[26], 0xff) -> 0x60",
                 "slot[28] = eor(slot[29], slot[28]) -> 0xf",
                 "slot[26] = lsr(slot[26], 0x8) -> 0x1f7b34",
                 "slot[25] = add(slot[25], 0xffffffffffffffff) -> 0xa",
                 "slot[24] = add(slot[24], 0x1) -> 0x7599191127",
-                "slot[24] = eor(slot[8], slot[24]) -> 0x95f2ec79",
             ],
             "fully_seeded_replay": {
                 "seeded_slots": {
                     "0": "0x0",
-                    "8": "0x90d2d669",
                     "24": "0x7599191126",
                     "25": "0xb",
                     "26": "0x1f7b3460",
                     "28": "0x6f",
                 },
-                "computed_effects": 114,
+                "computed_effects": 127,
                 "trusted_effects": 0,
                 "unresolved_read_count": 0,
                 "final_slot24": "0x95f2ec79",
@@ -2653,30 +2651,22 @@ def vm_replay_seed_provenance_summary() -> dict:
                     "loaded from slot9, then slot26, then byte memory around "
                     "0x74b68bcc10"
                 ),
-                "frontier": "observed_read_without_matching_traced_write",
-                "boundary": {
-                    "addr": "0x7744599578",
-                    "observed_bytes_hex": "1ccc8bb674000000",
-                    "gap_call_count_total": 1,
-                },
+                "terminal": "no_local_def at VM bytecode IP base 0x74fbf72380",
                 "portable_status": "not_proven",
             },
         },
         "middle_lhs_ladder_window": {
             "slot8": {
                 "value": "0x90d2d669",
-                "frontier": "observed_read_without_matching_traced_write",
-                "boundary": {
-                    "addr": "0x7744599588",
-                    "observed_bytes_hex": "2011199975000000",
-                    "gap_call_count_total": 1,
-                },
-                "portable_status": "not_proven",
+                "status": "computed_inside_replay_window",
+                "writer_idx": 14017046,
+                "writer_asm": "stp x9, x10, [x25, #0x40]",
+                "portable_status": "not_an_initial_seed_after_pair_slot_fix",
             },
             "slot24": {
                 "value": "0x7599191126",
-                "lineage": "six +1 increments from 0x7599191120",
-                "frontier": "same slot29 observed-read boundary as slot8",
+                "lineage": "six +1 increments from a call-return value 0x7599191120",
+                "frontier": "call_return_boundary at #14009734 blr x22",
                 "portable_status": "not_proven",
             },
             "slot25": {
@@ -2699,10 +2689,10 @@ def vm_replay_seed_provenance_summary() -> dict:
             },
         },
         "interpretation": (
-            "The replay seeds are now split into bytecode-literal frontiers, "
-            "pointer/constant chains, and observed-read memory boundaries. "
-            "The open portable-algorithm work is concentrated in slot25/28 "
-            "scratch pointer provenance and the ladder slot8/24/26 chains."
+            "After fixing pair-store slot handling, slot8 is computed inside "
+            "the ladder replay window instead of being an initial seed. The "
+            "open portable-algorithm work is concentrated in scratch slot25/28 "
+            "pointer provenance plus ladder slot24/26."
         ),
     }
 

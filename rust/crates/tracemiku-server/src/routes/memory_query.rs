@@ -977,7 +977,7 @@ fn source_reg_for_write_at(
     let op = decoded
         .mem_op
         .iter()
-        .find(|op| op.is_write && addr_of(record, op) == dst_addr)
+        .find(|op| op.is_write && touches_addr(addr_of(record, op), op.size, dst_addr))
         .or_else(|| decoded.mem_op.iter().find(|op| op.is_write))?;
     if !op.src_reg.is_empty() {
         return Some(op.src_reg.clone());

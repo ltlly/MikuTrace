@@ -10472,12 +10472,12 @@ fn vm_op_from_group(group: &[serde_json::Value]) -> serde_json::Value {
     let vm_slot_reads = group
         .iter()
         .filter(|row| row.get("class").and_then(|v| v.as_str()) == Some("vm-reg-load"))
-        .filter_map(vm_slot_access_summary)
+        .flat_map(vm_slot_access_summaries)
         .collect::<Vec<_>>();
     let vm_slot_writes = group
         .iter()
         .filter(|row| row.get("class").and_then(|v| v.as_str()) == Some("vm-reg-store"))
-        .filter_map(vm_slot_access_summary)
+        .flat_map(vm_slot_access_summaries)
         .collect::<Vec<_>>();
     let small_byte_loads = group
         .iter()
@@ -10561,47 +10561,99 @@ fn bytecode_read_summary(row: &serde_json::Value) -> Option<serde_json::Value> {
     }))
 }
 
-fn vm_slot_access_summary(row: &serde_json::Value) -> Option<serde_json::Value> {
-    let slot = row.get("vm_slot")?;
+fn vm_slot_access_summaries(row: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(slot) = row.get("vm_slot") else {
+        return Vec::new();
+    };
     let class = row.get("class").and_then(|v| v.as_str()).unwrap_or("");
-    let (op, reg, value) = if class == "vm-reg-load" {
-        (
-            "load",
-            row.pointer("/def/reg")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-            row.pointer("/def/value_after")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        )
+    let base_slot = slot.get("slot").and_then(|v| v.as_u64()).unwrap_or(0);
+    let base_mem_addr = row
+        .get("mem_addr")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str);
+    if class == "vm-reg-load" {
+        let defs = row
+            .get("defs")
+            .and_then(|v| v.as_array())
+            .filter(|defs| !defs.is_empty())
+            .cloned()
+            .unwrap_or_else(|| {
+                row.get("def")
+                    .filter(|v| !v.is_null())
+                    .cloned()
+                    .into_iter()
+                    .collect()
+            });
+        return defs
+            .iter()
+            .enumerate()
+            .map(|(idx, def)| {
+                let def_mem_addr = def
+                    .get("mem_addr")
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_u64_str)
+                    .or_else(|| base_mem_addr.map(|addr| addr + (idx as u64) * 8));
+                let slot_idx = vm_slot_index_for_mem_addr(base_slot, base_mem_addr, def_mem_addr);
+                serde_json::json!({
+                    "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "op": "load",
+                    "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                    "slot": slot_idx,
+                    "index_reg": slot.get("index_reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "index_value": slot.get("index_value").cloned().unwrap_or(serde_json::Value::Null),
+                    "reg": def.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "value": def.get("value_after").cloned().unwrap_or(serde_json::Value::Null),
+                    "mem_addr": def_mem_addr.map(|addr| format!("{addr:#x}")),
+                })
+            })
+            .collect();
     } else if class == "vm-reg-store" {
-        let src = row
+        let srcs = row
             .get("store_src")
             .and_then(|v| v.as_array())
-            .and_then(|items| items.first());
-        (
-            "store",
-            src.and_then(|v| v.get("reg"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-            src.and_then(|v| v.get("value"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        )
+            .cloned()
+            .unwrap_or_default();
+        let mut byte_offset = 0u64;
+        return srcs
+            .iter()
+            .map(|src| {
+                let reg = src
+                    .get("reg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let width = register_load_width(&reg);
+                let mem_addr = base_mem_addr.map(|addr| addr + byte_offset);
+                let slot_idx = vm_slot_index_for_mem_addr(base_slot, base_mem_addr, mem_addr);
+                byte_offset = byte_offset.saturating_add(width);
+                serde_json::json!({
+                    "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "op": "store",
+                    "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                    "slot": slot_idx,
+                    "index_reg": slot.get("index_reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "index_value": slot.get("index_value").cloned().unwrap_or(serde_json::Value::Null),
+                    "reg": src.get("reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "value": src.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    "mem_addr": mem_addr.map(|addr| format!("{addr:#x}")),
+                })
+            })
+            .collect();
     } else {
-        return None;
-    };
-    Some(serde_json::json!({
-        "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
-        "op": op,
-        "asm": row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
-        "slot": slot.get("slot").cloned().unwrap_or(serde_json::Value::Null),
-        "index_reg": slot.get("index_reg").cloned().unwrap_or(serde_json::Value::Null),
-        "index_value": slot.get("index_value").cloned().unwrap_or(serde_json::Value::Null),
-        "reg": reg,
-        "value": value,
-        "mem_addr": row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
-    }))
+        Vec::new()
+    }
+}
+
+fn vm_slot_index_for_mem_addr(
+    base_slot: u64,
+    base_mem_addr: Option<u64>,
+    mem_addr: Option<u64>,
+) -> serde_json::Value {
+    base_mem_addr
+        .zip(mem_addr)
+        .and_then(|(base, addr)| addr.checked_sub(base))
+        .map(|offset| serde_json::json!(base_slot + offset / 8))
+        .unwrap_or_else(|| serde_json::json!(base_slot))
 }
 
 fn byte_load_summary(row: &serde_json::Value) -> Option<serde_json::Value> {
@@ -12923,10 +12975,10 @@ fn classify_vm_asm(asm: &str, profile: &VmProfile) -> &'static str {
         return "bytecode-read";
     }
     if bracket_base == Some(profile.state_reg.as_str()) {
-        if asm.starts_with("ldr") {
+        if asm.starts_with("ldr") || asm.starts_with("ldp") || asm.starts_with("ldnp") {
             return "vm-reg-load";
         }
-        if asm.starts_with("str") {
+        if asm.starts_with("str") || asm.starts_with("stp") || asm.starts_with("stnp") {
             return "vm-reg-store";
         }
     }
@@ -13159,16 +13211,31 @@ fn vm_slot_from_asm(
     if regs.first().map(String::as_str) != Some(profile.state_reg.as_str()) {
         return None;
     }
-    let idx_reg = regs.get(1)?;
-    let idx_val = record_reg_u64(record, idx_reg)?;
-    let slot = if lower.contains("lsl #3") {
-        idx_val
+    if let Some(idx_reg) = regs.get(1) {
+        let idx_val = record_reg_u64(record, idx_reg)?;
+        let slot = if lower.contains("lsl #3") {
+            idx_val
+        } else {
+            idx_val / 8
+        };
+        return Some(serde_json::json!({
+            "index_reg": idx_reg,
+            "index_value": format!("{idx_val:#x}"),
+            "slot": slot,
+        }));
+    }
+    let state_base = record_reg_u64(record, &profile.state_reg)?;
+    let mem_addr = mem_addr_from_asm(asm, record)?;
+    let offset = mem_addr.checked_sub(state_base)?;
+    let slot = if offset % 8 == 0 {
+        offset / 8
     } else {
-        idx_val / 8
+        return None;
     };
     Some(serde_json::json!({
-        "index_reg": idx_reg,
-        "index_value": format!("{idx_val:#x}"),
+        "index_reg": serde_json::Value::Null,
+        "index_value": serde_json::Value::Null,
+        "offset": format!("{offset:#x}"),
         "slot": slot,
     }))
 }
@@ -13880,7 +13947,7 @@ mod tests {
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
         store_touch_for_addr, vm_backchain_stop_summary, vm_op_effect_summaries,
         vm_ops_compact_replay_summary, vm_ops_effects_only_summary, vm_ops_replay_plan_summary,
-        vm_ops_state_updates, vm_slot_from_asm, ElfSymbol, VmProfile,
+        vm_ops_state_updates, vm_slot_access_summaries, vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -13914,7 +13981,11 @@ mod tests {
         );
         assert_eq!(
             classify_vm_asm("ldp x9, x10, [x25, #0xc0]", &profile),
-            "mem-load"
+            "vm-reg-load"
+        );
+        assert_eq!(
+            classify_vm_asm("stp x9, x10, [x25, #0xc0]", &profile),
+            "vm-reg-store"
         );
         assert_eq!(
             mem_addr_from_asm("ldr x4, [x25, x19, lsl #3]", &record),
@@ -13928,6 +13999,32 @@ mod tests {
         );
         let slot = vm_slot_from_asm("str x3, [x25, x1]", &record, &profile).unwrap();
         assert_eq!(slot["slot"], serde_json::json!(28));
+        let slot = vm_slot_from_asm("stp x9, x10, [x25, #0xc0]", &record, &profile).unwrap();
+        assert_eq!(slot["slot"], serde_json::json!(24));
+        assert_eq!(slot["offset"], serde_json::json!("0xc0"));
+    }
+
+    #[test]
+    fn vm_slot_access_expands_pair_state_stores() {
+        let row = serde_json::json!({
+            "idx": 14017046,
+            "class": "vm-reg-store",
+            "asm": "stp x9, x10, [x25, #0x40]",
+            "vm_slot": {"slot": 8, "index_reg": null, "index_value": null},
+            "mem_addr": "0x77445994e0",
+            "store_src": [
+                {"reg": "x9", "value": "0x90d2d669"},
+                {"reg": "x10", "value": "0x0"}
+            ]
+        });
+        let writes = vm_slot_access_summaries(&row);
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0]["slot"], serde_json::json!(8));
+        assert_eq!(writes[0]["mem_addr"], serde_json::json!("0x77445994e0"));
+        assert_eq!(writes[0]["reg"], serde_json::json!("x9"));
+        assert_eq!(writes[1]["slot"], serde_json::json!(9));
+        assert_eq!(writes[1]["mem_addr"], serde_json::json!("0x77445994e8"));
+        assert_eq!(writes[1]["reg"], serde_json::json!("x10"));
     }
 
     #[test]

@@ -947,8 +947,8 @@ slot27=0x20, slot28=0x74b68bbe00, slot29=0x37
 => trusted_effects=0, unresolved_read_count=0, scratch dump still matches
 
 [21,25) ladder seeds:
-slot0=0, slot8=0x90d2d669, slot24=0x7599191126,
-slot25=0xb, slot26=0x1f7b3460, slot28=0x6f
+slot0=0, slot24=0x7599191126, slot25=0xb,
+slot26=0x1f7b3460, slot28=0x6f
 => trusted_effects=0, unresolved_read_count=0, final slot24=0x95f2ec79
 ```
 
@@ -997,13 +997,16 @@ scratch slot25 before #14164280:
   slot25 = 0x74b68bcc1c
   writer #14164103: stp x9, x10, [x25, #0xc0]
   loaded from slot9, then slot26, then byte memory around 0x74b68bcc10
-  frontier: observed_read_without_matching_traced_write on slot27/memory state
-  boundary: addr 0x7744599578, observed 1ccc8bb674000000, gap calls 1
+  18 compact steps end at no_local_def on VM bytecode IP 0x74fbf72380
 
-[21,25) ladder slot8/24 before #14015880:
-  both reach the same slot29 observed-read boundary at addr 0x7744599588
-  observed 2011199975000000, gap calls 1
+[21,25) ladder slot8 around #14017046:
+  no longer an initial seed after fixed-offset pair slot handling
+  writer #14017046: stp x9, x10, [x25, #0x40]
+  slot8 = 0x90d2d669 is computed inside the replay window
+
+[21,25) ladder slot24 before #14015880:
   slot24 is six +1 increments from 0x7599191120
+  lineage ends at call_return_boundary #14009734: blr x22
 
 [21,25) ladder slot25/28 before #14015880:
   slot25 = 0xb = 0xffffffffffffffff + 0xc
@@ -1015,10 +1018,10 @@ scratch slot25 before #14164280:
   20 compact steps show XOR/shift/mask structure and end at depth_limit
 ```
 
-So the seed problem is no longer one undifferentiated "observed fallback" bucket.
-The remaining hard parts are scratch pointer provenance (`slot25/28`) and the
-ladder seed chains (`slot8/24/26`); `slot27/29` and ladder `slot25/28` are now
-closer to bytecode-literal or bytecode-frontier explanations.
+So the seed problem is no longer one undifferentiated fallback bucket. The
+pair-store fixes removed a false `slot8` seed and false observed-read
+boundaries. The remaining hard parts are scratch pointer provenance
+(`slot25/28`) and ladder chains (`slot24/26`).
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:

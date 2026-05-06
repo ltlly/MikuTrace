@@ -83,6 +83,39 @@ fn synth_scaled_store_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_pair_store_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_1r_1ms");
+    std::fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272];
+    buf[0..8].copy_from_slice(&0x100000u64.to_le_bytes());
+    // stp x9, x10, [x25, #0xe0].
+    buf[268..272].copy_from_slice(&0xa90e2b29u32.to_le_bytes());
+    for (reg, value) in [(9usize, 0x1112u64), (10, 0x7599191120), (25, 0x7000)] {
+        let off = 8 + reg * 8;
+        buf[off..off + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    std::fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    std::fs::write(
+        cd.join("meta.json"),
+        r#"{"records":1,"tid":100,"ms":1,"truncated":false}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 fn append_external_write(cd: &std::path::Path, idx: u64, addr: u64, byte: u8) {
     let mut rec = Vec::with_capacity(17);
     rec.extend_from_slice(&idx.to_le_bytes());
@@ -119,6 +152,26 @@ async fn last_write_of_addr_reports_writer_context() {
     assert_eq!(v["src_reg"], "x0");
     assert_eq!(v["src_value"], "0x6f6c6c6568");
     assert_eq!(v["writes_before"], 1);
+}
+
+#[tokio::test]
+async fn last_write_of_addr_uses_pair_half_for_inner_byte() {
+    let (_tmp, cd) = synth_pair_store_call_dir();
+    let v = get_json(
+        cd.clone(),
+        "/api/last-write-of-addr?addr=0x70e0&before_idx=1",
+    )
+    .await;
+    assert_eq!(v["status"], "found");
+    assert_eq!(v["dst_addr"], "0x70e0");
+    assert_eq!(v["src_reg"], "x9");
+    assert_eq!(v["src_value"], "0x1112");
+
+    let v = get_json(cd, "/api/last-write-of-addr?addr=0x70e9&before_idx=1").await;
+    assert_eq!(v["status"], "found");
+    assert_eq!(v["dst_addr"], "0x70e8");
+    assert_eq!(v["src_reg"], "x10");
+    assert_eq!(v["src_value"], "0x7599191120");
 }
 
 #[tokio::test]
