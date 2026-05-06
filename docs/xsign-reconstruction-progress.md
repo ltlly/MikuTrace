@@ -663,24 +663,24 @@ earlier observed `QfYBk7NLPFEMz` bytes. The right reconstruction boundary is
 still the earlier observed read without a matching traced write.
 
 The full 16-writer summary over the table is now compact enough for an AI to
-consume directly:
+consume directly. `byte-writer-map --summary` exposes this as
+`vm_source_ranges[]` with inclusive offsets:
 
 ```text
-scratch offsets  bytes      writer       class / first boundary
-0..4             000000fb   #14164352    stat("/") st_mtim boundary
-4..8             e9f26979   #14164406    stat boundary + static byte
-8..12            ecf29541   #14164461    no-writer-window table ladder
-12..36           f601...3b  #14164504..  earlier VM-generated ladder values
-36..40           a0444a34   #14164924    text boundary "10.6"
-40..44           2344c59b   #14164979    text boundary "0.10"
-44..52           c569...01  #14165022..  short literal/ladder tail
+offsets  bytes       class
+0..7     000000fb... memory_boundary_read, stat("/") st_mtim candidate
+8..11    ecf29541    static_memory_load_constant / no-writer-window table
+12..35   f601...3b   traced_formula_only, earlier VM ladder values
+36..43   a044...9b   memory_boundary_read, text bytes "10.6" / "0.10"
+44..47   c5690000    traced_formula_only
+48..51   3abf0301    unclassified short tail
 ```
 
 Aggregate pattern counts from these 16 chains are:
 
 ```text
 memory_boundary_read        = 4
-static_memory_load_constant = 14
+static_memory_load_constant = 10
 ```
 
 This is the useful split for simulation work: the table is generated, but its

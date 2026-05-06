@@ -243,8 +243,12 @@ rust/target/debug/tracemiku-cli byte-writer-map <call_dir> \
 ```
 
 The summary keeps `bytes_hex`, printable `ascii`, compact writer runs,
-aggregate VM chain counts, and per-run chain summaries. Omit `--summary` only
-when the AI needs the full byte list or full backchain steps.
+aggregate VM chain counts, per-run chain summaries, and `vm_source_ranges[]`.
+`vm_source_ranges[]` groups adjacent writer chains by generic source class:
+`memory_boundary_read`, `static_memory_load_constant`, `traced_formula_only`,
+or `unclassified`. Use it as the first buffer-level triage surface before
+opening the full per-run `vm_chains[]`. Omit `--summary` only when the AI needs
+the full byte list or full backchain steps.
 
 To dump a byte range as of a specific trace index, use `mem-dump --cursor`.
 Without `--cursor`, it shows the final MemShadow state:

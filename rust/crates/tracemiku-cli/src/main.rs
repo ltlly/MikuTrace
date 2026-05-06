@@ -10249,6 +10249,7 @@ fn byte_writer_map_summary(output: &serde_json::Value) -> serde_json::Value {
         .flatten()
         .map(compact_byte_writer_chain)
         .collect::<Vec<_>>();
+    let vm_source_ranges = byte_writer_vm_source_ranges(&vm_chains);
     serde_json::json!({
         "status": output.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "addr": output.get("addr").cloned().unwrap_or(serde_json::Value::Null),
@@ -10264,9 +10265,248 @@ fn byte_writer_map_summary(output: &serde_json::Value) -> serde_json::Value {
         "writer_run_count": writer_runs.len(),
         "writer_runs": writer_runs,
         "vm_chain_summary": output.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
+        "vm_source_ranges": vm_source_ranges,
         "vm_chains": vm_chains,
         "warning": output.get("warning").cloned().unwrap_or(serde_json::Value::Null),
     })
+}
+
+#[derive(Debug, Default)]
+struct ByteWriterVmSourceGroup {
+    source_class: String,
+    start_offset: u64,
+    end_offset: u64,
+    bytes_hex: String,
+    ascii: String,
+    chain_count: usize,
+    writer_idxs: Vec<serde_json::Value>,
+    memory_boundaries: Vec<serde_json::Value>,
+    static_memory_loads: Vec<serde_json::Value>,
+    static_memory_load_count: usize,
+    semantic_kind_counts: BTreeMap<String, usize>,
+}
+
+impl ByteWriterVmSourceGroup {
+    fn new(source_class: String, chain: &serde_json::Value) -> Self {
+        let start_offset = chain
+            .get("start_offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let end_offset = chain
+            .get("end_offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(start_offset);
+        let mut group = Self {
+            source_class,
+            start_offset,
+            end_offset,
+            bytes_hex: chain
+                .get("bytes_hex")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            ascii: chain
+                .get("ascii")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            chain_count: 0,
+            ..Self::default()
+        };
+        group.add_chain(chain);
+        group
+    }
+
+    fn can_extend(&self, source_class: &str, chain: &serde_json::Value) -> bool {
+        self.source_class == source_class
+            && chain
+                .get("start_offset")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|start| self.end_offset.saturating_add(1) == start)
+    }
+
+    fn add_chain(&mut self, chain: &serde_json::Value) {
+        if self.chain_count > 0 {
+            if let Some(bytes_hex) = chain.get("bytes_hex").and_then(|v| v.as_str()) {
+                self.bytes_hex.push_str(bytes_hex);
+            }
+            if let Some(ascii) = chain.get("ascii").and_then(|v| v.as_str()) {
+                self.ascii.push_str(ascii);
+            }
+        }
+        if let Some(end_offset) = chain.get("end_offset").and_then(|v| v.as_u64()) {
+            self.end_offset = end_offset;
+        }
+        self.chain_count += 1;
+        self.writer_idxs.push(
+            chain
+                .get("writer_idx")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+        for boundary in chain
+            .pointer("/recognized_pattern_summary/memory_boundary_reads")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(compact_memory_boundary_read)
+        {
+            push_unique_json(&mut self.memory_boundaries, boundary);
+        }
+        let static_loads = chain
+            .pointer("/recognized_pattern_summary/static_memory_loads")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        self.static_memory_load_count += static_loads.len();
+        for load in static_loads.into_iter().map(compact_static_memory_load) {
+            push_unique_json(&mut self.static_memory_loads, load);
+        }
+        for item in chain
+            .get("recognized_semantics")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(kind) = item
+                .get("semantic")
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str())
+            {
+                *self
+                    .semantic_kind_counts
+                    .entry(kind.to_string())
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+
+    fn into_json(self) -> serde_json::Value {
+        let size = self.end_offset.saturating_sub(self.start_offset) + 1;
+        serde_json::json!({
+            "source_class": self.source_class,
+            "start_offset": self.start_offset,
+            "end_offset": self.end_offset,
+            "size": size,
+            "bytes_hex": self.bytes_hex,
+            "ascii": self.ascii,
+            "chain_count": self.chain_count,
+            "writer_idxs": self.writer_idxs,
+            "memory_boundary_reads": self.memory_boundaries,
+            "static_memory_load_count": self.static_memory_load_count,
+            "static_memory_loads": self.static_memory_loads,
+            "semantic_kind_counts": self.semantic_kind_counts
+                .into_iter()
+                .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
+                .collect::<Vec<_>>(),
+            "interpretation": vm_source_class_interpretation(&self.source_class),
+        })
+    }
+}
+
+fn byte_writer_vm_source_ranges(vm_chains: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut groups = Vec::<ByteWriterVmSourceGroup>::new();
+    for chain in vm_chains {
+        let source_class = byte_writer_chain_source_class(chain);
+        if let Some(last) = groups.last_mut() {
+            if last.can_extend(&source_class, chain) {
+                last.add_chain(chain);
+                continue;
+            }
+        }
+        groups.push(ByteWriterVmSourceGroup::new(source_class, chain));
+    }
+    groups
+        .into_iter()
+        .map(ByteWriterVmSourceGroup::into_json)
+        .collect()
+}
+
+fn byte_writer_chain_source_class(chain: &serde_json::Value) -> String {
+    if chain
+        .pointer("/recognized_pattern_summary/memory_boundary_reads")
+        .and_then(|v| v.as_array())
+        .is_some_and(|items| !items.is_empty())
+    {
+        return "memory_boundary_read".to_string();
+    }
+    if chain
+        .pointer("/recognized_pattern_summary/static_memory_loads")
+        .and_then(|v| v.as_array())
+        .is_some_and(|items| !items.is_empty())
+    {
+        return "static_memory_load_constant".to_string();
+    }
+    if chain
+        .get("recognized_semantics")
+        .and_then(|v| v.as_array())
+        .is_some_and(|items| !items.is_empty())
+    {
+        return "traced_formula_only".to_string();
+    }
+    "unclassified".to_string()
+}
+
+fn compact_memory_boundary_read(pattern: &serde_json::Value) -> serde_json::Value {
+    let last_write = pattern
+        .get("last_write")
+        .unwrap_or(&serde_json::Value::Null);
+    serde_json::json!({
+        "idx": pattern.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "step": pattern.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "addr": pattern.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": pattern.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "value": pattern.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": pattern.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "observed_mismatch_count": pattern
+            .get("observed_mismatches")
+            .and_then(|v| v.as_array())
+            .map(|items| items.len())
+            .unwrap_or(0),
+        "last_write": {
+            "idx": last_write.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "asm": last_write.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+            "dst_addr": last_write.get("dst_addr").cloned().unwrap_or(serde_json::Value::Null),
+            "src_reg": last_write.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+            "src_value": last_write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+        }
+    })
+}
+
+fn compact_static_memory_load(pattern: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "idx": pattern.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+        "step": pattern.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "addr": pattern.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+        "bytes_hex": pattern.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
+        "value": pattern.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": pattern.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_lo": pattern.get("idx_lo").cloned().unwrap_or(serde_json::Value::Null),
+        "idx_hi": pattern.get("idx_hi").cloned().unwrap_or(serde_json::Value::Null),
+        "source_boundary": pattern.get("source_boundary").cloned().unwrap_or(serde_json::Value::Null),
+        "caution": pattern.get("caution").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn push_unique_json(items: &mut Vec<serde_json::Value>, value: serde_json::Value) {
+    if !items.iter().any(|item| item == &value) {
+        items.push(value);
+    }
+}
+
+fn vm_source_class_interpretation(source_class: &str) -> &'static str {
+    match source_class {
+        "memory_boundary_read" => {
+            "chain reaches an observed memory value that is not explained by the latest traced write"
+        }
+        "static_memory_load_constant" => {
+            "chain reaches a memory load with no writer in the selected lookback window"
+        }
+        "traced_formula_only" => {
+            "chain has recognized ALU semantics but no memory/static boundary in the returned depth"
+        }
+        _ => "chain did not expose a recognized source class in the returned depth",
+    }
 }
 
 fn compact_byte_writer_run(run: &serde_json::Value) -> serde_json::Value {
@@ -12363,10 +12603,10 @@ mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, byte_lane_from_writer_map_entry,
         byte_lineage_summary, byte_writer_map_output, byte_writer_map_summary,
-        byte_writers_from_range_writes, choose_frontier_next, choose_frontier_next_for_lane,
-        choose_laned_upstream_next, classify_vm_asm, compact_gap_call_candidates,
-        dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm,
-        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        byte_writer_vm_source_ranges, byte_writers_from_range_writes, choose_frontier_next,
+        choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
+        compact_gap_call_candidates, dedupe_byte_nexts, def_entries_from_asm,
+        def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
         gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
         mem_dump_summary, memory_access_width, observed_byte_writer_mismatches, odd_u64_inverse,
         output_map_summary, output_semantic_byte_equation,
@@ -13510,6 +13750,127 @@ mod tests {
         assert_eq!(
             summary["semantic_writer_map"]["xor_word_template_count"],
             serde_json::json!(0)
+        );
+    }
+
+    #[test]
+    fn byte_writer_summary_groups_vm_source_ranges() {
+        let chains = serde_json::json!([
+            {
+                "start_offset": 0,
+                "end_offset": 3,
+                "bytes_hex": "000000fb",
+                "ascii": "....",
+                "writer_idx": 10,
+                "recognized_pattern_summary": {
+                    "memory_boundary_reads": [
+                        {
+                            "idx": 90,
+                            "step": 12,
+                            "addr": "0x4000",
+                            "bytes_hex": "fbe9f26900000000",
+                            "value": "0x69f2e9fb",
+                            "asm": "ldr x8, [x1]",
+                            "last_write": {
+                                "idx": 80,
+                                "asm": "str x6, [x19]",
+                                "dst_addr": "0x4000",
+                                "src_reg": "x6",
+                                "src_value": "0x0"
+                            },
+                            "observed_mismatches": [
+                                {"offset": 0}, {"offset": 1}, {"offset": 2}, {"offset": 3}
+                            ]
+                        }
+                    ],
+                    "static_memory_loads": []
+                },
+                "recognized_semantics": [
+                    {"semantic": {"kind": "shift_left"}}
+                ]
+            },
+            {
+                "start_offset": 4,
+                "end_offset": 7,
+                "bytes_hex": "e9f26979",
+                "ascii": "..iy",
+                "writer_idx": 11,
+                "recognized_pattern_summary": {
+                    "memory_boundary_reads": [
+                        {
+                            "idx": 90,
+                            "step": 12,
+                            "addr": "0x4000",
+                            "bytes_hex": "fbe9f26900000000",
+                            "value": "0x69f2e9fb",
+                            "asm": "ldr x8, [x1]",
+                            "last_write": {
+                                "idx": 80,
+                                "asm": "str x6, [x19]",
+                                "dst_addr": "0x4000",
+                                "src_reg": "x6",
+                                "src_value": "0x0"
+                            },
+                            "observed_mismatches": [
+                                {"offset": 0}, {"offset": 1}, {"offset": 2}, {"offset": 3}
+                            ]
+                        }
+                    ],
+                    "static_memory_loads": []
+                },
+                "recognized_semantics": [
+                    {"semantic": {"kind": "shift_right"}},
+                    {"semantic": {"kind": "bitwise_or_merge"}}
+                ]
+            },
+            {
+                "start_offset": 8,
+                "end_offset": 11,
+                "bytes_hex": "ecf29541",
+                "ascii": "...A",
+                "writer_idx": 12,
+                "recognized_pattern_summary": {
+                    "memory_boundary_reads": [],
+                    "static_memory_loads": [
+                        {
+                            "idx": 70,
+                            "step": 20,
+                            "addr": "0x5000",
+                            "bytes_hex": "911dbf9000000000",
+                            "value": "0x90bf1d91",
+                            "asm": "ldr x5, [x16, x1]",
+                            "idx_lo": 50,
+                            "idx_hi": 70,
+                            "source_boundary": "lookback_window",
+                            "caution": "increase lookback"
+                        }
+                    ]
+                },
+                "recognized_semantics": [
+                    {"semantic": {"kind": "xor_mix"}}
+                ]
+            }
+        ]);
+        let ranges = byte_writer_vm_source_ranges(chains.as_array().unwrap());
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(
+            ranges[0]["source_class"],
+            serde_json::json!("memory_boundary_read")
+        );
+        assert_eq!(ranges[0]["start_offset"], serde_json::json!(0));
+        assert_eq!(ranges[0]["end_offset"], serde_json::json!(7));
+        assert_eq!(ranges[0]["writer_idxs"], serde_json::json!([10, 11]));
+        assert_eq!(
+            ranges[0]["memory_boundary_reads"][0]["observed_mismatch_count"],
+            serde_json::json!(4)
+        );
+        assert_eq!(
+            ranges[1]["source_class"],
+            serde_json::json!("static_memory_load_constant")
+        );
+        assert_eq!(
+            ranges[1]["static_memory_loads"][0]["addr"],
+            serde_json::json!("0x5000")
         );
     }
 
