@@ -3950,6 +3950,7 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
             .collect::<Vec<_>>(),
         "xor_rhs_pattern": semantic_xor_rhs_offset_pattern(&parsed),
         "xor_lhs_runs": semantic_xor_lhs_runs(&parsed),
+        "xor_lhs_word_chunks": semantic_xor_lhs_word_chunks(&parsed),
     })
 }
 
@@ -4018,6 +4019,83 @@ fn semantic_xor_lhs_runs(equations: &[CompactByteEquation]) -> serde_json::Value
         runs.push(run);
     }
     serde_json::Value::Array(runs.into_iter().map(XorByteRun::into_json).collect())
+}
+
+fn semantic_xor_lhs_word_chunks(equations: &[CompactByteEquation]) -> serde_json::Value {
+    let mut chunks = Vec::new();
+    let mut current = Vec::<CompactByteEquation>::new();
+    for item in equations.iter().filter(|item| item.kind == "xor_mix") {
+        if current
+            .last()
+            .is_some_and(|prev| item.offset != prev.offset + 1)
+        {
+            push_xor_lhs_word_chunks(&mut chunks, &current, equations);
+            current.clear();
+        }
+        current.push(item.clone());
+    }
+    if !current.is_empty() {
+        push_xor_lhs_word_chunks(&mut chunks, &current, equations);
+    }
+    serde_json::Value::Array(chunks)
+}
+
+fn push_xor_lhs_word_chunks(
+    chunks: &mut Vec<serde_json::Value>,
+    run: &[CompactByteEquation],
+    equations: &[CompactByteEquation],
+) {
+    let Some(first) = run.first() else {
+        return;
+    };
+    let Some(last) = run.last() else {
+        return;
+    };
+    let run_range = serde_json::json!([first.offset, last.offset + 1]);
+    for (chunk_index, chunk) in run.chunks(4).enumerate() {
+        if chunk.len() == 4 {
+            if let Some(mut value) = semantic_xor_word_template(chunk, equations) {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("kind".to_string(), serde_json::json!("word32"));
+                    obj.insert("run_range".to_string(), run_range.clone());
+                    obj.insert("run_chunk".to_string(), serde_json::json!(chunk_index));
+                }
+                chunks.push(value);
+            }
+            continue;
+        }
+
+        let lhs = chunk
+            .iter()
+            .filter_map(|item| item.lhs.map(|v| (v & 0xff) as u8))
+            .collect::<Vec<_>>();
+        let rhs = chunk
+            .iter()
+            .filter_map(|item| item.rhs.map(|v| (v & 0xff) as u8))
+            .collect::<Vec<_>>();
+        if lhs.len() != chunk.len() || rhs.len() != chunk.len() {
+            continue;
+        }
+        let result = chunk
+            .iter()
+            .map(|item| (item.result & 0xff) as u8)
+            .collect::<Vec<_>>();
+        let start = chunk
+            .first()
+            .map(|item| item.offset)
+            .unwrap_or(first.offset);
+        let end = chunk.last().map(|item| item.offset + 1).unwrap_or(start);
+        chunks.push(serde_json::json!({
+            "kind": "tail_bytes",
+            "run_range": run_range,
+            "run_chunk": chunk_index,
+            "semantic_range": [start, end],
+            "size": end.saturating_sub(start),
+            "lhs_hex": bytes_to_hex(&lhs),
+            "rhs_hex": bytes_to_hex(&rhs),
+            "result_hex": bytes_to_hex(&result),
+        }));
+    }
 }
 
 fn semantic_xor_rhs_offset_pattern(equations: &[CompactByteEquation]) -> serde_json::Value {
@@ -10486,6 +10564,14 @@ mod tests {
             serde_json::json!([1, 2])
         );
         assert_eq!(first["result_bytes_hex"], serde_json::json!("05d528b9"));
+
+        let summary = output_semantic_byte_equation_summary(&equations);
+        let chunk = summary["xor_lhs_word_chunks"][0].clone();
+        assert_eq!(chunk["kind"], serde_json::json!("word32"));
+        assert_eq!(chunk["run_range"], serde_json::json!([3, 7]));
+        assert_eq!(chunk["run_chunk"], serde_json::json!(0));
+        assert_eq!(chunk["semantic_range"], serde_json::json!([3, 7]));
+        assert_eq!(chunk["lhs_word_le"], serde_json::json!("0xd84ab467"));
     }
 
     #[test]

@@ -307,6 +307,17 @@ contiguous streams:
 [61,65): 3abf0301
 ```
 
+For simulator-oriented output, the CLI also exposes
+`byte_equation_summary.xor_lhs_word_chunks[]`, which splits these streams into
+non-overlapping little-endian 32-bit chunks. For example the first chunk of the
+large middle stream is:
+
+```text
+semantic[16:20] = word32_le(0x69f2e9fb) ^ 61626162
+lhs bytes       = fbe9f269
+result bytes    = 9a8b930b
+```
+
 Cross-sample extraction over `call_001`, `call_003`, `call_004`, and `call_005`
 shows that the large middle stream is almost fixed, not ASLR-shaped pointer
 entropy:

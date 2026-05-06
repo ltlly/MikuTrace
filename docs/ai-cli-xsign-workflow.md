@@ -218,7 +218,10 @@ XOR mask structure such as an offset-parity mask (`even_byte = 0x61`,
 `odd_byte = 0x62`), which is usually the compact form an AI agent should carry
 into the simulator. It also emits `xor_lhs_runs[]`, contiguous byte ranges of
 the unmasked left-hand stream; use those ranges as the next backtracking seeds
-when the final output is mostly `lhs_i ^ mask_i`.
+when the final output is mostly `lhs_i ^ mask_i`. For simulator work, prefer
+`xor_lhs_word_chunks[]` over manually slicing the hex string: it splits each
+contiguous XOR lhs run into non-overlapping little-endian 32-bit chunks plus a
+short tail chunk when the run length is not divisible by four.
 
 When four consecutive byte equations are XORs, the summary additionally emits
 `semantic_writer_map.xor_word_templates[]`. This is designed for the manual
