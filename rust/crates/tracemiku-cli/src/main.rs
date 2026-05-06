@@ -4182,6 +4182,10 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .map(|runs| runs.len())
         .unwrap_or(0);
     let byte_equations = output_semantic_byte_equations(value);
+    let byte_equation_summary = output_semantic_byte_equation_summary_with_context(
+        &byte_equations,
+        value.get("semantic_context"),
+    );
     let xor_word_templates = output_semantic_xor_word_templates(&byte_equations);
     let xor_word_template_count = xor_word_templates
         .as_array()
@@ -4202,7 +4206,7 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "writer_runs": value.get("writer_runs").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_seed_mode": value.get("vm_chain_seed_mode").cloned().unwrap_or(serde_json::Value::Null),
         "vm_chain_summary": value.get("vm_chain_summary").cloned().unwrap_or(serde_json::Value::Null),
-        "byte_equation_summary": output_semantic_byte_equation_summary(&byte_equations),
+        "byte_equation_summary": byte_equation_summary,
         "byte_equations": byte_equations,
         "xor_word_template_count": xor_word_template_count,
         "xor_word_templates": xor_word_templates,
@@ -4222,7 +4226,15 @@ fn output_semantic_byte_equations(value: &serde_json::Value) -> serde_json::Valu
     serde_json::Value::Array(equations)
 }
 
+#[cfg(test)]
 fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde_json::Value {
+    output_semantic_byte_equation_summary_with_context(equations, None)
+}
+
+fn output_semantic_byte_equation_summary_with_context(
+    equations: &serde_json::Value,
+    semantic_context: Option<&serde_json::Value>,
+) -> serde_json::Value {
     let mut parsed = equations
         .as_array()
         .into_iter()
@@ -4230,6 +4242,10 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
         .filter_map(compact_byte_equation)
         .collect::<Vec<_>>();
     parsed.sort_by_key(|item| item.offset);
+    let covered_set = parsed
+        .iter()
+        .map(|item| item.offset)
+        .collect::<HashSet<_>>();
     let mut kind_counts = BTreeMap::<String, usize>::new();
     for item in &parsed {
         *kind_counts.entry(item.kind.clone()).or_insert(0) += 1;
@@ -4242,11 +4258,42 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
     let max_offset = parsed.last().map(|item| item.offset);
     let missing_offsets = match (min_offset, max_offset) {
         (Some(lo), Some(hi)) => (lo..=hi)
-            .filter(|offset| !parsed.iter().any(|item| item.offset == *offset))
+            .filter(|offset| !covered_set.contains(offset))
             .map(|offset| serde_json::json!(offset))
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
+    let requested_range = semantic_context.and_then(semantic_requested_range);
+    let missing_offsets_in_requested_range = requested_range
+        .map(|(start, end)| {
+            (start..end)
+                .filter(|offset| !covered_set.contains(offset))
+                .map(|offset| serde_json::json!(offset))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let covered_count_in_requested_range = requested_range
+        .map(|(start, end)| {
+            (start..end)
+                .filter(|offset| covered_set.contains(offset))
+                .count()
+        })
+        .unwrap_or(0);
+    let requested_range_json = requested_range
+        .map(|(start, end)| serde_json::json!([start, end]))
+        .unwrap_or(serde_json::Value::Null);
+    let requested_coverage_status = requested_range
+        .map(|(start, end)| {
+            if start == end {
+                "empty_requested_range"
+            } else if missing_offsets_in_requested_range.is_empty() {
+                "complete_in_requested_range"
+            } else {
+                "partial_in_requested_range"
+            }
+        })
+        .map(|status| serde_json::json!(status))
+        .unwrap_or(serde_json::Value::Null);
     let xor_lhs_run_chunks = semantic_xor_lhs_run_chunks(&parsed);
     serde_json::json!({
         "count": parsed.len(),
@@ -4256,6 +4303,11 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
             _ => serde_json::Value::Null,
         },
         "missing_offsets_in_covered_range": missing_offsets,
+        "requested_range": requested_range_json,
+        "covered_count_in_requested_range": covered_count_in_requested_range,
+        "missing_count_in_requested_range": missing_offsets_in_requested_range.len(),
+        "missing_offsets_in_requested_range": missing_offsets_in_requested_range,
+        "requested_coverage_status": requested_coverage_status,
         "kind_counts": kind_counts
             .into_iter()
             .map(|(kind, count)| serde_json::json!({ "kind": kind, "count": count }))
@@ -4265,6 +4317,13 @@ fn output_semantic_byte_equation_summary(equations: &serde_json::Value) -> serde
         "xor_lhs_run_chunks": xor_lhs_run_chunks.clone(),
         "xor_lhs_word_chunks": xor_lhs_run_chunks,
     })
+}
+
+fn semantic_requested_range(context: &serde_json::Value) -> Option<(u64, u64)> {
+    let start = context.get("semantic_offset").and_then(value_as_u64)?;
+    let count = context.get("semantic_count").and_then(value_as_u64)?;
+    let end = start.checked_add(count)?;
+    Some((start, end))
 }
 
 #[derive(Debug)]
@@ -11827,6 +11886,10 @@ mod tests {
             "strategy": "output_base64_group_map",
             "semantic_writer_map": {
                 "status": "ready",
+                "semantic_context": {
+                    "semantic_offset": 3,
+                    "semantic_count": 2
+                },
                 "vm_chain_summary": {
                     "chain_count": 1
                 },
@@ -11859,6 +11922,18 @@ mod tests {
             summary["semantic_writer_map"]["byte_equation_summary"]
         );
         assert_eq!(summary["semantic_byte_equation_summary"]["count"], 1);
+        assert_eq!(
+            summary["semantic_byte_equation_summary"]["requested_range"],
+            serde_json::json!([3, 5])
+        );
+        assert_eq!(
+            summary["semantic_byte_equation_summary"]["missing_offsets_in_requested_range"],
+            serde_json::json!([4])
+        );
+        assert_eq!(
+            summary["semantic_byte_equation_summary"]["requested_coverage_status"],
+            serde_json::json!("partial_in_requested_range")
+        );
         assert_eq!(
             summary["semantic_vm_chain_summary"]["chain_count"],
             serde_json::json!(1)
