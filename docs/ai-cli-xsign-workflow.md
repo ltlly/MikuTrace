@@ -114,6 +114,14 @@ state addition, `add_known_constant` for recognized IV/constants such as MD5,
 and `and_identity`/`or_identity` for masking or merging operations that
 preserve the value being chased.
 
+Byte writer maps are little-endian lane-aware. Each `bytes[]` entry and
+single-byte writer run carries `source_byte_offset`, and each compact
+`vm_chains[]` seed includes `byte_lane`. This matters when a final output byte
+was written with `strb` from the low byte of a register that was previously
+loaded as a 32-bit word: without lane selection, a linear chain can accidentally
+follow the newest writer of another byte in that word. The auto
+`output-map --semantic-writer-map-vm-chain-*` path passes the lane for you.
+
 For x-sign-like outputs that Base64-encode a variable tail in the same scratch
 buffer, `output-map` can now derive the pre-encoding semantic byte map directly
 from the final JNI string:
@@ -310,6 +318,7 @@ Use `vm-backchain` when the next hop should be followed automatically:
 rust/target/debug/tracemiku-cli vm-backchain <call_dir> \
   --idx <writer_idx> \
   --reg <source_reg> \
+  --byte-lane <source_byte_offset> \
   --steps 8 \
   --summary
 ```
@@ -319,6 +328,9 @@ full register dumps and large `writes_tail[]` payloads, while keeping local
 definitions, compact upstream writes, frontiers, and formulas. The command is
 intentionally linear: for multi-byte memory loads, inspect the full output or
 use `vm-backtree` when different output bytes have different writers.
+When the seed came from a byte writer map, pass that byte's
+`source_byte_offset` as `--byte-lane`; the summary will record
+`decision.kind = upstream_byte_lane` when it selected a matching memory byte.
 
 When following a final encoded output backward, enable frontier following:
 

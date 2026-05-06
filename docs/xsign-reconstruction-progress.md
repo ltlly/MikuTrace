@@ -138,8 +138,8 @@ run over all current `call_001` writer runs reports:
 32 writer runs
 bitwise_or_merge: 13
 mod255_low_byte: 7
-xor_identity: 6
-xor_mix: 23
+xor_identity: 5
+xor_mix: 24
 ubfx: 12
 shift_right: 12
 add_small_delta: 2
@@ -152,6 +152,22 @@ several single-byte tail positions including the repeated `62 61 62` suffix.
 Deeper selected chains also expose MD5-like 32-bit state operations, including
 `add_known_constant` with `md5_iv_a = 0x67452301`, `add32_mix`, 32-bit
 `shift_left`, `and_identity`, and `or_identity`.
+
+The backward byte chains are now lane-aware. Each byte writer map entry records
+`source_byte_offset`; `vm-backchain` receives that as `start.byte_lane` and
+prefers `upstream.byte_nexts[]` with the same little-endian lane when a
+multi-byte load is encountered. This prevents a final `strb` output byte from
+being traced to the newest byte of a loaded 32-bit word. For example,
+`call_001` semantic tail offset 4 is now correctly summarized as:
+
+```text
+tail[4] = 0xd5
+step 1: ldr w16, [0x74b68bc100] follows lane 0 -> writer 14704246, value 0xd5
+step 4: 0xd5 = 0xb4 ^ 0x61
+```
+
+Before lane selection, the same path could incorrectly follow lane 3 of the
+word and report `0x1a = 0x78 ^ 0x62`.
 
 Crypto cross-check:
 

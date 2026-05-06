@@ -12,6 +12,8 @@ pieces that have been proven from local libsgmainso traces:
   0x0a, 0x62, and 0x61.
 - the full 68-byte semantic tail for call_001 has a complete byte-writer map
   before the final output buffer overwrite;
+- byte-level backward chains must keep the writer's little-endian
+  source_byte_offset as byte_lane when crossing multi-byte loads;
 - the repeated semantic tail range tail[65:68] == tail[13:16] is a structural
   repeat across samples, but call_001 trace evidence shows the tail copy
   candidate is re-encoded from VM scratch bytes, not yet proven as a direct
@@ -101,8 +103,8 @@ TRACE_TAIL_WRITER_MAP = {
         "mod255_low_byte": 7,
         "shift_right": 12,
         "ubfx": 12,
-        "xor_identity": 6,
-        "xor_mix": 23,
+        "xor_identity": 5,
+        "xor_mix": 24,
     },
     "classes": [
         {
@@ -116,7 +118,11 @@ TRACE_TAIL_WRITER_MAP = {
         },
         {
             "range": "3..6 deeper selected chains",
-            "note": "selected long chains expose add_known_constant(md5_iv_a), add32_mix, 32-bit shift_left, and identity masks",
+            "note": (
+                "lane-aware selected long chains expose XOR byte mixing such as "
+                "tail[4] 0xd5 = 0xb4 ^ 0x61 plus add_known_constant(md5_iv_a), "
+                "add32_mix, and 32-bit shift/extract operations"
+            ),
         },
         {
             "range": "59..60,65..67",

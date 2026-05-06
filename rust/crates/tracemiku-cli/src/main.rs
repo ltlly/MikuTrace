@@ -916,6 +916,9 @@ enum Cmd {
         /// Continue through a chosen frontier source reg when upstream.next is unavailable.
         #[arg(long)]
         follow_frontier: bool,
+        /// Prefer upstream memory byte writers matching this little-endian source byte lane.
+        #[arg(long)]
+        byte_lane: Option<usize>,
         /// Emit a compact AI-readable summary instead of the full step payload.
         #[arg(long)]
         summary: bool,
@@ -1848,6 +1851,7 @@ async fn main() -> anyhow::Result<()> {
             lookback,
             max_writes,
             follow_frontier,
+            byte_lane,
             summary,
             regs,
         }) => {
@@ -1860,6 +1864,7 @@ async fn main() -> anyhow::Result<()> {
                 lookback,
                 max_writes,
                 follow_frontier,
+                byte_lane,
                 regs,
                 summary,
             )
@@ -4540,6 +4545,7 @@ async fn vm_chains_for_writer_runs(
             opts.vm_chain_lookback,
             5000,
             opts.vm_chain_follow_frontier,
+            None,
             regs.to_string(),
         )
         .await?;
@@ -4595,19 +4601,23 @@ async fn vm_chains_for_byte_writer_runs(
             lookback,
             5000,
             follow_frontier,
+            byte_lane_from_writer_run(run),
             regs.to_string(),
         )
         .await?;
+        let seed_byte_lane = byte_lane_from_writer_run(run);
         out.push(serde_json::json!({
             "start_offset": run.get("start_offset").cloned().unwrap_or(serde_json::Value::Null),
             "end_offset": run.get("end_offset").cloned().unwrap_or(serde_json::Value::Null),
             "size": run.get("size").cloned().unwrap_or(serde_json::Value::Null),
             "bytes_hex": run.get("bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
             "ascii": run.get("ascii").cloned().unwrap_or(serde_json::Value::Null),
+            "source_byte_offsets": run.get("source_byte_offsets").cloned().unwrap_or_else(|| serde_json::json!([])),
             "writer_idx": idx,
             "seed": {
                 "idx": idx,
                 "reg": reg,
+                "byte_lane": seed_byte_lane,
                 "src_value": writer.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
                 "asm": writer.get("asm").cloned().unwrap_or(serde_json::Value::Null),
                 "func": writer.get("func").cloned().unwrap_or(serde_json::Value::Null),
@@ -4616,6 +4626,18 @@ async fn vm_chains_for_byte_writer_runs(
         }));
     }
     Ok(out)
+}
+
+fn byte_lane_from_writer_run(run: &serde_json::Value) -> Option<usize> {
+    run.get("source_byte_offset")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            run.get("source_byte_offsets")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .and_then(|v| v.as_u64())
+        })
+        .map(|v| v as usize)
 }
 
 fn vm_chain_batch_summary(chains: &[serde_json::Value]) -> serde_json::Value {
@@ -4909,6 +4931,7 @@ async fn cmd_vm_backchain(
     lookback: usize,
     max_writes: usize,
     follow_frontier: bool,
+    byte_lane: Option<usize>,
     regs: String,
     summary: bool,
 ) -> anyhow::Result<()> {
@@ -4922,6 +4945,7 @@ async fn cmd_vm_backchain(
         lookback,
         max_writes,
         follow_frontier,
+        byte_lane,
         regs,
     )
     .await?;
@@ -4976,23 +5000,29 @@ async fn vm_backchain_value_on(
     lookback: usize,
     max_writes: usize,
     follow_frontier: bool,
+    byte_lane: Option<usize>,
     regs: String,
 ) -> anyhow::Result<serde_json::Value> {
     let mut current_idx = idx;
     let mut current_reg = reg.clone();
+    let mut current_byte_lane = byte_lane;
     let mut seen = HashSet::new();
     let mut rows = Vec::new();
     for step_idx in 0..steps {
         if !seen.insert(format!(
-            "{}:{}",
+            "{}:{}:{}",
             current_idx,
-            current_reg.as_deref().unwrap_or("")
+            current_reg.as_deref().unwrap_or(""),
+            current_byte_lane
+                .map(|lane| lane.to_string())
+                .unwrap_or_default()
         )) {
             rows.push(serde_json::json!({
                 "step": step_idx,
                 "status": "cycle",
                 "idx": current_idx,
                 "reg": current_reg,
+                "byte_lane": current_byte_lane,
             }));
             break;
         }
@@ -5006,14 +5036,25 @@ async fn vm_backchain_value_on(
             regs.clone(),
         )
         .await?;
-        let next = step
+        let upstream_next = step
             .get("upstream")
             .and_then(|v| v.get("next"))
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        let (chosen_next, decision) = if next.get("idx").and_then(|v| v.as_u64()).is_some() {
+        let lane_next = current_byte_lane
+            .and_then(|lane| choose_laned_upstream_next(&step, lane).map(|next| (lane, next)));
+        let (chosen_next, decision) = if let Some((lane, next)) = lane_next {
             (
-                next,
+                next.clone(),
+                serde_json::json!({
+                    "kind": "upstream_byte_lane",
+                    "byte_lane": lane,
+                    "next": next,
+                }),
+            )
+        } else if upstream_next.get("idx").and_then(|v| v.as_u64()).is_some() {
+            (
+                upstream_next,
                 serde_json::json!({
                     "kind": "upstream_next",
                 }),
@@ -5060,8 +5101,14 @@ async fn vm_backchain_value_on(
             .get("reg")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        current_byte_lane = chosen_next
+            .get("source_byte_offset")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .or(current_byte_lane);
         rows.push(serde_json::json!({
             "step": step_idx,
+            "byte_lane": current_byte_lane,
             "backstep": step,
             "next": chosen_next,
             "decision": decision,
@@ -5075,12 +5122,78 @@ async fn vm_backchain_value_on(
         "start": {
             "idx": idx,
             "reg": reg,
+            "byte_lane": byte_lane,
         },
         "follow_frontier": follow_frontier,
         "steps_requested": steps,
         "steps_returned": rows.len(),
         "chain": rows,
     }))
+}
+
+fn choose_laned_upstream_next(
+    step: &serde_json::Value,
+    byte_lane: usize,
+) -> Option<serde_json::Value> {
+    upstream_byte_nexts_from_step(step)
+        .into_iter()
+        .find(|next| next_matches_byte_lane(next, byte_lane))
+        .map(|next| next_with_selected_byte_lane(next, byte_lane))
+}
+
+fn next_matches_byte_lane(next: &serde_json::Value, byte_lane: usize) -> bool {
+    next.get("offset")
+        .and_then(|v| v.as_u64())
+        .is_some_and(|offset| offset as usize == byte_lane)
+        || next
+            .get("offsets")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .any(|offset| {
+                offset
+                    .as_u64()
+                    .is_some_and(|offset| offset as usize == byte_lane)
+            })
+}
+
+fn next_with_selected_byte_lane(
+    mut next: serde_json::Value,
+    byte_lane: usize,
+) -> serde_json::Value {
+    let selected_idx = next
+        .get("offsets")
+        .and_then(|v| v.as_array())
+        .and_then(|offsets| {
+            offsets
+                .iter()
+                .position(|offset| offset.as_u64().is_some_and(|v| v as usize == byte_lane))
+        });
+    if let Some(obj) = next.as_object_mut() {
+        obj.insert(
+            "selected_byte_lane".to_string(),
+            serde_json::json!(byte_lane),
+        );
+        if let Some(idx) = selected_idx {
+            if let Some(source_byte_offset) = obj
+                .get("source_byte_offsets")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.get(idx))
+                .cloned()
+            {
+                obj.insert("source_byte_offset".to_string(), source_byte_offset);
+            }
+            if let Some(addr) = obj
+                .get("addrs")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.get(idx))
+                .cloned()
+            {
+                obj.insert("addr".to_string(), addr);
+            }
+        }
+    }
+    next
 }
 
 fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
@@ -5886,6 +5999,7 @@ fn compact_backchain_summary_step(step: &serde_json::Value) -> serde_json::Value
         .unwrap_or(serde_json::Value::Null);
     let lineage_step = serde_json::json!({
         "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "byte_lane": step.get("byte_lane").cloned().unwrap_or(serde_json::Value::Null),
         "kind": "reg_source",
         "backstep": compact,
         "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
@@ -5915,6 +6029,7 @@ fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_json::Value {
             let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
             serde_json::json!({
                 "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "byte_lane": step.get("byte_lane").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": "reg_source",
                 "idx": backstep.get("idx").cloned().unwrap_or(serde_json::Value::Null),
                 "reg": backstep.get("source_reg").cloned().unwrap_or(serde_json::Value::Null),
@@ -7066,18 +7181,15 @@ fn byte_writer_map_entry(
     let byte = last_write
         .as_ref()
         .and_then(|write| source_byte_for_write_at(write, byte_addr));
-    let source_byte_offset = last_write.as_ref().and_then(|write| {
-        write
-            .get("dst_addr")
-            .and_then(|v| v.as_str())
-            .and_then(parse_u64_str)
-            .map(|start| byte_addr.saturating_sub(start))
-    });
+    let source_byte_offset = last_write
+        .as_ref()
+        .and_then(|write| source_byte_offset_for_write_at(write, byte_addr));
     let next = last_write.as_ref().and_then(|write| {
         Some(serde_json::json!({
             "idx": write.get("idx")?,
             "reg": write.get("src_reg")?,
             "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+            "source_byte_offset": source_byte_offset,
             "reason": "buffer_byte_last_writer",
             "offset": offset,
             "addr": format!("{byte_addr:#x}"),
@@ -7094,6 +7206,19 @@ fn byte_writer_map_entry(
         "writer": last_write,
         "next": next,
     })
+}
+
+fn source_byte_offset_for_write_at(write: &serde_json::Value, byte_addr: u64) -> Option<u64> {
+    let start = write
+        .get("dst_addr")
+        .and_then(|v| v.as_str())
+        .and_then(parse_u64_str)?;
+    let size = write.get("size").and_then(|v| v.as_u64()).unwrap_or(1);
+    if byte_addr < start || byte_addr >= start.saturating_add(size) {
+        return None;
+    }
+    let offset = byte_addr - start;
+    (offset < 8).then_some(offset)
 }
 
 fn source_byte_for_write_at(write: &serde_json::Value, byte_addr: u64) -> Option<u8> {
@@ -7137,11 +7262,16 @@ fn byte_writer_runs(bytes: &[serde_json::Value]) -> Vec<serde_json::Value> {
             .get("offset")
             .and_then(|v| v.as_u64())
             .unwrap_or_default() as usize;
+        let source_byte_offset = entry
+            .get("source_byte_offset")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let identity = byte_writer_identity(writer);
         if let Some(run) = current.as_mut() {
             if run.identity == identity && run.end_offset + 1 == offset {
                 run.end_offset = offset;
                 run.bytes_hex.push_str(byte_hex);
+                run.source_byte_offsets.push(source_byte_offset);
                 run.ascii.push_str(
                     &u8::from_str_radix(byte_hex, 16)
                         .ok()
@@ -7161,6 +7291,7 @@ fn byte_writer_runs(bytes: &[serde_json::Value]) -> Vec<serde_json::Value> {
                 .ok()
                 .and_then(printable_ascii_char)
                 .unwrap_or_else(|| ".".to_string()),
+            source_byte_offsets: vec![source_byte_offset],
             writer: writer.clone(),
         });
     }
@@ -7177,17 +7308,28 @@ struct ByteWriterRun {
     end_offset: usize,
     bytes_hex: String,
     ascii: String,
+    source_byte_offsets: Vec<serde_json::Value>,
     writer: serde_json::Value,
 }
 
 impl ByteWriterRun {
     fn into_json(self) -> serde_json::Value {
+        let source_byte_offset = if self.source_byte_offsets.len() == 1 {
+            self.source_byte_offsets
+                .first()
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::Value::Null
+        };
         serde_json::json!({
             "start_offset": self.start_offset,
             "end_offset": self.end_offset,
             "size": self.end_offset.saturating_sub(self.start_offset) + 1,
             "bytes_hex": self.bytes_hex,
             "ascii": self.ascii,
+            "source_byte_offset": source_byte_offset,
+            "source_byte_offsets": self.source_byte_offsets,
             "writer": self.writer,
         })
     }
@@ -7227,11 +7369,15 @@ fn byte_writer_entry(
     byte_addr: u64,
     last_write: Option<serde_json::Value>,
 ) -> serde_json::Value {
+    let source_byte_offset = last_write
+        .as_ref()
+        .and_then(|write| source_byte_offset_for_write_at(write, byte_addr));
     let next = last_write.as_ref().and_then(|write| {
         Some(serde_json::json!({
             "idx": write.get("idx")?,
             "reg": write.get("src_reg")?,
             "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+            "source_byte_offset": source_byte_offset,
             "reason": "memory_load_byte",
             "offset": offset,
             "addr": format!("{byte_addr:#x}"),
@@ -7241,6 +7387,7 @@ fn byte_writer_entry(
         "offset": offset,
         "addr": format!("{byte_addr:#x}"),
         "status": if last_write.is_some() { "ready" } else { "not_found" },
+        "source_byte_offset": source_byte_offset,
         "last_write": last_write,
         "next": next,
     })
@@ -7266,6 +7413,10 @@ fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde_json::Valu
             .get("addr")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
+        let source_byte_offset = writer
+            .get("source_byte_offset")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         if let Some(existing) = out.iter_mut().find(|item| {
             item.get("idx").and_then(|v| v.as_u64()) == Some(idx)
                 && item.get("reg").and_then(|v| v.as_str()) == Some(reg)
@@ -7276,12 +7427,22 @@ fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde_json::Valu
             if let Some(addrs) = existing.get_mut("addrs").and_then(|v| v.as_array_mut()) {
                 addrs.push(addr);
             }
+            if let Some(source_byte_offsets) = existing
+                .get_mut("source_byte_offsets")
+                .and_then(|v| v.as_array_mut())
+            {
+                source_byte_offsets.push(source_byte_offset);
+            }
             continue;
         }
         let mut item = next.clone();
         if let Some(obj) = item.as_object_mut() {
             obj.insert("offsets".to_string(), serde_json::json!([offset]));
             obj.insert("addrs".to_string(), serde_json::json!([addr]));
+            obj.insert(
+                "source_byte_offsets".to_string(),
+                serde_json::json!([source_byte_offset]),
+            );
         }
         out.push(item);
     }
@@ -8738,10 +8899,12 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         alu_expression_from_asm, base64_decoded_bytes, byte_writer_map_output,
-        choose_frontier_next, classify_vm_asm, def_entries_from_asm, def_source_regs_from_asm,
+        byte_writers_from_range_writes, choose_frontier_next, choose_laned_upstream_next,
+        classify_vm_asm, dedupe_byte_nexts, def_entries_from_asm, def_source_regs_from_asm,
         find_hex_byte_offsets, mem_addr_from_asm, memory_access_width, odd_u64_inverse,
         recognize_alu_semantic, recognized_backchain_patterns, resolve_addr_in_maps_text,
-        source_byte_for_write_at, store_source_regs_from_asm, vm_slot_from_asm,
+        source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
+        vm_slot_from_asm,
     };
 
     #[test]
@@ -9314,6 +9477,14 @@ mod tests {
             out["writer_runs"][0]["writer"]["idx"],
             serde_json::json!(120)
         );
+        assert_eq!(
+            out["writer_runs"][0]["source_byte_offsets"],
+            serde_json::json!([0, 1, 2, 3])
+        );
+        assert_eq!(
+            out["writer_runs"][0]["source_byte_offset"],
+            serde_json::Value::Null
+        );
         assert_eq!(out["writer_runs"][1]["bytes_hex"], serde_json::json!("62"));
     }
 
@@ -9329,6 +9500,40 @@ mod tests {
         assert_eq!(source_byte_for_write_at(&write, 0x3002), Some(0x28));
         assert_eq!(source_byte_for_write_at(&write, 0x3003), Some(0xd5));
         assert_eq!(source_byte_for_write_at(&write, 0x3004), None);
+        assert_eq!(source_byte_offset_for_write_at(&write, 0x3000), Some(0));
+        assert_eq!(source_byte_offset_for_write_at(&write, 0x3003), Some(3));
+        assert_eq!(source_byte_offset_for_write_at(&write, 0x3004), None);
+    }
+
+    #[test]
+    fn chooses_matching_byte_lane_from_deduped_upstream_writers() {
+        let write = serde_json::json!({
+            "idx": 120,
+            "pc": "0x1004",
+            "rel": "0x4",
+            "func": "sub_pack",
+            "asm": "str w16, [x2]",
+            "dst_addr": "0x4000",
+            "size": 4,
+            "src_reg": "x16",
+            "src_value": "0xd528b905",
+            "byte0": 5
+        });
+        let byte_writers = byte_writers_from_range_writes(0x4000, 4, &[write]);
+        let step = serde_json::json!({
+            "upstream": {
+                "byte_nexts": dedupe_byte_nexts(&byte_writers)
+            }
+        });
+        let lane0 = choose_laned_upstream_next(&step, 0).unwrap();
+        assert_eq!(lane0["selected_byte_lane"], serde_json::json!(0));
+        assert_eq!(lane0["source_byte_offset"], serde_json::json!(0));
+        assert_eq!(lane0["addr"], serde_json::json!("0x4000"));
+
+        let lane3 = choose_laned_upstream_next(&step, 3).unwrap();
+        assert_eq!(lane3["selected_byte_lane"], serde_json::json!(3));
+        assert_eq!(lane3["source_byte_offset"], serde_json::json!(3));
+        assert_eq!(lane3["addr"], serde_json::json!("0x4003"));
     }
 
     #[test]
