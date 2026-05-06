@@ -2486,6 +2486,55 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     }
 
 
+def python_vm_replay_plan_eval_summary() -> dict:
+    return {
+        "status": "trace_bound_replay_eval_available",
+        "tool": "tools/vm_replay_plan_eval.py",
+        "scratch_writer_window": {
+            "command": (
+                "tracemiku-cli vm-ops <call_dir> --start 14164280 "
+                "--end 14165320 --replay-plan --max-ops 400 | "
+                "uv run python tools/vm_replay_plan_eval.py "
+                "--dump-mem 0x74b68bbe00:52"
+            ),
+            "computed_effects": 98,
+            "trusted_effects": 12,
+            "skipped_effects": 5,
+            "unresolved_read_count": 13,
+            "scratch_dump": {
+                "addr": "0x74b68bbe00",
+                "size": 52,
+                "complete": True,
+                "hex": (
+                    "000000fbe9f26979ecf29541f60193b34b3c510ccc029de3"
+                    "9cec2953090237cbfa4f43ba0444a342344c59bc5690000"
+                    "3abf0301"
+                ),
+                "matches_trace": True,
+            },
+        },
+        "middle_lhs_ladder_window": {
+            "command": (
+                "tracemiku-cli vm-ops <call_dir> --start 14015880 "
+                "--end 14017110 --replay-plan --max-ops 400 | "
+                "uv run python tools/vm_replay_plan_eval.py"
+            ),
+            "computed_effects": 109,
+            "trusted_effects": 18,
+            "skipped_effects": 14,
+            "unresolved_read_count": 17,
+            "final_observed_slot24": "0x95f2ec79",
+        },
+        "interpretation": (
+            "The generic replay-plan evaluator can reconstruct the full "
+            "call_001 scratch table bytes from ordered VM effects, but it "
+            "still falls back to observed trace values for missing initial "
+            "slot/table inputs. This is trace-bound replay, not yet a "
+            "portable algorithm."
+        ),
+    }
+
+
 def completion_audit() -> dict:
     return {
         "objective": (
@@ -2498,16 +2547,25 @@ def completion_audit() -> dict:
                 "requirement": "CLI exposes enough VM/taint/provenance evidence for AI analysis.",
                 "evidence": [
                     "vm-ops op_templates/template_skeletons/template_operands.roles",
+                    "vm-ops --compact compact_templates",
+                    "vm-ops --replay-plan ordered python_with_values steps",
                     "vm-ops op_effects bytecode_reads.name",
                     "vm-ops effects python_with_values",
                     "byte-writer-map vm_source_ranges and stops",
+                    "tools/vm_replay_plan_eval.py evaluates replay-plan JSON",
                 ],
                 "status": "substantially_available",
             },
             {
                 "id": "trace_bound_python_sim",
                 "requirement": "Python reproduces at least call_001 x-sign from trace-derived formulas.",
-                "evidence": ["current_trace_model_simulation.matches_trace == true"],
+                "evidence": [
+                    "current_trace_model_simulation.matches_trace == true",
+                    (
+                        "python_vm_replay_plan_eval_summary scratch dump "
+                        "matches 52/52 bytes"
+                    ),
+                ],
                 "status": "done_for_call001_trace_model",
             },
             {
@@ -2528,8 +2586,8 @@ def completion_audit() -> dict:
             },
         ],
         "blocking_gaps": [
-            "Replace middle_lhs traced_formula_only/static/table segments with portable formulas or declared external inputs.",
-            "Validate VM opcode implementations over full scratch table and semantic tail source windows, not just samples.",
+            "Replace replay evaluator observed-value fallbacks with portable initial slot/table inputs.",
+            "Lift replay-plan steps into maintained Python algorithm code instead of a trace-bound evaluator.",
             "Prove how LCG/time-derived state feeds every payload byte, not only selected mod255 inputs.",
         ],
         "goal_complete": False,
@@ -2841,6 +2899,7 @@ def main() -> None:
     byte_source_model = semantic_byte_source_model()
     helper_coverage = python_semantic_helper_coverage()
     multi_sample_coverage = multi_sample_formula_coverage(sample_tails)
+    replay_eval_summary = python_vm_replay_plan_eval_summary()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -2965,6 +3024,7 @@ def main() -> None:
         "xor_rhs_mask_model": rhs_mask_model,
         "semantic_byte_source_model": byte_source_model,
         "python_semantic_helper_coverage": helper_coverage,
+        "python_vm_replay_plan_eval_summary": replay_eval_summary,
         "tail_repeat_trace_evidence": [
             {
                 **item,
@@ -3260,8 +3320,8 @@ def main() -> None:
                 "XOR lhs chunks"
             ),
             (
-                "validated Python VM opcode implementations for the scratch "
-                "table and semantic tail byte sources"
+                "portable initial slot/table inputs to remove replay-plan "
+                "observed-value fallbacks"
             ),
             "role of the LCG/time state in every payload byte",
         ],

@@ -917,6 +917,24 @@ first replay steps:
 This shifts `[25,49)` and `[57,59)` from "need trace evidence" to "need Python
 replay implementation from compact templates".
 
+`tools/vm_replay_plan_eval.py` now executes replay-plan JSON directly. On the
+scratch writer window it reconstructs the full scratch table dump:
+
+```text
+tracemiku-cli vm-ops <call_dir> --start 14164280 --end 14165320 \
+  --replay-plan --max-ops 400 |
+uv run python tools/vm_replay_plan_eval.py --dump-mem 0x74b68bbe00:52
+
+computed_effects=98, trusted_effects=12, unresolved_read_count=13
+scratch[0:52] complete=true
+000000fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43ba0444a342344c59bc56900003abf0301
+```
+
+The evaluator also handles the `[21,25)` ladder window and reaches
+`slot[24] = 0x95f2ec79`, but it still needs observed-value fallbacks for missing
+initial slot/table values. That keeps this as trace-bound replay rather than a
+portable x-sign algorithm.
+
 The partial simulator now also emits `current_trace_model_input_manifest`.
 For `call_001`, the manifest has six entries:
 

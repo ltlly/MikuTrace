@@ -6771,9 +6771,13 @@ fn vm_op_replay_effect(effect: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "idx": effect.get("idx").cloned().unwrap_or(serde_json::Value::Null),
         "kind": effect.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+        "class": effect.get("class").cloned().unwrap_or(serde_json::Value::Null),
         "slot": effect.get("slot").cloned().unwrap_or(serde_json::Value::Null),
         "addr": effect.get("addr").cloned().unwrap_or(serde_json::Value::Null),
         "value": effect.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "src": effect.get("src").cloned().unwrap_or(serde_json::Value::Null),
+        "source_slot": effect.get("source_slot").cloned().unwrap_or(serde_json::Value::Null),
+        "store_width": vm_op_replay_store_width(effect),
         "pseudocode": effect.get("pseudocode").cloned().unwrap_or(serde_json::Value::Null),
         "python_with_values": effect.get("python_with_values").cloned().unwrap_or(serde_json::Value::Null),
         "formula": if formula.is_null() {
@@ -6800,6 +6804,34 @@ fn vm_op_replay_effect(effect: &serde_json::Value) -> serde_json::Value {
             })
         },
     })
+}
+
+fn vm_op_replay_store_width(effect: &serde_json::Value) -> serde_json::Value {
+    if effect.get("kind").and_then(|v| v.as_str()) != Some("memory_store") {
+        return serde_json::Value::Null;
+    }
+    if effect.get("class").and_then(|v| v.as_str()) == Some("byte-store") {
+        return serde_json::json!(1);
+    }
+    let reg = effect
+        .get("src")
+        .and_then(|v| v.get("reg"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let width = if reg.starts_with('w') {
+        Some(4)
+    } else if reg.starts_with('x') {
+        Some(8)
+    } else if reg.starts_with('b') {
+        Some(1)
+    } else if reg.starts_with('h') {
+        Some(2)
+    } else {
+        None
+    };
+    width
+        .map(|value| serde_json::json!(value))
+        .unwrap_or(serde_json::Value::Null)
 }
 
 #[derive(Debug, Default)]
@@ -15606,6 +15638,13 @@ mod tests {
             replay_plan["replay_steps"][1]["effects"][0]["formula"]["op"],
             serde_json::json!("add")
         );
+        let replay_memory_store = replay_plan["replay_steps"][0]["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|effect| effect["kind"] == serde_json::json!("memory_store"))
+            .unwrap();
+        assert_eq!(replay_memory_store["store_width"], serde_json::json!(8));
     }
 
     #[test]
