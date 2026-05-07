@@ -1917,14 +1917,18 @@ the 52-byte scratch dump. The auto-seeded no-trust replay needs six non-user
 seed slots (`2`, `25`, `26`, `27`, `28`, `29`), and the report now records the
 corresponding `byte-lineage` proof commands.
 Running those seed proofs classifies `2`, `26`, `27`, and `29` as VM
-bytecode/immediate boundaries. Slots `25` and `28` are still pointer-shaped
-scratch/base seeds: deeper lineage runs hit stable copy-loop values
-`0x74b68bd4c0` and `0x74b68bb9a0` rather than a portable producer. The next CLI
-improvement should classify that stable pointer walk as a boundary instead of
-requiring ever-larger depth.
-`byte-lineage --compact` now reports this pattern directly as
+bytecode/immediate boundaries. Slots `25` and `28` first appeared as
+pointer-shaped scratch/base seeds with stable copy-loop values
+`0x74b68bd4c0` and `0x74b68bb9a0`; increasing the proof depth to 1000 with a
+15M lookback now reaches the same `call_return_boundary` for both:
+`#7364 bl #0x7601bcbd60`, `x0=0x40000`, return `0x74b687edc0`. The pointer
+tail includes `0x74b68bedc0 = 0x74b687edc0 + 0x40000`, so the portable model
+should treat these as symbolic scratch-buffer offsets instead of embedding
+ASLR concrete addresses.
+`byte-lineage --compact` still reports shorter-depth copies as
 `stable_pointer_loop` when a depth/cycle stop is dominated by one repeated
-pointer-shaped value.
+pointer-shaped value, which remains useful for deciding when to widen depth
+or switch to allocation-boundary proof.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges

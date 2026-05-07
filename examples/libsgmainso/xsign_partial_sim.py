@@ -3150,6 +3150,20 @@ def current_trace_model_input_manifest() -> dict:
             "used_by": "scratch_writer_replay x_umt_text_boundary",
         },
         {
+            "name": "scratch_heap_buffers",
+            "kind": "symbolic_heap_allocation",
+            "value": {
+                "slot25": "malloc(0x40000)-derived scratch pointer",
+                "slot28": "malloc(0x40000)-derived scratch pointer",
+            },
+            "source": (
+                "byte-lineage --compact depth 1000 reaches call_return_boundary "
+                "at #7364 bl #0x7601bcbd60, x0=0x40000, return=0x74b687edc0"
+            ),
+            "status": "parameterized_symbolic_scratch_buffer",
+            "used_by": "scratch_writer_replay slot25/slot28 address seeds",
+        },
+        {
             "name": "previous_ladder_slot24",
             "kind": "vm_ladder_state_word",
             "value": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
@@ -3266,6 +3280,11 @@ def parameterized_simulation_contract() -> dict:
                 "name": "x_umt",
                 "kind": "external_companion_header",
                 "source": "JNI x-umt header value until x-umt producer is reconstructed",
+            },
+            {
+                "name": "scratch_heap_buffers",
+                "kind": "symbolic_heap_allocation",
+                "source": "malloc(0x40000)-derived scratch space for replay address seeds",
             },
             {
                 "name": "previous_ladder_slot24",
@@ -4389,23 +4408,29 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 {
                     "slot": 25,
                     "suggested_value": "0x74b68bcc1c",
-                    "steps_returned": 180,
-                    "terminal": "depth_limit",
-                    "top_repeated_values": [
-                        {"value": "0x74b68bd4c0", "count": 145},
-                        {"value": "0x74b68bb9a0", "count": 22},
-                        {"value": "0x74b68bcc1c", "count": 6},
-                    ],
-                    "stable_pointer_loop": {
-                        "value": "0x74b68bd4c0",
-                        "count": 45,
-                        "first_step": 35,
-                        "last_step": 79,
+                    "steps_returned": 951,
+                    "terminal": "stop:call_return_boundary",
+                    "deep_command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599568 --before-idx 14164280 --depth 1000 "
+                        "--lookback 15000000 --compact"
+                    ),
+                    "heap_allocation_boundary": {
+                        "call_idx": 7364,
+                        "call_asm": "bl #0x7601bcbd60",
+                        "target_value": "0x7601bcbd60",
+                        "resolved_target": "libc.so+0x5c718 = malloc@@LIBC",
+                        "size_arg_x0": "0x40000",
+                        "return_value": "0x74b687edc0",
+                        "last_pointer_expression": (
+                            "0x74b68bedc0 = 0x74b687edc0 + 0x40000"
+                        ),
                     },
                     "interpretation": (
-                        "pointer-shaped scratch/base seed; current byte-lineage "
-                        "walks a stable copy loop instead of reaching a portable "
-                        "allocation or call-return boundary"
+                        "pointer-shaped scratch/base seed; deep lineage now "
+                        "reaches malloc(0x40000), so the portable replay should "
+                        "model this as a symbolic scratch buffer rather than "
+                        "embed the concrete ASLR address"
                     ),
                 },
                 {
@@ -4430,23 +4455,29 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 {
                     "slot": 28,
                     "suggested_value": "0x74b68bbe00",
-                    "steps_returned": 180,
-                    "terminal": "depth_limit",
-                    "top_repeated_values": [
-                        {"value": "0x74b68bb9a0", "count": 169},
-                        {"value": "0x74b68bbdff", "count": 7},
-                        {"value": "0x74b68bbba0", "count": 2},
-                    ],
-                    "stable_pointer_loop": {
-                        "value": "0x74b68bb9a0",
-                        "count": 69,
-                        "first_step": 11,
-                        "last_step": 79,
+                    "steps_returned": 942,
+                    "terminal": "stop:call_return_boundary",
+                    "deep_command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599580 --before-idx 14164280 --depth 1000 "
+                        "--lookback 15000000 --compact"
+                    ),
+                    "heap_allocation_boundary": {
+                        "call_idx": 7364,
+                        "call_asm": "bl #0x7601bcbd60",
+                        "target_value": "0x7601bcbd60",
+                        "resolved_target": "libc.so+0x5c718 = malloc@@LIBC",
+                        "size_arg_x0": "0x40000",
+                        "return_value": "0x74b687edc0",
+                        "last_pointer_expression": (
+                            "0x74b68bedc0 = 0x74b687edc0 + 0x40000"
+                        ),
                     },
                     "interpretation": (
-                        "pointer-shaped scratch/base seed; needs a generic "
-                        "copy-loop or allocation-boundary classifier before it "
-                        "can be promoted beyond trace-bound replay"
+                        "pointer-shaped scratch/base seed; deep lineage reaches "
+                        "the same malloc(0x40000) allocation as slot25, so the "
+                        "portable replay should use symbolic scratch-buffer "
+                        "offsets instead of this concrete pointer"
                     ),
                 },
                 {
@@ -5084,11 +5115,12 @@ def completion_audit() -> dict:
         ],
         "blocking_gaps": [
             (
-                "Prove or parameterize the remaining VM seed semantics: "
-                "scratch-writer slot25/28 reach malloc-backed heap scratch "
-                "boundaries; scratch-writer slot26 reaches a VM bytecode/IP "
-                "boundary; ladder slot24/26 still carry static-table or "
-                "allocator boundaries."
+                "Lift or parameterize the remaining VM seed semantics: "
+                "scratch-writer slot25/28 are now classified as symbolic "
+                "malloc(0x40000)-backed scratch buffers, while scratch-writer "
+                "slot26/27/29 still terminate at VM bytecode/IP boundaries and "
+                "the ladder window still carries static-table or bytecode "
+                "frontiers."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
