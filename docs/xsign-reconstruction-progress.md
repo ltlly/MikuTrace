@@ -824,6 +824,11 @@ store width, little-endian bytes, `python_with_values`, and source class. The
 first suffix word is now explicitly tied to
 `#14164461 mem[0x74b68bbe08] = 0x4195f2ec`; the final four tail bytes are tied
 to `getpid`, the getpid-derived LCG byte, and two bytecode literals.
+The second suffix word `scratch[12:16] = f60193b3` is now classified as the
+same kind of VM ladder frontier: compact lineage shows
+`0xb39301f6 = 0xb3000000 | (0x9301f641 >> 8)`,
+`0x9301f641 = 0xbfaa5a69 ^ 0x2cabac28`, and then stops at bytecode-read
+`#10613716 ldr x1, [x21,#8]`.
 
 The simulator also emits a machine-readable `middle_lhs_source_manifest` for
 semantic range `[16,59)`:
