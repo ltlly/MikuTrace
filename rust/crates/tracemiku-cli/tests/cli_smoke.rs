@@ -974,6 +974,24 @@ fn byte_lineage_count_traces_consecutive_bytes() {
     assert_eq!(results[1]["addr"], "0x7001");
     assert_eq!(results[1]["lineage"]["path"][0]["writer_idx"], 1);
     assert_eq!(results[1]["lineage"]["path"][0]["src_value"], "0x42");
+
+    let limited = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--before-idx".into(),
+        "4".into(),
+        "--count".into(),
+        "2".into(),
+        "--depth".into(),
+        "1".into(),
+        "--compact".into(),
+    ]);
+    assert_eq!(
+        limited["decision_counts"],
+        serde_json::json!([{"decision": "depth_limit", "count": 2}])
+    );
 }
 
 #[test]

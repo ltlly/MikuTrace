@@ -8353,21 +8353,25 @@ async fn cmd_byte_lineage(
         let mut upstream_counts: BTreeMap<String, usize> = BTreeMap::new();
         let mut step_values = Vec::new();
         for entry in &results {
-            let decision = entry
-                .pointer("/lineage/terminal/decision_kind")
-                .or_else(|| entry.pointer("/lineage/stop_reason/decision_kind"))
-                .or_else(|| entry.pointer("/lineage/terminal/kind"))
-                .or_else(|| entry.pointer("/lineage/stop_reason/kind"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let decision = [
+                "/lineage/terminal/decision_kind",
+                "/lineage/stop_reason/decision_kind",
+                "/lineage/terminal/kind",
+                "/lineage/stop_reason/kind",
+            ]
+            .iter()
+            .find_map(|path| entry.pointer(path).and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
             *decision_counts.entry(decision).or_default() += 1;
-            let upstream = entry
-                .pointer("/lineage/terminal/upstream_status")
-                .or_else(|| entry.pointer("/lineage/stop_reason/upstream_status"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let upstream = [
+                "/lineage/terminal/upstream_status",
+                "/lineage/stop_reason/upstream_status",
+            ]
+            .iter()
+            .find_map(|path| entry.pointer(path).and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
             *upstream_counts.entry(upstream).or_default() += 1;
             if let Some(steps) = entry
                 .pointer("/lineage/steps_returned")
