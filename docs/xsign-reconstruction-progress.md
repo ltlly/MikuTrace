@@ -1372,8 +1372,8 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-strong offsets     0,1,2,3,4,5,6,13,14,15,16,17,18,19,59,60,61,63,65,66,67
-partial offsets    7..12,20..58,62,64
+strong offsets     0,1,2,3,4,5,6,12,13,14,15,16,17,18,19,59,60,61,63,65,66,67
+partial offsets    7..11,20..58,62,64
 strong+partial     68/68
 all_match          true
 ```
@@ -1385,7 +1385,7 @@ all available samples. The second xor-word formula for semantic offsets
 `add32_mix -> lsr -> xor_word` chain. It is intentionally kept as partial
 coverage because `diff_run1_call_005` degenerates at offset `9`: the inferred
 lhs byte is `0x00`, so the CLI reports a `word32_zero_lane` template instead of
-inventing a full 32-bit state-source proof. The remaining 47 semantic bytes are
+inventing a full 32-bit state-source proof. The remaining 46 semantic bytes are
 still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
@@ -1695,11 +1695,9 @@ call_004  lhs db 04  = high8(0xdb3d615b) || 0x04
 call_005  lhs b2 05  = high8(0xb2010d7f) || 0x05
 ```
 
-The first byte comes from another `add32_mix` state result. The second byte is a
-small VM/call counter byte, observed through shifts such as `0x5b2 >> 8 = 0x05`.
-This is partial coverage: the formula is cross-sample, but the portable source
-of that counter still needs to be proven before these offsets can be counted as
-strongly covered.
+The first byte comes from another `add32_mix` state result and remains partial.
+The second byte is now promoted to strong coverage:
+`semantic[12] = low8(meta.callIdx) ^ parity_mask` for the five diff samples.
 
 The first five bytes of the large middle lhs run, `semantic[16:21]`, are stable
 across all current samples:
