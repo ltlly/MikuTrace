@@ -1937,9 +1937,13 @@ or switch to allocation-boundary proof.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges
-and call_001 still stops at `memory_not_found_boundary`. It should therefore
-remain a pre-trace/non-module table frontier until an earlier trace, map
-classification, or static extraction proves a portable source.
+and call_001 still stops at `memory_not_found_boundary`. Searching the local
+`libsgmainso-6.8.260403.so` copies for `0x90bf1d91`, `0x95f2ec79`, and
+`0x90d2d669` finds no direct file hit. The simulator now records this as the
+explicit `pretrace_table_seed_word` parameter and derives
+`previous_ladder_slot24 = 0x90bf1d91 ^ 0x006dcbf8 ^ 0x05203a10`, but it should
+remain a pre-trace/non-module table frontier until an earlier trace or external
+table source is captured.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:

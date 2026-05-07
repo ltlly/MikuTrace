@@ -129,7 +129,14 @@ TRACE_SMALL_AFFINE = {
 }
 
 CALL001_STAT_MTIM_TV_SEC = 0x69F2E9FB
-CALL001_SCRATCH_PREFIX_SOURCE_WORD = 0x95F2EC79
+CALL001_PRETRACE_TABLE_SEED_WORD = 0x90BF1D91
+CALL001_PRETRACE_TABLE_XOR_A = 0x006DCBF8
+CALL001_PRETRACE_TABLE_XOR_B = 0x05203A10
+CALL001_SCRATCH_PREFIX_SOURCE_WORD = (
+    CALL001_PRETRACE_TABLE_SEED_WORD
+    ^ CALL001_PRETRACE_TABLE_XOR_A
+    ^ CALL001_PRETRACE_TABLE_XOR_B
+)
 CALL001_SCRATCH_PREFIX_STATIC_BYTE = 0x79
 CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX = (
     "79ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43b"
@@ -523,8 +530,9 @@ SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
         "source": "xor_lhs:scratch_writer_replay:static_table_boundary",
         "frontier": "memory_not_found_boundary:not_found",
         "proof_action": (
-            "prove the static-table seed or promote it to an explicit table "
-            "parameter before treating semantic offsets 20..23 as portable"
+            "treat 0x90bf1d91 as an explicit pre-trace/non-module table "
+            "parameter; file/static SO search has no hits, so portable "
+            "completion still needs an earlier trace or external table source"
         ),
         "batch_offsets": [0, 1, 2, 3],
         "semantic_offsets": [20, 21, 22, 23],
@@ -684,11 +692,34 @@ SCRATCH_WRITER_REPLAY_STATIC_BOUNDARY_PROBE = {
             "diff_run1_call_005",
         ],
     },
+    "static_so_search": {
+        "status": "no_hits",
+        "command": (
+            "search local libsgmainso-6.8.260403.so copies for "
+            "911dbf90/90bf1d91/79ecf295/69d6d290"
+        ),
+        "searched_files": [
+            "/tmp/sgmain_re/libsgmainso-6.8.260403.so",
+            "/tmp/opencode/tracemiku-device-so/libsgmainso-6.8.260403.so",
+            "example/106_d9da290cacaffd471ee1231d16b59190/lib/arm64-v8a/libsgmainso-6.8.260403.so",
+        ],
+        "patterns": [
+            "le_0x90bf1d91",
+            "be_0x90bf1d91",
+            "le_0x95f2ec79",
+            "le_0x90d2d669",
+        ],
+        "module_lookup": {
+            "0x74fbf29208": "no module in traces/diff/run1/meta.json",
+            "0x75360484cc": "no module in traces/diff/run1/meta.json",
+        },
+    },
     "interpretation": (
         "The seed is observed in multiple traces but resolves outside known "
-        "module ranges and has no earlier traced writer in call_001. Treat it "
-        "as a pre-trace/non-module table frontier until an earlier trace, maps "
-        "classification, or file/static extraction proves a portable source."
+        "module ranges, has no earlier traced writer in call_001, and was not "
+        "found in local libsgmainso file copies. Treat it as an explicit "
+        "pre-trace/non-module table parameter until an earlier trace or "
+        "external table source is captured."
     ),
 }
 
@@ -2928,8 +2959,16 @@ def scratch_tail_lhs_bytes_from_pid(process_id: int, small_bytes: bytes) -> byte
     return bytes([process_id & 0xFF, mixed & 0xFF]) + small_bytes
 
 
+def previous_ladder_slot24_from_pretrace_seed(params: dict) -> int:
+    return (
+        int(params["pretrace_table_seed_word"])
+        ^ int(params["pretrace_table_xor_a"])
+        ^ int(params["pretrace_table_xor_b"])
+    ) & 0xFFFFFFFF
+
+
 def scratch_writer_dump_bytes_from_parameters(params: dict) -> bytes:
-    previous_ladder_slot24 = params["previous_ladder_slot24"]
+    previous_ladder_slot24 = previous_ladder_slot24_from_pretrace_seed(params)
     stat_mtim_tv_sec = params["stat_mtim_tv_sec"]
     word0 = vm_lsl(stat_mtim_tv_sec, 0x18, 32)
     word1 = vm_orr(
@@ -3150,6 +3189,17 @@ def current_trace_model_input_manifest() -> dict:
             "used_by": "scratch_writer_replay x_umt_text_boundary",
         },
         {
+            "name": "pretrace_table_seed_word",
+            "kind": "pretrace_nonmodule_table_parameter",
+            "value": f"{CALL001_PRETRACE_TABLE_SEED_WORD:#x}",
+            "source": (
+                "observed at 0x74fbf29208/0x75360484cc with no containing "
+                "module and no matching word in local libsgmainso files"
+            ),
+            "status": "parameterized_pretrace_nonmodule_table_input",
+            "used_by": "previous_ladder_slot24 derivation for semantic[20:24]",
+        },
+        {
             "name": "scratch_heap_buffers",
             "kind": "symbolic_heap_allocation",
             "value": {
@@ -3184,8 +3234,10 @@ def current_trace_model_input_manifest() -> dict:
             "kind": "vm_ladder_state_word",
             "value": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
             "derived_low_byte": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
-            "source": "previous ladder final slot24",
-            "status": "not_portable_until_ladder_lifted",
+            "source": (
+                "pretrace_table_seed_word ^ 0x006dcbf8 ^ 0x05203a10"
+            ),
+            "status": "derived_from_parameterized_pretrace_table_seed",
             "used_by": "scratch writer word1 and middle_lhs[4]",
         },
         {
@@ -3298,6 +3350,11 @@ def parameterized_simulation_contract() -> dict:
                 "source": "JNI x-umt header value until x-umt producer is reconstructed",
             },
             {
+                "name": "pretrace_table_seed_word",
+                "kind": "pretrace_nonmodule_table_parameter",
+                "source": "0x90bf1d91 observed outside known module ranges; no static SO hit",
+            },
+            {
                 "name": "scratch_heap_buffers",
                 "kind": "symbolic_heap_allocation",
                 "source": "malloc(0x40000)-derived scratch space for replay address seeds",
@@ -3309,8 +3366,8 @@ def parameterized_simulation_contract() -> dict:
             },
             {
                 "name": "previous_ladder_slot24",
-                "kind": "vm_ladder_state_word",
-                "source": "ladder auto-seeded replay final slot24",
+                "kind": "derived_vm_ladder_state_word",
+                "source": "pretrace_table_seed_word ^ 0x006dcbf8 ^ 0x05203a10",
             },
             {
                 "name": "scratch_writer_replay_suffix_words_le",
@@ -5140,8 +5197,10 @@ def completion_audit() -> dict:
                 "scratch-writer slot25/28 are now classified as symbolic "
                 "malloc(0x40000)-backed scratch buffers, and scratch-writer "
                 "slot2/26/27/29 are explicit VM bytecode-frontier parameters. "
-                "The ladder and middle-lhs windows still need static-table or "
-                "bytecode source extraction before the simulator is portable."
+                "The 0x90bf1d91 ladder seed is now an explicit pre-trace/"
+                "non-module table parameter, but the ladder and middle-lhs "
+                "windows still need bytecode/static-table source extraction "
+                "before the simulator is portable."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
@@ -5216,6 +5275,9 @@ def call001_trace_model_parameters() -> dict:
         "mod255_odd_input": TRACE_MOD255_INPUT_LCG_CHAIN["mod255_input"],
         "xor_lhs_runs": CALL001_XOR_LHS_RUNS,
         "stat_mtim_tv_sec": CALL001_STAT_MTIM_TV_SEC,
+        "pretrace_table_seed_word": CALL001_PRETRACE_TABLE_SEED_WORD,
+        "pretrace_table_xor_a": CALL001_PRETRACE_TABLE_XOR_A,
+        "pretrace_table_xor_b": CALL001_PRETRACE_TABLE_XOR_B,
         "previous_ladder_slot24": CALL001_SCRATCH_PREFIX_SOURCE_WORD,
         "scratch_writer_replay_suffix_words_le": (
             CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
