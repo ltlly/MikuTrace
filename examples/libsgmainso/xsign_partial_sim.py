@@ -218,7 +218,29 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "width": 4,
         "value": 0xE39D02CC,
         "python_with_values": "mem[0x74b68bbe14] = 0xe39d02cc",
-        "source_class": "scratch_writer_replay_word_pending_lift",
+        "source_class": "vm_xor_ladder_bytecode_frontier_pending_lift",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe14 "
+                "--before-idx 14164666 --depth 120 --lookback 8000000 --compact"
+            ),
+            "steps_returned": 57,
+            "recognized_semantic_count": 21,
+            "head_formula": "0xe39d02cc = 0xe3000000 | (0x9d02cc0c >> 8)",
+            "mid_formula": "0x9d02cc0c = 0xb1a96024 ^ 0x2cabac28",
+            "terminal": "bytecode_read_boundary",
+            "terminal_idx": 10616493,
+            "terminal_asm": "ldr x1, [x21, #8]",
+            "terminal_addr": "0x75ebae5ad8",
+            "top_repeated_values": [
+                {"value": "0x9d02cc0c", "count": 13},
+                {"value": "0x496352c0", "count": 8},
+                {"value": "0xa", "count": 5},
+                {"value": "0xb1a96024", "count": 5},
+                {"value": "0x4433300a", "count": 4},
+                {"value": "0xcc", "count": 4},
+            ],
+        },
     },
     {
         "scratch_offset": 24,

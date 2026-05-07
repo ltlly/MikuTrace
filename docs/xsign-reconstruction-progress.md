@@ -833,6 +833,10 @@ The third suffix word follows the same shape:
 `0x0c513c4b = 0x0c000000 | (0x513c4bb3 >> 8)`,
 `0x513c4bb3 = 0x7d97e79b ^ 0x2cabac28`, and terminal bytecode-read
 `#10614904 ldr x1, [x21,#8]`.
+The fourth suffix word also follows that frontier pattern:
+`0xe39d02cc = 0xe3000000 | (0x9d02cc0c >> 8)`,
+`0x9d02cc0c = 0xb1a96024 ^ 0x2cabac28`, and terminal bytecode-read
+`#10616493 ldr x1, [x21,#8]`.
 
 The simulator also emits a machine-readable `middle_lhs_source_manifest` for
 semantic range `[16,59)`:
