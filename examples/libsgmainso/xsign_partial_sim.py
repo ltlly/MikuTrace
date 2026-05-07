@@ -2478,7 +2478,6 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "prove semantic offset 0 static byte across samples",
             "lift trace_literal_lhs_hex word runs into state/table formulas",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
         ],
@@ -2581,10 +2580,20 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": odd_matches and even_matches,
             }
         )
+    byte0_rows = [
+        {
+            "sample": name,
+            "semantic_offset": 0,
+            "value": f"{tail[0]:#x}",
+            "expected": "0xa",
+            "matches": tail[0] == 0x0A,
+        }
+        for name, tail in sample_tails.items()
+    ]
     all_rows = tail_3_7 + mask_fold_rows
     covered_samples = sorted({row["sample"] for row in all_rows})
     covered_offsets = sorted(
-        set([1, 2, 3, 4, 5, 6] + odd_repeat_offsets + even_repeat_offsets)
+        set([0, 1, 2, 3, 4, 5, 6] + odd_repeat_offsets + even_repeat_offsets)
     )
     return {
         "status": "partial_multi_sample_formula_coverage",
@@ -2594,6 +2603,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "formula_ranges": [
             {"semantic_range": [1, 3], "kind": "mod255_low_byte_pair"},
             {"semantic_range": [3, 7], "kind": "xor_word_tail_bytes"},
+            {"semantic_range": [0, 1], "kind": "static_byte_lane_extract"},
             {
                 "semantic_offsets": sorted(odd_repeat_offsets + even_repeat_offsets),
                 "kind": "repeated_mod255_parity_mask",
@@ -2603,9 +2613,11 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "covered_byte_count": len(covered_offsets),
         "tail_3_7": tail_3_7,
         "mask_fold_1_3": mask_fold_rows,
+        "static_byte0": byte0_rows,
+        "static_byte0_all_samples_match": all(row["matches"] for row in byte0_rows),
         "repeated_mask_offsets": repeated_mask_rows,
         "repeated_mask_all_samples_match": all(row["matches"] for row in repeated_mask_rows),
-        "all_match": all(row["matches"] for row in all_rows + repeated_mask_rows),
+        "all_match": all(row["matches"] for row in all_rows + repeated_mask_rows + byte0_rows),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
             "mod255 parity masks expand structural coverage to offsets "
@@ -3100,7 +3112,7 @@ def completion_audit() -> dict:
                 "id": "multi_sample_generalization",
                 "requirement": "Python formulas explain multiple libsgmainso trace samples.",
                 "evidence": [
-                    "multi_sample_formula_coverage covers semantic offsets 1..6 for 5 samples and repeated mod255 mask offsets across all samples",
+                    "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3122,7 +3134,7 @@ def completion_audit() -> dict:
                 "instead of relying on trace-bound replay summaries."
             ),
             (
-                "Expand multi-sample formula coverage beyond the 14 currently "
+                "Expand multi-sample formula coverage beyond the 15 currently "
                 "covered semantic offsets and prove how LCG/time-derived state "
                 "feeds every payload byte."
             ),

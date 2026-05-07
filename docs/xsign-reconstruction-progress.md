@@ -1318,13 +1318,13 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-covered offsets    1,2,3,4,5,6,13,14,15,59,60,65,66,67
+covered offsets    0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
 all_match          true
 ```
 
 This proves the current mod255 pair and first xor-word formula across several
 samples, and it also proves the repeated odd/even mod255 mask positions across
-all available samples. The remaining 54 semantic bytes are still mostly
+all available samples. The remaining 53 semantic bytes are still mostly
 call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
