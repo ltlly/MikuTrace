@@ -46,6 +46,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import string
 import urllib.parse
 
 
@@ -3445,7 +3446,7 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "size": 52,
                 "complete": True,
                 "hex": (
-                    "000000fbe9f26979ecf29541f60193b34b3c510ccc029de3"
+                    "000000fbe9f26979ecf29541f60193b34b3c510ccc029de33"
                     "9cec2953090237cbfa4f43ba0444a342344c59bc5690000"
                     "3abf0301"
                 ),
@@ -4147,6 +4148,44 @@ def bytewise_variations(hex_by_sample: dict[str, str]) -> list[dict]:
     return out
 
 
+HEX_FIELD_NAMES = {
+    "hex",
+    "bytes_hex",
+    "lhs_hex",
+    "rhs_hex",
+    "computed_hex",
+    "expected_hex",
+    "observed_bytes_hex",
+    "boundary_bytes_hex",
+}
+
+
+def audit_hex_fields(value, path: str = "") -> list[dict]:
+    if isinstance(value, dict):
+        issues = []
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else key
+            issues.extend(audit_hex_fields(child, child_path))
+        return issues
+    if isinstance(value, list):
+        issues = []
+        for idx, child in enumerate(value):
+            issues.extend(audit_hex_fields(child, f"{path}[{idx}]"))
+        return issues
+    if not isinstance(value, str):
+        return []
+
+    key = path.rsplit(".", 1)[-1]
+    key = key.split("[", 1)[0]
+    if not (key.endswith("_hex") or key in HEX_FIELD_NAMES):
+        return []
+    if not value or any(ch not in string.hexdigits for ch in value):
+        return []
+    if len(value) % 2 == 0:
+        return []
+    return [{"path": path, "length": len(value), "value": value}]
+
+
 def xor_lhs_word_chunks(raw_hex: str, semantic_start: int) -> list[dict]:
     data = bytes.fromhex(raw_hex)
     chunks = []
@@ -4835,6 +4874,12 @@ def main() -> None:
             ),
             "role of the LCG/time state in every payload byte",
         ],
+    }
+    hex_field_issues = audit_hex_fields(report)
+    report["hex_field_audit"] = {
+        "status": "ok" if not hex_field_issues else "invalid_hex_fields",
+        "issue_count": len(hex_field_issues),
+        "issues": hex_field_issues,
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
