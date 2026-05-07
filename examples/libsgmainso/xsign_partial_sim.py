@@ -4351,6 +4351,12 @@ def python_vm_replay_plan_eval_summary() -> dict:
                         {"value": "0x74b68bb9a0", "count": 22},
                         {"value": "0x74b68bcc1c", "count": 6},
                     ],
+                    "stable_pointer_loop": {
+                        "value": "0x74b68bd4c0",
+                        "count": 45,
+                        "first_step": 35,
+                        "last_step": 79,
+                    },
                     "interpretation": (
                         "pointer-shaped scratch/base seed; current byte-lineage "
                         "walks a stable copy loop instead of reaching a portable "
@@ -4386,6 +4392,12 @@ def python_vm_replay_plan_eval_summary() -> dict:
                         {"value": "0x74b68bbdff", "count": 7},
                         {"value": "0x74b68bbba0", "count": 2},
                     ],
+                    "stable_pointer_loop": {
+                        "value": "0x74b68bb9a0",
+                        "count": 69,
+                        "first_step": 11,
+                        "last_step": 79,
+                    },
                     "interpretation": (
                         "pointer-shaped scratch/base seed; needs a generic "
                         "copy-loop or allocation-boundary classifier before it "

@@ -1922,6 +1922,9 @@ scratch/base seeds: deeper lineage runs hit stable copy-loop values
 `0x74b68bd4c0` and `0x74b68bb9a0` rather than a portable producer. The next CLI
 improvement should classify that stable pointer walk as a boundary instead of
 requiring ever-larger depth.
+`byte-lineage --compact` now reports this pattern directly as
+`stable_pointer_loop` when a depth/cycle stop is dominated by one repeated
+pointer-shaped value.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges

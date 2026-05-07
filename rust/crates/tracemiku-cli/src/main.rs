@@ -10086,8 +10086,14 @@ fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde_json::Valu
         .unwrap_or(serde_json::Value::Null);
     let repeated_values = compact_lineage_repeated_values(&chain);
     let pointer_transitions = compact_lineage_pointer_transitions(&chain);
-    let next_actions =
-        compact_lineage_next_actions(&memory_boundaries, &terminal, &semantics, &repeated_values);
+    let stable_pointer_loop = compact_lineage_stable_pointer_loop(&terminal, &repeated_values);
+    let next_actions = compact_lineage_next_actions(
+        &memory_boundaries,
+        &terminal,
+        &semantics,
+        &repeated_values,
+        &stable_pointer_loop,
+    );
     serde_json::json!({
         "status": summary.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": summary.get("start").cloned().unwrap_or(serde_json::Value::Null),
@@ -10097,6 +10103,7 @@ fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde_json::Valu
         "recognized_semantics": semantics,
         "repeated_values": repeated_values,
         "pointer_transitions": pointer_transitions,
+        "stable_pointer_loop": stable_pointer_loop,
         "memory_boundaries": memory_boundaries,
         "path": chain,
         "next_actions": next_actions,
@@ -10362,6 +10369,7 @@ fn compact_lineage_next_actions(
     terminal: &serde_json::Value,
     semantics: &serde_json::Value,
     repeated_values: &serde_json::Value,
+    stable_pointer_loop: &serde_json::Value,
 ) -> serde_json::Value {
     let mut actions = Vec::new();
     if !memory_boundaries.is_empty() {
@@ -10413,7 +10421,47 @@ fn compact_lineage_next_actions(
             "inspect repeated_values; repeated pointer/state values usually indicate a copy loop or stable VM base"
         ));
     }
+    if !stable_pointer_loop.is_null() {
+        actions.push(serde_json::json!(
+            "treat stable_pointer_loop as a copy/base boundary; prove the repeated pointer once instead of chasing more depth"
+        ));
+    }
     serde_json::Value::Array(actions)
+}
+
+fn compact_lineage_stable_pointer_loop(
+    terminal: &serde_json::Value,
+    repeated_values: &serde_json::Value,
+) -> serde_json::Value {
+    if !matches!(
+        terminal.get("kind").and_then(|v| v.as_str()),
+        Some("depth_limit" | "cycle")
+    ) {
+        return serde_json::Value::Null;
+    }
+    let Some(row) = repeated_values
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let value = row.get("value").and_then(|v| v.as_str())?;
+            let count = row.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let parsed = parse_u64_str(value)?;
+            (count >= 8 && looks_like_pointer(parsed)).then_some(row)
+        })
+        .max_by_key(|row| row.get("count").and_then(|v| v.as_u64()).unwrap_or(0))
+    else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "kind": "stable_pointer_loop",
+        "value": row.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        "count": row.get("count").cloned().unwrap_or(serde_json::Value::Null),
+        "first_step": row.get("first_step").cloned().unwrap_or(serde_json::Value::Null),
+        "last_step": row.get("last_step").cloned().unwrap_or(serde_json::Value::Null),
+        "terminal_kind": terminal.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+        "interpretation": "the lineage is walking a stable pointer/base copy chain; prove this pointer once or mark it as an allocation/base parameter",
+    })
 }
 
 fn compact_lineage_repeated_values(chain: &[serde_json::Value]) -> serde_json::Value {
@@ -18634,6 +18682,66 @@ mod tests {
             .unwrap()
             .iter()
             .any(|action| action.as_str().unwrap_or("").contains("repeated_values")));
+    }
+
+    #[test]
+    fn byte_lineage_compact_summary_reports_stable_pointer_loop() {
+        let steps = (0..12)
+            .map(|step| {
+                serde_json::json!({
+                    "step": step,
+                    "kind": "reg_source",
+                    "seed": {"kind": "reg_at", "idx": 200 - step, "reg": "x9"},
+                    "backstep": {
+                        "idx": 200 - step,
+                        "source_reg": "x9",
+                        "source_value": "0x74b68bd4c0",
+                        "target": {"idx": 200 - step, "asm": "mov x9, x10", "class": "alu"},
+                        "local_def": {
+                            "idx": 199 - step,
+                            "asm": "orr x9, xzr, x10",
+                            "class": "alu",
+                            "formula": {
+                                "op": "orr",
+                                "expression": "0x74b68bd4c0 = 0x0 | 0x74b68bd4c0"
+                            }
+                        },
+                        "upstream": {"status": "not_memory_backed"}
+                    },
+                    "decision": {"kind": "frontier_auto"},
+                    "next": {"idx": 199 - step, "reg": "x10"}
+                })
+            })
+            .collect::<Vec<_>>();
+        let lineage = serde_json::json!({
+            "status": "ready",
+            "start": {"addr": "0x4000", "before_idx": 200},
+            "depth_requested": 12,
+            "steps_returned": 12,
+            "stop_reason": {"kind": "depth_limit"},
+            "steps": steps
+        });
+        let compact = byte_lineage_compact_summary(&lineage);
+        assert_eq!(
+            compact["stable_pointer_loop"]["kind"],
+            serde_json::json!("stable_pointer_loop")
+        );
+        assert_eq!(
+            compact["stable_pointer_loop"]["value"],
+            serde_json::json!("0x74b68bd4c0")
+        );
+        assert_eq!(
+            compact["stable_pointer_loop"]["count"],
+            serde_json::json!(12)
+        );
+        assert!(compact["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action
+                .as_str()
+                .unwrap_or("")
+                .contains("stable_pointer_loop")));
     }
 
     #[test]
