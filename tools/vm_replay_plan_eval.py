@@ -332,6 +332,10 @@ def python_int_dict(items: dict[int, int]) -> str:
     return "{" + entries + "}"
 
 
+def python_int_list(items: list[int]) -> str:
+    return "[" + ", ".join(str(item) for item in items) + "]"
+
+
 def suggestion_seed_slots(suggestions: dict[int, dict[str, Any]]) -> dict[int, int]:
     out = {}
     for slot, suggestion in sorted(suggestions.items()):
@@ -364,19 +368,26 @@ def generate_python_replay(
     plan: dict[str, Any],
     seed_slots: list[str] | None = None,
     suggestions: dict[int, dict[str, Any]] | None = None,
+    effective_seed_slots: dict[int, int] | None = None,
+    redundant_seed_slots: list[int] | None = None,
 ) -> str:
     user_seeds = parse_seed_slots(seed_slots or [])
     suggested_seeds = suggestion_seed_slots(suggestions or {})
+    effective_seeds = effective_seed_slots if effective_seed_slots is not None else suggested_seeds
+    redundant_seeds = redundant_seed_slots or []
     observed_byte_loads = replay_plan_observed_byte_loads(plan)
     lines = [
         "# Generated from traceMiku vm-ops --replay-plan.",
         "# This is a generic trace replay skeleton, not a target-specific algorithm.",
         "# SUGGESTED_SEED_SLOTS are formula-derived from observed trace values.",
+        "# EFFECTIVE_SEED_SLOTS are the minimized subset used by default.",
         "# OBSERVED_BYTE_LOADS are also trace-derived defaults.",
         "# Prove or replace both before treating this as a portable algorithm.",
         "MASK64 = (1 << 64) - 1",
         f"USER_SEED_SLOTS = {python_int_dict(user_seeds)}",
         f"SUGGESTED_SEED_SLOTS = {python_int_dict(suggested_seeds)}",
+        f"EFFECTIVE_SEED_SLOTS = {python_int_dict(effective_seeds)}",
+        f"REDUNDANT_SEED_SLOTS = {python_int_list(redundant_seeds)}",
         f"OBSERVED_BYTE_LOADS = {python_int_dict(observed_byte_loads)}",
         "",
         "def vm_add(*values): return sum(values) & MASK64",
@@ -408,8 +419,10 @@ def generate_python_replay(
         "    for offset in range(width):",
         "        mem[addr + offset] = (value >> (offset * 8)) & 0xff",
         "",
-        "def replay(seed_slots=None, byte_loads=None):",
+        "def replay(seed_slots=None, byte_loads=None, use_effective_seeds=True):",
         "    merged_seed_slots = dict(USER_SEED_SLOTS)",
+        "    if use_effective_seeds:",
+        "        merged_seed_slots.update(EFFECTIVE_SEED_SLOTS)",
         "    if seed_slots is not None:",
         "        merged_seed_slots.update(seed_slots)",
         "    slots = {int(k): int(v) & MASK64 for k, v in merged_seed_slots.items()}",
@@ -657,8 +670,36 @@ def main() -> int:
     plan = json.load(sys.stdin)
     if args.emit_python:
         trusted_pass = replay_plan(plan, trust_observed=True, seed_slots=args.seed_slot)
+        user_seeds = parse_seed_slots(args.seed_slot)
+        suggested_seeds = dict(user_seeds)
+        for slot, suggestion in sorted(trusted_pass.seed_suggestions.items()):
+            if slot in suggested_seeds:
+                continue
+            value = parse_value(suggestion.get("value"))
+            if value is not None:
+                suggested_seeds[slot] = value & MASK64
+        reference_replay = replay_plan(
+            plan, trust_observed=False, seed_slots=seed_specs_from_map(suggested_seeds)
+        )
+        minimized_seeds = minimize_auto_seed_slots(
+            plan, user_seeds, suggested_seeds, reference_replay
+        )
+        effective_auto_seeds = {
+            slot: value for slot, value in minimized_seeds.items() if slot not in user_seeds
+        }
+        redundant_auto_seeds = [
+            slot
+            for slot in sorted(suggested_seeds)
+            if slot not in minimized_seeds and slot not in user_seeds
+        ]
         sys.stdout.write(
-            generate_python_replay(plan, args.seed_slot, trusted_pass.seed_suggestions)
+            generate_python_replay(
+                plan,
+                args.seed_slot,
+                trusted_pass.seed_suggestions,
+                effective_auto_seeds,
+                redundant_auto_seeds,
+            )
         )
         return 0
     state = replay_plan(

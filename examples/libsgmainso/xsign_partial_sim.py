@@ -2985,8 +2985,9 @@ def python_vm_replay_plan_eval_summary() -> dict:
         ),
         "emit_python_status": (
             "--emit-python now embeds USER_SEED_SLOTS, SUGGESTED_SEED_SLOTS, "
-            "and OBSERVED_BYTE_LOADS; with suggested seeds the emitted scratch "
-            "writer skeleton reproduces the 52-byte dump"
+            "EFFECTIVE_SEED_SLOTS, REDUNDANT_SEED_SLOTS, and OBSERVED_BYTE_LOADS; "
+            "replay() uses effective seeds by default, so the emitted scratch "
+            "writer skeleton directly reproduces the 52-byte dump"
         ),
         "auto_seed_minimization_status": (
             "--auto-seed-suggestions now reports effective_seed_slots and "
