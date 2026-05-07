@@ -1020,6 +1020,9 @@ enum Cmd {
         /// Find the last write strictly before this trace index.
         #[arg(long)]
         before_idx: usize,
+        /// Number of consecutive bytes to trace starting at --addr.
+        #[arg(long, default_value_t = 1)]
+        count: usize,
         /// Max lineage steps.
         #[arg(long, default_value_t = 12)]
         depth: usize,
@@ -2123,6 +2126,7 @@ async fn main() -> anyhow::Result<()> {
             trace_dir,
             addr,
             before_idx,
+            count,
             depth,
             context,
             lookback,
@@ -2132,8 +2136,8 @@ async fn main() -> anyhow::Result<()> {
             compact,
         }) => {
             cmd_byte_lineage(
-                trace_dir, addr, before_idx, depth, context, lookback, max_writes, regs, summary,
-                compact,
+                trace_dir, addr, before_idx, count, depth, context, lookback, max_writes, regs,
+                summary, compact,
             )
             .await
         }
@@ -8276,6 +8280,7 @@ async fn cmd_byte_lineage(
     trace_dir: PathBuf,
     addr: String,
     before_idx: usize,
+    count: usize,
     depth: usize,
     context: usize,
     lookback: usize,
@@ -8285,7 +8290,71 @@ async fn cmd_byte_lineage(
     compact: bool,
 ) -> anyhow::Result<()> {
     let addr = parse_u64_str(&addr).with_context(|| format!("parse addr {addr}"))?;
+    if count == 0 {
+        bail!("--count must be at least 1");
+    }
+    if count > 4096 {
+        bail!("--count is capped at 4096 bytes");
+    }
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
+    if count > 1 {
+        let mut results = Vec::with_capacity(count);
+        for offset in 0..count {
+            let byte_addr = addr + offset as u64;
+            let entry = match byte_lineage_value_on(
+                &app,
+                byte_addr,
+                before_idx,
+                depth,
+                context,
+                lookback,
+                max_writes,
+                regs.clone(),
+            )
+            .await
+            {
+                Ok(value) => {
+                    let lineage = if compact {
+                        byte_lineage_compact_summary(&value)
+                    } else if summary {
+                        byte_lineage_summary(&value)
+                    } else {
+                        value
+                    };
+                    serde_json::json!({
+                        "offset": offset,
+                        "addr": format!("{byte_addr:#x}"),
+                        "lineage": lineage,
+                    })
+                }
+                Err(err) => serde_json::json!({
+                    "offset": offset,
+                    "addr": format!("{byte_addr:#x}"),
+                    "lineage": {
+                        "status": "error",
+                        "error": format!("{err:#}"),
+                    },
+                }),
+            };
+            results.push(entry);
+        }
+        let status = if results
+            .iter()
+            .any(|entry| entry.pointer("/lineage/status").and_then(|v| v.as_str()) == Some("error"))
+        {
+            "partial_error"
+        } else {
+            "ready"
+        };
+        return print_pretty(&serde_json::json!({
+            "status": status,
+            "start_addr": format!("{addr:#x}"),
+            "before_idx": before_idx,
+            "count": count,
+            "mode": if compact { "compact" } else if summary { "summary" } else { "full" },
+            "results": results,
+        }));
+    }
     let value = byte_lineage_value_on(
         &app, addr, before_idx, depth, context, lookback, max_writes, regs,
     )

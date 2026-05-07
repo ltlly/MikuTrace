@@ -1883,6 +1883,9 @@ cannot be mistaken for portable completion.
 (`xor_lhs:lcg_seed_low_byte` and `xor_lhs:tail64_lhs_model`) and prioritizes
 the still-large `scratch_writer_replay` middle-lhs range before the two
 single-byte frontier exceptions.
+To make that range practical for AI agents, `byte-lineage` now accepts
+`--count N`, returning consecutive byte lineages in one indexed run while
+preserving the old one-byte output when `--count` is omitted.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:

@@ -941,6 +941,35 @@ fn byte_lineage_starts_from_last_memory_writer() {
 }
 
 #[test]
+fn byte_lineage_count_traces_consecutive_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
+    let v = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--before-idx".into(),
+        "4".into(),
+        "--count".into(),
+        "2".into(),
+        "--depth".into(),
+        "2".into(),
+        "--compact".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["count"], 2);
+    let results = v["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["addr"], "0x7000");
+    assert_eq!(results[0]["lineage"]["path"][0]["writer_idx"], 0);
+    assert_eq!(results[0]["lineage"]["path"][0]["src_value"], "0x41");
+    assert_eq!(results[1]["addr"], "0x7001");
+    assert_eq!(results[1]["lineage"]["path"][0]["writer_idx"], 1);
+    assert_eq!(results[1]["lineage"]["path"][0]["src_value"], "0x42");
+}
+
+#[test]
 fn vm_ops_groups_rows_by_vm_ip() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_vm_ops_trace(tmp.path(), "run1");
