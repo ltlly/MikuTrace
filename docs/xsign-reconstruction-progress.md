@@ -1372,21 +1372,20 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-strong offsets     0,1,2,3,4,5,6,12,13,14,15,16,17,18,19,59,60,61,63,65,66,67
-partial offsets    7..11,20..58,62,64
+strong offsets     0..10,12,13,14,15,16,17,18,19,59,60,61,63,65,66,67
+partial offsets    11,20..58,62,64
 strong+partial     68/68
 all_match          true
 ```
 
-This proves the current mod255 pair and first xor-word formula across several
-samples, and it also proves the repeated odd/even mod255 mask positions across
-all available samples. The second xor-word formula for semantic offsets
-`7..10` is now trace-proven for four diff samples through the same
-`add32_mix -> lsr -> xor_word` chain. It is intentionally kept as partial
-coverage because `diff_run1_call_005` degenerates at offset `9`: the inferred
-lhs byte is `0x00`, so the CLI reports a `word32_zero_lane` template instead of
-inventing a full 32-bit state-source proof. The remaining 46 semantic bytes are
-still mostly call_001-scoped.
+This proves the current mod255 pair and the first two xor-word formulas across
+the diff samples, and it also proves the repeated odd/even mod255 mask
+positions across all available samples. The second xor-word formula for
+semantic offsets `7..10` is now source-proven for all five diff samples through
+the same `add32_mix -> lsr -> xor_word` shape. `diff_run1_call_005` still has a
+degenerate output lane at offset `9`, but lane-aware backchains show that the
+lhs byte is a real zero byte inside the same add32_mix state word. The
+remaining 42 semantic bytes are still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
 
@@ -1666,23 +1665,26 @@ link under `semantic_writer_map.xor_word_state_sources[]`, so one command from
 the final `x-sign` string now reaches the upstream state update for
 `tail[3:7]`.
 
-The next 32-bit lane, `tail[7:11]`, now has the same output-first proof for four
-diff samples:
+The next 32-bit lane, `tail[7:11]`, now has the same output-first proof for all
+five diff samples:
 
 ```text
 call_006  word 0x8ef018e6 -> low32(0x163a3ab10 + 0x2b4c6dd6)
 call_001  word 0x783e786f -> low32(0x561d4e18 + 0x22212a57)
 call_003  word 0xf5e1e4ad -> low32(0x1629d1cea + 0x9344c7c3)
 call_004  word 0xbb1885b7 -> low32(0xd4436143 + 0xe6d52474)
+call_005  word 0x873300ea -> low32(0x222f1cd6e + 0x6441337c)
 ```
 
 For `call_005`, `tail[7:11] = 12 f6 95 2f` and the parity mask is
 `95 c5 95 c5`, so the inferred lhs is `87 33 00 ea`. Because one lane is zero,
 the CLI now emits `xor_word_degenerate_templates[]` with
 `kind = word32_zero_lane`, `lhs_word_le = 0xea003387`, and
-`zero_lhs_offsets = [2]` in the selected local slice. This is a useful negative
-example for the VM CLI design: summaries should report missing or degenerate
-lanes rather than force every four-byte window into a hash-state shape.
+`zero_lhs_offsets = [2]` in the selected local slice. The lane-aware backchain
+for the three non-zero lanes reaches the same `add32_mix` result
+`0x873300ea`, so this is now a source-proven zero lane rather than a missing
+state-source proof. It remains a useful UI/CLI example: summaries should report
+degenerate lanes without losing the underlying word-level source.
 
 The following two bytes, `tail[11:13]`, are also no longer treated as an opaque
 trace literal. Across the five diff samples the lhs bytes are:
@@ -1809,9 +1811,9 @@ digest_be = 67b44ad8783e786fcdfca1044c17da366f613fe4
 
 `crypto-scan` also sees `SHA1_H[4] = 0xc3d2e1f0` in the same constant family,
 so the current working label for this component is SHA1-like state finalize.
-The first word is strongly connected to `tail[3:7]`; the second word is
-connected to `tail[7:11]` for four diff samples and has one explicit degenerate
-sample left to resolve.
+The first word is strongly connected to `tail[3:7]`; the second word is now
+connected to `tail[7:11]` for all five diff samples, including the source-proven
+degenerate zero-lane sample.
 
 The mask bytes themselves are also cross-sample `mod255_low_byte` folds:
 

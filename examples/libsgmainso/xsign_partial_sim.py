@@ -21,8 +21,9 @@ pieces that have been proven from local libsgmainso traces:
 - one VM byte-load boundary now explains slot[18] = byte[0x753ddd7fdc]
   (0x7a), but the producing helper call is not lifted yet.
 - the second sha1-like XOR state word at semantic offsets 7..10 is trace-proven
-  for four diff samples; call_005 is explicitly tracked as a degenerate
-  zero-lane word case with one zero lhs byte.
+  for all five diff samples; call_005 is still tracked as a degenerate
+  output case, but lane-aware backchains prove its zero lane comes from the
+  same add32_mix state word.
 - semantic offset 11 is no longer treated as an opaque trace literal: across
   diff samples it matches a state-high byte before the same parity XOR mask.
   Semantic offset 12 is now covered as low8(meta.callIdx) xor mask.
@@ -458,6 +459,16 @@ TRACE_MULTI_SAMPLE_XOR_WORDS_7_11 = {
         "state_add_rhs": 0xE6D52474,
         "state_add_result": 0x1BB1885B7,
     },
+    "diff_run1_call_005": {
+        "state_word_le": 0xEA003387,
+        "source": "semantic offset 7 degenerate lhs bytes 87 33 00 ea",
+        "source_word_be": 0x873300EA,
+        "state_add_idx": 6960264,
+        "state_add_lhs": 0x222F1CD6E,
+        "state_add_rhs": 0x6441337C,
+        "state_add_result": 0x2873300EA,
+        "degenerate_zero_lhs_offsets": [9],
+    },
 }
 
 TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE = {
@@ -470,8 +481,9 @@ TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE = {
         "cli_status": "word32_zero_lane",
         "interpretation": (
             "The same parity mask is present, but one lhs byte is zero, so the "
-            "CLI reports a degenerate xor-word template instead of treating it "
-            "as a full 32-bit state source."
+            "CLI reports a degenerate xor-word template. Manual lane-aware "
+            "backchains now prove this is a real zero byte inside the same "
+            "add32_mix state word, not a missing state source."
         ),
     }
 }
@@ -2798,7 +2810,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "resolve semantic offsets 7..11: call_005 degenerate xor-word and state-high-byte source proof",
+            "resolve semantic offset 11 state-high-byte source proof",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
             "prove or parameterize semantic offset 62 static table seed LCG source",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
@@ -3146,6 +3158,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     covered_samples = sorted({row["sample"] for row in all_rows})
     covered_offsets = sorted(
         set([0, 1, 2, 3, 4, 5, 6, 12, 61, 63] + odd_repeat_offsets + even_repeat_offsets)
+        | set(range(7, 11))
         | set(range(16, 20))
     )
     return {
@@ -3184,12 +3197,6 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ],
         "partial_formula_ranges": [
             {
-                "semantic_range": [7, 11],
-                "kind": "xor_word_tail_bytes",
-                "complete_word_template_samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_7_11),
-                "degenerate_samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE),
-            },
-            {
                 "semantic_offsets": [11],
                 "kind": "state_high_byte",
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13),
@@ -3227,7 +3234,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ],
         "covered_semantic_offsets": covered_offsets,
         "partially_covered_semantic_offsets": sorted(
-            set([7, 8, 9, 10, 11, 62, 64] + middle_partial_offsets)
+            set([11, 62, 64] + middle_partial_offsets)
         ),
         "strong_or_partial_semantic_offsets": sorted(
             set(covered_offsets + [7, 8, 9, 10, 11, 12, 61, 62, 63, 64] + middle_partial_offsets)
@@ -3302,11 +3309,13 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         )
         and all(row["matches_recorded_lhs"] for row in tail_7_11_degenerate),
         "partial_coverage_note": (
-            "Semantic offsets 7..10 have a complete xor-word state-source proof "
-            "for four diff samples. diff_run1_call_005 is a degenerate case "
-            "where offset 9 is the parity mask itself because the inferred lhs "
-            "byte is zero. Semantic offset 11 matches a state-high byte across "
-            "the diff samples, while semantic offset 12 now matches low8(meta.callIdx) "
+            "Semantic offsets 7..10 now have a complete xor-word state-source "
+            "proof for all five diff samples. diff_run1_call_005 remains a "
+            "degenerate output form because offset 9 is the parity mask itself, "
+            "but lane-aware backchains prove the inferred lhs byte is a real "
+            "zero byte inside the same add32_mix state word. Semantic offset "
+            "11 matches a state-high byte across the diff samples, while "
+            "semantic offset 12 now matches low8(meta.callIdx) "
             "xor the parity mask. Semantic offsets 16..20 match the "
             "stat-mtime/ladder prefix across all current samples, and the full "
             "semantic offsets 16..58 middle lhs is stable across the diff "
@@ -3942,7 +3951,7 @@ def completion_audit() -> dict:
                 "requirement": "Python formulas explain multiple libsgmainso trace samples.",
                 "evidence": [
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
-                    "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate word32_zero_lane case",
+                    "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for all five diff samples; call_005 is tracked as a source-proven degenerate word32_zero_lane case",
                     "semantic offset 11 matches state-high-byte formulas across five diff samples",
                     "semantic offset 12 matches low8(meta.callIdx) xor mask across five diff samples",
                     "semantic offsets 16..19 match stat-mtime-derived bytes across all current samples",
@@ -3972,7 +3981,7 @@ def completion_audit() -> dict:
             ),
             (
                 "All 68 semantic offsets now have strong or partial formula "
-                "coverage, but 46 partial offsets still need portable source "
+                "coverage, but 42 partial offsets still need portable source "
                 "proof before this is a recovered algorithm."
             ),
         ],
@@ -4556,11 +4565,11 @@ def main() -> None:
                 ),
                 "degenerate_samples": xor_word_7_11_degenerate,
                 "interpretation": (
-                    "The same sha1-like state update pattern explains four diff "
-                    "samples. diff_run1_call_005 is intentionally kept outside "
-                    "the full-word set because its offset 9 lhs byte is zero, "
-                    "so the CLI summarizes it as word32_zero_lane rather than "
-                    "inventing a full state-source proof."
+                    "The same sha1-like state update pattern explains all five "
+                    "diff samples. diff_run1_call_005 still emits a degenerate "
+                    "word32_zero_lane summary because offset 9 has a zero lhs "
+                    "byte, but lane-aware backchains prove that zero byte comes "
+                    "from the same add32_mix state word."
                 ),
             },
             "call_001_state_word_source": {
