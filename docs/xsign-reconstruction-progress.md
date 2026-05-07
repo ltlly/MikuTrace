@@ -844,6 +844,11 @@ The fifth through seventh suffix words continue the same pattern:
 `0x23903095 = 0xf3b9cbd ^ 0x2cabac28`, terminal `#10618788`;
 and `0x3bf4a4bf = 0x3b000000 | (0xf4a4bf7c >> 8)`,
 `0xf4a4bf7c = 0xd80f1354 ^ 0x2cabac28`, terminal `#10620557`.
+The tail word at `scratch[44:48]` is now byte-probed rather than left as a
+single pending word: the semantic bytes are `c5 69`, with
+`0x69c5 = 0x69c59b >> 8`; the low byte follows `0xc5 = 0x5e ^ 0x9b`
+to bytecode-read `#14069466`, while the high byte follows
+`0x69 = 0x29 | 0x40`, `0x29 = 0x21 | 0x8` to bytecode-read `#14089019`.
 
 The simulator also emits a machine-readable `middle_lhs_source_manifest` for
 semantic range `[16,59)`:

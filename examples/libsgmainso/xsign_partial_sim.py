@@ -354,7 +354,49 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "width": 4,
         "value": 0x000069C5,
         "python_with_values": "mem[0x74b68bbe2c] = 0x69c5",
-        "source_class": "scratch_writer_replay_tail_word_pending_lift",
+        "source_class": "vm_tail_word_bytecode_frontier_pending_lift",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr "
+                "0x74b68bbe2c/0x74b68bbe2d --before-idx 14165023 "
+                "--depth 120 --lookback 8000000 --compact"
+            ),
+            "head_formula": "0x69c5 = 0x69c59b >> 8",
+            "low_byte_formula": "0xc5 = 0x5e ^ 0x9b",
+            "high_byte_formula": "0x69 = 0x29 | 0x40; 0x29 = 0x21 | 0x8",
+            "byte_probes": [
+                {
+                    "addr": "0x74b68bbe2c",
+                    "steps_returned": 23,
+                    "recognized_semantic_count": 6,
+                    "terminal": "bytecode_read_boundary",
+                    "terminal_idx": 14069466,
+                    "terminal_asm": "ldr w19, [x21, #8]",
+                    "terminal_addr": "0x74fbf69ed8",
+                    "top_repeated_values": [
+                        {"value": "0x5e", "count": 6},
+                        {"value": "0x69c5", "count": 5},
+                        {"value": "0xc5", "count": 5},
+                        {"value": "0x5e5e5e5e", "count": 2},
+                    ],
+                },
+                {
+                    "addr": "0x74b68bbe2d",
+                    "steps_returned": 19,
+                    "recognized_semantic_count": 7,
+                    "terminal": "bytecode_read_boundary",
+                    "terminal_idx": 14089019,
+                    "terminal_asm": "ldr x5, [x21, #8]",
+                    "terminal_addr": "0x74fbf638b8",
+                    "top_repeated_values": [
+                        {"value": "0x29", "count": 5},
+                        {"value": "0x69c5", "count": 5},
+                        {"value": "0x69", "count": 4},
+                        {"value": "0x21", "count": 2},
+                    ],
+                },
+            ],
+        },
     },
     {
         "scratch_offset": 48,
