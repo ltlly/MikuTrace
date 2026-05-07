@@ -144,6 +144,47 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "value": 0x7969F2E9,
         "python_with_values": "mem[0x74b68bbe04] = 0x7969f2e9",
         "source_class": "stat_mtim_shift_plus_previous_ladder",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr "
+                "0x74b68bbe04/0x74b68bbe07 --before-idx 14164407 "
+                "--depth 180 --lookback 10000000 --compact"
+            ),
+            "head_formula": (
+                "0x7969f2e9 = 0x79000000 | (0x69f2e9fb >> 8)"
+            ),
+            "low_bytes_formula": "0x69f2e9 = 0x69f2e9fb >> 8",
+            "high_byte_formula": "0x79000000 = (0x95f2ec79 & 0xff) << 24",
+            "ladder_formula": "0x95f2ec79 = 0x90d2d669 ^ 0x05203a10",
+            "static_boundary_formula": "0x90d2d669 = 0x90bf1d91 ^ 0x006dcbf8",
+            "byte_probes": [
+                {
+                    "addr": "0x74b68bbe04",
+                    "steps_returned": 14,
+                    "recognized_semantic_count": 3,
+                    "terminal": "observed_read_without_matching_traced_write",
+                    "terminal_addr": "0x74b68bd108",
+                    "observed_bytes_hex": "fbe9f26900000000",
+                    "mem_dump_command": (
+                        "tracemiku-cli mem-dump <call_dir> --addr "
+                        "0x74b68bd108 --count 8 --cursor 13980732 --summary"
+                    ),
+                },
+                {
+                    "addr": "0x74b68bbe07",
+                    "steps_returned": 22,
+                    "recognized_semantic_count": 7,
+                    "terminal": "memory_not_found_boundary",
+                    "terminal_idx": 14016978,
+                    "terminal_addr": "0x74fbf29208",
+                    "observed_bytes_hex": "911dbf9000000000",
+                    "mem_dump_command": (
+                        "tracemiku-cli mem-dump <call_dir> --addr "
+                        "0x74fbf29208 --count 8 --cursor 14016978 --summary"
+                    ),
+                },
+            ],
+        },
     },
     {
         "scratch_offset": 8,
@@ -152,6 +193,32 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "value": 0x4195F2EC,
         "python_with_values": "mem[0x74b68bbe08] = 0x4195f2ec",
         "source_class": "vm_xor_ladder_from_static_table_seed_pending_lift",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe08 "
+                "--before-idx 14164462 --depth 160 --lookback 10000000 --compact"
+            ),
+            "steps_returned": 22,
+            "recognized_semantic_count": 7,
+            "head_formula": "0x4195f2ec = 0x41000000 | (0x95f2ec79 >> 8)",
+            "mid_formula": "0x95f2ec79 = 0x90d2d669 ^ 0x05203a10",
+            "static_boundary_formula": "0x90d2d669 = 0x90bf1d91 ^ 0x006dcbf8",
+            "terminal": "memory_not_found_boundary",
+            "terminal_idx": 14016978,
+            "terminal_addr": "0x74fbf29208",
+            "observed_bytes_hex": "911dbf9000000000",
+            "mem_dump_command": (
+                "tracemiku-cli mem-dump <call_dir> --addr 0x74fbf29208 "
+                "--count 8 --cursor 14016978 --summary"
+            ),
+            "top_repeated_values": [
+                {"value": "0x95f2ec79", "count": 9},
+                {"value": "0x90d2d669", "count": 5},
+                {"value": "0x95f2ec", "count": 3},
+                {"value": "0x4195f2ec", "count": 2},
+                {"value": "0x90bf1d91", "count": 2},
+            ],
+        },
     },
     {
         "scratch_offset": 12,

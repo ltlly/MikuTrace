@@ -824,6 +824,14 @@ store width, little-endian bytes, `python_with_values`, and source class. The
 first suffix word is now explicitly tied to
 `#14164461 mem[0x74b68bbe08] = 0x4195f2ec`; the final four tail bytes are tied
 to `getpid`, the getpid-derived LCG byte, and two bytecode literals.
+The first suffix word is now traced to a static-table boundary:
+`0x4195f2ec = 0x41000000 | (0x95f2ec79 >> 8)`,
+`0x95f2ec79 = 0x90d2d669 ^ 0x05203a10`,
+`0x90d2d669 = 0x90bf1d91 ^ 0x006dcbf8`, terminal
+`0x74fbf29208` (`mem-dump --cursor 14016978` observes
+`911dbf9000000000`). The previous-ladder byte used in
+`scratch[4:8]` is the same `0x95f2ec79` low byte shifted into the high byte:
+`0x7969f2e9 = 0x79000000 | (0x69f2e9fb >> 8)`.
 The second suffix word `scratch[12:16] = f60193b3` is now classified as the
 same kind of VM ladder frontier: compact lineage shows
 `0xb39301f6 = 0xb3000000 | (0x9301f641 >> 8)`,
