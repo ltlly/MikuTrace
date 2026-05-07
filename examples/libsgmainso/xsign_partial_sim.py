@@ -5526,6 +5526,7 @@ def main() -> None:
                         "--addr 0x74b68bbe07 --before-idx 14165023 --count 39 "
                         "--depth 80 --lookback 10000000 --compact"
                     ),
+                    "cli_native_frontier_groups": True,
                     "status": "ready",
                     "count": 39,
                     "error_count": 0,

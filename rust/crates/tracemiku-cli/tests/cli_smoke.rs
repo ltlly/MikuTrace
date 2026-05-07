@@ -966,6 +966,13 @@ fn byte_lineage_count_traces_consecutive_bytes() {
     );
     assert_eq!(v["step_stats"]["min"], 2);
     assert_eq!(v["step_stats"]["max"], 2);
+    assert_eq!(v["frontier_groups"].as_array().unwrap().len(), 1);
+    assert_eq!(v["frontier_groups"][0]["decision"], "stop");
+    assert_eq!(v["frontier_groups"][0]["count"], 2);
+    assert_eq!(
+        v["frontier_groups"][0]["offset_ranges"],
+        serde_json::json!([[0, 2]])
+    );
     let results = v["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["addr"], "0x7000");
