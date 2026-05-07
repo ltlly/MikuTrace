@@ -8426,12 +8426,25 @@ async fn vm_backchain_value_on(
             .unwrap_or(serde_json::Value::Null);
         let lane_next = current_byte_lane
             .and_then(|lane| choose_laned_upstream_next(&step, lane).map(|next| (lane, next)));
+        let inferred_low_byte_next = current_byte_lane
+            .is_none()
+            .then(|| choose_zero_extended_low_byte_upstream_next(&step))
+            .flatten();
         let (chosen_next, decision) = if let Some((lane, next)) = lane_next {
             (
                 next.clone(),
                 serde_json::json!({
                     "kind": "upstream_byte_lane",
                     "byte_lane": lane,
+                    "next": next,
+                }),
+            )
+        } else if let Some(next) = inferred_low_byte_next {
+            (
+                next.clone(),
+                serde_json::json!({
+                    "kind": "upstream_zero_extended_low_byte",
+                    "byte_lane": 0,
                     "next": next,
                 }),
             )
@@ -8578,6 +8591,42 @@ fn next_with_selected_byte_lane(
         }
     }
     next
+}
+
+fn choose_zero_extended_low_byte_upstream_next(
+    step: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let source_value = step.get("source_value").and_then(value_as_u64)?;
+    if source_value == 0 || source_value > 0xff {
+        return None;
+    }
+    let observed_hex = step
+        .pointer("/upstream/observed_bytes_hex")
+        .and_then(|v| v.as_str())?;
+    let observed = parse_hex_bytes_cli(observed_hex).ok()?;
+    if observed.len() <= 1
+        || observed.first().copied() != Some(source_value as u8)
+        || observed[1..].iter().any(|byte| *byte != 0)
+    {
+        return None;
+    }
+    upstream_byte_nexts_from_step(step)
+        .into_iter()
+        .find(|next| {
+            next.get("offset").and_then(|v| v.as_u64()) == Some(0)
+                && upstream_next_byte_value(next) == Some(source_value as u8)
+        })
+        .map(|next| next_with_selected_byte_lane(next, 0))
+}
+
+fn upstream_next_byte_value(next: &serde_json::Value) -> Option<u8> {
+    let value = next.get("src_value").and_then(value_as_u64)?;
+    let lane = next
+        .get("source_byte_offset")
+        .and_then(|v| v.as_u64())
+        .map(|lane| lane as usize)
+        .unwrap_or(0);
+    byte_at_lane(value, lane)
 }
 
 #[cfg(test)]
@@ -14922,10 +14971,10 @@ mod tests {
         byte_lane_from_writer_map_entry, byte_lineage_compact_summary, byte_lineage_summary,
         byte_writer_map_output, byte_writer_map_summary, byte_writer_vm_source_ranges,
         byte_writers_from_range_writes, call_return_def_from_previous_call, choose_frontier_next,
-        choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
-        compact_gap_call_candidates, compact_lineage_formula, dedupe_byte_nexts,
-        def_entries_from_asm, def_source_contains_reg, def_source_regs_from_asm,
-        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        choose_frontier_next_for_lane, choose_laned_upstream_next,
+        choose_zero_extended_low_byte_upstream_next, classify_vm_asm, compact_gap_call_candidates,
+        compact_lineage_formula, dedupe_byte_nexts, def_entries_from_asm, def_source_contains_reg,
+        def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
         gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
         mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
@@ -17614,6 +17663,90 @@ mod tests {
         assert_eq!(lane3["selected_byte_lane"], serde_json::json!(3));
         assert_eq!(lane3["source_byte_offset"], serde_json::json!(3));
         assert_eq!(lane3["addr"], serde_json::json!("0x4003"));
+    }
+
+    #[test]
+    fn chooses_loaded_byte_offset_when_writer_source_lane_differs() {
+        let lane0_write = serde_json::json!({
+            "idx": 120,
+            "pc": "0x1004",
+            "rel": "0x4",
+            "func": "sub_pack",
+            "asm": "strb w1, [x2]",
+            "dst_addr": "0x4000",
+            "size": 1,
+            "src_reg": "x1",
+            "src_value": "0x11",
+            "byte0": 0x11
+        });
+        let lane3_write = serde_json::json!({
+            "idx": 123,
+            "pc": "0x1010",
+            "rel": "0x10",
+            "func": "sub_pack",
+            "asm": "strb w2, [x2, #3]",
+            "dst_addr": "0x4003",
+            "size": 1,
+            "src_reg": "x2",
+            "src_value": "0x22",
+            "byte0": 0x22
+        });
+        let byte_writers = byte_writers_from_range_writes(0x4000, 4, &[lane0_write, lane3_write]);
+        let step = serde_json::json!({
+            "upstream": {
+                "byte_nexts": dedupe_byte_nexts(&byte_writers)
+            }
+        });
+        let lane3 = choose_laned_upstream_next(&step, 3).unwrap();
+        assert_eq!(lane3["idx"], serde_json::json!(123));
+        assert_eq!(lane3["addr"], serde_json::json!("0x4003"));
+        assert_eq!(lane3["selected_byte_lane"], serde_json::json!(3));
+        assert_eq!(lane3["source_byte_offset"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn infers_zero_extended_low_byte_upstream_next() {
+        let step = serde_json::json!({
+            "source_value": "0x1",
+            "upstream": {
+                "observed_bytes_hex": "01000000",
+                "next": {
+                    "idx": 123,
+                    "reg": "x19",
+                    "src_value": "0x0"
+                },
+                "byte_nexts": [
+                    {
+                        "addr": "0x4000",
+                        "idx": 120,
+                        "offset": 0,
+                        "offsets": [0],
+                        "reason": "memory_load_byte",
+                        "reg": "x20",
+                        "source_byte_offset": 0,
+                        "source_byte_offsets": [0],
+                        "src_value": "0x1"
+                    },
+                    {
+                        "addr": "0x4003",
+                        "idx": 123,
+                        "offset": 3,
+                        "offsets": [3],
+                        "reason": "memory_load_byte",
+                        "reg": "x19",
+                        "source_byte_offset": 0,
+                        "source_byte_offsets": [0],
+                        "src_value": "0x0"
+                    }
+                ]
+            }
+        });
+        let next = choose_zero_extended_low_byte_upstream_next(&step).unwrap();
+        assert_eq!(next["idx"], serde_json::json!(120));
+        assert_eq!(next["reg"], serde_json::json!("x20"));
+        assert_eq!(next["addr"], serde_json::json!("0x4000"));
+        assert_eq!(next["selected_byte_lane"], serde_json::json!(0));
+        assert_eq!(next["source_byte_offset"], serde_json::json!(0));
     }
 
     #[test]
