@@ -1917,7 +1917,12 @@ the 52-byte scratch dump. The auto-seeded no-trust replay needs six non-user
 seed slots (`2`, `25`, `26`, `27`, `28`, `29`), and the report now records the
 corresponding `byte-lineage` proof commands.
 Running those seed proofs classifies `2`, `26`, `27`, and `29` as VM
-bytecode/immediate boundaries. Slots `25` and `28` first appeared as
+bytecode/immediate boundaries. The machine-readable simulator manifest now
+records these as `scratch_writer_bytecode_seed_expressions`: slot `2` is the
+literal `0x1`, slot `26` is a bytecode-fed bitfield/or chain ending at `0x38`,
+slot `27` is a bytecode-fed small-integer chain ending at `0x20`, and slot `29`
+is `0x37 = 0x38 + 0xffffffffffffffff`.
+Slots `25` and `28` first appeared as
 pointer-shaped scratch/base seeds with stable copy-loop values
 `0x74b68bd4c0` and `0x74b68bb9a0`; increasing the proof depth to 1000 with a
 15M lookback now reaches the same `call_return_boundary` for both:

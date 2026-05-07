@@ -3164,6 +3164,22 @@ def current_trace_model_input_manifest() -> dict:
             "used_by": "scratch_writer_replay slot25/slot28 address seeds",
         },
         {
+            "name": "scratch_writer_bytecode_seed_expressions",
+            "kind": "vm_bytecode_frontier_parameters",
+            "value": {
+                "slot2": "0x1",
+                "slot26": "0x38 via bytecode-fed bitfield/or chain",
+                "slot27": "0x20 via bytecode-fed small-integer chain",
+                "slot29": "0x37 = 0x38 + 0xffffffffffffffff",
+            },
+            "source": (
+                "effective seed byte-lineage probes for slots 2,26,27,29 all "
+                "terminate at bytecode_read_boundary"
+            ),
+            "status": "parameterized_vm_bytecode_frontier",
+            "used_by": "scratch_writer_replay non-address seed slots",
+        },
+        {
             "name": "previous_ladder_slot24",
             "kind": "vm_ladder_state_word",
             "value": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
@@ -3285,6 +3301,11 @@ def parameterized_simulation_contract() -> dict:
                 "name": "scratch_heap_buffers",
                 "kind": "symbolic_heap_allocation",
                 "source": "malloc(0x40000)-derived scratch space for replay address seeds",
+            },
+            {
+                "name": "scratch_writer_bytecode_seed_expressions",
+                "kind": "vm_bytecode_frontier_parameters",
+                "source": "bytecode-read frontier values for replay seed slots 2/26/27/29",
             },
             {
                 "name": "previous_ladder_slot24",
@@ -5117,10 +5138,10 @@ def completion_audit() -> dict:
             (
                 "Lift or parameterize the remaining VM seed semantics: "
                 "scratch-writer slot25/28 are now classified as symbolic "
-                "malloc(0x40000)-backed scratch buffers, while scratch-writer "
-                "slot26/27/29 still terminate at VM bytecode/IP boundaries and "
-                "the ladder window still carries static-table or bytecode "
-                "frontiers."
+                "malloc(0x40000)-backed scratch buffers, and scratch-writer "
+                "slot2/26/27/29 are explicit VM bytecode-frontier parameters. "
+                "The ladder and middle-lhs windows still need static-table or "
+                "bytecode source extraction before the simulator is portable."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
