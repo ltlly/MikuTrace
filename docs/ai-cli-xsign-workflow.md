@@ -522,6 +522,19 @@ or through `bswap_lhs_word_le`. Entries are emitted only when the chain also
 reaches a concrete `add32_mix` state update, so this field is suitable for
 feeding the Python simulator rather than just listing sliding XOR windows.
 
+Some four-byte windows are almost word templates but contain a zero lhs lane.
+For those, the summary uses
+`semantic_writer_map.xor_word_degenerate_templates[]` instead of promoting the
+window to `xor_word_templates[]`. A `kind = "word32_zero_lane"` row means the
+non-XOR lane is equivalent to `lhs = 0, rhs = result` under the same parity
+mask. Treat this as useful structure, not as proof of an upstream state word:
+continue with byte lineage for the zero lane or compare more samples.
+
+For selected semantic slices, `byte_equation_summary.requested_range` is local
+to the selected slice, while `semantic_global_range` preserves the absolute
+semantic tail offsets. For example `--semantic-offset 7 --semantic-count 4`
+reports `requested_range = [0,4]` and `semantic_global_range = [7,11]`.
+
 ## Backward dataflow path
 
 Trace register provenance from a writer or suspicious finalizer instruction:

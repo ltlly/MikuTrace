@@ -4270,6 +4270,12 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         .as_array()
         .map(|templates| templates.len())
         .unwrap_or(0);
+    let xor_word_degenerate_templates =
+        output_semantic_xor_word_degenerate_templates(&byte_equations);
+    let xor_word_degenerate_template_count = xor_word_degenerate_templates
+        .as_array()
+        .map(|templates| templates.len())
+        .unwrap_or(0);
     let xor_word_run_templates = output_semantic_xor_word_run_templates(&byte_equations);
     let xor_word_run_template_count = xor_word_run_templates
         .as_array()
@@ -4301,6 +4307,8 @@ fn output_semantic_writer_map_summary(value: &serde_json::Value) -> serde_json::
         "byte_equations": byte_equations,
         "xor_word_template_count": xor_word_template_count,
         "xor_word_templates": xor_word_templates,
+        "xor_word_degenerate_template_count": xor_word_degenerate_template_count,
+        "xor_word_degenerate_templates": xor_word_degenerate_templates,
         "xor_word_run_template_count": xor_word_run_template_count,
         "xor_word_run_templates": xor_word_run_templates,
         "xor_word_state_source_summary": xor_word_state_source_summary,
@@ -4358,6 +4366,7 @@ fn output_semantic_byte_equation_summary_with_context(
         _ => Vec::new(),
     };
     let requested_range = semantic_context.and_then(semantic_requested_range);
+    let semantic_global_range = semantic_context.and_then(semantic_global_requested_range);
     let missing_offsets_in_requested_range = requested_range
         .map(|(start, end)| {
             (start..end)
@@ -4398,6 +4407,12 @@ fn output_semantic_byte_equation_summary_with_context(
         },
         "missing_offsets_in_covered_range": missing_offsets,
         "requested_range": requested_range_json,
+        "requested_offset_basis": semantic_context
+            .map(semantic_requested_offset_basis)
+            .unwrap_or("local"),
+        "semantic_global_range": semantic_global_range
+            .map(|(start, end)| serde_json::json!([start, end]))
+            .unwrap_or(serde_json::Value::Null),
         "covered_count_in_requested_range": covered_count_in_requested_range,
         "missing_count_in_requested_range": missing_offsets_in_requested_range.len(),
         "missing_offsets_in_requested_range": missing_offsets_in_requested_range,
@@ -4414,10 +4429,29 @@ fn output_semantic_byte_equation_summary_with_context(
 }
 
 fn semantic_requested_range(context: &serde_json::Value) -> Option<(u64, u64)> {
+    if context.get("mode").and_then(|v| v.as_str()) == Some("selected_output_buffer_pre_encoding") {
+        let count = context.get("semantic_count").and_then(value_as_u64)?;
+        return Some((0, count));
+    }
     let start = context.get("semantic_offset").and_then(value_as_u64)?;
     let count = context.get("semantic_count").and_then(value_as_u64)?;
     let end = start.checked_add(count)?;
     Some((start, end))
+}
+
+fn semantic_global_requested_range(context: &serde_json::Value) -> Option<(u64, u64)> {
+    let start = context.get("semantic_offset").and_then(value_as_u64)?;
+    let count = context.get("semantic_count").and_then(value_as_u64)?;
+    let end = start.checked_add(count)?;
+    Some((start, end))
+}
+
+fn semantic_requested_offset_basis(context: &serde_json::Value) -> &'static str {
+    if context.get("mode").and_then(|v| v.as_str()) == Some("selected_output_buffer_pre_encoding") {
+        "selected_slice_local"
+    } else {
+        "semantic_global"
+    }
 }
 
 #[derive(Debug, Default)]
@@ -4701,7 +4735,7 @@ fn semantic_xor_rhs_offset_pattern(equations: &[CompactByteEquation]) -> serde_j
     if even.len() == 1 && odd.len() == 1 {
         serde_json::json!({
             "kind": "offset_parity_mask",
-            "formula": "xor rhs = even_byte when semantic offset is even, odd_byte when semantic offset is odd",
+            "formula": "xor rhs = even_byte when equation offset is even, odd_byte when equation offset is odd",
             "even_byte": format!("{:#x}", even[0]),
             "odd_byte": format!("{:#x}", odd[0]),
             "matched_offsets": xor_items.len(),
@@ -4898,6 +4932,26 @@ fn output_semantic_xor_word_templates(equations: &serde_json::Value) -> serde_js
     serde_json::Value::Array(templates)
 }
 
+fn output_semantic_xor_word_degenerate_templates(
+    equations: &serde_json::Value,
+) -> serde_json::Value {
+    let mut parsed = equations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(compact_byte_equation)
+        .collect::<Vec<_>>();
+    parsed.sort_by_key(|item| item.offset);
+
+    let mut templates = Vec::new();
+    for window in parsed.windows(4) {
+        if let Some(template) = semantic_xor_word_zero_lane_template(window, &parsed) {
+            templates.push(template);
+        }
+    }
+    serde_json::Value::Array(templates)
+}
+
 fn output_semantic_xor_word_run_templates(equations: &serde_json::Value) -> serde_json::Value {
     let mut parsed = equations
         .as_array()
@@ -5000,6 +5054,94 @@ fn semantic_xor_word_template(
         "result_bytes_hex": bytes_to_hex(&result),
         "result_word_le": format!("0x{:08x}", le_word_u32(&result)),
     }))
+}
+
+fn semantic_xor_word_zero_lane_template(
+    window: &[CompactByteEquation],
+    equations: &[CompactByteEquation],
+) -> Option<serde_json::Value> {
+    let start = window.first()?.offset;
+    if !window
+        .iter()
+        .enumerate()
+        .all(|(idx, item)| item.offset == start + idx as u64)
+    {
+        return None;
+    }
+
+    let mut lhs = Vec::new();
+    let mut rhs = Vec::new();
+    let mut result = Vec::new();
+    let mut zero_lhs_offsets = Vec::new();
+    let mut lane_kinds = Vec::new();
+    for item in window {
+        let out = (item.result & 0xff) as u8;
+        if item.kind == "xor_mix" {
+            let l = (item.lhs? & 0xff) as u8;
+            let r = (item.rhs? & 0xff) as u8;
+            if out != (l ^ r) {
+                return None;
+            }
+            lhs.push(l);
+            rhs.push(r);
+            result.push(out);
+            lane_kinds.push(serde_json::json!({
+                "offset": item.offset,
+                "kind": "xor_mix",
+            }));
+            continue;
+        }
+
+        let r = xor_rhs_byte_for_offset(equations, item.offset)?;
+        if out != r {
+            return None;
+        }
+        lhs.push(0);
+        rhs.push(r);
+        result.push(out);
+        zero_lhs_offsets.push(item.offset);
+        lane_kinds.push(serde_json::json!({
+            "offset": item.offset,
+            "kind": item.kind,
+            "equivalent": "xor_mix(lhs=0, rhs=result)",
+        }));
+    }
+    if zero_lhs_offsets.is_empty() || zero_lhs_offsets.len() == window.len() {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "kind": "word32_zero_lane",
+        "semantic_range": [start, start + 4],
+        "formula": "semantic[start..start+4] = word32_le(lhs_word_le) xor rhs_bytes, with zero-lhs lanes inferred from the parity mask",
+        "lhs_bytes_hex": bytes_to_hex(&lhs),
+        "lhs_word_le": format!("0x{:08x}", le_word_u32(&lhs)),
+        "rhs_bytes_hex": bytes_to_hex(&rhs),
+        "rhs_word_le": format!("0x{:08x}", le_word_u32(&rhs)),
+        "result_bytes_hex": bytes_to_hex(&result),
+        "result_word_le": format!("0x{:08x}", le_word_u32(&result)),
+        "zero_lhs_offsets": zero_lhs_offsets,
+        "lane_kinds": lane_kinds,
+        "confidence": "equivalent_xor_with_zero_lhs_from_parity_mask",
+    }))
+}
+
+fn xor_rhs_byte_for_offset(equations: &[CompactByteEquation], offset: u64) -> Option<u8> {
+    let mut values = Vec::new();
+    for item in equations.iter().filter(|item| item.kind == "xor_mix") {
+        if item.offset % 2 != offset % 2 {
+            continue;
+        }
+        let rhs = (item.rhs? & 0xff) as u8;
+        if !values.contains(&rhs) {
+            values.push(rhs);
+        }
+    }
+    if values.len() == 1 {
+        values.first().copied()
+    } else {
+        None
+    }
 }
 
 fn equation_offset_for_byte(
@@ -14567,7 +14709,8 @@ mod tests {
         mem_addr_from_asm, mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
-        output_semantic_byte_equation_summary, output_semantic_xor_word_run_templates,
+        output_semantic_byte_equation_summary, output_semantic_byte_equation_summary_with_context,
+        output_semantic_xor_word_degenerate_templates, output_semantic_xor_word_run_templates,
         output_semantic_xor_word_state_source_summary, output_semantic_xor_word_state_sources,
         output_semantic_xor_word_templates, parse_nm_symbol_line, recognize_alu_semantic,
         recognized_backchain_pattern_summary, recognized_backchain_patterns, record_reg_u64,
@@ -15733,6 +15876,111 @@ mod tests {
             run_templates[0]["lhs_word_le"],
             serde_json::json!("0xd84ab467")
         );
+    }
+
+    #[test]
+    fn summarizes_selected_semantic_slice_coverage_with_local_offsets() {
+        let equations = serde_json::json!([
+            {
+                "offset": 0,
+                "kind": "xor_mix",
+                "lhs": "0x78",
+                "rhs": "0x62",
+                "result": "0x1a"
+            },
+            {
+                "offset": 1,
+                "kind": "xor_mix",
+                "lhs": "0x3e",
+                "rhs": "0x61",
+                "result": "0x5f"
+            },
+            {
+                "offset": 2,
+                "kind": "xor_mix",
+                "lhs": "0x78",
+                "rhs": "0x62",
+                "result": "0x1a"
+            },
+            {
+                "offset": 3,
+                "kind": "xor_mix",
+                "lhs": "0x6f",
+                "rhs": "0x61",
+                "result": "0x0e"
+            }
+        ]);
+        let context = serde_json::json!({
+            "mode": "selected_output_buffer_pre_encoding",
+            "semantic_offset": 7,
+            "semantic_count": 4
+        });
+
+        let summary =
+            output_semantic_byte_equation_summary_with_context(&equations, Some(&context));
+        assert_eq!(summary["requested_range"], serde_json::json!([0, 4]));
+        assert_eq!(
+            summary["requested_offset_basis"],
+            serde_json::json!("selected_slice_local")
+        );
+        assert_eq!(summary["semantic_global_range"], serde_json::json!([7, 11]));
+        assert_eq!(
+            summary["covered_count_in_requested_range"],
+            serde_json::json!(4)
+        );
+        assert_eq!(
+            summary["requested_coverage_status"],
+            serde_json::json!("complete_in_requested_range")
+        );
+        assert_eq!(
+            summary["xor_lhs_word_chunks"][0]["semantic_range"],
+            serde_json::json!([0, 4])
+        );
+    }
+
+    #[test]
+    fn summarizes_degenerate_xor_word_zero_lanes() {
+        let equations = serde_json::json!([
+            {
+                "offset": 0,
+                "kind": "xor_mix",
+                "lhs": "0x87",
+                "rhs": "0x95",
+                "result": "0x12"
+            },
+            {
+                "offset": 1,
+                "kind": "xor_mix",
+                "lhs": "0x33",
+                "rhs": "0xc5",
+                "result": "0xf6"
+            },
+            {
+                "offset": 2,
+                "kind": "mod255_low_byte",
+                "output_byte": "0x95",
+                "result": "0x95"
+            },
+            {
+                "offset": 3,
+                "kind": "xor_mix",
+                "lhs": "0xea",
+                "rhs": "0xc5",
+                "result": "0x2f"
+            }
+        ]);
+
+        let templates = output_semantic_xor_word_degenerate_templates(&equations);
+        let first = templates.as_array().unwrap().first().unwrap();
+        assert_eq!(first["kind"], serde_json::json!("word32_zero_lane"));
+        assert_eq!(first["semantic_range"], serde_json::json!([0, 4]));
+        assert_eq!(first["lhs_bytes_hex"], serde_json::json!("873300ea"));
+        assert_eq!(first["rhs_bytes_hex"], serde_json::json!("95c595c5"));
+        assert_eq!(first["result_bytes_hex"], serde_json::json!("12f6952f"));
+        assert_eq!(first["zero_lhs_offsets"], serde_json::json!([2]));
+
+        let full_templates = output_semantic_xor_word_templates(&equations);
+        assert!(full_templates.as_array().unwrap().is_empty());
     }
 
     #[test]

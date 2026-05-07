@@ -1329,8 +1329,8 @@ all available samples. The second xor-word formula for semantic offsets
 `7..10` is now trace-proven for four diff samples through the same
 `add32_mix -> lsr -> xor_word` chain. It is intentionally kept as partial
 coverage because `diff_run1_call_005` degenerates at offset `9`: the inferred
-lhs byte is `0x00`, so the CLI reports a partial XOR run plus a mask byte
-instead of inventing a 32-bit word template. The remaining 53 semantic bytes are
+lhs byte is `0x00`, so the CLI reports a `word32_zero_lane` template instead of
+inventing a full 32-bit state-source proof. The remaining 53 semantic bytes are
 still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
@@ -1623,10 +1623,11 @@ call_004  word 0xbb1885b7 -> low32(0xd4436143 + 0xe6d52474)
 
 For `call_005`, `tail[7:11] = 12 f6 95 2f` and the parity mask is
 `95 c5 95 c5`, so the inferred lhs is `87 33 00 ea`. Because one lane is zero,
-the CLI correctly keeps this as a degenerate non-word-template case. This is a
-useful negative example for the VM CLI design: summaries should report missing
-or degenerate lanes rather than force every four-byte window into a hash-state
-shape.
+the CLI now emits `xor_word_degenerate_templates[]` with
+`kind = word32_zero_lane`, `lhs_word_le = 0xea003387`, and
+`zero_lhs_offsets = [2]` in the selected local slice. This is a useful negative
+example for the VM CLI design: summaries should report missing or degenerate
+lanes rather than force every four-byte window into a hash-state shape.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:

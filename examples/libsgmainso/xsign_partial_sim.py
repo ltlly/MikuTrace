@@ -22,7 +22,7 @@ pieces that have been proven from local libsgmainso traces:
   (0x7a), but the producing helper call is not lifted yet.
 - the second sha1-like XOR state word at semantic offsets 7..10 is trace-proven
   for four diff samples; call_005 is explicitly tracked as a degenerate
-  non-word-template case with one zero lhs byte.
+  zero-lane word case with one zero lhs byte.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -456,11 +456,11 @@ TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE = {
         "rhs_hex": "95c595c5",
         "lhs_hex": "873300ea",
         "zero_lhs_offsets": [9],
-        "cli_status": "no_xor_word_templates",
+        "cli_status": "word32_zero_lane",
         "interpretation": (
             "The same parity mask is present, but one lhs byte is zero, so the "
-            "CLI correctly does not summarize this as a full 32-bit xor-word "
-            "state source."
+            "CLI reports a degenerate xor-word template instead of treating it "
+            "as a full 32-bit state source."
         ),
     }
 }
@@ -3252,7 +3252,7 @@ def completion_audit() -> dict:
                 "requirement": "Python formulas explain multiple libsgmainso trace samples.",
                 "evidence": [
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
-                    "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate non-word-template case",
+                    "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate word32_zero_lane case",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3855,8 +3855,8 @@ def main() -> None:
                     "The same sha1-like state update pattern explains four diff "
                     "samples. diff_run1_call_005 is intentionally kept outside "
                     "the full-word set because its offset 9 lhs byte is zero, "
-                    "so the CLI summarizes it as a partial xor run plus a mask "
-                    "byte rather than inventing a word template."
+                    "so the CLI summarizes it as word32_zero_lane rather than "
+                    "inventing a full state-source proof."
                 ),
             },
             "call_001_state_word_source": {
