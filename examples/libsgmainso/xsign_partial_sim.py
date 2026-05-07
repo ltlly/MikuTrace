@@ -2191,7 +2191,7 @@ CALL001_XOR_LHS_RUNS = [
     },
     {
         "range": [16, 59],
-        "source": "stat_mtim_le_plus_mixed_suffix",
+        "source": "scratch_writer_replay",
     },
     {
         "range": [61, 65],
@@ -2425,7 +2425,7 @@ def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
 def call001_middle_lhs_source_manifest() -> dict:
     semantic_start = 16
     scratch_start = 3
-    middle = call001_lhs_run_bytes({"source": "stat_mtim_le_plus_mixed_suffix"})
+    middle = call001_lhs_run_bytes({"source": "scratch_writer_replay"})
     scratch_end = scratch_start + len(middle)
     segments = [
         {
@@ -2893,7 +2893,8 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
+            "prove or parameterize scratch_writer_replay_suffix_words_le static-table/bytecode provenance",
+            "prove or parameterize previous_ladder_slot24 VM ladder state source",
             "prove or parameterize semantic offset 62 static table seed LCG source",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
         ],
@@ -4135,7 +4136,7 @@ def call001_lhs_run_bytes(run: dict) -> bytes:
 def lhs_run_bytes_from_parameters(run: dict, params: dict) -> bytes:
     if "lhs_hex" in run:
         return bytes.fromhex(run["lhs_hex"])
-    if run.get("source") == "stat_mtim_le_plus_mixed_suffix":
+    if run.get("source") in {"scratch_writer_replay", "stat_mtim_le_plus_mixed_suffix"}:
         return middle_lhs_bytes_from_scratch_writer_parameters(params)
     if run.get("source") == "getpid_lcg_tail_word":
         return scratch_tail_lhs_bytes_from_pid(
