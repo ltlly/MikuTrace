@@ -1319,7 +1319,7 @@ model no longer depends on observed trace bytes.
 available samples  7
 covered samples    5
 covered offsets    0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
-partial offsets    7,8,9,10,11,12,61,62,63,64
+partial offsets    7,8,9,10,11,12,16,17,18,19,20,61,62,63,64
 all_match          true
 ```
 
@@ -1645,6 +1645,21 @@ small VM/call counter byte, observed through shifts such as `0x5b2 >> 8 = 0x05`.
 This is partial coverage: the formula is cross-sample, but the portable source
 of that counter still needs to be proven before these offsets can be counted as
 strongly covered.
+
+The first five bytes of the large middle lhs run, `semantic[16:21]`, are stable
+across all current samples:
+
+```text
+lhs[16:21] = fbe9f26979
+formula    = scratch[3:8]
+scratch    = u32(stat('/').st_mtim.tv_sec << 24)
+          || u32((stat('/').st_mtim.tv_sec >> 8) | (ladder_low8 << 24))
+```
+
+For `call_001`, `stat('/').st_mtim.tv_sec = 0x69f2e9fb` and
+`ladder_low8 = 0x79`, giving `fbe9f26979`. This is useful partial coverage
+because the stat input is now an explicit parameter, but the ladder low byte
+still needs source proof before the prefix can be treated as portable.
 
 The tail word at `semantic[61:65]` is also now cross-sample formula-covered:
 

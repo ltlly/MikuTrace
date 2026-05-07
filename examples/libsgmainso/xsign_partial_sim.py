@@ -28,6 +28,9 @@ pieces that have been proven from local libsgmainso traces:
   byte before the same parity XOR mask.
 - semantic offsets 61..64 are tracked as a multi-sample xor word whose lhs has
   fixed lanes plus one or two variable VM scratch/table bytes.
+- semantic offsets 16..20 share the trace-proven stat-mtime/laddr prefix across
+  all current samples, but one ladder byte in that prefix still needs a portable
+  source proof.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -534,6 +537,19 @@ TRACE_MULTI_SAMPLE_XOR_WORDS_61_65 = {
         "result_hex": "af6696c7",
         "rhs_hex": "95c595c5",
     },
+}
+
+TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21 = {
+    "semantic_range": [16, 21],
+    "lhs_hex": "fbe9f26979",
+    "formula": (
+        "scratch[0:4]=u32((stat_mtim << 24)); "
+        "scratch[4:8]=u32((stat_mtim >> 8) | (static_byte << 24)); "
+        "semantic_lhs_prefix=scratch[3:8]"
+    ),
+    "stat_mtim_tv_sec": CALL001_STAT_MTIM_TV_SEC,
+    "static_byte": CALL001_SCRATCH_PREFIX_STATIC_BYTE,
+    "static_byte_source": "low8(previous ladder final slot24)",
 }
 
 TRACE_MULTI_SAMPLE_MASK_FOLDS = {
@@ -2773,6 +2789,24 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[61:65] and computed.hex() == item["result_hex"],
             }
         )
+    tail_16_21 = []
+    scratch_prefix = TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21
+    scratch_lhs = bytes.fromhex(scratch_prefix["lhs_hex"])
+    for name, tail in sample_tails.items():
+        start, end = scratch_prefix["semantic_range"]
+        rhs = bytes([tail[1] if offset % 2 == 1 else tail[2] for offset in range(start, end)])
+        computed = bytes(xor_mix(a, b) for a, b in zip(scratch_lhs, rhs))
+        tail_16_21.append(
+            {
+                "sample": name,
+                "semantic_range": scratch_prefix["semantic_range"],
+                "lhs_hex": scratch_lhs.hex(),
+                "rhs_hex": rhs.hex(),
+                "computed_hex": computed.hex(),
+                "expected_hex": tail[start:end].hex(),
+                "matches": computed == tail[start:end],
+            }
+        )
     mask_fold_rows = []
     for name, item in TRACE_MULTI_SAMPLE_MASK_FOLDS.items():
         tail = sample_tails[name]
@@ -2857,9 +2891,30 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "kind": "vm_scratch_lhs_table_tail_word",
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_61_65),
             },
+            {
+                "semantic_range": [16, 21],
+                "kind": "stat_mtim_ladder_prefix",
+                "samples": sorted(sample_tails),
+            },
         ],
         "covered_semantic_offsets": covered_offsets,
-        "partially_covered_semantic_offsets": [7, 8, 9, 10, 11, 12, 61, 62, 63, 64],
+        "partially_covered_semantic_offsets": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            16,
+            17,
+            18,
+            19,
+            20,
+            61,
+            62,
+            63,
+            64,
+        ],
         "covered_byte_count": len(covered_offsets),
         "tail_3_7": tail_3_7,
         "tail_7_11": tail_7_11,
@@ -2871,6 +2926,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "tail_11_13_all_samples_match": all(row["matches"] for row in tail_11_13),
         "tail_61_65": tail_61_65,
         "tail_61_65_all_samples_match": all(row["matches"] for row in tail_61_65),
+        "tail_16_21": tail_16_21,
+        "tail_16_21_all_samples_match": all(row["matches"] for row in tail_16_21),
         "mask_fold_1_3": mask_fold_rows,
         "static_byte0": byte0_rows,
         "static_byte0_all_samples_match": all(row["matches"] for row in byte0_rows),
@@ -2881,6 +2938,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             for row in all_rows
             + tail_7_11
             + tail_11_13
+            + tail_16_21
             + tail_61_65
             + repeated_mask_rows
             + byte0_rows
@@ -2892,8 +2950,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "where offset 9 is the parity mask itself because the inferred lhs "
             "byte is zero. Semantic offsets 11..12 match a state-high byte plus "
             "a small VM/call counter byte across the diff samples. These ranges "
-            "and semantic offsets 61..64 are not promoted to strong coverage "
-            "until their portable parameter sources are proven."
+            "Semantic offsets 16..20 match the stat-mtime/ladder prefix across "
+            "all current samples. Semantic offsets 61..64 also match a VM "
+            "scratch/table tail word. These ranges are not promoted to strong "
+            "coverage until their portable parameter sources are proven."
         ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
@@ -3392,6 +3452,7 @@ def completion_audit() -> dict:
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
                     "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate word32_zero_lane case",
                     "semantic offsets 11..12 match state-high-byte plus VM/call-counter formulas across five diff samples",
+                    "semantic offsets 16..20 match the stat-mtime/ladder prefix across all current samples",
                     "semantic offsets 61..64 match a VM scratch/table tail xor-word formula across five diff samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
@@ -3415,7 +3476,7 @@ def completion_audit() -> dict:
             ),
             (
                 "Expand multi-sample formula coverage beyond the 15 strong "
-                "semantic offsets and 10 partial offsets, then prove how "
+                "semantic offsets and 15 partial offsets, then prove how "
                 "LCG/time-derived state feeds every payload byte."
             ),
         ],
