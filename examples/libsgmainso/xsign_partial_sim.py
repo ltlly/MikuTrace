@@ -27,8 +27,10 @@ pieces that have been proven from local libsgmainso traces:
   diff samples it matches a state-high byte before the same parity XOR mask.
   Semantic offset 12 is now covered as low8(meta.callIdx) xor mask.
 - semantic offset 61 is now cross-sample covered as low8(meta.pid) xor mask;
-  offset 63 is covered as bytecode literal 0x03 xor mask; offsets 62 and 64
-  remain a multi-sample xor word whose lhs has variable VM scratch/table lanes.
+  offset 63 is covered as bytecode literal 0x03 xor mask; offset 62 has a
+  traced table-seed LCG byte formula for the proven subset, but the table seed
+  source is still not portable; offset 64 remains a variable VM scratch/table
+  lane.
 - semantic offsets 16..20 share the trace-proven stat-mtime/laddr prefix across
   all current samples; offsets 16..19 are the stat-mtime-derived bytes, while
   the ladder byte at offset 20 still needs a portable source proof.
@@ -581,6 +583,33 @@ TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_63 = {
         "value": 0x03,
         "bytecode_read_idx": 6823507,
         "bytecode_addr": "0x74fbf74c78",
+    },
+}
+
+TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS = {
+    "diff_run1_truncated_call_006": {
+        "seed": 0x15DB0BA3,
+        "seed_addr": "0x74fbf31b80",
+        "seed_source": "memory_not_found_boundary",
+        "boundary_bytes_hex": "a30bdb1500000000",
+    },
+    "diff_run1_call_003": {
+        "seed": 0x00F9FECC,
+        "seed_addr": "0x74fbf31b80",
+        "seed_source": "memory_not_found_boundary",
+        "boundary_bytes_hex": "ccfef90000000000",
+    },
+    "diff_run1_call_004": {
+        "seed": 0x20F171A1,
+        "seed_addr": "0x74fbf31b80",
+        "seed_source": "memory_not_found_boundary",
+        "boundary_bytes_hex": "a171f12000000000",
+    },
+    "diff_run1_call_005": {
+        "seed": 0x4F385B7E,
+        "seed_addr": "0x74fbf31b80",
+        "seed_source": "memory_not_found_boundary",
+        "boundary_bytes_hex": "7e5b384f00000000",
     },
 }
 
@@ -2926,6 +2955,31 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[63],
             }
         )
+    tail_62_table_seed_lcg = []
+    for name, item in TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS.items():
+        tail = sample_tails[name]
+        seed = item["seed"]
+        mixed = ((seed * 0xDD08CEE9) + 0x61F5) & 0x7FFFFFFF
+        lhs = mixed & 0xFF
+        rhs = tail[2]
+        computed = xor_mix(lhs, rhs)
+        tail_62_table_seed_lcg.append(
+            {
+                "sample": name,
+                "semantic_offset": 62,
+                "seed": f"{seed:#x}",
+                "seed_addr": item["seed_addr"],
+                "seed_source": item["seed_source"],
+                "boundary_bytes_hex": item["boundary_bytes_hex"],
+                "formula": "low8(((seed * 0xdd08cee9) + 0x61f5) & 0x7fffffff)",
+                "mixed": f"{mixed:#x}",
+                "lhs": f"{lhs:#x}",
+                "rhs": f"{rhs:#x}",
+                "computed": f"{computed:#x}",
+                "expected": f"{tail[62]:#x}",
+                "matches": computed == tail[62],
+            }
+        )
     tail_16_21 = []
     scratch_prefix = TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21
     scratch_lhs = bytes.fromhex(scratch_prefix["lhs_hex"])
@@ -3064,7 +3118,16 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13),
             },
             {
-                "semantic_offsets": [62, 64],
+                "semantic_offsets": [62],
+                "kind": "static_table_seed_lcg_low_byte",
+                "samples": sorted(TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS),
+                "caution": (
+                    "the byte formula is trace-proven for this subset, but the "
+                    "seed is a memory-not-found/preinitialized table boundary"
+                ),
+            },
+            {
+                "semantic_offsets": [64],
                 "kind": "vm_scratch_lhs_table_tail_word",
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_61_65),
             },
@@ -3108,6 +3171,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "tail_63_bytecode_literal_all_samples_match": all(
             row["matches"] for row in tail_63_bytecode_literal
         ),
+        "tail_62_table_seed_lcg": tail_62_table_seed_lcg,
+        "tail_62_table_seed_lcg_all_proven_samples_match": all(
+            row["matches"] for row in tail_62_table_seed_lcg
+        ),
         "tail_16_21": tail_16_21,
         "tail_16_21_all_samples_match": all(row["matches"] for row in tail_16_21),
         "tail_16_20_stat_mtim": tail_16_20_stat_mtim,
@@ -3139,6 +3206,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             + tail_61_65
             + tail_61_pid_lane
             + tail_63_bytecode_literal
+            + tail_62_table_seed_lcg
             + repeated_mask_rows
             + byte0_rows
         )
@@ -3157,9 +3225,12 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "Semantic offset 63 now matches a bytecode literal 0x03 xor "
             "parity_mask across diff samples. Semantic offsets 16..19 now "
             "match stat_mtim-derived little-endian bytes xor parity masks. "
-            "Semantic offsets 20..58 plus 62 and 64 still match VM "
-            "scratch/table or stable middle lhs bytes but remain partial "
-            "until their portable parameter sources are proven."
+            "Semantic offset 62 now has a traced table-seed LCG byte formula "
+            "for the proven subset, but remains partial because the seed is a "
+            "memory-not-found/preinitialized table boundary. Semantic offsets "
+            "20..58 plus 62 and 64 still match VM scratch/table or stable "
+            "middle lhs bytes but remain partial until their portable "
+            "parameter sources are proven."
         ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "

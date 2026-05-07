@@ -1746,6 +1746,28 @@ literal. This keeps only `62` and `64` in partial coverage for the tail word:
 the XOR word shape is proven, but the variable table/counter lanes still need
 source proof.
 
+`semantic[62]` is now refined further for the subset whose lineage reached the
+same table boundary. In those samples the left-hand byte is:
+
+```text
+lhs62 = low8(((static_table_seed * 0xdd08cee9) + 0x61f5) & 0x7fffffff)
+tail[62] = lhs62 ^ parity_mask_even
+```
+
+The observed seeds all load from the same no-writer/preinitialized boundary at
+`0x74fbf31b80`:
+
+```text
+call_006  seed 0x15db0ba3 -> lhs 0x50 -> 0xf1 with mask 0xa1
+call_003  seed 0x00f9fecc -> lhs 0xa1 -> 0x18 with mask 0xb9
+call_004  seed 0x20f171a1 -> lhs 0x7e -> 0x2a with mask 0x54
+call_005  seed 0x4f385b7e -> lhs 0xa3 -> 0x66 with mask 0xc5
+```
+
+This is better than an opaque scratch byte, but it is still partial coverage:
+the portable Python model must either extract/parameterize that table seed or
+prove the earlier initializer that writes it.
+
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
 
