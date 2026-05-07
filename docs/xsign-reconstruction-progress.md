@@ -1768,6 +1768,33 @@ This is better than an opaque scratch byte, but it is still partial coverage:
 the portable Python model must either extract/parameterize that table seed or
 prove the earlier initializer that writes it.
 
+`semantic[64]` is now also narrowed. Four samples reduce to a bytecode literal
+lane:
+
+```text
+tail[64] = 0x01 ^ parity_mask_even
+
+call_006  bytecode 0x01 @ 0x74fbf64d88 -> 0xa0 with mask 0xa1
+call_001  bytecode 0x01 @ 0x74fbf7b3b8 -> 0x60 with mask 0x61
+call_003  bytecode 0x01 @ 0x74fbf64d88 -> 0xb8 with mask 0xb9
+call_004  bytecode 0x01 @ 0x74fbf64d88 -> 0x55 with mask 0x54
+```
+
+`call_005` is the exception:
+
+```text
+lhs64 = 0x02 = bytecode_literal_0x1 + table_byte_0x1
+tail[64] = 0x02 ^ 0xc5 = 0xc7
+table byte read: 0x75664d72a4 observed 01000000, no traced writer
+table index: bytecode literal 0x04 @ 0x74fbf675b8
+```
+
+The new `vm-backchain` lane fix was needed here: without byte-lane inference,
+`ldr w19` over `01000000` could follow the last byte writer for the zero high
+byte instead of offset `0`, hiding the bytecode-literal path. This is still
+partial coverage because the `call_005` table byte has no portable source
+proof.
+
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
 

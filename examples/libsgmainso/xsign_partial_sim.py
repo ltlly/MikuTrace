@@ -29,8 +29,8 @@ pieces that have been proven from local libsgmainso traces:
 - semantic offset 61 is now cross-sample covered as low8(meta.pid) xor mask;
   offset 63 is covered as bytecode literal 0x03 xor mask; offset 62 has a
   traced table-seed LCG byte formula for the proven subset, but the table seed
-  source is still not portable; offset 64 remains a variable VM scratch/table
-  lane.
+  source is still not portable; offset 64 is bytecode literal 0x01 for four
+  samples, with one table-add exception still not portable.
 - semantic offsets 16..20 share the trace-proven stat-mtime/laddr prefix across
   all current samples; offsets 16..19 are the stat-mtime-derived bytes, while
   the ladder byte at offset 20 still needs a portable source proof.
@@ -584,6 +584,46 @@ TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_63 = {
         "bytecode_read_idx": 6823507,
         "bytecode_addr": "0x74fbf74c78",
     },
+}
+
+TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_64 = {
+    "diff_run1_truncated_call_006": {
+        "value": 0x01,
+        "bytecode_read_idx": 6876610,
+        "bytecode_addr": "0x74fbf64d88",
+    },
+    "diff_run1_call_001": {
+        "value": 0x01,
+        "bytecode_read_idx": 14692039,
+        "bytecode_addr": "0x74fbf7b3b8",
+    },
+    "diff_run1_call_003": {
+        "value": 0x01,
+        "bytecode_read_idx": 6800799,
+        "bytecode_addr": "0x74fbf64d88",
+    },
+    "diff_run1_call_004": {
+        "value": 0x01,
+        "bytecode_read_idx": 6781129,
+        "bytecode_addr": "0x74fbf64d88",
+    },
+}
+
+TRACE_MULTI_SAMPLE_TAIL64_CALL005_EXCEPTION = {
+    "sample": "diff_run1_call_005",
+    "semantic_offset": 64,
+    "lhs": 0x02,
+    "lhs_formula": "bytecode_literal_0x1 + table_byte_0x1",
+    "bytecode_read_idx": 6819717,
+    "bytecode_addr": "0x74fbf675c8",
+    "bytecode_value": 0x01,
+    "table_read_idx": 6819709,
+    "table_read_addr": "0x75664d72a4",
+    "table_index_bytecode_read_idx": 6819706,
+    "table_index_bytecode_addr": "0x74fbf675b8",
+    "table_index_bytecode_value": 0x04,
+    "table_observed_bytes_hex": "01000000",
+    "table_source": "memory_not_found_boundary",
 }
 
 TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS = {
@@ -2955,6 +2995,38 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[63],
             }
         )
+    tail_64_bytecode_literal = []
+    for name, item in TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_64.items():
+        tail = sample_tails[name]
+        lhs = item["value"] & 0xFF
+        rhs = tail[2]
+        computed = xor_mix(lhs, rhs)
+        tail_64_bytecode_literal.append(
+            {
+                "sample": name,
+                "semantic_offset": 64,
+                "lhs": f"{lhs:#x}",
+                "rhs": f"{rhs:#x}",
+                "computed": f"{computed:#x}",
+                "expected": f"{tail[64]:#x}",
+                "bytecode_read_idx": item["bytecode_read_idx"],
+                "bytecode_addr": item["bytecode_addr"],
+                "matches": computed == tail[64],
+            }
+        )
+    call005_tail64 = TRACE_MULTI_SAMPLE_TAIL64_CALL005_EXCEPTION
+    call005_tail = sample_tails[call005_tail64["sample"]]
+    call005_tail64_computed = xor_mix(call005_tail64["lhs"], call005_tail[2])
+    tail_64_call005_exception = {
+        **call005_tail64,
+        "lhs": f"{call005_tail64['lhs']:#x}",
+        "bytecode_value": f"{call005_tail64['bytecode_value']:#x}",
+        "table_index_bytecode_value": f"{call005_tail64['table_index_bytecode_value']:#x}",
+        "rhs": f"{call005_tail[2]:#x}",
+        "computed": f"{call005_tail64_computed:#x}",
+        "expected": f"{call005_tail[64]:#x}",
+        "matches": call005_tail64_computed == call005_tail[64],
+    }
     tail_62_table_seed_lcg = []
     for name, item in TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS.items():
         tail = sample_tails[name]
@@ -3128,8 +3200,13 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             },
             {
                 "semantic_offsets": [64],
-                "kind": "vm_scratch_lhs_table_tail_word",
-                "samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_61_65),
+                "kind": "bytecode_literal_or_table_add_xor_mask",
+                "bytecode_literal_samples": sorted(TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_64),
+                "exception_sample": TRACE_MULTI_SAMPLE_TAIL64_CALL005_EXCEPTION["sample"],
+                "caution": (
+                    "four samples reduce to bytecode literal 0x01, but one "
+                    "sample adds a no-writer table byte before the parity xor"
+                ),
             },
             {
                 "semantic_range": [20, 21],
@@ -3171,6 +3248,12 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "tail_63_bytecode_literal_all_samples_match": all(
             row["matches"] for row in tail_63_bytecode_literal
         ),
+        "tail_64_bytecode_literal": tail_64_bytecode_literal,
+        "tail_64_bytecode_literal_all_proven_samples_match": all(
+            row["matches"] for row in tail_64_bytecode_literal
+        ),
+        "tail_64_call005_exception": tail_64_call005_exception,
+        "tail_64_call005_exception_matches": tail_64_call005_exception["matches"],
         "tail_62_table_seed_lcg": tail_62_table_seed_lcg,
         "tail_62_table_seed_lcg_all_proven_samples_match": all(
             row["matches"] for row in tail_62_table_seed_lcg
@@ -3206,6 +3289,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             + tail_61_65
             + tail_61_pid_lane
             + tail_63_bytecode_literal
+            + tail_64_bytecode_literal
+            + [tail_64_call005_exception]
             + tail_62_table_seed_lcg
             + repeated_mask_rows
             + byte0_rows
@@ -3228,9 +3313,12 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "Semantic offset 62 now has a traced table-seed LCG byte formula "
             "for the proven subset, but remains partial because the seed is a "
             "memory-not-found/preinitialized table boundary. Semantic offsets "
-            "20..58 plus 62 and 64 still match VM scratch/table or stable "
-            "middle lhs bytes but remain partial until their portable "
-            "parameter sources are proven."
+            "64 now reduces to bytecode literal 0x01 for four samples, while "
+            "diff_run1_call_005 uses bytecode literal 0x01 plus a no-writer "
+            "table byte 0x01 before the parity xor. Semantic offsets 20..58 "
+            "plus 62 and 64 still match VM scratch/table or stable middle lhs "
+            "bytes but remain partial until their portable parameter sources "
+            "are proven."
         ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
