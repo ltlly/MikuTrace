@@ -729,6 +729,11 @@ use `vm-backtree` when different output bytes have different writers.
 When the seed came from a byte writer map, pass that byte's
 `source_byte_offset` as `--byte-lane`; the summary will record
 `decision.kind = upstream_byte_lane` when it selected a matching memory byte.
+If no byte lane was supplied but the current register value is a non-zero byte
+zero-extended from a wider little-endian load, `vm-backchain` can infer lane
+`0` and reports `decision.kind = upstream_zero_extended_low_byte`. This avoids
+following the last traced writer for a zero high byte in loads like
+`01 00 00 00`.
 
 When following a final encoded output backward, enable frontier following:
 
