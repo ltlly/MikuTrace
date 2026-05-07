@@ -3035,7 +3035,9 @@ def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
         "stat_mtim_tv_sec": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
         "static_byte": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
         "static_byte_source_word": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
-        "static_byte_source": "low8(previous ladder final slot24)",
+        "static_byte_source": (
+            "low8(pretrace_table_seed_word ^ 0x006dcbf8 ^ 0x05203a10)"
+        ),
         "scratch_prefix_hex": scratch.hex(),
         "expected_scratch_prefix_hex": expected_scratch.hex(),
         "semantic_lhs_prefix_hex": semantic_prefix.hex(),
@@ -3059,7 +3061,7 @@ def call001_middle_lhs_source_manifest() -> dict:
             "bytes_hex": call001_scratch_lhs_prefix_bytes().hex(),
             "inputs": [
                 "stat('/').st_mtim.tv_sec",
-                "low8(previous ladder final slot24 0x95f2ec79)",
+                "low8(pretrace_table_seed_word ^ 0x006dcbf8 ^ 0x05203a10)",
             ],
         }
     ]
@@ -3635,7 +3637,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "prove or parameterize scratch_writer_replay static-table boundary for semantic offsets 20..23",
+            "keep 0x90bf1d91 as a pre-trace/non-module table parameter for semantic offsets 20..23 until an earlier trace or external table source is captured",
             "lift scratch_writer_replay VM bytecode-read frontiers for semantic offsets 24..43,45..46,56..58",
             "treat x-umt as an explicit companion input for scratch_writer_replay semantic offsets 44,47 until x-umt is reconstructed",
             "keep Android versionName as an explicit replay parameter for scratch_writer_replay semantic offsets 48..55",
