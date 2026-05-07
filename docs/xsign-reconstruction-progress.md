@@ -752,8 +752,11 @@ bytecode operand layouts plus effect shapes into portable Python VM templates.
 The Python reconstruction now uses this split directly:
 
 ```text
-middle_lhs[0:4]  = word32_le(stat("/").st_mtim.tv_sec)
-middle_lhs[4:43] = traced mixed suffix from static/text/literal VM sources
+scratch[0:4]        = word32_le(stat("/").st_mtim.tv_sec << 24)
+scratch[4:8]        = word32_le((stat_mtim >> 8) | (low8(prev_ladder_slot24) << 24))
+scratch[8:48]       = replay suffix words from the scratch-writer VM window
+scratch[48:52]      = getpid/table/literal tail word
+middle_lhs[0:43]    = scratch[3:46]
 ```
 
 The actual scratch writer window is now inspectable as role-bound VM templates:
@@ -809,9 +812,12 @@ component. That source word is the previous ladder window's final `slot24`, so
 the byte is `low8(0x95f2ec79)`. The remaining portability work is therefore the
 ladder lift, not a separate unknown static byte.
 
-`call001_lhs_run_bytes()` now uses this prefix formula for the first five lhs
-bytes before appending the remaining traced mixed suffix, while preserving the
-existing call_001 tail reconstruction match.
+`call001_lhs_run_bytes()` no longer consumes one opaque
+`middle_lhs_mixed_suffix_hex`. It builds the scratch writer dump from
+`stat_mtim_tv_sec`, `previous_ladder_slot24`, ten replay suffix words, `getpid`,
+and the bytecode-literal tail bytes, then slices `scratch[3:46]`. This still
+preserves the existing call_001 tail reconstruction match, but keeps the
+remaining trace-derived words visible as replay parameters.
 
 The simulator also emits a machine-readable `middle_lhs_source_manifest` for
 semantic range `[16,59)`:
@@ -1294,16 +1300,19 @@ base+0x6d0 = 0x66063bca  bytes ca3b066600000000
 ```
 
 The partial simulator now also emits `current_trace_model_input_manifest`.
-For `call_001`, the manifest has seven entries:
+For `call_001`, the manifest has ten entries:
 
 ```text
-raw_prefix                  fixed_literal, portable for current samples
-stat_mtim_tv_sec            external_parameter, stat('/').st_mtim.tv_sec
-app_versionName             external_parameter, Android versionName
-scratch_prefix_static_byte  vm_ladder_low_byte, low8(previous ladder slot24)
-middle_lhs_source_segments  segmented_trace_sources, complete for call_001
-mod255_input_even           vm_state_expression, trace-proven one sample
-mod255_input_odd            vm_state_expression, trace-proven one sample
+raw_prefix                           fixed_literal, portable for current samples
+stat_mtim_tv_sec                     external_parameter, stat('/').st_mtim.tv_sec
+app_versionName                      external_parameter, Android versionName
+previous_ladder_slot24               vm_ladder_state_word, not portable yet
+scratch_writer_replay_suffix_words   vm_replay_word_parameters, call_001 scoped
+middle_lhs_source_segments           segmented_trace_sources, complete for call_001
+mod255_input_even                    vm_state_expression, trace-proven one sample
+mod255_input_odd                     vm_state_expression, trace-proven one sample
+process_id                           syscall_parameter, getpid
+scratch_tail_small_bytes             bytecode_literal
 ```
 
 This is the checklist for turning the current trace replay model into a

@@ -35,7 +35,10 @@ pieces that have been proven from local libsgmainso traces:
   samples, with one table-add exception still not portable.
 - semantic offsets 16..20 share the trace-proven stat-mtime/laddr prefix across
   all current samples; offsets 16..19 are the stat-mtime-derived bytes, while
-  the ladder byte at offset 20 still needs a portable source proof.
+  the ladder byte at offset 20 still needs a portable source proof. The current
+  call_001 reconstruction now derives semantic offsets 16..58 from scratch
+  writer replay parameters instead of one opaque middle-lhs suffix, but those
+  suffix words remain trace-bound.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -113,6 +116,18 @@ CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX = (
     "79ecf29541f60193b34b3c510ccc029de339cec2953090237cbfa4f43b"
     "a0444a342344c59bc569"
 )
+CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE = [
+    0x4195F2EC,
+    0xB39301F6,
+    0x0C513C4B,
+    0xE39D02CC,
+    0x95C2CE39,
+    0x7C239030,
+    0x3BF4A4BF,
+    0x344A44A0,
+    0x9BC54423,
+    0x000069C5,
+]
 
 CALL_001_SEMANTIC_TAIL_HEX = (
     "0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460"
@@ -2346,6 +2361,35 @@ def scratch_tail_lhs_bytes_from_pid(process_id: int, small_bytes: bytes) -> byte
     return bytes([process_id & 0xFF, mixed & 0xFF]) + small_bytes
 
 
+def scratch_writer_dump_bytes_from_parameters(params: dict) -> bytes:
+    previous_ladder_slot24 = params["previous_ladder_slot24"]
+    stat_mtim_tv_sec = params["stat_mtim_tv_sec"]
+    word0 = vm_lsl(stat_mtim_tv_sec, 0x18, 32)
+    word1 = vm_orr(
+        vm_lsr(stat_mtim_tv_sec, 0x8, 32),
+        vm_lsl(previous_ladder_slot24 & 0xFF, 0x18, 32),
+        32,
+    )
+    suffix_words = [
+        int(word) & 0xFFFFFFFF
+        for word in params["scratch_writer_replay_suffix_words_le"]
+    ]
+    tail_word = int.from_bytes(
+        scratch_tail_lhs_bytes_from_pid(
+            params["process_id"],
+            bytes.fromhex(params["scratch_tail_small_bytes_hex"]),
+        ),
+        "little",
+    )
+    words = [word0, word1] + suffix_words + [tail_word]
+    return b"".join(word32_le_bytes(word) for word in words)
+
+
+def middle_lhs_bytes_from_scratch_writer_parameters(params: dict) -> bytes:
+    scratch = scratch_writer_dump_bytes_from_parameters(params)
+    return scratch[3:46]
+
+
 def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
     word0 = vm_lsl(CALL001_STAT_MTIM_TV_SEC, 0x18, 32)
     word1 = vm_orr(
@@ -2513,13 +2557,23 @@ def current_trace_model_input_manifest() -> dict:
             "used_by": "middle_lhs[49:57]",
         },
         {
-            "name": "scratch_prefix_static_byte",
-            "kind": "vm_ladder_low_byte",
-            "value": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
-            "source_word": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
-            "source": "low8(previous ladder final slot24)",
+            "name": "previous_ladder_slot24",
+            "kind": "vm_ladder_state_word",
+            "value": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
+            "derived_low_byte": f"{CALL001_SCRATCH_PREFIX_STATIC_BYTE:#x}",
+            "source": "previous ladder final slot24",
             "status": "not_portable_until_ladder_lifted",
-            "used_by": "middle_lhs[4]",
+            "used_by": "scratch writer word1 and middle_lhs[4]",
+        },
+        {
+            "name": "scratch_writer_replay_suffix_words_le",
+            "kind": "vm_replay_word_parameters",
+            "value": [
+                f"{word:#x}" for word in CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
+            ],
+            "source": "vm-ops replay-plan suffix words for scratch offsets 8..48",
+            "status": "complete_for_call001_not_fully_portable",
+            "used_by": "scratch writer replay -> semantic[21:59] xor lhs",
         },
         {
             "name": "middle_lhs_source_segments",
@@ -2606,7 +2660,19 @@ def parameterized_simulation_contract() -> dict:
             {
                 "name": "xor_lhs_runs",
                 "kind": "mixed_formula_and_segment_inputs",
-                "source": "CALL001_XOR_LHS_RUNS + middle_lhs_source_manifest",
+                "source": (
+                    "CALL001_XOR_LHS_RUNS + scratch_writer_replay parameters"
+                ),
+            },
+            {
+                "name": "previous_ladder_slot24",
+                "kind": "vm_ladder_state_word",
+                "source": "ladder auto-seeded replay final slot24",
+            },
+            {
+                "name": "scratch_writer_replay_suffix_words_le",
+                "kind": "vm_replay_word_parameters",
+                "source": "scratch writer replay suffix words for scratch offsets 8..48",
             },
             {
                 "name": "process_id",
@@ -3956,6 +4022,7 @@ def completion_audit() -> dict:
                         "matches 52/52 bytes"
                     ),
                     "simulate_call001_xsign_current_trace_model uses reconstruct_semantic_tail_from_parameters",
+                    "scratch_writer_replay_model derives semantic[16:59] from scratch replay parameters instead of one opaque lhs suffix",
                 ],
                 "status": "done_for_call001_trace_model",
             },
@@ -3980,6 +4047,7 @@ def completion_audit() -> dict:
                     "semantic offsets 62 and 64 match a VM scratch/table tail xor-word formula across five diff samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
+                    "scratch_writer_replay_suffix_words_le is explicit but still call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
                 ],
                 "status": "weakly_covered",
@@ -3995,8 +4063,9 @@ def completion_audit() -> dict:
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
-                "algorithm code with explicit table/app/device parameters, "
-                "instead of relying on trace-bound replay summaries."
+                "algorithm code with explicit table/app/device parameters; "
+                "semantic[16:59] no longer uses one opaque lhs suffix, but "
+                "the replay suffix words still need portable provenance."
             ),
             (
                 "All 68 semantic offsets now have strong or partial formula "
@@ -4046,11 +4115,7 @@ def lhs_run_bytes_from_parameters(run: dict, params: dict) -> bytes:
     if "lhs_hex" in run:
         return bytes.fromhex(run["lhs_hex"])
     if run.get("source") == "stat_mtim_le_plus_mixed_suffix":
-        prefix = scratch_lhs_prefix_bytes_from_parameters(
-            params["stat_mtim_tv_sec"],
-            params["scratch_prefix_static_byte"],
-        )
-        return prefix + bytes.fromhex(params["middle_lhs_mixed_suffix_hex"])[1:]
+        return middle_lhs_bytes_from_scratch_writer_parameters(params)
     if run.get("source") == "getpid_lcg_tail_word":
         return scratch_tail_lhs_bytes_from_pid(
             params["process_id"],
@@ -4069,8 +4134,10 @@ def call001_trace_model_parameters() -> dict:
         "mod255_odd_input": TRACE_MOD255_INPUT_LCG_CHAIN["mod255_input"],
         "xor_lhs_runs": CALL001_XOR_LHS_RUNS,
         "stat_mtim_tv_sec": CALL001_STAT_MTIM_TV_SEC,
-        "scratch_prefix_static_byte": CALL001_SCRATCH_PREFIX_STATIC_BYTE,
-        "middle_lhs_mixed_suffix_hex": CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX,
+        "previous_ladder_slot24": CALL001_SCRATCH_PREFIX_SOURCE_WORD,
+        "scratch_writer_replay_suffix_words_le": (
+            CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
+        ),
         "process_id": CALL001_GETPID_RETURN,
         "scratch_tail_small_bytes_hex": CALL001_SCRATCH_TAIL_SMALL_BYTES_HEX,
     }
@@ -4254,6 +4321,11 @@ def main() -> None:
         for name, xsign in SAMPLE_XSIGNS.items()
     }
     expected_semantic = bytes.fromhex(CALL_001_SEMANTIC_TAIL_HEX)
+    trace_model_params = call001_trace_model_parameters()
+    scratch_writer_dump = scratch_writer_dump_bytes_from_parameters(trace_model_params)
+    middle_lhs_from_scratch_replay = middle_lhs_bytes_from_scratch_writer_parameters(
+        trace_model_params
+    )
     formula_semantic = reconstruct_call001_semantic_tail_from_trace_formulas()
     formula_xsign = xsign_from_semantic_tail(
         urllib.parse.unquote(CALL_001_XSIGN)[:FIXED_PREFIX_CHARS],
@@ -4582,7 +4654,20 @@ def main() -> None:
                 ],
                 "formula_inputs": {
                     "stat_mtim_tv_sec": f"{CALL001_STAT_MTIM_TV_SEC:#x}",
-                    "middle_lhs_mixed_suffix_hex": CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX,
+                    "previous_ladder_slot24": f"{CALL001_SCRATCH_PREFIX_SOURCE_WORD:#x}",
+                    "scratch_writer_replay_suffix_words_le": [
+                        f"{word:#x}"
+                        for word in CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
+                    ],
+                    "scratch_writer_dump_hex": scratch_writer_dump.hex(),
+                    "middle_lhs_from_scratch_replay_hex": (
+                        middle_lhs_from_scratch_replay.hex()
+                    ),
+                    "legacy_middle_lhs_mixed_suffix_hex": CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX,
+                    "legacy_suffix_still_matches": (
+                        middle_lhs_from_scratch_replay[4:].hex()
+                        == CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX
+                    ),
                 },
                 "note": (
                     "This reconstructs the observed call_001 output from traced "
@@ -4833,6 +4918,34 @@ def main() -> None:
             "scratch_table_writer_chain_summary": TRACE_CALL001_SCRATCH_TABLE_WRITER_CHAIN_SUMMARY,
             "scratch_vm_opcode_validation": scratch_vm_opcode_validation,
             "scratch_lhs_prefix_formula": scratch_lhs_prefix_formula,
+            "scratch_writer_replay_model": {
+                "status": "maintained_python_replay_parameters",
+                "scratch_dump_hex": scratch_writer_dump.hex(),
+                "scratch_dump_matches_cli_summary": (
+                    scratch_writer_dump.hex()
+                    == python_vm_replay_plan_eval_summary()["scratch_writer_window"][
+                        "scratch_dump"
+                    ]["hex"]
+                ),
+                "middle_lhs_range": [16, 59],
+                "middle_lhs_hex": middle_lhs_from_scratch_replay.hex(),
+                "middle_lhs_matches_trace": (
+                    middle_lhs_from_scratch_replay
+                    == bytes.fromhex(
+                        TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN["samples"][
+                            "diff_run1_call_001"
+                        ]
+                    )
+                ),
+                "trace_bound_suffix_word_count": len(
+                    CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
+                ),
+                "caution": (
+                    "The reconstruction no longer consumes one opaque middle "
+                    "lhs suffix string, but the replay suffix words still need "
+                    "portable static-table/bytecode provenance."
+                ),
+            },
             "middle_lhs_source_manifest": middle_lhs_source_manifest,
             "vm_byte_load_boundaries": TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES,
             "call_001_word_source_classes": TRACE_CALL001_WORD_SOURCE_CLASSES,
