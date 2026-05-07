@@ -1372,20 +1372,30 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-strong offsets     0..10,12,13,14,15,16,17,18,19,59,60,61,63,65,66,67
-partial offsets    11,20..58,62,64
+strong offsets     0..19,59,60,61,63,65,66,67
+partial offsets    20..58,62,64
 strong+partial     68/68
 all_match          true
 ```
 
-This proves the current mod255 pair and the first two xor-word formulas across
-the diff samples, and it also proves the repeated odd/even mod255 mask
-positions across all available samples. The second xor-word formula for
-semantic offsets `7..10` is now source-proven for all five diff samples through
-the same `add32_mix -> lsr -> xor_word` shape. `diff_run1_call_005` still has a
-degenerate output lane at offset `9`, but lane-aware backchains show that the
-lhs byte is a real zero byte inside the same add32_mix state word. The
-remaining 42 semantic bytes are still mostly call_001-scoped.
+This proves the current mod255 pair, the first two xor-word formulas, and the
+semantic offset `11` state-high byte across the diff samples; it also proves the
+repeated odd/even mod255 mask positions across all available samples. The second
+xor-word formula for semantic offsets `7..10` is now source-proven for all five
+diff samples through the same `add32_mix -> lsr -> xor_word` shape.
+`diff_run1_call_005` still has a degenerate output lane at offset `9`, but
+lane-aware backchains show that the lhs byte is a real zero byte inside the
+same add32_mix state word. Semantic offset `11` is now source-proven as:
+
+```text
+call_006  high8(low32(0xe6a626ee + 0x8581017f)) = high8(0x6c27286d)
+call_001  high8(low32(0x2e657df9 + 0x9f97230b)) = high8(0xcdfca104)
+call_003  high8(low32(0xbc7c1c4b + 0xfbbcca1d)) = high8(0xb838e668)
+call_004  high8(low32(0xbe7455dd + 0x1cc90b7e)) = high8(0xdb3d615b)
+call_005  high8(low32(0x4ab15934 + 0x674fb44b)) = high8(0xb2010d7f)
+```
+
+The remaining 41 semantic bytes are still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
 

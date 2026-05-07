@@ -25,8 +25,9 @@ pieces that have been proven from local libsgmainso traces:
   output case, but lane-aware backchains prove its zero lane comes from the
   same add32_mix state word.
 - semantic offset 11 is no longer treated as an opaque trace literal: across
-  diff samples it matches a state-high byte before the same parity XOR mask.
-  Semantic offset 12 is now covered as low8(meta.callIdx) xor mask.
+  diff samples it has an add32_mix state-high-byte source proof before the
+  same parity XOR mask. Semantic offset 12 is now covered as low8(meta.callIdx)
+  xor mask.
 - semantic offset 61 is now cross-sample covered as low8(meta.pid) xor mask;
   offset 63 is covered as bytecode literal 0x03 xor mask; offset 62 has a
   traced table-seed LCG byte formula for the proven subset, but the table seed
@@ -493,6 +494,9 @@ TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
         "lhs_hex": "6c06",
         "state_word_be": 0x6C27286D,
         "state_add_idx": 7014068,
+        "state_add_lhs": 0xE6A626EE,
+        "state_add_rhs": 0x8581017F,
+        "state_add_result": 0x16C27286D,
         "counter_input": 0x66C,
         "counter_byte": 0x06,
     },
@@ -500,6 +504,9 @@ TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
         "lhs_hex": "cd01",
         "state_word_be": 0xCDFCA104,
         "state_add_idx": 14678197,
+        "state_add_lhs": 0x2E657DF9,
+        "state_add_rhs": 0x9F97230B,
+        "state_add_result": 0xCDFCA104,
         "counter_input": 0x1CD,
         "counter_byte": 0x01,
     },
@@ -507,6 +514,9 @@ TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
         "lhs_hex": "b803",
         "state_word_be": 0xB838E668,
         "state_add_idx": 6938257,
+        "state_add_lhs": 0xBC7C1C4B,
+        "state_add_rhs": 0xFBBCCA1D,
+        "state_add_result": 0x1B838E668,
         "counter_input": 0x3B8,
         "counter_byte": 0x03,
     },
@@ -514,6 +524,9 @@ TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
         "lhs_hex": "db04",
         "state_word_be": 0xDB3D615B,
         "state_add_idx": 6918587,
+        "state_add_lhs": 0xBE7455DD,
+        "state_add_rhs": 0x1CC90B7E,
+        "state_add_result": 0xDB3D615B,
         "counter_input": 0x4DB,
         "counter_byte": 0x04,
     },
@@ -521,6 +534,9 @@ TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
         "lhs_hex": "b205",
         "state_word_be": 0xB2010D7F,
         "state_add_idx": 6960285,
+        "state_add_lhs": 0x4AB15934,
+        "state_add_rhs": 0x674FB44B,
+        "state_add_result": 0xB2010D7F,
         "counter_input": 0x5B2,
         "counter_byte": 0x05,
     },
@@ -2810,7 +2826,6 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "resolve semantic offset 11 state-high-byte source proof",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
             "prove or parameterize semantic offset 62 static table seed LCG source",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
@@ -2923,6 +2938,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         lhs = bytes([(item["state_word_be"] >> 24) & 0xFF, item["counter_byte"] & 0xFF])
         rhs = bytes([tail[1], tail[2]])
         computed = bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
+        state_add_low32 = item["state_add_result"] & 0xFFFFFFFF
         tail_11_13.append(
             {
                 "sample": name,
@@ -2935,6 +2951,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[11:13] and lhs.hex() == item["lhs_hex"],
                 "state_word_be": f"{item['state_word_be']:#x}",
                 "state_add_idx": item["state_add_idx"],
+                "state_add_lhs": f"{item['state_add_lhs']:#x}",
+                "state_add_rhs": f"{item['state_add_rhs']:#x}",
+                "state_add_result": f"{item['state_add_result']:#x}",
+                "source_word_matches_state_add": state_add_low32 == item["state_word_be"],
                 "counter_input": f"{item['counter_input']:#x}",
                 "counter_byte": f"{item['counter_byte']:#x}",
             }
@@ -3159,6 +3179,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     covered_offsets = sorted(
         set([0, 1, 2, 3, 4, 5, 6, 12, 61, 63] + odd_repeat_offsets + even_repeat_offsets)
         | set(range(7, 11))
+        | {11}
         | set(range(16, 20))
     )
     return {
@@ -3197,11 +3218,6 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ],
         "partial_formula_ranges": [
             {
-                "semantic_offsets": [11],
-                "kind": "state_high_byte",
-                "samples": sorted(TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13),
-            },
-            {
                 "semantic_offsets": [62],
                 "kind": "static_table_seed_lcg_low_byte",
                 "samples": sorted(TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS),
@@ -3234,7 +3250,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ],
         "covered_semantic_offsets": covered_offsets,
         "partially_covered_semantic_offsets": sorted(
-            set([11, 62, 64] + middle_partial_offsets)
+            set([62, 64] + middle_partial_offsets)
         ),
         "strong_or_partial_semantic_offsets": sorted(
             set(covered_offsets + [7, 8, 9, 10, 11, 12, 61, 62, 63, 64] + middle_partial_offsets)
@@ -3247,7 +3263,9 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ),
         "tail_7_11_degenerate": tail_7_11_degenerate,
         "tail_11_13": tail_11_13,
-        "tail_11_13_all_samples_match": all(row["matches"] for row in tail_11_13),
+        "tail_11_13_all_samples_match": all(
+            row["matches"] and row["source_word_matches_state_add"] for row in tail_11_13
+        ),
         "tail_12_call_idx_lane": tail_12_call_idx_lane,
         "tail_12_call_idx_lane_all_samples_match": all(
             row["matches"] for row in tail_12_call_idx_lane
@@ -3314,8 +3332,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "degenerate output form because offset 9 is the parity mask itself, "
             "but lane-aware backchains prove the inferred lhs byte is a real "
             "zero byte inside the same add32_mix state word. Semantic offset "
-            "11 matches a state-high byte across the diff samples, while "
-            "semantic offset 12 now matches low8(meta.callIdx) "
+            "11 now has state-high-byte add32_mix source proof across the diff "
+            "samples, while semantic offset 12 now matches low8(meta.callIdx) "
             "xor the parity mask. Semantic offsets 16..20 match the "
             "stat-mtime/ladder prefix across all current samples, and the full "
             "semantic offsets 16..58 middle lhs is stable across the diff "
@@ -3952,7 +3970,7 @@ def completion_audit() -> dict:
                 "evidence": [
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
                     "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for all five diff samples; call_005 is tracked as a source-proven degenerate word32_zero_lane case",
-                    "semantic offset 11 matches state-high-byte formulas across five diff samples",
+                    "semantic offset 11 has add32_mix state-high-byte source proof across five diff samples",
                     "semantic offset 12 matches low8(meta.callIdx) xor mask across five diff samples",
                     "semantic offsets 16..19 match stat-mtime-derived bytes across all current samples",
                     "semantic offsets 20..58 are trace-observed stable across five diff samples",
@@ -3981,7 +3999,7 @@ def completion_audit() -> dict:
             ),
             (
                 "All 68 semantic offsets now have strong or partial formula "
-                "coverage, but 42 partial offsets still need portable source "
+                "coverage, but 41 partial offsets still need portable source "
                 "proof before this is a recovered algorithm."
             ),
         ],
