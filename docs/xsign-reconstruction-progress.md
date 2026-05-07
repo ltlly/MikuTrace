@@ -1835,6 +1835,10 @@ call_005  seed 0x4f385b7e -> lhs 0xa3 -> 0x66 with mask 0xc5
 This is better than an opaque scratch byte, but it is still partial coverage:
 the portable Python model must either extract/parameterize that table seed or
 prove the earlier initializer that writes it.
+The simulator now emits each proven sample's `call_dir` plus a cursor-pinned
+repo-local `seed_mem_dump_command`, so an AI agent can replay the exact CLI
+evidence without reconstructing trace paths from prose or accidentally reading
+a later table state.
 
 `semantic[64]` is now also narrowed. Four samples reduce to a bytecode literal
 lane:
@@ -1862,6 +1866,9 @@ The new `vm-backchain` lane fix was needed here: without byte-lane inference,
 byte instead of offset `0`, hiding the bytecode-literal path. This is still
 partial coverage because the `call_005` table byte has no portable source
 proof.
+The simulator now also emits repo-local replayable CLI proof commands for this lane:
+`bytecode_mem_dump_command` for the normal literal, and for the call_005
+exception `table_index_bytecode_mem_dump_command` plus `table_mem_dump_command`.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:

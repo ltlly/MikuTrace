@@ -59,6 +59,7 @@ LCG_MULT = 0x5851F42D4C957F2D
 LCG_INC = 1
 FIXED_PREFIX_CHARS = 12
 TAIL_ALIGNMENT_PREFIX = "AA"
+REPO_TRACEMIKU_CLI = "rust/target/debug/tracemiku-cli"
 
 CALL_001_XSIGN = (
     "azYBCM007xAApiYQXVKLkaXxoOr2BiYWKai5MLGI6T9yCUYPHSKV0zba5j/4Jbr6D0UvFBHd3FllrCJShVQSWn+qcIYmFY3mFgYmFi"
@@ -75,6 +76,24 @@ SAMPLE_XSIGNS = {
     "diff_run1_call_005": "azYBCM007xAAqVxW9B0aoS9pUvJ8CVxZU+fDf8vHk3AIRjxAZ23vnEyVnHCCasC1dQpVW2uSphYf41gd/xtoFQXlCslcWvZpbHlcWV",
     "jni_only_call_001": "azYBCM007xAApHrmlCyZkzRvMUHKxHrkdVrlwu16tc0u%2Bxr9QdDJIWoous2k1%2BYIU7dz5k0vgKs5Xn6g2aZOqCNYLHR660L0SsR65H",
     "boundary_stat_launch2_call_001": BOUNDARY_STAT_LAUNCH2_XSIGN,
+}
+
+TRACE_SAMPLE_CALL_DIRS = {
+    "diff_run1_truncated_call_006": (
+        "traces/diff/run1/calls/_truncated_call_006_tid32005_7600833r_7453ms"
+    ),
+    "diff_run1_call_001": (
+        "traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms"
+    ),
+    "diff_run1_call_003": (
+        "traces/diff/run1/calls/call_003_tid32216_7511589r_4951ms"
+    ),
+    "diff_run1_call_004": (
+        "traces/diff/run1/calls/call_004_tid31706_7494655r_5171ms"
+    ),
+    "diff_run1_call_005": (
+        "traces/diff/run1/calls/call_005_tid32225_7528678r_7006ms"
+    ),
 }
 
 TRACE_TIME_RET = 0x69F5B3CB
@@ -1044,24 +1063,28 @@ TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS = {
     "diff_run1_truncated_call_006": {
         "seed": 0x15DB0BA3,
         "seed_addr": "0x74fbf31b80",
+        "seed_cursor_idx": 6874163,
         "seed_source": "memory_not_found_boundary",
         "boundary_bytes_hex": "a30bdb1500000000",
     },
     "diff_run1_call_003": {
         "seed": 0x00F9FECC,
         "seed_addr": "0x74fbf31b80",
+        "seed_cursor_idx": 6798352,
         "seed_source": "memory_not_found_boundary",
         "boundary_bytes_hex": "ccfef90000000000",
     },
     "diff_run1_call_004": {
         "seed": 0x20F171A1,
         "seed_addr": "0x74fbf31b80",
+        "seed_cursor_idx": 6778682,
         "seed_source": "memory_not_found_boundary",
         "boundary_bytes_hex": "a171f12000000000",
     },
     "diff_run1_call_005": {
         "seed": 0x4F385B7E,
         "seed_addr": "0x74fbf31b80",
+        "seed_cursor_idx": 6822270,
         "seed_source": "memory_not_found_boundary",
         "boundary_bytes_hex": "7e5b384f00000000",
     },
@@ -3333,6 +3356,17 @@ def python_semantic_helper_coverage() -> dict:
     }
 
 
+def sample_call_dir(sample: str) -> str:
+    return TRACE_SAMPLE_CALL_DIRS.get(sample, "<call_dir>")
+
+
+def sample_mem_dump_command(sample: str, addr: str, cursor: int, count: int = 8) -> str:
+    return (
+        f"{REPO_TRACEMIKU_CLI} mem-dump {sample_call_dir(sample)} --addr {addr} "
+        f"--count {count} --cursor {cursor} --summary"
+    )
+
+
 def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     tail_3_7 = []
     for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS.items():
@@ -3478,6 +3512,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         tail_63_bytecode_literal.append(
             {
                 "sample": name,
+                "call_dir": sample_call_dir(name),
                 "semantic_offset": 63,
                 "lhs": f"{lhs:#x}",
                 "rhs": f"{rhs:#x}",
@@ -3485,6 +3520,9 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "expected": f"{tail[63]:#x}",
                 "bytecode_read_idx": item["bytecode_read_idx"],
                 "bytecode_addr": item["bytecode_addr"],
+                "bytecode_mem_dump_command": sample_mem_dump_command(
+                    name, item["bytecode_addr"], item["bytecode_read_idx"]
+                ),
                 "matches": computed == tail[63],
             }
         )
@@ -3497,6 +3535,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         tail_64_bytecode_literal.append(
             {
                 "sample": name,
+                "call_dir": sample_call_dir(name),
                 "semantic_offset": 64,
                 "lhs": f"{lhs:#x}",
                 "rhs": f"{rhs:#x}",
@@ -3504,6 +3543,9 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "expected": f"{tail[64]:#x}",
                 "bytecode_read_idx": item["bytecode_read_idx"],
                 "bytecode_addr": item["bytecode_addr"],
+                "bytecode_mem_dump_command": sample_mem_dump_command(
+                    name, item["bytecode_addr"], item["bytecode_read_idx"]
+                ),
                 "matches": computed == tail[64],
             }
         )
@@ -3512,9 +3554,25 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     call005_tail64_computed = xor_mix(call005_tail64["lhs"], call005_tail[2])
     tail_64_call005_exception = {
         **call005_tail64,
+        "call_dir": sample_call_dir(call005_tail64["sample"]),
         "lhs": f"{call005_tail64['lhs']:#x}",
         "bytecode_value": f"{call005_tail64['bytecode_value']:#x}",
         "table_index_bytecode_value": f"{call005_tail64['table_index_bytecode_value']:#x}",
+        "bytecode_mem_dump_command": sample_mem_dump_command(
+            call005_tail64["sample"],
+            call005_tail64["bytecode_addr"],
+            call005_tail64["bytecode_read_idx"],
+        ),
+        "table_index_bytecode_mem_dump_command": sample_mem_dump_command(
+            call005_tail64["sample"],
+            call005_tail64["table_index_bytecode_addr"],
+            call005_tail64["table_index_bytecode_read_idx"],
+        ),
+        "table_mem_dump_command": sample_mem_dump_command(
+            call005_tail64["sample"],
+            call005_tail64["table_read_addr"],
+            call005_tail64["table_read_idx"],
+        ),
         "rhs": f"{call005_tail[2]:#x}",
         "computed": f"{call005_tail64_computed:#x}",
         "expected": f"{call005_tail[64]:#x}",
@@ -3531,11 +3589,16 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         tail_62_table_seed_lcg.append(
             {
                 "sample": name,
+                "call_dir": sample_call_dir(name),
                 "semantic_offset": 62,
                 "seed": f"{seed:#x}",
                 "seed_addr": item["seed_addr"],
+                "seed_cursor_idx": item["seed_cursor_idx"],
                 "seed_source": item["seed_source"],
                 "boundary_bytes_hex": item["boundary_bytes_hex"],
+                "seed_mem_dump_command": sample_mem_dump_command(
+                    name, item["seed_addr"], item["seed_cursor_idx"]
+                ),
                 "formula": "low8(((seed * 0xdd08cee9) + 0x61f5) & 0x7fffffff)",
                 "mixed": f"{mixed:#x}",
                 "lhs": f"{lhs:#x}",
