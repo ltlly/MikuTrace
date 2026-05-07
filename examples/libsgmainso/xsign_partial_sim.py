@@ -2745,6 +2745,11 @@ def semantic_byte_source_model() -> dict:
 
 def semantic_source_key(row: dict) -> str:
     if row["kind"] == "xor_mix":
+        offset = row["offset"]
+        if offset == 62:
+            return "xor_lhs:static_table_seed_lcg_low_byte"
+        if offset == 64:
+            return "xor_lhs:bytecode_literal_or_table_add"
         return f"xor_lhs:{row.get('lhs_source', 'unknown')}"
     if row["kind"] == "mod255_low_byte":
         return f"mod255:{row.get('rhs_parity', 'unknown')}"
@@ -2793,10 +2798,10 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "resolve the semantic offsets 7..10 call_005 degenerate xor-word case",
-            "prove the portable source of the semantic offset 12 VM/call counter byte",
-            "prove the portable source of semantic offsets 62 and 64 VM scratch/table lanes",
+            "resolve semantic offsets 7..11: call_005 degenerate xor-word and state-high-byte source proof",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
+            "prove or parameterize semantic offset 62 static table seed LCG source",
+            "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
         ],
     }
 
@@ -3302,17 +3307,17 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "where offset 9 is the parity mask itself because the inferred lhs "
             "byte is zero. Semantic offset 11 matches a state-high byte across "
             "the diff samples, while semantic offset 12 now matches low8(meta.callIdx) "
-            "xor the parity mask. These ranges "
-            "Semantic offsets 16..20 match the stat-mtime/ladder prefix across "
-            "all current samples, and the full semantic offsets 16..58 middle "
-            "lhs is stable across the diff samples. Semantic offset 61 now "
+            "xor the parity mask. Semantic offsets 16..20 match the "
+            "stat-mtime/ladder prefix across all current samples, and the full "
+            "semantic offsets 16..58 middle lhs is stable across the diff "
+            "samples. Semantic offset 61 now "
             "matches low8(meta.pid) ^ parity_mask across diff samples. "
             "Semantic offset 63 now matches a bytecode literal 0x03 xor "
             "parity_mask across diff samples. Semantic offsets 16..19 now "
             "match stat_mtim-derived little-endian bytes xor parity masks. "
             "Semantic offset 62 now has a traced table-seed LCG byte formula "
             "for the proven subset, but remains partial because the seed is a "
-            "memory-not-found/preinitialized table boundary. Semantic offsets "
+            "memory-not-found/preinitialized table boundary. Semantic offset "
             "64 now reduces to bytecode literal 0x01 for four samples, while "
             "diff_run1_call_005 uses bytecode literal 0x01 plus a no-writer "
             "table byte 0x01 before the parity xor. Semantic offsets 20..58 "
