@@ -3537,6 +3537,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "sample": name,
                 "call_dir": sample_call_dir(name),
                 "semantic_offset": 64,
+                "lhs_source": "bytecode_literal",
+                "lhs_formula": "bytecode_literal_0x1",
                 "lhs": f"{lhs:#x}",
                 "rhs": f"{rhs:#x}",
                 "computed": f"{computed:#x}",
@@ -3555,6 +3557,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     tail_64_call005_exception = {
         **call005_tail64,
         "call_dir": sample_call_dir(call005_tail64["sample"]),
+        "lhs_source": "bytecode_literal_plus_table_byte",
         "lhs": f"{call005_tail64['lhs']:#x}",
         "bytecode_value": f"{call005_tail64['bytecode_value']:#x}",
         "table_index_bytecode_value": f"{call005_tail64['table_index_bytecode_value']:#x}",
@@ -3578,6 +3581,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "expected": f"{call005_tail[64]:#x}",
         "matches": call005_tail64_computed == call005_tail[64],
     }
+    tail_64_lhs_model = tail_64_bytecode_literal + [tail_64_call005_exception]
     tail_62_table_seed_lcg = []
     for name, item in TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS.items():
         tail = sample_tails[name]
@@ -3775,6 +3779,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             {
                 "semantic_offsets": [64],
                 "kind": "bytecode_literal_or_table_add_xor_mask",
+                "samples": sorted({row["sample"] for row in tail_64_lhs_model}),
+                "lhs_sources": sorted({row["lhs_source"] for row in tail_64_lhs_model}),
                 "bytecode_literal_samples": sorted(TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_64),
                 "exception_sample": TRACE_MULTI_SAMPLE_TAIL64_CALL005_EXCEPTION["sample"],
                 "caution": (
@@ -3830,6 +3836,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ),
         "tail_64_call005_exception": tail_64_call005_exception,
         "tail_64_call005_exception_matches": tail_64_call005_exception["matches"],
+        "tail_64_lhs_model": tail_64_lhs_model,
+        "tail_64_lhs_model_all_diff_samples_match": all(
+            row["matches"] for row in tail_64_lhs_model
+        ),
         "tail_62_table_seed_lcg": tail_62_table_seed_lcg,
         "tail_62_table_seed_lcg_all_proven_samples_match": all(
             row["matches"] for row in tail_62_table_seed_lcg

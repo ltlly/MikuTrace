@@ -1872,6 +1872,9 @@ proof.
 The simulator now also emits repo-local replayable CLI proof commands for this lane:
 `bytecode_mem_dump_command` for the normal literal, and for the call_005
 exception `table_index_bytecode_mem_dump_command` plus `table_mem_dump_command`.
+The machine-readable `tail_64_lhs_model` now combines all five diff samples:
+four are `lhs_source=bytecode_literal`, while call_005 is
+`lhs_source=bytecode_literal_plus_table_byte`.
 `completion_audit.prompt_to_artifact_checklist` now mirrors the user goal
 directly: generic CLI capability, libsgmain trace evidence, algorithm recovery,
 and complete Python simulation are tracked separately so trace-bound success
