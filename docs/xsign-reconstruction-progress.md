@@ -1916,6 +1916,12 @@ the generated replay has `slots_match=true`, `mem_match=true`, and reproduces
 the 52-byte scratch dump. The auto-seeded no-trust replay needs six non-user
 seed slots (`2`, `25`, `26`, `27`, `28`, `29`), and the report now records the
 corresponding `byte-lineage` proof commands.
+Running those seed proofs classifies `2`, `26`, `27`, and `29` as VM
+bytecode/immediate boundaries. Slots `25` and `28` are still pointer-shaped
+scratch/base seeds: deeper lineage runs hit stable copy-loop values
+`0x74b68bd4c0` and `0x74b68bb9a0` rather than a portable producer. The next CLI
+improvement should classify that stable pointer walk as a boundary instead of
+requiring ever-larger depth.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges

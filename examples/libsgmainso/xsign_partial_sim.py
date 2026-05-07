@@ -4333,6 +4333,73 @@ def python_vm_replay_plan_eval_summary() -> dict:
                     ),
                 },
             ],
+            "effective_seed_lineage_results": [
+                {
+                    "slot": 2,
+                    "suggested_value": "0x1",
+                    "steps_returned": 8,
+                    "terminal": "stop:bytecode_read_boundary",
+                    "interpretation": "small VM bytecode/immediate seed",
+                },
+                {
+                    "slot": 25,
+                    "suggested_value": "0x74b68bcc1c",
+                    "steps_returned": 180,
+                    "terminal": "depth_limit",
+                    "top_repeated_values": [
+                        {"value": "0x74b68bd4c0", "count": 145},
+                        {"value": "0x74b68bb9a0", "count": 22},
+                        {"value": "0x74b68bcc1c", "count": 6},
+                    ],
+                    "interpretation": (
+                        "pointer-shaped scratch/base seed; current byte-lineage "
+                        "walks a stable copy loop instead of reaching a portable "
+                        "allocation or call-return boundary"
+                    ),
+                },
+                {
+                    "slot": 26,
+                    "suggested_value": "0x38",
+                    "steps_returned": 77,
+                    "terminal": "stop:bytecode_read_boundary",
+                    "top_repeated_values": [
+                        {"value": "0x4", "count": 23},
+                        {"value": "0x38", "count": 11},
+                        {"value": "0x24", "count": 8},
+                    ],
+                    "interpretation": "VM bytecode-derived small integer seed",
+                },
+                {
+                    "slot": 27,
+                    "suggested_value": "0x20",
+                    "steps_returned": 5,
+                    "terminal": "stop:bytecode_read_boundary",
+                    "interpretation": "VM bytecode-derived small integer seed",
+                },
+                {
+                    "slot": 28,
+                    "suggested_value": "0x74b68bbe00",
+                    "steps_returned": 180,
+                    "terminal": "depth_limit",
+                    "top_repeated_values": [
+                        {"value": "0x74b68bb9a0", "count": 169},
+                        {"value": "0x74b68bbdff", "count": 7},
+                        {"value": "0x74b68bbba0", "count": 2},
+                    ],
+                    "interpretation": (
+                        "pointer-shaped scratch/base seed; needs a generic "
+                        "copy-loop or allocation-boundary classifier before it "
+                        "can be promoted beyond trace-bound replay"
+                    ),
+                },
+                {
+                    "slot": 29,
+                    "suggested_value": "0x37",
+                    "steps_returned": 3,
+                    "terminal": "stop:bytecode_read_boundary",
+                    "interpretation": "VM bytecode-derived small integer seed",
+                },
+            ],
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
                 "size": 52,
