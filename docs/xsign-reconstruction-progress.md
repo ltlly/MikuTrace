@@ -1869,6 +1869,10 @@ proof.
 The simulator now also emits repo-local replayable CLI proof commands for this lane:
 `bytecode_mem_dump_command` for the normal literal, and for the call_005
 exception `table_index_bytecode_mem_dump_command` plus `table_mem_dump_command`.
+`completion_audit.prompt_to_artifact_checklist` now mirrors the user goal
+directly: generic CLI capability, libsgmain trace evidence, algorithm recovery,
+and complete Python simulation are tracked separately so trace-bound success
+cannot be mistaken for portable completion.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:

@@ -4437,6 +4437,68 @@ def completion_audit() -> dict:
             "Use generic traceMiku CLI evidence from libsgmainso traces to "
             "recover and simulate the x-sign generation algorithm in Python."
         ),
+        "prompt_to_artifact_checklist": [
+            {
+                "requirement": "Improve generic CLI capability for AI trace analysis.",
+                "artifacts": [
+                    "rust/target/debug/tracemiku-cli vm-ops --replay-plan",
+                    "rust/target/debug/tracemiku-cli byte-lineage --compact",
+                    "rust/target/debug/tracemiku-cli output-map --semantic-writer-map",
+                    "rust/target/debug/tracemiku-cli mem-dump --summary",
+                    "tools/vm_replay_plan_eval.py --verify-emitted-python",
+                    "multi_sample_formula_coverage tail proof command fields",
+                ],
+                "evidence": [
+                    "CLI reports VM replay steps, byte lineage, semantic writer maps, and memory snapshots",
+                    "xsign_partial_sim emits repo-local proof commands with call_dir and cursor where needed",
+                ],
+                "status": "substantially_available",
+            },
+            {
+                "requirement": "Base the reconstruction on libsgmain trace evidence.",
+                "artifacts": [
+                    "traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms",
+                    "traces/diff/run1/calls/call_003_tid32216_7511589r_4951ms",
+                    "traces/diff/run1/calls/call_004_tid31706_7494655r_5171ms",
+                    "traces/diff/run1/calls/call_005_tid32225_7528678r_7006ms",
+                    "traces/diff/run1/calls/_truncated_call_006_tid32005_7600833r_7453ms",
+                    "docs/xsign-reconstruction-progress.md",
+                ],
+                "evidence": [
+                    "multi_sample_formula_coverage covers five diff samples and two extra call_001 samples for the stat-mtime prefix",
+                    "scratch_writer_replay_model records trace idx, address, bytes, source class, and lineage probes for call_001",
+                ],
+                "status": "covered_for_current_trace_corpus",
+            },
+            {
+                "requirement": "Recover the x-sign generation algorithm, not only observed bytes.",
+                "artifacts": [
+                    "current_trace_model_simulation",
+                    "multi_sample_formula_coverage",
+                    "scratch_writer_replay_model",
+                    "multi_sample_next_proof_plan",
+                ],
+                "evidence": [
+                    "all 68 semantic offsets have strong or partial formula coverage",
+                    "semantic offsets 20..58 remain trace-observed stable middle-lhs bytes, not portable source proof",
+                    "semantic offsets 62 and 64 still depend on table/bytecode frontier parameters",
+                ],
+                "status": "not_done",
+            },
+            {
+                "requirement": "Provide a complete Python simulation.",
+                "artifacts": [
+                    "examples/libsgmainso/xsign_partial_sim.py",
+                    "current_trace_model_simulation.matches_trace",
+                    "current_trace_model_simulation.portable_algorithm_ready",
+                ],
+                "evidence": [
+                    "matches_trace is true for call_001 current trace model",
+                    "portable_algorithm_ready is false",
+                ],
+                "status": "trace_bound_only_not_complete",
+            },
+        ],
         "success_criteria": [
             {
                 "id": "cli_surfaces",
