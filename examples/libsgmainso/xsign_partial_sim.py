@@ -26,8 +26,9 @@ pieces that have been proven from local libsgmainso traces:
 - semantic offsets 11..12 are no longer treated as opaque trace literals:
   across diff samples they match a state-high byte plus a small VM/call counter
   byte before the same parity XOR mask.
-- semantic offsets 61..64 are tracked as a multi-sample xor word whose lhs has
-  fixed lanes plus one or two variable VM scratch/table bytes.
+- semantic offset 61 is now cross-sample covered as low8(meta.pid) xor mask;
+  offsets 62..64 remain a multi-sample xor word whose lhs has variable VM
+  scratch/table or bytecode-literal lanes.
 - semantic offsets 16..20 share the trace-proven stat-mtime/laddr prefix across
   all current samples, but one ladder byte in that prefix still needs a portable
   source proof.
@@ -537,6 +538,14 @@ TRACE_MULTI_SAMPLE_XOR_WORDS_61_65 = {
         "result_hex": "af6696c7",
         "rhs_hex": "95c595c5",
     },
+}
+
+TRACE_MULTI_SAMPLE_META_PIDS = {
+    "diff_run1_truncated_call_006": 0x7B3A,
+    "diff_run1_call_001": 0x7B3A,
+    "diff_run1_call_003": 0x7B3A,
+    "diff_run1_call_004": 0x7B3A,
+    "diff_run1_call_005": 0x7B3A,
 }
 
 TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21 = {
@@ -2681,7 +2690,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "recommended_order": [
             "resolve the semantic offsets 7..10 call_005 degenerate xor-word case",
             "prove the portable source of the semantic offset 12 VM/call counter byte",
-            "prove the portable source of semantic offsets 61..64 VM scratch/table lanes",
+            "prove the portable source of semantic offsets 62..64 VM scratch/table lanes",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
         ],
     }
@@ -2826,6 +2835,24 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[61:65] and computed.hex() == item["result_hex"],
             }
         )
+    tail_61_pid_lane = []
+    for name, pid in TRACE_MULTI_SAMPLE_META_PIDS.items():
+        tail = sample_tails[name]
+        lhs = pid & 0xFF
+        rhs = tail[1]
+        computed = xor_mix(lhs, rhs)
+        tail_61_pid_lane.append(
+            {
+                "sample": name,
+                "semantic_offset": 61,
+                "pid": f"{pid:#x}",
+                "lhs": f"{lhs:#x}",
+                "rhs": f"{rhs:#x}",
+                "computed": f"{computed:#x}",
+                "expected": f"{tail[61]:#x}",
+                "matches": computed == tail[61],
+            }
+        )
     tail_16_21 = []
     scratch_prefix = TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21
     scratch_lhs = bytes.fromhex(scratch_prefix["lhs_hex"])
@@ -2897,7 +2924,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     all_rows = tail_3_7 + mask_fold_rows
     covered_samples = sorted({row["sample"] for row in all_rows})
     covered_offsets = sorted(
-        set([0, 1, 2, 3, 4, 5, 6] + odd_repeat_offsets + even_repeat_offsets)
+        set([0, 1, 2, 3, 4, 5, 6, 61] + odd_repeat_offsets + even_repeat_offsets)
     )
     return {
         "status": "partial_multi_sample_formula_coverage",
@@ -2911,6 +2938,11 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             {
                 "semantic_offsets": sorted(odd_repeat_offsets + even_repeat_offsets),
                 "kind": "repeated_mod255_parity_mask",
+            },
+            {
+                "semantic_offsets": [61],
+                "kind": "pid_low_byte_xor_mask",
+                "samples": sorted(TRACE_MULTI_SAMPLE_META_PIDS),
             },
         ],
         "partial_formula_ranges": [
@@ -2944,7 +2976,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ],
         "covered_semantic_offsets": covered_offsets,
         "partially_covered_semantic_offsets": sorted(
-            set([7, 8, 9, 10, 11, 12, 61, 62, 63, 64] + middle_partial_offsets)
+            set([7, 8, 9, 10, 11, 12, 62, 63, 64] + middle_partial_offsets)
         ),
         "strong_or_partial_semantic_offsets": sorted(
             set(covered_offsets + [7, 8, 9, 10, 11, 12, 61, 62, 63, 64] + middle_partial_offsets)
@@ -2960,6 +2992,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "tail_11_13_all_samples_match": all(row["matches"] for row in tail_11_13),
         "tail_61_65": tail_61_65,
         "tail_61_65_all_samples_match": all(row["matches"] for row in tail_61_65),
+        "tail_61_pid_lane": tail_61_pid_lane,
+        "tail_61_pid_lane_all_samples_match": all(row["matches"] for row in tail_61_pid_lane),
         "tail_16_21": tail_16_21,
         "tail_16_21_all_samples_match": all(row["matches"] for row in tail_16_21),
         "tail_16_59_trace_observed": {
@@ -2983,6 +3017,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             + tail_11_13
             + tail_16_21
             + tail_61_65
+            + tail_61_pid_lane
             + repeated_mask_rows
             + byte0_rows
         )
@@ -2995,10 +3030,11 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "a small VM/call counter byte across the diff samples. These ranges "
             "Semantic offsets 16..20 match the stat-mtime/ladder prefix across "
             "all current samples, and the full semantic offsets 16..58 middle "
-            "lhs is stable across the diff samples. Semantic offsets 61..64 "
-            "also match a VM scratch/table tail word. These ranges are not "
-            "promoted to strong coverage until their portable parameter "
-            "sources are proven."
+            "lhs is stable across the diff samples. Semantic offset 61 now "
+            "matches low8(meta.pid) ^ parity_mask across diff samples. "
+            "Semantic offsets 62..64 still match a VM scratch/table tail word "
+            "but remain partial until their portable parameter sources are "
+            "proven."
         ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
@@ -3621,7 +3657,8 @@ def completion_audit() -> dict:
                     "semantic offsets 11..12 match state-high-byte plus VM/call-counter formulas across five diff samples",
                     "semantic offsets 16..20 match the stat-mtime/ladder prefix across all current samples",
                     "semantic offsets 16..58 are trace-observed stable across five diff samples",
-                    "semantic offsets 61..64 match a VM scratch/table tail xor-word formula across five diff samples",
+                    "semantic offset 61 matches low8(meta.pid) xor mask across five diff samples",
+                    "semantic offsets 62..64 match a VM scratch/table tail xor-word formula across five diff samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3644,7 +3681,7 @@ def completion_audit() -> dict:
             ),
             (
                 "All 68 semantic offsets now have strong or partial formula "
-                "coverage, but 53 partial offsets still need portable source "
+                "coverage, but 52 partial offsets still need portable source "
                 "proof before this is a recovered algorithm."
             ),
         ],

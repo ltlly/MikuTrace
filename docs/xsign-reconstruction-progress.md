@@ -1372,8 +1372,8 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-strong offsets     0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
-partial offsets    7..12,16..58,61..64
+strong offsets     0,1,2,3,4,5,6,13,14,15,59,60,61,65,66,67
+partial offsets    7..12,16..58,62..64
 strong+partial     68/68
 all_match          true
 ```
@@ -1385,7 +1385,7 @@ all available samples. The second xor-word formula for semantic offsets
 `add32_mix -> lsr -> xor_word` chain. It is intentionally kept as partial
 coverage because `diff_run1_call_005` degenerates at offset `9`: the inferred
 lhs byte is `0x00`, so the CLI reports a `word32_zero_lane` template instead of
-inventing a full 32-bit state-source proof. The remaining 53 semantic bytes are
+inventing a full 32-bit state-source proof. The remaining 52 semantic bytes are
 still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
@@ -1739,9 +1739,11 @@ call_004  lhs 3a7e0301  rhs 1b541b54  -> 212a1855
 call_005  lhs 3aa30302  rhs 95c595c5  -> af6696c7
 ```
 
-This keeps `61..64` in partial coverage rather than strong coverage: the XOR
-word shape is proven, and lanes `0`/`2` are stable in the current samples, but
-the variable table/counter lanes still need source proof.
+The first lane is now promoted to strong coverage:
+`semantic[61] = low8(meta.pid) ^ parity_mask`, and all five `traces/diff/run1`
+samples have `meta.pid = 0x7b3a`. This keeps only `62..64` in partial coverage:
+the XOR word shape is proven, but the variable table/counter lanes still need
+source proof.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
