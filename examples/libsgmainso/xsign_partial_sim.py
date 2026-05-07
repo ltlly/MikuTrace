@@ -3681,18 +3681,33 @@ def vm_replay_seed_provenance_summary() -> dict:
                 "writer_idx": 14164105,
                 "writer_asm": "stp x9, x10, [x25, #0xd0]",
                 "lineage": (
-                    "80-step compact lineage walks small integer states "
+                    "160-step compact lineage walks small integer states "
                     "0x38, 0x2f, 0x2e, 0x24, 0xc, 0x8, 0x4 through "
-                    "OR/shift/ubfx identities"
+                    "OR/shift/ubfx identities and stops at a bytecode-read "
+                    "boundary, not at a single immediate literal"
                 ),
                 "bytecode_ip_tail": {
                     "states": ["0x38", "0x2f", "0x2e", "0x24", "0xc", "0x8", "0x4"],
+                    "steps_returned": 77,
+                    "recognized_semantic_count": 19,
+                    "top_repeated_values": [
+                        {"value": "0x4", "count": 23},
+                        {"value": "0x38", "count": 11},
+                        {"value": "0x24", "count": 8},
+                        {"value": "0x2e", "count": 8},
+                        {"value": "0x2f", "count": 8},
+                        {"value": "0x8", "count": 8},
+                        {"value": "0xc", "count": 8},
+                    ],
                     "byte_load_idx": 13952492,
                     "byte_load_asm": "ldrb w8, [x20, x0]",
                     "byte_load_addr": "0x74b68bd0b8",
                     "byte_value": "0x4",
+                    "terminal_bytecode_read_idx": 13951579,
+                    "terminal_bytecode_read_asm": "ldr w19, [x21, #8]",
+                    "terminal_bytecode_read_addr": "0x74fbf63708",
                     "terminal_reg": "x21",
-                    "terminal_value": "0x74fbf63110",
+                    "terminal_value": "0x74fbf63700",
                     "scaled_ip_updates": [
                         {
                             "asm": "add x21, x21, x3, lsl #4",
@@ -3706,7 +3721,7 @@ def vm_replay_seed_provenance_summary() -> dict:
                         },
                     ],
                 },
-                "terminal": "no_local_def at VM bytecode/IP base after scaled x21 updates",
+                "terminal": "bytecode_read_boundary after VM slot/copy/or_identity chain",
                 "portable_status": "bytecode_ip_boundary",
             },
             "slot28": {

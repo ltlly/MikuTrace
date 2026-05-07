@@ -1141,10 +1141,12 @@ scratch slot26 before #14164280:
   slot26 = 0x38
   writer #14164105: stp x9, x10, [x25, #0xd0]
   chain includes 0x38 = 0x2f + 0x9 plus OR/shift identities
-  deeper compact chain:
+  160-step compact chain:
     0x38 -> 0x2f -> 0x2e -> 0x24 -> 0xc -> 0x8 -> 0x4
+    repeated values: 0x4 x23, 0x38 x11, 0x24/0x2e/0x2f/0x8/0xc x8
     byte load #13952492 reads 0x4 from 0x74b68bd0b8
-    final boundary reaches x21 VM bytecode/IP base 0x74fbf63110
+    final boundary is bytecode-read #13951579: ldr w19, [x21,#8]
+    final x21 VM bytecode/IP base: 0x74fbf63700
     shifted IP updates now render as:
       0x74fbf636e0 = 0x74fbf635f0 + (0xf << 0x4)
       operand x3 effective_value = 0xf0
