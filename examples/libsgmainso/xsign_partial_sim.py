@@ -882,6 +882,10 @@ TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
     "semantic_range": [16, 59],
     "size": 43,
     "samples": {
+        "diff_run1_truncated_call_006": (
+            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
+            "bfa4f43ba0444a342344c59bc569"
+        ),
         "diff_run1_call_001": (
             "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
             "bfa4f43ba0444a342344c59bc569"
@@ -895,12 +899,12 @@ TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN = {
             "bfa4f43ba0444a342344c59bc569"
         ),
         "diff_run1_call_005": (
-            "fbe9f26979ecf24141f60193b34b3c510ccc029de339cec2953090237c"
+            "fbe9f26979ecf29541f60193b34b3c510ccc029de339cec2953090237c"
             "bfa4f43ba0444a342344c59bc569"
         ),
     },
     "interpretation": (
-        "The large middle XOR lhs stream is nearly stable across diff samples; "
+        "The large middle XOR lhs stream is stable across diff samples; "
         "prioritize fixed table/salt/VM literal provenance before treating it "
         "as ASLR-derived pointer noise."
     ),
