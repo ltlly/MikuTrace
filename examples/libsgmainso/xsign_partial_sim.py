@@ -568,8 +568,9 @@ SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
         "source": "xor_lhs:scratch_writer_replay:x_umt_text_boundary",
         "frontier": "observed_read_without_matching_traced_write",
         "proof_action": (
-            "treat x-umt as an explicit companion input until its producer is "
-            "traced or reconstructed"
+            "treat x-umt as a companion output over the same scratch payload "
+            "stream; lift the shared scratch/VM producer before treating it as "
+            "an independent external secret"
         ),
         "batch_offsets": [24, 27],
         "semantic_offsets": [44, 47],
@@ -2667,6 +2668,52 @@ TRACE_CALL001_VM_BYTE_LOAD_BOUNDARIES = [
     }
 ]
 
+TRACE_XUMT_OUTPUT_RELATION = {
+    "status": "companion_output_over_shared_scratch_payload",
+    "jni_output_pair": {
+        "key": "x-umt",
+        "key_idx": 15322406,
+        "value": "QfYBk7NLPFEMzAKd4znOwpUwkCN8v6T0",
+        "value_idx": 15322467,
+        "value_len": 32,
+    },
+    "decoded_payload_hex": (
+        "41f60193b34b3c510ccc029de339cec2"
+        "953090237cbfa4f4"
+    ),
+    "raw_ascii_pattern_probe": {
+        "command": (
+            "tracemiku-cli api <call_dir> /api/find-mem-pattern "
+            "-p bytes_hex=516659426b374e4c5046454d7a414b64"
+            "347a6e4f777055776b434e3876365430 -p max=10"
+        ),
+        "count": 0,
+        "interpretation": (
+            "The final x-umt JNI text itself is not found as a contiguous "
+            "raw ASCII memory pattern in the traced writes."
+        ),
+    },
+    "decoded_payload_pattern_probe": {
+        "command": (
+            "tracemiku-cli api <call_dir> /api/find-mem-pattern "
+            "-p bytes_hex=41f60193b34b3c510ccc029de339cec2"
+            "953090237cbfa4f4 -p max=10"
+        ),
+        "count": 3,
+        "hits": [
+            {"addr": "0x74b68bbe0b", "first_idx": 14691182},
+            {"addr": "0x74b68bc014", "first_idx": 14700970},
+            {"addr": "0x7599191000", "first_idx": 11430291},
+        ],
+    },
+    "interpretation": (
+        "x-umt decodes to 24 bytes that appear in the same scratch/middle-lhs "
+        "payload stream used by the current x-sign reconstruction. It should "
+        "be modeled as a companion output boundary over shared bytes until "
+        "the common scratch producer is lifted, not as a separate magic input."
+    ),
+}
+
 TRACE_CALL001_WORD_SOURCE_CLASSES = [
     {
         "semantic_range": [3, 7],
@@ -3186,9 +3233,15 @@ def current_trace_model_input_manifest() -> dict:
             "name": "x_umt",
             "kind": "external_companion_header",
             "value": "QfYBk7NLPFEMzAKd4znOwpUwkCN8v6T0",
-            "source": "JNI NewStringUTF(\"x-umt\") companion header value",
-            "status": "parameterized_external_input_until_x_umt_reconstructed",
-            "used_by": "scratch_writer_replay x_umt_text_boundary",
+            "source": (
+                "JNI NewStringUTF(\"x-umt\") companion header; decoded payload "
+                "has traced hits in the same scratch/middle-lhs stream"
+            ),
+            "status": "companion_output_shared_payload_pending_common_producer_lift",
+            "used_by": (
+                "scratch_writer_replay x_umt_text_boundary for semantic[44,47]; "
+                "also guides x-umt producer reconstruction"
+            ),
         },
         {
             "name": "pretrace_table_seed_word",
@@ -3639,7 +3692,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "recommended_order": [
             "keep 0x90bf1d91 as a pre-trace/non-module table parameter for semantic offsets 20..23 until an earlier trace or external table source is captured",
             "lift scratch_writer_replay VM bytecode-read frontiers for semantic offsets 24..43,45..46,56..58",
-            "treat x-umt as an explicit companion input for scratch_writer_replay semantic offsets 44,47 until x-umt is reconstructed",
+            "use x-umt as companion-output evidence for the same scratch payload stream, then lift the shared producer for semantic offsets 44,47",
             "keep Android versionName as an explicit replay parameter for scratch_writer_replay semantic offsets 48..55",
             "prove or parameterize non-call001 semantic offset 62 LCG table seed initializer",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
@@ -5085,6 +5138,7 @@ def completion_audit() -> dict:
                 "evidence": [
                     "all 68 semantic offsets have strong or partial formula coverage",
                     "semantic offsets 20..58 remain trace-observed stable middle-lhs bytes, not portable source proof",
+                    "x-umt is now classified as a companion output over the same scratch payload stream, but its producer is not lifted yet",
                     "semantic offsets 62 and 64 still depend on table/bytecode frontier parameters",
                 ],
                 "status": "not_done",
@@ -5185,6 +5239,7 @@ def completion_audit() -> dict:
                     "semantic offset 61 matches low8(meta.pid) xor mask across five diff samples",
                     "semantic offset 63 matches bytecode literal 0x03 xor mask across five diff samples",
                     "semantic offsets 62 and 64 match a VM scratch/table tail xor-word formula across five diff samples",
+                    "x-umt's decoded 24-byte payload is found in the same scratch/middle-lhs stream and should be reconstructed through the shared producer",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "scratch_writer_replay_suffix_words_le is explicit but still call_001-scoped",
@@ -5202,7 +5257,9 @@ def completion_audit() -> dict:
                 "The 0x90bf1d91 ladder seed is now an explicit pre-trace/"
                 "non-module table parameter, but the ladder and middle-lhs "
                 "windows still need bytecode/static-table source extraction "
-                "before the simulator is portable."
+                "and the companion x-umt producer should be lifted through "
+                "the shared scratch stream rather than kept as an opaque "
+                "header input before the simulator is portable."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
@@ -5758,6 +5815,7 @@ def main() -> None:
             "states_hex": [f"{value:#x}" for value in lcg_states],
         },
         "current_trace_model_input_manifest": input_manifest,
+        "xumt_output_relation": TRACE_XUMT_OUTPUT_RELATION,
         "parameterized_simulation_contract": replay_contract,
         "current_trace_model_simulation": current_trace_model_simulation,
         "generic_vm_scope_audit": generic_vm_audit,

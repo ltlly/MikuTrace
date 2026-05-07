@@ -1906,6 +1906,15 @@ For the `x-umt` group, dumping `0x753ddd7fd0` at cursor `#10620736` shows
 are `x-umt[27] == '8'` and `x-umt[31] == '0'`. This reduces the frontier to an
 explicit companion-header input, but does not yet reconstruct the x-umt
 producer.
+The later `x-umt` output-map probe changes the interpretation from "separate
+external secret" to "companion output over the same scratch payload stream":
+the raw ASCII string has no contiguous traced memory-pattern hit, while its
+Base64-decoded 24-byte payload
+`41f60193b34b3c510ccc029de339cec2953090237cbfa4f4` has three hits
+(`0x74b68bbe0b` first seen at `#14691182`, `0x74b68bc014` at `#14700970`, and
+`0x7599191000` at `#11430291`). For the current simulator this still remains a
+parameterized boundary, but the next proof should lift the shared scratch/VM
+producer rather than chase x-umt as an independent source.
 `current_trace_model_input_manifest` now lists both `app_versionName` and
 `x_umt` as explicit external parameters, so a generated simulator can avoid
 embedding those observed bytes while still flagging x-umt reconstruction as

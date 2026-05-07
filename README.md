@@ -71,6 +71,49 @@ cargo run -p tracemiku-cli -- dec-summary <call_dir>
 cargo run -p tracemiku-cli -- dec-fn <call_dir> trace:F0 --tier hot
 ```
 
+The CLI is also the main LLM-friendly surface for trace analysis. It exposes
+typed JSON commands for web API routes plus higher-level provenance tools:
+
+```bash
+./tracemiku api <call_dir> /api/backtrace -p idx=443 -p limit=64
+rust/target/debug/tracemiku-cli output-map <call_dir> --key x-sign --summary --semantic-writer-map
+rust/target/debug/tracemiku-cli output-backtrace <call_dir> --key x-sign
+rust/target/debug/tracemiku-cli jni-output-strings <call_dir> --key x-umt
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr 0x1234 --before-idx 1000 --compact
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr 0x1234 --before-idx 1000 --count 32 --compact
+rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --summary
+rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --replay-plan
+```
+
+Recent AI-analysis additions include:
+
+- output-driven workflows from JNI strings or known bytes back to memory
+  writers, Base64 groups, semantic byte formulas, and VM backchains;
+- batched `byte-lineage --count` with compact `frontier_groups`, step stats,
+  repeated-value summaries, stable pointer loop hints, call-return boundaries,
+  syscall-return boundaries, and bytecode-read frontiers;
+- generic VM dynamic-trace helpers (`vm-slice`, `vm-ops`, `vm-backstep`,
+  `vm-backchain`, `vm-backtree`) with configurable role registers instead of
+  target-specific assumptions;
+- replay-plan export and verification through
+  `tools/vm_replay_plan_eval.py --emit-python` and
+  `--verify-emitted-python`, so an AI agent can turn observed VM effects into
+  editable Python scaffolding before replacing trace fallbacks with proven
+  parameters;
+- memory/JNI helpers such as `find-mem-pattern`, `byte-writer-map`,
+  `mem-dump`, `mem-writes-in-range`, `jni-output-strings`, and
+  `scan-jni-output-strings`.
+
+The current `libsgmainso`/`x-sign` reconstruction is tracked as an example, not
+as hardcoded tool behavior. The partial simulator in
+`examples/libsgmainso/xsign_partial_sim.py` now reproduces the current
+call_001 trace model and emits `completion_audit.goal_complete == false` until
+the remaining VM bytecode/table frontiers are lifted into portable inputs. The
+latest trace evidence also classifies `x-umt` as a companion output over the
+same scratch payload stream, rather than as a separate magic secret.
+See `docs/ai-cli-xsign-workflow.md` and `docs/xsign-reconstruction-progress.md`
+for the detailed workflow and proof log.
+
 ## Development
 
 ```bash
@@ -100,6 +143,10 @@ Current source-of-truth docs are:
 - `docs/PER_CALL_TRACE_DESIGN.md`: current per-call trace layout and record
   contract.
 - `docs/trace-decompiler-design.md`: current decompiler/BN/HLIL route design.
+- `docs/ai-cli-xsign-workflow.md`: target-agnostic AI workflow for using CLI
+  provenance, VM, memory, JNI, and output-mapping commands.
+- `docs/xsign-reconstruction-progress.md`: target-specific example progress
+  report for the current `libsgmainso` trace corpus.
 - `docs/android-analysis-frontier-report.md`: Android analysis pain points,
   product/UI direction, and current bug triage.
 - `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
