@@ -3326,6 +3326,36 @@ def vm_replay_seed_provenance_summary() -> dict:
             },
         },
         "middle_lhs_ladder_window": {
+            "effective_seed_lineage_probe": {
+                "command_source": (
+                    "vm_replay_plan_eval.py --auto-seed-suggestions "
+                    "--seed-lineage-call-dir <call_dir>"
+                ),
+                "effective_slots": [24, 25, 26, 28],
+                "redundant_slots": [29],
+                "slot24": {
+                    "terminal": "call_return_boundary",
+                    "summary": "six +1 increments from malloc(0x12) return value 0x7599191120",
+                    "final_seed_value": "0x7599191126",
+                },
+                "slot25": {
+                    "terminal": "no_local_def",
+                    "summary": "0xb = 0xffffffffffffffff + 0xc; upstream reaches VM bytecode/IP frontier",
+                    "repeated_ip_base": "0x74fbf3b7e0",
+                },
+                "slot26": {
+                    "terminal": "memory_not_found_boundary",
+                    "summary": "0x1f7b3460 = 0x1fda836e ^ 0x0a1b70e",
+                    "static_table_addr": "0x74fbf29828",
+                    "observed_bytes_hex": "6e83da1f00000000",
+                },
+                "slot28": {
+                    "terminal": "memory_not_found_boundary",
+                    "summary": "0x6f = 0xdb ^ 0xb4",
+                    "boundary_addr": "0x750cdbef89",
+                    "observed_bytes_hex": "db",
+                },
+            },
             "slot8": {
                 "value": "0x90d2d669",
                 "status": "computed_inside_replay_window",

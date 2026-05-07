@@ -1065,6 +1065,26 @@ The replay engine can now compute these windows without observed-value
 fallbacks. The remaining algorithm work is provenance for these seed values and
 multi-sample validation.
 
+Running the filtered effective seed lineage queue gives the current ladder
+frontier:
+
+```text
+slot24 -> call_return_boundary: malloc(0x12) returned 0x7599191120,
+          then six +1 increments produce 0x7599191126
+slot25 -> no_local_def / VM bytecode-IP frontier:
+          0xb = 0xffffffffffffffff + 0xc
+slot26 -> static/preinitialized table boundary:
+          0x1f7b3460 = 0x1fda836e ^ 0x0a1b70e,
+          table bytes at 0x74fbf29828 = 6e83da1f00000000
+slot28 -> static/preinitialized byte boundary:
+          0x6f = 0xdb ^ 0xb4,
+          observed byte at 0x750cdbef89 = db
+```
+
+So the next proof is not "find more replay ops"; the replay ops already close.
+The remaining problem is classifying those table/bytecode/preinitialized inputs
+as portable parameters or deriving them from earlier traced setup.
+
 The evaluator now includes `seed_suggestions` on trusted fallback records. For
 example, it can infer `slot25=0x74b68bcc1c` from
 `slot[25] = 0x74b68bcc2c = 0x74b68bcc1c + 0x10`, and `slot26=0x1f7b3460` from
