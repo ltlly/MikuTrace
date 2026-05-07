@@ -20,6 +20,9 @@ pieces that have been proven from local libsgmainso traces:
   string memcpy.
 - one VM byte-load boundary now explains slot[18] = byte[0x753ddd7fdc]
   (0x7a), but the producing helper call is not lifted yet.
+- the second sha1-like XOR state word at semantic offsets 7..10 is trace-proven
+  for four diff samples; call_005 is explicitly tracked as a degenerate
+  non-word-template case with one zero lhs byte.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -405,6 +408,61 @@ TRACE_MULTI_SAMPLE_XOR_WORDS = {
         "state_add_rhs": 0x4A6B7C58,
         "state_add_result": 0x2FA84446F,
     },
+}
+
+TRACE_MULTI_SAMPLE_XOR_WORDS_7_11 = {
+    "diff_run1_truncated_call_006": {
+        "state_word_le": 0xE618F08E,
+        "source": "semantic offset 7 output-map lhs bytes 8e f0 18 e6",
+        "source_word_be": 0x8EF018E6,
+        "state_add_idx": 7014047,
+        "state_add_lhs": 0x163A3AB10,
+        "state_add_rhs": 0x2B4C6DD6,
+        "state_add_result": 0x18EF018E6,
+    },
+    "diff_run1_call_001": {
+        "state_word_le": 0x6F783E78,
+        "source": "semantic offset 7 output-map lhs bytes 78 3e 78 6f",
+        "source_word_be": 0x783E786F,
+        "state_add_idx": 14678176,
+        "state_add_lhs": 0x561D4E18,
+        "state_add_rhs": 0x22212A57,
+        "state_add_result": 0x783E786F,
+    },
+    "diff_run1_call_003": {
+        "state_word_le": 0xADE4E1F5,
+        "source": "semantic offset 7 output-map lhs bytes f5 e1 e4 ad",
+        "source_word_be": 0xF5E1E4AD,
+        "state_add_idx": 6938236,
+        "state_add_lhs": 0x1629D1CEA,
+        "state_add_rhs": 0x9344C7C3,
+        "state_add_result": 0x1F5E1E4AD,
+    },
+    "diff_run1_call_004": {
+        "state_word_le": 0xB78518BB,
+        "source": "semantic offset 7 output-map lhs bytes bb 18 85 b7",
+        "source_word_be": 0xBB1885B7,
+        "state_add_idx": 6918566,
+        "state_add_lhs": 0xD4436143,
+        "state_add_rhs": 0xE6D52474,
+        "state_add_result": 0x1BB1885B7,
+    },
+}
+
+TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE = {
+    "diff_run1_call_005": {
+        "semantic_range": [7, 11],
+        "result_hex": "12f6952f",
+        "rhs_hex": "95c595c5",
+        "lhs_hex": "873300ea",
+        "zero_lhs_offsets": [9],
+        "cli_status": "no_xor_word_templates",
+        "interpretation": (
+            "The same parity mask is present, but one lhs byte is zero, so the "
+            "CLI correctly does not summarize this as a full 32-bit xor-word "
+            "state source."
+        ),
+    }
 }
 
 TRACE_MULTI_SAMPLE_MASK_FOLDS = {
@@ -2487,10 +2545,12 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
     return {
         "status": "next_proof_plan",
         "covered_offsets": sorted(covered),
+        "partially_covered_offsets": coverage.get("partially_covered_semantic_offsets", []),
+        "partial_coverage_note": coverage.get("partial_coverage_note"),
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "extend sha1_like_state_word coverage to semantic offsets 7..10",
+            "resolve the semantic offsets 7..10 call_005 degenerate xor-word case",
             "lift the remaining trace_literal_lhs_hex bytes at offsets 11..12",
             "prove vm_scratch_lhs_table_tail offsets 61..64",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
@@ -2554,6 +2614,47 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "computed_hex": computed.hex(),
                 "expected_hex": tail[3:7].hex(),
                 "matches": computed == tail[3:7],
+            }
+        )
+    tail_7_11 = []
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS_7_11.items():
+        tail = sample_tails[name]
+        computed = xor_word_tail_bytes(item["state_word_le"], tail[1], tail[2])
+        state_add_low32 = (item["state_add_lhs"] + item["state_add_rhs"]) & 0xFFFFFFFF
+        tail_7_11.append(
+            {
+                "sample": name,
+                "semantic_range": [7, 11],
+                "computed_hex": computed.hex(),
+                "expected_hex": tail[7:11].hex(),
+                "matches": computed == tail[7:11],
+                "source_word_be": f"{item['source_word_be']:#x}",
+                "source_word_matches_state_add": state_add_low32 == item["source_word_be"],
+                "state_add_idx": item["state_add_idx"],
+            }
+        )
+    tail_7_11_degenerate = []
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE.items():
+        tail = sample_tails[name]
+        expected = tail[item["semantic_range"][0] : item["semantic_range"][1]]
+        rhs = bytes(
+            [
+                tail[1] if offset % 2 == 1 else tail[2]
+                for offset in range(item["semantic_range"][0], item["semantic_range"][1])
+            ]
+        )
+        lhs = bytes(xor_mix(a, b) for a, b in zip(expected, rhs))
+        tail_7_11_degenerate.append(
+            {
+                "sample": name,
+                "semantic_range": item["semantic_range"],
+                "expected_hex": expected.hex(),
+                "rhs_hex": rhs.hex(),
+                "lhs_hex": lhs.hex(),
+                "matches_recorded_lhs": lhs.hex() == item["lhs_hex"],
+                "zero_lhs_offsets": item["zero_lhs_offsets"],
+                "cli_status": item["cli_status"],
+                "interpretation": item["interpretation"],
             }
         )
     mask_fold_rows = []
@@ -2623,15 +2724,39 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "kind": "repeated_mod255_parity_mask",
             },
         ],
+        "partial_formula_ranges": [
+            {
+                "semantic_range": [7, 11],
+                "kind": "xor_word_tail_bytes",
+                "complete_word_template_samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_7_11),
+                "degenerate_samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE),
+            }
+        ],
         "covered_semantic_offsets": covered_offsets,
+        "partially_covered_semantic_offsets": [7, 8, 9, 10],
         "covered_byte_count": len(covered_offsets),
         "tail_3_7": tail_3_7,
+        "tail_7_11": tail_7_11,
+        "tail_7_11_all_word_samples_match": all(
+            row["matches"] and row["source_word_matches_state_add"] for row in tail_7_11
+        ),
+        "tail_7_11_degenerate": tail_7_11_degenerate,
         "mask_fold_1_3": mask_fold_rows,
         "static_byte0": byte0_rows,
         "static_byte0_all_samples_match": all(row["matches"] for row in byte0_rows),
         "repeated_mask_offsets": repeated_mask_rows,
         "repeated_mask_all_samples_match": all(row["matches"] for row in repeated_mask_rows),
-        "all_match": all(row["matches"] for row in all_rows + repeated_mask_rows + byte0_rows),
+        "all_match": all(
+            row["matches"]
+            for row in all_rows + tail_7_11 + repeated_mask_rows + byte0_rows
+        )
+        and all(row["matches_recorded_lhs"] for row in tail_7_11_degenerate),
+        "partial_coverage_note": (
+            "Semantic offsets 7..10 have a complete xor-word state-source proof "
+            "for four diff samples. diff_run1_call_005 is a degenerate case "
+            "where offset 9 is the parity mask itself because the inferred lhs "
+            "byte is zero, so these offsets are not promoted to strong coverage."
+        ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
             "mod255 parity masks expand structural coverage to offsets "
@@ -3127,6 +3252,7 @@ def completion_audit() -> dict:
                 "requirement": "Python formulas explain multiple libsgmainso trace samples.",
                 "evidence": [
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
+                    "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate non-word-template case",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3416,6 +3542,43 @@ def main() -> None:
             "matches_trace": computed == tail[3:7],
             "source": item["source"],
         }
+    xor_word_7_11_samples = {}
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS_7_11.items():
+        tail = sample_tails[name]
+        computed = xor_word_tail_bytes(item["state_word_le"], tail[1], tail[2])
+        state_add_low32 = (item["state_add_lhs"] + item["state_add_rhs"]) & 0xFFFFFFFF
+        xor_word_7_11_samples[name] = {
+            "state_word_le": f"{item['state_word_le']:#x}",
+            "state_bytes_le": word32_le_bytes(item["state_word_le"]).hex(),
+            "source_word_be": f"{item['source_word_be']:#x}",
+            "bswap32_source_matches_state_word": bswap32(item["source_word_be"]) == item["state_word_le"],
+            "state_add_idx": item["state_add_idx"],
+            "state_add_lhs": f"{item['state_add_lhs']:#x}",
+            "state_add_rhs": f"{item['state_add_rhs']:#x}",
+            "state_add_result": f"{item['state_add_result']:#x}",
+            "state_add_result_low32": f"{item['state_add_result'] & 0xFFFFFFFF:#x}",
+            "state_add_computed_low32": f"{state_add_low32:#x}",
+            "state_add_matches_source_word": state_add_low32 == item["source_word_be"],
+            "mask_bytes_from_tail_1_2": tail[1:3].hex(),
+            "computed_tail_7_11": computed.hex(),
+            "expected_tail_7_11": tail[7:11].hex(),
+            "matches_trace": computed == tail[7:11],
+            "source": item["source"],
+        }
+    xor_word_7_11_degenerate = {}
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE.items():
+        tail = sample_tails[name]
+        start, end = item["semantic_range"]
+        result = tail[start:end]
+        rhs = bytes([tail[1] if offset % 2 == 1 else tail[2] for offset in range(start, end)])
+        lhs = bytes(xor_mix(a, b) for a, b in zip(result, rhs))
+        xor_word_7_11_degenerate[name] = {
+            **item,
+            "result_from_tail_hex": result.hex(),
+            "rhs_from_tail_hex": rhs.hex(),
+            "lhs_from_tail_hex": lhs.hex(),
+            "matches_recorded_lhs": lhs.hex() == item["lhs_hex"],
+        }
     mask_fold_samples = {}
     for name, item in TRACE_MULTI_SAMPLE_MASK_FOLDS.items():
         tail = sample_tails[name]
@@ -3676,6 +3839,24 @@ def main() -> None:
                 "all_state_adds_match": all(
                     item["bswap32_source_matches_state_word"] and item["state_add_matches_source_word"]
                     for item in xor_word_samples.values()
+                ),
+            },
+            "multi_sample_word_template_7_11": {
+                "formula": "tail[7:11] = word32_le(state_word) ^ [tail[1], tail[2], tail[1], tail[2]]",
+                "samples": xor_word_7_11_samples,
+                "all_word_samples_match": all(
+                    item["matches_trace"]
+                    and item["bswap32_source_matches_state_word"]
+                    and item["state_add_matches_source_word"]
+                    for item in xor_word_7_11_samples.values()
+                ),
+                "degenerate_samples": xor_word_7_11_degenerate,
+                "interpretation": (
+                    "The same sha1-like state update pattern explains four diff "
+                    "samples. diff_run1_call_005 is intentionally kept outside "
+                    "the full-word set because its offset 9 lhs byte is zero, "
+                    "so the CLI summarizes it as a partial xor run plus a mask "
+                    "byte rather than inventing a word template."
                 ),
             },
             "call_001_state_word_source": {

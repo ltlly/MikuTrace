@@ -1319,13 +1319,19 @@ model no longer depends on observed trace bytes.
 available samples  7
 covered samples    5
 covered offsets    0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
+partial offsets    7,8,9,10
 all_match          true
 ```
 
 This proves the current mod255 pair and first xor-word formula across several
 samples, and it also proves the repeated odd/even mod255 mask positions across
-all available samples. The remaining 53 semantic bytes are still mostly
-call_001-scoped.
+all available samples. The second xor-word formula for semantic offsets
+`7..10` is now trace-proven for four diff samples through the same
+`add32_mix -> lsr -> xor_word` chain. It is intentionally kept as partial
+coverage because `diff_run1_call_005` degenerates at offset `9`: the inferred
+lhs byte is `0x00`, so the CLI reports a partial XOR run plus a mask byte
+instead of inventing a 32-bit word template. The remaining 53 semantic bytes are
+still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
 
@@ -1605,6 +1611,23 @@ link under `semantic_writer_map.xor_word_state_sources[]`, so one command from
 the final `x-sign` string now reaches the upstream state update for
 `tail[3:7]`.
 
+The next 32-bit lane, `tail[7:11]`, now has the same output-first proof for four
+diff samples:
+
+```text
+call_006  word 0x8ef018e6 -> low32(0x163a3ab10 + 0x2b4c6dd6)
+call_001  word 0x783e786f -> low32(0x561d4e18 + 0x22212a57)
+call_003  word 0xf5e1e4ad -> low32(0x1629d1cea + 0x9344c7c3)
+call_004  word 0xbb1885b7 -> low32(0xd4436143 + 0xe6d52474)
+```
+
+For `call_005`, `tail[7:11] = 12 f6 95 2f` and the parity mask is
+`95 c5 95 c5`, so the inferred lhs is `87 33 00 ea`. Because one lane is zero,
+the CLI correctly keeps this as a degenerate non-word-template case. This is a
+useful negative example for the VM CLI design: summaries should report missing
+or degenerate lanes rather than force every four-byte window into a hash-state
+shape.
+
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
 
@@ -1619,7 +1642,9 @@ digest_be = 67b44ad8783e786fcdfca1044c17da366f613fe4
 
 `crypto-scan` also sees `SHA1_H[4] = 0xc3d2e1f0` in the same constant family,
 so the current working label for this component is SHA1-like state finalize.
-Only the first word has been connected to `tail[3:7]` so far.
+The first word is strongly connected to `tail[3:7]`; the second word is
+connected to `tail[7:11]` for four diff samples and has one explicit degenerate
+sample left to resolve.
 
 The mask bytes themselves are also cross-sample `mod255_low_byte` folds:
 
