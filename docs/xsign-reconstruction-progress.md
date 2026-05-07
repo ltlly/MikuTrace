@@ -1832,9 +1832,12 @@ call_004  seed 0x20f171a1 -> lhs 0x7e -> 0x2a with mask 0x54
 call_005  seed 0x4f385b7e -> lhs 0xa3 -> 0x66 with mask 0xc5
 ```
 
-This is better than an opaque scratch byte, but it is still partial coverage:
-the portable Python model must either extract/parameterize that table seed or
-prove the earlier initializer that writes it.
+The same LCG seed formula also covers `call_001`: using `meta.pid/getpid`
+`0x7b3a` as the seed gives `0x4f6935bf`, so lhs62 is `0xbf` and
+`0xbf ^ 0x61 = 0xde`. This is better than an opaque scratch byte, but it is
+still partial coverage: the portable Python model must either
+extract/parameterize the later table seeds or prove the earlier initializer
+that writes them.
 The simulator now emits each proven sample's `call_dir` plus a cursor-pinned
 repo-local `seed_mem_dump_command`, so an AI agent can replay the exact CLI
 evidence without reconstructing trace paths from prose or accidentally reading

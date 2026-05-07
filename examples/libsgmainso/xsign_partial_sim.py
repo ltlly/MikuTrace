@@ -3608,6 +3608,31 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "matches": computed == tail[62],
             }
         )
+    call001_tail62_seed = {
+        "sample": "diff_run1_call_001",
+        "call_dir": sample_call_dir("diff_run1_call_001"),
+        "semantic_offset": 62,
+        "seed": f"{TRACE_MULTI_SAMPLE_META_PIDS['diff_run1_call_001']:#x}",
+        "seed_source": "process_id",
+        "seed_proof": "meta.pid plus call_001 getpid syscall lineage",
+    }
+    call001_tail = sample_tails[call001_tail62_seed["sample"]]
+    call001_seed = TRACE_MULTI_SAMPLE_META_PIDS[call001_tail62_seed["sample"]]
+    call001_mixed = ((call001_seed * 0xDD08CEE9) + 0x61F5) & 0x7FFFFFFF
+    call001_lhs62 = call001_mixed & 0xFF
+    call001_tail62_computed = xor_mix(call001_lhs62, call001_tail[2])
+    tail_62_lcg_seed_model = [
+        {
+            **call001_tail62_seed,
+            "formula": "low8(((seed * 0xdd08cee9) + 0x61f5) & 0x7fffffff)",
+            "mixed": f"{call001_mixed:#x}",
+            "lhs": f"{call001_lhs62:#x}",
+            "rhs": f"{call001_tail[2]:#x}",
+            "computed": f"{call001_tail62_computed:#x}",
+            "expected": f"{call001_tail[62]:#x}",
+            "matches": call001_tail62_computed == call001_tail[62],
+        }
+    ] + tail_62_table_seed_lcg
     tail_16_21 = []
     scratch_prefix = TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21
     scratch_lhs = bytes.fromhex(scratch_prefix["lhs_hex"])
@@ -3738,11 +3763,13 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "partial_formula_ranges": [
             {
                 "semantic_offsets": [62],
-                "kind": "static_table_seed_lcg_low_byte",
-                "samples": sorted(TRACE_MULTI_SAMPLE_TAIL62_TABLE_SEEDS),
+                "kind": "lcg_seed_low_byte",
+                "samples": sorted({row["sample"] for row in tail_62_lcg_seed_model}),
+                "seed_sources": sorted({row["seed_source"] for row in tail_62_lcg_seed_model}),
                 "caution": (
-                    "the byte formula is trace-proven for this subset, but the "
-                    "seed is a memory-not-found/preinitialized table boundary"
+                    "the byte formula is trace-proven for all five diff samples, "
+                    "but non-call001 seeds are memory-not-found/preinitialized "
+                    "table boundaries"
                 ),
             },
             {
@@ -3807,6 +3834,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "tail_62_table_seed_lcg_all_proven_samples_match": all(
             row["matches"] for row in tail_62_table_seed_lcg
         ),
+        "tail_62_lcg_seed_model": tail_62_lcg_seed_model,
+        "tail_62_lcg_seed_model_all_diff_samples_match": all(
+            row["matches"] for row in tail_62_lcg_seed_model
+        ),
         "tail_16_21": tail_16_21,
         "tail_16_21_all_samples_match": all(row["matches"] for row in tail_16_21),
         "tail_16_20_stat_mtim": tail_16_20_stat_mtim,
@@ -3840,6 +3871,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             + tail_63_bytecode_literal
             + tail_64_bytecode_literal
             + [tail_64_call005_exception]
+            + tail_62_lcg_seed_model
             + tail_62_table_seed_lcg
             + repeated_mask_rows
             + byte0_rows
@@ -3861,10 +3893,11 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "Semantic offset 63 now matches a bytecode literal 0x03 xor "
             "parity_mask across diff samples. Semantic offsets 16..19 now "
             "match stat_mtim-derived little-endian bytes xor parity masks. "
-            "Semantic offset 62 now has a traced table-seed LCG byte formula "
-            "for the proven subset, but remains partial because the seed is a "
-            "memory-not-found/preinitialized table boundary. Semantic offset "
-            "64 now reduces to bytecode literal 0x01 for four samples, while "
+            "Semantic offset 62 now shares the same LCG seed byte formula "
+            "across all five diff samples; call_001 uses process id as the "
+            "seed, while the later samples still depend on "
+            "memory-not-found/preinitialized table seed boundaries. Semantic "
+            "offset 64 now reduces to bytecode literal 0x01 for four samples, while "
             "diff_run1_call_005 uses bytecode literal 0x01 plus a no-writer "
             "table byte 0x01 before the parity xor. Semantic offsets 20..58 "
             "plus 62 and 64 still match VM scratch/table or stable middle lhs "
