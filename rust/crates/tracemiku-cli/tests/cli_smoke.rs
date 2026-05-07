@@ -959,6 +959,13 @@ fn byte_lineage_count_traces_consecutive_bytes() {
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["count"], 2);
+    assert_eq!(v["error_count"], 0);
+    assert_eq!(
+        v["decision_counts"],
+        serde_json::json!([{"decision": "stop", "count": 2}])
+    );
+    assert_eq!(v["step_stats"]["min"], 2);
+    assert_eq!(v["step_stats"]["max"], 2);
     let results = v["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["addr"], "0x7000");

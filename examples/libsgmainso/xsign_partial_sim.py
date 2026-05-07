@@ -4568,7 +4568,7 @@ def completion_audit() -> dict:
                     "vm_replay_plan_eval.py emits effective seed lineage commands for non-redundant auto seeds",
                     "byte-lineage --compact formula operands label pointer_base and delta",
                     "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
-                    "byte-lineage --count batches consecutive byte provenance without rebuilding indexes per byte",
+                    "byte-lineage --count batches consecutive byte provenance and reports frontier/step summaries",
                     "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",
                     "byte-lineage formulas expose shifted-register effective_value for VM bytecode/IP updates",
                     "byte-lineage lane-aware AND-mask selection follows the data operand instead of mask operands",
@@ -5530,9 +5530,14 @@ def main() -> None:
                     "count": 39,
                     "error_count": 0,
                     "decision_counts": {
-                        "bytecode_read_boundary": 25,
                         "memory_not_found_boundary": 4,
                         "observed_read_without_matching_traced_write": 10,
+                        "stop": 25,
+                    },
+                    "upstream_counts": {
+                        "bytecode_read_boundary": 25,
+                        "not_found": 4,
+                        "unknown": 10,
                     },
                     "step_stats": {"min": 19, "max": 59, "avg": 42.53846153846154},
                     "interpretation": (

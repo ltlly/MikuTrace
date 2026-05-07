@@ -1885,7 +1885,9 @@ the still-large `scratch_writer_replay` middle-lhs range before the two
 single-byte frontier exceptions.
 To make that range practical for AI agents, `byte-lineage` now accepts
 `--count N`, returning consecutive byte lineages in one indexed run while
-preserving the old one-byte output when `--count` is omitted.
+preserving the old one-byte output when `--count` is omitted. Batch output now
+includes `decision_counts`, `upstream_counts`, `error_count`, and `step_stats`,
+so agents can pick frontier classes without a follow-up `jq` reduction.
 The first call_001 middle-lhs batch probe covers `scratch[7:46]` with
 `--count 39`: 39/39 bytes returned, 25 stop at VM bytecode-read frontiers,
 4 stop at memory-not-found boundaries, and 10 stop at observed reads without a
