@@ -5539,6 +5539,48 @@ def main() -> None:
                         "not_found": 4,
                         "unknown": 10,
                     },
+                    "frontier_groups": [
+                        {
+                            "frontier": "memory_not_found_boundary:not_found",
+                            "count": 4,
+                            "batch_offsets": [0, 1, 2, 3],
+                            "semantic_offsets": [20, 21, 22, 23],
+                            "top_values": [{"value": "0x95f2ec79", "count": 4}],
+                        },
+                        {
+                            "frontier": "observed_read_without_matching_traced_write",
+                            "count": 10,
+                            "batch_offsets": [24, 27, 28, 29, 30, 31, 32, 33, 34, 35],
+                            "semantic_offsets": [44, 47, 48, 49, 50, 51, 52, 53, 54, 55],
+                            "top_values": [
+                                {"value": "0x4a44a03b", "count": 4},
+                                {"value": "0xc5442334", "count": 4},
+                                {"value": "0xf4a4bf7c", "count": 2},
+                            ],
+                        },
+                        {
+                            "frontier": "stop:bytecode_read_boundary",
+                            "count": 25,
+                            "batch_offsets": [
+                                4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                17, 18, 19, 20, 21, 22, 23, 25, 26, 36, 37, 38,
+                            ],
+                            "semantic_offsets": [
+                                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+                                36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 56, 57, 58,
+                            ],
+                            "top_values": [
+                                {"value": "0x23903095", "count": 4},
+                                {"value": "0x513c4bb3", "count": 4},
+                                {"value": "0x9301f641", "count": 4},
+                                {"value": "0x9d02cc0c", "count": 4},
+                                {"value": "0xc2ce39e3", "count": 4},
+                                {"value": "0x5e", "count": 2},
+                                {"value": "0xf4a4bf7c", "count": 2},
+                                {"value": "0x29", "count": 1},
+                            ],
+                        },
+                    ],
                     "step_stats": {"min": 19, "max": 59, "avg": 42.53846153846154},
                     "interpretation": (
                         "Batch byte-lineage gives the next middle-lhs proof "

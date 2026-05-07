@@ -1893,6 +1893,10 @@ The first call_001 middle-lhs batch probe covers `scratch[7:46]` with
 4 stop at memory-not-found boundaries, and 10 stop at observed reads without a
 matching traced write. This confirms the next lift should group frontiers by
 boundary class rather than manually chasing each byte.
+The report now records those groups as semantic offsets:
+`20..23` share the `0x95f2ec79` table boundary, `44` and `47..55` are
+observed-read/no-writer frontiers, and `24..43`, `45..46`, `56..58` stop at
+VM bytecode reads.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
