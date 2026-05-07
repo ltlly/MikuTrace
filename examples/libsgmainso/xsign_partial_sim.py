@@ -5519,6 +5519,27 @@ def main() -> None:
                 "trace_bound_suffix_word_count": len(
                     CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
                 ),
+                "middle_lhs_batch_lineage_probe": {
+                    "command": (
+                        "rust/target/debug/tracemiku-cli byte-lineage "
+                        "traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms "
+                        "--addr 0x74b68bbe07 --before-idx 14165023 --count 39 "
+                        "--depth 80 --lookback 10000000 --compact"
+                    ),
+                    "status": "ready",
+                    "count": 39,
+                    "error_count": 0,
+                    "decision_counts": {
+                        "bytecode_read_boundary": 25,
+                        "memory_not_found_boundary": 4,
+                        "observed_read_without_matching_traced_write": 10,
+                    },
+                    "step_stats": {"min": 19, "max": 59, "avg": 42.53846153846154},
+                    "interpretation": (
+                        "Batch byte-lineage gives the next middle-lhs proof "
+                        "entry point without rebuilding CLI indexes per byte."
+                    ),
+                },
                 "write_rows": scratch_writer_replay_write_rows(),
                 "caution": (
                     "The reconstruction no longer consumes one opaque middle "

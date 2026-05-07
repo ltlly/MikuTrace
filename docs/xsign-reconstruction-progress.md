@@ -1886,6 +1886,11 @@ single-byte frontier exceptions.
 To make that range practical for AI agents, `byte-lineage` now accepts
 `--count N`, returning consecutive byte lineages in one indexed run while
 preserving the old one-byte output when `--count` is omitted.
+The first call_001 middle-lhs batch probe covers `scratch[7:46]` with
+`--count 39`: 39/39 bytes returned, 25 stop at VM bytecode-read frontiers,
+4 stop at memory-not-found boundaries, and 10 stop at observed reads without a
+matching traced write. This confirms the next lift should group frontiers by
+boundary class rather than manually chasing each byte.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
