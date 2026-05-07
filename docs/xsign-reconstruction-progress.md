@@ -1879,6 +1879,10 @@ four are `lhs_source=bytecode_literal`, while call_005 is
 directly: generic CLI capability, libsgmain trace evidence, algorithm recovery,
 and complete Python simulation are tracked separately so trace-bound success
 cannot be mistaken for portable completion.
+`multi_sample_next_proof_plan` now uses the current source names
+(`xor_lhs:lcg_seed_low_byte` and `xor_lhs:tail64_lhs_model`) and prioritizes
+the still-large `scratch_writer_replay` middle-lhs range before the two
+single-byte frontier exceptions.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:

@@ -3253,9 +3253,9 @@ def semantic_source_key(row: dict) -> str:
     if row["kind"] == "xor_mix":
         offset = row["offset"]
         if offset == 62:
-            return "xor_lhs:static_table_seed_lcg_low_byte"
+            return "xor_lhs:lcg_seed_low_byte"
         if offset == 64:
-            return "xor_lhs:bytecode_literal_or_table_add"
+            return "xor_lhs:tail64_lhs_model"
         return f"xor_lhs:{row.get('lhs_source', 'unknown')}"
     if row["kind"] == "mod255_low_byte":
         return f"mod255:{row.get('rhs_parity', 'unknown')}"
@@ -3304,10 +3304,10 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "prove or parameterize scratch_writer_replay_suffix_words_le static-table/bytecode provenance",
-            "prove or parameterize previous_ladder_slot24 VM ladder state source",
-            "prove or parameterize semantic offset 62 static table seed LCG source",
+            "prove or parameterize scratch_writer_replay middle-lhs portable sources for semantic offsets 20..58",
+            "prove or parameterize non-call001 semantic offset 62 LCG table seed initializer",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
+            "lift previous_ladder_slot24/static-table frontiers into portable VM/table parameters",
         ],
     }
 
