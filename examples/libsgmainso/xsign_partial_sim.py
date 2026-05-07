@@ -30,8 +30,8 @@ pieces that have been proven from local libsgmainso traces:
   offset 63 is covered as bytecode literal 0x03 xor mask; offsets 62 and 64
   remain a multi-sample xor word whose lhs has variable VM scratch/table lanes.
 - semantic offsets 16..20 share the trace-proven stat-mtime/laddr prefix across
-  all current samples, but one ladder byte in that prefix still needs a portable
-  source proof.
+  all current samples; offsets 16..19 are the stat-mtime-derived bytes, while
+  the ladder byte at offset 20 still needs a portable source proof.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -2903,6 +2903,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     tail_16_21 = []
     scratch_prefix = TRACE_MULTI_SAMPLE_SCRATCH_PREFIX_16_21
     scratch_lhs = bytes.fromhex(scratch_prefix["lhs_hex"])
+    stat_mtim_lhs = scratch_lhs[:4]
     for name, tail in sample_tails.items():
         start, end = scratch_prefix["semantic_range"]
         rhs = bytes([tail[1] if offset % 2 == 1 else tail[2] for offset in range(start, end)])
@@ -2916,6 +2917,22 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "computed_hex": computed.hex(),
                 "expected_hex": tail[start:end].hex(),
                 "matches": computed == tail[start:end],
+            }
+        )
+    tail_16_20_stat_mtim = []
+    for name, tail in sample_tails.items():
+        rhs = bytes([tail[2], tail[1], tail[2], tail[1]])
+        computed = bytes(xor_mix(a, b) for a, b in zip(stat_mtim_lhs, rhs))
+        tail_16_20_stat_mtim.append(
+            {
+                "sample": name,
+                "semantic_range": [16, 20],
+                "stat_mtim_tv_sec": f"{scratch_prefix['stat_mtim_tv_sec']:#x}",
+                "lhs_hex": stat_mtim_lhs.hex(),
+                "rhs_hex": rhs.hex(),
+                "computed_hex": computed.hex(),
+                "expected_hex": tail[16:20].hex(),
+                "matches": computed == tail[16:20],
             }
         )
     mask_fold_rows = []
@@ -2938,7 +2955,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         )
     odd_repeat_offsets = [13, 15, 59, 65, 67]
     even_repeat_offsets = [14, 60, 66]
-    middle_partial_offsets = list(range(16, 59))
+    middle_partial_offsets = list(range(20, 59))
     middle_lhs_variations = bytewise_variations(TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN["samples"])
     repeated_mask_rows = []
     for name, tail in sample_tails.items():
@@ -2972,6 +2989,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
     covered_samples = sorted({row["sample"] for row in all_rows})
     covered_offsets = sorted(
         set([0, 1, 2, 3, 4, 5, 6, 61, 63] + odd_repeat_offsets + even_repeat_offsets)
+        | set(range(16, 20))
     )
     return {
         "status": "partial_multi_sample_formula_coverage",
@@ -2996,6 +3014,11 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "kind": "bytecode_literal_xor_mask",
                 "samples": sorted(TRACE_MULTI_SAMPLE_BYTECODE_LITERAL_63),
             },
+            {
+                "semantic_range": [16, 20],
+                "kind": "stat_mtim_little_endian_xor_mask",
+                "samples": sorted(sample_tails),
+            },
         ],
         "partial_formula_ranges": [
             {
@@ -3015,12 +3038,12 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_61_65),
             },
             {
-                "semantic_range": [16, 21],
-                "kind": "stat_mtim_ladder_prefix",
+                "semantic_range": [20, 21],
+                "kind": "ladder_static_byte_prefix",
                 "samples": sorted(sample_tails),
             },
             {
-                "semantic_range": [16, 59],
+                "semantic_range": [20, 59],
                 "kind": "trace_observed_stable_middle_lhs",
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN["samples"]),
                 "caution": "stable trace-observed lhs bytes, not portable source proof",
@@ -3052,6 +3075,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         ),
         "tail_16_21": tail_16_21,
         "tail_16_21_all_samples_match": all(row["matches"] for row in tail_16_21),
+        "tail_16_20_stat_mtim": tail_16_20_stat_mtim,
+        "tail_16_20_stat_mtim_all_samples_match": all(
+            row["matches"] for row in tail_16_20_stat_mtim
+        ),
         "tail_16_59_trace_observed": {
             "semantic_range": TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN["semantic_range"],
             "sample_count": len(TRACE_MULTI_SAMPLE_XOR_LHS_MIDDLE_RUN["samples"]),
@@ -3072,6 +3099,7 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             + tail_7_11
             + tail_11_13
             + tail_16_21
+            + tail_16_20_stat_mtim
             + tail_61_65
             + tail_61_pid_lane
             + tail_63_bytecode_literal
@@ -3090,8 +3118,10 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "lhs is stable across the diff samples. Semantic offset 61 now "
             "matches low8(meta.pid) ^ parity_mask across diff samples. "
             "Semantic offset 63 now matches a bytecode literal 0x03 xor "
-            "parity_mask across diff samples. Semantic offsets 62 and 64 "
-            "still match a VM scratch/table tail word but remain partial "
+            "parity_mask across diff samples. Semantic offsets 16..19 now "
+            "match stat_mtim-derived little-endian bytes xor parity masks. "
+            "Semantic offsets 20..58 plus 62 and 64 still match VM "
+            "scratch/table or stable middle lhs bytes but remain partial "
             "until their portable parameter sources are proven."
         ),
         "coverage_note": (
@@ -3713,8 +3743,8 @@ def completion_audit() -> dict:
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
                     "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate word32_zero_lane case",
                     "semantic offsets 11..12 match state-high-byte plus VM/call-counter formulas across five diff samples",
-                    "semantic offsets 16..20 match the stat-mtime/ladder prefix across all current samples",
-                    "semantic offsets 16..58 are trace-observed stable across five diff samples",
+                    "semantic offsets 16..19 match stat-mtime-derived bytes across all current samples",
+                    "semantic offsets 20..58 are trace-observed stable across five diff samples",
                     "semantic offset 61 matches low8(meta.pid) xor mask across five diff samples",
                     "semantic offset 63 matches bytecode literal 0x03 xor mask across five diff samples",
                     "semantic offsets 62 and 64 match a VM scratch/table tail xor-word formula across five diff samples",
@@ -3740,7 +3770,7 @@ def completion_audit() -> dict:
             ),
             (
                 "All 68 semantic offsets now have strong or partial formula "
-                "coverage, but 51 partial offsets still need portable source "
+                "coverage, but 47 partial offsets still need portable source "
                 "proof before this is a recovered algorithm."
             ),
         ],

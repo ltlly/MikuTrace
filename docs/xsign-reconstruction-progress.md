@@ -1372,8 +1372,8 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-strong offsets     0,1,2,3,4,5,6,13,14,15,59,60,61,63,65,66,67
-partial offsets    7..12,16..58,62,64
+strong offsets     0,1,2,3,4,5,6,13,14,15,16,17,18,19,59,60,61,63,65,66,67
+partial offsets    7..12,20..58,62,64
 strong+partial     68/68
 all_match          true
 ```
@@ -1385,7 +1385,7 @@ all available samples. The second xor-word formula for semantic offsets
 `add32_mix -> lsr -> xor_word` chain. It is intentionally kept as partial
 coverage because `diff_run1_call_005` degenerates at offset `9`: the inferred
 lhs byte is `0x00`, so the CLI reports a `word32_zero_lane` template instead of
-inventing a full 32-bit state-source proof. The remaining 51 semantic bytes are
+inventing a full 32-bit state-source proof. The remaining 47 semantic bytes are
 still mostly call_001-scoped.
 
 `xor_rhs_mask_model` now isolates the repeated xor RHS bytes:
@@ -1712,11 +1712,12 @@ scratch    = u32(stat('/').st_mtim.tv_sec << 24)
 ```
 
 For `call_001`, `stat('/').st_mtim.tv_sec = 0x69f2e9fb` and
-`ladder_low8 = 0x79`, giving `fbe9f26979`. This is useful partial coverage
-because the stat input is now an explicit parameter, but the ladder low byte
-still needs source proof before the prefix can be treated as portable.
+`ladder_low8 = 0x79`, giving `fbe9f26979`. The first four bytes are now strong
+coverage as stat-derived bytes xor parity masks across all current samples. The
+fifth byte, `0x79`, still needs source proof before the full prefix can be
+treated as portable.
 
-The full middle lhs range, `semantic[16:59]`, is now treated as trace-observed
+The remaining middle lhs range, `semantic[20:59]`, is now treated as trace-observed
 partial coverage across the five diff samples:
 
 ```text
