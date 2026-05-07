@@ -248,7 +248,29 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "width": 4,
         "value": 0x95C2CE39,
         "python_with_values": "mem[0x74b68bbe18] = 0x95c2ce39",
-        "source_class": "scratch_writer_replay_word_pending_lift",
+        "source_class": "vm_xor_ladder_bytecode_frontier_pending_lift",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe18 "
+                "--before-idx 14164721 --depth 120 --lookback 8000000 --compact"
+            ),
+            "steps_returned": 57,
+            "recognized_semantic_count": 21,
+            "head_formula": "0x95c2ce39 = 0x95000000 | (0xc2ce39e3 >> 8)",
+            "mid_formula": "0xc2ce39e3 = 0xee6595cb ^ 0x2cabac28",
+            "terminal": "bytecode_read_boundary",
+            "terminal_idx": 10617588,
+            "terminal_asm": "ldr x1, [x21, #8]",
+            "terminal_addr": "0x75ebae5b58",
+            "top_repeated_values": [
+                {"value": "0xc2ce39e3", "count": 13},
+                {"value": "0x97dccb2b", "count": 8},
+                {"value": "0x27", "count": 5},
+                {"value": "0xee6595cb", "count": 5},
+                {"value": "0x39", "count": 4},
+                {"value": "0xa778ce7", "count": 4},
+            ],
+        },
     },
     {
         "scratch_offset": 28,
@@ -256,7 +278,29 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "width": 4,
         "value": 0x7C239030,
         "python_with_values": "mem[0x74b68bbe1c] = 0x7c239030",
-        "source_class": "scratch_writer_replay_word_pending_lift",
+        "source_class": "vm_xor_ladder_bytecode_frontier_pending_lift",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe1c "
+                "--before-idx 14164764 --depth 120 --lookback 8000000 --compact"
+            ),
+            "steps_returned": 52,
+            "recognized_semantic_count": 18,
+            "head_formula": "0x7c239030 = 0x7c000000 | (0x23903095 >> 8)",
+            "mid_formula": "0x23903095 = 0xf3b9cbd ^ 0x2cabac28",
+            "terminal": "bytecode_read_boundary",
+            "terminal_idx": 10618788,
+            "terminal_asm": "ldr x1, [x21, #8]",
+            "terminal_addr": "0x75ebae5b58",
+            "top_repeated_values": [
+                {"value": "0x23903095", "count": 13},
+                {"value": "0x30", "count": 9},
+                {"value": "0x7a1e7739", "count": 8},
+                {"value": "0xf3b9cbd", "count": 5},
+                {"value": "0x1e7739", "count": 3},
+                {"value": "0x239030", "count": 3},
+            ],
+        },
     },
     {
         "scratch_offset": 32,
@@ -264,7 +308,29 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
         "width": 4,
         "value": 0x3BF4A4BF,
         "python_with_values": "mem[0x74b68bbe20] = 0x3bf4a4bf",
-        "source_class": "scratch_writer_replay_word_pending_lift",
+        "source_class": "vm_xor_ladder_bytecode_frontier_pending_lift",
+        "lineage_probe": {
+            "command": (
+                "tracemiku-cli byte-lineage <call_dir> --addr 0x74b68bbe20 "
+                "--before-idx 14164871 --depth 120 --lookback 8000000 --compact"
+            ),
+            "steps_returned": 57,
+            "recognized_semantic_count": 21,
+            "head_formula": "0x3bf4a4bf = 0x3b000000 | (0xf4a4bf7c >> 8)",
+            "mid_formula": "0xf4a4bf7c = 0xd80f1354 ^ 0x2cabac28",
+            "terminal": "bytecode_read_boundary",
+            "terminal_idx": 10620557,
+            "terminal_asm": "ldr x1, [x21, #8]",
+            "terminal_addr": "0x75ebae5ad8",
+            "top_repeated_values": [
+                {"value": "0xf4a4bf7c", "count": 13},
+                {"value": "0xa9b01e26", "count": 8},
+                {"value": "0x13", "count": 5},
+                {"value": "0xd80f1354", "count": 5},
+                {"value": "0x8df2fe93", "count": 4},
+                {"value": "0xbf", "count": 4},
+            ],
+        },
     },
     {
         "scratch_offset": 36,
