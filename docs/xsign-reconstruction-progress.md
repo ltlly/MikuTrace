@@ -1895,9 +1895,10 @@ The first call_001 middle-lhs batch probe covers `scratch[7:46]` with
 matching traced write. This confirms the next lift should group frontiers by
 boundary class rather than manually chasing each byte.
 The report now records those groups as semantic offsets:
-`20..23` share the `0x95f2ec79` table boundary, `44` and `47..55` are
-observed-read/no-writer frontiers, and `24..43`, `45..46`, `56..58` stop at
-VM bytecode reads.
+`20..23` share the `0x95f2ec79` table boundary, `44` and `47` are remaining
+pre-trace VM byte-table frontiers, `48..55` are the Android
+`versionName=10.60.10` text boundary, and `24..43`, `45..46`, `56..58` stop
+at VM bytecode reads.
 The machine-readable next proof plan now mirrors that split, so an AI agent can
 work one frontier class at a time instead of treating semantic offsets `20..58`
 as one opaque block.

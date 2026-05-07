@@ -557,18 +557,42 @@ SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
         ],
     },
     {
-        "source": "xor_lhs:scratch_writer_replay:observed_read_no_writer",
+        "source": "xor_lhs:scratch_writer_replay:pretrace_vm_byte_table",
         "frontier": "observed_read_without_matching_traced_write",
         "proof_action": (
-            "inspect gap call candidates or widen tracing around the producer; "
-            "otherwise parameterize these bytes as pre-trace app/framework input"
+            "inspect the 0x753ddd7feb/0x753ddd7fef byte table producer or "
+            "parameterize the pre-trace VM byte-table bytes"
         ),
-        "batch_offsets": [24, 27, 28, 29, 30, 31, 32, 33, 34, 35],
-        "semantic_offsets": [44, 47, 48, 49, 50, 51, 52, 53, 54, 55],
+        "batch_offsets": [24, 27],
+        "semantic_offsets": [44, 47],
+        "top_values": [
+            {"value": "0xf4a4bf7c", "count": 2},
+        ],
+        "observed_boundaries": [
+            {"addr": "0x753ddd7feb", "bytes_hex": "38"},
+            {"addr": "0x753ddd7fef", "bytes_hex": "30"},
+        ],
+    },
+    {
+        "source": "xor_lhs:scratch_writer_replay:app_version_text_boundary",
+        "frontier": "observed_read_without_matching_traced_write",
+        "proof_action": (
+            "pass Android package versionName as an explicit replay parameter "
+            "instead of embedding these trace bytes"
+        ),
+        "batch_offsets": [28, 29, 30, 31, 32, 33, 34, 35],
+        "semantic_offsets": [48, 49, 50, 51, 52, 53, 54, 55],
         "top_values": [
             {"value": "0x4a44a03b", "count": 4},
             {"value": "0xc5442334", "count": 4},
-            {"value": "0xf4a4bf7c", "count": 2},
+        ],
+        "observed_boundaries": [
+            {
+                "addr": "0x756649a2d0",
+                "bytes_hex": "31302e36302e3130",
+                "ascii": "10.60.10",
+                "semantic_role": "android_package_versionName",
+            }
         ],
     },
 ]
@@ -3479,7 +3503,8 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "recommended_order": [
             "prove or parameterize scratch_writer_replay static-table boundary for semantic offsets 20..23",
             "lift scratch_writer_replay VM bytecode-read frontiers for semantic offsets 24..43,45..46,56..58",
-            "trace-widen or parameterize scratch_writer_replay observed-read/no-writer frontiers for semantic offsets 44,47..55",
+            "trace-widen or parameterize scratch_writer_replay pre-trace VM byte-table frontiers for semantic offsets 44,47",
+            "keep Android versionName as an explicit replay parameter for scratch_writer_replay semantic offsets 48..55",
             "prove or parameterize non-call001 semantic offset 62 LCG table seed initializer",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
             "lift previous_ladder_slot24/static-table frontiers into portable VM/table parameters",
