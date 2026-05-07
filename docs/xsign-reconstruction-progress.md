@@ -900,6 +900,11 @@ so the scratch-writer skeleton replays the same 52-byte scratch dump as the
 trace without manual seed plumbing. `OBSERVED_BYTE_LOADS` now uses hex address
 keys, keeping those unproven inputs easy to line up with `byte-lineage` probes.
 This makes the replay directly executable while keeping unproven inputs visible.
+`--verify-emitted-python` now generates that same skeleton, executes it
+in-memory, and compares its `slots` and `mem` against the internal no-trust
+evaluator. On the scratch-writer window it reports `status=ok`,
+`slots_match=true`, `mem_match=true`, `generated_line_count=357`; on the ladder
+window it reports the same match with `generated_line_count=446`.
 `tools/vm_replay_plan_eval.py --auto-seed-suggestions` also distinguishes
 mechanical seed gaps from missing logic. On the scratch-writer window it applies
 six formula-derived seed suggestions and replays with `trusted_effects=0`,
@@ -1027,8 +1032,9 @@ first replay steps:
   slot[4] = lsl(slot[3], 0x18)
 ```
 
-This shifts `[25,49)` and `[57,59)` from "need trace evidence" to "need Python
-replay implementation from compact templates".
+This shifts `[25,49)` and `[57,59)` from one opaque trace-byte dependency to
+explicit replay words. The remaining work is proving those replay words from
+portable static-table, bytecode, app metadata, or device/environment inputs.
 
 `tools/vm_replay_plan_eval.py` now executes replay-plan JSON directly. On the
 scratch writer window it reconstructs the full scratch table dump:

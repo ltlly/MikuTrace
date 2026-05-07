@@ -622,6 +622,79 @@ def filter_suggestions_for_effective_seeds(
     }
 
 
+def emitted_replay_seed_sets(
+    plan: dict[str, Any], seed_slots: list[str]
+) -> dict[str, Any]:
+    trusted_pass = replay_plan(plan, trust_observed=True, seed_slots=seed_slots)
+    user_seeds = parse_seed_slots(seed_slots)
+    suggested_seeds = dict(user_seeds)
+    for slot, suggestion in sorted(trusted_pass.seed_suggestions.items()):
+        if slot in suggested_seeds:
+            continue
+        value = parse_value(suggestion.get("value"))
+        if value is not None:
+            suggested_seeds[slot] = value & MASK64
+    reference_replay = replay_plan(
+        plan, trust_observed=False, seed_slots=seed_specs_from_map(suggested_seeds)
+    )
+    minimized_seeds = minimize_auto_seed_slots(
+        plan, user_seeds, suggested_seeds, reference_replay
+    )
+    effective_auto_seeds = {
+        slot: value for slot, value in minimized_seeds.items() if slot not in user_seeds
+    }
+    redundant_auto_seeds = [
+        slot
+        for slot in sorted(suggested_seeds)
+        if slot not in minimized_seeds and slot not in user_seeds
+    ]
+    return {
+        "trusted_pass": trusted_pass,
+        "user_seeds": user_seeds,
+        "suggested_seeds": suggested_seeds,
+        "minimized_seeds": minimized_seeds,
+        "effective_auto_seeds": effective_auto_seeds,
+        "redundant_auto_seeds": redundant_auto_seeds,
+    }
+
+
+def verify_generated_python_replay(
+    plan: dict[str, Any], seed_slots: list[str]
+) -> dict[str, Any]:
+    seed_sets = emitted_replay_seed_sets(plan, seed_slots)
+    generated = generate_python_replay(
+        plan,
+        seed_slots,
+        seed_sets["trusted_pass"].seed_suggestions,
+        seed_sets["effective_auto_seeds"],
+        seed_sets["redundant_auto_seeds"],
+    )
+    namespace: dict[str, Any] = {}
+    exec(generated, namespace)
+    generated_result = namespace["replay"]()
+    expected = replay_plan(
+        plan,
+        trust_observed=False,
+        seed_slots=seed_specs_from_map(seed_sets["minimized_seeds"]),
+    )
+    slots_match = generated_result["slots"] == expected.slots
+    mem_match = generated_result["mem"] == expected.mem
+    ok = slots_match and mem_match
+    return {
+        "status": "ok" if ok else "mismatch",
+        "slots_match": slots_match,
+        "mem_match": mem_match,
+        "generated_line_count": len(generated.splitlines()),
+        "user_seed_slots": formatted_slots(seed_sets["user_seeds"]),
+        "effective_auto_seed_slots": formatted_slots(seed_sets["effective_auto_seeds"]),
+        "redundant_auto_seed_slots": seed_sets["redundant_auto_seeds"],
+        "expected_slot_count": len(expected.slots),
+        "expected_mem_byte_count": len(expected.mem),
+        "generated_slot_count": len(generated_result["slots"]),
+        "generated_mem_byte_count": len(generated_result["mem"]),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-mem", action="append", default=[], metavar="ADDR:SIZE")
@@ -641,6 +714,14 @@ def main() -> int:
         "--emit-python",
         action="store_true",
         help="Emit a standalone Python replay skeleton instead of executing the plan.",
+    )
+    parser.add_argument(
+        "--verify-emitted-python",
+        action="store_true",
+        help=(
+            "Generate the Python replay skeleton, execute it in-memory, and "
+            "verify that replay() matches the internal no-trust evaluator."
+        ),
     )
     parser.add_argument(
         "--auto-seed-suggestions",
@@ -671,37 +752,19 @@ def main() -> int:
     parser.add_argument("--seed-lineage-lookback", type=int, default=5_000_000)
     args = parser.parse_args()
     plan = json.load(sys.stdin)
+    if args.verify_emitted_python:
+        summary = verify_generated_python_replay(plan, args.seed_slot)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0 if summary["status"] == "ok" else 1
     if args.emit_python:
-        trusted_pass = replay_plan(plan, trust_observed=True, seed_slots=args.seed_slot)
-        user_seeds = parse_seed_slots(args.seed_slot)
-        suggested_seeds = dict(user_seeds)
-        for slot, suggestion in sorted(trusted_pass.seed_suggestions.items()):
-            if slot in suggested_seeds:
-                continue
-            value = parse_value(suggestion.get("value"))
-            if value is not None:
-                suggested_seeds[slot] = value & MASK64
-        reference_replay = replay_plan(
-            plan, trust_observed=False, seed_slots=seed_specs_from_map(suggested_seeds)
-        )
-        minimized_seeds = minimize_auto_seed_slots(
-            plan, user_seeds, suggested_seeds, reference_replay
-        )
-        effective_auto_seeds = {
-            slot: value for slot, value in minimized_seeds.items() if slot not in user_seeds
-        }
-        redundant_auto_seeds = [
-            slot
-            for slot in sorted(suggested_seeds)
-            if slot not in minimized_seeds and slot not in user_seeds
-        ]
+        seed_sets = emitted_replay_seed_sets(plan, args.seed_slot)
         sys.stdout.write(
             generate_python_replay(
                 plan,
                 args.seed_slot,
-                trusted_pass.seed_suggestions,
-                effective_auto_seeds,
-                redundant_auto_seeds,
+                seed_sets["trusted_pass"].seed_suggestions,
+                seed_sets["effective_auto_seeds"],
+                seed_sets["redundant_auto_seeds"],
             )
         )
         return 0

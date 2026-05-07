@@ -3441,6 +3441,11 @@ def python_vm_replay_plan_eval_summary() -> dict:
             "replay() uses effective seeds by default, so the emitted scratch "
             "writer skeleton directly reproduces the 52-byte dump"
         ),
+        "verify_emitted_python_status": (
+            "--verify-emitted-python executes the generated replay skeleton "
+            "in-memory and compares its slots/mem with the internal no-trust "
+            "evaluator before agents rely on exported code"
+        ),
         "auto_seed_minimization_status": (
             "--auto-seed-suggestions now reports effective_seed_slots and "
             "redundant_seed_slots so AI agents can distinguish proof-critical "
@@ -3982,6 +3987,7 @@ def completion_audit() -> dict:
                     "byte-lineage default stack registers preserve sp/fp/lr stack-slot chains",
                     "mem-dump --summary words_le64 exposes aligned static-table seeds",
                     "vm_replay_plan_eval.py --emit-python emits editable replay skeletons",
+                    "vm_replay_plan_eval.py --verify-emitted-python verifies exported skeleton slots/mem against the internal no-trust evaluator",
                     "emitted replay skeletons include suggested seeds and observed byte-load defaults",
                     "vm_replay_plan_eval.py --auto-seed-suggestions separates seed gaps from replay logic",
                     "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",

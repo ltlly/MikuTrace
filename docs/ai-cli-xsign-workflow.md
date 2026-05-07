@@ -115,6 +115,7 @@ For AI use, treat the output categories as contracts:
 | `vm_state_base` | First observed VM state/register-file base in `vm-ops` output. `vm_replay_plan_eval.py` uses it for seed proof commands when available. |
 | `seed_lineage_commands[]` | Optional command hints that turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. With `--auto-seed-suggestions`, prefer `auto_seeded_replay.effective_seed_lineage_commands[]` because it excludes user-provided and redundant seeds. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
+| `vm_replay_plan_eval.py --verify-emitted-python` | Generates the same Python skeleton, executes it in-memory, and verifies that `replay()` matches the internal no-trust evaluator's slots and memory. Use this before relying on emitted code in a reconstruction report. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, compact formula operands, memory boundaries, and next actions. Boundary rows include `mem_dump_command` hints with the correct `--cursor` for checking observed bytes. Use it before requesting the full chain. |
 | `local_def.formula.operands[].role` | Generic operand hint for compact formulas. For pointer-shaped `add`, roles such as `pointer_base` and `delta` expose both sides of `base + offset`; `delta` includes small positive values and small two's-complement negative offsets. Shifted register operands also expose `shift`, `shift_amount`, and `effective_value`, for example `reg << 4`. |
 | Lane-aware `and` masks | For byte lineage through `and data, mask`, the compact backchain follows the data operand when the selected byte lane is preserved by an `0xff` mask byte, instead of wasting the chain on the mask value. |
@@ -146,6 +147,22 @@ formula-derived `SUGGESTED_SEED_SLOTS`, minimized `EFFECTIVE_SEED_SLOTS`,
 `replay()` uses effective seeds by default so the skeleton is executable, and
 observed byte-load addresses are emitted as hex integer keys so they can be
 matched back to trace addresses. Those defaults are still trace-derived.
+
+Before using the emitted skeleton as evidence, run the verification mode:
+
+```bash
+rust/target/debug/tracemiku-cli vm-ops <call_dir> \
+  --start <idx> --end <idx> \
+  --replay-plan --max-ops 400 \
+| uv run python tools/vm_replay_plan_eval.py \
+  --seed-slot 0=0 \
+  --verify-emitted-python
+```
+
+The expected result is `status: ok`, `slots_match: true`, and
+`mem_match: true`. This only proves that the exported skeleton is equivalent to
+the trace-bound replay; the effective seeds and observed byte loads still need
+independent provenance before the result is a portable algorithm.
 Replace effective seeds and observed byte loads with proven table/app/device
 parameters before promoting it from trace replay to a portable simulator.
 

@@ -2,7 +2,7 @@ PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
-PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py examples/llm_cookbook.py
+PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py tools/vm_replay_plan_eval.py examples/llm_cookbook.py
 
 .PHONY: help fmt test test-v2 test-fast test-slow smoke-web smoke-ui webui clean
 
