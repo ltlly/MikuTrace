@@ -9847,6 +9847,7 @@ fn compact_lineage_memory_boundary(step: &serde_json::Value) -> Option<serde_jso
         return None;
     }
     let upstream = step.get("upstream").unwrap_or(&serde_json::Value::Null);
+    let mem_dump_command = compact_lineage_boundary_mem_dump_command(step, upstream);
     Some(serde_json::json!({
         "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
         "kind": decision_kind,
@@ -9858,7 +9859,28 @@ fn compact_lineage_memory_boundary(step: &serde_json::Value) -> Option<serde_jso
         "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
         "gap_call_count_total": upstream.pointer("/gap_call_candidates/candidate_count_total").cloned().unwrap_or(serde_json::Value::Null),
         "maybe_truncated": upstream.get("maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "mem_dump_command": mem_dump_command,
     }))
+}
+
+fn compact_lineage_boundary_mem_dump_command(
+    step: &serde_json::Value,
+    upstream: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(addr) = upstream.get("addr").and_then(|v| v.as_str()) else {
+        return serde_json::Value::Null;
+    };
+    let Some(idx) = step.get("idx").and_then(|v| v.as_u64()) else {
+        return serde_json::Value::Null;
+    };
+    let count = upstream
+        .get("observed_bytes_hex")
+        .and_then(|v| v.as_str())
+        .map(|hex| (hex.len() / 2).max(1))
+        .unwrap_or(1);
+    serde_json::json!(format!(
+        "tracemiku-cli mem-dump <call_dir> --addr {addr} --count {count} --cursor {idx} --summary"
+    ))
 }
 
 fn compact_lineage_next_actions(
@@ -17603,6 +17625,12 @@ mod tests {
         assert_eq!(
             compact["memory_boundaries"][0]["gap_call_count_total"],
             serde_json::json!(2)
+        );
+        assert_eq!(
+            compact["memory_boundaries"][0]["mem_dump_command"],
+            serde_json::json!(
+                "tracemiku-cli mem-dump <call_dir> --addr 0x4000 --count 8 --cursor 200 --summary"
+            )
         );
         assert!(compact["next_actions"].as_array().unwrap().len() >= 2);
     }
