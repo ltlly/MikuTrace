@@ -573,6 +573,82 @@ SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
     },
 ]
 
+SCRATCH_WRITER_REPLAY_STATIC_BOUNDARY_PROBE = {
+    "status": "cross_sample_non_module_frontier",
+    "boundary_value": "0x90bf1d91",
+    "derived_ladder_formula": "0x95f2ec79 = (0x90bf1d91 ^ 0x006dcbf8) ^ 0x05203a10",
+    "call_001_lineage": {
+        "command": (
+            "tracemiku-cli byte-lineage <call_001_dir> --addr 0x74b68bbe07 "
+            "--before-idx 14164407 --depth 180 --lookback 10000000 --compact"
+        ),
+        "terminal": "memory_not_found_boundary:not_found",
+        "terminal_addr": "0x74fbf29208",
+        "terminal_idx": 14016978,
+        "mem_dump_command": (
+            "tracemiku-cli mem-dump <call_001_dir> --addr 0x74fbf29208 "
+            "--count 8 --cursor 14016978 --summary"
+        ),
+        "observed_bytes_hex": "911dbf9000000000",
+        "resolve_trace_addr_status": "miss",
+    },
+    "pattern_probe": {
+        "command": "tracemiku-cli api <call_dir> /api/find-mem-pattern -p bytes_hex=911dbf90 -p max=5",
+        "hits": [
+            {
+                "sample": "diff_run1_call_001",
+                "addr": "0x74fbf29208",
+                "first_idx": 14016976,
+                "resolve_trace_addr_status": "miss",
+                "mem_dump_summary": {
+                    "cursor": 14016978,
+                    "bytes_hex": "911dbf9000000000",
+                    "known_byte_count": 8,
+                },
+            },
+            {
+                "sample": "diff_run1_call_004",
+                "addr": "0x75360484cc",
+                "first_idx": 2203702,
+                "resolve_trace_addr_status": "miss",
+                "mem_dump_summary": {
+                    "cursor": 2203702,
+                    "bytes_hex": (
+                        "911dbf90........f220b06a........"
+                        "de41be847dd4da1a........51b5d4f4"
+                    ),
+                    "known_byte_count": 20,
+                },
+            },
+            {
+                "sample": "diff_run1_truncated_call_006",
+                "addr": "0x75360484cc",
+                "first_idx": 2285317,
+                "resolve_trace_addr_status": "miss",
+                "mem_dump_summary": {
+                    "cursor": 2285317,
+                    "bytes_hex": (
+                        "911dbf90........f220b06a........"
+                        "de41be847dd4da1a................"
+                    ),
+                    "known_byte_count": 16,
+                },
+            },
+        ],
+        "miss_samples": [
+            "diff_run1_call_002",
+            "diff_run1_call_003",
+            "diff_run1_call_005",
+        ],
+    },
+    "interpretation": (
+        "The seed is observed in multiple traces but resolves outside known "
+        "module ranges and has no earlier traced writer in call_001. Treat it "
+        "as a pre-trace/non-module table frontier until an earlier trace, maps "
+        "classification, or file/static extraction proves a portable source."
+    ),
+}
+
 CALL_001_SEMANTIC_TAIL_HEX = (
     "0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460"
     "f1d2295d336dae63ff825bafa0f452f1411dddc5965ac22528554125"
@@ -5617,6 +5693,9 @@ def main() -> None:
                 ),
                 "trace_bound_suffix_word_count": len(
                     CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
+                ),
+                "static_boundary_cross_sample_probe": (
+                    SCRATCH_WRITER_REPLAY_STATIC_BOUNDARY_PROBE
                 ),
                 "middle_lhs_batch_lineage_probe": {
                     "command": (

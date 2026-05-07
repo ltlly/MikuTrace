@@ -1901,6 +1901,12 @@ VM bytecode reads.
 The machine-readable next proof plan now mirrors that split, so an AI agent can
 work one frontier class at a time instead of treating semantic offsets `20..58`
 as one opaque block.
+The static-table-looking group is now deliberately classified more narrowly:
+the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
+call_006 trace, but all observed addresses resolve outside known module ranges
+and call_001 still stops at `memory_not_found_boundary`. It should therefore
+remain a pre-trace/non-module table frontier until an earlier trace, map
+classification, or static extraction proves a portable source.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
