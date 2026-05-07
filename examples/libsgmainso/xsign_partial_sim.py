@@ -128,6 +128,136 @@ CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE = [
     0x9BC54423,
     0x000069C5,
 ]
+CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
+    {
+        "scratch_offset": 0,
+        "idx": 14164352,
+        "width": 4,
+        "value": 0xFB000000,
+        "python_with_values": "mem[0x74b68bbe00] = 0xfb000000",
+        "source_class": "stat_mtim_shift",
+    },
+    {
+        "scratch_offset": 4,
+        "idx": 14164406,
+        "width": 4,
+        "value": 0x7969F2E9,
+        "python_with_values": "mem[0x74b68bbe04] = 0x7969f2e9",
+        "source_class": "stat_mtim_shift_plus_previous_ladder",
+    },
+    {
+        "scratch_offset": 8,
+        "idx": 14164461,
+        "width": 4,
+        "value": 0x4195F2EC,
+        "python_with_values": "mem[0x74b68bbe08] = 0x4195f2ec",
+        "source_class": "vm_xor_ladder_from_static_table_seed_pending_lift",
+    },
+    {
+        "scratch_offset": 12,
+        "idx": 14164504,
+        "width": 4,
+        "value": 0xB39301F6,
+        "python_with_values": "mem[0x74b68bbe0c] = 0xb39301f6",
+        "source_class": "scratch_writer_replay_word_pending_lift",
+    },
+    {
+        "scratch_offset": 16,
+        "idx": 14164611,
+        "width": 4,
+        "value": 0x0C513C4B,
+        "python_with_values": "mem[0x74b68bbe10] = 0xc513c4b",
+        "source_class": "scratch_writer_replay_word_pending_lift",
+    },
+    {
+        "scratch_offset": 20,
+        "idx": 14164665,
+        "width": 4,
+        "value": 0xE39D02CC,
+        "python_with_values": "mem[0x74b68bbe14] = 0xe39d02cc",
+        "source_class": "scratch_writer_replay_word_pending_lift",
+    },
+    {
+        "scratch_offset": 24,
+        "idx": 14164720,
+        "width": 4,
+        "value": 0x95C2CE39,
+        "python_with_values": "mem[0x74b68bbe18] = 0x95c2ce39",
+        "source_class": "scratch_writer_replay_word_pending_lift",
+    },
+    {
+        "scratch_offset": 28,
+        "idx": 14164763,
+        "width": 4,
+        "value": 0x7C239030,
+        "python_with_values": "mem[0x74b68bbe1c] = 0x7c239030",
+        "source_class": "scratch_writer_replay_word_pending_lift",
+    },
+    {
+        "scratch_offset": 32,
+        "idx": 14164870,
+        "width": 4,
+        "value": 0x3BF4A4BF,
+        "python_with_values": "mem[0x74b68bbe20] = 0x3bf4a4bf",
+        "source_class": "scratch_writer_replay_word_pending_lift",
+    },
+    {
+        "scratch_offset": 36,
+        "idx": 14164924,
+        "width": 4,
+        "value": 0x344A44A0,
+        "python_with_values": "mem[0x74b68bbe24] = 0x344a44a0",
+        "source_class": "confirmed_app_version_text_boundary",
+    },
+    {
+        "scratch_offset": 40,
+        "idx": 14164979,
+        "width": 4,
+        "value": 0x9BC54423,
+        "python_with_values": "mem[0x74b68bbe28] = 0x9bc54423",
+        "source_class": "confirmed_app_version_text_boundary",
+    },
+    {
+        "scratch_offset": 44,
+        "idx": 14165022,
+        "width": 4,
+        "value": 0x000069C5,
+        "python_with_values": "mem[0x74b68bbe2c] = 0x69c5",
+        "source_class": "scratch_writer_replay_tail_word_pending_lift",
+    },
+    {
+        "scratch_offset": 48,
+        "idx": 14165215,
+        "width": 1,
+        "value": 0x3A,
+        "python_with_values": "mem[0x74b68bbe30] = low8(slot[28])",
+        "source_class": "getpid_low_byte",
+    },
+    {
+        "scratch_offset": 49,
+        "idx": 14165225,
+        "width": 1,
+        "value": 0xBF,
+        "python_with_values": "mem[0x74b68bbe31] = low8(slot[29])",
+        "source_class": "getpid_lcg_low_byte",
+    },
+    {
+        "scratch_offset": 50,
+        "idx": 14165246,
+        "width": 1,
+        "value": 0x03,
+        "python_with_values": "mem[0x74b68bbe32] = low8(slot[2])",
+        "source_class": "bytecode_literal",
+    },
+    {
+        "scratch_offset": 51,
+        "idx": 14165276,
+        "width": 1,
+        "value": 0x01,
+        "python_with_values": "mem[0x74b68bbe33] = low8(slot[28])",
+        "source_class": "bytecode_literal",
+    },
+]
 
 CALL_001_SEMANTIC_TAIL_HEX = (
     "0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460"
@@ -2388,6 +2518,24 @@ def scratch_writer_dump_bytes_from_parameters(params: dict) -> bytes:
 def middle_lhs_bytes_from_scratch_writer_parameters(params: dict) -> bytes:
     scratch = scratch_writer_dump_bytes_from_parameters(params)
     return scratch[3:46]
+
+
+def scratch_writer_replay_write_rows() -> list[dict]:
+    rows = []
+    for item in CALL001_SCRATCH_WRITER_REPLAY_WRITES:
+        value = item["value"]
+        width = item["width"]
+        rows.append(
+            {
+                **item,
+                "addr": f"{0x74B68BBE00 + item['scratch_offset']:#x}",
+                "value": f"{value:#x}",
+                "bytes_hex": int(value & ((1 << (width * 8)) - 1)).to_bytes(
+                    width, "little"
+                ).hex(),
+            }
+        )
+    return rows
 
 
 def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
@@ -4962,6 +5110,7 @@ def main() -> None:
                 "trace_bound_suffix_word_count": len(
                     CALL001_SCRATCH_WRITER_REPLAY_SUFFIX_WORDS_LE
                 ),
+                "write_rows": scratch_writer_replay_write_rows(),
                 "caution": (
                     "The reconstruction no longer consumes one opaque middle "
                     "lhs suffix string, but the replay suffix words still need "

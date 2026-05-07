@@ -818,6 +818,12 @@ ladder lift, not a separate unknown static byte.
 and the bytecode-literal tail bytes, then slices `scratch[3:46]`. This still
 preserves the existing call_001 tail reconstruction match, but keeps the
 remaining trace-derived words visible as replay parameters.
+`scratch_writer_replay_model.write_rows` now records all 16 memory writes that
+construct the 52-byte scratch dump, including each trace idx, scratch offset,
+store width, little-endian bytes, `python_with_values`, and source class. The
+first suffix word is now explicitly tied to
+`#14164461 mem[0x74b68bbe08] = 0x4195f2ec`; the final four tail bytes are tied
+to `getpid`, the getpid-derived LCG byte, and two bytecode literals.
 
 The simulator also emits a machine-readable `middle_lhs_source_manifest` for
 semantic range `[16,59)`:
