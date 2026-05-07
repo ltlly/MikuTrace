@@ -8590,7 +8590,10 @@ fn choose_frontier_next_for_lane(
     byte_lane: Option<usize>,
     profile: &VmProfile,
 ) -> Option<serde_json::Value> {
-    if step.pointer("/local_def/class").and_then(|v| v.as_str()) == Some("call-return") {
+    if matches!(
+        step.pointer("/local_def/class").and_then(|v| v.as_str()),
+        Some("call-return" | "syscall-return")
+    ) {
         return None;
     }
     if let Some(next) = choose_semantic_frontier_next(step, byte_lane) {
@@ -8635,7 +8638,10 @@ fn choose_semantic_frontier_next(
     byte_lane: Option<usize>,
 ) -> Option<serde_json::Value> {
     let local_def = step.get("local_def")?;
-    if local_def.get("class").and_then(|v| v.as_str()) == Some("call-return") {
+    if matches!(
+        local_def.get("class").and_then(|v| v.as_str()),
+        Some("call-return" | "syscall-return")
+    ) {
         return None;
     }
     let formula = row_alu_formula(local_def)?;
@@ -9705,6 +9711,7 @@ fn compact_lineage_path_step(step: &serde_json::Value) -> serde_json::Value {
                     "mem_addr": local_def.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
                     "formula": compact_lineage_formula(local_def.get("formula")),
                     "call_return": compact_lineage_call_return(local_def.get("call_return")),
+                    "syscall_return": compact_lineage_syscall_return(local_def.get("syscall_return")),
                 },
                 "upstream": {
                     "status": upstream.get("status").cloned().unwrap_or(serde_json::Value::Null),
@@ -9861,6 +9868,25 @@ fn compact_lineage_call_return(call_return: Option<&serde_json::Value>) -> serde
     })
 }
 
+fn compact_lineage_syscall_return(syscall_return: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(syscall_return) = syscall_return else {
+        return serde_json::Value::Null;
+    };
+    if syscall_return.is_null() {
+        return serde_json::Value::Null;
+    }
+    serde_json::json!({
+        "svc_idx": syscall_return.get("svc_idx").cloned().unwrap_or(serde_json::Value::Null),
+        "asm": syscall_return.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+        "syscall_reg": syscall_return.get("syscall_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "syscall_number": syscall_return.get("syscall_number").cloned().unwrap_or(serde_json::Value::Null),
+        "return_reg": syscall_return.get("return_reg").cloned().unwrap_or(serde_json::Value::Null),
+        "return_value": syscall_return.get("return_value").cloned().unwrap_or(serde_json::Value::Null),
+        "intervening_rows": syscall_return.get("intervening_rows").cloned().unwrap_or(serde_json::Value::Null),
+        "args": syscall_return.get("args").cloned().unwrap_or_else(|| serde_json::json!([])),
+    })
+}
+
 fn compact_lineage_memory_boundary(step: &serde_json::Value) -> Option<serde_json::Value> {
     let decision_kind = step.pointer("/decision/kind").and_then(|v| v.as_str())?;
     if !matches!(
@@ -9934,6 +9960,11 @@ fn compact_lineage_next_actions(
     if terminal.get("upstream_status").and_then(|v| v.as_str()) == Some("call_return_boundary") {
         actions.push(serde_json::json!(
             "inspect the compact call_return target and args, then trace or summarize the callee"
+        ));
+    }
+    if terminal.get("upstream_status").and_then(|v| v.as_str()) == Some("syscall_return_boundary") {
+        actions.push(serde_json::json!(
+            "inspect the compact syscall_return number and args, then parameterize the syscall output"
         ));
     }
     if semantics.as_array().is_some_and(|rows| !rows.is_empty()) {
@@ -10426,6 +10457,7 @@ fn compact_lineage_row_for_summary(row: Option<&serde_json::Value>) -> serde_jso
         "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
         "formula": row.get("formula").cloned().unwrap_or(serde_json::Value::Null),
         "call_return": row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
+        "syscall_return": row.get("syscall_return").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -10656,6 +10688,7 @@ fn compact_vm_row(row: Option<&serde_json::Value>) -> serde_json::Value {
         "vm_slot": row.get("vm_slot").cloned().unwrap_or(serde_json::Value::Null),
         "formula": formula,
         "call_return": row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
+        "syscall_return": row.get("syscall_return").cloned().unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -10713,13 +10746,28 @@ async fn vm_backstep_value_on(
         }));
     };
     let source_key = register_value_key(&source_reg);
-    let target_defines_source = row_defines_reg(target_row, &source_key);
+    let target_def = row_def_entry_for_key(target_row, &source_key);
+    let target_defines_source = target_def
+        .as_ref()
+        .is_some_and(|def| !def_source_contains_reg(def, &source_key));
     let local_def = if target_defines_source {
-        row_for_def_reg(target_row, &source_key)
+        let def = target_def.expect("target_defines_source requires target def");
+        let mut out = target_row.clone();
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("def".to_string(), def.clone());
+            if let Some(mem_addr) = def.get("mem_addr") {
+                obj.insert("mem_addr".to_string(), mem_addr.clone());
+            }
+        }
+        Some(out)
     } else if let Some(call_return) =
         call_return_def_from_previous_call(&rows, records, target_pos, &source_key, target_record)
     {
         Some(call_return)
+    } else if let Some(syscall_return) =
+        syscall_return_def_from_previous_svc(&rows, records, target_pos, &source_key, target_record)
+    {
+        Some(syscall_return)
     } else {
         rows[..target_pos]
             .iter()
@@ -10851,6 +10899,76 @@ fn is_call_asm(asm: &str) -> bool {
     matches!(mnemonic, "bl" | "blr")
 }
 
+fn syscall_return_def_from_previous_svc(
+    rows: &[serde_json::Value],
+    records: &[serde_json::Value],
+    target_pos: usize,
+    source_key: &str,
+    target_record: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if source_key != "x0" || target_pos == 0 {
+        return None;
+    }
+    let svc_pos = (0..target_pos).rev().find(|pos| {
+        let row = &rows[*pos];
+        if row_defines_reg(row, source_key) {
+            return false;
+        }
+        row.get("asm")
+            .and_then(|v| v.as_str())
+            .is_some_and(is_svc_asm)
+    })?;
+    if rows[svc_pos + 1..target_pos]
+        .iter()
+        .any(|row| row_defines_reg(row, source_key))
+    {
+        return None;
+    }
+    let svc_row = rows.get(svc_pos)?;
+    let svc_record = records.get(svc_pos)?;
+    let args = ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8"]
+        .into_iter()
+        .map(|reg| {
+            serde_json::json!({
+                "reg": reg,
+                "value": record_reg_value(svc_record, reg).cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut row = svc_row.clone();
+    if let Some(obj) = row.as_object_mut() {
+        obj.insert("class".to_string(), serde_json::json!("syscall-return"));
+        obj.insert(
+            "def".to_string(),
+            serde_json::json!({
+                "reg": "x0",
+                "src": args.clone(),
+                "value_after": record_reg_value(target_record, "x0").cloned().unwrap_or(serde_json::Value::Null),
+            }),
+        );
+        obj.insert(
+            "syscall_return".to_string(),
+            serde_json::json!({
+                "svc_idx": svc_row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
+                "svc_pc": svc_row.get("pc").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": svc_row.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "syscall_reg": "x8",
+                "syscall_number": record_reg_value(svc_record, "x8").cloned().unwrap_or(serde_json::Value::Null),
+                "return_reg": "x0",
+                "return_value": record_reg_value(target_record, "x0").cloned().unwrap_or(serde_json::Value::Null),
+                "args": args,
+                "intervening_rows": target_pos.saturating_sub(svc_pos + 1),
+                "note": "x0 changed across svc; treat it as a syscall return boundary",
+            }),
+        );
+    }
+    Some(row)
+}
+
+fn is_svc_asm(asm: &str) -> bool {
+    asm.split_whitespace().next().unwrap_or("") == "svc"
+}
+
 fn indirect_call_target_reg(asm: &str) -> Option<String> {
     let mut parts = asm.trim().splitn(2, char::is_whitespace);
     if parts.next()? != "blr" {
@@ -10906,6 +11024,21 @@ fn row_def_entry_for_key(row: &serde_json::Value, reg_key: &str) -> Option<serde
             (row_def_reg_key(row).as_deref() == Some(reg_key))
                 .then(|| row.get("def").cloned())
                 .flatten()
+        })
+}
+
+fn def_source_contains_reg(def: &serde_json::Value, reg_key: &str) -> bool {
+    let reg_key = register_value_key(reg_key);
+    def.get("src")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .any(|src| {
+            src.get("reg")
+                .and_then(|v| v.as_str())
+                .map(register_value_key)
+                .as_deref()
+                == Some(reg_key.as_str())
         })
 }
 
@@ -11335,6 +11468,13 @@ async fn upstream_writer_for_def_on(
             "status": "call_return_boundary",
             "reason": "register value came from a call return; inspect call_return target and args",
             "call_return": def_row.get("call_return").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
+    if class == "syscall-return" {
+        return Ok(serde_json::json!({
+            "status": "syscall_return_boundary",
+            "reason": "register value came from a syscall return; inspect syscall_return number and args",
+            "syscall_return": def_row.get("syscall_return").cloned().unwrap_or(serde_json::Value::Null),
         }));
     }
     let mut kind = None;
@@ -13726,6 +13866,9 @@ fn classify_vm_asm(asm: &str, profile: &VmProfile) -> &'static str {
     if asm.starts_with("blr ") {
         return "call-indirect";
     }
+    if asm.starts_with("svc ") || asm == "svc" {
+        return "syscall";
+    }
     if bracket_base == Some(profile.dispatch_reg.as_str()) {
         return "dispatch-table-load";
     }
@@ -13746,10 +13889,15 @@ fn classify_vm_asm(asm: &str, profile: &VmProfile) -> &'static str {
     if asm.starts_with("ldrb ") {
         return "byte-load";
     }
-    if asm.starts_with("str ") || asm.starts_with("stp ") {
+    if asm.starts_with("str ")
+        || asm.starts_with("stur")
+        || asm.starts_with("stp ")
+        || asm.starts_with("stnp ")
+    {
         return "mem-store";
     }
     if asm.starts_with("ldr ")
+        || asm.starts_with("ldur")
         || asm.starts_with("ldrsw ")
         || asm.starts_with("ldp ")
         || asm.starts_with("ldnp ")
@@ -14031,8 +14179,20 @@ fn bracket_immediate(asm: &str) -> Option<u64> {
     let inside = &asm[start + 1..end];
     split_operands(inside).into_iter().find_map(|part| {
         let trimmed = part.trim().trim_start_matches('#');
-        parse_u64_str(trimmed)
+        parse_wrapping_i64_str(trimmed)
     })
+}
+
+fn parse_wrapping_i64_str(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    let negative = s.starts_with('-');
+    let unsigned = s.strip_prefix(['-', '+']).unwrap_or(s);
+    let magnitude = parse_u64_str(unsigned)?;
+    if negative {
+        Some(0u64.wrapping_sub(magnitude))
+    } else {
+        Some(magnitude)
+    }
 }
 
 fn bracket_index_shift(asm: &str) -> Option<u32> {
@@ -14749,9 +14909,10 @@ mod tests {
         byte_writers_from_range_writes, call_return_def_from_previous_call, choose_frontier_next,
         choose_frontier_next_for_lane, choose_laned_upstream_next, classify_vm_asm,
         compact_gap_call_candidates, compact_lineage_formula, dedupe_byte_nexts,
-        def_entries_from_asm, def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes,
-        find_hex_byte_offsets, gap_call_candidate_from_record, lineage_next_from_backstep,
-        mem_addr_from_asm, mem_dump_summary, memory_access_width, merge_missing_meta_field,
+        def_entries_from_asm, def_source_contains_reg, def_source_regs_from_asm,
+        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
+        mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
         output_semantic_byte_equation, output_semantic_byte_equation_input_summary,
         output_semantic_byte_equation_summary, output_semantic_byte_equation_summary_with_context,
@@ -14761,9 +14922,10 @@ mod tests {
         recognized_backchain_pattern_summary, recognized_backchain_patterns, record_reg_u64,
         register_value_key, resolve_addr_in_maps_text, resolve_elf_symbol_json,
         source_byte_for_write_at, source_byte_offset_for_write_at, store_source_regs_from_asm,
-        store_touch_for_addr, vm_backchain_stop_summary, vm_op_effect_summaries,
-        vm_ops_compact_replay_summary, vm_ops_effects_only_summary, vm_ops_replay_plan_summary,
-        vm_ops_state_updates, vm_slot_access_summaries, vm_slot_from_asm, ElfSymbol, VmProfile,
+        store_touch_for_addr, syscall_return_def_from_previous_svc, vm_backchain_stop_summary,
+        vm_op_effect_summaries, vm_ops_compact_replay_summary, vm_ops_effects_only_summary,
+        vm_ops_replay_plan_summary, vm_ops_state_updates, vm_slot_access_summaries,
+        vm_slot_from_asm, ElfSymbol, VmProfile,
     };
 
     #[test]
@@ -14792,6 +14954,22 @@ mod tests {
     }
 
     #[test]
+    fn detects_self_def_source_registers() {
+        let self_def = serde_json::json!({
+            "reg": "x0",
+            "src": [{"reg": "x0", "value": "0x7b3a"}]
+        });
+        assert!(def_source_contains_reg(&self_def, "x0"));
+        assert!(def_source_contains_reg(&self_def, "w0"));
+
+        let copy_def = serde_json::json!({
+            "reg": "x2",
+            "src": [{"reg": "x3", "value": "0x7b3a"}]
+        });
+        assert!(!def_source_contains_reg(&copy_def, "x2"));
+    }
+
+    #[test]
     fn mem_addr_from_asm_uses_stack_and_frame_aliases() {
         let record = serde_json::json!({
             "regs": {
@@ -14807,6 +14985,10 @@ mod tests {
         assert_eq!(
             mem_addr_from_asm("ldr x8, [x29, #0x18]", &record),
             Some(0x7118)
+        );
+        assert_eq!(
+            mem_addr_from_asm("ldur x3, [x29, #-0x18]", &record),
+            Some(0x70e8)
         );
         assert_eq!(record_reg_u64(&record, "x29"), Some(0x7100));
     }
@@ -14844,6 +15026,11 @@ mod tests {
             classify_vm_asm("ldr x4, [x25, x19, lsl #3]", &profile),
             "vm-reg-load"
         );
+        assert_eq!(
+            classify_vm_asm("ldur x3, [x29, #-0x18]", &profile),
+            "mem-load"
+        );
+        assert_eq!(classify_vm_asm("svc #0", &profile), "syscall");
         assert_eq!(
             classify_vm_asm("ldp x9, x10, [x25, #0xc0]", &profile),
             "vm-reg-load"
@@ -15110,6 +15297,33 @@ mod tests {
         );
         assert_eq!(row["call_return"]["intervening_rows"], serde_json::json!(3));
         assert_eq!(row["def"]["value_after"], serde_json::json!("0x74b687edc0"));
+    }
+
+    #[test]
+    fn syscall_return_boundary_scans_past_non_def_uses() {
+        let rows = vec![
+            serde_json::json!({"idx": 10, "asm": "svc #0"}),
+            serde_json::json!({"idx": 11, "asm": "cmn x0, #1, lsl #12"}),
+            serde_json::json!({"idx": 12, "asm": "cneg x0, x0, hi"}),
+        ];
+        let records = vec![
+            serde_json::json!({"idx": 10, "regs": {"x0": "0x0", "x8": "0xac"}}),
+            serde_json::json!({"idx": 11, "regs": {"x0": "0x7b3a", "x8": "0xac"}}),
+            serde_json::json!({"idx": 12, "regs": {"x0": "0x7b3a", "x8": "0xac"}}),
+        ];
+        let row =
+            syscall_return_def_from_previous_svc(&rows, &records, 2, "x0", &records[2]).unwrap();
+        assert_eq!(row["class"], serde_json::json!("syscall-return"));
+        assert_eq!(row["syscall_return"]["svc_idx"], serde_json::json!(10));
+        assert_eq!(
+            row["syscall_return"]["syscall_number"],
+            serde_json::json!("0xac")
+        );
+        assert_eq!(
+            row["syscall_return"]["return_value"],
+            serde_json::json!("0x7b3a")
+        );
+        assert_eq!(row["def"]["value_after"], serde_json::json!("0x7b3a"));
     }
 
     #[test]
@@ -15418,6 +15632,16 @@ mod tests {
             ]
         });
         assert!(choose_frontier_next(&call_return).is_none());
+
+        let syscall_return = serde_json::json!({
+            "local_def": {
+                "class": "syscall-return"
+            },
+            "frontier": [
+                {"idx": 40, "reg": "x0", "value": "0x7b3a"}
+            ]
+        });
+        assert!(choose_frontier_next(&syscall_return).is_none());
     }
 
     #[test]

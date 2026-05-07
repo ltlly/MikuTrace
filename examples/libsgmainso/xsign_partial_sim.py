@@ -2037,12 +2037,14 @@ CALL001_XOR_LHS_RUNS = [
     },
     {
         "range": [61, 65],
-        "lhs_hex": "3abf0301",
-        "source": "vm_scratch_lhs_table_tail",
+        "source": "getpid_lcg_tail_word",
+        "trace_lhs_hex": "3abf0301",
     },
 ]
 
 CALL001_MOD255_MASK_OFFSETS = [1, 2, 13, 14, 15, 59, 60, 65, 66, 67]
+CALL001_GETPID_RETURN = 0x7B3A
+CALL001_SCRATCH_TAIL_SMALL_BYTES_HEX = "0301"
 
 
 def b64decode_unpadded(raw: str) -> bytes:
@@ -2194,6 +2196,11 @@ def scratch_lhs_prefix_bytes_from_parameters(
     )
     scratch = word32_le_bytes(word0) + word32_le_bytes(word1)
     return scratch[3:8]
+
+
+def scratch_tail_lhs_bytes_from_pid(process_id: int, small_bytes: bytes) -> bytes:
+    mixed = ((process_id * 0xDD08CEE9) + 0x61F5) & 0x7FFFFFFF
+    return bytes([process_id & 0xFF, mixed & 0xFF]) + small_bytes
 
 
 def reconstruct_call001_scratch_lhs_prefix_from_sources() -> dict:
@@ -2392,6 +2399,21 @@ def current_trace_model_input_manifest() -> dict:
             "status": TRACE_MOD255_INPUT_LCG_CHAIN["status"],
             "used_by": "odd parity xor rhs bytes",
         },
+        {
+            "name": "process_id",
+            "kind": "syscall_parameter",
+            "value": f"{CALL001_GETPID_RETURN:#x}",
+            "source": "svc #0 with x8=0xac (Linux AArch64 getpid)",
+            "status": "parameterized_external_input",
+            "used_by": "semantic[61:63] xor lhs",
+        },
+        {
+            "name": "scratch_tail_small_bytes",
+            "kind": "vm_state_expression",
+            "value": CALL001_SCRATCH_TAIL_SMALL_BYTES_HEX,
+            "status": "trace_proven_one_sample_pending_portable_source",
+            "used_by": "semantic[63:65] xor lhs",
+        },
     ]
     return {
         "status": "call001_trace_model_inputs_known",
@@ -2441,6 +2463,16 @@ def parameterized_simulation_contract() -> dict:
                 "name": "xor_lhs_runs",
                 "kind": "mixed_formula_and_segment_inputs",
                 "source": "CALL001_XOR_LHS_RUNS + middle_lhs_source_manifest",
+            },
+            {
+                "name": "process_id",
+                "kind": "syscall_parameter",
+                "source": "syscall_return_boundary x8=0xac/getpid",
+            },
+            {
+                "name": "scratch_tail_small_bytes_hex",
+                "kind": "vm_state_expression",
+                "source": "scratch tail byte lineage for semantic[63:65]",
             },
         ],
         "opaque_or_nonportable_inputs": [
@@ -3077,16 +3109,16 @@ def python_vm_replay_plan_eval_summary() -> dict:
                         "addr": "0x74b68bcc4d",
                         "load_idx": 14165182,
                         "value": "0x3a",
-                        "terminal": "no_local_def",
-                        "recognized": "0x7b3a OR identity then low byte",
+                        "terminal": "syscall_return_boundary",
+                        "recognized": "low8(getpid()) from svc #0 with x8=0xac",
                     },
                     {
                         "addr": "0x74b68bcc4e",
                         "load_idx": 14165193,
                         "value": "0xbf",
-                        "terminal": "no_local_def via shared 0x7b3a frontier",
+                        "terminal": "syscall_return_boundary via shared getpid() frontier",
                         "recognized": (
-                            "low8(((0x7b3a * 0xdd08cee9) + 0x61f5) "
+                            "low8(((getpid() * 0xdd08cee9) + 0x61f5) "
                             "& 0x7fffffff)"
                         ),
                     },
@@ -3114,11 +3146,12 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 ],
                 "interpretation": (
                     "The replay byte-load defaults are no longer anonymous, "
-                    "and the 0xbf byte now shares the 0x7b3a upstream state "
-                    "with the 0x3a byte after lane-aware AND-mask lineage "
-                    "selection. They still stop at live VM handler state "
-                    "rather than a portable input. Proving them needs an "
-                    "earlier trace window or an explicit VM/table parameter."
+                    "and the first two bytes now share a syscall-derived "
+                    "getpid() input after ldur/negative-offset, self-def, "
+                    "and syscall-return lineage fixes. The 0x03/0x01 tail "
+                    "bytes still stop at live VM handler state rather than "
+                    "a portable input. Proving them needs an earlier trace "
+                    "window or an explicit VM/table parameter."
                 ),
             },
         },
@@ -3541,6 +3574,7 @@ def completion_audit() -> dict:
                     "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",
                     "byte-lineage formulas expose shifted-register effective_value for VM bytecode/IP updates",
                     "byte-lineage lane-aware AND-mask selection follows the data operand instead of mask operands",
+                    "byte-lineage recognizes svc syscall-return boundaries and exposes x8 syscall numbers/args",
                 ],
                 "status": "substantially_available",
             },
@@ -3600,7 +3634,9 @@ def completion_audit() -> dict:
                 "scratch-writer slot25/28 reach malloc-backed heap scratch "
                 "boundaries; scratch-writer slot26 reaches a VM bytecode/IP "
                 "boundary; ladder slot24/26 still carry static-table or "
-                "allocator boundaries."
+                "allocator boundaries; the scratch tail 0x03/0x01 bytes "
+                "still need a portable source after the first two bytes were "
+                "reduced to getpid()."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "
@@ -3660,6 +3696,11 @@ def lhs_run_bytes_from_parameters(run: dict, params: dict) -> bytes:
             params["scratch_prefix_static_byte"],
         )
         return prefix + bytes.fromhex(params["middle_lhs_mixed_suffix_hex"])[1:]
+    if run.get("source") == "getpid_lcg_tail_word":
+        return scratch_tail_lhs_bytes_from_pid(
+            params["process_id"],
+            bytes.fromhex(params["scratch_tail_small_bytes_hex"]),
+        )
     raise ValueError(f"unsupported lhs run source: {run}")
 
 
@@ -3675,6 +3716,8 @@ def call001_trace_model_parameters() -> dict:
         "stat_mtim_tv_sec": CALL001_STAT_MTIM_TV_SEC,
         "scratch_prefix_static_byte": CALL001_SCRATCH_PREFIX_STATIC_BYTE,
         "middle_lhs_mixed_suffix_hex": CALL001_MIDDLE_LHS_MIXED_SUFFIX_HEX,
+        "process_id": CALL001_GETPID_RETURN,
+        "scratch_tail_small_bytes_hex": CALL001_SCRATCH_TAIL_SMALL_BYTES_HEX,
     }
 
 
