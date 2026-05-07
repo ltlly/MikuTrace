@@ -1314,8 +1314,9 @@ model no longer depends on observed trace bytes.
 ```text
 available samples  7
 covered samples    5
-covered offsets    0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
-partial offsets    7,8,9,10,11,12,16,17,18,19,20,61,62,63,64
+strong offsets     0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
+partial offsets    7..12,16..58,61..64
+strong+partial     68/68
 all_match          true
 ```
 
@@ -1656,6 +1657,19 @@ For `call_001`, `stat('/').st_mtim.tv_sec = 0x69f2e9fb` and
 `ladder_low8 = 0x79`, giving `fbe9f26979`. This is useful partial coverage
 because the stat input is now an explicit parameter, but the ladder low byte
 still needs source proof before the prefix can be treated as portable.
+
+The full middle lhs range, `semantic[16:59]`, is now treated as trace-observed
+partial coverage across the five diff samples:
+
+```text
+sample count        5
+stable bytes        43/43
+variation count     0
+```
+
+This closes the byte-formula accounting gap, but not the algorithmic source
+gap: the range still depends on VM scratch/table replay, static table reads,
+and app metadata boundaries recorded in `middle_lhs_source_manifest`.
 
 The tail word at `semantic[61:65]` is also now cross-sample formula-covered:
 
