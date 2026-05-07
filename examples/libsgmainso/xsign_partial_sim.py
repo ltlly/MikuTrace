@@ -23,6 +23,9 @@ pieces that have been proven from local libsgmainso traces:
 - the second sha1-like XOR state word at semantic offsets 7..10 is trace-proven
   for four diff samples; call_005 is explicitly tracked as a degenerate
   zero-lane word case with one zero lhs byte.
+- semantic offsets 11..12 are no longer treated as opaque trace literals:
+  across diff samples they match a state-high byte plus a small VM/call counter
+  byte before the same parity XOR mask.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -463,6 +466,44 @@ TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE = {
             "as a full 32-bit state source."
         ),
     }
+}
+
+TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
+    "diff_run1_truncated_call_006": {
+        "lhs_hex": "6c06",
+        "state_word_be": 0x6C27286D,
+        "state_add_idx": 7014068,
+        "counter_input": 0x66C,
+        "counter_byte": 0x06,
+    },
+    "diff_run1_call_001": {
+        "lhs_hex": "cd01",
+        "state_word_be": 0xCDFCA104,
+        "state_add_idx": 14678197,
+        "counter_input": 0x1CD,
+        "counter_byte": 0x01,
+    },
+    "diff_run1_call_003": {
+        "lhs_hex": "b803",
+        "state_word_be": 0xB838E668,
+        "state_add_idx": 6938257,
+        "counter_input": 0x3B8,
+        "counter_byte": 0x03,
+    },
+    "diff_run1_call_004": {
+        "lhs_hex": "db04",
+        "state_word_be": 0xDB3D615B,
+        "state_add_idx": 6918587,
+        "counter_input": 0x4DB,
+        "counter_byte": 0x04,
+    },
+    "diff_run1_call_005": {
+        "lhs_hex": "b205",
+        "state_word_be": 0xB2010D7F,
+        "state_add_idx": 6960285,
+        "counter_input": 0x5B2,
+        "counter_byte": 0x05,
+    },
 }
 
 TRACE_MULTI_SAMPLE_MASK_FOLDS = {
@@ -1931,9 +1972,14 @@ CALL001_XOR_LHS_RUNS = [
         "source": "sha1_like_state_word",
     },
     {
-        "range": [11, 13],
-        "lhs_hex": "cd01",
-        "source": "trace_literal_lhs_hex",
+        "range": [11, 12],
+        "lhs_hex": "cd",
+        "source": "sha1_like_state_word_high_byte",
+    },
+    {
+        "range": [12, 13],
+        "lhs_hex": "01",
+        "source": "vm_counter_byte",
     },
     {
         "range": [16, 59],
@@ -2551,7 +2597,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "groups": groups,
         "recommended_order": [
             "resolve the semantic offsets 7..10 call_005 degenerate xor-word case",
-            "lift the remaining trace_literal_lhs_hex bytes at offsets 11..12",
+            "prove the portable source of the semantic offset 12 VM/call counter byte",
             "prove vm_scratch_lhs_table_tail offsets 61..64",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
         ],
@@ -2657,6 +2703,28 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "interpretation": item["interpretation"],
             }
         )
+    tail_11_13 = []
+    for name, item in TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13.items():
+        tail = sample_tails[name]
+        lhs = bytes([(item["state_word_be"] >> 24) & 0xFF, item["counter_byte"] & 0xFF])
+        rhs = bytes([tail[1], tail[2]])
+        computed = bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
+        tail_11_13.append(
+            {
+                "sample": name,
+                "semantic_range": [11, 13],
+                "lhs_hex": lhs.hex(),
+                "recorded_lhs_hex": item["lhs_hex"],
+                "rhs_hex": rhs.hex(),
+                "computed_hex": computed.hex(),
+                "expected_hex": tail[11:13].hex(),
+                "matches": computed == tail[11:13] and lhs.hex() == item["lhs_hex"],
+                "state_word_be": f"{item['state_word_be']:#x}",
+                "state_add_idx": item["state_add_idx"],
+                "counter_input": f"{item['counter_input']:#x}",
+                "counter_byte": f"{item['counter_byte']:#x}",
+            }
+        )
     mask_fold_rows = []
     for name, item in TRACE_MULTI_SAMPLE_MASK_FOLDS.items():
         tail = sample_tails[name]
@@ -2730,10 +2798,15 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "kind": "xor_word_tail_bytes",
                 "complete_word_template_samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_7_11),
                 "degenerate_samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORD_7_11_DEGENERATE),
-            }
+            },
+            {
+                "semantic_range": [11, 13],
+                "kind": "state_high_byte_plus_vm_counter_byte",
+                "samples": sorted(TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13),
+            },
         ],
         "covered_semantic_offsets": covered_offsets,
-        "partially_covered_semantic_offsets": [7, 8, 9, 10],
+        "partially_covered_semantic_offsets": [7, 8, 9, 10, 11, 12],
         "covered_byte_count": len(covered_offsets),
         "tail_3_7": tail_3_7,
         "tail_7_11": tail_7_11,
@@ -2741,6 +2814,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             row["matches"] and row["source_word_matches_state_add"] for row in tail_7_11
         ),
         "tail_7_11_degenerate": tail_7_11_degenerate,
+        "tail_11_13": tail_11_13,
+        "tail_11_13_all_samples_match": all(row["matches"] for row in tail_11_13),
         "mask_fold_1_3": mask_fold_rows,
         "static_byte0": byte0_rows,
         "static_byte0_all_samples_match": all(row["matches"] for row in byte0_rows),
@@ -2748,14 +2823,17 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "repeated_mask_all_samples_match": all(row["matches"] for row in repeated_mask_rows),
         "all_match": all(
             row["matches"]
-            for row in all_rows + tail_7_11 + repeated_mask_rows + byte0_rows
+            for row in all_rows + tail_7_11 + tail_11_13 + repeated_mask_rows + byte0_rows
         )
         and all(row["matches_recorded_lhs"] for row in tail_7_11_degenerate),
         "partial_coverage_note": (
             "Semantic offsets 7..10 have a complete xor-word state-source proof "
             "for four diff samples. diff_run1_call_005 is a degenerate case "
             "where offset 9 is the parity mask itself because the inferred lhs "
-            "byte is zero, so these offsets are not promoted to strong coverage."
+            "byte is zero. Semantic offsets 11..12 match a state-high byte plus "
+            "a small VM/call counter byte across the diff samples. These ranges "
+            "are not promoted to strong coverage until their portable parameter "
+            "sources are proven."
         ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
@@ -3253,6 +3331,7 @@ def completion_audit() -> dict:
                 "evidence": [
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
                     "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate word32_zero_lane case",
+                    "semantic offsets 11..12 match state-high-byte plus VM/call-counter formulas across five diff samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3274,9 +3353,9 @@ def completion_audit() -> dict:
                 "instead of relying on trace-bound replay summaries."
             ),
             (
-                "Expand multi-sample formula coverage beyond the 15 currently "
-                "covered semantic offsets and prove how LCG/time-derived state "
-                "feeds every payload byte."
+                "Expand multi-sample formula coverage beyond the 15 strong "
+                "semantic offsets and 6 partial offsets, then prove how "
+                "LCG/time-derived state feeds every payload byte."
             ),
         ],
         "goal_complete": False,

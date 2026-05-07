@@ -1319,7 +1319,7 @@ model no longer depends on observed trace bytes.
 available samples  7
 covered samples    5
 covered offsets    0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
-partial offsets    7,8,9,10
+partial offsets    7,8,9,10,11,12
 all_match          true
 ```
 
@@ -1628,6 +1628,23 @@ the CLI now emits `xor_word_degenerate_templates[]` with
 `zero_lhs_offsets = [2]` in the selected local slice. This is a useful negative
 example for the VM CLI design: summaries should report missing or degenerate
 lanes rather than force every four-byte window into a hash-state shape.
+
+The following two bytes, `tail[11:13]`, are also no longer treated as an opaque
+trace literal. Across the five diff samples the lhs bytes are:
+
+```text
+call_006  lhs 6c 06  = high8(0x6c27286d) || 0x06
+call_001  lhs cd 01  = high8(0xcdfca104) || 0x01
+call_003  lhs b8 03  = high8(0xb838e668) || 0x03
+call_004  lhs db 04  = high8(0xdb3d615b) || 0x04
+call_005  lhs b2 05  = high8(0xb2010d7f) || 0x05
+```
+
+The first byte comes from another `add32_mix` state result. The second byte is a
+small VM/call counter byte, observed through shifts such as `0x5b2 >> 8 = 0x05`.
+This is partial coverage: the formula is cross-sample, but the portable source
+of that counter still needs to be proven before these offsets can be counted as
+strongly covered.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
