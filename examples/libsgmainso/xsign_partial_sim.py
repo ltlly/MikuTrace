@@ -4240,10 +4240,99 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "scratch_dump_matches": True,
                 "caution": "seed suggestions are not portable until lineage-proven",
             },
+            "verify_emitted_python": {
+                "command": (
+                    "tracemiku-cli vm-ops <call_dir> --start 14164280 "
+                    "--end 14165320 --replay-plan --max-ops 400 | "
+                    "uv run python tools/vm_replay_plan_eval.py "
+                    "--seed-slot 0=0 --auto-seed-suggestions "
+                    "--verify-emitted-python"
+                ),
+                "status": "ok",
+                "slots_match": True,
+                "mem_match": True,
+                "generated_line_count": 357,
+                "user_seed_slots": {"0": "0x0"},
+                "effective_auto_seed_slots": {
+                    "2": "0x1",
+                    "25": "0x74b68bcc1c",
+                    "26": "0x38",
+                    "27": "0x20",
+                    "28": "0x74b68bbe00",
+                    "29": "0x37",
+                },
+                "redundant_auto_seed_slots": [],
+                "expected_slot_count": 10,
+                "expected_mem_byte_count": 52,
+                "generated_slot_count": 10,
+                "generated_mem_byte_count": 52,
+            },
             "seed_lineage_command_status": (
                 "vm_state_base=0x77445994a0 lets seed_lineage_commands emit "
                 "byte-lineage commands automatically; slot26 maps to 0x7744599570"
             ),
+            "effective_seed_lineage_commands": [
+                {
+                    "slot": 2,
+                    "suggested_value": "0x1",
+                    "addr": "0x77445994b0",
+                    "command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x77445994b0 --before-idx 14164280 --depth 80 "
+                        "--lookback 5000000 --compact"
+                    ),
+                },
+                {
+                    "slot": 25,
+                    "suggested_value": "0x74b68bcc1c",
+                    "addr": "0x7744599568",
+                    "command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599568 --before-idx 14164280 --depth 80 "
+                        "--lookback 5000000 --compact"
+                    ),
+                },
+                {
+                    "slot": 26,
+                    "suggested_value": "0x38",
+                    "addr": "0x7744599570",
+                    "command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599570 --before-idx 14164280 --depth 80 "
+                        "--lookback 5000000 --compact"
+                    ),
+                },
+                {
+                    "slot": 27,
+                    "suggested_value": "0x20",
+                    "addr": "0x7744599578",
+                    "command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599578 --before-idx 14164280 --depth 80 "
+                        "--lookback 5000000 --compact"
+                    ),
+                },
+                {
+                    "slot": 28,
+                    "suggested_value": "0x74b68bbe00",
+                    "addr": "0x7744599580",
+                    "command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599580 --before-idx 14164280 --depth 80 "
+                        "--lookback 5000000 --compact"
+                    ),
+                },
+                {
+                    "slot": 29,
+                    "suggested_value": "0x37",
+                    "addr": "0x7744599588",
+                    "command": (
+                        "tracemiku-cli byte-lineage <call_dir> --addr "
+                        "0x7744599588 --before-idx 14164280 --depth 80 "
+                        "--lookback 5000000 --compact"
+                    ),
+                },
+            ],
             "scratch_dump": {
                 "addr": "0x74b68bbe00",
                 "size": 52,

@@ -1910,6 +1910,12 @@ producer.
 `x_umt` as explicit external parameters, so a generated simulator can avoid
 embedding those observed bytes while still flagging x-umt reconstruction as
 future work.
+For the scratch-writer VM window, `vm_replay_plan_eval.py --verify-emitted-python`
+now verifies the emitted Python skeleton directly: with user seed `slot[0]=0`,
+the generated replay has `slots_match=true`, `mem_match=true`, and reproduces
+the 52-byte scratch dump. The auto-seeded no-trust replay needs six non-user
+seed slots (`2`, `25`, `26`, `27`, `28`, `29`), and the report now records the
+corresponding `byte-lineage` proof commands.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges
