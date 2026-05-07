@@ -518,6 +518,61 @@ CALL001_SCRATCH_WRITER_REPLAY_WRITES = [
     },
 ]
 
+SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
+    {
+        "source": "xor_lhs:scratch_writer_replay:static_table_boundary",
+        "frontier": "memory_not_found_boundary:not_found",
+        "proof_action": (
+            "prove the static-table seed or promote it to an explicit table "
+            "parameter before treating semantic offsets 20..23 as portable"
+        ),
+        "batch_offsets": [0, 1, 2, 3],
+        "semantic_offsets": [20, 21, 22, 23],
+        "top_values": [{"value": "0x95f2ec79", "count": 4}],
+    },
+    {
+        "source": "xor_lhs:scratch_writer_replay:vm_bytecode_read_boundary",
+        "frontier": "stop:bytecode_read_boundary",
+        "proof_action": (
+            "lift the VM opcode templates around the bytecode reads and "
+            "parameterize each literal/table byte source"
+        ),
+        "batch_offsets": [
+            4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            21, 22, 23, 25, 26, 36, 37, 38,
+        ],
+        "semantic_offsets": [
+            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+            40, 41, 42, 43, 45, 46, 56, 57, 58,
+        ],
+        "top_values": [
+            {"value": "0x23903095", "count": 4},
+            {"value": "0x513c4bb3", "count": 4},
+            {"value": "0x9301f641", "count": 4},
+            {"value": "0x9d02cc0c", "count": 4},
+            {"value": "0xc2ce39e3", "count": 4},
+            {"value": "0x5e", "count": 2},
+            {"value": "0xf4a4bf7c", "count": 2},
+            {"value": "0x29", "count": 1},
+        ],
+    },
+    {
+        "source": "xor_lhs:scratch_writer_replay:observed_read_no_writer",
+        "frontier": "observed_read_without_matching_traced_write",
+        "proof_action": (
+            "inspect gap call candidates or widen tracing around the producer; "
+            "otherwise parameterize these bytes as pre-trace app/framework input"
+        ),
+        "batch_offsets": [24, 27, 28, 29, 30, 31, 32, 33, 34, 35],
+        "semantic_offsets": [44, 47, 48, 49, 50, 51, 52, 53, 54, 55],
+        "top_values": [
+            {"value": "0x4a44a03b", "count": 4},
+            {"value": "0xc5442334", "count": 4},
+            {"value": "0xf4a4bf7c", "count": 2},
+        ],
+    },
+]
+
 CALL_001_SEMANTIC_TAIL_HEX = (
     "0a626105d528b91a5f1a0eaf606261629a8b930b188e93f7209460"
     "f1d2295d336dae63ff825bafa0f452f1411dddc5965ac22528554125"
@@ -3287,15 +3342,57 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         if offset in covered:
             continue
         by_source.setdefault(semantic_source_key(row), []).append(offset)
-    groups = [
-        {
-            "source": source,
-            "ranges": contiguous_ranges(offsets),
-            "offsets": offsets,
-            "byte_count": len(offsets),
-        }
-        for source, offsets in sorted(by_source.items(), key=lambda item: item[1][0])
-    ]
+    groups = []
+    for source, offsets in sorted(by_source.items(), key=lambda item: item[1][0]):
+        if source == "xor_lhs:scratch_writer_replay":
+            known_offsets: set[int] = set()
+            for frontier in SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS:
+                pairs = [
+                    (batch_offset, semantic_offset)
+                    for batch_offset, semantic_offset in zip(
+                        frontier["batch_offsets"], frontier["semantic_offsets"]
+                    )
+                    if semantic_offset in offsets
+                ]
+                frontier_offsets = [semantic_offset for _, semantic_offset in pairs]
+                if not frontier_offsets:
+                    continue
+                known_offsets.update(frontier_offsets)
+                groups.append(
+                    {
+                        "source": frontier["source"],
+                        "parent_source": source,
+                        "frontier": frontier["frontier"],
+                        "ranges": contiguous_ranges(frontier_offsets),
+                        "offsets": frontier_offsets,
+                        "byte_count": len(frontier_offsets),
+                        "batch_offsets": [batch_offset for batch_offset, _ in pairs],
+                        "top_values": frontier["top_values"],
+                        "proof_action": frontier["proof_action"],
+                    }
+                )
+            remainder = [offset for offset in offsets if offset not in known_offsets]
+            if remainder:
+                groups.append(
+                    {
+                        "source": f"{source}:unclassified",
+                        "parent_source": source,
+                        "ranges": contiguous_ranges(remainder),
+                        "offsets": remainder,
+                        "byte_count": len(remainder),
+                        "proof_action": "run byte-lineage --compact --count for these offsets",
+                    }
+                )
+            continue
+        groups.append(
+            {
+                "source": source,
+                "ranges": contiguous_ranges(offsets),
+                "offsets": offsets,
+                "byte_count": len(offsets),
+            }
+        )
+    groups.sort(key=lambda group: group["offsets"][0])
     return {
         "status": "next_proof_plan",
         "covered_offsets": sorted(covered),
@@ -3304,7 +3401,9 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "prove or parameterize scratch_writer_replay middle-lhs portable sources for semantic offsets 20..58",
+            "prove or parameterize scratch_writer_replay static-table boundary for semantic offsets 20..23",
+            "lift scratch_writer_replay VM bytecode-read frontiers for semantic offsets 24..43,45..46,56..58",
+            "trace-widen or parameterize scratch_writer_replay observed-read/no-writer frontiers for semantic offsets 44,47..55",
             "prove or parameterize non-call001 semantic offset 62 LCG table seed initializer",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",
             "lift previous_ladder_slot24/static-table frontiers into portable VM/table parameters",
@@ -4509,7 +4608,7 @@ def completion_audit() -> dict:
                 ],
                 "evidence": [
                     "multi_sample_formula_coverage covers five diff samples and two extra call_001 samples for the stat-mtime prefix",
-                    "scratch_writer_replay_model records trace idx, address, bytes, source class, and lineage probes for call_001",
+                    "scratch_writer_replay_model records trace idx, address, bytes, source class, lineage probes, and frontier groups for call_001",
                 ],
                 "status": "covered_for_current_trace_corpus",
             },
@@ -4627,7 +4726,7 @@ def completion_audit() -> dict:
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "scratch_writer_replay_suffix_words_le is explicit but still call_001-scoped",
-                    "multi_sample_next_proof_plan groups uncovered offsets by source class",
+                    "multi_sample_next_proof_plan groups uncovered scratch_writer_replay offsets by frontier class",
                 ],
                 "status": "weakly_covered",
             },
@@ -5538,49 +5637,11 @@ def main() -> None:
                     "upstream_counts": {
                         "bytecode_read_boundary": 25,
                         "not_found": 4,
-                        "unknown": 10,
+                        "observed_read_without_matching_traced_write": 10,
                     },
                     "frontier_groups": [
-                        {
-                            "frontier": "memory_not_found_boundary:not_found",
-                            "count": 4,
-                            "batch_offsets": [0, 1, 2, 3],
-                            "semantic_offsets": [20, 21, 22, 23],
-                            "top_values": [{"value": "0x95f2ec79", "count": 4}],
-                        },
-                        {
-                            "frontier": "observed_read_without_matching_traced_write",
-                            "count": 10,
-                            "batch_offsets": [24, 27, 28, 29, 30, 31, 32, 33, 34, 35],
-                            "semantic_offsets": [44, 47, 48, 49, 50, 51, 52, 53, 54, 55],
-                            "top_values": [
-                                {"value": "0x4a44a03b", "count": 4},
-                                {"value": "0xc5442334", "count": 4},
-                                {"value": "0xf4a4bf7c", "count": 2},
-                            ],
-                        },
-                        {
-                            "frontier": "stop:bytecode_read_boundary",
-                            "count": 25,
-                            "batch_offsets": [
-                                4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                                17, 18, 19, 20, 21, 22, 23, 25, 26, 36, 37, 38,
-                            ],
-                            "semantic_offsets": [
-                                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-                                36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 56, 57, 58,
-                            ],
-                            "top_values": [
-                                {"value": "0x23903095", "count": 4},
-                                {"value": "0x513c4bb3", "count": 4},
-                                {"value": "0x9301f641", "count": 4},
-                                {"value": "0x9d02cc0c", "count": 4},
-                                {"value": "0xc2ce39e3", "count": 4},
-                                {"value": "0x5e", "count": 2},
-                                {"value": "0xf4a4bf7c", "count": 2},
-                                {"value": "0x29", "count": 1},
-                            ],
-                        },
+                        {**group, "count": len(group["semantic_offsets"])}
+                        for group in SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS
                     ],
                     "step_stats": {"min": 19, "max": 59, "avg": 42.53846153846154},
                     "interpretation": (

@@ -1880,9 +1880,9 @@ directly: generic CLI capability, libsgmain trace evidence, algorithm recovery,
 and complete Python simulation are tracked separately so trace-bound success
 cannot be mistaken for portable completion.
 `multi_sample_next_proof_plan` now uses the current source names
-(`xor_lhs:lcg_seed_low_byte` and `xor_lhs:tail64_lhs_model`) and prioritizes
-the still-large `scratch_writer_replay` middle-lhs range before the two
-single-byte frontier exceptions.
+(`xor_lhs:lcg_seed_low_byte` and `xor_lhs:tail64_lhs_model`) and splits the
+formerly large `scratch_writer_replay` middle-lhs range by frontier class
+before the two single-byte frontier exceptions.
 To make that range practical for AI agents, `byte-lineage` now accepts
 `--count N`, returning consecutive byte lineages in one indexed run while
 preserving the old one-byte output when `--count` is omitted. Batch output now
@@ -1898,6 +1898,9 @@ The report now records those groups as semantic offsets:
 `20..23` share the `0x95f2ec79` table boundary, `44` and `47..55` are
 observed-read/no-writer frontiers, and `24..43`, `45..46`, `56..58` stop at
 VM bytecode reads.
+The machine-readable next proof plan now mirrors that split, so an AI agent can
+work one frontier class at a time instead of treating semantic offsets `20..58`
+as one opaque block.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
