@@ -3139,7 +3139,15 @@ def current_trace_model_input_manifest() -> dict:
             "value": "10.60.10",
             "source": "adb dumpsys package com.taobao.taobao versionName",
             "status": "parameterized_external_input",
-            "used_by": "middle_lhs[49:57]",
+            "used_by": "scratch_writer_replay app_version_text_boundary",
+        },
+        {
+            "name": "x_umt",
+            "kind": "external_companion_header",
+            "value": "QfYBk7NLPFEMzAKd4znOwpUwkCN8v6T0",
+            "source": "JNI NewStringUTF(\"x-umt\") companion header value",
+            "status": "parameterized_external_input_until_x_umt_reconstructed",
+            "used_by": "scratch_writer_replay x_umt_text_boundary",
         },
         {
             "name": "previous_ladder_slot24",
@@ -3248,6 +3256,16 @@ def parameterized_simulation_contract() -> dict:
                 "source": (
                     "CALL001_XOR_LHS_RUNS + scratch_writer_replay parameters"
                 ),
+            },
+            {
+                "name": "app_versionName",
+                "kind": "external_parameter",
+                "source": "Android package versionName",
+            },
+            {
+                "name": "x_umt",
+                "kind": "external_companion_header",
+                "source": "JNI x-umt header value until x-umt producer is reconstructed",
             },
             {
                 "name": "previous_ladder_slot24",

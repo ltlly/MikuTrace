@@ -1906,6 +1906,10 @@ For the `x-umt` group, dumping `0x753ddd7fd0` at cursor `#10620736` shows
 are `x-umt[27] == '8'` and `x-umt[31] == '0'`. This reduces the frontier to an
 explicit companion-header input, but does not yet reconstruct the x-umt
 producer.
+`current_trace_model_input_manifest` now lists both `app_versionName` and
+`x_umt` as explicit external parameters, so a generated simulator can avoid
+embedding those observed bytes while still flagging x-umt reconstruction as
+future work.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges
