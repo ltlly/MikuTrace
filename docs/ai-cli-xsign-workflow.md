@@ -111,7 +111,7 @@ For AI use, treat the output categories as contracts:
 | `python_with_values` | A concrete, value-filled expression. It is good for verification, but must be parameterized before calling it an algorithm. |
 | `source_byte_load` | A byte/word input to the VM operation. Follow it with `byte-lineage` when it is not yet a known table, literal, or app/device input. |
 | `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
-| `vm_replay_plan_eval.py --auto-seed-suggestions` | Runs a trusted pass, applies formula-derived seed suggestions, then reports a second no-trust replay. Use this to remove mechanical fallback noise before proving each seed. |
+| `vm_replay_plan_eval.py --auto-seed-suggestions` | Runs a trusted pass, applies formula-derived seed suggestions, then reports a second no-trust replay. It also emits `effective_seed_slots` and `redundant_seed_slots` so agents prove only the required initial state. Use this to remove mechanical fallback noise before proving each seed. |
 | `vm_state_base` | First observed VM state/register-file base in `vm-ops` output. `vm_replay_plan_eval.py` uses it for seed proof commands when available. |
 | `seed_lineage_commands[]` | Optional command hints that turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
@@ -159,7 +159,10 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> \
 If `auto_seeded_replay.summary.trusted_effects == 0`, the window can be replayed
 without observed fallbacks once its initial seeds are supplied. Those seeds are
 still not portable until `byte-lineage`, `mem-dump`, or an external metadata
-probe proves their source.
+probe proves their source. Prefer
+`auto_seeded_replay.effective_seed_slots` over the raw suggestion list when
+deciding which VM slots need lineage proof; `redundant_seed_slots` are values
+that the replay can recompute once earlier seeds are supplied.
 
 For register-file VMs where slot `N` lives at `slot_base + N*8`, emit the next
 lineage commands directly. `vm-ops --replay-plan` normally carries

@@ -896,8 +896,12 @@ mechanical seed gaps from missing logic. On the scratch-writer window it applies
 six formula-derived seed suggestions and replays with `trusted_effects=0`,
 `unresolved_read_count=0`, and the 52-byte scratch dump still matching the
 trace. On the `[21,25)` ladder window it applies five suggestions and replays
-to final `slot24=0x95f2ec79` with no observed fallbacks. These suggestions are
-still evidence to prove, not portable inputs by themselves.
+to final `slot24=0x95f2ec79` with no observed fallbacks. The evaluator now also
+minimizes the auto-seeded input set: the scratch-writer window keeps all six
+suggestions, while the ladder window drops redundant `slot29` and needs only
+`slot24`, `slot25`, `slot26`, and `slot28` in addition to user seed `slot0`.
+These suggestions are still evidence to prove, not portable inputs by
+themselves.
 `vm-ops --replay-plan` now includes `vm_state_base`, so the same tool emits
 direct `seed_lineage_commands[]` without a manually supplied slot base; for
 example slot26 maps to `0x7744599570`, matching the earlier manual
@@ -1031,9 +1035,9 @@ scratch[0:52] complete=true
 
 The evaluator also handles the `[21,25)` ladder window and reaches
 `slot[24] = 0x95f2ec79`, but it still needs observed-value fallbacks for missing
-initial slot/table values. With `--seed-slot 0=0`, both active replay windows are
-down to six unresolved slot reads each. That keeps this as trace-bound replay
-rather than a portable x-sign algorithm.
+initial slot/table values. With `--seed-slot 0=0`, the scratch writer is down to
+six unresolved slot reads, and the ladder is down to five unresolved reads. That
+keeps this as trace-bound replay rather than a portable x-sign algorithm.
 
 Those remaining reads can be eliminated by explicitly seeding the initial VM
 slots inferred from the trace:
@@ -1048,6 +1052,11 @@ slot27=0x20, slot28=0x74b68bbe00, slot29=0x37
 slot0=0, slot24=0x7599191126, slot25=0xb,
 slot26=0x1f7b3460, slot28=0x6f
 => trusted_effects=0, unresolved_read_count=0, final slot24=0x95f2ec79
+
+auto-seed minimization:
+scratch writer effective_seed_slots = slot0,slot2,slot25,slot26,slot27,slot28,slot29
+ladder effective_seed_slots = slot0,slot24,slot25,slot26,slot28
+ladder redundant_seed_slots = slot29
 ```
 
 The replay engine can now compute these windows without observed-value

@@ -2988,6 +2988,11 @@ def python_vm_replay_plan_eval_summary() -> dict:
             "and OBSERVED_BYTE_LOADS; with suggested seeds the emitted scratch "
             "writer skeleton reproduces the 52-byte dump"
         ),
+        "auto_seed_minimization_status": (
+            "--auto-seed-suggestions now reports effective_seed_slots and "
+            "redundant_seed_slots so AI agents can distinguish proof-critical "
+            "initial state from mechanically redundant suggestions"
+        ),
         "scratch_writer_window": {
             "command": (
                 "tracemiku-cli vm-ops <call_dir> --start 14164280 "
@@ -3025,6 +3030,16 @@ def python_vm_replay_plan_eval_summary() -> dict:
             },
             "auto_seeded_replay": {
                 "applied_seed_suggestion_count": 6,
+                "effective_seed_slots": {
+                    "0": "0x0",
+                    "2": "0x1",
+                    "25": "0x74b68bcc1c",
+                    "26": "0x38",
+                    "27": "0x20",
+                    "28": "0x74b68bbe00",
+                    "29": "0x37",
+                },
+                "redundant_seed_slots": [],
                 "trusted_effects": 0,
                 "unresolved_read_count": 0,
                 "scratch_dump_matches": True,
@@ -3053,9 +3068,9 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 "uv run python tools/vm_replay_plan_eval.py --seed-slot 0=0"
             ),
             "seeded_slots": {"0": "0x0"},
-            "computed_effects": 122,
+            "computed_effects": 123,
             "trusted_effects": 5,
-            "skipped_effects": 14,
+            "skipped_effects": 10,
             "unresolved_read_count": 5,
             "remaining_missing_slots": [26, 28, 25, 24],
             "trusted_writes": [
@@ -3073,14 +3088,25 @@ def python_vm_replay_plan_eval_summary() -> dict:
                     "26": "0x1f7b3460",
                     "28": "0x6f",
                 },
-                "computed_effects": 127,
+                "computed_effects": 128,
                 "trusted_effects": 0,
+                "skipped_effects": 10,
                 "unresolved_read_count": 0,
                 "final_slot24": "0x95f2ec79",
             },
             "auto_seeded_replay": {
                 "applied_seed_suggestion_count": 5,
+                "effective_seed_slots": {
+                    "0": "0x0",
+                    "24": "0x7599191126",
+                    "25": "0xb",
+                    "26": "0x1f7b3460",
+                    "28": "0x6f",
+                },
+                "redundant_seed_slots": [29],
+                "computed_effects": 128,
                 "trusted_effects": 0,
+                "skipped_effects": 10,
                 "unresolved_read_count": 0,
                 "final_slot24": "0x95f2ec79",
                 "caution": "seed suggestions are not portable until lineage-proven",
@@ -3417,6 +3443,7 @@ def completion_audit() -> dict:
                     "vm_replay_plan_eval.py --auto-seed-suggestions separates seed gaps from replay logic",
                     "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",
+                    "vm_replay_plan_eval.py minimizes auto-seeded replay inputs and reports redundant suggestions",
                     "byte-lineage --compact formula operands label pointer_base and delta",
                     "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
                     "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",

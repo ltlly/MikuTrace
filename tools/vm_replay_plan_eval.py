@@ -284,6 +284,10 @@ def seed_specs_from_map(seeds: dict[int, int]) -> list[str]:
     return [f"{slot}={value:#x}" for slot, value in sorted(seeds.items())]
 
 
+def formatted_slots(seeds: dict[int, int]) -> dict[str, str]:
+    return {str(slot): f"{value:#x}" for slot, value in sorted(seeds.items())}
+
+
 def replay_plan(
     plan: dict[str, Any], trust_observed: bool, seed_slots: list[str]
 ) -> ReplayState:
@@ -491,7 +495,8 @@ def auto_seeded_replay_summary(
     plan: dict[str, Any], seed_slots: list[str], dump_specs: list[str]
 ) -> dict[str, Any]:
     trusted_pass = replay_plan(plan, trust_observed=True, seed_slots=seed_slots)
-    seeds = parse_seed_slots(seed_slots)
+    user_seeds = parse_seed_slots(seed_slots)
+    seeds = dict(user_seeds)
     applied = []
     for slot, suggestion in sorted(trusted_pass.seed_suggestions.items()):
         if slot in seeds:
@@ -504,6 +509,10 @@ def auto_seeded_replay_summary(
     replay = replay_plan(
         plan, trust_observed=False, seed_slots=seed_specs_from_map(seeds)
     )
+    minimized_seeds = minimize_auto_seed_slots(plan, user_seeds, seeds, replay)
+    minimized_replay = replay_plan(
+        plan, trust_observed=False, seed_slots=seed_specs_from_map(minimized_seeds)
+    )
     return {
         "status": "ready",
         "caution": (
@@ -512,8 +521,42 @@ def auto_seeded_replay_summary(
             "seed with lineage before treating the replay as portable."
         ),
         "applied_seed_suggestions": applied,
+        "effective_seed_slots": formatted_slots(minimized_seeds),
+        "redundant_seed_slots": [
+            slot for slot in sorted(seeds) if slot not in minimized_seeds
+        ],
         "summary": summarize(plan, replay, dump_specs),
+        "minimized_summary": summarize(plan, minimized_replay, dump_specs),
     }
+
+
+def replay_equivalent(candidate: ReplayState, reference: ReplayState) -> bool:
+    return (
+        candidate.trusted_effects == 0
+        and not candidate.unresolved_reads
+        and candidate.slots == reference.slots
+        and candidate.mem == reference.mem
+    )
+
+
+def minimize_auto_seed_slots(
+    plan: dict[str, Any],
+    user_seeds: dict[int, int],
+    seeds: dict[int, int],
+    reference: ReplayState,
+) -> dict[int, int]:
+    minimized = dict(seeds)
+    for slot in sorted(seeds):
+        if slot in user_seeds:
+            continue
+        candidate = dict(minimized)
+        candidate.pop(slot, None)
+        replay = replay_plan(
+            plan, trust_observed=False, seed_slots=seed_specs_from_map(candidate)
+        )
+        if replay_equivalent(replay, reference):
+            minimized = candidate
+    return minimized
 
 
 def seed_lineage_commands(
