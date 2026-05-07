@@ -1863,8 +1863,19 @@ TRACE_CALL001_WORD_SOURCE_CLASSES = [
 
 CALL001_XOR_LHS_RUNS = [
     {
-        "range": [3, 13],
-        "lhs_hex": "67b44ad8783e786fcd01",
+        "range": [3, 7],
+        "lhs_hex": "67b44ad8",
+        "source": "sha1_like_state_word",
+    },
+    {
+        "range": [7, 11],
+        "lhs_hex": "783e786f",
+        "source": "sha1_like_state_word",
+    },
+    {
+        "range": [11, 13],
+        "lhs_hex": "cd01",
+        "source": "trace_literal_lhs_hex",
     },
     {
         "range": [16, 59],
@@ -1873,6 +1884,7 @@ CALL001_XOR_LHS_RUNS = [
     {
         "range": [61, 65],
         "lhs_hex": "3abf0301",
+        "source": "vm_scratch_lhs_table_tail",
     },
 ]
 
@@ -2478,7 +2490,9 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "uncovered_count": sum(group["byte_count"] for group in groups),
         "groups": groups,
         "recommended_order": [
-            "lift trace_literal_lhs_hex word runs into state/table formulas",
+            "extend sha1_like_state_word coverage to semantic offsets 7..10",
+            "lift the remaining trace_literal_lhs_hex bytes at offsets 11..12",
+            "prove vm_scratch_lhs_table_tail offsets 61..64",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
         ],
     }
