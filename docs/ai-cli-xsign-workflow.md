@@ -141,10 +141,11 @@ The generated code keeps trace index comments and generic helper calls such as
 `vm_eor`, `vm_lsr`, and `store_le`. It also includes `USER_SEED_SLOTS`,
 formula-derived `SUGGESTED_SEED_SLOTS`, minimized `EFFECTIVE_SEED_SLOTS`,
 `REDUNDANT_SEED_SLOTS`, and trace-derived `OBSERVED_BYTE_LOADS`. The generated
-`replay()` uses effective seeds by default so the skeleton is executable, but
-those defaults are still trace-derived. Replace effective seeds and observed
-byte loads with proven table/app/device parameters before promoting it from
-trace replay to a portable simulator.
+`replay()` uses effective seeds by default so the skeleton is executable, and
+observed byte-load addresses are emitted as hex integer keys so they can be
+matched back to trace addresses. Those defaults are still trace-derived.
+Replace effective seeds and observed byte loads with proven table/app/device
+parameters before promoting it from trace replay to a portable simulator.
 
 When the evaluator reports trusted fallbacks, first separate mechanical seed
 gaps from real missing logic:

@@ -325,10 +325,13 @@ def replay_python_expr(expr: str) -> str:
     )
 
 
-def python_int_dict(items: dict[int, int]) -> str:
+def python_int_dict(items: dict[int, int], *, hex_keys: bool = False) -> str:
     if not items:
         return "{}"
-    entries = ", ".join(f"{slot}: {value:#x}" for slot, value in sorted(items.items()))
+    entries = ", ".join(
+        f"{slot:#x}: {value:#x}" if hex_keys else f"{slot}: {value:#x}"
+        for slot, value in sorted(items.items())
+    )
     return "{" + entries + "}"
 
 
@@ -388,7 +391,7 @@ def generate_python_replay(
         f"SUGGESTED_SEED_SLOTS = {python_int_dict(suggested_seeds)}",
         f"EFFECTIVE_SEED_SLOTS = {python_int_dict(effective_seeds)}",
         f"REDUNDANT_SEED_SLOTS = {python_int_list(redundant_seeds)}",
-        f"OBSERVED_BYTE_LOADS = {python_int_dict(observed_byte_loads)}",
+        f"OBSERVED_BYTE_LOADS = {python_int_dict(observed_byte_loads, hex_keys=True)}",
         "",
         "def vm_add(*values): return sum(values) & MASK64",
         "def vm_sub(head, *tail):",

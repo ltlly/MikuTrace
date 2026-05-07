@@ -891,8 +891,9 @@ The emitted skeleton now carries `USER_SEED_SLOTS`, `SUGGESTED_SEED_SLOTS`, and
 `OBSERVED_BYTE_LOADS`; it now also carries minimized `EFFECTIVE_SEED_SLOTS` and
 `REDUNDANT_SEED_SLOTS`. The generated `replay()` uses effective seeds by default,
 so the scratch-writer skeleton replays the same 52-byte scratch dump as the
-trace without manual seed plumbing. This makes the replay directly executable
-while keeping unproven inputs visible.
+trace without manual seed plumbing. `OBSERVED_BYTE_LOADS` now uses hex address
+keys, keeping those unproven inputs easy to line up with `byte-lineage` probes.
+This makes the replay directly executable while keeping unproven inputs visible.
 `tools/vm_replay_plan_eval.py --auto-seed-suggestions` also distinguishes
 mechanical seed gaps from missing logic. On the scratch-writer window it applies
 six formula-derived seed suggestions and replays with `trusted_effects=0`,
