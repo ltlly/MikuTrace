@@ -2409,9 +2409,10 @@ def current_trace_model_input_manifest() -> dict:
         },
         {
             "name": "scratch_tail_small_bytes",
-            "kind": "vm_state_expression",
+            "kind": "bytecode_literal",
             "value": CALL001_SCRATCH_TAIL_SMALL_BYTES_HEX,
-            "status": "trace_proven_one_sample_pending_portable_source",
+            "source": "bytecode-read boundaries at ldr x5, [x21, #8]",
+            "status": "parameterized_vm_bytecode_literal",
             "used_by": "semantic[63:65] xor lhs",
         },
     ]
@@ -2471,8 +2472,8 @@ def parameterized_simulation_contract() -> dict:
             },
             {
                 "name": "scratch_tail_small_bytes_hex",
-                "kind": "vm_state_expression",
-                "source": "scratch tail byte lineage for semantic[63:65]",
+                "kind": "bytecode_literal",
+                "source": "bytecode_read_boundary values for semantic[63:65]",
             },
         ],
         "opaque_or_nonportable_inputs": [
@@ -3126,32 +3127,31 @@ def python_vm_replay_plan_eval_summary() -> dict:
                         "addr": "0x74b68bcc4f",
                         "load_idx": 14165204,
                         "value": "0x03",
-                        "terminal": "no_local_def",
-                        "recognized": "small live VM value",
+                        "terminal": "bytecode_read_boundary",
+                        "recognized": "VM bytecode/immediate literal 0x03",
                     },
                     {
                         "addr": "0x74b68bcc50",
                         "load_idx": 14165236,
                         "value": "0x01",
-                        "terminal": "no_local_def",
-                        "recognized": "small live VM value after VM IP pointer transitions",
+                        "terminal": "bytecode_read_boundary",
+                        "recognized": "low byte of VM bytecode/immediate literal 0x01",
                     },
                     {
                         "addr": "0x74b68bcc51",
                         "load_idx": 14165318,
                         "value": "0x00",
-                        "terminal": "no_local_def",
-                        "recognized": "small live VM value after VM IP pointer transitions",
+                        "terminal": "bytecode_read_boundary",
+                        "recognized": "high byte lane of VM bytecode/immediate literal 0x01",
                     },
                 ],
                 "interpretation": (
                     "The replay byte-load defaults are no longer anonymous, "
                     "and the first two bytes now share a syscall-derived "
                     "getpid() input after ldur/negative-offset, self-def, "
-                    "and syscall-return lineage fixes. The 0x03/0x01 tail "
-                    "bytes still stop at live VM handler state rather than "
-                    "a portable input. Proving them needs an earlier trace "
-                    "window or an explicit VM/table parameter."
+                    "and syscall-return lineage fixes. The 0x03/0x01/0x00 "
+                    "tail bytes now stop at explicit VM bytecode-read "
+                    "boundaries instead of bytecode pointer registers."
                 ),
             },
         },
@@ -3575,6 +3575,7 @@ def completion_audit() -> dict:
                     "byte-lineage formulas expose shifted-register effective_value for VM bytecode/IP updates",
                     "byte-lineage lane-aware AND-mask selection follows the data operand instead of mask operands",
                     "byte-lineage recognizes svc syscall-return boundaries and exposes x8 syscall numbers/args",
+                    "byte-lineage stops at VM bytecode-read boundaries instead of chasing bytecode pointer registers",
                 ],
                 "status": "substantially_available",
             },
@@ -3634,9 +3635,7 @@ def completion_audit() -> dict:
                 "scratch-writer slot25/28 reach malloc-backed heap scratch "
                 "boundaries; scratch-writer slot26 reaches a VM bytecode/IP "
                 "boundary; ladder slot24/26 still carry static-table or "
-                "allocator boundaries; the scratch tail 0x03/0x01 bytes "
-                "still need a portable source after the first two bytes were "
-                "reduced to getpid()."
+                "allocator boundaries."
             ),
             (
                 "Lift the replay-plan skeletons into maintained Python "

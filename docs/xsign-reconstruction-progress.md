@@ -1097,18 +1097,20 @@ tail word source bytes at `0x74b68bcc4d..0x74b68bcc51`. Focused
           low8(getpid()), from svc #0 with x8=0xac and return x0=0x7b3a
 0x74b68bcc4e @ #14165193 -> 0xbf, syscall_return_boundary through shared getpid():
           low8(((getpid() * 0xdd08cee9) + 0x61f5) & 0x7fffffff)
-0x74b68bcc4f @ #14165204 -> 0x03, no_local_def, small live VM value
-0x74b68bcc50 @ #14165236 -> 0x01, no_local_def, VM IP pointer transitions
-0x74b68bcc51 @ #14165318 -> 0x00, no_local_def, VM IP pointer transitions
+0x74b68bcc4f @ #14165204 -> 0x03, bytecode_read_boundary:
+          VM bytecode/immediate literal 0x03
+0x74b68bcc50 @ #14165236 -> 0x01, bytecode_read_boundary:
+          low byte of VM bytecode/immediate literal 0x01
+0x74b68bcc51 @ #14165318 -> 0x00, bytecode_read_boundary:
+          high byte lane of VM bytecode/immediate literal 0x01
 ```
 
 These are no longer anonymous byte defaults. Fixing lane-aware `and` lineage was
 required first: before the fix, `byte-lineage` followed the `0x7fffffff` mask
 operand instead of the data operand. The later `ldur`/negative-offset,
-self-def, and `svc` return-boundary fixes reduce the first two bytes to an
-explicit `getpid()` parameter. The remaining tail bytes `0x03/0x01/0x00` still
-need an earlier trace window, a VM literal proof, or an explicit VM-state
-parameter with multi-sample validation.
+self-def, `svc` return-boundary, and `bytecode-read` boundary fixes reduce the
+five-byte source window to an explicit `getpid()` parameter plus VM bytecode
+literal bytes, instead of live handler state.
 
 The evaluator now includes `seed_suggestions` on trusted fallback records. For
 example, it can infer `slot25=0x74b68bcc1c` from

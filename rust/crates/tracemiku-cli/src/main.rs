@@ -8592,7 +8592,7 @@ fn choose_frontier_next_for_lane(
 ) -> Option<serde_json::Value> {
     if matches!(
         step.pointer("/local_def/class").and_then(|v| v.as_str()),
-        Some("call-return" | "syscall-return")
+        Some("call-return" | "syscall-return" | "bytecode-read")
     ) {
         return None;
     }
@@ -8640,7 +8640,7 @@ fn choose_semantic_frontier_next(
     let local_def = step.get("local_def")?;
     if matches!(
         local_def.get("class").and_then(|v| v.as_str()),
-        Some("call-return" | "syscall-return")
+        Some("call-return" | "syscall-return" | "bytecode-read")
     ) {
         return None;
     }
@@ -9965,6 +9965,11 @@ fn compact_lineage_next_actions(
     if terminal.get("upstream_status").and_then(|v| v.as_str()) == Some("syscall_return_boundary") {
         actions.push(serde_json::json!(
             "inspect the compact syscall_return number and args, then parameterize the syscall output"
+        ));
+    }
+    if terminal.get("upstream_status").and_then(|v| v.as_str()) == Some("bytecode_read_boundary") {
+        actions.push(serde_json::json!(
+            "treat the compact bytecode-read value as a VM opcode/immediate literal or lift the containing opcode template"
         ));
     }
     if semantics.as_array().is_some_and(|rows| !rows.is_empty()) {
@@ -11475,6 +11480,16 @@ async fn upstream_writer_for_def_on(
             "status": "syscall_return_boundary",
             "reason": "register value came from a syscall return; inspect syscall_return number and args",
             "syscall_return": def_row.get("syscall_return").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
+    if class == "bytecode-read" {
+        return Ok(serde_json::json!({
+            "status": "bytecode_read_boundary",
+            "kind": "bytecode_read",
+            "reason": "register value came from VM bytecode; treat the loaded byte/word as an opcode/immediate literal",
+            "addr": def_row.get("mem_addr").cloned().unwrap_or(serde_json::Value::Null),
+            "size": memory_access_width(def_row.get("asm").and_then(|v| v.as_str()).unwrap_or("")),
+            "value": def_row.pointer("/def/value_after").cloned().unwrap_or(serde_json::Value::Null),
         }));
     }
     let mut kind = None;
@@ -15642,6 +15657,16 @@ mod tests {
             ]
         });
         assert!(choose_frontier_next(&syscall_return).is_none());
+
+        let bytecode_read = serde_json::json!({
+            "local_def": {
+                "class": "bytecode-read"
+            },
+            "frontier": [
+                {"idx": 50, "reg": "x21", "value": "0x74fbf74c70"}
+            ]
+        });
+        assert!(choose_frontier_next(&bytecode_read).is_none());
     }
 
     #[test]
