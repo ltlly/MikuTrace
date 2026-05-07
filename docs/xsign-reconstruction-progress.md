@@ -1087,6 +1087,23 @@ So the next proof is not "find more replay ops"; the replay ops already close.
 The remaining problem is classifying those table/bytecode/preinitialized inputs
 as portable parameters or deriving them from earlier traced setup.
 
+The scratch-writer replay skeleton still has five `OBSERVED_BYTE_LOADS` for the
+tail word source bytes at `0x74b68bcc4d..0x74b68bcc51`. Focused
+`byte-lineage --compact` probes map their current frontier:
+
+```text
+0x74b68bcc4d @ #14165182 -> 0x3a, no_local_def, via 0x7b3a OR identity
+0x74b68bcc4e @ #14165193 -> 0xbf, no_local_def, 0x4f6935bf & 0xff
+0x74b68bcc4f @ #14165204 -> 0x03, no_local_def, small live VM value
+0x74b68bcc50 @ #14165236 -> 0x01, no_local_def, VM IP pointer transitions
+0x74b68bcc51 @ #14165318 -> 0x00, no_local_def, VM IP pointer transitions
+```
+
+These are no longer anonymous byte defaults, but they are still not portable
+algorithm inputs. The next step is an earlier/larger trace around those handler
+states, or turning the five-byte source window into an explicit table/VM-state
+parameter with multi-sample validation.
+
 The evaluator now includes `seed_suggestions` on trusted fallback records. For
 example, it can infer `slot25=0x74b68bcc1c` from
 `slot[25] = 0x74b68bcc2c = 0x74b68bcc1c + 0x10`, and `slot26=0x1f7b3460` from

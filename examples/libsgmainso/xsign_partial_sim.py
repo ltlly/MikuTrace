@@ -3066,6 +3066,56 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 ),
                 "matches_trace": True,
             },
+            "observed_byte_load_lineage": {
+                "status": "frontier_mapped",
+                "command_template": (
+                    "tracemiku-cli byte-lineage <call_dir> --addr <byte_addr> "
+                    "--before-idx <load_idx> --depth 80 --lookback 5000000 --compact"
+                ),
+                "loads": [
+                    {
+                        "addr": "0x74b68bcc4d",
+                        "load_idx": 14165182,
+                        "value": "0x3a",
+                        "terminal": "no_local_def",
+                        "recognized": "0x7b3a OR identity then low byte",
+                    },
+                    {
+                        "addr": "0x74b68bcc4e",
+                        "load_idx": 14165193,
+                        "value": "0xbf",
+                        "terminal": "no_local_def",
+                        "recognized": "bitmask_extract: 0x4f6935bf & 0xff",
+                    },
+                    {
+                        "addr": "0x74b68bcc4f",
+                        "load_idx": 14165204,
+                        "value": "0x03",
+                        "terminal": "no_local_def",
+                        "recognized": "small live VM value",
+                    },
+                    {
+                        "addr": "0x74b68bcc50",
+                        "load_idx": 14165236,
+                        "value": "0x01",
+                        "terminal": "no_local_def",
+                        "recognized": "small live VM value after VM IP pointer transitions",
+                    },
+                    {
+                        "addr": "0x74b68bcc51",
+                        "load_idx": 14165318,
+                        "value": "0x00",
+                        "terminal": "no_local_def",
+                        "recognized": "small live VM value after VM IP pointer transitions",
+                    },
+                ],
+                "interpretation": (
+                    "The replay byte-load defaults are no longer anonymous, "
+                    "but they still stop at live VM handler state rather than "
+                    "a traced memory boundary. Proving them needs an earlier "
+                    "trace window or an explicit VM/table parameter."
+                ),
+            },
         },
         "middle_lhs_ladder_window": {
             "command": (
