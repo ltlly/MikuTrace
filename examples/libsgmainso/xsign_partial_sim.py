@@ -26,6 +26,8 @@ pieces that have been proven from local libsgmainso traces:
 - semantic offsets 11..12 are no longer treated as opaque trace literals:
   across diff samples they match a state-high byte plus a small VM/call counter
   byte before the same parity XOR mask.
+- semantic offsets 61..64 are tracked as a multi-sample xor word whose lhs has
+  fixed lanes plus one or two variable VM scratch/table bytes.
 
 Run:
     uv run python examples/libsgmainso/xsign_partial_sim.py
@@ -503,6 +505,34 @@ TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13 = {
         "state_add_idx": 6960285,
         "counter_input": 0x5B2,
         "counter_byte": 0x05,
+    },
+}
+
+TRACE_MULTI_SAMPLE_XOR_WORDS_61_65 = {
+    "diff_run1_truncated_call_006": {
+        "lhs_hex": "3a500301",
+        "result_hex": "80f1b9a0",
+        "rhs_hex": "baa1baa1",
+    },
+    "diff_run1_call_001": {
+        "lhs_hex": "3abf0301",
+        "result_hex": "58de6160",
+        "rhs_hex": "62616261",
+    },
+    "diff_run1_call_003": {
+        "lhs_hex": "3aa10301",
+        "result_hex": "0e1837b8",
+        "rhs_hex": "34b934b9",
+    },
+    "diff_run1_call_004": {
+        "lhs_hex": "3a7e0301",
+        "result_hex": "212a1855",
+        "rhs_hex": "1b541b54",
+    },
+    "diff_run1_call_005": {
+        "lhs_hex": "3aa30302",
+        "result_hex": "af6696c7",
+        "rhs_hex": "95c595c5",
     },
 }
 
@@ -2598,7 +2628,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "recommended_order": [
             "resolve the semantic offsets 7..10 call_005 degenerate xor-word case",
             "prove the portable source of the semantic offset 12 VM/call counter byte",
-            "prove vm_scratch_lhs_table_tail offsets 61..64",
+            "prove the portable source of semantic offsets 61..64 VM scratch/table lanes",
             "replace stat_mtim_le_plus_mixed_suffix with parameterized ladder/static-table replay",
         ],
     }
@@ -2725,6 +2755,24 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "counter_byte": f"{item['counter_byte']:#x}",
             }
         )
+    tail_61_65 = []
+    for name, item in TRACE_MULTI_SAMPLE_XOR_WORDS_61_65.items():
+        tail = sample_tails[name]
+        lhs = bytes.fromhex(item["lhs_hex"])
+        rhs = bytes.fromhex(item["rhs_hex"])
+        computed = bytes(xor_mix(a, b) for a, b in zip(lhs, rhs))
+        tail_61_65.append(
+            {
+                "sample": name,
+                "semantic_range": [61, 65],
+                "lhs_hex": lhs.hex(),
+                "rhs_hex": rhs.hex(),
+                "computed_hex": computed.hex(),
+                "recorded_result_hex": item["result_hex"],
+                "expected_hex": tail[61:65].hex(),
+                "matches": computed == tail[61:65] and computed.hex() == item["result_hex"],
+            }
+        )
     mask_fold_rows = []
     for name, item in TRACE_MULTI_SAMPLE_MASK_FOLDS.items():
         tail = sample_tails[name]
@@ -2804,9 +2852,14 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
                 "kind": "state_high_byte_plus_vm_counter_byte",
                 "samples": sorted(TRACE_MULTI_SAMPLE_XOR_HALFWORD_11_13),
             },
+            {
+                "semantic_range": [61, 65],
+                "kind": "vm_scratch_lhs_table_tail_word",
+                "samples": sorted(TRACE_MULTI_SAMPLE_XOR_WORDS_61_65),
+            },
         ],
         "covered_semantic_offsets": covered_offsets,
-        "partially_covered_semantic_offsets": [7, 8, 9, 10, 11, 12],
+        "partially_covered_semantic_offsets": [7, 8, 9, 10, 11, 12, 61, 62, 63, 64],
         "covered_byte_count": len(covered_offsets),
         "tail_3_7": tail_3_7,
         "tail_7_11": tail_7_11,
@@ -2816,6 +2869,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "tail_7_11_degenerate": tail_7_11_degenerate,
         "tail_11_13": tail_11_13,
         "tail_11_13_all_samples_match": all(row["matches"] for row in tail_11_13),
+        "tail_61_65": tail_61_65,
+        "tail_61_65_all_samples_match": all(row["matches"] for row in tail_61_65),
         "mask_fold_1_3": mask_fold_rows,
         "static_byte0": byte0_rows,
         "static_byte0_all_samples_match": all(row["matches"] for row in byte0_rows),
@@ -2823,7 +2878,12 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
         "repeated_mask_all_samples_match": all(row["matches"] for row in repeated_mask_rows),
         "all_match": all(
             row["matches"]
-            for row in all_rows + tail_7_11 + tail_11_13 + repeated_mask_rows + byte0_rows
+            for row in all_rows
+            + tail_7_11
+            + tail_11_13
+            + tail_61_65
+            + repeated_mask_rows
+            + byte0_rows
         )
         and all(row["matches_recorded_lhs"] for row in tail_7_11_degenerate),
         "partial_coverage_note": (
@@ -2832,8 +2892,8 @@ def multi_sample_formula_coverage(sample_tails: dict[str, bytes]) -> dict:
             "where offset 9 is the parity mask itself because the inferred lhs "
             "byte is zero. Semantic offsets 11..12 match a state-high byte plus "
             "a small VM/call counter byte across the diff samples. These ranges "
-            "are not promoted to strong coverage until their portable parameter "
-            "sources are proven."
+            "and semantic offsets 61..64 are not promoted to strong coverage "
+            "until their portable parameter sources are proven."
         ),
         "coverage_note": (
             "Offsets 1..6 are formula-checked for the diff samples; repeated "
@@ -3332,6 +3392,7 @@ def completion_audit() -> dict:
                     "multi_sample_formula_coverage covers semantic offset 0, offsets 1..6 for 5 samples, and repeated mod255 mask offsets across all samples",
                     "semantic offsets 7..10 have complete sha1-like xor-word state-source proof for four diff samples; call_005 is tracked as a degenerate word32_zero_lane case",
                     "semantic offsets 11..12 match state-high-byte plus VM/call-counter formulas across five diff samples",
+                    "semantic offsets 61..64 match a VM scratch/table tail xor-word formula across five diff samples",
                     "multi_sample_reencode_all_match uses observed semantic tails",
                     "middle_lhs_source_manifest is call_001-scoped",
                     "multi_sample_next_proof_plan groups uncovered offsets by source class",
@@ -3354,7 +3415,7 @@ def completion_audit() -> dict:
             ),
             (
                 "Expand multi-sample formula coverage beyond the 15 strong "
-                "semantic offsets and 6 partial offsets, then prove how "
+                "semantic offsets and 10 partial offsets, then prove how "
                 "LCG/time-derived state feeds every payload byte."
             ),
         ],

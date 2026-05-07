@@ -1319,7 +1319,7 @@ model no longer depends on observed trace bytes.
 available samples  7
 covered samples    5
 covered offsets    0,1,2,3,4,5,6,13,14,15,59,60,65,66,67
-partial offsets    7,8,9,10,11,12
+partial offsets    7,8,9,10,11,12,61,62,63,64
 all_match          true
 ```
 
@@ -1645,6 +1645,20 @@ small VM/call counter byte, observed through shifts such as `0x5b2 >> 8 = 0x05`.
 This is partial coverage: the formula is cross-sample, but the portable source
 of that counter still needs to be proven before these offsets can be counted as
 strongly covered.
+
+The tail word at `semantic[61:65]` is also now cross-sample formula-covered:
+
+```text
+call_006  lhs 3a500301  rhs baa1baa1  -> 80f1b9a0
+call_001  lhs 3abf0301  rhs 62616261  -> 58de6160
+call_003  lhs 3aa10301  rhs 34b934b9  -> 0e1837b8
+call_004  lhs 3a7e0301  rhs 1b541b54  -> 212a1855
+call_005  lhs 3aa30302  rhs 95c595c5  -> af6696c7
+```
+
+This keeps `61..64` in partial coverage rather than strong coverage: the XOR
+word shape is proven, and lanes `0`/`2` are stable in the current samples, but
+the variable table/counter lanes still need source proof.
 
 Expanding the same VM window shows five adjacent low-32 state writes, matching
 the SHA-1 state width rather than a four-word MD5-only finalize:
