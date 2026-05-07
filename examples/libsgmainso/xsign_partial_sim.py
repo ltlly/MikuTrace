@@ -557,11 +557,11 @@ SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
         ],
     },
     {
-        "source": "xor_lhs:scratch_writer_replay:pretrace_vm_byte_table",
+        "source": "xor_lhs:scratch_writer_replay:x_umt_text_boundary",
         "frontier": "observed_read_without_matching_traced_write",
         "proof_action": (
-            "inspect the 0x753ddd7feb/0x753ddd7fef byte table producer or "
-            "parameterize the pre-trace VM byte-table bytes"
+            "treat x-umt as an explicit companion input until its producer is "
+            "traced or reconstructed"
         ),
         "batch_offsets": [24, 27],
         "semantic_offsets": [44, 47],
@@ -569,9 +569,28 @@ SCRATCH_WRITER_REPLAY_MIDDLE_LHS_FRONTIER_GROUPS = [
             {"value": "0xf4a4bf7c", "count": 2},
         ],
         "observed_boundaries": [
-            {"addr": "0x753ddd7feb", "bytes_hex": "38"},
-            {"addr": "0x753ddd7fef", "bytes_hex": "30"},
+            {
+                "addr": "0x753ddd7feb",
+                "bytes_hex": "38",
+                "ascii": "8",
+                "source": "x-umt[27]",
+            },
+            {
+                "addr": "0x753ddd7fef",
+                "bytes_hex": "30",
+                "ascii": "0",
+                "source": "x-umt[31]",
+            },
         ],
+        "buffer_dump": {
+            "addr": "0x753ddd7fd0",
+            "cursor": 10620736,
+            "ascii": "QfYBk7NLPFEMzAKd4znOwpUwkCN8v6T0",
+            "bytes_hex": (
+                "516659426b374e4c5046454d7a414b64"
+                "347a6e4f777055776b434e3876365430"
+            ),
+        },
     },
     {
         "source": "xor_lhs:scratch_writer_replay:app_version_text_boundary",
@@ -3503,7 +3522,7 @@ def multi_sample_next_proof_plan(sample_tails: dict[str, bytes]) -> dict:
         "recommended_order": [
             "prove or parameterize scratch_writer_replay static-table boundary for semantic offsets 20..23",
             "lift scratch_writer_replay VM bytecode-read frontiers for semantic offsets 24..43,45..46,56..58",
-            "trace-widen or parameterize scratch_writer_replay pre-trace VM byte-table frontiers for semantic offsets 44,47",
+            "treat x-umt as an explicit companion input for scratch_writer_replay semantic offsets 44,47 until x-umt is reconstructed",
             "keep Android versionName as an explicit replay parameter for scratch_writer_replay semantic offsets 48..55",
             "prove or parameterize non-call001 semantic offset 62 LCG table seed initializer",
             "prove or parameterize semantic offset 64 call_005 no-writer table-byte exception",

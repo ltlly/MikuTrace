@@ -1895,13 +1895,17 @@ The first call_001 middle-lhs batch probe covers `scratch[7:46]` with
 matching traced write. This confirms the next lift should group frontiers by
 boundary class rather than manually chasing each byte.
 The report now records those groups as semantic offsets:
-`20..23` share the `0x95f2ec79` table boundary, `44` and `47` are remaining
-pre-trace VM byte-table frontiers, `48..55` are the Android
-`versionName=10.60.10` text boundary, and `24..43`, `45..46`, `56..58` stop
-at VM bytecode reads.
+`20..23` share the `0x95f2ec79` table boundary, `44` and `47` come from the
+companion `x-umt` text buffer, `48..55` are the Android `versionName=10.60.10`
+text boundary, and `24..43`, `45..46`, `56..58` stop at VM bytecode reads.
 The machine-readable next proof plan now mirrors that split, so an AI agent can
 work one frontier class at a time instead of treating semantic offsets `20..58`
 as one opaque block.
+For the `x-umt` group, dumping `0x753ddd7fd0` at cursor `#10620736` shows
+`QfYBk7NLPFEMzAKd4znOwpUwkCN8v6T0`; the two bytes used by this scratch frontier
+are `x-umt[27] == '8'` and `x-umt[31] == '0'`. This reduces the frontier to an
+explicit companion-header input, but does not yet reconstruct the x-umt
+producer.
 The static-table-looking group is now deliberately classified more narrowly:
 the seed `0x90bf1d91` is observed in call_001, call_004, and the truncated
 call_006 trace, but all observed addresses resolve outside known module ranges
