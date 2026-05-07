@@ -8423,6 +8423,7 @@ struct ByteLineageBatchGroup {
     terminal_addrs: BTreeMap<String, usize>,
     observed_bytes: BTreeMap<String, usize>,
     repeated_values: BTreeMap<String, (usize, u64)>,
+    stable_pointer_loops: BTreeMap<String, (usize, u64)>,
     representative: Option<serde_json::Value>,
 }
 
@@ -8472,6 +8473,23 @@ fn byte_lineage_batch_frontier_groups(results: &[serde_json::Value]) -> Vec<serd
                 })
                 .or_insert((1, count));
         }
+        if let Some(loop_value) = entry
+            .pointer("/lineage/stable_pointer_loop/value")
+            .and_then(|v| v.as_str())
+        {
+            let count = entry
+                .pointer("/lineage/stable_pointer_loop/count")
+                .and_then(value_as_u64)
+                .unwrap_or(1);
+            group
+                .stable_pointer_loops
+                .entry(loop_value.to_string())
+                .and_modify(|row| {
+                    row.0 += 1;
+                    row.1 += count;
+                })
+                .or_insert((1, count));
+        }
         for boundary in batch_lineage_boundaries(entry) {
             if let Some(addr) = batch_lineage_string_at(
                 &boundary,
@@ -8510,6 +8528,7 @@ fn byte_lineage_batch_frontier_groups(results: &[serde_json::Value]) -> Vec<serd
                 ]),
                 _ => serde_json::Value::Null,
             };
+            let has_stable_pointer_loop = !group.stable_pointer_loops.is_empty();
             serde_json::json!({
                 "decision": decision,
                 "upstream": upstream,
@@ -8519,10 +8538,11 @@ fn byte_lineage_batch_frontier_groups(results: &[serde_json::Value]) -> Vec<serd
                 "addr_range": addr_range,
                 "step_stats": batch_u64_stats(&group.steps),
                 "top_repeated_values": top_count_rows_with_total(group.repeated_values, "value", 8),
+                "stable_pointer_loops": top_count_rows_with_total(group.stable_pointer_loops, "value", 8),
                 "terminal_addrs": top_count_rows(group.terminal_addrs, "addr", 8),
                 "observed_bytes_hex": top_count_rows(group.observed_bytes, "bytes_hex", 8),
                 "representative": group.representative.unwrap_or(serde_json::Value::Null),
-                "next_action": batch_lineage_next_action(&decision, &upstream),
+                "next_action": batch_lineage_next_action(&decision, &upstream, has_stable_pointer_loop),
             })
         })
         .collect()
@@ -8656,7 +8676,14 @@ fn top_count_rows_with_total(
     rows
 }
 
-fn batch_lineage_next_action(decision: &str, upstream: &str) -> &'static str {
+fn batch_lineage_next_action(
+    decision: &str,
+    upstream: &str,
+    has_stable_pointer_loop: bool,
+) -> &'static str {
+    if has_stable_pointer_loop {
+        return "prove the stable pointer/base once or mark it as an allocation/base parameter; increasing depth is unlikely to help";
+    }
     match (decision, upstream) {
         ("memory_not_found_boundary", _) => {
             "verify the boundary bytes with the emitted mem-dump cursor, then classify them as pre-trace table/input or capture an earlier trace"
@@ -15392,13 +15419,14 @@ fn utf8_preview(bytes: &[u8], max: usize) -> String {
 mod tests {
     use super::{
         adjust_self_def_formula_next, alu_expression_from_asm, base64_decoded_bytes,
-        byte_lane_from_writer_map_entry, byte_lineage_compact_summary, byte_lineage_summary,
-        byte_writer_map_output, byte_writer_map_summary, byte_writer_vm_source_ranges,
-        byte_writers_from_range_writes, call_return_def_from_previous_call, choose_frontier_next,
-        choose_frontier_next_for_lane, choose_laned_upstream_next,
-        choose_zero_extended_low_byte_upstream_next, classify_vm_asm, compact_gap_call_candidates,
-        compact_lineage_formula, dedupe_byte_nexts, def_entries_from_asm, def_source_contains_reg,
-        def_source_regs_from_asm, enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
+        byte_lane_from_writer_map_entry, byte_lineage_batch_frontier_groups,
+        byte_lineage_compact_summary, byte_lineage_summary, byte_writer_map_output,
+        byte_writer_map_summary, byte_writer_vm_source_ranges, byte_writers_from_range_writes,
+        call_return_def_from_previous_call, choose_frontier_next, choose_frontier_next_for_lane,
+        choose_laned_upstream_next, choose_zero_extended_low_byte_upstream_next, classify_vm_asm,
+        compact_gap_call_candidates, compact_lineage_formula, dedupe_byte_nexts,
+        def_entries_from_asm, def_source_contains_reg, def_source_regs_from_asm,
+        enrich_gap_call_candidate_trace_writes, find_hex_byte_offsets,
         gap_call_candidate_from_record, lineage_next_from_backstep, mem_addr_from_asm,
         mem_dump_summary, memory_access_width, merge_missing_meta_field,
         observed_byte_writer_mismatches, odd_u64_inverse, output_map_summary,
@@ -18742,6 +18770,65 @@ mod tests {
                 .as_str()
                 .unwrap_or("")
                 .contains("stable_pointer_loop")));
+    }
+
+    #[test]
+    fn byte_lineage_batch_groups_stable_pointer_loops() {
+        let results = serde_json::json!([
+            {
+                "offset": 0,
+                "addr": "0x4000",
+                "lineage": {
+                    "status": "ready",
+                    "steps_returned": 80,
+                    "terminal": {"kind": "depth_limit"},
+                    "stable_pointer_loop": {
+                        "kind": "stable_pointer_loop",
+                        "value": "0x74b68bd4c0",
+                        "count": 45
+                    },
+                    "repeated_values": [
+                        {"value": "0x74b68bd4c0", "count": 45}
+                    ]
+                }
+            },
+            {
+                "offset": 1,
+                "addr": "0x4001",
+                "lineage": {
+                    "status": "ready",
+                    "steps_returned": 80,
+                    "terminal": {"kind": "depth_limit"},
+                    "stable_pointer_loop": {
+                        "kind": "stable_pointer_loop",
+                        "value": "0x74b68bd4c0",
+                        "count": 40
+                    },
+                    "repeated_values": [
+                        {"value": "0x74b68bd4c0", "count": 40}
+                    ]
+                }
+            }
+        ]);
+        let groups = byte_lineage_batch_frontier_groups(results.as_array().unwrap());
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0]["decision"], serde_json::json!("depth_limit"));
+        assert_eq!(
+            groups[0]["stable_pointer_loops"][0]["value"],
+            serde_json::json!("0x74b68bd4c0")
+        );
+        assert_eq!(
+            groups[0]["stable_pointer_loops"][0]["byte_count"],
+            serde_json::json!(2)
+        );
+        assert_eq!(
+            groups[0]["stable_pointer_loops"][0]["total_count"],
+            serde_json::json!(85)
+        );
+        assert!(groups[0]["next_action"]
+            .as_str()
+            .unwrap_or("")
+            .contains("stable pointer"));
     }
 
     #[test]
