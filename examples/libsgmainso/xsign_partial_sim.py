@@ -3084,8 +3084,11 @@ def python_vm_replay_plan_eval_summary() -> dict:
                         "addr": "0x74b68bcc4e",
                         "load_idx": 14165193,
                         "value": "0xbf",
-                        "terminal": "no_local_def",
-                        "recognized": "bitmask_extract: 0x4f6935bf & 0xff",
+                        "terminal": "no_local_def via shared 0x7b3a frontier",
+                        "recognized": (
+                            "low8(((0x7b3a * 0xdd08cee9) + 0x61f5) "
+                            "& 0x7fffffff)"
+                        ),
                     },
                     {
                         "addr": "0x74b68bcc4f",
@@ -3111,9 +3114,11 @@ def python_vm_replay_plan_eval_summary() -> dict:
                 ],
                 "interpretation": (
                     "The replay byte-load defaults are no longer anonymous, "
-                    "but they still stop at live VM handler state rather than "
-                    "a traced memory boundary. Proving them needs an earlier "
-                    "trace window or an explicit VM/table parameter."
+                    "and the 0xbf byte now shares the 0x7b3a upstream state "
+                    "with the 0x3a byte after lane-aware AND-mask lineage "
+                    "selection. They still stop at live VM handler state "
+                    "rather than a portable input. Proving them needs an "
+                    "earlier trace window or an explicit VM/table parameter."
                 ),
             },
         },
@@ -3535,6 +3540,7 @@ def completion_audit() -> dict:
                     "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
                     "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",
                     "byte-lineage formulas expose shifted-register effective_value for VM bytecode/IP updates",
+                    "byte-lineage lane-aware AND-mask selection follows the data operand instead of mask operands",
                 ],
                 "status": "substantially_available",
             },

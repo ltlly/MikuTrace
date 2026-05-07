@@ -1094,16 +1094,19 @@ tail word source bytes at `0x74b68bcc4d..0x74b68bcc51`. Focused
 
 ```text
 0x74b68bcc4d @ #14165182 -> 0x3a, no_local_def, via 0x7b3a OR identity
-0x74b68bcc4e @ #14165193 -> 0xbf, no_local_def, 0x4f6935bf & 0xff
+0x74b68bcc4e @ #14165193 -> 0xbf, no_local_def through shared 0x7b3a:
+          low8(((0x7b3a * 0xdd08cee9) + 0x61f5) & 0x7fffffff)
 0x74b68bcc4f @ #14165204 -> 0x03, no_local_def, small live VM value
 0x74b68bcc50 @ #14165236 -> 0x01, no_local_def, VM IP pointer transitions
 0x74b68bcc51 @ #14165318 -> 0x00, no_local_def, VM IP pointer transitions
 ```
 
 These are no longer anonymous byte defaults, but they are still not portable
-algorithm inputs. The next step is an earlier/larger trace around those handler
-states, or turning the five-byte source window into an explicit table/VM-state
-parameter with multi-sample validation.
+algorithm inputs. Fixing lane-aware `and` lineage was required here: before the
+fix, `byte-lineage` followed the `0x7fffffff` mask operand instead of the data
+operand. The next step is an earlier/larger trace around the shared `0x7b3a`
+handler state, or turning the five-byte source window into an explicit
+table/VM-state parameter with multi-sample validation.
 
 The evaluator now includes `seed_suggestions` on trusted fallback records. For
 example, it can infer `slot25=0x74b68bcc1c` from

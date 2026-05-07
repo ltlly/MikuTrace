@@ -8665,7 +8665,7 @@ fn choose_semantic_frontier_next(
     }
     if matches!(
         formula.get("op").and_then(|v| v.as_str()),
-        Some("add" | "orr")
+        Some("add" | "orr" | "and")
     ) {
         let operands = formula.get("operands").and_then(|v| v.as_array())?;
         if operands.len() >= 2 {
@@ -8678,6 +8678,15 @@ fn choose_semantic_frontier_next(
                 if let Some(lane) = byte_lane {
                     if let Some(input) =
                         choose_or_operand_for_lane(&operands[0], &operands[1], lane)
+                    {
+                        return next_for_formula_operand(step, input, Some(lane));
+                    }
+                }
+            }
+            if formula.get("op").and_then(|v| v.as_str()) == Some("and") {
+                if let Some(lane) = byte_lane {
+                    if let Some(input) =
+                        choose_and_operand_for_lane(&operands[0], &operands[1], lane)
                     {
                         return next_for_formula_operand(step, input, Some(lane));
                     }
@@ -8745,6 +8754,20 @@ fn choose_pointer_add_operand(operands: &[serde_json::Value]) -> Option<&serde_j
         (compact_formula_operand_role("add", idx, value, operands) == "pointer_base")
             .then_some(operand)
     })
+}
+
+fn choose_and_operand_for_lane<'a>(
+    lhs: &'a serde_json::Value,
+    rhs: &'a serde_json::Value,
+    lane: usize,
+) -> Option<&'a serde_json::Value> {
+    let lhs_byte = operand_value_u64(lhs).and_then(|value| byte_at_lane(value, lane));
+    let rhs_byte = operand_value_u64(rhs).and_then(|value| byte_at_lane(value, lane));
+    match (lhs_byte, rhs_byte) {
+        (Some(lhs_byte), Some(0xff)) if lhs_byte != 0 => Some(lhs),
+        (Some(0xff), Some(rhs_byte)) if rhs_byte != 0 => Some(rhs),
+        _ => None,
+    }
 }
 
 fn choose_or_operand_for_lane<'a>(
@@ -15679,6 +15702,28 @@ mod tests {
         let shifted = choose_frontier_next_for_lane(&shift_left, Some(3), &profile).unwrap();
         assert_eq!(shifted["reg"], serde_json::json!("w1"));
         assert_eq!(shifted["source_byte_offset"], serde_json::json!(0));
+
+        let and_mask = serde_json::json!({
+            "local_def": {
+                "asm": "and x17, x15, x16",
+                "class": "alu",
+                "def": {
+                    "reg": "x17",
+                    "src": [
+                        {"reg": "x15", "value": "0x6a654f6935bf"},
+                        {"reg": "x16", "value": "0x7fffffff"}
+                    ],
+                    "value_after": "0x4f6935bf"
+                }
+            },
+            "frontier": [
+                {"idx": 92, "reg": "x15", "value": "0x6a654f6935bf"},
+                {"idx": 92, "reg": "x16", "value": "0x7fffffff"}
+            ]
+        });
+        let masked = choose_frontier_next_for_lane(&and_mask, Some(0), &profile).unwrap();
+        assert_eq!(masked["reg"], serde_json::json!("x15"));
+        assert_eq!(masked["source_byte_offset"], serde_json::json!(0));
     }
 
     #[test]
