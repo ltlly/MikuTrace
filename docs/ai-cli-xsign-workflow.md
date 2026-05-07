@@ -113,7 +113,7 @@ For AI use, treat the output categories as contracts:
 | `seed_suggestions[]` | Formula-derived initial slot guesses produced from trusted observed fallbacks. They are debugging aids until their own provenance is proven. |
 | `vm_replay_plan_eval.py --auto-seed-suggestions` | Runs a trusted pass, applies formula-derived seed suggestions, then reports a second no-trust replay. It also emits `effective_seed_slots` and `redundant_seed_slots` so agents prove only the required initial state. Use this to remove mechanical fallback noise before proving each seed. |
 | `vm_state_base` | First observed VM state/register-file base in `vm-ops` output. `vm_replay_plan_eval.py` uses it for seed proof commands when available. |
-| `seed_lineage_commands[]` | Optional command hints that turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. |
+| `seed_lineage_commands[]` | Optional command hints that turn suggested VM slot seeds into `byte-lineage` probes using `slot_addr = base + slot*8`. With `--auto-seed-suggestions`, prefer `auto_seeded_replay.effective_seed_lineage_commands[]` because it excludes user-provided and redundant seeds. |
 | `vm_replay_plan_eval.py --emit-python` | Converts `vm-ops --replay-plan` JSON into a standalone Python replay skeleton with `slots`, `mem`, and `byte_load` inputs. This is trace replay scaffolding for AI editing, not proof of a portable algorithm by itself. |
 | `byte-lineage --compact` | Minimal one-byte provenance digest with path, recognized semantics, compact formula operands, memory boundaries, and next actions. Use it before requesting the full chain. |
 | `local_def.formula.operands[].role` | Generic operand hint for compact formulas. For pointer-shaped `add`, roles such as `pointer_base` and `delta` expose both sides of `base + offset`; `delta` includes small positive values and small two's-complement negative offsets. Shifted register operands also expose `shift`, `shift_amount`, and `effective_value`, for example `reg << 4`. |
@@ -179,6 +179,10 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> \
 ```
 
 The resulting `seed_lineage_commands[]` are proof tasks, not conclusions.
+When `--auto-seed-suggestions` is also enabled, the nested
+`auto_seeded_replay.effective_seed_lineage_commands[]` list is the cleaner
+queue for an AI agent because it follows `effective_seed_slots` instead of the
+raw suggestion list.
 
 ### Current VM CLI closure boundary
 

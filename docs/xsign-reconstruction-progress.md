@@ -901,7 +901,9 @@ minimizes the auto-seeded input set: the scratch-writer window keeps all six
 suggestions, while the ladder window drops redundant `slot29` and needs only
 `slot24`, `slot25`, `slot26`, and `slot28` in addition to user seed `slot0`.
 These suggestions are still evidence to prove, not portable inputs by
-themselves.
+themselves. With `--seed-lineage-call-dir`, the nested
+`auto_seeded_replay.effective_seed_lineage_commands[]` field now emits proof
+commands only for those non-redundant suggested seeds.
 `vm-ops --replay-plan` now includes `vm_state_base`, so the same tool emits
 direct `seed_lineage_commands[]` without a manually supplied slot base; for
 example slot26 maps to `0x7744599570`, matching the earlier manual

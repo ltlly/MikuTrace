@@ -2993,6 +2993,11 @@ def python_vm_replay_plan_eval_summary() -> dict:
             "redundant_seed_slots so AI agents can distinguish proof-critical "
             "initial state from mechanically redundant suggestions"
         ),
+        "effective_seed_lineage_status": (
+            "when --seed-lineage-call-dir is supplied, auto_seeded_replay also "
+            "emits effective_seed_lineage_commands filtered to non-redundant "
+            "suggested slots"
+        ),
         "scratch_writer_window": {
             "command": (
                 "tracemiku-cli vm-ops <call_dir> --start 14164280 "
@@ -3444,6 +3449,7 @@ def completion_audit() -> dict:
                     "vm-ops --replay-plan emits vm_state_base for automatic seed proof commands",
                     "vm_replay_plan_eval.py seed_lineage_commands emits next byte-lineage proof commands",
                     "vm_replay_plan_eval.py minimizes auto-seeded replay inputs and reports redundant suggestions",
+                    "vm_replay_plan_eval.py emits effective seed lineage commands for non-redundant auto seeds",
                     "byte-lineage --compact formula operands label pointer_base and delta",
                     "byte-lineage --compact repeated_values exposes copy-loop/stable-base signals",
                     "byte-lineage --compact reaches malloc-backed call_return boundaries for slot25/28 with larger lookback",

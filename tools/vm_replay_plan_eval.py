@@ -592,6 +592,20 @@ def seed_lineage_commands(
     return out
 
 
+def filter_suggestions_for_effective_seeds(
+    suggestions: dict[int, dict[str, Any]],
+    effective_seed_slots: dict[str, str],
+    user_seed_slots: list[str],
+) -> dict[int, dict[str, Any]]:
+    user_slots = set(parse_seed_slots(user_seed_slots))
+    effective_slots = {int(slot, 0) for slot in effective_seed_slots}
+    return {
+        slot: suggestion
+        for slot, suggestion in suggestions.items()
+        if slot in effective_slots and slot not in user_slots
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-mem", action="append", default=[], metavar="ADDR:SIZE")
@@ -655,6 +669,24 @@ def main() -> int:
         summary["auto_seeded_replay"] = auto_seeded_replay_summary(
             plan, args.seed_slot, args.dump_mem
         )
+        effective_suggestions = filter_suggestions_for_effective_seeds(
+            state.seed_suggestions,
+            summary["auto_seeded_replay"].get("effective_seed_slots", {}),
+            args.seed_slot,
+        )
+        effective_commands = seed_lineage_commands(
+            plan,
+            effective_suggestions,
+            args.seed_lineage_call_dir,
+            args.seed_lineage_base,
+            args.seed_lineage_before_idx,
+            args.seed_lineage_depth,
+            args.seed_lineage_lookback,
+        )
+        if effective_commands:
+            summary["auto_seeded_replay"][
+                "effective_seed_lineage_commands"
+            ] = effective_commands
     commands = seed_lineage_commands(
         plan,
         state.seed_suggestions,
