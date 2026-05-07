@@ -3593,6 +3593,51 @@ def python_semantic_helper_coverage() -> dict:
     }
 
 
+def generic_vm_scope_audit() -> dict:
+    return {
+        "status": "generic_dynamic_trace_helpers",
+        "not_a_static_devirtualizer": True,
+        "target_specific_core_logic": False,
+        "target_specific_material_policy": (
+            "Keep target-specific x-sign/libsgmainso observations in "
+            "examples/, docs/, tools/hooks/, or JSON specs, not Rust CLI/core "
+            "analysis logic."
+        ),
+        "profile_knobs": [
+            "--vm-ip-reg",
+            "--vm-state-reg",
+            "--vm-dispatch-reg",
+            "--vm-infra-regs",
+            "--base-ip",
+        ],
+        "current_strengths": [
+            "register-file VMs with memory-backed slot loads/stores",
+            "dynamic OLLVM-style opcode switch or computed-goto handler streams",
+            "bytecode/immediate reads from a visible VM IP register",
+            "scratch-buffer stores and byte-level output provenance",
+            "trace-faithful replay-plan skeletons once initial seeds are supplied",
+        ],
+        "partial_or_boundary_only": [
+            "flattened switch/case code without a distinct bytecode stream",
+            "nested-if dispatchers where only the executed path is visible",
+            "register-only VMs with no memory-backed slot table",
+            "encrypted/self-modifying VMProtect-style handlers",
+            "helper calls or framework/JNI writes outside the traced window",
+        ],
+        "extension_rule": (
+            "When a new VM variant appears, add a generic signal such as a "
+            "formula kind, frontier kind, or profile field. Do not add a "
+            "command whose semantics only make sense for one SO/APK/output key."
+        ),
+        "recommended_first_probe": [
+            "vm-slice or vm-ops over the executed window with the right VM profile",
+            "byte-writer-map/output-map from the known output buffer",
+            "byte-lineage --compact --count for consecutive unresolved bytes",
+            "vm-backtree when one source register branches into several upstreams",
+        ],
+    }
+
+
 def sample_call_dir(sample: str) -> str:
     return TRACE_SAMPLE_CALL_DIRS.get(sample, "<call_dir>")
 
@@ -5485,6 +5530,7 @@ def main() -> None:
     multi_sample_next_plan = multi_sample_next_proof_plan(sample_tails)
     replay_eval_summary = python_vm_replay_plan_eval_summary()
     seed_provenance_summary = vm_replay_seed_provenance_summary()
+    generic_vm_audit = generic_vm_scope_audit()
     audit = completion_audit()
 
     # Trace-proven first variable group: the x-sign tail starts at Base64
@@ -5597,6 +5643,7 @@ def main() -> None:
         "current_trace_model_input_manifest": input_manifest,
         "parameterized_simulation_contract": replay_contract,
         "current_trace_model_simulation": current_trace_model_simulation,
+        "generic_vm_scope_audit": generic_vm_audit,
         "completion_audit": audit,
         "small_affine": {
             "previous_state": f"{TRACE_SMALL_AFFINE['previous_state']:#x}",

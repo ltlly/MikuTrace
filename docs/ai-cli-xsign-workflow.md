@@ -134,6 +134,22 @@ Do not add target-specific VM commands for one SO. If a new variant needs
 additional recognition, add a generic signal, such as a new formula kind, a
 new frontier kind, or a configurable VM profile field.
 
+The design contract is:
+
+- `vm-*` commands are dynamic-trace explainers. They report what executed and
+  what data moved through visible registers, VM slots, bytecode reads, memory
+  loads, and stores.
+- They are not a universal static devirtualizer. Untaken paths, encrypted
+  handlers, and helpers outside the trace must remain explicit frontiers.
+- A profile names runtime roles, not a product: VM IP register, state/register
+  file base, dispatch base, and infrastructure registers.
+- Target-specific facts such as package names, x-sign fields, anti-debug
+  offsets, and known constants belong in `examples/`, `docs/`, `tools/hooks/`,
+  or JSON specs. They must not become Rust core/CLI behavior.
+- For a new VM family, prefer one reusable primitive: a formula classifier,
+  frontier kind, profile option, or replay-template field. Avoid commands that
+  only make sense for one SO, APK, output key, or opcode table.
+
 To hand a replay window to an AI as editable Python, emit a skeleton:
 
 ```bash
