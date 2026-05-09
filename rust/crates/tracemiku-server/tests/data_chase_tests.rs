@@ -47,6 +47,45 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_pair_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_4r_1ms");
+    fs::create_dir_all(&cd).unwrap();
+    let specs: [RecSpec<'_>; 4] = [
+        // mov x0, x2
+        (0x100000, 0xaa0203e0, &[(2, 0xaaaa)]),
+        // mov x1, x3
+        (0x100004, 0xaa0303e1, &[(3, 0xbbbb)]),
+        // stp x0, x1, [sp]
+        (0x100008, 0xa90007e0, &[(0, 0x1111), (1, 0x2222)]),
+        // ldp x4, x5, [sp]
+        (0x10000c, 0xa94017e4, &[]),
+    ];
+    let mut buf = vec![0u8; 272 * specs.len()];
+    for (i, (pc, inst, regs)) in specs.iter().enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        for (reg_idx, value) in *regs {
+            let roff = off + 8 + reg_idx * 8;
+            buf[roff..roff + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        buf[off + 256..off + 264].copy_from_slice(&0x8000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 async fn get_json(call_dir: PathBuf, uri: &str) -> serde_json::Value {
     let app = tracemiku_server::build_router(call_dir).expect("build router");
     let resp = app
@@ -68,6 +107,23 @@ async fn data_chase_follows_load_store_and_reg_source() {
     assert_eq!(v["steps"][0]["src"], "0x7000");
     assert_eq!(v["steps"][1]["via"], "mem-store-src");
     assert_eq!(v["steps"][1]["src"], "x1");
+    assert_eq!(v["steps"][2]["via"], "reg");
+    assert_eq!(v["steps"][2]["src"], "x3");
+}
+
+#[tokio::test]
+async fn data_chase_pair_load_follows_matching_store_half() {
+    let (_tmp, cd) = synth_pair_call_dir();
+    let v = get_json(cd, "/api/data-chase?start=4&reg=x5&max_steps=10").await;
+    assert_eq!(v["from"], 4);
+    assert_eq!(v["reg"], "x5");
+    assert_eq!(v["steps"][0]["via"], "mem-load");
+    assert_eq!(v["steps"][0]["src"], "0x8008");
+    assert_eq!(v["steps"][1]["via"], "mem-store-src");
+    assert_eq!(
+        v["steps"][1]["src"], "x1",
+        "x5 must chase through the second stp half, not x0: {v}"
+    );
     assert_eq!(v["steps"][2]["via"], "reg");
     assert_eq!(v["steps"][2]["src"], "x3");
 }

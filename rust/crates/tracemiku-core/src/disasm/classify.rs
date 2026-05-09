@@ -15,6 +15,12 @@ pub fn is_branch_mnem(mnem: &str) -> bool {
     ) || mnem.starts_with("b.")
 }
 
+/// `true` if mnemonic branches conditionally on NZCV or a tested register.
+pub fn is_conditional_branch_mnem(mnem: &str) -> bool {
+    matches!(mnem, "cbz" | "cbnz" | "tbz" | "tbnz")
+        || (mnem.starts_with("b.") && !matches!(mnem, "b.al" | "b.nv"))
+}
+
 /// `true` if mnemonic is a function call (direct or indirect).
 pub fn is_call_mnem(mnem: &str) -> bool {
     matches!(mnem, "bl" | "blr")

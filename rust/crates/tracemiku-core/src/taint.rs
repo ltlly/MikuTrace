@@ -7,8 +7,8 @@
 //!
 //! Algorithm (backward): BFS via VecDeque<BwdItem> where BwdItem is
 //! either a (cur_idx, want_reg) reg-chase or a (before_idx, addr, size)
-//! mem-chase. Mem items use index.mem_addr_to_writes for exact-addr
-//! writer lookup (byte-overlap mode is M3-γ Task 2 via through_mem).
+//! mem-chase. Mem items use index.mem_addr_to_writes for byte-range
+//! writer lookup.
 //! Mirrors viewer/taint.py:301-356 exactly.
 
 use serde::Serialize;
@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::thread;
 
-use crate::disasm::{addr_of, decode, MemOp};
+use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
 use crate::index::Index;
 use crate::memshadow::MemShadow;
 use crate::parallel;
@@ -49,6 +49,245 @@ fn addressing_regs(mem_ops: &[MemOp]) -> HashSet<String> {
         }
     }
     s
+}
+
+const REG_USE_EVENT: u8 = 0;
+const REG_DEF_EVENT: u8 = 1;
+const MEM_TOUCH_EVENT: u8 = 2;
+
+fn push_next_reg_event(
+    heap: &mut BinaryHeap<Reverse<(usize, u8, String, usize)>>,
+    entries: Option<&Vec<usize>>,
+    reg: &str,
+    lo: usize,
+    kind: u8,
+) {
+    let Some(entries) = entries else {
+        return;
+    };
+    let pos = entries.partition_point(|&u| u <= lo);
+    if pos < entries.len() {
+        heap.push(Reverse((entries[pos], kind, reg.to_string(), pos)));
+    }
+}
+
+fn push_next_reg_events(
+    heap: &mut BinaryHeap<Reverse<(usize, u8, String, usize)>>,
+    index: &Index,
+    exclude_regs: &HashSet<String>,
+    reg: &str,
+    lo: usize,
+) {
+    if exclude_regs.contains(reg) {
+        return;
+    }
+    push_next_reg_event(heap, index.reg_uses.get(reg), reg, lo, REG_USE_EVENT);
+    push_next_reg_event(heap, index.reg_defs.get(reg), reg, lo, REG_DEF_EVENT);
+}
+
+fn next_mem_touch_after(
+    index: &Index,
+    tainted_mem: &HashMap<u64, TaintProvenance>,
+    lo: usize,
+) -> Option<usize> {
+    if tainted_mem.is_empty() {
+        return None;
+    }
+    let next_in = |addr_to_idxs: &HashMap<u64, Vec<usize>>| {
+        tainted_mem
+            .keys()
+            .filter_map(|addr| {
+                let entries = addr_to_idxs.get(addr)?;
+                let pos = entries.partition_point(|&idx| idx <= lo);
+                entries.get(pos).copied()
+            })
+            .min()
+    };
+    match (
+        next_in(&index.mem_addr_to_reads),
+        next_in(&index.mem_addr_to_writes),
+    ) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn push_next_mem_touch(
+    heap: &mut BinaryHeap<Reverse<(usize, u8, String, usize)>>,
+    index: &Index,
+    tainted_mem: &HashMap<u64, TaintProvenance>,
+    lo: usize,
+) {
+    if let Some(idx) = next_mem_touch_after(index, tainted_mem, lo) {
+        heap.push(Reverse((idx, MEM_TOUCH_EVENT, String::new(), 0)));
+    }
+}
+
+fn mnemonic_base(mnemonic: &str) -> &str {
+    mnemonic.split('.').next().unwrap_or(mnemonic)
+}
+
+fn is_partial_modify(d: &DecodedInsn) -> bool {
+    matches!(
+        mnemonic_base(&d.mnemonic),
+        "movk" | "bfm" | "bfi" | "bfxil" | "bfc"
+    )
+}
+
+fn span_overlaps(a: u64, a_size: u32, b: u64, b_size: u32) -> bool {
+    let a_end = a.saturating_add(a_size as u64);
+    let b_end = b.saturating_add(b_size as u64);
+    a < b_end && b < a_end
+}
+
+fn load_dest_regs(d: &DecodedInsn, op: &MemOp) -> Vec<String> {
+    if !op.src_reg.is_empty() {
+        return vec![op.src_reg.clone()];
+    }
+    let out: Vec<String> = d
+        .regs_def
+        .iter()
+        .filter(|r| **r != op.base)
+        .take(1)
+        .cloned()
+        .collect();
+    if out.is_empty() {
+        d.regs_def.iter().take(1).cloned().collect()
+    } else {
+        out
+    }
+}
+
+fn load_op_feeds_reg(d: &DecodedInsn, op: &MemOp, reg: &str) -> bool {
+    if op.is_write {
+        return false;
+    }
+    let dests = load_dest_regs(d, op);
+    dests.is_empty() || dests.iter().any(|dst| dst == reg)
+}
+
+fn store_source_regs(d: &DecodedInsn, op: &MemOp) -> Vec<String> {
+    if !op.src_reg.is_empty() {
+        return vec![op.src_reg.clone()];
+    }
+    d.regs_use
+        .iter()
+        .find(|r| **r != op.base && (op.idx.is_empty() || **r != op.idx))
+        .cloned()
+        .into_iter()
+        .collect()
+}
+
+fn store_source_regs_for_addr(
+    d: &DecodedInsn,
+    r: &crate::trace::Record,
+    addr: u64,
+    size: u32,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for op in &d.mem_op {
+        if !op.is_write {
+            continue;
+        }
+        let base = addr_of(r, op);
+        if !span_overlaps(base, op.size, addr, size) {
+            continue;
+        }
+        for src in store_source_regs(d, op) {
+            if !out.contains(&src) {
+                out.push(src);
+            }
+        }
+    }
+    out
+}
+
+fn tainted_mem_overlaps(tainted_mem: &HashMap<u64, TaintProvenance>, addr: u64, size: u32) -> bool {
+    (0..size as u64).any(|o| tainted_mem.contains_key(&(addr + o)))
+}
+
+fn clear_tainted_mem_span(
+    tainted_mem: &mut HashMap<u64, TaintProvenance>,
+    addr: u64,
+    size: u32,
+    through_mem: bool,
+) {
+    if through_mem {
+        for o in 0..size as u64 {
+            tainted_mem.remove(&(addr + o));
+        }
+    } else {
+        tainted_mem.remove(&addr);
+    }
+}
+
+fn write_tainted_mem_span(
+    tainted_mem: &mut HashMap<u64, TaintProvenance>,
+    addr: u64,
+    size: u32,
+    through_mem: bool,
+    provenance: TaintProvenance,
+) {
+    if through_mem {
+        for o in 0..size as u64 {
+            tainted_mem.insert(addr + o, provenance);
+        }
+    } else {
+        tainted_mem.insert(addr, provenance);
+    }
+}
+
+fn last_cond_before(index: &Index, before_idx: usize) -> Option<usize> {
+    let pos = index.cond_branches.partition_point(|&i| i < before_idx);
+    if pos == 0 {
+        return None;
+    }
+    let ctrl_idx = index.cond_branches[pos - 1];
+    let boundary_pos = index
+        .call_ret_boundaries
+        .partition_point(|&i| i < before_idx);
+    if boundary_pos > 0 && index.call_ret_boundaries[boundary_pos - 1] > ctrl_idx {
+        return None;
+    }
+    Some(ctrl_idx)
+}
+
+fn push_control_dependency(
+    trace: &Trace,
+    index: &Index,
+    raw_out: &mut Vec<RawBwdHit>,
+    pending: &mut VecDeque<BwdItem>,
+    at_idx: usize,
+    parent_idx: usize,
+    depth: u32,
+    exclude_regs: &HashSet<String>,
+) {
+    let Some(ctrl_idx) = last_cond_before(index, at_idx) else {
+        return;
+    };
+    raw_out.push(RawBwdHit {
+        idx: ctrl_idx,
+        why: "control".to_string(),
+        parent_idxs: vec![parent_idx],
+        taint_depth: depth,
+        edge_kind: Some("control".to_string()),
+    });
+    let r = trace.record(ctrl_idx);
+    let d = decode(r.pc, r.inst);
+    for u in &d.regs_use {
+        if exclude_regs.contains(u) {
+            continue;
+        }
+        pending.push_back(BwdItem::Reg {
+            cur_idx: ctrl_idx,
+            want_reg: u.clone(),
+            parent_idx: Some(ctrl_idx),
+            depth: depth.saturating_add(1),
+            edge_kind: "control-reg",
+        });
+    }
 }
 
 /// Pending-queue item for backward taint BFS.
@@ -219,22 +458,8 @@ pub fn forward_taint(
     let mut tainted_regs: HashMap<String, TaintProvenance> = HashMap::new();
     tainted_regs.insert(taint_reg.to_string(), TaintProvenance::seed());
     let mut tainted_mem: HashMap<u64, TaintProvenance> = HashMap::new();
-    let mut heap: BinaryHeap<Reverse<(usize, String, usize)>> = BinaryHeap::new();
-
-    let push_reg =
-        |heap: &mut BinaryHeap<Reverse<(usize, String, usize)>>, reg: &str, lo: usize| {
-            if exclude_regs.contains(reg) {
-                return;
-            }
-            let Some(uses) = index.reg_uses.get(reg) else {
-                return;
-            };
-            let pos = uses.partition_point(|&u| u <= lo);
-            if pos < uses.len() {
-                heap.push(Reverse((uses[pos], reg.to_string(), pos)));
-            }
-        };
-    push_reg(&mut heap, taint_reg, start_idx);
+    let mut heap: BinaryHeap<Reverse<(usize, u8, String, usize)>> = BinaryHeap::new();
+    push_next_reg_events(&mut heap, index, exclude_regs, taint_reg, start_idx);
 
     let mut out: Vec<TaintHit> = Vec::new();
     let mut seen: HashSet<usize> = HashSet::new();
@@ -245,19 +470,32 @@ pub fn forward_taint(
     };
     let mut stopped = false;
 
-    while let Some(Reverse((i, reg, pos))) = heap.pop() {
+    while let Some(Reverse((i, event_kind, reg, pos))) = heap.pop() {
         if out.len() >= cap {
             stopped = true;
             break;
         }
-        if let Some(uses) = index.reg_uses.get(&reg) {
-            if pos + 1 < uses.len() {
-                heap.push(Reverse((uses[pos + 1], reg.clone(), pos + 1)));
+        if event_kind != MEM_TOUCH_EVENT {
+            let next_entries = if event_kind == REG_DEF_EVENT {
+                index.reg_defs.get(&reg)
+            } else {
+                index.reg_uses.get(&reg)
+            };
+            if let Some(entries) = next_entries {
+                if pos + 1 < entries.len() {
+                    heap.push(Reverse((
+                        entries[pos + 1],
+                        event_kind,
+                        reg.clone(),
+                        pos + 1,
+                    )));
+                }
             }
         }
         if seen.contains(&i) {
             continue;
         }
+        seen.insert(i);
         let r = trace.record(i);
         let d = decode(r.pc, r.inst);
         let addr_regs = if data_only {
@@ -280,8 +518,11 @@ pub fn forward_taint(
             }
         }
 
-        // Check loads against tainted_mem (Python:158-187).
+        // Check loads against tainted_mem (Python:158-187). For split pair
+        // loads, remember which destination half is actually fed by tainted
+        // memory so `ldp x4, x5, [sp]` does not taint both halves.
         let mut load_tainted = false;
+        let mut load_tainted_regs: Vec<String> = Vec::new();
         for op in &d.mem_op {
             if op.is_write {
                 continue;
@@ -291,15 +532,54 @@ pub fn forward_taint(
                 if let Some(src) = tainted_mem.get(&(base + o)) {
                     load_tainted = true;
                     sources.push(*src);
+                    for dst in load_dest_regs(&d, op) {
+                        if !load_tainted_regs.contains(&dst) {
+                            load_tainted_regs.push(dst);
+                        }
+                    }
                     break;
                 }
             }
-            if load_tainted {
+        }
+
+        let defines_tainted = d.regs_def.iter().any(|r| tainted_regs.contains_key(r));
+        let mut overwrites_tainted_mem = false;
+        for op in &d.mem_op {
+            if !op.is_write {
+                continue;
+            }
+            let base = addr_of(&r, op);
+            if tainted_mem_overlaps(&tainted_mem, base, op.size) {
+                overwrites_tainted_mem = true;
                 break;
             }
         }
 
         if used.is_empty() && !load_tainted {
+            // Kill semantics: a clean overwrite of a tainted register/memory
+            // should stop later false positives. Partial RMW forms such as
+            // movk keep the old destination taint when Capstone does not expose
+            // the old destination as a use.
+            if defines_tainted && !is_partial_modify(&d) {
+                for nr in &d.regs_def {
+                    tainted_regs.remove(nr);
+                }
+            }
+            if overwrites_tainted_mem {
+                for op in &d.mem_op {
+                    if !op.is_write {
+                        continue;
+                    }
+                    let base = addr_of(&r, op);
+                    let src_tainted = store_source_regs(&d, op)
+                        .iter()
+                        .any(|src| tainted_regs.contains_key(src));
+                    if !src_tainted {
+                        clear_tainted_mem_span(&mut tainted_mem, base, op.size, through_mem);
+                    }
+                }
+                push_next_mem_touch(&mut heap, index, &tainted_mem, i);
+            }
             continue;
         }
         used.sort();
@@ -334,34 +614,68 @@ pub fn forward_taint(
                 Some("reg".to_string())
             },
         });
-        seen.insert(i);
         let next_provenance = TaintProvenance::from_hit(i, taint_depth);
 
-        // Propagate: regs_def → push next-use.
+        // Propagate: regs_def → push next-use/def. Loads from tainted memory
+        // only taint the loaded destination register(s); tainted register
+        // sources still taint all explicit defs as before.
+        let mut defs_to_taint: HashSet<String> = HashSet::new();
+        if !used.is_empty() {
+            for nr in &d.regs_def {
+                defs_to_taint.insert(nr.clone());
+            }
+        }
+        if load_tainted {
+            if load_tainted_regs.is_empty() {
+                for nr in &d.regs_def {
+                    defs_to_taint.insert(nr.clone());
+                }
+            } else {
+                for nr in load_tainted_regs {
+                    defs_to_taint.insert(nr);
+                }
+            }
+        }
         for nr in &d.regs_def {
             if exclude_regs.contains(nr) {
                 continue;
             }
-            let was_tainted = tainted_regs.contains_key(nr);
-            tainted_regs.insert(nr.clone(), next_provenance);
-            if !was_tainted {
-                push_reg(&mut heap, nr, i);
+            if defs_to_taint.contains(nr)
+                || (is_partial_modify(&d) && tainted_regs.contains_key(nr))
+            {
+                let was_tainted = tainted_regs.contains_key(nr);
+                tainted_regs.insert(nr.clone(), next_provenance);
+                if !was_tainted {
+                    push_next_reg_events(&mut heap, index, exclude_regs, nr, i);
+                }
+            } else {
+                tainted_regs.remove(nr);
             }
         }
-        // Propagate: stores tag bytes (through_mem: full range; else: base only).
+        // Propagate/kill stores per memory half. Pair and exclusive stores use
+        // MemOp.src_reg, so stp half2 follows its second data register rather
+        // than the first register in the instruction.
         for op in &d.mem_op {
             if !op.is_write {
                 continue;
             }
             let base = addr_of(&r, op);
-            if through_mem {
-                for o in 0..op.size as u64 {
-                    tainted_mem.insert(base + o, next_provenance);
-                }
+            let src_tainted = store_source_regs(&d, op)
+                .iter()
+                .any(|src| tainted_regs.contains_key(src));
+            if src_tainted {
+                write_tainted_mem_span(
+                    &mut tainted_mem,
+                    base,
+                    op.size,
+                    through_mem,
+                    next_provenance,
+                );
             } else {
-                tainted_mem.insert(base, next_provenance);
+                clear_tainted_mem_span(&mut tainted_mem, base, op.size, through_mem);
             }
         }
+        push_next_mem_touch(&mut heap, index, &tainted_mem, i);
     }
 
     (out, stopped)
@@ -437,6 +751,18 @@ pub fn backward_taint(
             taint_depth: 0,
             edge_kind: Some("seed".to_string()),
         });
+        if !data_only {
+            push_control_dependency(
+                trace,
+                index,
+                &mut raw_out,
+                &mut pending,
+                idx,
+                idx,
+                1,
+                exclude_regs,
+            );
+        }
         let addr_regs0 = addressing_regs(&d0.mem_op);
         for u in &d0.regs_use {
             if exclude_regs.contains(u) {
@@ -458,7 +784,7 @@ pub fn backward_taint(
             });
         }
         for op in &d0.mem_op {
-            if op.is_write {
+            if !load_op_feeds_reg(&d0, op, taint_reg) {
                 continue;
             }
             let addr = addr_of(&r0, op);
@@ -508,19 +834,26 @@ pub fn backward_taint(
                         taint_depth: depth,
                         edge_kind: Some(edge_kind.to_string()),
                     });
-                    let (base_w, idx_w) = if let Some(op) = d.mem_op.first() {
-                        (op.base.clone(), op.idx.clone())
-                    } else {
-                        (String::new(), String::new())
-                    };
-                    if let Some(src) = d
-                        .regs_use
-                        .iter()
-                        .find(|u| !exclude_regs.contains(*u) && **u != base_w && **u != idx_w)
-                    {
+                    if !data_only {
+                        push_control_dependency(
+                            trace,
+                            index,
+                            &mut raw_out,
+                            &mut pending,
+                            j,
+                            j,
+                            depth.saturating_add(1),
+                            exclude_regs,
+                        );
+                    }
+                    let sources = store_source_regs_for_addr(&d, &r, addr, size);
+                    for src in sources {
+                        if exclude_regs.contains(&src) {
+                            continue;
+                        }
                         pending.push_back(BwdItem::Reg {
                             cur_idx: j,
-                            want_reg: src.clone(),
+                            want_reg: src,
                             parent_idx: Some(j),
                             depth: depth.saturating_add(1),
                             edge_kind: "store-src",
@@ -559,6 +892,18 @@ pub fn backward_taint(
                     taint_depth: depth,
                     edge_kind: Some(edge_kind.to_string()),
                 });
+                if !data_only {
+                    push_control_dependency(
+                        trace,
+                        index,
+                        &mut raw_out,
+                        &mut pending,
+                        j,
+                        j,
+                        depth.saturating_add(1),
+                        exclude_regs,
+                    );
+                }
 
                 let r = trace.record(j);
                 let d = decode(r.pc, r.inst);
@@ -579,7 +924,7 @@ pub fn backward_taint(
                     });
                 }
                 for op in &d.mem_op {
-                    if op.is_write {
+                    if !load_op_feeds_reg(&d, op, &want_reg) {
                         continue;
                     }
                     let addr = addr_of(&r, op);
@@ -697,6 +1042,41 @@ mod tests {
         Trace::load(&cd).unwrap()
     }
 
+    fn synth_trace_with<F>(insts: &[u32], mut fill: F) -> tempfile::TempDir
+    where
+        F: FnMut(usize, &mut [u8]),
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir
+            .path()
+            .join("run")
+            .join("calls")
+            .join(format!("call_001_tid1_{}r_1ms", insts.len()));
+        std::fs::create_dir_all(&cd).unwrap();
+        let mut buf = vec![0u8; REC_SIZE * insts.len()];
+        for (i, inst) in insts.iter().enumerate() {
+            let off = i * REC_SIZE;
+            let rec = &mut buf[off..off + REC_SIZE];
+            let pc = 0x100000u64 + (i as u64) * 4;
+            rec[0..8].copy_from_slice(&pc.to_le_bytes());
+            rec[256..264].copy_from_slice(&0x7000u64.to_le_bytes());
+            rec[268..272].copy_from_slice(&inst.to_le_bytes());
+            fill(i, rec);
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(
+            cd.join("meta.json"),
+            format!(r#"{{"records":{}}}"#, insts.len()),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x100000","size":4096}}"#,
+        )
+        .unwrap();
+        dir
+    }
+
     #[test]
     fn frame_depth_map_root_only_then_one_call() {
         let dir = synth_two_callees();
@@ -721,6 +1101,43 @@ mod tests {
         let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
         assert!(hits.is_empty());
         assert!(!stopped);
+    }
+
+    #[test]
+    fn forward_taint_kills_clean_reg_overwrite() {
+        // idx 0 seeds x0, idx 1 overwrites x0 with an immediate, idx 2 reads x0.
+        // Without explicit def-event kill semantics idx 2 was a false positive.
+        let dir = synth_trace_with(&[0xd2800020, 0xd2800000, 0x91000401], |i, rec| {
+            let x0 = if i == 0 { 1u64 } else { 0u64 };
+            rec[8..16].copy_from_slice(&x0.to_le_bytes());
+        });
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
+        assert!(!stopped);
+        assert!(
+            hits.iter().all(|h| h.idx != 2),
+            "clean overwrite at idx 1 should kill x0 before idx 2: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn forward_taint_partial_modify_preserves_reg_taint() {
+        // movk is a partial register update. If Capstone does not expose the old
+        // destination as a use, the taint engine still keeps the existing x0 taint.
+        let dir = synth_trace_with(&[0xd2800020, 0xf2800040, 0x91000401], |_, rec| {
+            rec[8..16].copy_from_slice(&1u64.to_le_bytes());
+        });
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (hits, stopped) = forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
+        assert!(!stopped);
+        assert!(
+            hits.iter().any(|h| h.idx == 2),
+            "movk should preserve x0 taint through the later add: {hits:?}"
+        );
     }
 
     #[test]
@@ -889,6 +1306,101 @@ mod tests {
     }
 
     #[test]
+    fn backward_taint_includes_control_dependency_when_enabled() {
+        // idx 0: cmp x0, #0
+        // idx 1: b.eq #8
+        // idx 2: mov x1, x2
+        let dir = synth_trace_with(&[0xf100001f, 0x54000040, 0xaa0203e1], |_, rec| {
+            rec[8..16].copy_from_slice(&1u64.to_le_bytes()); // x0
+            rec[24..32].copy_from_slice(&2u64.to_le_bytes()); // x2
+        });
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+
+        let (hits, stopped) = backward_taint(&t, &idx, 2, "x1", 100, &exclude, false, None, false);
+        assert!(!stopped);
+        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
+        assert!(
+            idxs.contains(&1),
+            "control branch should be included in backward taint: {hits:?}"
+        );
+        assert!(
+            idxs.contains(&0),
+            "control branch condition should chase back to cmp/nzcv def: {hits:?}"
+        );
+        let branch = hits.iter().find(|h| h.idx == 1).unwrap();
+        assert_eq!(branch.why, "control");
+        assert_eq!(branch.edge_kind.as_deref(), Some("control"));
+
+        let (data_hits, _) = backward_taint(&t, &idx, 2, "x1", 100, &exclude, false, None, true);
+        let data_idxs: Vec<usize> = data_hits.iter().map(|h| h.idx).collect();
+        assert!(
+            !data_idxs.contains(&1),
+            "data_only=true should suppress control branch dependency: {data_hits:?}"
+        );
+    }
+
+    #[test]
+    fn backward_taint_does_not_attach_control_across_call_boundary() {
+        // idx 0: cmp x0, #0
+        // idx 1: b.eq #8
+        // idx 2: bl #8        -- boundary between caller condition and callee body
+        // idx 3: mov x1, x2   -- pretend this is inside the callee
+        let dir = synth_trace_with(
+            &[0xf100001f, 0x54000040, 0x94000002, 0xaa0203e1],
+            |_, rec| {
+                rec[8..16].copy_from_slice(&1u64.to_le_bytes()); // x0
+                rec[24..32].copy_from_slice(&2u64.to_le_bytes()); // x2
+            },
+        );
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (hits, stopped) = backward_taint(&t, &idx, 3, "x1", 100, &exclude, false, None, false);
+        assert!(!stopped);
+        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
+        assert!(
+            !idxs.contains(&1),
+            "caller-side conditional branch should not control a row past bl boundary: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn backward_taint_pair_load_chases_matching_store_half() {
+        // idx 0: mov x0, x2
+        // idx 1: mov x1, x3
+        // idx 2: stp x0, x1, [sp]
+        // idx 3: ldp x4, x5, [sp]
+        //
+        // Backward from x5 must chase the second ldp/stp half through x1, not
+        // the first half through x0.
+        let dir = synth_trace_with(
+            &[0xaa0203e0, 0xaa0303e1, 0xa90007e0, 0xa94017e4],
+            |_, rec| {
+                rec[8..16].copy_from_slice(&0x1111u64.to_le_bytes()); // x0
+                rec[16..24].copy_from_slice(&0x2222u64.to_le_bytes()); // x1
+                rec[24..32].copy_from_slice(&0xaaaau64.to_le_bytes()); // x2
+                rec[32..40].copy_from_slice(&0xbbbbu64.to_le_bytes()); // x3
+            },
+        );
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (hits, stopped) = backward_taint(&t, &idx, 3, "x5", 100, &exclude, false, None, true);
+        assert!(!stopped);
+        let idxs: Vec<usize> = hits.iter().map(|h| h.idx).collect();
+        assert!(
+            idxs.contains(&1),
+            "x5 should chase through second store half source x1: {hits:?}"
+        );
+        assert!(
+            !idxs.contains(&0),
+            "x5 should not chase through first store half source x0: {hits:?}"
+        );
+    }
+
+    #[test]
     fn forward_taint_through_mem_byte_overlap_extends_taint() {
         // 4-record trace exploring byte-overlap behavior:
         //   idx 0: mov x0, #0xab     (defines x0)
@@ -997,6 +1509,37 @@ mod tests {
         assert!(
             !row2_off.why.contains("mem"),
             "through_mem=false: idx 2 why must NOT contain 'mem' (base-only tag); got {row2_off:?}"
+        );
+    }
+
+    #[test]
+    fn forward_taint_clean_store_kills_tainted_memory() {
+        // idx 0: mov x0, #0xab
+        // idx 1: str x0, [sp]    -> taints [sp]
+        // idx 2: mov x0, #0      -> kills x0
+        // idx 3: str x2, [sp]    -> clean overwrite must kill [sp]
+        // idx 4: ldr x1, [sp]    -> must not reload stale memory taint
+        let dir = synth_trace_with(
+            &[0xd2801560, 0xf90003e0, 0xd2800000, 0xf90003e2, 0xf94003e1],
+            |_, rec| {
+                rec[8..16].copy_from_slice(&0xabu64.to_le_bytes()); // x0
+                rec[24..32].copy_from_slice(&0xcdu64.to_le_bytes()); // x2
+            },
+        );
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let mem = MemShadow::build_from_trace(&t);
+        let (hits, stopped) =
+            forward_taint(&t, &idx, 0, "x0", 100, &exclude, true, Some(&mem), false);
+        assert!(!stopped);
+        assert!(
+            hits.iter().any(|h| h.idx == 1),
+            "seed x0 should taint the first store: {hits:?}"
+        );
+        assert!(
+            !hits.iter().any(|h| h.idx == 4 && h.why.contains("mem")),
+            "clean store at idx 3 should clear memory before load idx 4: {hits:?}"
         );
     }
 

@@ -3,7 +3,7 @@
 //! Wire shape mirrors webui/server.py:2734-2773. M3-ε: trace-ir entries
 //! (root + top-K split callees from build_trace_ir) plus the
 //! symbol-source fallback (FunctionIndex entries with source=="symbol"
-//! whose names aren't already in the trace-ir set).
+//! whose entry PCs are not already represented by trace-ir functions).
 
 use std::collections::HashSet;
 
@@ -20,6 +20,8 @@ use crate::state::AppState;
 pub struct DecFnEntry {
     pub id: String,
     pub name: String,
+    pub module: Option<String>,
+    pub entry_rel: Option<u64>,
     pub blocks: usize,
     pub loops: usize,
     pub calls: usize,
@@ -83,35 +85,43 @@ fn dec_summary_response_for_top(
     let fns: Vec<DecFnEntry> = top
         .fns
         .iter()
-        .map(|f| DecFnEntry {
-            id: make_trace_id(&f.id),
-            name: f.name.clone(),
-            blocks: f.blocks.len(),
-            loops: f.loops.len(),
-            calls: f.calls.len(),
-            type_anchors: f.type_anchors.len(),
-            entry_idx: Some(f.entry_idx),
-            exit_idx: Some(f.exit_idx),
-            source: "trace-ir",
-            trace_ir_id: Some(f.id.clone()),
+        .map(|f| {
+            let (module, entry_rel) = inner
+                .modules
+                .resolve_relative(f.pc_start)
+                .map(|(module, rel)| (Some(module), Some(rel)))
+                .unwrap_or((None, None));
+            DecFnEntry {
+                id: make_trace_id(&f.id),
+                name: f.name.clone(),
+                module,
+                entry_rel,
+                blocks: f.blocks.len(),
+                loops: f.loops.len(),
+                calls: f.calls.len(),
+                type_anchors: f.type_anchors.len(),
+                entry_idx: Some(f.entry_idx),
+                exit_idx: Some(f.exit_idx),
+                source: "trace-ir",
+                trace_ir_id: Some(f.id.clone()),
+            }
         })
         .collect();
 
-    // Symbol-source fallback (Python parity at webui/server.py:2745-2755):
-    // for each FunctionIndex entry with source=="symbol" whose name isn't
-    // already in the trace-ir set, append as a sym-source DecFnEntry.
-    let trace_names: HashSet<String> = fns.iter().map(|f| f.name.clone()).collect();
+    let trace_starts: HashSet<u64> = top.fns.iter().map(|f| f.pc_start).collect();
     let mut fns = fns;
     for entry in &inner.function_index.entries {
         if entry.source != "symbol" {
             continue;
         }
-        if trace_names.contains(&entry.name) {
+        if entry.entry_pc.is_some_and(|pc| trace_starts.contains(&pc)) {
             continue;
         }
         fns.push(DecFnEntry {
-            id: entry.id.clone(), // already "sym:<name>" form
+            id: entry.id.clone(),
             name: entry.name.clone(),
+            module: entry.module.clone(),
+            entry_rel: entry.entry_rel,
             blocks: entry.blocks as usize,
             loops: 0,
             calls: 0,

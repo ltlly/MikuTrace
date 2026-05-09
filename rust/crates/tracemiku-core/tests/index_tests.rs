@@ -145,6 +145,7 @@ fn index_records_mem_writes_with_idx_and_addr() {
     assert_eq!(mw.size, 8);
     assert_eq!(mw.value, None);
     assert_eq!(idx.mem_addr_to_writes.get(&0x7010).cloned(), Some(vec![0]));
+    assert_eq!(idx.mem_addr_to_writes.get(&0x7017).cloned(), Some(vec![0]));
 }
 
 #[test]
@@ -170,8 +171,11 @@ fn index_records_mem_reads_separate_from_writes() {
     assert_eq!(idx.mem_reads[0].idx, 1);
     assert_eq!(idx.mem_reads[0].addr, 0x7000);
     assert_eq!(idx.mem_reads[0].size, 8);
-    // Reads must NOT appear in mem_addr_to_writes.
+    // Reads have their own byte-range map and must NOT appear in writes.
     assert_eq!(idx.mem_addr_to_writes.get(&0x7000).cloned(), Some(vec![0]));
+    assert_eq!(idx.mem_addr_to_writes.get(&0x7007).cloned(), Some(vec![0]));
+    assert_eq!(idx.mem_addr_to_reads.get(&0x7000).cloned(), Some(vec![1]));
+    assert_eq!(idx.mem_addr_to_reads.get(&0x7007).cloned(), Some(vec![1]));
 }
 
 #[test]
@@ -197,6 +201,10 @@ fn index_addr_to_writes_lookup_returns_idxs_in_order() {
         idx.mem_addr_to_writes.get(&0x7000).cloned(),
         Some(vec![0, 1])
     );
+    assert_eq!(
+        idx.mem_addr_to_writes.get(&0x7007).cloned(),
+        Some(vec![0, 1])
+    );
     assert_eq!(idx.mem_addr_to_writes.get(&0x7010).cloned(), Some(vec![2]));
 }
 
@@ -208,6 +216,7 @@ fn index_no_mem_op_does_not_add_records() {
     assert!(idx.mem_writes.is_empty(), "nop trace must have no writes");
     assert!(idx.mem_reads.is_empty(), "nop trace must have no reads");
     assert!(idx.mem_addr_to_writes.is_empty());
+    assert!(idx.mem_addr_to_reads.is_empty());
 }
 
 #[test]
@@ -245,5 +254,15 @@ fn index_addr_to_writes_holds_trace_indices_not_vec_indices() {
         idx.mem_addr_to_writes.get(&0x7000).cloned(),
         Some(vec![0usize, 2]),
         "addr_to_writes must hold trace record indices, not mem_writes vec indices"
+    );
+    assert_eq!(
+        idx.mem_addr_to_writes.get(&0x7007).cloned(),
+        Some(vec![0usize, 2]),
+        "addr_to_writes must index every byte covered by the write"
+    );
+    assert_eq!(
+        idx.mem_addr_to_reads.get(&0x7007).cloned(),
+        Some(vec![1usize]),
+        "addr_to_reads must hold trace record indices for every covered byte"
     );
 }

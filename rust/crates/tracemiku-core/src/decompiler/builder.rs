@@ -13,10 +13,10 @@ use std::time::Instant;
 
 use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 use crate::cfg::CFG;
-use crate::decompiler::ir::{BlockIR, EdgeIR, FuncIR, TopIR, TypeAnchorIR};
+use crate::decompiler::ir::{BlockIR, CallIR, EdgeIR, FuncIR, TopIR, TypeAnchorIR};
 use crate::decompiler::type_anchor::{find_anchors, find_anchors_indexed, load_type_specs};
 use crate::disasm::decode;
-use crate::function_index::make_sym_id;
+use crate::function_index::{make_sym_addr_id, make_sym_id};
 use crate::index::Index;
 use crate::symbols::SymbolMap;
 use crate::trace::{Trace, TraceMeta};
@@ -230,6 +230,143 @@ fn idxs_hit_any_range(idxs: &[usize], ranges: &[(usize, usize)]) -> bool {
     false
 }
 
+fn build_call_idxs(trace: &Trace, index: Option<&Index>) -> Vec<usize> {
+    if let Some(index) = index {
+        let mut idxs = Vec::new();
+        for (&pc, pc_idxs) in &index.pc_to_idxs {
+            let Some(&first_idx) = pc_idxs.first() else {
+                continue;
+            };
+            let d = decode(pc, trace.inst(first_idx));
+            if d.is_call {
+                idxs.extend(pc_idxs.iter().copied());
+            }
+        }
+        idxs.sort_unstable();
+        idxs
+    } else {
+        let mut idxs = Vec::new();
+        for i in 0..trace.len() {
+            let pc = trace.pc(i);
+            let d = decode(pc, trace.inst(i));
+            if d.is_call {
+                idxs.push(i);
+            }
+        }
+        idxs
+    }
+}
+
+fn build_call_ret_idx_map(
+    trace: &Trace,
+    sym: &SymbolMap,
+    index: Option<&Index>,
+) -> HashMap<usize, usize> {
+    let tree = if let Some(index) = index {
+        build_call_tree_indexed(trace, sym, index, 50)
+    } else {
+        build_call_tree(trace, sym, 50)
+    };
+    flatten_calltree(&tree)
+        .into_iter()
+        .map(|frame| (frame.enter_idx, frame.exit_idx))
+        .collect()
+}
+
+fn fallback_sub_name(pc: u64, module_base: u64) -> String {
+    let off = if module_base != 0 && pc >= module_base {
+        pc.wrapping_sub(module_base)
+    } else {
+        pc
+    };
+    format!("sub_{off:x}")
+}
+
+fn build_calls_for_range(
+    trace: &Trace,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    call_idxs: &[usize],
+    ret_idx_by_call: &HashMap<usize, usize>,
+    block_ids: &HashMap<u64, String>,
+    entry_idx: usize,
+    exit_idx: usize,
+    fallback_module_base: u64,
+) -> Vec<CallIR> {
+    if call_idxs.is_empty() || block_ids.is_empty() || trace.is_empty() || entry_idx > exit_idx {
+        return Vec::new();
+    }
+
+    let start = call_idxs.partition_point(|&idx| idx < entry_idx);
+    let end = call_idxs.partition_point(|&idx| idx <= exit_idx);
+    let mut calls = Vec::new();
+    for &idx in &call_idxs[start..end] {
+        if idx + 1 >= trace.len() {
+            continue;
+        }
+        let pc = trace.pc(idx);
+        let Some(block) = cfg.block_containing(pc) else {
+            continue;
+        };
+        let src_block = block_ids
+            .get(&block.start_pc)
+            .cloned()
+            .unwrap_or_else(|| format!("ext:{:#x}", block.start_pc));
+
+        let callee_pc = trace.pc(idx + 1);
+        let lookup = sym.lookup_entry(callee_pc);
+        let callee_fn = lookup
+            .as_ref()
+            .filter(|lookup| !lookup.name.is_empty() && lookup.name != "?")
+            .map(|lookup| lookup.name.clone());
+        let callee_base = lookup
+            .as_ref()
+            .and_then(|lookup| lookup.module_base)
+            .unwrap_or(fallback_module_base);
+        let callee_name = callee_fn
+            .clone()
+            .unwrap_or_else(|| fallback_sub_name(callee_pc, callee_base));
+
+        calls.push(CallIR {
+            idx,
+            src_block,
+            callee_pc,
+            callee_fn,
+            callee_name,
+            ret_idx: ret_idx_by_call.get(&idx).copied(),
+            ret_val_x0: None,
+        });
+    }
+    calls
+}
+
+fn attach_calls(top: &mut TopIR, trace: &Trace, sym: &SymbolMap, cfg: &CFG, index: Option<&Index>) {
+    if top.fns.is_empty() || trace.is_empty() {
+        return;
+    }
+    let call_idxs = build_call_idxs(trace, index);
+    if call_idxs.is_empty() {
+        return;
+    }
+    let ret_idx_by_call = build_call_ret_idx_map(trace, sym, index);
+
+    for f in &mut top.fns {
+        let block_ids: HashMap<u64, String> =
+            f.blocks.iter().map(|b| (b.pc, b.id.clone())).collect();
+        f.calls = build_calls_for_range(
+            trace,
+            sym,
+            cfg,
+            &call_idxs,
+            &ret_idx_by_call,
+            &block_ids,
+            f.entry_idx,
+            f.exit_idx,
+            top.module_base,
+        );
+    }
+}
+
 /// In-place: promote top-K bl-targets (ranked by total records hit)
 /// to standalone FuncIR entries `F1..Fn`. Skips entries with fewer
 /// than `min_records` records.
@@ -261,6 +398,7 @@ pub fn split_top_k_callees(
     let cfg_block_pcs: HashSet<u64> = cfg.blocks().iter().map(|b| b.start_pc).collect();
     let cfg_block_lookup: HashMap<u64, &crate::cfg::Block> =
         cfg.blocks().iter().map(|b| (b.start_pc, *b)).collect();
+    let block_idxs = index.is_none().then(|| build_block_idx_map(trace, cfg));
 
     let tree = if let Some(index) = index {
         build_call_tree_indexed(trace, sym, index, 50)
@@ -349,10 +487,29 @@ pub fn split_top_k_callees(
         };
         own_block_pcs.sort();
 
+        let mut first_idxs: Vec<usize> = Vec::new();
+        let mut last_idxs: Vec<usize> = Vec::new();
         let own_blocks: Vec<BlockIR> = own_block_pcs
             .into_iter()
             .filter_map(|pc| {
                 let block = cfg_block_lookup.get(&pc)?;
+                let bounds = if let Some(index) = index {
+                    block_idx_bounds_from_index(block, index)
+                } else {
+                    block_idxs
+                        .as_ref()
+                        .and_then(|idxs| idxs.get(&block.start_pc))
+                        .and_then(|idxs| {
+                            idxs.first()
+                                .zip(idxs.last())
+                                .map(|(first, last)| (*first, *last))
+                        })
+                };
+                if let Some((first, last)) = bounds {
+                    first_idxs.push(first);
+                    last_idxs.push(last);
+                }
+
                 let id = block_ids
                     .get(&pc)
                     .cloned()
@@ -371,8 +528,14 @@ pub fn split_top_k_callees(
         } else {
             sym_name
         };
-        let first_idx = instances.iter().map(|f| f.enter_idx).min().unwrap_or(0);
-        let last_idx = instances.iter().map(|f| f.exit_idx).max().unwrap_or(0);
+        let first_idx = first_idxs
+            .into_iter()
+            .min()
+            .unwrap_or_else(|| instances.iter().map(|f| f.enter_idx).min().unwrap_or(0));
+        let last_idx = last_idxs
+            .into_iter()
+            .max()
+            .unwrap_or_else(|| instances.iter().map(|f| f.exit_idx).max().unwrap_or(0));
 
         new_fns.push(FuncIR {
             id: format!("F{}", top.fns.len() + new_fns.len()),
@@ -401,7 +564,7 @@ pub fn build_symbol_func_ir(
     cfg: &CFG,
     name: &str,
 ) -> Option<FuncIR> {
-    build_symbol_func_ir_impl(trace, sym, cfg, None, name)
+    build_symbol_func_ir_impl(trace, sym, cfg, None, SymbolFuncSelector::Name(name))
 }
 
 pub fn build_symbol_func_ir_indexed(
@@ -411,7 +574,66 @@ pub fn build_symbol_func_ir_indexed(
     index: &Index,
     name: &str,
 ) -> Option<FuncIR> {
-    build_symbol_func_ir_impl(trace, sym, cfg, Some(index), name)
+    build_symbol_func_ir_impl(trace, sym, cfg, Some(index), SymbolFuncSelector::Name(name))
+}
+
+pub fn build_symbol_func_ir_at(
+    trace: &Trace,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    entry_pc: u64,
+) -> Option<FuncIR> {
+    build_symbol_func_ir_impl(trace, sym, cfg, None, SymbolFuncSelector::EntryPc(entry_pc))
+}
+
+pub fn build_symbol_func_ir_at_indexed(
+    trace: &Trace,
+    sym: &SymbolMap,
+    cfg: &CFG,
+    index: &Index,
+    entry_pc: u64,
+) -> Option<FuncIR> {
+    build_symbol_func_ir_impl(
+        trace,
+        sym,
+        cfg,
+        Some(index),
+        SymbolFuncSelector::EntryPc(entry_pc),
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SymbolFuncSelector<'a> {
+    Name(&'a str),
+    EntryPc(u64),
+}
+
+impl SymbolFuncSelector<'_> {
+    fn matches(self, sym: &SymbolMap, block_pc: u64) -> bool {
+        match self {
+            SymbolFuncSelector::Name(name) => sym.lookup(block_pc).0 == name,
+            SymbolFuncSelector::EntryPc(entry_pc) => sym
+                .lookup_entry(block_pc)
+                .is_some_and(|lookup| lookup.pc == entry_pc),
+        }
+    }
+
+    fn output_name(self, sym: &SymbolMap) -> String {
+        match self {
+            SymbolFuncSelector::Name(name) => name.to_string(),
+            SymbolFuncSelector::EntryPc(entry_pc) => sym
+                .lookup_entry(entry_pc)
+                .map(|lookup| lookup.name)
+                .unwrap_or_else(|| format!("sub_{entry_pc:x}")),
+        }
+    }
+
+    fn output_id(self, name: &str) -> String {
+        match self {
+            SymbolFuncSelector::Name(_) => make_sym_id(name),
+            SymbolFuncSelector::EntryPc(entry_pc) => make_sym_addr_id(entry_pc),
+        }
+    }
 }
 
 fn build_symbol_func_ir_impl(
@@ -419,12 +641,12 @@ fn build_symbol_func_ir_impl(
     sym: &SymbolMap,
     cfg: &CFG,
     index: Option<&Index>,
-    name: &str,
+    selector: SymbolFuncSelector<'_>,
 ) -> Option<FuncIR> {
     let mut own_blocks: Vec<&crate::cfg::Block> = cfg
         .blocks()
         .into_iter()
-        .filter(|b| sym.lookup(b.start_pc).0 == name)
+        .filter(|b| selector.matches(sym, b.start_pc))
         .collect();
     own_blocks.sort_by_key(|b| b.start_pc);
     if own_blocks.is_empty() {
@@ -488,14 +710,36 @@ fn build_symbol_func_ir_impl(
         .max()
         .unwrap_or(pc_start);
 
+    let entry_idx = first_idxs.into_iter().min().unwrap_or(0);
+    let exit_idx = last_idxs.into_iter().max().unwrap_or(0);
+    let fallback_module_base = sym
+        .lookup_entry(pc_start)
+        .and_then(|lookup| lookup.module_base)
+        .unwrap_or(0);
+    let call_idxs = build_call_idxs(trace, index);
+    let ret_idx_by_call = build_call_ret_idx_map(trace, sym, index);
+    let calls = build_calls_for_range(
+        trace,
+        sym,
+        cfg,
+        &call_idxs,
+        &ret_idx_by_call,
+        &block_ids,
+        entry_idx,
+        exit_idx,
+        fallback_module_base,
+    );
+
+    let name = selector.output_name(sym);
     Some(FuncIR {
-        id: make_sym_id(name),
-        name: name.to_string(),
+        id: selector.output_id(&name),
+        name,
         pc_start,
         pc_end,
-        entry_idx: first_idxs.into_iter().min().unwrap_or(0),
-        exit_idx: last_idxs.into_iter().max().unwrap_or(0),
+        entry_idx,
+        exit_idx,
         blocks,
+        calls,
         exec_count,
         ..Default::default()
     })
@@ -728,6 +972,17 @@ pub fn build_trace_ir<P: AsRef<Path>>(
             "split top-k TraceIR callees"
         );
     }
+    if !top.fns.is_empty() {
+        let phase_start = Instant::now();
+        attach_calls(&mut top, trace, sym, cfg, index);
+        tracing::debug!(
+            target: "tracemiku-core",
+            fns = top.fns.len(),
+            calls = top.fns.iter().map(|f| f.calls.len()).sum::<usize>(),
+            elapsed_ms = phase_start.elapsed().as_millis(),
+            "attached TraceIR calls"
+        );
+    }
     if !spec_paths.is_empty() {
         let phase_start = Instant::now();
         if let Some(index) = index {
@@ -952,6 +1207,27 @@ mod tests {
         (trace, meta, sym)
     }
 
+    fn synth_tail_call_only() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir
+            .path()
+            .join("run")
+            .join("calls")
+            .join("call_001_tid1_1r_1ms");
+        std::fs::create_dir_all(&cd).unwrap();
+        let mut buf = vec![0u8; REC_SIZE];
+        buf[0..8].copy_from_slice(&0x100000u64.to_le_bytes());
+        buf[268..272].copy_from_slice(&0x94000040u32.to_le_bytes());
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":1}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x100000","size":4096}}"#,
+        )
+        .unwrap();
+        dir
+    }
+
     #[test]
     fn build_trace_ir_with_callee_splits_emits_f1_when_threshold_met() {
         // f_root → bl f_alpha (idx 1: bl, idx 2-3: in alpha) → ret;
@@ -1110,6 +1386,93 @@ mod tests {
                 assert!(!e.dst.is_empty(), "edge dst must be non-empty: {e:?}");
             }
         }
+    }
+
+    #[test]
+    fn build_trace_ir_populates_observed_calls() {
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
+        let f0 = &top.fns[0];
+        assert_eq!(
+            f0.calls.len(),
+            2,
+            "root FuncIR should expose both observed callsites: {:?}",
+            f0.calls
+        );
+        let c0 = &f0.calls[0];
+        assert_eq!(c0.idx, 1);
+        assert_eq!(c0.callee_pc, 0x100100);
+        assert_eq!(c0.callee_fn.as_deref(), Some("f_alpha"));
+        assert_eq!(c0.callee_name, "f_alpha");
+        assert_eq!(c0.ret_idx, Some(3));
+        assert!(!c0.src_block.is_empty());
+
+        let c1 = &f0.calls[1];
+        assert_eq!(c1.idx, 4);
+        assert_eq!(c1.callee_pc, 0x100200);
+        assert_eq!(c1.callee_fn.as_deref(), Some("f_beta"));
+        assert_eq!(c1.callee_name, "f_beta");
+        assert_eq!(c1.ret_idx, Some(7));
+        assert!(!c1.src_block.is_empty());
+    }
+
+    #[test]
+    fn build_trace_ir_skips_truncated_tail_call_without_target_record() {
+        let dir = synth_tail_call_only();
+        let (t, meta) = load(&dir);
+        let mut sym = SymbolMap::new();
+        sym.add(0x100000, "f_root".to_string());
+        sym.freeze();
+        let cfg = crate::cfg::build_cfg(&t);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
+        assert!(
+            top.fns[0].calls.is_empty(),
+            "tail bl without a following trace record must not emit sub_0: {:?}",
+            top.fns[0].calls
+        );
+    }
+
+    #[test]
+    fn build_trace_ir_unknown_call_names_use_module_relative_offsets() {
+        let dir = synth_two_callees();
+        let (t, meta, _sym) = load_two_callees(&dir);
+        let sym = SymbolMap::new();
+        let cfg = crate::cfg::build_cfg(&t);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 0, 0, &[], None);
+        let names: Vec<&str> = top.fns[0]
+            .calls
+            .iter()
+            .map(|call| call.callee_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["sub_100", "sub_200"]);
+    }
+
+    #[test]
+    fn split_callee_funcir_does_not_count_parent_callsite_as_own_call() {
+        let dir = synth_two_callees();
+        let (t, meta, sym) = load_two_callees(&dir);
+        let cfg = crate::cfg::build_cfg(&t);
+        let top =
+            build_trace_ir::<std::path::PathBuf>(&t, &meta, &sym, &cfg, None, 2, 1, &[], None);
+        let alpha = top
+            .fns
+            .iter()
+            .find(|f| f.name == "f_alpha")
+            .expect("split f_alpha");
+        assert!(
+            alpha.entry_idx > 1,
+            "split FuncIR entry should start in the callee body, not at the parent bl: {alpha:?}"
+        );
+        assert!(
+            alpha.calls.is_empty(),
+            "parent callsite must not be counted as f_alpha's own outgoing call: {:?}",
+            alpha.calls
+        );
     }
 
     #[test]

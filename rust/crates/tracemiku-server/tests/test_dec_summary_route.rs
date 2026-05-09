@@ -85,6 +85,8 @@ async fn dec_summary_emits_root_funcir_with_trace_ir_source() {
     assert_eq!(f0["trace_ir_id"], "F0");
     assert_eq!(f0["entry_idx"], 0);
     assert_eq!(f0["exit_idx"], 2);
+    assert_eq!(f0["module"], "libt.so");
+    assert_eq!(f0["entry_rel"], 0);
     let blocks_count = f0["blocks"].as_u64().unwrap();
     assert!(
         blocks_count >= 1,
@@ -170,6 +172,28 @@ async fn dec_summary_includes_symbol_source_fallback() {
     assert!(
         sym_names.iter().any(|n| *n == "f_alpha" || *n == "f_beta"),
         "expected f_alpha or f_beta in sym-source fns; got {sym_names:?}"
+    );
+    let sym = fns
+        .iter()
+        .find(|f| f["source"] == "symbol")
+        .expect("symbol fallback");
+    assert_eq!(sym["module"], "libt.so");
+    assert!(sym["entry_rel"].as_u64().is_some());
+
+    let f0 = fns
+        .iter()
+        .find(|f| f["source"] == "trace-ir" && f["trace_ir_id"] == "F0")
+        .expect("trace-ir F0");
+    assert_eq!(
+        f0["calls"], 2,
+        "trace-ir summary should count observed callsites: {v}"
+    );
+    assert!(
+        v["summary_md"]
+            .as_str()
+            .unwrap()
+            .contains("| [F0](fns/F0.md) |"),
+        "summary markdown should still render the functions table: {v}"
     );
 }
 

@@ -73,6 +73,14 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                         @ {`0x${fn.entry_pc!.toString(16)}`}
                       </span>
                     </Show>
+                    <Show when={fn.module}>
+                      <span class="dim small">
+                        {fn.module}
+                        <Show when={fn.entry_rel !== null && fn.entry_rel !== undefined}>
+                          <>+0x{fn.entry_rel!.toString(16)}</>
+                        </Show>
+                      </span>
+                    </Show>
                     <Show when={fn.blocks > 0}>
                       <span class="dim small">{fn.blocks} blocks</span>
                     </Show>

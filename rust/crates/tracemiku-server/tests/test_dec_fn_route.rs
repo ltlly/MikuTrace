@@ -229,7 +229,7 @@ async fn dec_fn_returns_markdown_for_sym_source() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/api/dec/fn/sym:f")
+                .uri("/api/dec/fn/symaddr:0x100000")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -240,12 +240,12 @@ async fn dec_fn_returns_markdown_for_sym_source() {
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["fn_id"], "sym:f");
+    assert_eq!(v["fn_id"], "symaddr:0x100000");
     assert_eq!(v["name"], "f");
     let md = v["markdown"].as_str().unwrap();
     assert!(
-        md.contains("# sym:f"),
-        "sym FuncIR should render with public sym id: {md}"
+        md.contains("# symaddr:0x100000"),
+        "symbol FuncIR should render with address-qualified id: {md}"
     );
     assert!(
         md.contains("## Blocks (1)"),
@@ -401,5 +401,32 @@ async fn dec_fn_markdown_contains_exits_section_when_branches_present() {
     assert!(
         md.contains("- exits:"),
         "markdown should carry an exits section when branches are present:\n{md}"
+    );
+}
+
+#[tokio::test]
+async fn dec_fn_markdown_contains_observed_calls_section() {
+    let dir = synth_two_callees();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/trace:F0?tier=summary")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let md = v["markdown"].as_str().unwrap();
+    assert!(md.contains("## Calls (2)"), "missing calls section:\n{md}");
+    assert!(
+        md.contains("`f_alpha` @ 0x100100") && md.contains("`f_beta` @ 0x100200"),
+        "calls should include resolved callee names and dynamic targets:\n{md}"
     );
 }

@@ -1,13 +1,14 @@
 //! Per-register def-use indices over a Trace. Used by taint and the
 //! `last-write-of-reg` family of endpoints.
 //!
-//! M2-ζ: also populates `mem_writes` / `mem_reads` / `mem_addr_to_writes`
+//! M2-ζ: also populates `mem_writes` / `mem_reads` / memory addr indexes
 //! in the same single trace-walk that drives the reg side. Mirrors
 //! `viewer/index.py:41-54`.
 
 use std::collections::HashMap;
 use std::thread;
 
+use crate::disasm::classify::is_conditional_branch_mnem;
 use crate::disasm::{addr_of, decode};
 use crate::parallel;
 use crate::trace::Trace;
@@ -41,10 +42,20 @@ pub struct Index {
     /// `pc → sorted record indices`. Used by hot UI navigation paths such as
     /// CFG/HLIL clicks, hash deep-links, and Trace-for-PC.
     pub pc_to_idxs: HashMap<u64, Vec<usize>>,
-    /// `addr → indices of mem_writes that wrote to that addr`. Fast
+    /// `addr → trace indices of writes whose byte range covers addr`. Fast
     /// "who wrote here?" lookup for backward taint and the
     /// `last-write-of-addr` endpoint family.
     pub mem_addr_to_writes: HashMap<u64, Vec<usize>>,
+    /// `addr → trace indices of reads whose byte range covers addr`. Used by
+    /// forward taint to jump to the next memory touch without scanning every
+    /// memory op in large traces.
+    pub mem_addr_to_reads: HashMap<u64, Vec<usize>>,
+    /// Sorted record indices of conditional branches. Used by backward taint
+    /// to expose optional control dependencies without a full dependency graph.
+    pub cond_branches: Vec<usize>,
+    /// Sorted record indices of calls and returns. Control dependencies are
+    /// intentionally not attributed across these boundaries.
+    pub call_ret_boundaries: Vec<usize>,
 }
 
 impl Index {
@@ -127,6 +138,12 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> Index {
         idx.pc_to_idxs.entry(pc).or_default().push(i);
         let inst = trace.inst(i);
         let d = decode(pc, inst);
+        if is_conditional_branch_mnem(&d.mnemonic) {
+            idx.cond_branches.push(i);
+        }
+        if d.is_call || d.is_ret {
+            idx.call_ret_boundaries.push(i);
+        }
         for r in &d.regs_def {
             idx.reg_defs.entry(r.clone()).or_default().push(i);
         }
@@ -150,9 +167,10 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> Index {
                 };
                 if op.is_write {
                     idx.mem_writes.push(mr);
-                    idx.mem_addr_to_writes.entry(addr).or_default().push(i);
+                    push_mem_addr_idx(&mut idx.mem_addr_to_writes, addr, op.size, i);
                 } else {
                     idx.mem_reads.push(mr);
+                    push_mem_addr_idx(&mut idx.mem_addr_to_reads, addr, op.size, i);
                 }
             }
         }
@@ -171,6 +189,8 @@ fn merge_partials(partials: Vec<Index>) -> Index {
         }
         out.mem_writes.extend(partial.mem_writes);
         out.mem_reads.extend(partial.mem_reads);
+        out.cond_branches.extend(partial.cond_branches);
+        out.call_ret_boundaries.extend(partial.call_ret_boundaries);
         for (pc, mut values) in partial.pc_to_idxs {
             out.pc_to_idxs.entry(pc).or_default().append(&mut values);
         }
@@ -180,6 +200,22 @@ fn merge_partials(partials: Vec<Index>) -> Index {
                 .or_default()
                 .append(&mut values);
         }
+        for (addr, mut values) in partial.mem_addr_to_reads {
+            out.mem_addr_to_reads
+                .entry(addr)
+                .or_default()
+                .append(&mut values);
+        }
     }
+    debug_assert!(out.cond_branches.windows(2).all(|w| w[0] < w[1]));
+    debug_assert!(out.call_ret_boundaries.windows(2).all(|w| w[0] < w[1]));
     out
+}
+
+fn push_mem_addr_idx(map: &mut HashMap<u64, Vec<usize>>, addr: u64, size: u32, idx: usize) {
+    for offset in 0..size as u64 {
+        map.entry(addr.saturating_add(offset))
+            .or_default()
+            .push(idx);
+    }
 }

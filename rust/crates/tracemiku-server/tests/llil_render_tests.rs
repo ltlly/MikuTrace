@@ -62,7 +62,7 @@ async fn llil_render_route_returns_pseudocode() {
     assert_eq!(v["fn_id"], "trace:F0");
     assert_eq!(v["records"], 3);
     let code = v["pseudocode"].as_str().unwrap();
-    assert!(code.contains("x0_1 = x1_0;"), "{code}");
+    assert!(code.contains("x0_v1 = arg_1;"), "{code}");
     assert!(code.contains("return;"), "{code}");
 }
 

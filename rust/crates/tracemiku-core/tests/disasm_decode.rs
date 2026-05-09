@@ -77,7 +77,9 @@ fn decodes_unknown_bytes_yields_bad() {
 
 // ── Classifier sweep ───────────────────────────────────────────────────────
 
-use tracemiku_core::disasm::classify::{is_branch_mnem, is_call_mnem, is_ret_mnem};
+use tracemiku_core::disasm::classify::{
+    is_branch_mnem, is_call_mnem, is_conditional_branch_mnem, is_ret_mnem,
+};
 
 #[test]
 fn classifier_branch_set() {
@@ -86,6 +88,22 @@ fn classifier_branch_set() {
         "b.lt", "b.al",
     ] {
         assert!(is_branch_mnem(m), "{m} should be a branch");
+    }
+}
+
+#[test]
+fn classifier_conditional_branch_set_excludes_always_never() {
+    for m in ["cbz", "cbnz", "tbz", "tbnz", "b.eq", "b.ne", "b.gt", "b.lt"] {
+        assert!(
+            is_conditional_branch_mnem(m),
+            "{m} should be a conditional branch"
+        );
+    }
+    for m in ["b", "bl", "br", "blr", "ret", "b.al", "b.nv"] {
+        assert!(
+            !is_conditional_branch_mnem(m),
+            "{m} should NOT be indexed as a control-dependency branch"
+        );
     }
 }
 

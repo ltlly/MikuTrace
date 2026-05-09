@@ -101,7 +101,6 @@ fn mem_flow_response(
     } else {
         None
     };
-    let base = primary_base(&inner.meta);
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
@@ -150,7 +149,10 @@ fn mem_flow_response(
                 byte: ev.byte,
                 kind: ev.kind,
                 pc: format!("{:#x}", record.pc),
-                rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+                rel: inner
+                    .modules
+                    .relative_offset(record.pc)
+                    .map(|off| format!("{off:#x}")),
                 func: (func_name != "?").then_some(func_name),
                 asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
                     .trim()
@@ -190,10 +192,6 @@ fn event_matches(
         return false;
     }
     true
-}
-
-fn primary_base(meta: &TraceMeta) -> Option<u64> {
-    meta.module.as_ref().and_then(|m| parse_int(&m.base))
 }
 
 fn parse_int(s: &str) -> Option<u64> {

@@ -124,7 +124,6 @@ fn query_records(
         .case_insensitive(true)
         .build()
         .ok();
-    let base = primary_base(inner);
     let mut count = 0usize;
     let mut rows = Vec::new();
     for idx in 0..inner.trace.len() {
@@ -145,7 +144,7 @@ fn query_records(
             rows.push(json!({
                 "idx": idx,
                 "pc": format!("{:#x}", record.pc),
-                "rel": base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+                "rel": inner.modules.relative_offset(record.pc).map(|off| format!("{off:#x}")),
                 "func": func,
                 "off": has_func.then_some(format!("{off:#x}")),
                 "asm": asm,
@@ -465,7 +464,6 @@ fn query_provenance(
 }
 
 fn record_row(inner: &crate::state::AppStateInner, idx: usize, extra: Value) -> Value {
-    let base = primary_base(inner);
     let record = inner.trace.record(idx);
     let decoded = tracemiku_core::disasm::decode(record.pc, record.inst);
     let (func_name, off) = inner.symbols.lookup(record.pc);
@@ -473,7 +471,7 @@ fn record_row(inner: &crate::state::AppStateInner, idx: usize, extra: Value) -> 
     json!({
         "idx": idx,
         "pc": format!("{:#x}", record.pc),
-        "rel": base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+        "rel": inner.modules.relative_offset(record.pc).map(|off| format!("{off:#x}")),
         "func": has_func.then_some(func_name),
         "off": has_func.then_some(format!("{off:#x}")),
         "asm": format!("{} {}", decoded.mnemonic, decoded.op_str).trim().to_string(),
@@ -526,10 +524,6 @@ fn ranges_overlap(a: u64, a_len: u64, b: u64, b_len: u64) -> bool {
     let a_end = a.saturating_add(a_len.max(1));
     let b_end = b.saturating_add(b_len.max(1));
     a < b_end && b < a_end
-}
-
-fn primary_base(inner: &crate::state::AppStateInner) -> Option<u64> {
-    inner.meta.module.as_ref().and_then(|m| parse_int(&m.base))
 }
 
 fn finish(

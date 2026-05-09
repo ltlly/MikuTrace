@@ -58,6 +58,8 @@ fn functions_response(inner: Arc<AppStateInner>) -> FunctionsResponse {
                         entry_pc: Some(start),
                         blocks: 0,
                         records: 0,
+                        module: None,
+                        entry_rel: None,
                         trace_ir_id: None,
                         bn_start: Some(start),
                         can_llil: false,

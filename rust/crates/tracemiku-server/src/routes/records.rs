@@ -116,17 +116,14 @@ fn records_response(inner: &crate::state::AppStateInner, q: RecordsQuery) -> Rec
         Some(names)
     };
 
-    let base: Option<u64> = inner
-        .meta
-        .module
-        .as_ref()
-        .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0));
-
     let mut rows = Vec::with_capacity(end - q.start);
     for i in q.start..end {
         let r = inner.trace.record(i);
         let d = decode(r.pc, r.inst);
-        let rel = base.map(|b| format!("{:#x}", r.pc.wrapping_sub(b)));
+        let rel = inner
+            .modules
+            .relative_offset(r.pc)
+            .map(|off| format!("{off:#x}"));
         let regs = regs_filter.as_ref().map(|fs| {
             let mut m = std::collections::BTreeMap::new();
             for nm in fs {

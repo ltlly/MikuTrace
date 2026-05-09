@@ -97,6 +97,8 @@ export interface FunctionEntry {
   entry_pc: number | null;
   blocks: number;
   records: number;
+  module: string | null;
+  entry_rel: number | null;
   trace_ir_id: string | null;
   bn_start: number | null;
   can_llil: boolean;
@@ -493,12 +495,44 @@ export interface TaintRow {
   frame_depth?: number;   // present iff cross_fn_call=true was passed
 }
 
+export interface TaintGraphNode {
+  id: string;
+  label: string;
+  idx: number | null;
+  func: string | null;
+  asm: string;
+  via: string;
+  kind: "seed" | "record" | string;
+  taint_depth: number;
+  edge_kind?: string;
+}
+
+export interface TaintGraphEdge {
+  from: string;
+  to: string;
+  kind: string;
+  label: string;
+}
+
+export interface TaintGraph {
+  nodes: TaintGraphNode[];
+  edges: TaintGraphEdge[];
+  node_count: number;
+  edge_count: number;
+  hidden_nodes: number;
+  hidden_edges: number;
+  truncated: boolean;
+  node_limit: number;
+  edge_limit: number;
+}
+
 export interface ForwardTaintResponse {
   status: string;
   count: number;
   from: number;
   reg: string;
   hits: TaintRow[];
+  graph: TaintGraph;
   stopped_at_max: boolean;
   max_count_used: number;
 }
@@ -509,6 +543,7 @@ export interface BackwardTaintResponse {
   from: number;
   reg: string;
   chain: TaintRow[];
+  graph: TaintGraph;
   stopped_at_max: boolean;
   max_count_used: number;
 }
@@ -518,6 +553,8 @@ export interface BackwardTaintResponse {
 export interface DecFnEntry {
   id: string;
   name: string;
+  module: string | null;
+  entry_rel: number | null;
   blocks: number;
   loops: number;
   calls: number;

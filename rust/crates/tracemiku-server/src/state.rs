@@ -12,11 +12,10 @@ use tracemiku_core::disasm::decode;
 use tracemiku_core::hashfin::{HashFinalizeCandidate, HashFinalizeIndex};
 use tracemiku_core::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use tracemiku_core::prelude::{
-    build_call_tree_indexed, build_frame_depth_map, build_from_trace, build_function_index,
-    build_trace_ir, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
-    Trace, TraceMeta, CFG,
+    build_call_tree_indexed, build_frame_depth_map, build_function_index, build_trace_ir, CallNode,
+    FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR, Trace, TraceMeta, CFG,
 };
-use tracemiku_core::symbols::auto_known_offsets_with_base;
+use tracemiku_core::symbols::auto_known_symbols_with_modules;
 
 use crate::bn_sidecar::BnSidecarManager;
 use crate::jni_scan::{parse_int, scan_jni_calls, JniCallScan};
@@ -153,11 +152,6 @@ impl AppState {
                 }
             }
         }
-        // Merge auto-discovered bl-target entries; examples + static WIN.
-        let auto = auto_known_offsets_with_base(&trace, primary_base);
-        for (off, name) in auto {
-            known_offsets.entry(off).or_insert(name);
-        }
         // Mirror Python's priority: when fn_addr aligns to an offset in known_offsets
         // AND meta.method is non-empty, replace that entry's name with method.
         // (Python: `name = m.method or known_offsets.get(off, "func")` when pc==fn_addr)
@@ -173,7 +167,26 @@ impl AppState {
                 }
             }
         }
-        let symbols = build_from_trace(&trace, primary_base, &known_offsets);
+        let mut symbols = SymbolMap::new();
+        for (off, name) in &known_offsets {
+            let pc = primary_base.wrapping_add(*off);
+            if let Some(module) = meta.module.as_ref() {
+                symbols.add_with_module(pc, name.clone(), module);
+            } else {
+                symbols.add(pc, name.clone());
+            }
+        }
+        // Merge auto-discovered bl-target entries; examples + static WIN.
+        // These are module-aware, so calls into app-private helper SOs get a
+        // name relative to the target SO rather than the primary SO base.
+        let auto = auto_known_symbols_with_modules(&trace, &modules);
+        for (pc, name) in auto {
+            if symbols.has_start_pc(pc) {
+                continue;
+            }
+            symbols.add_resolved(pc, name, &modules);
+        }
+        symbols.freeze();
 
         let cfg = build_cfg(&trace);
         let function_index = build_function_index(&symbols, Some(&cfg));

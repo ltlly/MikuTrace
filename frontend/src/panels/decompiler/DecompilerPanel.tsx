@@ -239,6 +239,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                     <tr>
                       <th>id</th>
                       <th>name</th>
+                      <th>module</th>
                       <th>blocks</th>
                       <th>calls</th>
                       <th>idx range</th>
@@ -254,6 +255,12 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                         >
                           <td class="dim small">{f.id}</td>
                           <td>{f.name}</td>
+                          <td class="dim small">
+                            {f.module ?? ""}
+                            <Show when={f.entry_rel !== null && f.entry_rel !== undefined}>
+                              <>+0x{f.entry_rel!.toString(16)}</>
+                            </Show>
+                          </td>
                           <td>{f.blocks}</td>
                           <td>{f.calls}</td>
                           <td class="dim small">

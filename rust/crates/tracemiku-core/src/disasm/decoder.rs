@@ -105,6 +105,11 @@ fn is_exclusive_store_style(mnem: &str) -> bool {
     )
 }
 
+fn is_load_pair_style(mnem: &str) -> bool {
+    let base = mnem.split('.').next().unwrap_or(mnem);
+    matches!(base, "ldp" | "ldnp" | "ldpsw" | "ldxp" | "ldaxp")
+}
+
 /// Deduplicate a list of strings, preserving order.
 fn dedup_preserve_order(v: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
@@ -148,6 +153,7 @@ fn build_reg_accesses(
     let arch_det = detail.arch_detail();
     if let Some(arm64_det) = arch_det.arm64() {
         let store = is_store_style(mnem);
+        let load_pair = is_load_pair_style(mnem);
         // Pre/post-indexed addressing modes (e.g. `ldr x0, [x1, #8]!` or
         // `ldr x0, [x1], #8`) writeback the computed address to the base
         // reg — so the base reg is BOTH a read AND a write. Capstone-rs
@@ -179,7 +185,9 @@ fn build_reg_accesses(
                     // Exclusive stores (`stxr`, `stxp`, `stlxr`, `stlxp`, ...)
                     // are special: operand 0 is the status destination, while
                     // later register operands are store sources.
-                    if reg_op_index == 0 && (!store || is_exclusive_store_style(mnem)) {
+                    if (load_pair && reg_op_index < 2)
+                        || (reg_op_index == 0 && (!store || is_exclusive_store_style(mnem)))
+                    {
                         if !regs_def.contains(&normalized) {
                             regs_def.push(normalized);
                         }

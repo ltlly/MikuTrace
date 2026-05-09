@@ -46,6 +46,14 @@ fn is_store(mnem_base: &str) -> bool {
     STORE_BASES.contains(&mnem_base)
 }
 
+fn is_exclusive_store_style(mnem: &str) -> bool {
+    let base = mnem.split('.').next().unwrap_or(mnem);
+    matches!(
+        base,
+        "stxr" | "stxrb" | "stxrh" | "stxp" | "stlxr" | "stlxrb" | "stlxrh" | "stlxp"
+    )
+}
+
 /// Determine size from the mnemonic + operand register class. Mirrors the
 /// Python heuristic in `viewer/disasm.py:108-112`.
 fn op_size(mnem_base: &str, ins: &capstone::Insn, cs: &Capstone) -> u32 {
@@ -153,11 +161,17 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
     // STP/LDP pair-split: capstone reports 1 mem_op but the actual access is
     // 2 contiguous halves (8+8 or 4+4 bytes). Split if mnem is in the pair set
     // AND we have ≥2 reg operands + exactly 1 mem_op recorded.
-    if matches!(mnem_base, "stp" | "ldp" | "stnp" | "ldnp")
-        && out.len() == 1
+    if matches!(
+        mnem_base,
+        "stp" | "ldp" | "stnp" | "ldnp" | "ldpsw" | "ldxp" | "ldaxp"
+    ) && out.len() == 1
         && reg_operand_names.len() >= 2
     {
-        let pair_sz: u32 = reg_access_size(&reg_operand_names[0]);
+        let pair_sz: u32 = if mnem_base == "ldpsw" {
+            4
+        } else {
+            reg_access_size(&reg_operand_names[0])
+        };
         let r0 = normalize_disasm_reg(&reg_operand_names[0]);
         let r1 = normalize_disasm_reg(&reg_operand_names[1]);
         let base_op = out.remove(0);
@@ -203,6 +217,17 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
             src_reg: r1,
             ..base_op
         });
+    }
+    // Normal stores also have a data source in the first register operand.
+    // Fill it so taint can distinguish address-only uses from stored data
+    // even for forms like `str x0, [x0]` where source and base are identical.
+    if is_w
+        && !is_exclusive_store_style(mnem)
+        && out.len() == 1
+        && out[0].src_reg.is_empty()
+        && !reg_operand_names.is_empty()
+    {
+        out[0].src_reg = normalize_disasm_reg(&reg_operand_names[0]);
     }
     out
 }

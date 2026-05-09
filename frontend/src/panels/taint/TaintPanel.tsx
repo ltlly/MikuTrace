@@ -1,11 +1,12 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
-import type { TaintRow } from "~/api/types";
+import type { TaintGraph, TaintRow } from "~/api/types";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
 
-type Direction = "forward" | "backward";
+export type TaintOverlayDirection = "forward" | "backward";
+type Direction = TaintOverlayDirection;
 type ViewMode = "tree" | "timeline" | "table";
 const TAINT_RETRY_MS = 500;
 const MAX_TAINT_ROWS = 5000;
@@ -26,6 +27,18 @@ interface RunResult {
   reg: string;
   limit: number;
   showDepth: boolean;
+  graph?: TaintGraph;
+}
+
+export interface TaintOverlayResult {
+  rows: TaintRow[];
+  count: number;
+  stopped: boolean;
+  direction: Direction;
+  from: number;
+  reg: string;
+  limit: number;
+  graph?: TaintGraph;
 }
 
 interface TaintPanelProps {
@@ -36,6 +49,7 @@ interface TaintPanelProps {
   runRequest?: RunRequest;
   active: boolean;
   onTaskUpdate?: UiTaskReporter;
+  onOverlayChange?: (result: TaintOverlayResult | null) => void;
 }
 
 export default function TaintPanel(props: TaintPanelProps) {
@@ -136,6 +150,7 @@ export default function TaintPanel(props: TaintPanelProps) {
     setRunning(true);
     setError(null);
     setResult(null);
+    props.onOverlayChange?.(null);
     props.onTaskUpdate?.({
       ...currentTask,
       status: "running",
@@ -155,7 +170,7 @@ export default function TaintPanel(props: TaintPanelProps) {
           scheduleMemoryRetry(seq, dir, startArg, regArg);
           return;
         }
-        setResult({
+        const nextResult: RunResult = {
           rows: resp.hits,
           count: resp.count,
           stopped: resp.stopped_at_max,
@@ -164,7 +179,10 @@ export default function TaintPanel(props: TaintPanelProps) {
           reg: resp.reg,
           limit,
           showDepth: flags.cross_fn_call,
-        });
+          graph: resp.graph,
+        };
+        setResult(nextResult);
+        props.onOverlayChange?.(nextResult);
         currentTask = undefined;
         props.onTaskUpdate?.({
           id: "taint",
@@ -181,7 +199,7 @@ export default function TaintPanel(props: TaintPanelProps) {
           scheduleMemoryRetry(seq, dir, startArg, regArg);
           return;
         }
-        setResult({
+        const nextResult: RunResult = {
           rows: resp.chain,
           count: resp.count,
           stopped: resp.stopped_at_max,
@@ -190,7 +208,10 @@ export default function TaintPanel(props: TaintPanelProps) {
           reg: resp.reg,
           limit,
           showDepth: flags.cross_fn_call,
-        });
+          graph: resp.graph,
+        };
+        setResult(nextResult);
+        props.onOverlayChange?.(nextResult);
         currentTask = undefined;
         props.onTaskUpdate?.({
           id: "taint",
@@ -242,6 +263,12 @@ export default function TaintPanel(props: TaintPanelProps) {
         return "store src";
       case "reg+mem":
         return "reg+mem";
+      case "control":
+        return "control";
+      case "control-reg":
+        return "control reg";
+      case "seed":
+        return "seed";
       case "reg":
         return "reg";
       default:
@@ -249,9 +276,24 @@ export default function TaintPanel(props: TaintPanelProps) {
     }
   };
 
+  const nodeKind = (kind: string | undefined): ProvNode["kind"] =>
+    kind === "seed" ? "seed" : "record";
+
   const graphNodes = createMemo<ProvNode[]>(() => {
     const r = result();
     if (!r) return [];
+    if (r.graph) {
+      return r.graph.nodes.map((node) => {
+        const idx = node.idx;
+        return {
+          id: node.id,
+          label: node.label,
+          sub: `${node.func ?? "?"} · ${node.via || node.asm}`,
+          kind: nodeKind(node.kind),
+          onClick: idx === null ? undefined : () => props.onSelect(idx),
+        };
+      });
+    }
     return r.rows.slice(0, 160).map((row, i) => ({
       id: String(row.idx),
       label: `#${row.idx}`,
@@ -262,6 +304,14 @@ export default function TaintPanel(props: TaintPanelProps) {
   });
 
   const graphEdges = createMemo<ProvEdge[]>(() => {
+    const graph = result()?.graph;
+    if (graph) {
+      return graph.edges.map((edge) => ({
+        from: edge.from,
+        to: edge.to,
+        label: edge.label || undefined,
+      }));
+    }
     const shown = new Set(graphNodes().map((node) => node.id));
     const edges: ProvEdge[] = [];
     for (const row of result()?.rows ?? []) {
@@ -273,6 +323,20 @@ export default function TaintPanel(props: TaintPanelProps) {
       }
     }
     return edges.slice(0, 240);
+  });
+
+  const graphSummary = createMemo(() => {
+    const graph = result()?.graph;
+    if (!graph) return undefined;
+    const base = `${graph.node_count} items · ${graph.edge_count} links`;
+    if (!graph.truncated) return base;
+    return `${base} · hidden ${graph.hidden_nodes} items/${graph.hidden_edges} links`;
+  });
+
+  const graphNote = createMemo(() => {
+    const graph = result()?.graph;
+    if (!graph?.truncated) return undefined;
+    return `showing first ${graph.nodes.length}/${graph.node_count} nodes and ${graph.edges.length}/${graph.edge_count} edges`;
   });
 
   const parentLabel = (row: TaintRow): string => {
@@ -434,6 +498,8 @@ export default function TaintPanel(props: TaintPanelProps) {
                     title="Taint Provenance"
                     nodes={graphNodes()}
                     edges={graphEdges()}
+                    summary={graphSummary()}
+                    note={graphNote()}
                     empty="no taint dependency edges"
                   />
                 </Show>

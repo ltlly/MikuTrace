@@ -12,6 +12,7 @@ fn str_scalar_records_write_with_size_8() {
     assert_eq!(op.base, "x1");
     assert_eq!(op.disp, 16);
     assert_eq!(op.size, 8);
+    assert_eq!(op.src_reg, "x0");
     assert!(op.is_write);
 }
 
@@ -116,6 +117,23 @@ fn ldp_pair_splits_with_dest_regs() {
     assert!(!d.mem_op[1].is_write);
     assert_eq!(d.mem_op[0].src_reg, "x0");
     assert_eq!(d.mem_op[1].src_reg, "x1");
+    assert!(d.regs_def.contains(&"x0".to_string()));
+    assert!(d.regs_def.contains(&"x1".to_string()));
+}
+
+#[test]
+fn ldpsw_pair_splits_as_two_32bit_reads_with_x_defs() {
+    // ldpsw x0, x1, [sp] = 0x694007e0. Each half reads 4 bytes and sign-extends
+    // into an x-register destination.
+    let d = decode(0x100000, 0x694007e0);
+    assert_eq!(d.mnemonic, "ldpsw");
+    assert_eq!(d.mem_op.len(), 2);
+    assert_eq!(d.mem_op[0].size, 4);
+    assert_eq!(d.mem_op[1].size, 4);
+    assert_eq!(d.mem_op[0].src_reg, "x0");
+    assert_eq!(d.mem_op[1].src_reg, "x1");
+    assert!(d.regs_def.contains(&"x0".to_string()));
+    assert!(d.regs_def.contains(&"x1".to_string()));
 }
 
 #[test]

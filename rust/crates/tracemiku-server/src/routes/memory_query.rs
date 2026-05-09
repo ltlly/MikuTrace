@@ -131,7 +131,6 @@ fn last_write_of_addr_response(
     let decoded = decode(record.pc, record.inst);
     let (func_name, _) = inner.symbols.lookup(record.pc);
     let func = (func_name != "?").then_some(func_name);
-    let base = primary_base(&inner.meta);
     let src_reg = source_reg_for_write_at(&decoded, &record, addr);
     let src_value = src_reg
         .as_deref()
@@ -145,7 +144,10 @@ fn last_write_of_addr_response(
         writer_idx,
         write_kind: "w",
         writer_pc: format!("{:#x}", record.pc),
-        rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+        rel: inner
+            .modules
+            .relative_offset(record.pc)
+            .map(|off| format!("{off:#x}")),
         func,
         asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
             .trim()
@@ -196,7 +198,6 @@ fn last_write_of_addr_response_from_memshadow(
     let decoded = decode(record.pc, record.inst);
     let (func_name, _) = inner.symbols.lookup(record.pc);
     let func = (func_name != "?").then_some(func_name);
-    let base = primary_base(&inner.meta);
     let src_reg = (writer_kind != "x")
         .then(|| source_reg_for_write_at(&decoded, &record, addr))
         .flatten();
@@ -212,7 +213,10 @@ fn last_write_of_addr_response_from_memshadow(
         writer_idx: write.idx,
         write_kind: writer_kind,
         writer_pc: format!("{:#x}", record.pc),
-        rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+        rel: inner
+            .modules
+            .relative_offset(record.pc)
+            .map(|off| format!("{off:#x}")),
         func,
         asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
             .trim()
@@ -315,11 +319,10 @@ fn mem_writes_in_range_response(
     let addr_hi = parse_optional_int("addr_hi", &q.addr_hi)?;
     let src_byte = parse_optional_int("src_byte", &q.src_byte)?.map(|v| (v & 0xff) as u8);
     let max = effective_writes_max(q.max);
-    let base = primary_base(&inner.meta);
     if q.with_external || src_byte.is_some() {
         let memshadow = inner.memshadow();
         return Ok(mem_writes_in_range_from_memshadow(
-            inner, max, lo, hi, addr_lo, addr_hi, src_byte, base, memshadow,
+            inner, max, lo, hi, addr_lo, addr_hi, src_byte, memshadow,
         ));
     }
 
@@ -359,7 +362,10 @@ fn mem_writes_in_range_response(
             idx: write.idx,
             write_kind: "w",
             pc: format!("{:#x}", record.pc),
-            rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+            rel: inner
+                .modules
+                .relative_offset(record.pc)
+                .map(|off| format!("{off:#x}")),
             func: (func_name != "?").then_some(func_name),
             asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
                 .trim()
@@ -390,7 +396,6 @@ fn mem_writes_in_range_from_memshadow(
     addr_lo: Option<u64>,
     addr_hi: Option<u64>,
     src_byte: Option<u8>,
-    base: Option<u64>,
     memshadow: &tracemiku_core::prelude::MemShadow,
 ) -> MemWritesInRangeResponse {
     let mut matched = 0usize;
@@ -420,7 +425,10 @@ fn mem_writes_in_range_from_memshadow(
             idx: write.idx,
             write_kind: writer_kind,
             pc: format!("{:#x}", record.pc),
-            rel: base.map(|b| format!("{:#x}", record.pc.wrapping_sub(b))),
+            rel: inner
+                .modules
+                .relative_offset(record.pc)
+                .map(|off| format!("{off:#x}")),
             func: (func_name != "?").then_some(func_name),
             asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
                 .trim()
@@ -987,8 +995,4 @@ fn source_reg_for_write_at(
         .iter()
         .find(|reg| reg.as_str() != op.base.as_str() && reg.as_str() != op.idx.as_str())
         .cloned()
-}
-
-fn primary_base(meta: &TraceMeta) -> Option<u64> {
-    meta.module.as_ref().and_then(|m| parse_int(&m.base))
 }

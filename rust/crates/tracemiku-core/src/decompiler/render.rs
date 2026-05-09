@@ -92,6 +92,38 @@ pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
         out.push('\n');
     }
 
+    if !fn_.calls.is_empty() {
+        out.push_str(&format!("## Calls ({})\n\n", fn_.calls.len()));
+        out.push_str("| idx | src | callee | ret |\n");
+        out.push_str("|---|---|---|---|\n");
+        for call in &fn_.calls {
+            let callee_name = if call.callee_name.is_empty() {
+                format!("sub_{:x}", call.callee_pc)
+            } else {
+                call.callee_name.replace('|', "\\|")
+            };
+            let callee = if call.callee_pc == 0 {
+                format!("`{callee_name}`")
+            } else {
+                format!("`{callee_name}` @ {:#x}", call.callee_pc)
+            };
+            let ret = call
+                .ret_idx
+                .map(|idx| format!("#{idx}"))
+                .unwrap_or_else(|| "-".to_string());
+            let ret = if let Some(x0) = call.ret_val_x0 {
+                format!("{ret} x0={:#x}", x0 as u64)
+            } else {
+                ret
+            };
+            out.push_str(&format!(
+                "| #{} | `{}` | {} | {} |\n",
+                call.idx, call.src_block, callee, ret
+            ));
+        }
+        out.push('\n');
+    }
+
     if tier_filter == "summary" {
         let hot_count = fn_.blocks.iter().filter(|b| b.tier == "hot").count();
         let warm_count = fn_.blocks.iter().filter(|b| b.tier == "warm").count();
@@ -283,7 +315,7 @@ pub fn render_summary_md(top: &TopIR) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decompiler::ir::{BlockIR, FuncIR, TopIR};
+    use crate::decompiler::ir::{BlockIR, CallIR, FuncIR, TopIR};
     use std::collections::HashMap;
 
     #[test]
@@ -349,6 +381,27 @@ mod tests {
         assert!(md.contains("`b.eq`"), "missing edge kind: {md}");
         assert!(md.contains("**B1**"), "missing dst id: {md}");
         assert!(md.contains("(×5)"), "missing taken_count annotation: {md}");
+    }
+
+    #[test]
+    fn render_func_md_emits_calls_section() {
+        let f = FuncIR {
+            id: "F0".to_string(),
+            name: "f".to_string(),
+            calls: vec![CallIR {
+                idx: 7,
+                src_block: "B2".to_string(),
+                callee_pc: 0x2000,
+                callee_fn: Some("callee".to_string()),
+                callee_name: "callee".to_string(),
+                ret_idx: Some(12),
+                ret_val_x0: None,
+            }],
+            ..Default::default()
+        };
+        let md = render_func_md(&f, "summary");
+        assert!(md.contains("## Calls (1)"), "missing calls section: {md}");
+        assert!(md.contains("| #7 | `B2` | `callee` @ 0x2000 | #12 |"));
     }
 
     #[test]

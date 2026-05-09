@@ -180,3 +180,52 @@ fn auto_naming_convention() {
         );
     }
 }
+
+#[test]
+fn auto_discovers_cross_module_targets_with_target_module_relative_names() {
+    use std::fs;
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_2r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+
+    let mut buf = vec![0u8; 272 * 2];
+    buf[0..8].copy_from_slice(&0x100000u64.to_le_bytes());
+    // bl 0x200100 from pc 0x100000: imm26=(0x100100 >> 2)=0x40040.
+    buf[268..272].copy_from_slice(&0x94040040u32.to_le_bytes());
+    buf[272..280].copy_from_slice(&0x200100u64.to_le_bytes());
+    buf[272 + 268..272 + 272].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":2}"#).unwrap();
+
+    let modules = vec![
+        ModuleInfo {
+            name: "liba.so".to_string(),
+            base: "0x100000".to_string(),
+            size: 0x1000,
+            end: "0x101000".to_string(),
+        },
+        ModuleInfo {
+            name: "libb.so".to_string(),
+            base: "0x200000".to_string(),
+            size: 0x1000,
+            end: "0x201000".to_string(),
+        },
+    ];
+    let t = Trace::load(&cd).unwrap();
+    let resolver = ModuleResolver::from_modules(&modules);
+    let auto = tracemiku_core::symbols::auto_known_symbols_with_modules(&t, &resolver);
+
+    assert_eq!(
+        auto.get(&0x200100).map(String::as_str),
+        Some("sub_100"),
+        "cross-SO target should be named relative to libb.so, got {auto:?}"
+    );
+}

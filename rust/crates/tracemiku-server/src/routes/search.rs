@@ -82,11 +82,6 @@ pub async fn search_handler(
 fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> SearchResponse {
     let max_results = effective_max_results(q.max_results);
     let re = compile_pattern(&q.pattern);
-    let base = inner
-        .meta
-        .module
-        .as_ref()
-        .and_then(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).ok());
     let mut groups = Vec::new();
 
     for asm_group in inner.asm_groups() {
@@ -111,7 +106,7 @@ fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> Searc
 
     let hits = hit_idxs
         .into_iter()
-        .map(|(idx, group_idx)| make_hit(inner, base, &groups[group_idx], idx))
+        .map(|(idx, group_idx)| make_hit(inner, &groups[group_idx], idx))
         .collect::<Vec<_>>();
 
     SearchResponse {
@@ -228,7 +223,6 @@ fn collect_before_cursor(
 
 fn make_hit(
     inner: &crate::state::AppStateInner,
-    base: Option<u64>,
     group: &MatchedGroup<'_>,
     idx: usize,
 ) -> SearchHit {
@@ -242,7 +236,10 @@ fn make_hit(
     SearchHit {
         idx,
         pc: format!("{:#x}", r.pc),
-        rel: base.map(|b| format!("{:#x}", r.pc.wrapping_sub(b))),
+        rel: inner
+            .modules
+            .relative_offset(r.pc)
+            .map(|off| format!("{off:#x}")),
         func,
         off,
         asm: group.asm.to_string(),

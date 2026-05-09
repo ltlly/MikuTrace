@@ -48,6 +48,51 @@ fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
     (tmp, cd)
 }
 
+fn synth_multi_so_cross_call_dir() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_4r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+    let pcs = [0x100000u64, 0x100100, 0x100004, 0x200100];
+    let insts: [u32; 4] = [
+        0x94000040, // bl 0x100100, same module offset 0x100
+        0xd65f03c0, // ret
+        0x9404003f, // bl 0x200100, helper module offset 0x100
+        0xd65f03c0, // ret
+    ];
+    let mut buf = vec![0u8; 272 * pcs.len()];
+    for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":4,"truncated":false}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{
+            "pkg":"tst",
+            "method":"f",
+            "cmd":1,
+            "module":{"name":"libmain.so","base":"0x100000","size":4096,"end":"0x101000"},
+            "modules":[
+                {"name":"libmain.so","base":"0x100000","size":4096,"end":"0x101000"},
+                {"name":"libhelper.so","base":"0x200000","size":4096,"end":"0x201000"}
+            ],
+            "fn_addr":"0x100000"
+        }"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
 #[tokio::test]
 async fn functions_returns_known_offsets_as_symbol_source() {
     let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
@@ -110,6 +155,86 @@ async fn functions_returns_known_offsets_as_symbol_source() {
         f_beta["records"].as_u64().unwrap_or(0) > 0,
         "f_beta should inherit CFG execution count"
     );
+}
+
+#[tokio::test]
+async fn functions_disambiguates_auto_symbols_across_modules() {
+    let (_tmp, call_dir) = synth_multi_so_cross_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/functions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let funcs = v["functions"].as_array().expect("functions array");
+    let sub_100: Vec<&serde_json::Value> =
+        funcs.iter().filter(|f| f["name"] == "sub_100").collect();
+    assert_eq!(
+        sub_100.len(),
+        2,
+        "expected one sub_100 per module, got {funcs:?}"
+    );
+    assert!(
+        sub_100.iter().all(|f| f["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("symaddr:"))),
+        "duplicate auto symbols should use address ids: {sub_100:?}"
+    );
+    let modules: Vec<&str> = sub_100
+        .iter()
+        .filter_map(|f| f["module"].as_str())
+        .collect();
+    assert!(modules.contains(&"libmain.so"));
+    assert!(modules.contains(&"libhelper.so"));
+    assert!(sub_100
+        .iter()
+        .all(|f| f["entry_rel"].as_u64() == Some(0x100)));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/dec/fn/symaddr:0x200100")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["fn_id"], "symaddr:0x200100");
+    assert_eq!(v["name"], "sub_100");
+    assert!(
+        v["markdown"]
+            .as_str()
+            .is_some_and(|md| md.contains("0x200100")),
+        "symaddr decompile should stay in helper module: {v:?}"
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/records?start=3&count=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let row = &v["records"][0];
+    assert_eq!(row["module"], "libhelper.so");
+    assert_eq!(row["rel"], "0x100");
+    assert_eq!(row["func"], "sub_100");
 }
 
 #[tokio::test]

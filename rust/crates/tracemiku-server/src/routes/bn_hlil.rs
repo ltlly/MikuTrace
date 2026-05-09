@@ -283,12 +283,12 @@ fn resolve_fn_pc(state: &AppState, fn_id: &str) -> Result<u64, (StatusCode, Stri
             .fn_by_id(&payload)
             .map(|f| f.pc_start)
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such trace fn {fn_id}"))),
-        "sym" => state
+        "sym" | "symaddr" => state
             .inner
             .function_index
             .by_id(fn_id)
             .and_then(|f| f.entry_pc)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such {src} fn {payload}"))),
         "bn" => parse_u64(&payload)
             .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("invalid bn fn id {fn_id}"))),
         _ => Err((

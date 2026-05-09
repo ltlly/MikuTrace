@@ -92,7 +92,6 @@ pub async fn block_handler(
 
 fn block_detail_response(inner: &crate::state::AppStateInner, pc: u64) -> Option<BlockDetail> {
     let block = inner.cfg.block_containing(pc)?;
-    let base = primary_base(&inner.meta);
     let (func_name, off_u64) = inner.symbols.lookup(block.start_pc);
     let func = (func_name != "?").then_some(func_name);
     let off = func.as_ref().map(|_| format!("{off_u64:#x}"));
@@ -121,7 +120,10 @@ fn block_detail_response(inner: &crate::state::AppStateInner, pc: u64) -> Option
             let d = decode(pc, inst);
             BlockInsn {
                 pc: format!("{pc:#x}"),
-                rel: base.map(|b| format!("{:#x}", pc.wrapping_sub(b))),
+                rel: inner
+                    .modules
+                    .relative_offset(pc)
+                    .map(|off| format!("{off:#x}")),
                 asm: format!("{} {}", d.mnemonic, d.op_str).trim().to_string(),
                 is_branch: d.is_branch,
                 is_call: d.is_call,
@@ -313,7 +315,6 @@ fn call_chain_response(
     inner: &crate::state::AppStateInner,
     q: CallChainQuery,
 ) -> CallChainResponse {
-    let base = primary_base(&inner.meta);
     let mut chain = Vec::new();
     let mut cur_idx = q.idx;
     let max_depth = effective_call_chain_depth(q.depth);
@@ -336,7 +337,10 @@ fn call_chain_response(
             depth,
             idx: cur_idx,
             pc: format!("{pc:#x}"),
-            rel: base.map(|b| format!("{:#x}", pc.wrapping_sub(b))),
+            rel: inner
+                .modules
+                .relative_offset(pc)
+                .map(|off| format!("{off:#x}")),
             func,
             off,
             lr: format!("{lr:#x}"),
@@ -466,25 +470,15 @@ fn last_pc_before(
 }
 
 fn fmt_pc_inner(inner: &crate::state::AppStateInner, pc: u64) -> String {
-    let Some(module) = inner.meta.module.as_ref() else {
+    let Some((_, rel)) = inner.modules.resolve_relative(pc) else {
         return format!("{pc:#x}");
     };
-    let Some(base) = parse_int(&module.base) else {
-        return format!("{pc:#x}");
-    };
-    if pc < base || pc >= base.saturating_add(module.size) {
-        return format!("{pc:#x}");
-    }
     let (fn_name, off) = inner.symbols.lookup(pc);
     if fn_name != "?" {
         format!("{fn_name}+{off:#x}")
     } else {
-        format!("+{:#x}", pc.wrapping_sub(base))
+        format!("+{rel:#x}")
     }
-}
-
-fn primary_base(meta: &TraceMeta) -> Option<u64> {
-    meta.module.as_ref().and_then(|m| parse_int(&m.base))
 }
 
 fn parse_int(s: &str) -> Option<u64> {

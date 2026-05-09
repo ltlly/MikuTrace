@@ -14,10 +14,45 @@ use crate::trace::{ModuleInfo, Trace};
 const PARALLEL_MIN_RECORDS: usize = 250_000;
 const MIN_CHUNK_RECORDS: usize = 200_000;
 
+/// One function/symbol entry. `module_*` is optional to preserve the old
+/// single-address-space behavior for callers that do not have module metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolEntry {
+    pub pc: u64,
+    pub name: String,
+    pub module: Option<String>,
+    pub module_base: Option<u64>,
+    pub module_end: Option<u64>,
+}
+
+impl SymbolEntry {
+    fn contains_pc(&self, pc: u64, module_aware: bool) -> bool {
+        match (self.module_base, self.module_end) {
+            (Some(base), Some(end)) => base <= pc && pc < end,
+            _ if module_aware => pc == self.pc,
+            _ => true,
+        }
+    }
+
+    pub fn entry_rel(&self) -> Option<u64> {
+        self.module_base.map(|base| self.pc.wrapping_sub(base))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolLookup {
+    pub pc: u64,
+    pub name: String,
+    pub off: u64,
+    pub module: Option<String>,
+    pub module_base: Option<u64>,
+    pub module_end: Option<u64>,
+}
+
 /// Lookup PC → (function-name, offset-within).
 #[derive(Debug, Default, Clone)]
 pub struct SymbolMap {
-    functions: Vec<(u64, String)>,
+    functions: Vec<SymbolEntry>,
     sorted: bool,
 }
 
@@ -29,33 +64,100 @@ impl SymbolMap {
     /// Add a function entry. Caller MUST call `freeze()` before any `lookup`
     /// calls to ensure the binary search sees sorted data.
     pub fn add(&mut self, pc: u64, name: String) {
-        self.functions.push((pc, name));
+        self.functions.push(SymbolEntry {
+            pc,
+            name,
+            module: None,
+            module_base: None,
+            module_end: None,
+        });
+        self.sorted = false;
+    }
+
+    pub fn add_with_module(&mut self, pc: u64, name: String, module: &ModuleInfo) {
+        let base = parse_hex_u64(&module.base).unwrap_or(0);
+        let end = parse_hex_u64(&module.end).unwrap_or_else(|| base.wrapping_add(module.size));
+        self.functions.push(SymbolEntry {
+            pc,
+            name,
+            module: Some(module.name.clone()),
+            module_base: Some(base),
+            module_end: Some(end),
+        });
+        self.sorted = false;
+    }
+
+    pub fn add_resolved(&mut self, pc: u64, name: String, modules: &ModuleResolver) {
+        if let Some(module) = modules.resolve(pc) {
+            self.add_with_module(pc, name, &module);
+        } else {
+            self.add(pc, name);
+        }
+    }
+
+    pub fn has_start_pc(&self, pc: u64) -> bool {
+        self.functions.iter().any(|entry| entry.pc == pc)
+    }
+
+    pub fn has_start_in_module(&self, pc: u64, module: Option<&str>) -> bool {
+        self.functions.iter().any(|entry| {
+            entry.pc == pc
+                && match module {
+                    Some(module) => entry.module.as_deref() == Some(module),
+                    None => entry.module.is_none(),
+                }
+        })
+    }
+
+    pub fn add_entry(&mut self, entry: SymbolEntry) {
+        self.functions.push(entry);
         self.sorted = false;
     }
 
     /// Sort the function list. Idempotent. Call once after all `add`s.
     pub fn freeze(&mut self) {
         if !self.sorted {
-            self.functions.sort_by_key(|(pc, _)| *pc);
+            self.functions.sort_by_key(|entry| entry.pc);
             self.sorted = true;
         }
+    }
+
+    pub fn lookup_entry(&self, pc: u64) -> Option<SymbolLookup> {
+        if self.functions.is_empty() {
+            return None;
+        }
+        let funcs = &self.functions;
+        let module_aware = funcs.iter().any(|entry| entry.module_base.is_some());
+        let mut i = funcs.partition_point(|entry| entry.pc <= pc);
+        while i > 0 {
+            let entry = &funcs[i - 1];
+            if entry.pc <= pc && entry.contains_pc(pc, module_aware) {
+                return Some(SymbolLookup {
+                    pc: entry.pc,
+                    name: entry.name.clone(),
+                    off: pc.wrapping_sub(entry.pc),
+                    module: entry.module.clone(),
+                    module_base: entry.module_base,
+                    module_end: entry.module_end,
+                });
+            }
+            if let Some(end) = entry.module_end {
+                if pc >= end {
+                    return None;
+                }
+            }
+            i -= 1;
+        }
+        None
     }
 
     /// `(name, offset_in_func)`. Returns `("?", 0)` if `pc` is before any
     /// known function or no functions exist. Caller must have called
     /// `freeze()` after all adds.
     pub fn lookup(&self, pc: u64) -> (String, u64) {
-        if self.functions.is_empty() {
-            return ("?".to_string(), 0);
-        }
-        let funcs = &self.functions;
-        // partition_point: rightmost index where start_pc <= pc.
-        let i = funcs.partition_point(|(start, _)| *start <= pc);
-        if i == 0 {
-            return ("?".to_string(), 0);
-        }
-        let (start, ref name) = funcs[i - 1];
-        (name.clone(), pc.wrapping_sub(start))
+        self.lookup_entry(pc)
+            .map(|entry| (entry.name, entry.off))
+            .unwrap_or_else(|| ("?".to_string(), 0))
     }
 
     pub fn len(&self) -> usize {
@@ -69,7 +171,13 @@ impl SymbolMap {
     /// Iterate over `(start_pc, name)` pairs in sorted order.
     /// Caller must have called `freeze()`.
     pub fn iter_functions(&self) -> impl Iterator<Item = (u64, String)> + '_ {
-        self.functions.iter().map(|(pc, name)| (*pc, name.clone()))
+        self.functions
+            .iter()
+            .map(|entry| (entry.pc, entry.name.clone()))
+    }
+
+    pub fn iter_entries(&self) -> impl Iterator<Item = SymbolEntry> + '_ {
+        self.functions.iter().cloned()
     }
 }
 
@@ -145,6 +253,20 @@ impl ModuleResolver {
         self.resolve(pc).map(|m| m.name)
     }
 
+    pub fn resolve_relative(&self, pc: u64) -> Option<(String, u64)> {
+        self.modules
+            .iter()
+            .find(|m| m.base <= pc && pc < m.end)
+            .map(|m| (m.name.clone(), pc.wrapping_sub(m.base)))
+    }
+
+    pub fn relative_offset(&self, pc: u64) -> Option<u64> {
+        self.modules
+            .iter()
+            .find(|m| m.base <= pc && pc < m.end)
+            .map(|m| pc.wrapping_sub(m.base))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.modules.is_empty()
     }
@@ -152,6 +274,10 @@ impl ModuleResolver {
     pub fn len(&self) -> usize {
         self.modules.len()
     }
+}
+
+fn parse_hex_u64(s: &str) -> Option<u64> {
+    u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
 }
 
 /// Walk the trace looking for `bl <target>` instructions; each unique target
@@ -190,6 +316,45 @@ pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, St
                 continue;
             }
             handles.push(scope.spawn(move || auto_known_offsets_range(trace, base, start, end)));
+        }
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("auto symbol worker panicked"))
+            .collect::<Vec<_>>()
+    });
+
+    merge_auto_known_offset_partials(partials)
+}
+
+/// Module-aware call-target discovery. Keys are ABSOLUTE target PCs. Names use
+/// the target module's relative offset when the target resolves into a module,
+/// so cross-SO calls do not inherit the primary module base.
+pub fn auto_known_symbols_with_modules(
+    trace: &Trace,
+    modules: &ModuleResolver,
+) -> HashMap<u64, String> {
+    let n = trace.len();
+    let workers = symbol_worker_count(n);
+    if workers <= 1 {
+        return auto_known_symbols_range(trace, modules, 0, n);
+    }
+    tracing::info!(
+        target: "tracemiku-core",
+        records = n,
+        workers,
+        "discovering module-aware auto symbols in parallel"
+    );
+
+    let chunk_size = n.div_ceil(workers);
+    let partials = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let start = worker * chunk_size;
+            let end = (start + chunk_size).min(n);
+            if start >= end {
+                continue;
+            }
+            handles.push(scope.spawn(move || auto_known_symbols_range(trace, modules, start, end)));
         }
         handles
             .into_iter()
@@ -239,6 +404,33 @@ fn merge_auto_known_offset_partials(partials: Vec<HashMap<u64, String>>) -> Hash
         for (key, name) in partial {
             out.entry(key).or_insert(name);
         }
+    }
+    out
+}
+
+fn auto_known_symbols_range(
+    trace: &Trace,
+    modules: &ModuleResolver,
+    start: usize,
+    end: usize,
+) -> HashMap<u64, String> {
+    let mut out = HashMap::new();
+    for i in start..end {
+        let pc = trace.pc(i);
+        let inst = trace.inst(i);
+        let d = decode(pc, inst);
+        if !d.is_call {
+            continue;
+        }
+        let Some(target) = parse_branch_target(&d.op_str) else {
+            continue;
+        };
+        let name = if let Some((_, rel)) = modules.resolve_relative(target) {
+            format!("sub_{rel:x}")
+        } else {
+            format!("sub_{target:x}")
+        };
+        out.entry(target).or_insert(name);
     }
     out
 }

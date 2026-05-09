@@ -5,8 +5,6 @@ use axum::Json;
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::prelude::TraceMeta;
-
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -81,7 +79,6 @@ fn fn_summary_response(
     inner: &crate::state::AppStateInner,
     q: FnSummaryQuery,
 ) -> FnSummaryResponse {
-    let base = primary_base(&inner.meta);
     let mut blocks = inner
         .cfg
         .blocks()
@@ -121,7 +118,10 @@ fn fn_summary_response(
         .into_iter()
         .map(|block| FnSummaryHotBlock {
             pc: format!("{:#x}", block.start_pc),
-            rel: base.map(|b| format!("{:#x}", block.start_pc.wrapping_sub(b))),
+            rel: inner
+                .modules
+                .relative_offset(block.start_pc)
+                .map(|off| format!("{off:#x}")),
             insns: block
                 .end_pc
                 .saturating_sub(block.start_pc)
@@ -172,25 +172,15 @@ fn fn_summary_response(
         status: "ready",
         fn_name: q.fn_name,
         pc: format!("{entry_pc:#x}"),
-        rel: base.map(|b| format!("{:#x}", entry_pc.wrapping_sub(b))),
+        rel: inner
+            .modules
+            .relative_offset(entry_pc)
+            .map(|off| format!("{off:#x}")),
         block_count: blocks.len(),
         total_executions,
         entry_idxs,
         entry_idxs_total,
         hot_blocks,
         callees,
-    }
-}
-
-fn primary_base(meta: &TraceMeta) -> Option<u64> {
-    meta.module.as_ref().and_then(|m| parse_int(&m.base))
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }

@@ -230,7 +230,8 @@ async fn dec_llm_call_uses_mock_mimo_and_caches_success() {
                 .uri("/api/dec/llm-call")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::json!({"fn_id":"sym:f","model":"mimo","max_tokens":64}).to_string(),
+                    serde_json::json!({"fn_id":"symaddr:0x100000","model":"mimo","max_tokens":64})
+                        .to_string(),
                 ))
                 .unwrap(),
         )

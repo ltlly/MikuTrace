@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
-    build_fn_decompile_prompt, build_symbol_func_ir_indexed, FuncIR, PromptBundle, TopIR,
+    build_fn_decompile_prompt, build_symbol_func_ir_at_indexed, build_symbol_func_ir_indexed,
+    FuncIR, PromptBundle, TopIR,
 };
 
 use crate::routes::dec_options::{
@@ -196,6 +197,24 @@ fn resolve_fn(
         )
         .map(|fn_| (fn_, None))
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
+        "symaddr" => {
+            let pc = parse_u64(&payload)
+                .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("invalid symaddr {fn_id}")))?;
+            build_symbol_func_ir_at_indexed(
+                &inner.trace,
+                &inner.symbols,
+                &inner.cfg,
+                &inner.index,
+                pc,
+            )
+            .map(|fn_| (fn_, None))
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("no such symaddr fn {payload}"),
+                )
+            })
+        }
         "bn" => Err((
             StatusCode::NOT_FOUND,
             "bn:* dec llm-call support is deferred until the Rust BN backend lands".to_string(),
@@ -204,6 +223,15 @@ fn resolve_fn(
             StatusCode::BAD_REQUEST,
             format!("unsupported fn_id source {src}"),
         )),
+    }
+}
+
+fn parse_u64(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
     }
 }
 

@@ -11,7 +11,8 @@ pub use crate::decompiler::backend::{
 };
 pub use crate::decompiler::builder::{
     attach_type_anchors, attach_type_anchors_indexed, build_symbol_func_ir,
-    build_symbol_func_ir_indexed, build_trace_ir, classify_blocks_by_tier,
+    build_symbol_func_ir_at, build_symbol_func_ir_at_indexed, build_symbol_func_ir_indexed,
+    build_trace_ir, classify_blocks_by_tier,
 };
 pub use crate::decompiler::ir::{
     BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR, VmCandidateIR,
@@ -27,17 +28,18 @@ pub use crate::decompiler::type_anchor::{
 pub use crate::decompiler::vm_candidate::detect_vm_candidates;
 pub use crate::disasm::{decode, normalize_disasm_reg, DecodedInsn};
 pub use crate::function_index::{
-    build_from_symbols as build_function_index, make_bn_id, make_sym_id, make_trace_id, parse_id,
-    FunctionEntry, FunctionIndex,
+    build_from_symbols as build_function_index, make_bn_id, make_sym_addr_id, make_sym_id,
+    make_trace_id, parse_id, FunctionEntry, FunctionIndex,
 };
 pub use crate::hashfin::{hash_finalize_detect, HashFinalizeCandidate};
 pub use crate::index::{Index, MemRec};
 pub use crate::llil::{
     collect_uidf, collect_uidf_indexed, constfold_block, constfold_expr, dce_block,
-    flag_elim_block, join_type, lift_arm64, render_expr, render_llil_block, render_stmt,
-    restructure_block, ssa_block, struct_recover_block, typelat_block, unify_vars, DceResult,
-    FieldAccess, FlagElimResult, LiftStats, LlilExpr, LlilOp, LlilOperand, ObservedValues,
-    SsaBlock, SsaVar, StructNode, StructShape, TypeEnv, TypeKind, VarNameMap,
+    flag_elim_block, join_type, lift_arm64, render_expr, render_llil_block,
+    render_llil_block_with_names, render_stmt, restructure_block, ssa_block, struct_recover_block,
+    typelat_block, unify_vars, DceResult, FieldAccess, FlagElimResult, LiftStats, LlilExpr, LlilOp,
+    LlilOperand, ObservedValues, SsaBlock, SsaVar, StructNode, StructShape, TypeEnv, TypeKind,
+    VarNameMap,
 };
 pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
 pub use crate::ollvmdet::{ollvm_detect_vm, OllvmFinding};

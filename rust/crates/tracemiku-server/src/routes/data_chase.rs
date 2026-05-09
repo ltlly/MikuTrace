@@ -4,7 +4,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::disasm::addr_of;
+use tracemiku_core::disasm::{addr_of, MemOp};
 use tracemiku_core::prelude::*;
 
 use crate::state::AppState;
@@ -84,9 +84,9 @@ fn data_chase_response(
     q: DataChaseQuery,
 ) -> DataChaseResponse {
     let exclude = parse_exclude_regs(&q.exclude_regs);
-    let base = primary_base(&inner.meta);
     let max_steps_used = effective_max_steps(q.max_steps);
-    let raw_steps = data_chase_core(inner, q.start, &q.reg, max_steps_used, &exclude);
+    let reg = normalize_disasm_reg(&q.reg);
+    let raw_steps = data_chase_core(inner, q.start, &reg, max_steps_used, &exclude);
     let steps: Vec<DataChaseStep> = raw_steps
         .into_iter()
         .map(|raw| {
@@ -95,7 +95,10 @@ fn data_chase_response(
             DataChaseStep {
                 idx: raw.idx,
                 pc: format!("{:#x}", rec.pc),
-                rel: base.map(|b| format!("{:#x}", rec.pc.wrapping_sub(b))),
+                rel: inner
+                    .modules
+                    .relative_offset(rec.pc)
+                    .map(|off| format!("{off:#x}")),
                 func: (func_name != "?").then_some(func_name),
                 asm: raw.asm,
                 via: raw.via,
@@ -107,7 +110,7 @@ fn data_chase_response(
     let stopped_at_max = max_steps_used > 0 && count >= max_steps_used;
     DataChaseResponse {
         from_idx: q.start,
-        reg: q.reg,
+        reg,
         count,
         steps,
         requested_max_steps: q.max_steps,
@@ -160,9 +163,7 @@ fn data_chase_core(
             .trim()
             .to_string();
 
-        let is_load = !decoded.mem_op.is_empty() && decoded.mem_op.iter().all(|op| !op.is_write);
-        if is_load {
-            let op = &decoded.mem_op[0];
+        if let Some(op) = load_mem_op_for_reg(&decoded, &cur_reg) {
             let mem_addr = addr_of(&record, op);
             out.push(RawStep {
                 idx: def_idx,
@@ -178,7 +179,7 @@ fn data_chase_core(
             let write_asm = format!("{} {}", write_dec.mnemonic, write_dec.op_str)
                 .trim()
                 .to_string();
-            let src = source_reg_for_store(&write_dec, exclude_regs);
+            let src = source_reg_for_store_addr(&write_dec, &write_rec, mem_addr, exclude_regs);
             out.push(RawStep {
                 idx: write_idx,
                 asm: write_asm,
@@ -218,21 +219,65 @@ fn data_chase_core(
 }
 
 fn latest_write_to_addr(index: &Index, addr: u64, before_idx: usize) -> Option<usize> {
-    let pos = index
-        .mem_writes
-        .partition_point(|write| write.idx < before_idx);
-    for write in index.mem_writes[..pos].iter().rev() {
-        if addr >= write.addr && addr < write.addr.saturating_add(write.size as u64) {
-            return Some(write.idx);
-        }
+    let writes = index.mem_addr_to_writes.get(&addr)?;
+    let pos = writes.partition_point(|&idx| idx < before_idx);
+    if pos == 0 {
+        None
+    } else {
+        Some(writes[pos - 1])
     }
-    None
 }
 
-fn source_reg_for_store(
+fn load_mem_op_for_reg<'a>(decoded: &'a DecodedInsn, reg: &str) -> Option<&'a MemOp> {
+    decoded
+        .mem_op
+        .iter()
+        .filter(|op| !op.is_write)
+        .find(|op| load_dest_regs(decoded, op).iter().any(|dst| dst == reg))
+}
+
+fn load_dest_regs(decoded: &DecodedInsn, op: &MemOp) -> Vec<String> {
+    if !op.src_reg.is_empty() {
+        return vec![op.src_reg.clone()];
+    }
+    let out = decoded
+        .regs_def
+        .iter()
+        .filter(|reg| **reg != op.base)
+        .take(1)
+        .cloned()
+        .collect::<Vec<_>>();
+    if out.is_empty() {
+        decoded.regs_def.iter().take(1).cloned().collect()
+    } else {
+        out
+    }
+}
+
+fn source_reg_for_store_addr(
     decoded: &DecodedInsn,
+    record: &Record,
+    addr: u64,
     exclude_regs: &std::collections::HashSet<String>,
 ) -> Option<String> {
+    for op in decoded.mem_op.iter().filter(|op| op.is_write) {
+        let base_addr = addr_of(record, op);
+        if addr < base_addr || addr >= base_addr.saturating_add(op.size as u64) {
+            continue;
+        }
+        if !op.src_reg.is_empty() {
+            return (!exclude_regs.contains(&op.src_reg)).then(|| op.src_reg.clone());
+        }
+        return decoded
+            .regs_use
+            .iter()
+            .find(|reg| {
+                reg.as_str() != op.base.as_str()
+                    && reg.as_str() != op.idx.as_str()
+                    && !exclude_regs.contains(*reg)
+            })
+            .cloned();
+    }
     let (base, idx) = decoded
         .mem_op
         .iter()
@@ -273,10 +318,4 @@ fn parse_exclude_regs(s: &str) -> std::collections::HashSet<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-fn primary_base(meta: &TraceMeta) -> Option<u64> {
-    meta.module
-        .as_ref()
-        .and_then(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).ok())
 }

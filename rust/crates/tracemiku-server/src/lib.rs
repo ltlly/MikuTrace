@@ -10,6 +10,7 @@ pub mod llm;
 pub mod phase_scan;
 pub mod routes;
 pub mod state;
+pub mod taint_graph;
 
 use std::path::PathBuf;
 

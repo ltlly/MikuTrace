@@ -45,12 +45,10 @@ pub async fn record_handler(
     let r = inner.trace.record(idx);
     let d = decode(r.pc, r.inst);
 
-    let base: Option<u64> = inner
-        .meta
-        .module
-        .as_ref()
-        .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0));
-    let rel = base.map(|b| format!("{:#x}", r.pc.wrapping_sub(b)));
+    let rel = inner
+        .modules
+        .relative_offset(r.pc)
+        .map(|off| format!("{off:#x}"));
 
     let names = [
         "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",

@@ -85,6 +85,16 @@ async fn forward_taint_basic() {
             "edge_kind must be present for tree view labels: {h}"
         );
     }
+    let graph = &v["graph"];
+    assert!(
+        graph["nodes"].as_array().unwrap().len() >= hits.len(),
+        "graph should expose taint nodes, including a synthetic seed when needed: {graph}"
+    );
+    assert!(
+        graph["edges"].as_array().unwrap().len() >= 1,
+        "graph should expose dependency edges: {graph}"
+    );
+    assert_eq!(graph["truncated"], false);
 }
 
 #[tokio::test]
@@ -197,6 +207,16 @@ async fn backward_taint_basic() {
             "edge_kind must be present for tree view labels: {h}"
         );
     }
+    let graph = &v["graph"];
+    assert!(
+        graph["nodes"].as_array().unwrap().len() >= chain.len(),
+        "backward graph should expose all visible chain nodes: {graph}"
+    );
+    assert!(
+        graph["edges"].as_array().unwrap().len() >= 1,
+        "backward graph should expose parent dependency edges: {graph}"
+    );
+    assert_eq!(graph["truncated"], false);
 }
 
 #[tokio::test]

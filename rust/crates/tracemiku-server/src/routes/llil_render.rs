@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::{
-    build_symbol_func_ir_indexed, collect_uidf_indexed, constfold_block, dce_block, decode,
-    flag_elim_block, lift_arm64, render_llil_block, restructure_block, ssa_block,
-    struct_recover_block, typelat_block, unify_vars, FuncIR, LiftStats,
+    build_symbol_func_ir_at_indexed, build_symbol_func_ir_indexed, collect_uidf_indexed,
+    constfold_block, dce_block, decode, flag_elim_block, lift_arm64, render_llil_block_with_names,
+    restructure_block, ssa_block, struct_recover_block, typelat_block, unify_vars, FuncIR,
+    LiftStats,
 };
 
 use crate::state::AppState;
@@ -149,7 +150,7 @@ pub fn render_llil_response(
     } else {
         Vec::new()
     };
-    let pseudocode = render_llil_block(&exprs);
+    let pseudocode = render_llil_block_with_names(&exprs, &var_names);
 
     Ok(LlilRenderResponse {
         fn_id: payload.fn_id,
@@ -200,6 +201,23 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
             &payload,
         )
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such sym fn {payload}"))),
+        "symaddr" => {
+            let pc = parse_u64(&payload)
+                .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("invalid symaddr {fn_id}")))?;
+            build_symbol_func_ir_at_indexed(
+                &inner.trace,
+                &inner.symbols,
+                &inner.cfg,
+                &inner.index,
+                pc,
+            )
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("no such symaddr fn {payload}"),
+                )
+            })
+        }
         "bn" => Err((
             StatusCode::NOT_FOUND,
             "bn:* LLIL render is deferred until the Rust BN backend lands".to_string(),
@@ -208,5 +226,14 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
             StatusCode::BAD_REQUEST,
             format!("unsupported fn_id source {src}"),
         )),
+    }
+}
+
+fn parse_u64(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
     }
 }

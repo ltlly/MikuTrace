@@ -10,6 +10,7 @@ use tracemiku_core::disasm::{decode, normalize_disasm_reg};
 use tracemiku_core::prelude::{default_frame_reg_set, forward_taint};
 
 use crate::state::AppState;
+use crate::taint_graph::{build_taint_graph, empty_taint_graph, TaintGraph, TaintGraphRow};
 
 const MAX_COUNT_CEILING: usize = 5_000;
 const DEFAULT_MAX_COUNT: usize = 5_000;
@@ -52,8 +53,39 @@ pub struct ForwardTaintResponse {
     pub from: usize,
     pub reg: String,
     pub hits: Vec<TaintRow>,
+    pub graph: TaintGraph,
     pub stopped_at_max: bool,
     pub max_count_used: usize,
+}
+
+impl TaintGraphRow for TaintRow {
+    fn idx(&self) -> usize {
+        self.idx
+    }
+
+    fn func(&self) -> Option<&str> {
+        self.func.as_deref()
+    }
+
+    fn asm(&self) -> &str {
+        &self.asm
+    }
+
+    fn via(&self) -> &str {
+        &self.why
+    }
+
+    fn edge_kind(&self) -> Option<&str> {
+        self.edge_kind.as_deref()
+    }
+
+    fn parent_idxs(&self) -> &[usize] {
+        &self.parent_idxs
+    }
+
+    fn taint_depth(&self) -> u32 {
+        self.taint_depth
+    }
 }
 
 pub async fn forward_taint_handler(
@@ -71,6 +103,7 @@ pub async fn forward_taint_handler(
                 status: "error",
                 count: 0,
                 from: start,
+                graph: empty_taint_graph(start, &reg),
                 reg,
                 hits: Vec::new(),
                 stopped_at_max: true,
@@ -99,6 +132,7 @@ fn forward_taint_response(
                     status,
                     count: 0,
                     from: q.start,
+                    graph: empty_taint_graph(q.start, &reg),
                     reg,
                     hits: Vec::new(),
                     stopped_at_max: false,
@@ -121,13 +155,6 @@ fn forward_taint_response(
         q.data_only,
     );
 
-    let base = inner
-        .meta
-        .module
-        .as_ref()
-        .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
-        .unwrap_or(0);
-
     let rows: Vec<TaintRow> = hits
         .into_iter()
         .map(|h| {
@@ -137,11 +164,10 @@ fn forward_taint_response(
             TaintRow {
                 idx: h.idx,
                 pc: format!("{:#x}", r.pc),
-                rel: if base != 0 {
-                    Some(format!("{:#x}", r.pc - base))
-                } else {
-                    None
-                },
+                rel: inner
+                    .modules
+                    .relative_offset(r.pc)
+                    .map(|off| format!("{off:#x}")),
                 func: if fname == "?" { None } else { Some(fname) },
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 why: h.why,
@@ -156,6 +182,7 @@ fn forward_taint_response(
             }
         })
         .collect();
+    let graph = build_taint_graph(q.start, &reg, &rows);
 
     ForwardTaintResponse {
         status: "ready",
@@ -163,6 +190,7 @@ fn forward_taint_response(
         from: q.start,
         reg,
         hits: rows,
+        graph,
         stopped_at_max: stopped,
         max_count_used: eff,
     }
