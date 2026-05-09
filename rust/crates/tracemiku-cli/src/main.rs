@@ -455,6 +455,25 @@ enum Cmd {
         #[arg(long, default_value = "sp,fp,lr")]
         exclude_regs: String,
     },
+    /// GET /api/dep-graph.
+    DepGraph {
+        trace_dir: PathBuf,
+        /// Concrete trace record index to use as seed.
+        #[arg(long)]
+        idx: Option<usize>,
+        /// Resolve seed to the last definition of this register before --before.
+        #[arg(long)]
+        reg: Option<String>,
+        /// Resolve seed to the last write touching this address before --before.
+        #[arg(long)]
+        addr: Option<String>,
+        #[arg(long)]
+        before: Option<usize>,
+        #[arg(long, default_value_t = 8)]
+        depth: usize,
+        #[arg(long, default_value_t = 160)]
+        limit: usize,
+    },
     /// GET /api/reg-timeline.
     RegTimeline {
         trace_dir: PathBuf,
@@ -1619,6 +1638,30 @@ async fn main() -> anyhow::Result<()> {
                 ("exclude_regs", exclude_regs),
             ];
             route_get_json(trace_dir, route_path("/api/data-chase", &params)).await
+        }
+        Some(Cmd::DepGraph {
+            trace_dir,
+            idx,
+            reg,
+            addr,
+            before,
+            depth,
+            limit,
+        }) => {
+            let mut params = vec![("depth", depth.to_string()), ("limit", limit.to_string())];
+            if let Some(idx) = idx {
+                params.push(("idx", idx.to_string()));
+            }
+            if let Some(reg) = reg {
+                params.push(("reg", reg));
+            }
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(before) = before {
+                params.push(("before", before.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/dep-graph", &params)).await
         }
         Some(Cmd::RegTimeline {
             trace_dir,

@@ -14,6 +14,7 @@ pub mod dec_llm_call;
 pub mod dec_models;
 pub mod dec_options;
 pub mod dec_summary;
+pub mod dep_graph;
 pub mod diff_traces;
 pub mod field_at;
 pub mod fn_summary;
@@ -84,6 +85,7 @@ pub fn router(state: AppState) -> Router {
             "/api/auto-phase-detect",
             get(auto_phase::auto_phase_detect_handler),
         )
+        .route("/api/dep-graph", get(dep_graph::dep_graph_handler))
         .route("/api/jni-events", get(jni_events::jni_events_handler))
         .route("/api/jni-calls", get(jni_calls::jni_calls_handler))
         .route("/api/jobj-history", get(jobj_history::jobj_history_handler))

@@ -122,6 +122,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "dec_fn.rs",
     "dec_llm_call.rs",
     "dec_summary.rs",
+    "dep_graph.rs",
     "diff_traces.rs",
     "fn_summary.rs",
     "forward_taint.rs",

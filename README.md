@@ -97,6 +97,8 @@ Recent AI-analysis additions include:
 - persistent `trace.bin.analysis-full.v1.bin` whole-trace analysis sidecars
   with CSR dependency rows, memory last-def bytes, register checkpoints, call
   tree reuse, and `/api/analysis-index` compact performance/coverage summaries;
+- dependency DAG queries through `/api/dep-graph` and `tracemiku-cli dep-graph`,
+  seeded from a trace index, register last-def, or memory-address last writer;
 - taint provenance graph expressions, Records taint-only filtering, JSON/TXT
   taint export, a Records minimap, call-frame folding, and local function
   renames for large-trace navigation;

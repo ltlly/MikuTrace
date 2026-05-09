@@ -229,7 +229,7 @@ fn row_expression<R: TaintGraphRow>(row: &R) -> String {
     expression_from_asm(row.asm(), row.via(), row.edge_kind())
 }
 
-fn expression_from_asm(asm: &str, via: &str, edge_kind: Option<&str>) -> String {
+pub(crate) fn expression_from_asm(asm: &str, via: &str, edge_kind: Option<&str>) -> String {
     let asm = asm.trim();
     let Some((mnemonic, rest)) = asm.split_once(char::is_whitespace) else {
         return format!("{via} <- {asm}");

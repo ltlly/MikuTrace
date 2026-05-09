@@ -502,6 +502,30 @@ fn data_chase_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn dep_graph_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "dep-graph".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "1".into(),
+        "--depth".into(),
+        "2".into(),
+        "--limit".into(),
+        "16".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["seed"]["kind"], "idx");
+    assert_eq!(v["seed"]["idx"], 1);
+    assert!(v["graph"]["nodes"].as_array().unwrap().len() >= 2);
+    assert!(v["graph"]["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|edge| edge["kind"] == "mem"));
+}
+
+#[test]
 fn taint_wrappers_include_dependency_metadata() {
     let (_tmp, cd) = synth_taint_tree_call_dir();
     let v = run_json(&[
