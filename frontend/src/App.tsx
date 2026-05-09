@@ -11,13 +11,13 @@ import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
 import QueryPanel, { type QueryRunRequest } from "./panels/query/QueryPanel";
-import RecordsPanel from "./panels/records/RecordsPanel";
+import RecordsPanel, { type RecordsTaintOverlay, type RecordsTaintOverlayMode } from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
 import SettingsPanel from "./panels/settings/SettingsPanel";
 import SoFilterPanel from "./panels/sofilter/SoFilterPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
 import StringProvenancePanel, { type StringProvenanceRequest } from "./panels/strings/StringProvenancePanel";
-import TaintPanel from "./panels/taint/TaintPanel";
+import TaintPanel, { type TaintOverlayResult } from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
 import type { FunctionEntry, RecordRow } from "./api/types";
@@ -195,6 +195,7 @@ export default function App() {
   const [searchPattern, setSearchPattern] = createSignal("");
   const [memoryRequest, setMemoryRequest] = createSignal<MemoryRequest | undefined>();
   const [taintRequest, setTaintRequest] = createSignal<TaintRunRequest | undefined>();
+  const [taintOverlay, setTaintOverlay] = createSignal<RecordsTaintOverlay | null>(null);
   const [queryRequest, setQueryRequest] = createSignal<QueryRunRequest | undefined>();
   const [stringProvenanceRequest, setStringProvenanceRequest] = createSignal<StringProvenanceRequest | undefined>();
   const [leftW, setLeftW] = createSignal(initial.leftW);
@@ -610,6 +611,27 @@ export default function App() {
     setTaintRequest({ token: Date.now(), idx, reg, direction });
   }
 
+  function updateTaintOverlay(result: TaintOverlayResult | null) {
+    if (!result) {
+      setTaintOverlay(null);
+      return;
+    }
+    const mode = untrack(taintOverlay)?.mode ?? "highlight";
+    setTaintOverlay({
+      idxs: new Set(result.rows.map((row) => row.idx)),
+      direction: result.direction,
+      from: result.from,
+      reg: result.reg,
+      count: result.count,
+      stopped: result.stopped,
+      mode,
+    });
+  }
+
+  function setTaintOverlayMode(mode: RecordsTaintOverlayMode) {
+    setTaintOverlay((current) => (current ? { ...current, mode } : current));
+  }
+
   function showStringProvenance(req: Omit<StringProvenanceRequest, "token">) {
     setStringProvenanceRequest({ ...req, token: Date.now() });
     setBottomTab("string-provenance");
@@ -976,6 +998,7 @@ export default function App() {
                 runRequest={taintRequest()}
                 active={leftTab() === "taint"}
                 onTaskUpdate={reportTask}
+                onOverlayChange={updateTaintOverlay}
               />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>
@@ -1039,6 +1062,9 @@ export default function App() {
               onOpenMemory={openMemoryAt}
               onRunTaint={runTaintFrom}
               onRowsLoaded={rememberRows}
+              taintOverlay={taintOverlay()}
+              onTaintOverlayModeChange={setTaintOverlayMode}
+              onClearTaintOverlay={() => setTaintOverlay(null)}
             />
           </div>
           <div

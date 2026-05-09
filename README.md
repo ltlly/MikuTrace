@@ -45,6 +45,11 @@ The Solid UI is the primary workflow surface:
 
 - Records are virtualized, keyboard-navigable, and keep stable row identity
   during range refetches.
+- Records can show Taint results as a live overlay, either highlighting hits or
+  dimming non-hit rows while preserving virtual-scroll layout.
+- Records support trace-local row marks from the context menu: color, note,
+  strike-through, and dim states persist in browser local storage per trace
+  path without changing trace files.
 - `g` opens the jump command: `#240` or `240` jumps to a trace index, and
   `0x...` jumps to the first executed record at that PC.
 - The CFG panel follows cursor changes when sync is enabled. Manual function
@@ -103,6 +108,9 @@ Recent AI-analysis additions include:
 - memory/JNI helpers such as `find-mem-pattern`, `byte-writer-map`,
   `mem-dump`, `mem-writes-in-range`, `jni-output-strings`, and
   `scan-jni-output-strings`.
+- `crypto-scan` covers common crypto/hash magic constants beyond IVs, including
+  MD5/SHA round constants, AES/SM3/SM4 tables, CRC32C, FNV, Murmur3, xxHash,
+  Poly1305, ChaCha20, and RC4 identity-table markers.
 
 The current `libsgmainso`/`x-sign` reconstruction is tracked as an example, not
 as hardcoded tool behavior. The partial simulator in

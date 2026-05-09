@@ -60,6 +60,35 @@ async fn crypto_scan_finds_sha1_md5_iv_bytes() {
 }
 
 #[tokio::test]
+async fn crypto_scan_finds_round_constants() {
+    let (_tmp, cd) = synth_call_dir(0xd76aa478);
+    let (status, v) = get(cd, "/api/crypto-scan").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["any_hit"], true);
+    let primitives = v["primitives"].as_array().unwrap();
+    let md5 = primitives.iter().find(|p| p["name"] == "MD5_T[1]").unwrap();
+    assert_eq!(md5["pattern"], "78a46ad7");
+    assert_eq!(md5["hit_count"], 1);
+    assert_eq!(md5["hits"][0]["addr"], "0x7000");
+}
+
+#[tokio::test]
+async fn crypto_scan_finds_hash_table_constants() {
+    let (_tmp, cd) = synth_call_dir(0x82f63b78);
+    let (status, v) = get(cd, "/api/crypto-scan").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["any_hit"], true);
+    let primitives = v["primitives"].as_array().unwrap();
+    let crc32c = primitives
+        .iter()
+        .find(|p| p["name"] == "CRC32C_table[1]")
+        .unwrap();
+    assert_eq!(crc32c["pattern"], "783bf682");
+    assert_eq!(crc32c["hit_count"], 1);
+    assert_eq!(crc32c["hits"][0]["addr"], "0x7000");
+}
+
+#[tokio::test]
 async fn crypto_scan_reports_zero_hits_for_non_crypto_bytes() {
     let (_tmp, cd) = synth_call_dir(0x11111111);
     let (status, v) = get(cd, "/api/crypto-scan").await;

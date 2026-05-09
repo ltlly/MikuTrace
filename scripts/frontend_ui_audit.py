@@ -131,6 +131,25 @@ def main() -> int:
         and "current?.token === token" in records,
         failures,
     )
+    require(
+        "Records taint overlay can highlight and dim hits",
+        "export interface RecordsTaintOverlay" in records
+        and '"taint-hit": taintHit()' in records
+        and '"taint-dim": taintDimmed()' in records
+        and "onTaintOverlayModeChange" in records
+        and "onOverlayChange={updateTaintOverlay}" in app,
+        failures,
+    )
+    require(
+        "Records row marks persist by trace path",
+        'const ROW_MARKS_PREFIX = "tracemiku-row-marks:"' in records
+        and "function loadRowMarks" in records
+        and "function saveRowMarks" in records
+        and "rowMarksKey" in records
+        and "row-context-menu" in records
+        and '"row-strike": !!mark()?.strike' in records,
+        failures,
+    )
 
     require("CFG header avoids stale no-fn label", 'cfgDisplayFn() || "select function"' in app, failures)
     require("CFG fetch has debounce", "CFG_FETCH_DEBOUNCE_MS" in cfg and "window.setTimeout" in cfg, failures)

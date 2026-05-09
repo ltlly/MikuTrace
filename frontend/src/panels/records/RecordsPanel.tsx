@@ -27,6 +27,21 @@ const ROW_HEIGHT = 18;
 const OVERSCAN = 18;
 const SAFE_SCROLL_HEIGHT = 30_000_000;
 const REG_RE = /\b(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)\b/gi;
+const ROW_MARKS_PREFIX = "tracemiku-row-marks:";
+const ROW_MARK_COLORS = ["red", "yellow", "green", "blue", "violet"] as const;
+type RowMarkColor = (typeof ROW_MARK_COLORS)[number];
+
+export type RecordsTaintOverlayMode = "highlight" | "dim";
+
+export interface RecordsTaintOverlay {
+  idxs: Set<number>;
+  direction: "forward" | "backward";
+  from: number;
+  reg: string;
+  count: number;
+  stopped: boolean;
+  mode: RecordsTaintOverlayMode;
+}
 
 interface RecordsPanelProps {
   selectedIdx: number;
@@ -42,6 +57,9 @@ interface RecordsPanelProps {
   // CallTree, hash deep-link, ...) can update cursorHint without paying a
   // /api/record round-trip — the visible rows already carry the data.
   onRowsLoaded?: (rows: RecordRow[]) => void;
+  taintOverlay?: RecordsTaintOverlay | null;
+  onTaintOverlayModeChange?: (mode: RecordsTaintOverlayMode) => void;
+  onClearTaintOverlay?: () => void;
 }
 
 interface RegContext {
@@ -52,6 +70,20 @@ interface RegContext {
   reg: string;
   value?: string | null;
   err?: string;
+}
+
+interface RowContext {
+  x: number;
+  y: number;
+  idx: number;
+  pc: string;
+}
+
+interface RowMark {
+  color?: RowMarkColor;
+  strike?: boolean;
+  muted?: boolean;
+  note?: string;
 }
 
 function firstAsmReg(asm: string): string | null {
@@ -89,6 +121,54 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
+function isRowMarkColor(value: unknown): value is RowMarkColor {
+  return typeof value === "string" && (ROW_MARK_COLORS as readonly string[]).includes(value);
+}
+
+function compactRowMark(mark: RowMark): RowMark | null {
+  const next: RowMark = {};
+  if (isRowMarkColor(mark.color)) next.color = mark.color;
+  if (mark.strike) next.strike = true;
+  if (mark.muted) next.muted = true;
+  const note = mark.note?.trim();
+  if (note) next.note = note;
+  return Object.keys(next).length ? next : null;
+}
+
+function loadRowMarks(key: string): Map<number, RowMark> {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = new Map<number, RowMark>();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return next;
+    for (const [idxRaw, value] of Object.entries(parsed)) {
+      const idx = Number(idxRaw);
+      if (!Number.isInteger(idx) || idx < 0 || !value || typeof value !== "object" || Array.isArray(value)) {
+        continue;
+      }
+      const mark = compactRowMark(value as RowMark);
+      if (mark) next.set(idx, mark);
+    }
+    return next;
+  } catch {
+    return new Map();
+  }
+}
+
+function saveRowMarks(key: string, marks: Map<number, RowMark>) {
+  const serialized: Record<string, RowMark> = {};
+  for (const [idx, mark] of marks) {
+    const compact = compactRowMark(mark);
+    if (compact) serialized[String(idx)] = compact;
+  }
+  try {
+    if (Object.keys(serialized).length) localStorage.setItem(key, JSON.stringify(serialized));
+    else localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 function sameRecordRow(a: RecordRow, b: RecordRow): boolean {
   return (
     a.idx === b.idx &&
@@ -110,6 +190,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewHeight, setViewHeight] = createSignal(0);
   const [regContext, setRegContext] = createSignal<RegContext | null>(null);
+  const [rowContext, setRowContext] = createSignal<RowContext | null>(null);
+  const [rowMarks, setRowMarks] = createSignal<Map<number, RowMark>>(new Map());
+  const [recordsLoadingVisible, setRecordsLoadingVisible] = createSignal(false);
   const [optimisticIdx, setOptimisticIdx] = createSignal(props.selectedIdx);
   const [meta] = createResource(fetchMeta);
   const regValueTitleCache = new Map<string, string>();
@@ -125,6 +208,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   let regContextAbort: AbortController | undefined;
   let bnTokenTimer: number | undefined;
   let bnTokenAbort: AbortController | undefined;
+  let recordsLoadingTimer: number | undefined;
 
   function cancelRegContext() {
     regContextSeq += 1;
@@ -138,7 +222,15 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     setRegContext(null);
   }
 
+  function closeRowContext() {
+    setRowContext(null);
+  }
+
   const totalRecords = createMemo(() => meta()?.records ?? 0);
+  const rowMarksKey = createMemo(() => {
+    const path = meta()?.path;
+    return path ? `${ROW_MARKS_PREFIX}${path}` : null;
+  });
   const fullHeight = createMemo(() => totalRecords() * ROW_HEIGHT);
   const innerHeight = createMemo(() => Math.min(SAFE_SCROLL_HEIGHT, Math.max(ROW_HEIGHT, fullHeight())));
   const compressed = createMemo(() => fullHeight() > SAFE_SCROLL_HEIGHT);
@@ -229,7 +321,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     }
     return cachedRows;
   });
-  const showRecordsLoading = createMemo(() => (meta.loading || resp.loading) && displayRows().length === 0);
+  const showRecordsLoading = createMemo(() => recordsLoadingVisible());
   let lastAutoScrollIdx = -1;
 
   createEffect(() => {
@@ -239,6 +331,29 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   createEffect(() => {
     const rows = displayRows();
     if (rows.length) props.onRowsLoaded?.(rows);
+  });
+
+  createEffect(() => {
+    const pending = (meta.loading || resp.loading) && displayRows().length === 0;
+    if (pending) {
+      if (recordsLoadingTimer === undefined && !recordsLoadingVisible()) {
+        recordsLoadingTimer = window.setTimeout(() => {
+          recordsLoadingTimer = undefined;
+          setRecordsLoadingVisible(true);
+        }, 120);
+      }
+      return;
+    }
+    if (recordsLoadingTimer !== undefined) {
+      window.clearTimeout(recordsLoadingTimer);
+      recordsLoadingTimer = undefined;
+    }
+    setRecordsLoadingVisible(false);
+  });
+
+  createEffect(() => {
+    const key = rowMarksKey();
+    setRowMarks(key ? loadRowMarks(key) : new Map());
   });
 
   onMount(() => {
@@ -266,10 +381,28 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       document.removeEventListener("keydown", closeOnKey);
     });
   });
+  createEffect(() => {
+    if (!rowContext()) return;
+    const closeOnPointer = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest(".row-context-menu")) return;
+      closeRowContext();
+    };
+    const closeOnKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeRowContext();
+    };
+    document.addEventListener("pointerdown", closeOnPointer);
+    document.addEventListener("keydown", closeOnKey);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOnPointer);
+      document.removeEventListener("keydown", closeOnKey);
+    });
+  });
   onCleanup(() => cancelRegContext());
   onCleanup(() => {
     if (bnTokenTimer !== undefined) window.clearTimeout(bnTokenTimer);
     bnTokenAbort?.abort();
+    if (recordsLoadingTimer !== undefined) window.clearTimeout(recordsLoadingTimer);
   });
 
   function pcKey(pc: string): string {
@@ -379,6 +512,37 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     if (reg) props.onSelectReg(reg);
   }
 
+  function updateRowMark(idx: number, updater: (mark: RowMark) => RowMark) {
+    const key = rowMarksKey();
+    setRowMarks((current) => {
+      const next = new Map(current);
+      const updated = compactRowMark(updater(next.get(idx) ?? {}));
+      if (updated) next.set(idx, updated);
+      else next.delete(idx);
+      if (key) saveRowMarks(key, next);
+      return next;
+    });
+  }
+
+  function setRowMarkColor(idx: number, color: RowMarkColor) {
+    updateRowMark(idx, (mark) => ({ ...mark, color }));
+  }
+
+  function toggleRowMarkFlag(idx: number, key: "strike" | "muted") {
+    updateRowMark(idx, (mark) => ({ ...mark, [key]: !mark[key] }));
+  }
+
+  function editRowNote(idx: number) {
+    const current = rowMarks().get(idx)?.note ?? "";
+    const next = window.prompt("row note", current);
+    if (next === null) return;
+    updateRowMark(idx, (mark) => ({ ...mark, note: next }));
+  }
+
+  function clearRowMark(idx: number) {
+    updateRowMark(idx, () => ({}));
+  }
+
   async function jumpLastWrite(idx: number, reg: string) {
     const navSeq = ++regNavSeq;
     const contextToken = regContext()?.token;
@@ -433,9 +597,23 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     }
   }
 
+  function openRowContext(e: MouseEvent, row: RecordRow) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeRegContext();
+    props.onSelect(row.idx);
+    setRowContext({
+      x: Math.min(e.clientX, window.innerWidth - 260),
+      y: Math.min(e.clientY, window.innerHeight - 220),
+      idx: row.idx,
+      pc: row.pc,
+    });
+  }
+
   async function openRegContext(e: MouseEvent, row: RecordRow, reg: string) {
     e.preventDefault();
     e.stopPropagation();
+    closeRowContext();
     cancelRegContext();
     const token = ++regContextSeq;
     const abort = new AbortController();
@@ -468,7 +646,10 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   }
 
   return (
-    <section class="panel records-panel" onClick={() => closeRegContext()}>
+    <section class="panel records-panel" onClick={() => {
+      closeRegContext();
+      closeRowContext();
+    }}>
       <h2>Records</h2>
       <Show when={meta.error}>
         <p class="err">meta failed: {String(meta.error)}</p>
@@ -483,6 +664,36 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         <span class="grow" />
         <span>selected idx {props.selectedIdx}</span>
         <span>reg {props.selectedReg}</span>
+        <Show when={props.taintOverlay}>
+          {(overlay) => (
+            <>
+              <span class="records-taint-status">
+                taint {overlay().direction} {overlay().reg} @#{overlay().from} · {overlay().count} hit{overlay().count === 1 ? "" : "s"}
+                <Show when={overlay().stopped}> · partial</Show>
+              </span>
+              <button
+                class="status-btn"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onTaintOverlayModeChange?.(overlay().mode === "dim" ? "highlight" : "dim");
+                }}
+              >
+                {overlay().mode === "dim" ? "highlight" : "dim non-hits"}
+              </button>
+              <button
+                class="status-btn"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onClearTaintOverlay?.();
+                }}
+              >
+                clear taint
+              </button>
+            </>
+          )}
+        </Show>
         <Show when={bnTokenStatus() && bnTokenStatus() !== "ok"}>
           <span title="BN asm token overlay status">bn tokens {bnTokenStatus()}</span>
         </Show>
@@ -505,27 +716,57 @@ export default function RecordsPanel(props: RecordsPanelProps) {
             </div>
           </Show>
           <For each={displayRows()}>
-            {(row) => (
-              <div
-                class="records-row"
-                classList={{
-                  selected: row.idx === activeIdx(),
-                  "is-call": row.is_call,
-                  "is-ret": row.is_ret,
-                  "is-branch": row.is_branch && !row.is_call && !row.is_ret,
-                  "so-hidden": row.module !== null && props.hiddenSos.has(row.module),
-                }}
-                style={{ top: rowTop(row), height: `${ROW_HEIGHT}px` }}
-                tabIndex={0}
-                onPointerDown={(e) => {
-                  if (e.button === 0) setOptimisticIdx(row.idx);
-                }}
-                onClick={() => selectRow(row)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") selectRow(row);
-                }}
-              >
-                <span class="dot">{rowKind(row)}</span>
+            {(row) => {
+              const mark = () => rowMarks().get(row.idx);
+              const taintHit = () => props.taintOverlay?.idxs.has(row.idx) ?? false;
+              const taintDimmed = () =>
+                !!props.taintOverlay && props.taintOverlay.mode === "dim" && !taintHit();
+              return (
+                <div
+                  class="records-row"
+                  classList={{
+                    selected: row.idx === activeIdx(),
+                    "is-call": row.is_call,
+                    "is-ret": row.is_ret,
+                    "is-branch": row.is_branch && !row.is_call && !row.is_ret,
+                    "so-hidden": row.module !== null && props.hiddenSos.has(row.module),
+                    "taint-hit": taintHit(),
+                    "taint-dim": taintDimmed(),
+                    "row-marked": !!mark(),
+                    "row-strike": !!mark()?.strike,
+                    "row-muted": !!mark()?.muted,
+                    "has-note": !!mark()?.note,
+                    "mark-red": mark()?.color === "red",
+                    "mark-yellow": mark()?.color === "yellow",
+                    "mark-green": mark()?.color === "green",
+                    "mark-blue": mark()?.color === "blue",
+                    "mark-violet": mark()?.color === "violet",
+                  }}
+                  style={{ top: rowTop(row), height: `${ROW_HEIGHT}px` }}
+                  tabIndex={0}
+                  onPointerDown={(e) => {
+                    if (e.button === 0) setOptimisticIdx(row.idx);
+                  }}
+                  onClick={() => selectRow(row)}
+                  onContextMenu={(e) => openRowContext(e, row)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") selectRow(row);
+                    else if (e.altKey && !e.ctrlKey && !e.metaKey && /^[1-5]$/.test(e.key)) {
+                      e.preventDefault();
+                      const color = ROW_MARK_COLORS[Number(e.key) - 1];
+                      if (color) setRowMarkColor(row.idx, color);
+                    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "s") {
+                      e.preventDefault();
+                      toggleRowMarkFlag(row.idx, "strike");
+                    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "d") {
+                      e.preventDefault();
+                      toggleRowMarkFlag(row.idx, "muted");
+                    }
+                  }}
+                >
+                <span class="dot" title={mark()?.note ?? undefined}>
+                  <Show when={mark()?.note} fallback={rowKind(row)}>*</Show>
+                </span>
                 <span class="idx">{row.idx}</span>
                 <span class="pc">
                   <code>{row.pc}</code>
@@ -533,7 +774,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                 <span class="func" title={fnLabel(row)}>
                   {fnLabel(row)}
                 </span>
-                <span class="asm" title={row.asm}>
+                <span class="asm" title={mark()?.note ? `${mark()?.note}\n${row.asm}` : row.asm}>
                   <code>
                     <Show
                       when={tokensForPc(row.pc)}
@@ -610,7 +851,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   </code>
                 </span>
               </div>
-            )}
+              );
+            }}
           </For>
           <Show when={regContext()}>
             {(ctx) => (
@@ -661,6 +903,50 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                 </button>
               </div>
             )}
+          </Show>
+          <Show when={rowContext()}>
+            {(ctx) => {
+              const mark = () => rowMarks().get(ctx().idx) ?? {};
+              return (
+                <div
+                  class="row-context-menu"
+                  style={{ left: `${ctx().x}px`, top: `${ctx().y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.preventDefault()}
+                >
+                  <div class="memory-context-title">
+                    row #{ctx().idx}
+                  </div>
+                  <p class="dim small">{ctx().pc}</p>
+                  <div class="row-mark-swatches">
+                    <For each={ROW_MARK_COLORS}>
+                      {(color) => (
+                        <button
+                          type="button"
+                          class={`row-mark-swatch ${color}`}
+                          classList={{ active: mark().color === color }}
+                          aria-label={`mark ${color}`}
+                          title={`mark ${color}`}
+                          onClick={() => setRowMarkColor(ctx().idx, color)}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <button type="button" onClick={() => editRowNote(ctx().idx)}>
+                    {mark().note ? "edit note" : "add note"}
+                  </button>
+                  <button type="button" onClick={() => toggleRowMarkFlag(ctx().idx, "strike")}>
+                    {mark().strike ? "remove strike" : "strike row"}
+                  </button>
+                  <button type="button" onClick={() => toggleRowMarkFlag(ctx().idx, "muted")}>
+                    {mark().muted ? "restore row" : "dim row"}
+                  </button>
+                  <button type="button" onClick={() => clearRowMark(ctx().idx)}>
+                    clear mark
+                  </button>
+                </div>
+              );
+            }}
           </Show>
         </div>
       </div>

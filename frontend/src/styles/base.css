@@ -523,6 +523,25 @@ body.is-resizing {
   font-size: 11px;
 }
 
+#stream .records-status .status-btn {
+  padding: 1px 6px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#stream .records-status .status-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
+#stream .records-taint-status {
+  color: var(--warn);
+}
+
 #stream .records-scroll {
   flex: 1;
   min-height: 0;
@@ -589,6 +608,88 @@ body.is-resizing {
 
 #stream .records-row.selected {
   background: var(--hl);
+}
+
+#stream .records-row.taint-hit {
+  background: rgba(247, 179, 43, 0.12);
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+
+#stream .records-row.taint-hit:hover,
+#stream .records-row.taint-hit:focus {
+  background: rgba(247, 179, 43, 0.18);
+}
+
+#stream .records-row.taint-hit.selected {
+  background: linear-gradient(90deg, rgba(88, 166, 255, 0.24), rgba(247, 179, 43, 0.16));
+  box-shadow: inset 2px 0 0 var(--accent), inset 4px 0 0 var(--warn);
+}
+
+#stream .records-row.taint-hit.row-marked:not(.selected) {
+  background: linear-gradient(90deg, rgba(247, 179, 43, 0.14), rgba(247, 179, 43, 0.04));
+}
+
+#stream .records-row.taint-hit.mark-red:not(.selected) {
+  box-shadow: inset 2px 0 0 var(--err), inset 4px 0 0 var(--warn);
+}
+
+#stream .records-row.taint-hit.mark-yellow:not(.selected) {
+  box-shadow: inset 2px 0 0 var(--warn), inset 4px 0 0 rgba(247, 179, 43, 0.55);
+}
+
+#stream .records-row.taint-hit.mark-green:not(.selected) {
+  box-shadow: inset 2px 0 0 var(--good), inset 4px 0 0 var(--warn);
+}
+
+#stream .records-row.taint-hit.mark-blue:not(.selected) {
+  box-shadow: inset 2px 0 0 var(--accent), inset 4px 0 0 var(--warn);
+}
+
+#stream .records-row.taint-hit.mark-violet:not(.selected) {
+  box-shadow: inset 2px 0 0 #d2a8ff, inset 4px 0 0 var(--warn);
+}
+
+#stream .records-row.taint-dim:not(.selected) {
+  opacity: 0.34;
+}
+
+#stream .records-row.mark-red {
+  box-shadow: inset 2px 0 0 var(--err);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+#stream .records-row.mark-yellow {
+  box-shadow: inset 2px 0 0 var(--warn);
+  background: rgba(247, 179, 43, 0.08);
+}
+
+#stream .records-row.mark-green {
+  box-shadow: inset 2px 0 0 var(--good);
+  background: rgba(63, 185, 80, 0.08);
+}
+
+#stream .records-row.mark-blue {
+  box-shadow: inset 2px 0 0 var(--accent);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+#stream .records-row.mark-violet {
+  box-shadow: inset 2px 0 0 #d2a8ff;
+  background: rgba(210, 168, 255, 0.08);
+}
+
+#stream .records-row.row-muted:not(.selected) {
+  opacity: 0.42;
+}
+
+#stream .records-row.row-strike .asm code {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+#stream .records-row.has-note .dot {
+  color: var(--fg);
+  font-weight: 700;
 }
 
 #stream .records-row.so-hidden {
@@ -671,6 +772,61 @@ body.is-resizing {
 .reg-context-menu button:hover {
   border-color: var(--accent);
   background: var(--bg3);
+}
+
+.row-context-menu {
+  position: fixed;
+  z-index: 132;
+  width: 236px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+}
+
+.row-context-menu button:not(.row-mark-swatch) {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+  padding: 2px 6px;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.row-context-menu button:not(.row-mark-swatch):hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
+.row-mark-swatches {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.row-mark-swatch {
+  width: 24px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.row-mark-swatch.red { background: var(--err); }
+.row-mark-swatch.yellow { background: var(--warn); }
+.row-mark-swatch.green { background: var(--good); }
+.row-mark-swatch.blue { background: var(--accent); }
+.row-mark-swatch.violet { background: #d2a8ff; }
+
+.row-mark-swatch.active {
+  outline: 1px solid var(--fg);
+  outline-offset: 2px;
 }
 
 .records-loading {
