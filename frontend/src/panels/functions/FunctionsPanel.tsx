@@ -66,8 +66,15 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                   return (
                     <li
                       class={props.selectedFn() === fn.id ? "selected" : ""}
+                      title={renamed() ? `orig ${fn.name}` : "right-click to rename"}
                       onClick={() => props.onSelectFn(fn)}
                       onDblClick={() => props.onJumpFn?.(fn)}
+                      onContextMenu={(e) => {
+                        if (!props.onRenameFn) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        props.onRenameFn(fn);
+                      }}
                     >
                       <span class="fn-source-tag" title={SOURCE_TITLES[fn.source] ?? fn.source}>
                         {SOURCE_LABELS[fn.source] ?? fn.source}
@@ -76,16 +83,6 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                       <Show when={renamed()}>
                         <span class="dim small">orig {fn.name}</span>
                       </Show>
-                      <button
-                        type="button"
-                        class="fn-row-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          props.onRenameFn?.(fn);
-                        }}
-                      >
-                        rename
-                      </button>
                       <Show when={fn.entry_pc !== null}>
                         <span class="dim small">
                           @ {`0x${fn.entry_pc!.toString(16)}`}

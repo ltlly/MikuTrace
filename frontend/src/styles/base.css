@@ -636,6 +636,17 @@ body.is-resizing {
   pointer-events: none;
 }
 
+.row-note {
+  grid-column: 5;
+  justify-self: end;
+  max-width: min(42%, 520px);
+  padding-left: 18px;
+  color: var(--fg);
+  background: linear-gradient(90deg, transparent, var(--bg) 24%);
+  font-size: 11px;
+  pointer-events: none;
+}
+
 #stream .records-row .idx { color: var(--dim); }
 #stream .records-row .pc { color: var(--accent2); }
 #stream .records-row .func { color: var(--good); }
@@ -651,6 +662,11 @@ body.is-resizing {
 
 #stream .records-row.selected {
   background: var(--hl);
+}
+
+#stream .records-row.range-selected:not(.selected) {
+  background: rgba(88, 166, 255, 0.12);
+  box-shadow: inset 2px 0 0 rgba(88, 166, 255, 0.65);
 }
 
 #stream .records-minimap {
@@ -1739,21 +1755,6 @@ html[data-density="dense"] .xref-table td {
   white-space: nowrap;
 }
 
-.fn-row-btn {
-  padding: 0 5px;
-  color: var(--dim);
-  background: transparent;
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.fn-row-btn:hover {
-  color: var(--fg);
-  border-color: var(--accent);
-}
-
 .cfg-panel {
   height: 100%;
   display: flex;
@@ -2407,6 +2408,27 @@ html[data-density="dense"] .xref-table td {
 .dec-controls button { cursor: pointer; }
 .dec-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
 .dec-option-note { margin-left: -4px; }
+.dec-function-pane {
+  min-width: 0;
+}
+.dec-function-drawer {
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.dec-function-drawer > summary {
+  padding: 4px 8px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+.dec-function-drawer[open] > summary {
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+.dec-function-list {
+  max-height: max(120px, min(360px, calc(100vh - 360px)));
+  overflow: auto;
+}
 .dec-table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
 .dec-table th, .dec-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .dec-table th { color: var(--dim, #888); font-weight: normal; }

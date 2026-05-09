@@ -76,14 +76,27 @@ fn render_expr_with_names(e: &LlilExpr, names: &VarNameMap) -> String {
             c_type(e.size),
             render_operand(e.operands.first(), names)
         ),
-        LlilOp::Neg => format!("-{}", render_operand(e.operands.first(), names)),
+        LlilOp::Neg => render_neg(e.operands.first(), names),
         LlilOp::Not => format!("~{}", render_operand(e.operands.first(), names)),
-        op if binary_symbol(op).is_some() => format!(
-            "({} {} {})",
-            render_operand(e.operands.first(), names),
-            binary_symbol(op).unwrap(),
-            render_operand(e.operands.get(1), names)
-        ),
+        op if binary_symbol(op).is_some() => {
+            if e.op == LlilOp::Add {
+                if let (Some(left), Some(right)) = (e.operands.first(), e.operands.get(1)) {
+                    if let Some(magnitude) = negative_addend(right) {
+                        return format!(
+                            "({} - {})",
+                            render_operand(Some(left), names),
+                            format_unsigned_literal(magnitude, 10)
+                        );
+                    }
+                }
+            }
+            format!(
+                "({} {} {})",
+                render_operand(e.operands.first(), names),
+                binary_symbol(op).unwrap(),
+                render_operand(e.operands.get(1), names)
+            )
+        }
         LlilOp::Intrinsic => format!(
             "{}({})",
             e.extra
@@ -104,20 +117,58 @@ fn render_call(e: &LlilExpr, names: &VarNameMap) -> String {
     format!("{}()", render_operand(e.operands.first(), names))
 }
 
+fn render_neg(op: Option<&LlilOperand>, names: &VarNameMap) -> String {
+    let value = render_operand(op, names);
+    if let Some(stripped) = value.strip_prefix('-') {
+        stripped.to_string()
+    } else {
+        format!("-{value}")
+    }
+}
+
 fn render_operand(op: Option<&LlilOperand>, names: &VarNameMap) -> String {
     match op {
         Some(LlilOperand::Expr(e)) => render_expr_with_names(e, names),
         Some(LlilOperand::Reg(r)) | Some(LlilOperand::Flag(r)) => render_ident(r, names),
         Some(LlilOperand::Str(s)) => s.clone(),
-        Some(LlilOperand::Imm(v)) => {
-            if v.abs() >= 10 {
-                format!("{v:#x}")
-            } else {
-                v.to_string()
-            }
-        }
+        Some(LlilOperand::Imm(v)) => format_signed_literal(*v, 10),
         Some(LlilOperand::U64(v)) => format!("{v:#x}"),
         None => "?".to_string(),
+    }
+}
+
+fn negative_addend(op: &LlilOperand) -> Option<u64> {
+    match op {
+        LlilOperand::Imm(v) if *v < 0 => Some(v.unsigned_abs()),
+        LlilOperand::U64(v) => {
+            let signed = *v as i64;
+            (signed < 0).then(|| signed.unsigned_abs())
+        }
+        LlilOperand::Expr(e) if matches!(e.op, LlilOp::Const | LlilOp::ConstPtr) => {
+            e.operands.first().and_then(negative_addend)
+        }
+        _ => None,
+    }
+}
+
+fn format_signed_literal(v: i64, hex_threshold: u64) -> String {
+    if v < 0 {
+        let magnitude = v.unsigned_abs();
+        if magnitude >= hex_threshold {
+            format!("-0x{magnitude:x}")
+        } else {
+            format!("-{magnitude}")
+        }
+    } else {
+        format_unsigned_literal(v as u64, hex_threshold)
+    }
+}
+
+fn format_unsigned_literal(v: u64, hex_threshold: u64) -> String {
+    if v >= hex_threshold {
+        format!("0x{v:x}")
+    } else {
+        v.to_string()
     }
 }
 
@@ -169,7 +220,9 @@ fn c_type(size: u8) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::llil::expr::{binary, konst, reg, set_reg, LlilOp};
+    use crate::llil::expr::{
+        binary, expr as operand_expr, konst, reg, set_reg, LlilExpr, LlilOp, LlilOperand,
+    };
 
     use super::*;
 
@@ -202,5 +255,41 @@ mod tests {
             render_llil_block_with_names(&block, &names),
             "arg_0 = (arg_1 + 2);\n"
         );
+    }
+
+    #[test]
+    fn renders_negative_stack_offsets_as_subtraction() {
+        let stmt = set_reg(
+            "x0#0",
+            binary(LlilOp::Add, reg("fp#2"), konst(-0x28)),
+            0x1000,
+        );
+        assert_eq!(render_stmt(&stmt), "x0_0 = (fp_2 - 0x28);");
+    }
+
+    #[test]
+    fn renders_twos_complement_stack_offsets_as_subtraction() {
+        let addr = LlilExpr::new(
+            LlilOp::Add,
+            8,
+            vec![
+                operand_expr(reg("fp#2")),
+                LlilOperand::U64(0xffff_ffff_ffff_ffe4),
+            ],
+            0,
+        );
+        let load = LlilExpr::new(LlilOp::Load, 4, vec![operand_expr(addr)], 0);
+        let stmt = set_reg("x8#27", load, 0x1000);
+        assert_eq!(render_stmt(&stmt), "x8_27 = *(uint32_t *)((fp_2 - 0x1c));");
+    }
+
+    #[test]
+    fn renders_negated_negative_literal_without_double_minus() {
+        let stmt = set_reg(
+            "x0#0",
+            crate::llil::expr::unary(LlilOp::Neg, konst(-5)),
+            0x1000,
+        );
+        assert_eq!(render_stmt(&stmt), "x0_0 = 5;");
     }
 }

@@ -233,45 +233,50 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
               </div>
             </Show>
             <div class="dec-grid">
-              <div>
-                <table class="dec-table">
-                  <thead>
-                    <tr>
-                      <th>id</th>
-                      <th>name</th>
-                      <th>module</th>
-                      <th>blocks</th>
-                      <th>calls</th>
-                      <th>idx range</th>
-                      <th>source</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={r().fns}>
-                      {(f) => (
-                        <tr
-                          class={props.selectedFn() === f.id ? "selected" : ""}
-                          onClick={() => props.onSelectFn(f.id)}
-                        >
-                          <td class="dim small">{f.id}</td>
-                          <td>{f.name}</td>
-                          <td class="dim small">
-                            {f.module ?? ""}
-                            <Show when={f.entry_rel !== null && f.entry_rel !== undefined}>
-                              <>+0x{f.entry_rel!.toString(16)}</>
-                            </Show>
-                          </td>
-                          <td>{f.blocks}</td>
-                          <td>{f.calls}</td>
-                          <td class="dim small">
-                            {f.entry_idx ?? "?"}..{f.exit_idx ?? "?"}
-                          </td>
-                          <td class="dim small">{f.source}</td>
+              <div class="dec-function-pane">
+                <details class="dec-function-drawer">
+                  <summary>functions ({r().fns.length.toLocaleString()})</summary>
+                  <div class="dec-function-list">
+                    <table class="dec-table">
+                      <thead>
+                        <tr>
+                          <th>id</th>
+                          <th>name</th>
+                          <th>module</th>
+                          <th>blocks</th>
+                          <th>calls</th>
+                          <th>idx range</th>
+                          <th>source</th>
                         </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        <For each={r().fns}>
+                          {(f) => (
+                            <tr
+                              class={props.selectedFn() === f.id ? "selected" : ""}
+                              onClick={() => props.onSelectFn(f.id)}
+                            >
+                              <td class="dim small">{f.id}</td>
+                              <td>{f.name}</td>
+                              <td class="dim small">
+                                {f.module ?? ""}
+                                <Show when={f.entry_rel !== null && f.entry_rel !== undefined}>
+                                  <>+0x{f.entry_rel!.toString(16)}</>
+                                </Show>
+                              </td>
+                              <td>{f.blocks}</td>
+                              <td>{f.calls}</td>
+                              <td class="dim small">
+                                {f.entry_idx ?? "?"}..{f.exit_idx ?? "?"}
+                              </td>
+                              <td class="dim small">{f.source}</td>
+                            </tr>
+                          )}
+                        </For>
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               </div>
               <div>
                 <div class="dec-controls">
@@ -303,17 +308,17 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                 <Show when={!fnResp.loading && fnResp.error}>
                   <p class="err">fn load failed: {String(fnResp.error)}</p>
                 </Show>
-                <Show when={fnResp.loading}>
-                  <p class="dim">loading function markdown…</p>
-                </Show>
-                <Show when={currentFnResp()}>
-                  {(f) => <pre class="dec-markdown">{f().markdown}</pre>}
-                </Show>
                 <Show when={llilError()}>
                   <p class="err">llil failed: {llilError()}</p>
                 </Show>
                 <Show when={llilOutput()}>
                   <pre class="dec-llil">{llilOutput()}</pre>
+                </Show>
+                <Show when={fnResp.loading}>
+                  <p class="dim">loading function markdown…</p>
+                </Show>
+                <Show when={currentFnResp()}>
+                  {(f) => <pre class="dec-markdown">{f().markdown}</pre>}
                 </Show>
               </div>
             </div>

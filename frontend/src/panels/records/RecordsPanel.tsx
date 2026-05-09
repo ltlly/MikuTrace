@@ -104,6 +104,11 @@ interface FoldRange {
   depth: number;
 }
 
+interface RowSelection {
+  anchor: number;
+  focus: number;
+}
+
 function firstAsmReg(asm: string): string | null {
   const m = asm.match(REG_RE);
   return m?.[0] ? normalizeReg(m[0]) : null;
@@ -232,6 +237,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [optimisticIdx, setOptimisticIdx] = createSignal(props.selectedIdx);
   const [foldCalls, setFoldCalls] = createSignal(false);
   const [collapsedCalls, setCollapsedCalls] = createSignal<Set<string>>(new Set());
+  const [foldAutoCollapsePending, setFoldAutoCollapsePending] = createSignal(false);
+  const [rowSelection, setRowSelection] = createSignal<RowSelection | null>(null);
   const [meta] = createResource(fetchMeta);
   const [callTreeResp, currentCallTreeResp] = createGuardedResource<number, CallTreeResponse>(
     () => (foldCalls() ? 50 : undefined),
@@ -428,6 +435,21 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     setRowMarks(key ? loadRowMarks(key) : new Map());
   });
 
+  createEffect(() => {
+    if (!foldCalls() || !foldAutoCollapsePending()) return;
+    if (!currentCallTreeResp()) {
+      if (callTreeResp.error) setFoldAutoCollapsePending(false);
+      return;
+    }
+    const ranges = foldRanges();
+    if (!ranges.length) {
+      setFoldAutoCollapsePending(false);
+      return;
+    }
+    setCollapsedCalls(new Set(ranges.map((range) => range.key)));
+    setFoldAutoCollapsePending(false);
+  });
+
   onMount(() => {
     const syncHeight = () => setViewHeight(viewport?.clientHeight ?? 0);
     syncHeight();
@@ -619,10 +641,10 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     return "highlight";
   }
 
-  function nextTaintModeLabel(mode: RecordsTaintOverlayMode): string {
-    if (mode === "highlight") return "dim non-hits";
-    if (mode === "dim") return "taint only";
-    return "highlight";
+  function taintModeLabel(mode: RecordsTaintOverlayMode): string {
+    if (mode === "highlight") return "highlight";
+    if (mode === "dim") return "dim non-hits";
+    return "taint only";
   }
 
   function pctForIdx(idx: number): number {
@@ -705,43 +727,91 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     selectRow(rowObjectCache.get(idx) ?? placeholderRow(idx));
   }
 
-  function selectRow(row: RecordRow) {
+  function normalizedSelection(): { start: number; end: number } | null {
+    const selection = rowSelection();
+    if (!selection) return null;
+    return {
+      start: Math.min(selection.anchor, selection.focus),
+      end: Math.max(selection.anchor, selection.focus),
+    };
+  }
+
+  function rowInSelection(idx: number): boolean {
+    const selection = normalizedSelection();
+    return !!selection && idx >= selection.start && idx <= selection.end;
+  }
+
+  function markTargetIdxs(idx: number): number[] {
+    const selection = normalizedSelection();
+    if (!selection || idx < selection.start || idx > selection.end) return [idx];
+    const out: number[] = [];
+    for (let i = selection.start; i <= selection.end; i += 1) out.push(i);
+    return out;
+  }
+
+  function selectionLabel(idx: number): string {
+    const selection = normalizedSelection();
+    if (!selection || idx < selection.start || idx > selection.end || selection.start === selection.end) {
+      return `row #${idx}`;
+    }
+    return `rows #${selection.start}..#${selection.end}`;
+  }
+
+  function selectRow(row: RecordRow, e?: MouseEvent) {
+    const anchor = rowSelection()?.anchor ?? activeIdx();
     setOptimisticIdx(row.idx);
+    if (e?.shiftKey) setRowSelection({ anchor, focus: row.idx });
+    else setRowSelection({ anchor: row.idx, focus: row.idx });
     props.onSelect(row.idx);
     props.onSelectRow?.(row);
     const reg = firstAsmReg(row.asm);
     if (reg) props.onSelectReg(reg);
   }
 
-  function updateRowMark(idx: number, updater: (mark: RowMark) => RowMark) {
+  function updateRowMarks(idxs: number[], updater: (mark: RowMark, idx: number) => RowMark) {
     const key = rowMarksKey();
     setRowMarks((current) => {
       const next = new Map(current);
-      const updated = compactRowMark(updater(next.get(idx) ?? {}));
-      if (updated) next.set(idx, updated);
-      else next.delete(idx);
+      for (const idx of idxs) {
+        const updated = compactRowMark(updater(next.get(idx) ?? {}, idx));
+        if (updated) next.set(idx, updated);
+        else next.delete(idx);
+      }
       if (key) saveRowMarks(key, next);
       return next;
     });
   }
 
   function setRowMarkColor(idx: number, color: RowMarkColor) {
-    updateRowMark(idx, (mark) => ({ ...mark, color }));
+    updateRowMarks(markTargetIdxs(idx), (mark) => ({ ...mark, color }));
   }
 
   function toggleRowMarkFlag(idx: number, key: "strike" | "muted") {
-    updateRowMark(idx, (mark) => ({ ...mark, [key]: !mark[key] }));
+    const targets = markTargetIdxs(idx);
+    const shouldEnable = targets.some((targetIdx) => !rowMarks().get(targetIdx)?.[key]);
+    updateRowMarks(targets, (mark) => ({ ...mark, [key]: shouldEnable }));
   }
 
   function editRowNote(idx: number) {
     const current = rowMarks().get(idx)?.note ?? "";
     const next = window.prompt("row note", current);
     if (next === null) return;
-    updateRowMark(idx, (mark) => ({ ...mark, note: next }));
+    updateRowMarks(markTargetIdxs(idx), (mark) => ({ ...mark, note: next }));
   }
 
   function clearRowMark(idx: number) {
-    updateRowMark(idx, () => ({}));
+    updateRowMarks(markTargetIdxs(idx), () => ({}));
+  }
+
+  function toggleFoldCalls() {
+    if (foldCalls()) {
+      setFoldCalls(false);
+      setCollapsedCalls(new Set<string>());
+      setFoldAutoCollapsePending(false);
+      return;
+    }
+    setFoldCalls(true);
+    setFoldAutoCollapsePending(true);
   }
 
   async function jumpLastWrite(idx: number, reg: string) {
@@ -802,7 +872,10 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     e.preventDefault();
     e.stopPropagation();
     closeRegContext();
+    setOptimisticIdx(row.idx);
     props.onSelect(row.idx);
+    props.onSelectRow?.(row);
+    if (!rowInSelection(row.idx)) setRowSelection({ anchor: row.idx, focus: row.idx });
     setRowContext({
       x: Math.min(e.clientX, window.innerWidth - 260),
       y: Math.min(e.clientY, window.innerHeight - 220),
@@ -884,8 +957,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   e.stopPropagation();
                   props.onTaintOverlayModeChange?.(nextTaintMode(overlay().mode));
                 }}
+                title={`switch to ${taintModeLabel(nextTaintMode(overlay().mode))}`}
               >
-                {nextTaintModeLabel(overlay().mode)}
+                {taintModeLabel(overlay().mode)}
               </button>
               <button
                 class="status-btn"
@@ -905,7 +979,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setFoldCalls(!foldCalls());
+            toggleFoldCalls();
           }}
         >
           {foldCalls() ? "unfold calls" : "fold calls"}
@@ -983,6 +1057,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   class="records-row"
                   classList={{
                     selected: row.idx === activeIdx(),
+                    "range-selected": rowInSelection(row.idx) && row.idx !== activeIdx(),
                     "is-call": row.is_call,
                     "is-ret": row.is_ret,
                     "is-branch": row.is_branch && !row.is_call && !row.is_ret,
@@ -1004,7 +1079,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   onPointerDown={(e) => {
                     if (e.button === 0) setOptimisticIdx(row.idx);
                   }}
-                  onClick={() => selectRow(row)}
+                  onClick={(e) => selectRow(row, e)}
                   onContextMenu={(e) => openRowContext(e, row)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") selectRow(row);
@@ -1131,6 +1206,13 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                     </span>
                   )}
                 </Show>
+                <Show when={!foldedRange() ? mark()?.note : undefined}>
+                  {(note) => (
+                    <span class="row-note" title={note()}>
+                      {note()}
+                    </span>
+                  )}
+                </Show>
               </div>
               );
             }}
@@ -1196,7 +1278,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   onContextMenu={(e) => e.preventDefault()}
                 >
                   <div class="memory-context-title">
-                    row #{ctx().idx}
+                    {selectionLabel(ctx().idx)}
                   </div>
                   <p class="dim small">{ctx().pc}</p>
                   <div class="row-mark-swatches">

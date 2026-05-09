@@ -198,6 +198,15 @@ export default function CfgPanel(props: CfgPanelProps) {
     }
   });
 
+  createEffect(() => {
+    if (!props.active || cfgSource() !== "trace" || fnName()) return;
+    const r = currentRecord();
+    if (!r?.func) return;
+    setAutoGraph(true);
+    setForceGraph(false);
+    setFnName(r.func);
+  });
+
   function cancelGraphTask(detail = "superseded") {
     if (graphTask && (graphLoading() || graphTimer !== undefined || graphAbort)) {
       props.onTaskUpdate?.({
@@ -630,7 +639,7 @@ export default function CfgPanel(props: CfgPanelProps) {
             queueMicrotask(applySvgPanZoom);
           }}
           class="cfg-svg-canvas"
-          onClick={onSvgClick}
+          onDblClick={onSvgClick}
           innerHTML={svg}
         />
       </div>

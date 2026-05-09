@@ -221,15 +221,24 @@ fn fmt_operand(op: Option<&LlilOperand>) -> String {
         Some(LlilOperand::Reg(r)) | Some(LlilOperand::Flag(r)) | Some(LlilOperand::Str(r)) => {
             r.clone()
         }
-        Some(LlilOperand::Imm(v)) => {
-            if v.abs() >= 16 {
-                format!("{v:#x}")
-            } else {
-                v.to_string()
-            }
-        }
+        Some(LlilOperand::Imm(v)) => fmt_signed_literal(*v, 16),
         Some(LlilOperand::U64(v)) => format!("{v:#x}"),
         None => "?".to_string(),
+    }
+}
+
+fn fmt_signed_literal(v: i64, hex_threshold: u64) -> String {
+    if v < 0 {
+        let magnitude = v.unsigned_abs();
+        if magnitude >= hex_threshold {
+            format!("-0x{magnitude:x}")
+        } else {
+            format!("-{magnitude}")
+        }
+    } else if (v as u64) >= hex_threshold {
+        format!("0x{v:x}")
+    } else {
+        v.to_string()
     }
 }
 
