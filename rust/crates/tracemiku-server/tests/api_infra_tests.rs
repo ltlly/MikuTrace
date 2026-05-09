@@ -160,6 +160,7 @@ const LIGHT_ROUTE_FILES: &[&str] = &[
     "idxs_for_pc.rs",
     "last_write_of_reg.rs",
     "meta.rs",
+    "next_use_of_reg.rs",
     "record.rs",
     "reg_value_at.rs",
     "search_pc.rs",

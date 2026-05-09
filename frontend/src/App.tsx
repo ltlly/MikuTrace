@@ -11,7 +11,7 @@ import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
 import QueryPanel, { type QueryRunRequest } from "./panels/query/QueryPanel";
-import RecordsPanel, { type RecordsTaintOverlay, type RecordsTaintOverlayMode } from "./panels/records/RecordsPanel";
+import RecordsPanel, { type RecordsTaintOverlay, type RecordsTaintOverlayMode, type RecordsVisibleNavigator } from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
 import SettingsPanel from "./panels/settings/SettingsPanel";
 import SoFilterPanel from "./panels/sofilter/SoFilterPanel";
@@ -164,6 +164,7 @@ export default function App() {
   // forced CfgPanel to wait for /api/record). Cache miss falls through to
   // the cursorRecord resource below.
   const rowHintCache = new Map<number, CursorRecordHint>();
+  let recordsVisibleNavigator: RecordsVisibleNavigator | null = null;
   const [rowHintCacheSize, setRowHintCacheSize] = createSignal(0);
   const [rowHintCacheVersion, setRowHintCacheVersion] = createSignal(0);
   function rememberRows(rows: RecordRow[]) {
@@ -343,6 +344,11 @@ export default function App() {
 
   function jumpToIdx(idx: number) {
     setSelectedIdx(clampIdx(idx));
+  }
+
+  function jumpVisible(delta: number) {
+    const next = recordsVisibleNavigator?.nextVisibleIdx(selectedIdx(), delta) ?? selectedIdx() + delta;
+    jumpToIdx(next);
   }
 
   createEffect(() => {
@@ -820,16 +826,16 @@ export default function App() {
       if (isEditableTarget(e.target)) return;
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
-        jumpToIdx(selectedIdx() + 1);
+        jumpVisible(1);
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
-        jumpToIdx(selectedIdx() - 1);
+        jumpVisible(-1);
       } else if (e.key === "PageDown") {
         e.preventDefault();
-        jumpToIdx(selectedIdx() + 20);
+        jumpVisible(20);
       } else if (e.key === "PageUp") {
         e.preventDefault();
-        jumpToIdx(selectedIdx() - 20);
+        jumpVisible(-20);
       } else if (e.key === "Home") {
         e.preventDefault();
         jumpToIdx(0);
@@ -1144,6 +1150,9 @@ export default function App() {
               onOpenMemory={openMemoryAt}
               onRunTaint={runTaintFrom}
               onRowsLoaded={rememberRows}
+              onVisibleNavigator={(navigator) => {
+                recordsVisibleNavigator = navigator;
+              }}
               taintOverlay={taintOverlay()}
               onTaintOverlayModeChange={setTaintOverlayMode}
               onClearTaintOverlay={() => setTaintOverlay(null)}

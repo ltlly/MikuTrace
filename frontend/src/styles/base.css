@@ -612,6 +612,7 @@ body.is-resizing {
 .row-fold-btn {
   width: 14px;
   height: 14px;
+  flex: 0 0 14px;
   padding: 0;
   color: var(--dim);
   background: transparent;
@@ -627,30 +628,33 @@ body.is-resizing {
 }
 
 .fold-summary {
-  grid-column: 5;
-  justify-self: end;
-  padding-left: 8px;
+  grid-column: 6;
+  justify-self: stretch;
+  min-width: 0;
+  padding-left: 6px;
   color: var(--warn);
-  background: linear-gradient(90deg, transparent, var(--bg) 20%);
+  border-left: 1px solid rgba(110, 118, 129, 0.45);
+  background: transparent;
   font-size: 11px;
-  pointer-events: none;
-}
-
-.row-note {
-  grid-column: 5;
-  justify-self: end;
-  max-width: min(42%, 520px);
-  padding-left: 18px;
-  color: var(--fg);
-  background: linear-gradient(90deg, transparent, var(--bg) 24%);
-  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
 }
 
 #stream .records-row .idx { color: var(--dim); }
 #stream .records-row .pc { color: var(--accent2); }
 #stream .records-row .func { color: var(--good); }
+#stream .records-row .asm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 #stream .records-row .asm code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: transparent;
   padding: 0;
 }
@@ -662,6 +666,36 @@ body.is-resizing {
 
 #stream .records-row.selected {
   background: var(--hl);
+}
+
+#stream .records-row.reg-flow-source {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+#stream .records-row.reg-flow-def:not(.selected) {
+  background: rgba(248, 81, 73, 0.1);
+  box-shadow: inset 2px 0 0 var(--err);
+}
+
+#stream .records-row.reg-flow-use:not(.selected) {
+  background: rgba(63, 185, 80, 0.1);
+  box-shadow: inset 2px 0 0 var(--good);
+}
+
+#stream .records-row.has-note,
+#stream .records-row.has-fold-summary {
+  grid-template-columns: var(--col-dot) var(--col-idx) var(--col-pc) var(--col-func) minmax(120px, 1fr) minmax(96px, min(28%, 280px));
+}
+
+.row-note {
+  grid-column: 6;
+  justify-self: stretch;
+  padding-left: 6px;
+  color: var(--fg);
+  border-left: 1px solid rgba(110, 118, 129, 0.45);
+  background: transparent;
+  font-size: 11px;
+  pointer-events: none;
 }
 
 #stream .records-row.range-selected:not(.selected) {
@@ -790,6 +824,31 @@ body.is-resizing {
   font-weight: 700;
 }
 
+.reg-flow-arrow {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.reg-flow-arrow.def {
+  color: var(--err);
+}
+
+.reg-flow-arrow.use {
+  color: var(--good);
+}
+
+.reg-flow-arrow.def-use {
+  color: var(--warn);
+}
+
+.records-reg-flow-status {
+  color: var(--fg);
+}
+
 #stream .records-row.so-hidden {
   display: none;
 }
@@ -800,7 +859,7 @@ body.is-resizing {
 
 .op-reg {
   color: var(--accent);
-  cursor: context-menu;
+  cursor: pointer;
 }
 
 .op-reg:hover {
@@ -812,6 +871,39 @@ body.is-resizing {
   color: var(--fg);
   background: rgba(88, 166, 255, 0.22);
   box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+.reg-flow-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin: 0 2px;
+  vertical-align: baseline;
+}
+
+.reg-flow-inline-btn {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 11px;
+  cursor: pointer;
+}
+
+.reg-flow-inline-btn.def {
+  color: var(--err);
+}
+
+.reg-flow-inline-btn.use {
+  color: var(--good);
+}
+
+.reg-flow-inline-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
 }
 
 .tok-key      { color: #ff7b72; }
@@ -880,6 +972,35 @@ body.is-resizing {
   background: var(--bg2);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   padding: 8px;
+}
+
+.fn-context-menu {
+  position: fixed;
+  z-index: 132;
+  width: 220px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+}
+
+.fn-context-menu button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+  padding: 2px 6px;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fn-context-menu button:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
 }
 
 .row-context-menu button:not(.row-mark-swatch) {

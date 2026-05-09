@@ -325,6 +325,26 @@ fn inspect_wrappers_use_server_wire_shape() {
     assert_eq!(v["before"], serde_json::json!([0]));
 
     let v = run_json(&[
+        "last-write-of-reg".into(),
+        cd.display().to_string(),
+        "--reg".into(),
+        "x2".into(),
+        "--before".into(),
+        "4".into(),
+    ]);
+    assert_eq!(v["idx"], 1);
+
+    let v = run_json(&[
+        "next-use-of-reg".into(),
+        cd.display().to_string(),
+        "--reg".into(),
+        "x1".into(),
+        "--after".into(),
+        "0".into(),
+    ]);
+    assert_eq!(v["idx"], 1);
+
+    let v = run_json(&[
         "search-asm".into(),
         cd.display().to_string(),
         "ret".into(),

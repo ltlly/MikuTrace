@@ -359,3 +359,213 @@ async fn last_write_of_reg_finds_last_def() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(v["idx"].is_null(), "non-existent reg should return null");
 }
+
+#[tokio::test]
+async fn next_use_of_reg_finds_next_use() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_3r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * 3];
+    let pcs = [0x100000u64, 0x100004, 0x100008];
+    let insts = [
+        0xaa0103e0u32, // mov x0, x1
+        0xaa0003e2u32, // mov x2, x0
+        0xaa0003e3u32, // mov x3, x0
+    ];
+    for (i, (pc, inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        if i == 1 {
+            buf[off + 8..off + 16].copy_from_slice(&0x1111u64.to_le_bytes());
+        } else if i == 2 {
+            buf[off + 8..off + 16].copy_from_slice(&0x2222u64.to_le_bytes());
+        }
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":3}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let app = tracemiku_server::build_router(cd).expect("build router");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x0&after=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["value"], "0x1111");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x0&after=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 2);
+    assert_eq!(v["value"], "0x2222");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=w0&after=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x0&after=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        v["idx"].is_null(),
+        "no use after the last x0 use should return null"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x0&cursor=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x99&after=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["idx"].is_null(), "non-existent reg should return null");
+}
+
+#[tokio::test]
+async fn reg_flow_routes_normalize_fp_lr_aliases() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_4r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * 4];
+    let insts = [
+        0xaa0003fdu32, // mov x29, x0
+        0xaa1d03e2u32, // mov x2, x29
+        0xaa0003feu32, // mov x30, x0
+        0xaa1e03e2u32, // mov x2, x30
+    ];
+    for (i, inst) in insts.iter().enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&(0x100000u64 + i as u64 * 4).to_le_bytes());
+        if i == 1 {
+            buf[off + 240..off + 248].copy_from_slice(&0x2929u64.to_le_bytes());
+        } else if i == 3 {
+            buf[off + 248..off + 256].copy_from_slice(&0x3030u64.to_le_bytes());
+        }
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let app = tracemiku_server::build_router(cd).expect("build router");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/last-write-of-reg?reg=x29&before=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 0);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x29&after=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
+    assert_eq!(v["value"], "0x2929");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/next-use-of-reg?reg=x30&after=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["idx"].as_u64().unwrap_or(99), 3);
+    assert_eq!(v["value"], "0x3030");
+}

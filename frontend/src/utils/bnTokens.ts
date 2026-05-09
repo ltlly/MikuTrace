@@ -4,8 +4,8 @@ const REG_RE_FULL = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|3[01])|w(?:[0-9]|1[0-9]|2[0-9]|
 
 export function normalizeReg(reg: string): string {
   const r = reg.toLowerCase();
-  if (r === "fp") return "x29";
-  if (r === "lr") return "x30";
+  if (r === "fp" || r === "x29" || r === "w29") return "fp";
+  if (r === "lr" || r === "x30" || r === "w30") return "lr";
   if (r === "wzr") return "xzr";
   if (r.startsWith("w") && /^w(?:[0-9]|1[0-9]|2[0-9]|3[01])$/.test(r)) return `x${r.slice(1)}`;
   return r;

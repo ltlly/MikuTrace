@@ -247,6 +247,14 @@ enum Cmd {
         #[arg(long)]
         cursor: Option<usize>,
     },
+    /// GET /api/next-use-of-reg.
+    NextUseOfReg {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        reg: String,
+        #[arg(long)]
+        after: Option<usize>,
+    },
     /// GET /api/functions.
     Functions { trace_dir: PathBuf },
     /// GET /api/fork-events.
@@ -1400,6 +1408,17 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("cursor", cursor.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/last-write-of-reg", &params)).await
+        }
+        Some(Cmd::NextUseOfReg {
+            trace_dir,
+            reg,
+            after,
+        }) => {
+            let mut params = vec![("reg", reg)];
+            if let Some(after) = after {
+                params.push(("after", after.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/next-use-of-reg", &params)).await
         }
         Some(Cmd::Functions { trace_dir }) => {
             route_get_json(trace_dir, "/api/functions".to_string()).await

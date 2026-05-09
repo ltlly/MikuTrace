@@ -3,6 +3,8 @@
 use crate::llil::expr::{LlilExpr, LlilOp, LlilOperand};
 use crate::llil::VarNameMap;
 
+const MAX_RENDERED_NEGATIVE_ADDEND: u64 = 0x10000;
+
 pub fn render_llil_block(exprs: &[LlilExpr]) -> String {
     render_llil_block_with_names(exprs, &VarNameMap::new())
 }
@@ -81,7 +83,10 @@ fn render_expr_with_names(e: &LlilExpr, names: &VarNameMap) -> String {
         op if binary_symbol(op).is_some() => {
             if e.op == LlilOp::Add {
                 if let (Some(left), Some(right)) = (e.operands.first(), e.operands.get(1)) {
-                    if let Some(magnitude) = negative_addend(right) {
+                    let right_rendered = render_operand(Some(right), names);
+                    if let Some(magnitude) =
+                        negative_addend(right).or_else(|| negative_rendered_addend(&right_rendered))
+                    {
                         return format!(
                             "({} - {})",
                             render_operand(Some(left), names),
@@ -139,16 +144,32 @@ fn render_operand(op: Option<&LlilOperand>, names: &VarNameMap) -> String {
 
 fn negative_addend(op: &LlilOperand) -> Option<u64> {
     match op {
-        LlilOperand::Imm(v) if *v < 0 => Some(v.unsigned_abs()),
-        LlilOperand::U64(v) => {
-            let signed = *v as i64;
-            (signed < 0).then(|| signed.unsigned_abs())
+        LlilOperand::Imm(v) if *v < 0 => {
+            let magnitude = v.unsigned_abs();
+            (magnitude <= MAX_RENDERED_NEGATIVE_ADDEND).then_some(magnitude)
         }
+        LlilOperand::U64(v) => negative_u64_addend(*v),
         LlilOperand::Expr(e) if matches!(e.op, LlilOp::Const | LlilOp::ConstPtr) => {
             e.operands.first().and_then(negative_addend)
         }
         _ => None,
     }
+}
+
+fn negative_rendered_addend(s: &str) -> Option<u64> {
+    let trimmed = s.trim().trim_start_matches('(').trim_end_matches(')');
+    let raw = trimmed.strip_prefix("0x")?;
+    let value = u64::from_str_radix(raw, 16).ok()?;
+    negative_u64_addend(value)
+}
+
+fn negative_u64_addend(value: u64) -> Option<u64> {
+    let signed = value as i64;
+    if signed >= 0 {
+        return None;
+    }
+    let magnitude = signed.unsigned_abs();
+    (magnitude <= MAX_RENDERED_NEGATIVE_ADDEND).then_some(magnitude)
 }
 
 fn format_signed_literal(v: i64, hex_threshold: u64) -> String {
@@ -221,7 +242,7 @@ fn c_type(size: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::llil::expr::{
-        binary, expr as operand_expr, konst, reg, set_reg, LlilExpr, LlilOp, LlilOperand,
+        binary, const_ptr, expr as operand_expr, konst, reg, set_reg, LlilExpr, LlilOp, LlilOperand,
     };
 
     use super::*;
@@ -281,6 +302,44 @@ mod tests {
         let load = LlilExpr::new(LlilOp::Load, 4, vec![operand_expr(addr)], 0);
         let stmt = set_reg("x8#27", load, 0x1000);
         assert_eq!(render_stmt(&stmt), "x8_27 = *(uint32_t *)((fp_2 - 0x1c));");
+    }
+
+    #[test]
+    fn renders_store_constptr_stack_offsets_as_subtraction() {
+        let addr = binary(LlilOp::Add, reg("fp#2"), const_ptr(0xffff_ffff_ffff_fff4));
+        let stmt = LlilExpr::new(
+            LlilOp::Store,
+            4,
+            vec![operand_expr(addr), operand_expr(reg("x8#17"))],
+            0x1000,
+        );
+        assert_eq!(render_stmt(&stmt), "*(uint32_t *)((fp_2 - 0xc)) = x8_17;");
+    }
+
+    #[test]
+    fn rendered_negative_addend_only_accepts_sign_extended_offsets() {
+        assert_eq!(negative_rendered_addend("0xfffffffffffffff4"), Some(0xc));
+        assert_eq!(negative_rendered_addend("0xffffffff80000000"), None);
+        assert_eq!(negative_rendered_addend("0xffffffff00000001"), None);
+        assert_eq!(negative_rendered_addend("0x8000000000000001"), None);
+    }
+
+    #[test]
+    fn u64_negative_addend_rejects_wide_offsets() {
+        let stmt = set_reg(
+            "x0#0",
+            LlilExpr::new(
+                LlilOp::Add,
+                8,
+                vec![
+                    operand_expr(reg("fp#2")),
+                    LlilOperand::U64(0xffff_ffff_8000_0000),
+                ],
+                0,
+            ),
+            0x1000,
+        );
+        assert_eq!(render_stmt(&stmt), "x0_0 = (fp_2 + 0xffffffff80000000);");
     }
 
     #[test]

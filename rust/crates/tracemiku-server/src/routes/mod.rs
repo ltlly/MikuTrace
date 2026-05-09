@@ -37,6 +37,7 @@ pub mod mem_flow;
 pub mod memory_query;
 pub mod meta;
 pub mod navigation;
+pub mod next_use_of_reg;
 pub mod ollvm_detect_vm;
 pub mod query;
 pub mod record;
@@ -138,6 +139,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),
+        )
+        .route(
+            "/api/next-use-of-reg",
+            get(next_use_of_reg::next_use_of_reg_handler),
         )
         .route("/api/reg-value-at", get(reg_value_at::reg_value_at_handler))
         .route("/api/reg-at-idx", get(reg_value_at::reg_value_at_handler))

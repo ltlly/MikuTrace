@@ -203,6 +203,7 @@ fn openapi_paths() -> Value {
         ("/api/string-provenance", "get"),
         ("/api/mem-dump", "get"),
         ("/api/last-write-of-reg", "get"),
+        ("/api/next-use-of-reg", "get"),
         ("/api/last-write-of-addr", "get"),
         ("/api/mem-writes-in-range", "get"),
         ("/api/idxs-touching-addr", "get"),

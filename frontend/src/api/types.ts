@@ -399,7 +399,7 @@ export interface TraceQueryResponse {
   request_limit?: number;
 }
 
-// ── /api/reg-value-at, /api/last-write-of-reg ────────────────────────────
+// ── /api/reg-value-at, /api/last-write-of-reg, /api/next-use-of-reg ───────
 
 export interface RegValueAtResponse {
   status: string;
@@ -411,6 +411,13 @@ export interface RegValueAtResponse {
 }
 
 export interface LastWriteOfRegResponse {
+  status?: string;
+  idx: number | null;
+  value?: string | null;
+  err?: string;
+}
+
+export interface NextUseOfRegResponse {
   status?: string;
   idx: number | null;
   value?: string | null;

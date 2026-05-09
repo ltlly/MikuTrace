@@ -1,4 +1,4 @@
-import { createResource, Show, For } from "solid-js";
+import { createEffect, createResource, createSignal, onCleanup, Show, For } from "solid-js";
 import { fetchFunctions } from "~/api/client";
 import type { Accessor } from "solid-js";
 import type { FunctionEntry } from "~/api/types";
@@ -25,10 +25,28 @@ export interface FunctionsPanelProps {
 }
 
 export default function FunctionsPanel(props: FunctionsPanelProps) {
+  const [fnContext, setFnContext] = createSignal<{ x: number; y: number; fn: FunctionEntry } | null>(null);
   const [resp] = createResource(
     () => (props.active ? "active" : undefined),
     () => fetchFunctions(),
   );
+  createEffect(() => {
+    if (!fnContext()) return;
+    const closeOnPointer = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest(".fn-context-menu")) return;
+      setFnContext(null);
+    };
+    const closeOnKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFnContext(null);
+    };
+    document.addEventListener("pointerdown", closeOnPointer);
+    document.addEventListener("keydown", closeOnKey);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOnPointer);
+      document.removeEventListener("keydown", closeOnKey);
+    });
+  });
   return (
     <section class="panel">
       <h2>Functions</h2>
@@ -66,14 +84,19 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                   return (
                     <li
                       class={props.selectedFn() === fn.id ? "selected" : ""}
-                      title={renamed() ? `orig ${fn.name}` : "right-click to rename"}
+                      title={renamed() ? `orig ${fn.name}` : undefined}
                       onClick={() => props.onSelectFn(fn)}
                       onDblClick={() => props.onJumpFn?.(fn)}
                       onContextMenu={(e) => {
                         if (!props.onRenameFn) return;
                         e.preventDefault();
                         e.stopPropagation();
-                        props.onRenameFn(fn);
+                        props.onSelectFn(fn);
+                        setFnContext({
+                          x: Math.min(e.clientX, window.innerWidth - 220),
+                          y: Math.min(e.clientY, window.innerHeight - 120),
+                          fn,
+                        });
                       }}
                     >
                       <span class="fn-source-tag" title={SOURCE_TITLES[fn.source] ?? fn.source}>
@@ -107,6 +130,27 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                 }}
               </For>
             </ul>
+            <Show when={fnContext()}>
+              {(ctx) => (
+                <div
+                  class="fn-context-menu"
+                  style={{ left: `${ctx().x}px`, top: `${ctx().y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.preventDefault()}
+                >
+                  <div class="memory-context-title">{props.renames?.().get(ctx().fn.id) ?? ctx().fn.name}</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      props.onRenameFn?.(ctx().fn);
+                      setFnContext(null);
+                    }}
+                  >
+                    rename
+                  </button>
+                </div>
+              )}
+            </Show>
           </>
         )}
       </Show>

@@ -85,13 +85,13 @@ def main() -> int:
         'window.addEventListener("keydown", onKey)' in app
         and 'if (isEditableTarget(e.target)) return' in app
         and 'e.key === "j" || e.key === "ArrowDown"' in app
-        and "jumpToIdx(selectedIdx() + 1)" in app
+        and "jumpVisible(1)" in app
         and 'e.key === "k" || e.key === "ArrowUp"' in app
-        and "jumpToIdx(selectedIdx() - 1)" in app
+        and "jumpVisible(-1)" in app
         and 'e.key === "PageDown"' in app
-        and "jumpToIdx(selectedIdx() + 20)" in app
+        and "jumpVisible(20)" in app
         and 'e.key === "PageUp"' in app
-        and "jumpToIdx(selectedIdx() - 20)" in app
+        and "jumpVisible(-20)" in app
         and 'e.key === "Home"' in app
         and "jumpToIdx(0)" in app
         and 'e.key === "End" || e.key === "G"' in app

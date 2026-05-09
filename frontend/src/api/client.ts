@@ -23,6 +23,7 @@ import type {
   SearchResponse,
   RegValueAtResponse,
   LastWriteOfRegResponse,
+  NextUseOfRegResponse,
   CallTreeResponse,
   BacktraceResponse,
   ForkEventsResponse,
@@ -390,11 +391,23 @@ export async function fetchRegValueAt(
 export async function fetchLastWriteOfReg(
   before: number,
   reg: string,
+  signal?: AbortSignal,
 ): Promise<LastWriteOfRegResponse> {
   const params = new URLSearchParams({ before: String(before), reg });
-  const r = await fx(`/api/last-write-of-reg?${params}`);
+  const r = await fx(`/api/last-write-of-reg?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/last-write-of-reg ${r.status}: ${await r.text()}`);
   return (await r.json()) as LastWriteOfRegResponse;
+}
+
+export async function fetchNextUseOfReg(
+  after: number,
+  reg: string,
+  signal?: AbortSignal,
+): Promise<NextUseOfRegResponse> {
+  const params = new URLSearchParams({ after: String(after), reg });
+  const r = await fx(`/api/next-use-of-reg?${params}`, { signal });
+  if (!r.ok) throw new Error(`/api/next-use-of-reg ${r.status}: ${await r.text()}`);
+  return (await r.json()) as NextUseOfRegResponse;
 }
 
 export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {

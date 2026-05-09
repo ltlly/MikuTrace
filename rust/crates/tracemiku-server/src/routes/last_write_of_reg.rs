@@ -6,6 +6,7 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use tracemiku_core::disasm::normalize_disasm_reg;
 
 use crate::state::AppState;
 
@@ -31,13 +32,15 @@ pub async fn last_write_of_reg_handler(
         .before
         .or(q.cursor)
         .unwrap_or_else(|| state.inner.trace.len());
-    let idx = state.inner.index.last_def_before(&q.reg, before);
+    let canon = normalize_disasm_reg(&q.reg);
+    let reg = if canon.is_empty() { q.reg } else { canon };
+    let idx = state.inner.index.last_def_before(&reg, before);
     let value = if before < state.inner.trace.len() {
         state
             .inner
             .trace
             .record(before)
-            .reg_by_name(&q.reg)
+            .reg_by_name(&reg)
             .map(|v| format!("{v:#x}"))
     } else {
         None

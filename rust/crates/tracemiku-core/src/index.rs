@@ -221,6 +221,14 @@ impl Index {
             }
         }
     }
+
+    /// First use index for `reg` strictly after `cursor`. Binary search.
+    /// Returns None if `reg` has no uses after cursor.
+    pub fn next_use_after(&self, reg: &str, cursor: usize) -> Option<usize> {
+        let uses = self.reg_uses.get(reg)?;
+        let i = uses.partition_point(|&idx| idx <= cursor);
+        uses.get(i).copied()
+    }
 }
 
 /// Planned worker count for [`Index::build`] at `n` records.
