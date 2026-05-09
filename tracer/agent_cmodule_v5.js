@@ -23,6 +23,17 @@ const STATE = {
     ringBuf: null,
     headBuf: null, tailBuf: null, droppedBuf: null,
     ringRecsBuf: null,
+    simdSidecar: false,
+    simdSampleStride: 1,
+    simdRingBuf: null,
+    simdHeadBuf: null, simdTailBuf: null, simdDroppedBuf: null,
+    simdRingRecsBuf: null, simdStrideBuf: null,
+    simdTraceFile: null, simdTraceFilePath: null,
+    semanticEvents: false,
+    semanticEventBuf: [],
+    semanticHooksInstalled: false,
+    semanticEventSeq: 0,
+    onSvcEventCb: null,
     flushTimer: null, hbTimer: null, batchSeq: 0, started: 0, callIdx: 0, primaryTid: 0,
     traceFile: null, traceFilePath: null, traceDir: null,
     lastTotal: 0, stuckSecs: 0, stuckThreshold: 15,
@@ -30,6 +41,9 @@ const STATE = {
 const REC_SIZE = 272;
 const RING_RECS = 65536;             // ~17.6 MB
 const RING_BYTES = REC_SIZE * RING_RECS;
+const SIMD_REC_SIZE = 8 + 32 * 16;   // trace_idx:u64 + q0..q31, each 128-bit
+const SIMD_RING_RECS = 8192;         // ~4.1 MB, optional sidecar only
+const SIMD_RING_BYTES = SIMD_REC_SIZE * SIMD_RING_RECS;
 const FLUSH_INTERVAL_MS = 10;
 
 // HARD_EXCL: atomic deadlock / early-init / re-entrant — NEVER trace these
@@ -110,6 +124,50 @@ function buildCModule() {
     //   - 兜底: head/tail 是 volatile, ring writes 完成后 head 写, 现代 ARM64 (Cortex-A78/X1
     //     in Pixel 7) 在 untrained code 上 store buffer drain 通常 < 100 cycles. v8 flush
     //     间隔 10ms = 数百万 cycles, race window 极小, 基本不丢.
+    const simdDecls = STATE.simdSidecar ? `
+#define SIMD_REC 520
+#define C_ASSERT(name, expr) typedef char c_assert_##name[(expr) ? 1 : -1]
+extern unsigned char simd_ring[];
+extern unsigned long long simd_ring_recs;
+extern unsigned long long simd_stride;
+extern volatile unsigned long long simd_head;
+extern volatile unsigned long long simd_tail;
+extern volatile unsigned long long simd_dropped;
+C_ASSERT(simd_rec_size, SIMD_REC == 520);
+C_ASSERT(arm64_vector_reg_size, sizeof(((GumCpuContext *) 0)->v[0]) == 16);
+C_ASSERT(arm64_vector_q_size, sizeof(((GumCpuContext *) 0)->v[0].q) == 16);
+C_ASSERT(arm64_vector_count, sizeof(((GumCpuContext *) 0)->v) == (32 * 16));
+
+static void write_simd_snapshot(GumCpuContext *ctx, unsigned long long trace_idx) {
+    if (simd_stride > 1 && (trace_idx % simd_stride) != 0) return;
+    unsigned long long h = simd_head;
+    unsigned long long t = simd_tail;
+    if (h - t >= simd_ring_recs) { simd_dropped = simd_dropped + 1; return; }
+    unsigned char *p = simd_ring + ((h % simd_ring_recs) * SIMD_REC);
+    *(unsigned long long *)(p + 0) = trace_idx;
+    for (int i = 0; i < 32; i++) {
+        memcpy(p + 8 + (i * 16), ctx->v[i].q, 16);
+    }
+    simd_head = h + 1;
+}
+` : "";
+    const semanticDecls = STATE.semanticEvents ? `
+extern void on_svc_event(unsigned long long idx,
+                         unsigned long long pc,
+                         unsigned long long nr,
+                         unsigned long long x0,
+                         unsigned long long x1,
+                         unsigned long long x2,
+                         unsigned long long x3,
+                         unsigned long long x4,
+                         unsigned long long x5);
+` : "";
+    const simdWrite = STATE.simdSidecar ? `    write_simd_snapshot(ctx, h);\n` : "";
+    const semanticWrite = STATE.semanticEvents ? `
+    if ((inst & 0xffe0001fU) == 0xd4000001U) {
+        on_svc_event(h, cu[0], cu[3+8], cu[3+0], cu[3+1], cu[3+2], cu[3+3], cu[3+4], cu[3+5]);
+    }
+` : "";
     const src = `
 #include <gum/gumstalker.h>
 #include <string.h>
@@ -121,6 +179,8 @@ extern unsigned long long ring_recs;
 extern volatile unsigned long long head;
 extern volatile unsigned long long tail;
 extern volatile unsigned long long dropped;
+${simdDecls}
+${semanticDecls}
 
 void on_insn(GumCpuContext *ctx, void *user_data) {
     unsigned long long h = head;       /* 64-bit aligned read on ARM64 = atomic */
@@ -141,19 +201,33 @@ void on_insn(GumCpuContext *ctx, void *user_data) {
     *(unsigned int *)(p + 264) = (unsigned int)(cu[2] & 0xffffffffULL);
     /* inst: 读 pc 处 4 字节机器码. 历史 bug: 旧代码硬编码 0, 导致 viewer/CLI 全部
        解码成 'udf #0'. ARM64 fixed-width 4-byte insns, *(uint32_t *)pc 对齐安全. */
-    *(unsigned int *)(p + 268) = *(unsigned int *)cu[0];
+    unsigned int inst = *(unsigned int *)cu[0];
+    *(unsigned int *)(p + 268) = inst;
+${simdWrite}${semanticWrite}
     head = h + 1;     /* volatile store. ARM64 store buffer drain ≪ v8 flush 间隔, 实际无 race */
 }
 `;
-    STATE.cm = new CModule(src, {
+    const symbols = {
         ring: STATE.ringBuf,
         ring_recs: STATE.ringRecsBuf,
         head: STATE.headBuf,
         tail: STATE.tailBuf,
         dropped: STATE.droppedBuf,
-    });
+    };
+    if (STATE.simdSidecar) {
+        symbols.simd_ring = STATE.simdRingBuf;
+        symbols.simd_ring_recs = STATE.simdRingRecsBuf;
+        symbols.simd_stride = STATE.simdStrideBuf;
+        symbols.simd_head = STATE.simdHeadBuf;
+        symbols.simd_tail = STATE.simdTailBuf;
+        symbols.simd_dropped = STATE.simdDroppedBuf;
+    }
+    if (STATE.semanticEvents) {
+        symbols.on_svc_event = STATE.onSvcEventCb;
+    }
+    STATE.cm = new CModule(src, symbols);
     STATE.onInsnPtr = STATE.cm.on_insn;
-    log(`[+] CModule loaded: on_insn @ ${STATE.cm.on_insn} (SPSC lock-free, spin ≤ 200ms)`);
+    log(`[+] CModule loaded: on_insn @ ${STATE.cm.on_insn} (SPSC lock-free, simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"})`);
 }
 
 function ensureTraceDir() {
@@ -180,12 +254,28 @@ function openTraceFile(callIdx, tid) {
     STATE.traceFile = new File(path, "wb");
     STATE.traceFilePath = path;
     log(`[+] trace 文件 = ${path}`);
+    if (STATE.simdSidecar) {
+        const simdPath = `${STATE.traceDir}/simd_trace_call${callIdx}_tid${tid}.bin`;
+        STATE.simdTraceFile = new File(simdPath, "wb");
+        STATE.simdTraceFilePath = simdPath;
+        log(`[+] SIMD sidecar 文件 = ${simdPath} (record=${SIMD_REC_SIZE} stride=${STATE.simdSampleStride})`);
+    } else {
+        STATE.simdTraceFile = null;
+        STATE.simdTraceFilePath = null;
+    }
 }
 
 function closeTraceFile() {
     if (STATE.traceFile) {
         try { STATE.traceFile.close(); } catch (_) {}
         STATE.traceFile = null;
+    }
+}
+
+function closeSimdTraceFile() {
+    if (STATE.simdTraceFile) {
+        try { STATE.simdTraceFile.close(); } catch (_) {}
+        STATE.simdTraceFile = null;
     }
 }
 
@@ -220,10 +310,35 @@ function flushRingToDisk(reason) {
     STATE.batchSeq++;
 }
 
+function flushSimdRingToDisk(reason) {
+    if (!STATE.simdSidecar || !STATE.simdTraceFile) return;
+    const h = STATE.simdHeadBuf.readU64().toNumber();
+    const t = STATE.simdTailBuf.readU64().toNumber();
+    const avail = h - t;
+    if (avail <= 0) return;
+    const tOff = t % SIMD_RING_RECS;
+    const hOff = h % SIMD_RING_RECS;
+    if (avail >= SIMD_RING_RECS) {
+        STATE.simdTraceFile.write(STATE.simdRingBuf.add(tOff * SIMD_REC_SIZE).readByteArray((SIMD_RING_RECS - tOff) * SIMD_REC_SIZE));
+        if (tOff > 0) {
+            STATE.simdTraceFile.write(STATE.simdRingBuf.readByteArray(tOff * SIMD_REC_SIZE));
+        }
+    } else if (hOff > tOff) {
+        STATE.simdTraceFile.write(STATE.simdRingBuf.add(tOff * SIMD_REC_SIZE).readByteArray(avail * SIMD_REC_SIZE));
+    } else {
+        STATE.simdTraceFile.write(STATE.simdRingBuf.add(tOff * SIMD_REC_SIZE).readByteArray((SIMD_RING_RECS - tOff) * SIMD_REC_SIZE));
+        if (hOff > 0) {
+            STATE.simdTraceFile.write(STATE.simdRingBuf.readByteArray(hOff * SIMD_REC_SIZE));
+        }
+    }
+    STATE.simdTailBuf.writeU64(h);
+}
+
 function ensureFlushTimer() {
     if (STATE.flushTimer) return;
     STATE.flushTimer = setInterval(() => {
         flushRingToDisk("interval");
+        flushSimdRingToDisk("interval");
     }, FLUSH_INTERVAL_MS);
     if (!STATE.hbTimer) {
         STATE.hbTimer = setInterval(() => {
@@ -241,15 +356,23 @@ function ensureFlushTimer() {
                     try { Stalker.unfollow(STATE.primaryTid); } catch(_){}
                     try { Stalker.flush(); } catch(_){}
                     flushRingToDisk("watchdog");
+                    flushSimdRingToDisk("watchdog");
                     closeTraceFile();
+                    closeSimdTraceFile();
                     const ms = Date.now() - STATE.started;
                     try { flushJniStringEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
+                    try { flushSemanticEvents(STATE.callIdx); } catch (e) { log(`[!] flushSemantic: ${e}`); }
                     try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
                     try { flushForkEvents(STATE.callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
                     send({ type: "trace-end", callIdx: STATE.callIdx,
                            tid: STATE.primaryTid, retval: "?",
                            ms, total, dropped, truncated: true,
-                           devicePath: STATE.traceFilePath });
+                           devicePath: STATE.traceFilePath,
+                           simdDevicePath: STATE.simdTraceFilePath,
+                           simdRecords: STATE.simdSidecar ? STATE.simdHeadBuf.readU64().toNumber() : 0,
+                           simdDropped: STATE.simdSidecar ? STATE.simdDroppedBuf.readU64().toNumber() : 0,
+                           simdRecordSize: SIMD_REC_SIZE,
+                           simdSampleStride: STATE.simdSampleStride });
                     STATE.fnEntered = false;
                     STATE.stuckSecs = 0;
                 }
@@ -719,6 +842,169 @@ function getJNIEnvDirect() {
 // 对 cstring/utf16/bytes 这种内存读类型, 先 untag (mask top byte 0x00ffff...).
 const _PTR_UNTAG_MASK = ptr("0x00ffffffffffffff");
 
+const ARM64_SYSCALL_NAMES = {
+    56: "openat", 57: "close", 62: "lseek", 63: "read", 64: "write",
+    65: "readv", 66: "writev", 67: "pread64", 68: "pwrite64",
+    78: "readlinkat", 79: "newfstatat", 93: "exit", 94: "exit_group",
+    131: "tgkill", 134: "rt_sigaction", 135: "rt_sigprocmask",
+    172: "getpid", 178: "gettid", 198: "socket", 203: "connect",
+    215: "munmap", 220: "clone", 221: "execve", 222: "mmap",
+    226: "mprotect", 260: "wait4", 278: "getrandom", 283: "memfd_create",
+};
+
+function syscallName(nr) {
+    const n = Number(nr);
+    return ARM64_SYSCALL_NAMES[n] || `syscall_${nr}`;
+}
+
+function currentTraceIdx() {
+    try { return STATE.headBuf.readU64().toNumber(); } catch (_) { return 0; }
+}
+
+function ptrToStringMaybe(p, maxLen) {
+    if (!p || p.isNull()) return null;
+    try { return p.readUtf8String(); } catch (_) {}
+    try { return p.readUtf8String(maxLen || 160); } catch (_) {}
+    try { return p.and(_PTR_UNTAG_MASK).readUtf8String(); } catch (_) {}
+    try { return p.and(_PTR_UNTAG_MASK).readUtf8String(maxLen || 160); } catch (_) {}
+    return null;
+}
+
+function pushSemanticEvent(ev) {
+    if (!STATE.semanticEvents || !STATE.fnEntered) return;
+    if (!STATE.semanticEventBuf) STATE.semanticEventBuf = [];
+    const out = ev || {};
+    out.event_id = STATE.semanticEventSeq++;
+    if (out.trace_idx === undefined || out.trace_idx === null) out.trace_idx = currentTraceIdx();
+    if (!out.tid) out.tid = STATE.primaryTid;
+    out.ts_ms = Date.now();
+    STATE.semanticEventBuf.push(out);
+    if (STATE.semanticEventBuf.length >= 128) {
+        flushSemanticEvents(STATE.callIdx);
+    }
+}
+
+function flushSemanticEvents(callIdx) {
+    if (!STATE.semanticEvents || !STATE.semanticEventBuf || STATE.semanticEventBuf.length === 0) return 0;
+    const events = STATE.semanticEventBuf;
+    STATE.semanticEventBuf = [];
+    send({type: "semantic-events", callIdx: callIdx, count: events.length, events: events});
+    return events.length;
+}
+
+function installSemanticHooksOnce() {
+    if (!STATE.semanticEvents || STATE.semanticHooksInstalled) return;
+    const specs = [
+        {name: "syscall", kind: "syscall_wrapper", argc: 7},
+        {name: "open", kind: "libc", argc: 3, strings: {0: "path"}},
+        {name: "openat", kind: "libc", argc: 4, strings: {1: "path"}},
+        {name: "read", kind: "libc", argc: 3},
+        {name: "write", kind: "libc", argc: 3},
+        {name: "pread64", kind: "libc", argc: 4},
+        {name: "pwrite64", kind: "libc", argc: 4},
+        {name: "mmap", kind: "libc", argc: 6},
+        {name: "mmap64", kind: "libc", argc: 6},
+        {name: "mprotect", kind: "libc", argc: 3},
+        {name: "munmap", kind: "libc", argc: 2},
+        {name: "ioctl", kind: "libc", argc: 3},
+        {name: "__system_property_get", kind: "libc", argc: 2, strings: {0: "name"}, outStrings: {1: "value"}},
+    ];
+    let installed = 0;
+    let skipped = 0;
+    for (const spec of specs) {
+        let fp = null;
+        try { fp = getExport(spec.name); } catch (_) {}
+        if (!fp || fp.isNull()) { skipped++; continue; }
+        try {
+            Interceptor.attach(fp, {
+                onEnter(args) {
+                    if (!STATE.fnEntered || this.threadId !== STATE.primaryTid) {
+                        this._skip = true;
+                        return;
+                    }
+                    this._spec = spec;
+                    this._traceIdx = currentTraceIdx();
+                    this._args = {};
+                    this._outStringPtrs = [];
+                    for (let i = 0; i < spec.argc; i++) {
+                        const key = `x${i}`;
+                        this._args[key] = args[i].toString();
+                        if (spec.strings && spec.strings[i]) {
+                            const s = ptrToStringMaybe(args[i], 160);
+                            if (s !== null) this._args[spec.strings[i]] = s;
+                        }
+                        if (spec.outStrings && spec.outStrings[i]) {
+                            this._outStringPtrs.push({name: spec.outStrings[i], ptr: args[i]});
+                        }
+                    }
+                    if (spec.name === "syscall") {
+                        const nr = args[0].toUInt32();
+                        this._args.syscall_nr = nr;
+                        this._args.syscall = syscallName(nr);
+                    }
+                },
+                onLeave(retv) {
+                    if (this._skip) return;
+                    for (const out of this._outStringPtrs || []) {
+                        const s = ptrToStringMaybe(out.ptr, 160);
+                        if (s !== null) this._args[out.name] = s;
+                    }
+                    const kind = this._spec.name === "syscall" ? "syscall" : "libc";
+                    pushSemanticEvent({
+                        kind,
+                        source: this._spec.kind,
+                        name: this._args.syscall || this._spec.name,
+                        trace_idx: this._traceIdx,
+                        args: this._args,
+                        ret: retv.toString(),
+                        tid: this.threadId,
+                    });
+                }
+            });
+            installed++;
+        } catch (e) {
+            log(`[semantic][!] ${spec.name}: ${e}`);
+            skipped++;
+        }
+    }
+    STATE.semanticHooksInstalled = true;
+    log(`[semantic] libc/syscall hooks: ${installed}/${specs.length} installed (${skipped} skipped)`);
+}
+
+function u64Dec(v) {
+    try { return v.toString(); } catch (_) { return String(v); }
+}
+
+function u64Num(v) {
+    const n = parseInt(u64Dec(v), 10);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function createSvcEventCallback() {
+    return new NativeCallback(function(idx, pc, nr, x0, x1, x2, x3, x4, x5) {
+        const nrNum = u64Num(nr);
+        pushSemanticEvent({
+            kind: "syscall",
+            source: "inline_svc",
+            name: syscallName(nrNum),
+            trace_idx: u64Num(idx),
+            pc: u64Dec(pc),
+            syscall_nr: nrNum,
+            args: {
+                x0: u64Dec(x0),
+                x1: u64Dec(x1),
+                x2: u64Dec(x2),
+                x3: u64Dec(x3),
+                x4: u64Dec(x4),
+                x5: u64Dec(x5),
+            },
+            ret: null,
+            note: "inline svc event is captured before execution; return value is visible in the next trace record",
+            tid: STATE.primaryTid,
+        });
+    }, "void", ["uint64", "uint64", "uint64", "uint64", "uint64", "uint64", "uint64", "uint64", "uint64"]);
+}
+
 function _readArgVal(arg, spec) {
     if (!spec || !spec.type) return arg.toString();
     const maxLen = spec.max_len || 256;
@@ -791,11 +1077,21 @@ function _makeJsonHookHandler(spec) {
             for (let i = 0; i < this._spec.args.length; i++) {
                 argsObj[this._spec.args[i].name] = this._argVals[i];
             }
-            STATE.jniHookEvents.push({
+            const event = {
                 id: this._spec.id,
                 trace_idx: head,    // == next record idx in trace.bin
                 args: argsObj,
                 ret: ret,
+            };
+            STATE.jniHookEvents.push(event);
+            pushSemanticEvent({
+                kind: "jni",
+                source: "jni_vtable",
+                name: this._spec.id,
+                trace_idx: head,
+                args: argsObj,
+                ret: ret,
+                tid: this.threadId,
             });
         }
     };
@@ -1033,6 +1329,16 @@ rpc.exports = {
         STATE.hideRwxMaps = !!opts.hideRwxMaps;
         // jniHooks: array of hook specs (parsed from JSON config). null/empty = disabled.
         STATE.jniHookSpecs = Array.isArray(opts.jniHooks) ? opts.jniHooks : null;
+        STATE.semanticEvents = !!opts.semanticEvents;
+        STATE.semanticEventBuf = [];
+        STATE.semanticEventSeq = 0;
+        STATE.semanticHooksInstalled = false;
+        if (STATE.semanticEvents && !STATE.onSvcEventCb) {
+            STATE.onSvcEventCb = createSvcEventCallback();
+        }
+        STATE.simdSidecar = !!opts.simdSidecar;
+        const stride = parseInt(opts.simdSampleStride || 1);
+        STATE.simdSampleStride = Number.isFinite(stride) && stride > 0 ? stride : 1;
         // P1-C M1: opt-in fork hook (libc fork/vfork/clone/__bionic_clone).
         // 默认关 (大部分 app 不 fork; 开了多 1 个 hook 开销). 反调试 fork 场景必开.
         STATE.enableForkHook = !!opts.enableForkHook;
@@ -1042,8 +1348,16 @@ rpc.exports = {
         STATE.tailBuf  = Memory.alloc(8);  STATE.tailBuf.writeU64(0);
         STATE.droppedBuf = Memory.alloc(8); STATE.droppedBuf.writeU64(0);
         STATE.ringRecsBuf = Memory.alloc(8); STATE.ringRecsBuf.writeU64(RING_RECS);
+        if (STATE.simdSidecar) {
+            STATE.simdRingBuf = Memory.alloc(SIMD_RING_BYTES);
+            STATE.simdHeadBuf = Memory.alloc(8); STATE.simdHeadBuf.writeU64(0);
+            STATE.simdTailBuf = Memory.alloc(8); STATE.simdTailBuf.writeU64(0);
+            STATE.simdDroppedBuf = Memory.alloc(8); STATE.simdDroppedBuf.writeU64(0);
+            STATE.simdRingRecsBuf = Memory.alloc(8); STATE.simdRingRecsBuf.writeU64(SIMD_RING_RECS);
+            STATE.simdStrideBuf = Memory.alloc(8); STATE.simdStrideBuf.writeU64(STATE.simdSampleStride);
+        }
 
-        log(`[*] cmodule-v5 SPSC lock-free, ring=${(RING_BYTES/1024/1024).toFixed(1)}MB (${RING_RECS} recs), flush=${FLUSH_INTERVAL_MS}ms, pkg=${STATE.pkg}`);
+        log(`[*] cmodule-v5 SPSC lock-free, ring=${(RING_BYTES/1024/1024).toFixed(1)}MB (${RING_RECS} recs), flush=${FLUSH_INTERVAL_MS}ms, pkg=${STATE.pkg}, simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"}`);
         send({ type: "hello", pid: Process.id, frida: Frida.version, mode: "cmodule-v5-spsc-spool" });
 
         try { buildCModule(); }
@@ -1152,10 +1466,22 @@ function installFnHook(fp, onInsn) {
                 STATE.headBuf.writeU64(0);
                 STATE.tailBuf.writeU64(0);
                 STATE.droppedBuf.writeU64(0);
+                if (STATE.simdSidecar) {
+                    STATE.simdHeadBuf.writeU64(0);
+                    STATE.simdTailBuf.writeU64(0);
+                    STATE.simdDroppedBuf.writeU64(0);
+                }
+                if (STATE.semanticEvents) {
+                    STATE.semanticEventBuf = [];
+                }
                 STATE.batchSeq = 0;
                 openTraceFile(this._callIdx, this._tid);
                 log(`[>] call #${this._callIdx} tid=${this._tid}`);
-                send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started, devicePath: STATE.traceFilePath });
+                send({ type: "trace-begin", callIdx: this._callIdx, tid: this._tid, ts: STATE.started,
+                       devicePath: STATE.traceFilePath,
+                       simdDevicePath: STATE.simdTraceFilePath,
+                       simdRecordSize: SIMD_REC_SIZE,
+                       simdSampleStride: STATE.simdSampleStride });
                 ensureFlushTimer();
                 // B3: 隐藏 RWX 匿名页 from /proc/self/maps reads. 在 Stalker.follow 创建
                 // block cache 之前装好, 反检测就看不到 rwxp 了.
@@ -1178,6 +1504,7 @@ function installFnHook(fp, onInsn) {
                 // Hook libart JNI string fns once we're in a thread that has JNIEnv.
                 // Interceptor (not Stalker) — safe even though libart is HARD_EXCL.
                 try { installJniStringHooksOnce(); } catch(_){}
+                try { installSemanticHooksOnce(); } catch(e) { log("[semantic][!] " + e); }
                 // P1-C M1: hook libc fork/clone family — Tier 1 fork-event 永远记录,
                 // 不依赖 spawn-gating. opt-in via STATE.enableForkHook.
                 if (STATE.enableForkHook) {
@@ -1216,19 +1543,29 @@ function installFnHook(fp, onInsn) {
                 try { Stalker.unfollow(this._tid); } catch(_){}
                 try { Stalker.flush(); } catch(_){}
                 flushRingToDisk("end");
+                flushSimdRingToDisk("end");
                 closeTraceFile();
+                closeSimdTraceFile();
                 const elapsed = Date.now() - STATE.started;
                 const total = STATE.headBuf.readU64().toNumber();
                 const dropped = STATE.droppedBuf.readU64().toNumber();
+                const simdTotal = STATE.simdSidecar ? STATE.simdHeadBuf.readU64().toNumber() : 0;
+                const simdDropped = STATE.simdSidecar ? STATE.simdDroppedBuf.readU64().toNumber() : 0;
                 const rate = (total / Math.max(elapsed/1000, 1e-3)).toFixed(0);
                 // 在 trace-end 前 flush JNI string events 让 host 关联到本 call
                 try { flushJniStringEvents(this._callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
+                try { flushSemanticEvents(this._callIdx); } catch (e) { log(`[!] flushSemantic: ${e}`); }
                 try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
                 try { flushForkEvents(this._callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
                 log(`[<] call #${this._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
                 send({ type: "trace-end", callIdx: this._callIdx, tid: this._tid,
                        retval: retv.toString(), ms: elapsed, total, dropped, truncated: false,
-                       devicePath: STATE.traceFilePath });
+                       devicePath: STATE.traceFilePath,
+                       simdDevicePath: STATE.simdTraceFilePath,
+                       simdRecords: simdTotal,
+                       simdDropped: simdDropped,
+                       simdRecordSize: SIMD_REC_SIZE,
+                       simdSampleStride: STATE.simdSampleStride });
                 STATE.fnEntered = false;
             }
         });

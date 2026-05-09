@@ -91,6 +91,43 @@ trace 结束 (onLeave):
 
 Rust core / server / CLI 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.
 
+## 可选 sidecar
+
+默认 `trace.bin` 仍只保存 272B 主记录. 下面两个 sidecar 都要显式打开, 用来补
+GumTrace 类语义信息, 不改变主 trace 合同.
+
+### SIMD/Q 寄存器 (`--simd-sidecar`)
+
+`--simd-sidecar` 会让 agent 额外写 per-call `simd_trace.bin`. 每条 sidecar 记录
+520 字节, little-endian:
+
+```
+0x000  u64  trace_idx      对应主 trace.bin 的记录下标
+0x008  u8   q0[16]
+...
+0x1F8  u8   q31[16]
+```
+
+默认 `--simd-sample-stride 1` 表示每条指令保存一次 q0-q31. 大 trace 可调高步长,
+例如 `--simd-sample-stride 8`, 降低额外 I/O 和磁盘放大. Host 拉回后会在
+`meta.json` 写入 `simd_sidecar = {file, bytes, record_size, records, dropped,
+sample_stride}`.
+
+### 语义事件 (`--semantic-events`)
+
+`--semantic-events` 会额外写 per-call `semantic_events.jsonl`. 事件来源包括:
+
+- `source="inline_svc"`: CModule 在指令流中识别 AArch64 `svc #imm`; 这是执行前
+  事件, `ret` 为 `null`, 返回值可在下一条主 trace 记录的 `x0` 中观察.
+- `source="syscall_wrapper"` / `source="libc"`: Interceptor hook libc `syscall`,
+  `open/openat/read/write/pread64/pwrite64/mmap/mprotect/munmap/ioctl` 等常见 I/O
+  入口, 记录参数和返回值.
+- `source="jni_vtable"`: 已有 JSON-driven JNI hook 的镜像事件, 方便把 JNI 字符串
+  与 syscall/libc 事件放进同一条时间线.
+
+`meta.json` 只保留 `semantic_events_count` 和前 200 条
+`semantic_events_sample`; 完整数据在 JSONL 中, 避免 meta 无界膨胀.
+
 ## 启动
 
 入口是仓库根的 `tracemiku trace ...`, 详见根 README. 这里只列直接的 mode 选项:
@@ -106,6 +143,9 @@ Rust core / server / CLI 共用此格式, mode (v3/v5/js) 不影响 record 物�
 
 # v3 回归对比
 ./tracemiku trace ... --mode cmodule-v3 ...
+
+# 可选: 采集 SIMD/Q 寄存器和 syscall/JNI/libc 语义事件
+./tracemiku trace ... --simd-sidecar --simd-sample-stride 4 --semantic-events ...
 ```
 
 ## Deep-trace 模式 (`--trace-deep`)

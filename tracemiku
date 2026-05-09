@@ -349,6 +349,9 @@ def cmd_trace(args):
         try:
             if s.get("jni_fp"): s["jni_fp"].close()
         except: pass
+        try:
+            if s.get("semantic_fp"): s["semantic_fp"].close()
+        except: pass
         # v5: 从 device 拉 trace.bin
         device_path = s["meta"].get("devicePath")
         if device_path:
@@ -360,6 +363,29 @@ def cmd_trace(args):
                 s["meta"]["bytes"] = size
             except Exception as e:
                 wlog(f"[!] pull device trace 失败: {e}")
+        # Optional SIMD sidecar: separate file so the main 272B trace.bin format
+        # remains stable and lightweight.
+        simd_device_path = s["meta"].get("simdDevicePath")
+        if simd_device_path:
+            try:
+                simd_local_path = s["dir"] / "simd_trace.bin"
+                t0 = time.time()
+                simd_size = adb_pull_device_trace(simd_device_path, str(simd_local_path))
+                wlog(f"  pull SIMD {simd_device_path} → {simd_size:,} bytes in {time.time()-t0:.1f}s")
+                rec_size = int(s["meta"].get("simdRecordSize") or 520)
+                recs = s["meta"].get("simdRecords")
+                if recs is None and rec_size > 0:
+                    recs = simd_size // rec_size
+                s["meta"]["simd_sidecar"] = {
+                    "file": "simd_trace.bin",
+                    "bytes": simd_size,
+                    "record_size": rec_size,
+                    "records": int(recs or 0),
+                    "dropped": int(s["meta"].get("simdDropped") or 0),
+                    "sample_stride": int(s["meta"].get("simdSampleStride") or 1),
+                }
+            except Exception as e:
+                wlog(f"[!] pull SIMD sidecar 失败: {e}")
         md = s["meta"]
         md["truncated"] = bool(truncated)
         md["closed_at"] = time.time()
@@ -441,6 +467,9 @@ def cmd_trace(args):
                         # v5: agent 落盘 device, host 之后 adb pull
                         if p.get("devicePath"):
                             sess_files[ci]["meta"]["devicePath"] = p["devicePath"]
+                        for k in ("simdDevicePath", "simdRecordSize", "simdSampleStride"):
+                            if p.get(k) is not None:
+                                sess_files[ci]["meta"][k] = p.get(k)
                         wlog(f"[{tag}] trace 开始 call#{ci} tid={p['tid']}{' device='+p['devicePath'] if p.get('devicePath') else ''}")
                     elif t == "trace-end":
                         ci = p.get("callIdx") or 0
@@ -453,10 +482,36 @@ def cmd_trace(args):
                         s["meta"]["ts_out"] = time.time()
                         if p.get("devicePath"):     # v5
                             s["meta"]["devicePath"] = p["devicePath"]
+                        for k in ("simdDevicePath", "simdRecords", "simdDropped",
+                                  "simdRecordSize", "simdSampleStride"):
+                            if p.get(k) is not None:
+                                s["meta"][k] = p.get(k)
                         truncated = bool(p.get("truncated", False))
                         finalize_call(s, truncated=truncated)
                         del sess_files[ci]
                         wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated} dropped={p.get('dropped',0)}")
+                    elif t == "semantic-events":
+                        # Optional semantic IPC stream. Full events are stored as
+                        # JSONL; meta keeps only a bounded preview plus a count.
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        evs = p.get("events", [])
+                        s = sess_files[ci]
+                        sf = s.get("semantic_fp")
+                        if sf is None:
+                            sf = open(s["dir"] / "semantic_events.jsonl", "a", encoding="utf-8")
+                            s["semantic_fp"] = sf
+                        for ev in evs:
+                            sf.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                        sf.flush()
+                        md = s["meta"]
+                        md["semantic_events_count"] = int(md.get("semantic_events_count") or 0) + len(evs)
+                        sample = md.setdefault("semantic_events_sample", [])
+                        remain = max(0, 200 - len(sample))
+                        if remain:
+                            sample.extend(evs[:remain])
+                        wlog(f"[{tag}] semantic-events call#{ci} +{len(evs)} (total={md['semantic_events_count']})")
                     elif t == "jni-hooks" or t == "jni-strings":
                         # JSON-driven JNI hooks (libart, Interceptor — not Stalker, anti-detect 看不到).
                         # 每条 event = {id, trace_idx, args:{name:val,...}, ret}.
@@ -615,6 +670,9 @@ def cmd_trace(args):
         "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
         "jniHooks": jni_hooks_specs,
         "enableForkHook": bool(getattr(args, "enable_fork_hook", False)),
+        "semanticEvents": bool(getattr(args, "semantic_events", False)),
+        "simdSidecar": bool(getattr(args, "simd_sidecar", False)),
+        "simdSampleStride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -712,6 +770,9 @@ def cmd_trace(args):
             "patch_suicide": bool(getattr(args, "patch_suicide", False)),
             "hide_rwx_maps": bool(getattr(args, "hide_rwx_maps", False)),
             "jni_hooks": getattr(args, "jni_hooks", None),
+            "semantic_events": bool(getattr(args, "semantic_events", False)),
+            "simd_sidecar": bool(getattr(args, "simd_sidecar", False)),
+            "simd_sample_stride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
         }
         for h in diagnose_trace_failure(logcat=lc, tombstone=tb,
                                           exception=_e, cli_args=cli_flags):
@@ -762,13 +823,18 @@ def cmd_trace(args):
         mp = cd/"meta.json"
         if not mp.exists(): continue
         cm = json.load(open(mp))
-        calls_summary.append({
+        call_summary = {
             "callIdx": cm.get("callIdx"), "tid": cm.get("tid"),
             "records": cm.get("records", 0), "ms": cm.get("ms"),
             "retval": cm.get("retval"), "truncated": cm.get("truncated", True),
             "last_insn_is_ret": cm.get("last_insn_is_ret"),
             "dir": cd.name,
-        })
+        }
+        if cm.get("simd_sidecar") is not None:
+            call_summary["simd_sidecar"] = cm.get("simd_sidecar")
+        if cm.get("semantic_events_count") is not None:
+            call_summary["semantic_events_count"] = cm.get("semantic_events_count")
+        calls_summary.append(call_summary)
         for ev in (cm.get("fork_events") or []):
             all_fork_events.append((cd.name, ev))
     top_meta["calls"] = calls_summary
@@ -817,6 +883,9 @@ def _post_trace_diagnose(args, wlog):
         "patch_suicide": bool(getattr(args, "patch_suicide", False)),
         "hide_rwx_maps": bool(getattr(args, "hide_rwx_maps", False)),
         "jni_hooks": getattr(args, "jni_hooks", None),
+        "semantic_events": bool(getattr(args, "semantic_events", False)),
+        "simd_sidecar": bool(getattr(args, "simd_sidecar", False)),
+        "simd_sample_stride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
     }
     hints = diagnose_trace_failure(logcat=lc, tombstone=tb, cli_args=cli_flags)
     if hints:
@@ -1415,6 +1484,15 @@ def main():
                       help="JSON 描述要 hook 的 JNI vtable 函数 (offset/参数类型/返回类型). "
                            "默认 = libart string fns. 设 'none' 关闭. 输出 jni_hooks.jsonl per-call. "
                            "Interceptor 不依赖 Stalker, 给重防护 app 的备选方案 (低反检测面).")
+    p_tr.add_argument("--semantic-events", action="store_true", dest="semantic_events",
+                      help="开启采集侧语义事件 sidecar: syscall/libc/JNI 事件写入 per-call "
+                           "semantic_events.jsonl. 默认关闭, 不影响 trace.bin 272B 主格式.")
+    p_tr.add_argument("--simd-sidecar", action="store_true", dest="simd_sidecar",
+                      help="开启可选 SIMD/Q 寄存器快照 sidecar, per-call 输出 simd_trace.bin. "
+                           "默认关闭, 避免放大采集数据量.")
+    p_tr.add_argument("--simd-sample-stride", type=int, default=1, dest="simd_sample_stride",
+                      help="SIMD sidecar 采样步长: 1=每条指令保存 q0-q31, N=每 N 条保存一次. "
+                           "仅 --simd-sidecar 生效.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")
