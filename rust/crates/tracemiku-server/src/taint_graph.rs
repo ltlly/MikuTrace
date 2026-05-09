@@ -28,6 +28,7 @@ pub struct TaintGraphNode {
     pub via: String,
     pub kind: &'static str,
     pub taint_depth: u32,
+    pub expression: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edge_kind: Option<String>,
 }
@@ -96,6 +97,7 @@ pub fn build_taint_graph<R: TaintGraphRow>(from: usize, reg: &str, rows: &[R]) -
             via: row.via().to_string(),
             kind: if row.idx() == from { "seed" } else { "record" },
             taint_depth: row.taint_depth(),
+            expression: row_expression(row),
             edge_kind: row.edge_kind().map(ToOwned::to_owned),
         });
     }
@@ -168,6 +170,7 @@ fn seed_node(from: usize, reg: &str) -> TaintGraphNode {
         via: reg.to_string(),
         kind: "seed",
         taint_depth: 0,
+        expression: format!("seed({reg}) @ #{from}"),
         edge_kind: Some("seed".to_string()),
     }
 }
@@ -222,9 +225,67 @@ fn edge_label(kind: &str) -> String {
     .to_string()
 }
 
+fn row_expression<R: TaintGraphRow>(row: &R) -> String {
+    expression_from_asm(row.asm(), row.via(), row.edge_kind())
+}
+
+fn expression_from_asm(asm: &str, via: &str, edge_kind: Option<&str>) -> String {
+    let asm = asm.trim();
+    let Some((mnemonic, rest)) = asm.split_once(char::is_whitespace) else {
+        return format!("{via} <- {asm}");
+    };
+    let mnemonic = mnemonic.to_ascii_lowercase();
+    let ops = rest
+        .split(',')
+        .map(|op| op.trim())
+        .filter(|op| !op.is_empty())
+        .collect::<Vec<_>>();
+
+    match mnemonic.as_str() {
+        "mov" | "movz" | "movn" | "adr" | "adrp" if ops.len() >= 2 => {
+            format!("{} = {}", ops[0], ops[1..].join(", "))
+        }
+        "add" | "adds" if ops.len() >= 3 => format!("{} = {} + {}", ops[0], ops[1], ops[2]),
+        "sub" | "subs" if ops.len() >= 3 => format!("{} = {} - {}", ops[0], ops[1], ops[2]),
+        "mul" if ops.len() >= 3 => format!("{} = {} * {}", ops[0], ops[1], ops[2]),
+        "eor" if ops.len() >= 3 => format!("{} = {} ^ {}", ops[0], ops[1], ops[2]),
+        "and" | "ands" if ops.len() >= 3 => format!("{} = {} & {}", ops[0], ops[1], ops[2]),
+        "orr" if ops.len() >= 3 => format!("{} = {} | {}", ops[0], ops[1], ops[2]),
+        "lsl" if ops.len() >= 3 => format!("{} = {} << {}", ops[0], ops[1], ops[2]),
+        "lsr" if ops.len() >= 3 => format!("{} = {} >> {}", ops[0], ops[1], ops[2]),
+        "asr" if ops.len() >= 3 => format!("{} = signed({}) >> {}", ops[0], ops[1], ops[2]),
+        "ubfx" if ops.len() >= 4 => {
+            format!(
+                "{} = ({} >> {}) & ((1 << {}) - 1)",
+                ops[0], ops[1], ops[2], ops[3]
+            )
+        }
+        "sxtb" | "sxth" | "sxtw" | "uxtb" | "uxth" | "uxtw" if ops.len() >= 2 => {
+            format!("{} = {}({})", ops[0], mnemonic, ops[1])
+        }
+        "ldr" | "ldrb" | "ldrh" | "ldrsb" | "ldrsh" | "ldrsw" if ops.len() >= 2 => {
+            format!("{} = *({})", ops[0], ops[1..].join(", "))
+        }
+        "ldp" if ops.len() >= 3 => format!("({}, {}) = *({})", ops[0], ops[1], ops[2..].join(", ")),
+        "str" | "strb" | "strh" if ops.len() >= 2 => {
+            format!("*({}) = {}", ops[1..].join(", "), ops[0])
+        }
+        "stp" if ops.len() >= 3 => format!("*({}) = ({}, {})", ops[2..].join(", "), ops[0], ops[1]),
+        "cmp" if ops.len() >= 2 => format!("flags = {} - {}", ops[0], ops[1]),
+        "cmn" if ops.len() >= 2 => format!("flags = {} + {}", ops[0], ops[1]),
+        _ => match edge_kind {
+            Some("mem") => format!("{via} = memory_value({asm})"),
+            Some("store-src") => format!("{via} = store_source({asm})"),
+            Some("addr") => format!("{via} = address_dependency({asm})"),
+            Some("control") | Some("control-reg") => format!("control({via}) = {asm}"),
+            _ => format!("{via} <- {asm}"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_taint_graph, TaintGraphRow};
+    use super::{build_taint_graph, expression_from_asm, TaintGraphRow};
 
     struct Row {
         idx: usize,
@@ -286,6 +347,34 @@ mod tests {
         assert_eq!(start.kind, "seed");
         assert_eq!(graph.edge_count, 2);
         assert_eq!(graph.hidden_edges, 1, "parent #5 is outside visible rows");
+    }
+
+    #[test]
+    fn graph_nodes_include_c_like_expression() {
+        let rows = vec![Row {
+            idx: 7,
+            parents: Vec::new(),
+            edge_kind: Some("reg"),
+        }];
+        let graph = build_taint_graph(0, "x0", &rows);
+        let node = graph.nodes.iter().find(|node| node.id == "idx:7").unwrap();
+        assert_eq!(node.expression, "x0 = x0 + #1");
+    }
+
+    #[test]
+    fn expression_from_asm_covers_memory_and_bitwise_shapes() {
+        assert_eq!(
+            expression_from_asm("ldr x0, [x1, #8]", "x0", Some("mem")),
+            "x0 = *([x1, #8])"
+        );
+        assert_eq!(
+            expression_from_asm("str x2, [x3]", "mem", Some("store-src")),
+            "*([x3]) = x2"
+        );
+        assert_eq!(
+            expression_from_asm("eor w0, w1, w2", "w0", Some("reg")),
+            "w0 = w1 ^ w2"
+        );
     }
 
     #[test]

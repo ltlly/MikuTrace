@@ -12,8 +12,9 @@ use tracemiku_core::disasm::decode;
 use tracemiku_core::hashfin::{HashFinalizeCandidate, HashFinalizeIndex};
 use tracemiku_core::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use tracemiku_core::prelude::{
-    build_call_tree_indexed, build_frame_depth_map, build_function_index, build_trace_ir, CallNode,
-    FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR, Trace, TraceMeta, CFG,
+    build_call_tree_indexed, build_frame_depth_map, build_function_index, build_trace_ir,
+    AnalysisIndex, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
+    Trace, TraceMeta, CFG,
 };
 use tracemiku_core::symbols::auto_known_symbols_with_modules;
 
@@ -68,6 +69,7 @@ pub struct AppStateInner {
     pub modules: ModuleResolver,
     pub cfg: CFG,
     pub function_index: FunctionIndex,
+    analysis_index: OnceLock<AnalysisIndex>,
     memshadow: OnceLock<MemShadow>,
     memshadow_status: AtomicU8,
     call_tree: OnceLock<CallNode>,
@@ -120,7 +122,7 @@ impl AppState {
         let meta = TraceMeta::load(&trace_dir)?;
         let trace = Trace::load(&trace_dir)?;
 
-        let index = Index::build(&trace);
+        let index = Index::load_or_build(&trace);
         let modules = ModuleResolver::from_modules(&meta.modules);
 
         // Build SymbolMap from per-call meta.json::known_offsets if present,
@@ -225,6 +227,7 @@ impl AppState {
             modules,
             cfg,
             function_index,
+            analysis_index: OnceLock::new(),
             memshadow,
             memshadow_status,
             call_tree: OnceLock::new(),
@@ -454,6 +457,19 @@ impl AppStateInner {
             MEMSHADOW_LOADING => "loading",
             MEMSHADOW_READY => "ready",
             _ => "idle",
+        }
+    }
+
+    pub fn analysis_index(&self) -> &AnalysisIndex {
+        self.analysis_index
+            .get_or_init(|| AnalysisIndex::load_or_build(&self.trace, &self.symbols, &self.index))
+    }
+
+    pub fn analysis_index_status(&self) -> &'static str {
+        if self.analysis_index.get().is_some() {
+            "ready"
+        } else {
+            "idle"
         }
     }
 

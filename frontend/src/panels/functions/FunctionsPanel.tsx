@@ -17,8 +17,10 @@ const SOURCE_TITLES: Record<string, string> = {
 
 export interface FunctionsPanelProps {
   selectedFn: Accessor<string>;
+  renames?: Accessor<Map<string, string>>;
   onSelectFn: (fn: FunctionEntry) => void;
   onJumpFn?: (fn: FunctionEntry) => void;
+  onRenameFn?: (fn: FunctionEntry) => void;
   active: boolean;
 }
 
@@ -58,37 +60,54 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
             </p>
             <ul class="functions-list">
               <For each={r().functions}>
-                {(fn) => (
-                  <li
-                    class={props.selectedFn() === fn.id ? "selected" : ""}
-                    onClick={() => props.onSelectFn(fn)}
-                    onDblClick={() => props.onJumpFn?.(fn)}
-                  >
-                    <span class="fn-source-tag" title={SOURCE_TITLES[fn.source] ?? fn.source}>
-                      {SOURCE_LABELS[fn.source] ?? fn.source}
-                    </span>
-                    <span class="fn-name">{fn.name}</span>
-                    <Show when={fn.entry_pc !== null}>
-                      <span class="dim small">
-                        @ {`0x${fn.entry_pc!.toString(16)}`}
+                {(fn) => {
+                  const displayName = () => props.renames?.().get(fn.id) ?? fn.name;
+                  const renamed = () => displayName() !== fn.name;
+                  return (
+                    <li
+                      class={props.selectedFn() === fn.id ? "selected" : ""}
+                      onClick={() => props.onSelectFn(fn)}
+                      onDblClick={() => props.onJumpFn?.(fn)}
+                    >
+                      <span class="fn-source-tag" title={SOURCE_TITLES[fn.source] ?? fn.source}>
+                        {SOURCE_LABELS[fn.source] ?? fn.source}
                       </span>
-                    </Show>
-                    <Show when={fn.module}>
-                      <span class="dim small">
-                        {fn.module}
-                        <Show when={fn.entry_rel !== null && fn.entry_rel !== undefined}>
-                          <>+0x{fn.entry_rel!.toString(16)}</>
-                        </Show>
-                      </span>
-                    </Show>
-                    <Show when={fn.blocks > 0}>
-                      <span class="dim small">{fn.blocks} blocks</span>
-                    </Show>
-                    <Show when={fn.records > 0}>
-                      <span class="dim small">{fn.records.toLocaleString()} recs</span>
-                    </Show>
-                  </li>
-                )}
+                      <span class="fn-name" title={renamed() ? fn.name : undefined}>{displayName()}</span>
+                      <Show when={renamed()}>
+                        <span class="dim small">orig {fn.name}</span>
+                      </Show>
+                      <button
+                        type="button"
+                        class="fn-row-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onRenameFn?.(fn);
+                        }}
+                      >
+                        rename
+                      </button>
+                      <Show when={fn.entry_pc !== null}>
+                        <span class="dim small">
+                          @ {`0x${fn.entry_pc!.toString(16)}`}
+                        </span>
+                      </Show>
+                      <Show when={fn.module}>
+                        <span class="dim small">
+                          {fn.module}
+                          <Show when={fn.entry_rel !== null && fn.entry_rel !== undefined}>
+                            <>+0x{fn.entry_rel!.toString(16)}</>
+                          </Show>
+                        </span>
+                      </Show>
+                      <Show when={fn.blocks > 0}>
+                        <span class="dim small">{fn.blocks} blocks</span>
+                      </Show>
+                      <Show when={fn.records > 0}>
+                        <span class="dim small">{fn.records.toLocaleString()} recs</span>
+                      </Show>
+                    </li>
+                  );
+                }}
               </For>
             </ul>
           </>

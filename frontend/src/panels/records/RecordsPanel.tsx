@@ -12,6 +12,7 @@ import {
 import {
   fetchBlockForPc,
   fetchAsmTokensForPcs,
+  fetchCallTree,
   fetchIdxsForBlock,
   fetchIdxsForPc,
   fetchLastWriteOfReg,
@@ -19,7 +20,7 @@ import {
   fetchRecords,
   fetchRegValueAt,
 } from "~/api/client";
-import type { AsmToken, RecordRow, RecordsResponse } from "~/api/types";
+import type { AsmToken, CallNode, CallTreeResponse, RecordRow, RecordsResponse } from "~/api/types";
 import { normalizeReg, tokenAddr, tokenClass, tokenReg, tokenText } from "~/utils/bnTokens";
 import { createGuardedResource } from "~/utils/resourceGuards";
 
@@ -31,10 +32,11 @@ const ROW_MARKS_PREFIX = "tracemiku-row-marks:";
 const ROW_MARK_COLORS = ["red", "yellow", "green", "blue", "violet"] as const;
 type RowMarkColor = (typeof ROW_MARK_COLORS)[number];
 
-export type RecordsTaintOverlayMode = "highlight" | "dim";
+export type RecordsTaintOverlayMode = "highlight" | "dim" | "only";
 
 export interface RecordsTaintOverlay {
   idxs: Set<number>;
+  rows: RecordRow[];
   direction: "forward" | "backward";
   from: number;
   reg: string;
@@ -86,6 +88,22 @@ interface RowMark {
   note?: string;
 }
 
+interface MinimapMark {
+  idx: number;
+  topPct: number;
+  kind: "selected" | "taint" | "mark";
+  color?: RowMarkColor;
+  title: string;
+}
+
+interface FoldRange {
+  key: string;
+  enter: number;
+  exit: number;
+  fn: string;
+  depth: number;
+}
+
 function firstAsmReg(asm: string): string | null {
   const m = asm.match(REG_RE);
   return m?.[0] ? normalizeReg(m[0]) : null;
@@ -115,6 +133,24 @@ function rowKind(row: RecordRow): string {
   if (row.is_ret) return "ret";
   if (row.is_branch) return "br";
   return "";
+}
+
+function foldKey(node: CallNode): string {
+  return `${node.depth}:${node.enter_idx}:${node.exit_idx}:${node.fn ?? "?"}`;
+}
+
+function collectFoldRanges(node: CallNode, out: FoldRange[] = []): FoldRange[] {
+  if (node.depth > 0 && node.exit_idx > node.enter_idx) {
+    out.push({
+      key: foldKey(node),
+      enter: node.enter_idx,
+      exit: node.exit_idx,
+      fn: node.fn ?? "?",
+      depth: node.depth,
+    });
+  }
+  for (const child of node.children ?? []) collectFoldRanges(child, out);
+  return out;
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -194,7 +230,14 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [rowMarks, setRowMarks] = createSignal<Map<number, RowMark>>(new Map());
   const [recordsLoadingVisible, setRecordsLoadingVisible] = createSignal(false);
   const [optimisticIdx, setOptimisticIdx] = createSignal(props.selectedIdx);
+  const [foldCalls, setFoldCalls] = createSignal(false);
+  const [collapsedCalls, setCollapsedCalls] = createSignal<Set<string>>(new Set());
   const [meta] = createResource(fetchMeta);
+  const [callTreeResp, currentCallTreeResp] = createGuardedResource<number, CallTreeResponse>(
+    () => (foldCalls() ? 50 : undefined),
+    (depth) => fetchCallTree(depth),
+    (resp, depth) => (resp.request_max_depth ?? 50) === depth,
+  );
   const regValueTitleCache = new Map<string, string>();
   const rowObjectCache = new Map<number, RecordRow>();
   const bnTokenCache = new Map<string, AsmToken[] | null>();
@@ -231,17 +274,37 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     const path = meta()?.path;
     return path ? `${ROW_MARKS_PREFIX}${path}` : null;
   });
-  const fullHeight = createMemo(() => totalRecords() * ROW_HEIGHT);
+  const taintOnlyRows = createMemo(() =>
+    props.taintOverlay?.mode === "only" ? props.taintOverlay.rows : null,
+  );
+  const taintOnlyPositions = createMemo(() => {
+    const rows = taintOnlyRows();
+    if (!rows) return new Map<number, number>();
+    return new Map(rows.map((row, pos) => [row.idx, pos]));
+  });
+  const virtualTotalRecords = createMemo(() => taintOnlyRows()?.length ?? totalRecords());
+  const fullHeight = createMemo(() => virtualTotalRecords() * ROW_HEIGHT);
   const innerHeight = createMemo(() => Math.min(SAFE_SCROLL_HEIGHT, Math.max(ROW_HEIGHT, fullHeight())));
   const compressed = createMemo(() => fullHeight() > SAFE_SCROLL_HEIGHT);
   // Rounded viewport rows avoid 1px layout jitter flipping fetch count at an
   // exact ROW_HEIGHT boundary. Overscan below still covers the partial row.
   const visibleRows = createMemo(() => Math.max(1, Math.round((viewHeight() || 480) / ROW_HEIGHT)));
   const activeIdx = createMemo(() => optimisticIdx());
+  const foldRanges = createMemo(() => {
+    const tree = currentCallTreeResp()?.tree;
+    return tree ? collectFoldRanges(tree) : [];
+  });
+  const foldRangeByEnter = createMemo(() => new Map(foldRanges().map((range) => [range.enter, range])));
+  const collapsedFoldRanges = createMemo(() => {
+    const collapsed = collapsedCalls();
+    return foldRanges()
+      .filter((range) => collapsed.has(range.key))
+      .sort((a, b) => a.enter - b.enter || a.exit - b.exit);
+  });
 
-  const range = createMemo<{ start: number; count: number; end: number }>(
+  const rawRange = createMemo<{ start: number; count: number; end: number }>(
     (prev) => {
-      const total = totalRecords();
+      const total = virtualTotalRecords();
       if (total <= 0) return { start: 0, count: 0, end: 0 };
 
       let next: { start: number; count: number; end: number };
@@ -282,6 +345,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       return next;
     },
   );
+  const range = createMemo<{ start: number; count: number; end: number } | undefined>(() =>
+    taintOnlyRows() ? undefined : rawRange(),
+  );
 
   const [resp, currentResp] = createGuardedResource<
     { start: number; count: number; end: number },
@@ -310,16 +376,22 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     return stable;
   }
   const displayRows = createMemo(() => {
+    const onlyRows = taintOnlyRows();
+    if (onlyRows) {
+      const r = rawRange();
+      return onlyRows.slice(r.start, r.end);
+    }
+    const foldRows = (rows: RecordRow[]) => foldCalls() ? rows.filter((row) => !isFoldHiddenIdx(row.idx)) : rows;
     const freshRows = currentResp()?.records;
-    if (freshRows) return stabilizeRows(freshRows);
-    const r = range();
+    if (freshRows) return foldRows(stabilizeRows(freshRows));
+    const r = rawRange();
     if (r.count <= 0) return [];
     const cachedRows: RecordRow[] = [];
     for (let idx = r.start; idx < r.end; idx += 1) {
       const row = rowObjectCache.get(idx);
       if (row) cachedRows.push(row);
     }
-    return cachedRows;
+    return foldRows(cachedRows);
   });
   const showRecordsLoading = createMemo(() => recordsLoadingVisible());
   let lastAutoScrollIdx = -1;
@@ -483,12 +555,15 @@ export default function RecordsPanel(props: RecordsPanelProps) {
 
   createEffect(() => {
     const selected = props.selectedIdx;
-    const total = totalRecords();
+    const onlyPositions = taintOnlyPositions();
+    const onlyRows = taintOnlyRows();
+    const total = virtualTotalRecords();
     const h = viewHeight();
     if (!viewport || !total || !h) return;
     if (selected === lastAutoScrollIdx) return;
     lastAutoScrollIdx = selected;
-    const idx = clamp(selected, 0, total - 1);
+    const idx = onlyRows ? onlyPositions.get(selected) : clamp(selected, 0, total - 1);
+    if (idx === undefined) return;
     const rowTop = compressed()
       ? (idx / Math.max(1, total - 1)) * Math.max(1, innerHeight() - h)
       : idx * ROW_HEIGHT;
@@ -499,9 +574,135 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     setScrollTop(next);
   });
 
-  function rowTop(row: RecordRow): string {
+  function isFoldHiddenIdx(idx: number): boolean {
+    for (const range of collapsedFoldRanges()) {
+      if (idx > range.enter && idx <= range.exit) return true;
+      if (range.enter > idx) break;
+    }
+    return false;
+  }
+
+  function foldedRangeForRow(row: RecordRow): FoldRange | undefined {
+    if (!foldCalls()) return undefined;
+    const range = foldRangeByEnter().get(row.idx);
+    return range && collapsedCalls().has(range.key) ? range : undefined;
+  }
+
+  function foldableRangeForRow(row: RecordRow): FoldRange | undefined {
+    if (!foldCalls()) return undefined;
+    return foldRangeByEnter().get(row.idx);
+  }
+
+  function toggleFoldRange(range: FoldRange) {
+    setCollapsedCalls((current) => {
+      const next = new Set(current);
+      if (next.has(range.key)) next.delete(range.key);
+      else next.add(range.key);
+      return next;
+    });
+  }
+
+  function rowTop(row: RecordRow, pos = 0): string {
+    if (taintOnlyRows()) {
+      return `${(taintOnlyPositions().get(row.idx) ?? 0) * ROW_HEIGHT}px`;
+    }
+    if (foldCalls() && collapsedCalls().size > 0) {
+      return `${scrollTop() + pos * ROW_HEIGHT}px`;
+    }
     if (!compressed()) return `${row.idx * ROW_HEIGHT}px`;
-    return `${scrollTop() + (row.idx - range().start) * ROW_HEIGHT}px`;
+    return `${scrollTop() + (row.idx - rawRange().start) * ROW_HEIGHT}px`;
+  }
+
+  function nextTaintMode(mode: RecordsTaintOverlayMode): RecordsTaintOverlayMode {
+    if (mode === "highlight") return "dim";
+    if (mode === "dim") return "only";
+    return "highlight";
+  }
+
+  function nextTaintModeLabel(mode: RecordsTaintOverlayMode): string {
+    if (mode === "highlight") return "dim non-hits";
+    if (mode === "dim") return "taint only";
+    return "highlight";
+  }
+
+  function pctForIdx(idx: number): number {
+    const total = virtualTotalRecords();
+    if (total <= 1) return 0;
+    if (taintOnlyRows()) {
+      const pos = taintOnlyPositions().get(idx);
+      return pos === undefined ? 0 : (pos / (total - 1)) * 100;
+    }
+    return (clamp(idx, 0, total - 1) / (total - 1)) * 100;
+  }
+
+  const minimapMarks = createMemo<MinimapMark[]>(() => {
+    const total = virtualTotalRecords();
+    if (total <= 0) return [];
+    const out: MinimapMark[] = [
+      {
+        idx: activeIdx(),
+        topPct: pctForIdx(activeIdx()),
+        kind: "selected",
+        title: `selected #${activeIdx()}`,
+      },
+    ];
+    const overlay = props.taintOverlay;
+    if (overlay) {
+      const maxMarks = 1200;
+      const stride = Math.max(1, Math.ceil(overlay.rows.length / maxMarks));
+      for (let i = 0; i < overlay.rows.length; i += stride) {
+        const idx = overlay.rows[i].idx;
+        out.push({
+          idx,
+          topPct: pctForIdx(idx),
+          kind: "taint",
+          title: `taint #${idx}`,
+        });
+      }
+    }
+    for (const [idx, mark] of rowMarks()) {
+      if (taintOnlyRows() && !taintOnlyPositions().has(idx)) continue;
+      out.push({
+        idx,
+        topPct: pctForIdx(idx),
+        kind: "mark",
+        color: mark.color,
+        title: mark.note ? `#${idx}: ${mark.note}` : `marked #${idx}`,
+      });
+    }
+    return out;
+  });
+
+  function placeholderRow(idx: number): RecordRow {
+    return {
+      idx,
+      pc: "",
+      rel: null,
+      module: null,
+      func: null,
+      off: null,
+      asm: "",
+      annotation: null,
+      exec_count: null,
+      is_branch: false,
+      is_call: false,
+      is_ret: false,
+    };
+  }
+
+  function jumpMinimap(e: MouseEvent) {
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const ratio = clamp((e.clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+    const only = taintOnlyRows();
+    if (only) {
+      const pos = clamp(Math.round(ratio * Math.max(0, only.length - 1)), 0, Math.max(0, only.length - 1));
+      const row = only[pos];
+      if (row) selectRow(row);
+      return;
+    }
+    const idx = Math.round(ratio * Math.max(0, totalRecords() - 1));
+    selectRow(rowObjectCache.get(idx) ?? placeholderRow(idx));
   }
 
   function selectRow(row: RecordRow) {
@@ -659,7 +860,12 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       </Show>
       <div class="records-status">
         <span>
-          window {range().start}-{range().end} / {totalRecords().toLocaleString()}
+          <Show
+            when={taintOnlyRows()}
+            fallback={<>window {rawRange().start}-{rawRange().end} / {totalRecords().toLocaleString()}</>}
+          >
+            {(rows) => <>taint rows {rawRange().start}-{rawRange().end} / {rows().length.toLocaleString()}</>}
+          </Show>
         </span>
         <span class="grow" />
         <span>selected idx {props.selectedIdx}</span>
@@ -676,10 +882,10 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  props.onTaintOverlayModeChange?.(overlay().mode === "dim" ? "highlight" : "dim");
+                  props.onTaintOverlayModeChange?.(nextTaintMode(overlay().mode));
                 }}
               >
-                {overlay().mode === "dim" ? "highlight" : "dim non-hits"}
+                {nextTaintModeLabel(overlay().mode)}
               </button>
               <button
                 class="status-btn"
@@ -694,6 +900,21 @@ export default function RecordsPanel(props: RecordsPanelProps) {
             </>
           )}
         </Show>
+        <button
+          class="status-btn"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setFoldCalls(!foldCalls());
+          }}
+        >
+          {foldCalls() ? "unfold calls" : "fold calls"}
+        </button>
+        <Show when={foldCalls()}>
+          <span class="dim">
+            {callTreeResp.loading ? "call tree loading" : `${collapsedCalls().size} folded`}
+          </span>
+        </Show>
         <Show when={bnTokenStatus() && bnTokenStatus() !== "ok"}>
           <span title="BN asm token overlay status">bn tokens {bnTokenStatus()}</span>
         </Show>
@@ -706,6 +927,40 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         tabIndex={0}
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       >
+        <div
+          class="records-minimap"
+          style={{ top: `${scrollTop()}px`, height: `${Math.max(1, viewHeight())}px` }}
+          onClick={jumpMinimap}
+          title="trace minimap"
+        >
+          <For each={minimapMarks()}>
+            {(mark) => (
+              <button
+                type="button"
+                class="records-minimap-mark"
+                classList={{
+                  selected: mark.kind === "selected",
+                  taint: mark.kind === "taint",
+                  marked: mark.kind === "mark",
+                  "mark-red": mark.color === "red",
+                  "mark-yellow": mark.color === "yellow",
+                  "mark-green": mark.color === "green",
+                  "mark-blue": mark.color === "blue",
+                  "mark-violet": mark.color === "violet",
+                }}
+                style={{ top: `${mark.topPct}%` }}
+                title={mark.title}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const only = taintOnlyRows();
+                  const row = only?.find((item) => item.idx === mark.idx) ?? rowObjectCache.get(mark.idx);
+                  if (row) selectRow(row);
+                  else props.onSelect(mark.idx);
+                }}
+              />
+            )}
+          </For>
+        </div>
         <div class="records-inner" style={{ height: `${innerHeight()}px` }}>
           <Show when={showRecordsLoading()}>
             <p class="dim records-loading">loading…</p>
@@ -716,11 +971,13 @@ export default function RecordsPanel(props: RecordsPanelProps) {
             </div>
           </Show>
           <For each={displayRows()}>
-            {(row) => {
+            {(row, pos) => {
               const mark = () => rowMarks().get(row.idx);
               const taintHit = () => props.taintOverlay?.idxs.has(row.idx) ?? false;
               const taintDimmed = () =>
                 !!props.taintOverlay && props.taintOverlay.mode === "dim" && !taintHit();
+              const foldedRange = () => foldedRangeForRow(row);
+              const foldableRange = () => foldableRangeForRow(row);
               return (
                 <div
                   class="records-row"
@@ -742,7 +999,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                     "mark-blue": mark()?.color === "blue",
                     "mark-violet": mark()?.color === "violet",
                   }}
-                  style={{ top: rowTop(row), height: `${ROW_HEIGHT}px` }}
+                  style={{ top: rowTop(row, pos()), height: `${ROW_HEIGHT}px` }}
                   tabIndex={0}
                   onPointerDown={(e) => {
                     if (e.button === 0) setOptimisticIdx(row.idx);
@@ -765,7 +1022,24 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   }}
                 >
                 <span class="dot" title={mark()?.note ?? undefined}>
-                  <Show when={mark()?.note} fallback={rowKind(row)}>*</Show>
+                  <Show
+                    when={foldableRange()}
+                    fallback={<Show when={mark()?.note} fallback={rowKind(row)}>*</Show>}
+                  >
+                    {(range) => (
+                      <button
+                        type="button"
+                        class="row-fold-btn"
+                        title={`${collapsedCalls().has(range().key) ? "expand" : "collapse"} ${range().fn} [${range().enter}..${range().exit}]`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFoldRange(range());
+                        }}
+                      >
+                        {collapsedCalls().has(range().key) ? "▶" : "▼"}
+                      </button>
+                    )}
+                  </Show>
                 </span>
                 <span class="idx">{row.idx}</span>
                 <span class="pc">
@@ -850,6 +1124,13 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                     </Show>
                   </code>
                 </span>
+                <Show when={foldedRange()}>
+                  {(range) => (
+                    <span class="fold-summary">
+                      folded {range().fn} · {Math.max(0, range().exit - range().enter).toLocaleString()} rows
+                    </span>
+                  )}
+                </Show>
               </div>
               );
             }}

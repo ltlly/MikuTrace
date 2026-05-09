@@ -3,6 +3,10 @@
 //! Use `use tracemiku_core::prelude::*;` rather than reaching into
 //! submodules directly.
 
+pub use crate::analysis_index::{
+    AnalysisIndex, AnalysisSummary, DepEdge, DepKind, DependencyIndex, FunctionSummary,
+    MemLastDefEntry, PcSummary, RegCheckpoint,
+};
 pub use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 pub use crate::cfg::{Block, CFG};
 pub use crate::decompiler::backend::{

@@ -4,14 +4,14 @@
 //! for the algorithm + caveats (indirect br x14 tail-calls, b-only tail-calls,
 //! Frinet FP-chain not done here).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::disasm::decode;
 use crate::index::Index;
 use crate::symbols::SymbolMap;
 use crate::trace::Trace;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CallNode {
     /// Function name. Root node uses "?" (matches Python).
     /// Children with unknown symbol use None (Python: `cf if cf != "?" else None`).

@@ -110,6 +110,7 @@ fn rust_router_methods() -> BTreeSet<(String, String)> {
 }
 
 const HEAVY_ROUTE_FILES: &[&str] = &[
+    "analysis_index.rs",
     "auto_phase.rs",
     "backward_taint.rs",
     "bn_hlil.rs",
@@ -391,6 +392,7 @@ async fn openapi_json_lists_current_paths() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["openapi"], "3.0.3");
     assert!(v["paths"]["/api/bg-status"]["get"].is_object());
+    assert!(v["paths"]["/api/analysis-index"]["get"].is_object());
     assert!(v["paths"]["/api/decomp-status"]["get"].is_object());
     assert!(v["paths"]["/api/mem-writes-in-range"]["get"].is_object());
     assert!(v["paths"]["/api/hash-input-search"]["post"].is_object());
@@ -446,16 +448,43 @@ async fn python_web_compat_status_endpoints_are_available() {
         if uri == "/api/bg-status" {
             assert_eq!(v["cfg"]["status"], "ready");
             assert_eq!(v["index"]["status"], "ready");
+            assert_eq!(v["analysis_index"]["status"], "idle");
             assert_eq!(v["mem"]["status"], "ready");
             assert!(v["decomp"]["status"].is_string());
             assert!(v["parallelism"]["available"].is_number());
             assert!(v["parallelism"]["workers"]["index"].is_number());
+            assert!(v["parallelism"]["workers"]["analysis_index"].is_number());
             assert!(v["parallelism"]["workers"]["jni_calls"].is_number());
         } else {
             assert!(v["status"].is_string());
             assert!(v.get("so_path").is_some());
         }
     }
+}
+
+#[tokio::test]
+async fn analysis_index_endpoint_returns_compact_summary() {
+    let (_tmp, cd) = synth_call_dir();
+    let app = tracemiku_server::build_router(cd).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/analysis-index")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["summary"]["record_count"], 1);
+    assert!(v["summary"]["unique_pc_count"].is_number());
+    assert!(v["checkpoint_count"].is_number());
+    assert!(v["mem_last_def_count"].is_number());
+    assert!(v["top_pcs"].is_array());
+    assert!(v["top_functions"].is_array());
+    assert!(v["sidecar"].as_str().unwrap().contains("analysis-full.v1"));
 }
 
 #[tokio::test]

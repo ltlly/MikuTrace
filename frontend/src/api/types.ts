@@ -504,6 +504,7 @@ export interface TaintGraphNode {
   via: string;
   kind: "seed" | "record" | string;
   taint_depth: number;
+  expression: string;
   edge_kind?: string;
 }
 

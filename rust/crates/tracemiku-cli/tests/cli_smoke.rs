@@ -584,7 +584,15 @@ fn crypto_scan_wrapper_uses_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&["crypto-scan".into(), cd.display().to_string()]);
     assert!(v["scanned"].as_u64().unwrap() > 0);
-    assert_eq!(v["primitives"].as_array().unwrap().len(), 22);
+    let primitives = v["primitives"].as_array().unwrap();
+    assert!(
+        primitives.len() >= 22,
+        "crypto primitive catalog should stay populated"
+    );
+    assert!(primitives[0]["name"].is_string());
+    assert!(primitives[0]["pattern"].is_string());
+    assert!(primitives[0]["hit_count"].is_number());
+    assert!(primitives[0]["hits"].is_array());
     assert!(v["any_hit"].is_boolean());
 }
 

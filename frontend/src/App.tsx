@@ -20,7 +20,7 @@ import StringProvenancePanel, { type StringProvenanceRequest } from "./panels/st
 import TaintPanel, { type TaintOverlayResult } from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
-import type { FunctionEntry, RecordRow } from "./api/types";
+import type { FunctionEntry, RecordRow, TaintRow } from "./api/types";
 import type { UiTaskEntry, UiTaskReporter, UiTaskUpdate } from "./utils/taskCenter";
 
 type LeftTab =
@@ -43,6 +43,7 @@ type MemoryRequest = { token: number; addr: string; count?: number };
 type TaintRunRequest = { token: number; idx: number; reg: string; direction: TaintRunDirection };
 
 const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
+const FUNCTION_RENAMES_PREFIX = "tracemiku-function-renames:";
 const LEGACY_LAYOUT_KEY = "tracemiku-layout-v2";
 const LAYOUT_KEY = "tracemiku-layout-v4";
 
@@ -103,6 +104,36 @@ function initialHiddenSos(): Set<string> {
     return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === "string")) : new Set();
   } catch {
     return new Set();
+  }
+}
+
+function loadFunctionRenames(key: string): Map<string, string> {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return new Map();
+    return new Map(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].trim().length > 0,
+      ),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function saveFunctionRenames(key: string, renames: Map<string, string>) {
+  const serialized: Record<string, string> = {};
+  for (const [id, name] of renames) {
+    const trimmed = name.trim();
+    if (trimmed) serialized[id] = trimmed;
+  }
+  try {
+    if (Object.keys(serialized).length) localStorage.setItem(key, JSON.stringify(serialized));
+    else localStorage.removeItem(key);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -256,6 +287,11 @@ export default function App() {
     }
   }
   const [meta] = createResource(fetchMeta);
+  const functionRenameKey = createMemo(() => {
+    const path = meta()?.path;
+    return path ? `${FUNCTION_RENAMES_PREFIX}${path}` : null;
+  });
+  const [functionRenames, setFunctionRenames] = createSignal<Map<string, string>>(new Map());
   const helpTopic = createMemo(() => helpState()?.topic ?? null);
   let cmdInput: HTMLInputElement | undefined;
   let hashJumpSeq = 0;
@@ -263,6 +299,11 @@ export default function App() {
   let searchSeq = 0;
   let searchAbort: AbortController | undefined;
   let gotoSeq = 0;
+
+  createEffect(() => {
+    const key = functionRenameKey();
+    setFunctionRenames(key ? loadFunctionRenames(key) : new Map());
+  });
   let gotoAbort: AbortController | undefined;
   let applyingNavHistory = false;
 
@@ -488,10 +529,30 @@ export default function App() {
     setSyncCfg(false);
     setRightTab("cfg");
     if (jumpEntry && fn.entry_pc !== null) {
-      void jumpToFirstPc(`0x${fn.entry_pc.toString(16)}`, fn.name);
+      void jumpToFirstPc(`0x${fn.entry_pc.toString(16)}`, functionLabel(fn));
     } else if (jumpEntry) {
-      setCmdStatus(`${fn.name}: no trace entry PC`);
+      setCmdStatus(`${functionLabel(fn)}: no trace entry PC`);
     }
+  }
+
+  function functionLabel(fn: FunctionEntry): string {
+    return functionRenames().get(fn.id) ?? fn.name;
+  }
+
+  function renameFunction(fn: FunctionEntry) {
+    const key = functionRenameKey();
+    if (!key) return;
+    const current = functionRenames().get(fn.id) ?? fn.name;
+    const next = window.prompt("rename function", current);
+    if (next === null) return;
+    const trimmed = next.trim();
+    setFunctionRenames((prev) => {
+      const updated = new Map(prev);
+      if (!trimmed || trimmed === fn.name) updated.delete(fn.id);
+      else updated.set(fn.id, trimmed);
+      saveFunctionRenames(key, updated);
+      return updated;
+    });
   }
 
   function setHiddenSos(next: Set<string>) {
@@ -619,6 +680,7 @@ export default function App() {
     const mode = untrack(taintOverlay)?.mode ?? "highlight";
     setTaintOverlay({
       idxs: new Set(result.rows.map((row) => row.idx)),
+      rows: result.rows.map(recordRowFromTaintRow),
       direction: result.direction,
       from: result.from,
       reg: result.reg,
@@ -630,6 +692,24 @@ export default function App() {
 
   function setTaintOverlayMode(mode: RecordsTaintOverlayMode) {
     setTaintOverlay((current) => (current ? { ...current, mode } : current));
+  }
+
+  function recordRowFromTaintRow(row: TaintRow): RecordRow {
+    const mnemonic = row.asm.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+    return {
+      idx: row.idx,
+      pc: row.pc,
+      rel: row.rel,
+      module: null,
+      func: row.func,
+      off: null,
+      asm: row.asm,
+      annotation: row.why ?? row.via ?? null,
+      exec_count: null,
+      is_branch: mnemonic.startsWith("b") || mnemonic === "cbz" || mnemonic === "cbnz" || mnemonic === "tbz" || mnemonic === "tbnz",
+      is_call: mnemonic === "bl" || mnemonic === "blr",
+      is_ret: mnemonic === "ret",
+    };
   }
 
   function showStringProvenance(req: Omit<StringProvenanceRequest, "token">) {
@@ -967,8 +1047,10 @@ export default function App() {
             <div class="lp-tab" classList={{ active: leftTab() === "funcs" }}>
               <FunctionsPanel
                 selectedFn={selectedFn}
+                renames={functionRenames}
                 onSelectFn={(fn) => selectFunction(fn, false)}
                 onJumpFn={(fn) => selectFunction(fn, true)}
+                onRenameFn={renameFunction}
                 active={leftTab() === "funcs"}
               />
             </div>

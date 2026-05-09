@@ -538,6 +538,22 @@ body.is-resizing {
   background: var(--bg3);
 }
 
+.inline-btn {
+  margin-left: 6px;
+  padding: 1px 6px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.inline-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
 #stream .records-taint-status {
   color: var(--warn);
 }
@@ -570,7 +586,7 @@ body.is-resizing {
 #stream .records-row {
   position: absolute;
   left: 0;
-  right: 0;
+  right: 12px;
   display: grid;
   grid-template-columns: var(--col-dot) var(--col-idx) var(--col-pc) var(--col-func) minmax(var(--col-asm), 1fr);
   gap: 6px;
@@ -593,6 +609,33 @@ body.is-resizing {
   font-size: 10px;
 }
 
+.row-fold-btn {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  color: var(--dim);
+  background: transparent;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 12px;
+  cursor: pointer;
+}
+
+.row-fold-btn:hover {
+  color: var(--fg);
+}
+
+.fold-summary {
+  grid-column: 5;
+  justify-self: end;
+  padding-left: 8px;
+  color: var(--warn);
+  background: linear-gradient(90deg, transparent, var(--bg) 20%);
+  font-size: 11px;
+  pointer-events: none;
+}
+
 #stream .records-row .idx { color: var(--dim); }
 #stream .records-row .pc { color: var(--accent2); }
 #stream .records-row .func { color: var(--good); }
@@ -609,6 +652,45 @@ body.is-resizing {
 #stream .records-row.selected {
   background: var(--hl);
 }
+
+#stream .records-minimap {
+  position: absolute;
+  right: 2px;
+  width: 8px;
+  cursor: pointer;
+  z-index: 3;
+}
+
+#stream .records-minimap-mark {
+  position: absolute;
+  left: 0;
+  width: 8px;
+  height: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--dim);
+  opacity: 0.75;
+  transform: translateY(-1px);
+  cursor: pointer;
+}
+
+#stream .records-minimap-mark.taint {
+  background: var(--warn);
+}
+
+#stream .records-minimap-mark.selected {
+  height: 5px;
+  background: var(--accent);
+  opacity: 1;
+  z-index: 2;
+}
+
+#stream .records-minimap-mark.marked.mark-red { background: var(--err); }
+#stream .records-minimap-mark.marked.mark-yellow { background: var(--warn); }
+#stream .records-minimap-mark.marked.mark-green { background: var(--good); }
+#stream .records-minimap-mark.marked.mark-blue { background: var(--accent); }
+#stream .records-minimap-mark.marked.mark-violet { background: var(--violet); }
 
 #stream .records-row.taint-hit {
   background: rgba(247, 179, 43, 0.12);
@@ -1655,6 +1737,21 @@ html[data-density="dense"] .xref-table td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.fn-row-btn {
+  padding: 0 5px;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.fn-row-btn:hover {
+  color: var(--fg);
+  border-color: var(--accent);
 }
 
 .cfg-panel {

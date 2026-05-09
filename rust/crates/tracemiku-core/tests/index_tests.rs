@@ -266,3 +266,85 @@ fn index_addr_to_writes_holds_trace_indices_not_vec_indices() {
         "addr_to_reads must hold trace record indices for every covered byte"
     );
 }
+
+#[test]
+fn index_v2_sidecar_roundtrip_preserves_index() {
+    let (_tmp, cd) = make_call_dir(3);
+    write_synth_trace(
+        &cd,
+        &[
+            (0x100000u64, 0xaa0103e0u32, &[(1usize, 0x11u64)]), // mov x0, x1
+            (0x100004u64, 0xf9000020u32, &[(1usize, 0x7000u64)]), // str x0, [x1]
+            (0x100008u64, 0xf9400022u32, &[(1usize, 0x7000u64)]), // ldr x2, [x1]
+        ],
+    );
+    let trace = Trace::load(&cd).unwrap();
+    let built = Index::build(&trace);
+    built.save_sidecar(&trace).unwrap();
+
+    let sidecar = Index::sidecar_path(&trace);
+    assert!(
+        sidecar.exists(),
+        "index sidecar should exist at {sidecar:?}"
+    );
+    let loaded = Index::try_load_sidecar(&trace).expect("sidecar loads");
+    assert_eq!(loaded, built);
+}
+
+#[test]
+fn index_v2_sidecar_stale_trace_size_rebuilds() {
+    use std::io::Write;
+
+    let (_tmp, cd) = make_call_dir(1);
+    write_synth_trace(&cd, &[(0x100000u64, 0xaa0103e0u32, &[(1usize, 0x11u64)])]);
+    let trace = Trace::load(&cd).unwrap();
+    let first = Index::load_or_build(&trace);
+    assert_eq!(first.pc_to_idxs.values().map(Vec::len).sum::<usize>(), 1);
+    assert!(Index::sidecar_path(&trace).exists());
+
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(cd.join("trace.bin"))
+        .unwrap();
+    let mut extra = [0u8; 272];
+    extra[0..8].copy_from_slice(&0x100004u64.to_le_bytes());
+    extra[256..264].copy_from_slice(&0x7000u64.to_le_bytes());
+    extra[268..272].copy_from_slice(&0xd503201fu32.to_le_bytes()); // nop
+    f.write_all(&extra).unwrap();
+    std::fs::write(
+        cd.join("meta.json"),
+        r#"{"records":2,"tid":100,"ms":2,"truncated":false}"#,
+    )
+    .unwrap();
+
+    let trace2 = Trace::load(&cd).unwrap();
+    assert!(
+        Index::try_load_sidecar(&trace2).is_none(),
+        "stale index sidecar must not load after trace.bin size changes"
+    );
+    let rebuilt = Index::load_or_build(&trace2);
+    assert_eq!(rebuilt.pc_to_idxs.values().map(Vec::len).sum::<usize>(), 2);
+}
+
+#[test]
+fn index_v2_sidecar_same_size_trace_replacement_rebuilds() {
+    let (_tmp, cd) = make_call_dir(1);
+    write_synth_trace(&cd, &[(0x100000u64, 0xaa0103e0u32, &[(1usize, 0x11u64)])]);
+    let trace = Trace::load(&cd).unwrap();
+    let first = Index::load_or_build(&trace);
+    assert!(first.reg_defs.contains_key("x0"));
+    assert!(Index::sidecar_path(&trace).exists());
+    drop(trace);
+
+    write_synth_trace(&cd, &[(0x100004u64, 0xd503201fu32, &[])]); // same size, different content
+    let trace2 = Trace::load(&cd).unwrap();
+    assert!(
+        Index::try_load_sidecar(&trace2).is_none(),
+        "same-size trace.bin replacement must not reuse stale index sidecar"
+    );
+    let rebuilt = Index::load_or_build(&trace2);
+    assert!(
+        !rebuilt.reg_defs.contains_key("x0"),
+        "rebuilt nop trace should not retain stale mov x0 definition"
+    );
+}

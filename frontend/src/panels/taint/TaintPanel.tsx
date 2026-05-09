@@ -288,7 +288,7 @@ export default function TaintPanel(props: TaintPanelProps) {
         return {
           id: node.id,
           label: node.label,
-          sub: `${node.func ?? "?"} · ${node.via || node.asm}`,
+          sub: `${node.func ?? "?"} · ${node.expression || node.via || node.asm}`,
           kind: nodeKind(node.kind),
           onClick: idx === null ? undefined : () => props.onSelect(idx),
         };
@@ -350,6 +350,61 @@ export default function TaintPanel(props: TaintPanelProps) {
   function rerunAtUiCap(r: RunResult) {
     setMaxCount(MAX_TAINT_ROWS);
     queueMicrotask(() => void run(r.direction, r.from, r.reg));
+  }
+
+  function saveTextFile(name: string, mime: string, text: string) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportRows(r: RunResult, format: "json" | "txt") {
+    const stem = `taint-${r.direction}-${r.reg}-${r.from}`;
+    if (format === "json") {
+      saveTextFile(
+        `${stem}.json`,
+        "application/json",
+        JSON.stringify(
+          {
+            direction: r.direction,
+            from: r.from,
+            reg: r.reg,
+            count: r.count,
+            stopped: r.stopped,
+            limit: r.limit,
+            rows: r.rows,
+            graph: r.graph ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    const header = ["idx", "pc", "func", "asm", "why_via", "edge", "parents", "taint_depth", "call_depth"];
+    const lines = [
+      header.join("\t"),
+      ...r.rows.map((row) =>
+        [
+          row.idx,
+          row.pc,
+          row.func ?? "",
+          row.asm,
+          labelFor(row),
+          edgeLabel(row),
+          (row.parent_idxs ?? []).join(","),
+          row.taint_depth ?? "",
+          row.frame_depth ?? "",
+        ].map((value) => String(value).replace(/\t/g, " ").replace(/\n/g, " ")).join("\t"),
+      ),
+    ];
+    saveTextFile(`${stem}.txt`, "text/plain", `${lines.join("\n")}\n`);
   }
 
   return (
@@ -442,6 +497,9 @@ export default function TaintPanel(props: TaintPanelProps) {
               <Show when={r().stopped}>
                 {" "}· partial result
               </Show>
+              {" "}
+              <button type="button" class="inline-btn" onClick={() => exportRows(r(), "json")}>JSON</button>
+              <button type="button" class="inline-btn" onClick={() => exportRows(r(), "txt")}>TXT</button>
             </p>
             <Show when={r().stopped}>
               <div class="cap-notice" role="status">

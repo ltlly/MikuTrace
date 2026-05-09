@@ -1,3 +1,4 @@
+pub mod analysis_index;
 pub mod api_infra;
 pub mod asm_tokens;
 pub mod auto_phase;
@@ -57,6 +58,10 @@ pub fn router(state: AppState) -> Router {
         .route("/openapi.json", get(api_infra::openapi_handler))
         .route("/ws/jobs", get(api_infra::jobs_ws_handler))
         .route("/api/meta", get(meta::meta_handler))
+        .route(
+            "/api/analysis-index",
+            get(analysis_index::analysis_index_handler),
+        )
         .route("/api/bg-status", get(api_infra::bg_status_handler))
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))

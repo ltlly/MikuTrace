@@ -40,6 +40,7 @@ pub async fn bg_status_handler(State(state): State<AppState>) -> Json<Value> {
         "pc_to_block": ready_task_status(),
         "block_idxs": ready_task_status(),
         "index": ready_task_status(),
+        "analysis_index": analysis_index_status_value(&state),
         "mem": mem_status_value(&state),
         "decomp": decomp_status_value(&state),
         "parallelism": parallelism_status_value(&state),
@@ -79,6 +80,15 @@ fn mem_status_value(state: &AppState) -> Value {
     })
 }
 
+fn analysis_index_status_value(state: &AppState) -> Value {
+    json!({
+        "status": state.inner.analysis_index_status(),
+        "started_at": null,
+        "ready_at": null,
+        "err": null,
+    })
+}
+
 fn parallelism_status_value(state: &AppState) -> Value {
     let records = state.inner.trace.len();
     let available = thread::available_parallelism()
@@ -89,6 +99,7 @@ fn parallelism_status_value(state: &AppState) -> Value {
         "records": records,
         "workers": {
             "index": tracemiku_core::index::index_worker_count(records),
+            "analysis_index": 1,
             "symbols": tracemiku_core::symbols::symbol_worker_count(records),
             "cfg": tracemiku_core::cfg::cfg_worker_count(records),
             "frame_depths": tracemiku_core::taint::frame_depth_worker_count(records),
@@ -157,6 +168,7 @@ fn openapi_paths() -> Value {
     let mut paths = serde_json::Map::new();
     for (path, method) in [
         ("/api/meta", "get"),
+        ("/api/analysis-index", "get"),
         ("/api/records", "get"),
         ("/api/record/{idx}", "get"),
         ("/api/functions", "get"),

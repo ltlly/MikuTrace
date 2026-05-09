@@ -92,6 +92,14 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --repl
 
 Recent AI-analysis additions include:
 
+- persistent `trace.bin.analysis-index.v2.bin` index sidecars for repeated
+  server opens, with trace-size and content-fingerprint invalidation;
+- persistent `trace.bin.analysis-full.v1.bin` whole-trace analysis sidecars
+  with CSR dependency rows, memory last-def bytes, register checkpoints, call
+  tree reuse, and `/api/analysis-index` compact performance/coverage summaries;
+- taint provenance graph expressions, Records taint-only filtering, JSON/TXT
+  taint export, a Records minimap, call-frame folding, and local function
+  renames for large-trace navigation;
 - output-driven workflows from JNI strings or known bytes back to memory
   writers, Base64 groups, semantic byte formulas, and VM backchains;
 - batched `byte-lineage --count` with compact `frontier_groups`, step stats,
