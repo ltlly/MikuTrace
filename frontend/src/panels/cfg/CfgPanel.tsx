@@ -540,17 +540,73 @@ export default function CfgPanel(props: CfgPanelProps) {
       e.preventDefault();
       return;
     }
-    const target = e.target as Element | null;
-    const anchor = target?.closest("a");
-    const href =
-      anchor?.getAttribute("href") ??
-      anchor?.getAttribute("xlink:href") ??
-      anchor?.getAttribute("XLink:href") ??
-      "";
+    const href = anchorHrefForClick(e);
+    if (!href) return;
     const m = href.match(/#(?:insn_|hdr_b)([0-9a-f]+)/i);
     if (!m) return;
     e.preventDefault();
     void jumpToPc(m[1]);
+  }
+
+  /// Panel-level click handler. The SVG anchors can paint inside the frame
+  /// (overflow:hidden) but their bounding boxes extend above/below into
+  /// areas owned by the panel header `<p class="dim small">` status text or
+  /// the controls row. A user clicking a visible-looking block whose
+  /// rendered text actually paints right at the frame edge can land on
+  /// those header elements instead of the SVG anchor — `target.closest("a")`
+  /// returns null, the canvas onClick never fires, and the jump silently
+  /// fails. This handler catches that case.
+  function onPanelClick(e: MouseEvent) {
+    if (suppressNextClick) return; // canvas listener will handle
+    const target = e.target as Element | null;
+    if (!target || target.closest(".cfg-svg-canvas")) return; // canvas already handled
+    if (target.closest("button, select, input, label, textarea, a")) return;
+    // Only reach here when click landed on a non-interactive panel surface.
+    const href = anchorHrefForClick(e);
+    if (!href) return;
+    const m = href.match(/#(?:insn_|hdr_b)([0-9a-f]+)/i);
+    if (!m) return;
+    void jumpToPc(m[1]);
+  }
+
+  /// Resolve the SVG anchor for a click event. Tries the obvious path
+  /// (target.closest("a")) first. If that fails — most commonly because
+  /// the user clicked the panel's header status text overlapping an
+  /// `<a>` whose bounding box extends above the frame's visible area
+  /// (the SVG paints inside the frame's clip but the DOM elements still
+  /// have y-coords above frame.top, so a click at the panel's status
+  /// `<p class="dim small">` line lands on the `<p>`, not the anchor) —
+  /// fall back to a hit-test against every SVG anchor's bounding box.
+  /// Pick the closest anchor whose box contains the click point. Bound
+  /// the search to the SVG inside this panel.
+  function anchorHrefForClick(e: MouseEvent): string | null {
+    const target = e.target as Element | null;
+    const direct = target?.closest("a");
+    if (direct) {
+      return (
+        direct.getAttribute("href") ??
+        direct.getAttribute("xlink:href") ??
+        direct.getAttribute("XLink:href") ??
+        null
+      );
+    }
+    if (!canvas) return null;
+    const cx = e.clientX;
+    const cy = e.clientY;
+    const anchors = canvas.querySelectorAll("a");
+    for (const a of anchors) {
+      const r = a.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
+        return (
+          a.getAttribute("href") ??
+          a.getAttribute("xlink:href") ??
+          a.getAttribute("XLink:href") ??
+          null
+        );
+      }
+    }
+    return null;
   }
 
   function onWheel(e: WheelEvent) {
@@ -647,7 +703,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   }
 
   return (
-    <section class="panel cfg-panel">
+    <section class="panel cfg-panel" onClick={onPanelClick}>
       <h2>Graph</h2>
       <div class="cfg-controls">
         <label>
