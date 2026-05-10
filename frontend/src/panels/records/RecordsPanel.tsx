@@ -402,8 +402,14 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         // clicked row -> browser drops the click event entirely.
         const sTopRow = Math.floor(scrollTop() / ROW_HEIGHT);
         const vRows = visibleRows();
-        const start = clamp(sTopRow - OVERSCAN, 0, total);
-        const end = Math.min(total, sTopRow + vRows + OVERSCAN);
+        // Clamp `start` so it can never run past `total - vRows`. Without
+        // this, a stale scrollTop signal (e.g. right after a taint-only
+        // mode switch shrinks `virtualTotalRecords`) drives start past
+        // the end of the array, slice yields [], and the panel paints
+        // empty rows.
+        const maxStart = Math.max(0, total - vRows);
+        const start = clamp(sTopRow - OVERSCAN, 0, maxStart);
+        const end = Math.min(total, start + vRows + OVERSCAN * 2);
         next = { start, count: Math.max(0, end - start), end };
       }
 
@@ -652,6 +658,36 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     scheduleBnAsmFetch();
   });
 
+  // When the virtual coordinate system shrinks (e.g. taint overlay flipped
+  // to "only" mode and total dropped from millions to hundreds), the
+  // browser auto-clamps `viewport.scrollTop`. Sync the signal so
+  // `rawRange` stops returning empty windows, and reset the auto-scroll
+  // guard so the next selection re-centers in the new coordinate space.
+  //
+  // CRITICAL: this effect must only fire on coordinate-system change. If
+  // it tracks `scrollTop()` reactively, every user wheel tick re-runs it,
+  // which resets `lastAutoScrollIdx` and then the auto-scroll effect at
+  // the bottom force-snaps the viewport back to the selected row's slot —
+  // user scroll becomes impossible.
+  let lastVirtualTotal = -1;
+  createEffect(() => {
+    const total = virtualTotalRecords();
+    if (total === lastVirtualTotal) return;
+    lastVirtualTotal = total;
+    if (!viewport) return;
+    const h = viewHeight();
+    if (!h) return;
+    const maxScroll = Math.max(0, innerHeight() - h);
+    // Read scrollTop ONCE non-reactively — we just need its current value
+    // for clamping, not a subscription.
+    const current = viewport.scrollTop;
+    if (current > maxScroll) {
+      viewport.scrollTop = maxScroll;
+      setScrollTop(maxScroll);
+    }
+    lastAutoScrollIdx = -1;
+  });
+
   createEffect(() => {
     const selected = props.selectedIdx;
     const onlyPositions = taintOnlyPositions();
@@ -667,9 +703,27 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         ? actualIdxToFoldedPos(selected)
         : clamp(selected, 0, total - 1);
     if (idx === undefined) return;
-    const rowTop = compressed()
-      ? (idx / Math.max(1, total - 1)) * Math.max(1, innerHeight() - h)
-      : idx * ROW_HEIGHT;
+    if (compressed()) {
+      // In compressed mode, scrollTop maps linearly to rawRange.start via
+      //   start = floor(scrollTop / maxScroll * maxStart)
+      // and visible rows are [start, start + vRows]. The previous logic
+      // treated `(idx / total) * innerHeight` as the row's pixel position
+      // and bailed when that scalar was inside the viewport — but it's
+      // actually the *target* scrollTop, not a y-coordinate. We compare
+      // against the visible idx range instead.
+      const maxScroll = Math.max(1, innerHeight() - h);
+      const maxStart = Math.max(0, total - visibleRows());
+      const currentStart = Math.floor((scrollTop() / maxScroll) * maxStart);
+      const visibleEnd = currentStart + visibleRows();
+      if (idx >= currentStart + 2 && idx <= visibleEnd - 2) return;
+      const targetStart = clamp(idx - Math.floor(visibleRows() / 3), 0, maxStart);
+      const next =
+        maxStart > 0 ? Math.round((targetStart / maxStart) * maxScroll) : 0;
+      viewport.scrollTop = next;
+      setScrollTop(next);
+      return;
+    }
+    const rowTop = idx * ROW_HEIGHT;
     const rowBottom = rowTop + ROW_HEIGHT;
     if (rowTop >= scrollTop() && rowBottom <= scrollTop() + h) return;
     const next = clamp(rowTop - Math.floor(h / 3), 0, Math.max(0, innerHeight() - h));
@@ -779,16 +833,29 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   }
 
   function rowTop(row: RecordRow): string {
+    return `${pixelTopForIdx(row.idx)}px`;
+  }
+
+  /// Pixel y-coordinate the row at `idx` would occupy in the records-inner
+  /// container. Mirrors `rowTop` but works for an arbitrary idx (used by the
+  /// def/use SVG overlay, which has to render targets that may not be in
+  /// `displayRows`).
+  function pixelTopForIdx(idx: number): number {
     if (taintOnlyRows()) {
-      return `${(taintOnlyPositions().get(row.idx) ?? 0) * ROW_HEIGHT}px`;
+      return (taintOnlyPositions().get(idx) ?? 0) * ROW_HEIGHT;
     }
     if (foldedCompact()) {
-      const foldedPos = actualIdxToFoldedPos(row.idx);
-      if (!compressed()) return `${foldedPos * ROW_HEIGHT}px`;
-      return `${scrollTop() + (foldedPos - rawRange().start) * ROW_HEIGHT}px`;
+      const foldedPos = actualIdxToFoldedPos(idx);
+      if (!compressed()) return foldedPos * ROW_HEIGHT;
+      return scrollTop() + (foldedPos - rawRange().start) * ROW_HEIGHT;
     }
-    if (!compressed()) return `${row.idx * ROW_HEIGHT}px`;
-    return `${scrollTop() + (row.idx - rawRange().start) * ROW_HEIGHT}px`;
+    if (!compressed()) return idx * ROW_HEIGHT;
+    return scrollTop() + (idx - rawRange().start) * ROW_HEIGHT;
+  }
+
+  /// Centre y of the row at `idx` (for the SVG arrow's endpoints).
+  function pixelCenterForIdx(idx: number): number {
+    return pixelTopForIdx(idx) + Math.floor(ROW_HEIGHT / 2);
   }
 
   function nextTaintMode(mode: RecordsTaintOverlayMode): RecordsTaintOverlayMode {
@@ -980,37 +1047,167 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       : `jump ${flow.reg} use #${flow.useIdx}`;
   }
 
-  function renderRegFlowInline(row: RecordRow, regRaw: string) {
-    const reg = normalizeReg(regRaw);
+  /// Long-arrow SVG overlay drawn above `records-inner` linking the source
+  /// row of the active register flow to its def (red, upward) and use
+  /// (green, downward) rows. Replaces the per-row inline ▲▼ buttons. The
+  /// arrow is clickable; off-screen targets clamp to the viewport edge with
+  /// a "+N rows" label.
+  ///
+  /// IMPORTANT: this overlay must NOT capture scroll/wheel events. The
+  /// parent `<svg>` and `<g>` keep `pointer-events: none`; only the
+  /// `<line>` (with `pointer-events: stroke`) and the off-screen `<text>`
+  /// label (with `pointer-events: visiblePainted`) accept clicks. The
+  /// circle anchor and `<title>` are decorative (`pointer-events: none`).
+  /// Anything else captures wheel events on a 100%-height SVG and the
+  /// records virtual list stops scrolling.
+  /// Arrow geometry. Returned coordinates are **viewport-relative** so the
+  /// SVG container can be sized to the visible window (a few hundred px)
+  /// instead of the full virtual height (which can be 30 million px on
+  /// large traces and turns into a layout-instability hazard).
+  const regFlowArrows = createMemo(() => {
+    const f = regFlow();
+    if (!f || !viewport) return null;
+    const sTop = scrollTop();
+    const vH = Math.max(1, viewHeight());
+    void virtualTotalRecords();
+    void rawRange();
+    const x = 18;
+
+    // Convert records-inner-relative y to viewport-relative y. Source row
+    // and target rows can both be inside or outside the visible window.
+    const toViewportY = (innerY: number) => innerY - sTop;
+    const srcInner = pixelCenterForIdx(f.sourceIdx);
+    const srcInWindow = srcInner >= sTop && srcInner <= sTop + vH;
+
+    const arrows: Array<{
+      kind: "def" | "use";
+      color: string;
+      targetIdx: number;
+      srcY: number; // viewport-relative
+      tgtY: number; // viewport-relative, clamped to viewport edges
+      srcOff: "top" | "bottom" | null; // source off-screen direction
+      tgtOff: "top" | "bottom" | null; // target off-screen direction
+      label?: string;
+      title: string;
+    }> = [];
+
+    for (const kind of ["def", "use"] as const) {
+      const targetIdx = kind === "def" ? f.defIdx : f.useIdx;
+      const err = kind === "def" ? f.defErr : f.useErr;
+      if (err || targetIdx === null || targetIdx === undefined) continue;
+      if (targetIdx === f.sourceIdx) continue;
+      const tgtInner = pixelCenterForIdx(targetIdx);
+      const tgtOff = tgtInner < sTop ? "top" : tgtInner > sTop + vH ? "bottom" : null;
+      const srcOff = srcInner < sTop ? "top" : srcInner > sTop + vH ? "bottom" : null;
+      const clampInner = (innerY: number) =>
+        Math.max(sTop + 6, Math.min(sTop + vH - 6, innerY));
+      const srcY = toViewportY(srcOff ? clampInner(srcInner) : srcInner);
+      const tgtY = toViewportY(tgtOff ? clampInner(tgtInner) : tgtInner);
+      const rowGap = Math.abs(targetIdx - f.sourceIdx);
+      const label = tgtOff ? `+${rowGap.toLocaleString()} rows` : undefined;
+      arrows.push({
+        kind,
+        color: kind === "def" ? "var(--err, #f78166)" : "var(--ok, #56d364)",
+        targetIdx,
+        srcY,
+        tgtY,
+        srcOff,
+        tgtOff,
+        label,
+        title: regFlowTargetTitle(f, kind, f.sourceIdx),
+      });
+    }
+    if (!arrows.length) return null;
+    void srcInWindow;
+    return { arrows, x, sTop, vH };
+  });
+
+  /// SVG sticks to the visible viewport (top = scrollTop, height = view).
+  /// Arrow coordinates are viewport-relative, so scrolling re-positions
+  /// the overlay correctly without painting a 30M-pixel-tall element.
+  function renderRegFlowOverlay() {
     return (
-      <Show when={regFlow()?.sourceIdx === row.idx && regFlow()?.reg === reg ? regFlow() : null}>
-        {(flow) => (
-          <span class="reg-flow-inline" title={`${reg} nearest def/use`}>
-            <button
-              type="button"
-              class="reg-flow-inline-btn def"
-              disabled={!!flow().defErr || flow().defIdx === null || flow().defIdx === undefined}
-              title={regFlowTargetTitle(flow(), "def", row.idx)}
-              onClick={(e) => {
-                e.stopPropagation();
-                jumpRegFlowTarget("def");
-              }}
-            >
-              {flow().defErr ? "!" : "▲"}
-            </button>
-            <button
-              type="button"
-              class="reg-flow-inline-btn use"
-              disabled={!!flow().useErr || flow().useIdx === null || flow().useIdx === undefined}
-              title={regFlowTargetTitle(flow(), "use", row.idx)}
-              onClick={(e) => {
-                e.stopPropagation();
-                jumpRegFlowTarget("use");
-              }}
-            >
-              {flow().useErr ? "!" : "▼"}
-            </button>
-          </span>
+      <Show when={regFlowArrows()}>
+        {(data) => (
+          <svg
+            class="reg-flow-overlay"
+            style={{
+              position: "absolute",
+              left: "0",
+              top: `${data().sTop}px`,
+              width: "100%",
+              height: `${data().vH}px`,
+              // CRITICAL: never capture scroll. Children opt in selectively.
+              "pointer-events": "none",
+              "z-index": "5",
+            }}
+          >
+            <defs>
+              <marker
+                id="rf-arrow-def"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="8"
+                markerHeight="8"
+                orient="auto-start-reverse"
+              >
+                <path d="M0,0 L10,5 L0,10 z" fill="var(--err, #f78166)" />
+              </marker>
+              <marker
+                id="rf-arrow-use"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="8"
+                markerHeight="8"
+                orient="auto-start-reverse"
+              >
+                <path d="M0,0 L10,5 L0,10 z" fill="var(--ok, #56d364)" />
+              </marker>
+            </defs>
+            <For each={data().arrows}>
+              {(arrow) => (
+                <g style={{ "pointer-events": "none" }}>
+                  <line
+                    x1={data().x}
+                    y1={arrow.srcY}
+                    x2={data().x}
+                    y2={arrow.tgtY}
+                    stroke={arrow.color}
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    marker-end={`url(#rf-arrow-${arrow.kind})`}
+                    style={{ "pointer-events": "stroke", cursor: "pointer" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      jumpRegFlowTarget(arrow.kind);
+                    }}
+                  >
+                    <title>{arrow.title}</title>
+                  </line>
+                  <Show when={arrow.label}>
+                    <text
+                      x={data().x + 8}
+                      y={arrow.tgtY + (arrow.tgtOff === "top" ? 12 : -4)}
+                      fill={arrow.color}
+                      font-size="10"
+                      style={{ "pointer-events": "visiblePainted", cursor: "pointer" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        jumpRegFlowTarget(arrow.kind);
+                      }}
+                    >
+                      {arrow.label}
+                      <title>{arrow.title}</title>
+                    </text>
+                  </Show>
+                  {/* anchor dot at source row — decorative, no events */}
+                  <circle cx={data().x} cy={arrow.srcY} r="3" fill={arrow.color} />
+                </g>
+              )}
+            </For>
+          </svg>
         )}
       </Show>
     );
@@ -1023,10 +1220,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     const token = ++regFlowSeq;
     const abort = new AbortController();
     regFlowAbort = abort;
-    setOptimisticIdx(row.idx);
-    setRowSelection({ anchor: row.idx, focus: row.idx });
-    props.onSelect(row.idx);
-    props.onSelectRow?.(row);
+    // Selecting a register on a row should NOT move the global cursor.
+    // Cursor moves only on row click, double-click on the register, or
+    // explicit jump from the def/use SVG arrow / right-click menu.
     props.onSelectReg(reg);
     setRegFlow({
       token,
@@ -1178,7 +1374,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     const token = ++regContextSeq;
     const abort = new AbortController();
     regContextAbort = abort;
-    props.onSelect(row.idx);
+    // Right-click on a register opens the menu only — the cursor stays put.
+    // Choose a menu action (jump-to-last-write, taint, etc.) to actually move.
     props.onSelectReg(reg);
     const base: RegContext = {
       token,
@@ -1454,26 +1651,23 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                               fallback={<span>{part.text}</span>}
                             >
                               {(reg) => (
-                                <>
-                                  <span
-                                    class="op-reg"
-                                    classList={{ selected: reg() === normalizeReg(props.selectedReg) }}
-                                    title={`${reg()} · click nearest def/use · double-click last write · right-click actions`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void selectRegFlow(row, reg());
-                                    }}
-                                    onDblClick={(e) => {
-                                      e.stopPropagation();
-                                      void jumpLastWrite(row.idx, reg());
-                                    }}
-                                    onMouseEnter={(e) => void loadRegTitle(e.currentTarget, row.idx, reg())}
-                                    onContextMenu={(e) => void openRegContext(e, row, reg())}
-                                  >
-                                    {part.text}
-                                  </span>
-                                  {renderRegFlowInline(row, reg())}
-                                </>
+                                <span
+                                  class="op-reg"
+                                  classList={{ selected: reg() === normalizeReg(props.selectedReg) }}
+                                  title={`${reg()} · click selects register and shows def/use arrow · double-click jumps to last write · right-click for actions`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void selectRegFlow(row, reg());
+                                  }}
+                                  onDblClick={(e) => {
+                                    e.stopPropagation();
+                                    void jumpLastWrite(row.idx, reg());
+                                  }}
+                                  onMouseEnter={(e) => void loadRegTitle(e.currentTarget, row.idx, reg())}
+                                  onContextMenu={(e) => void openRegContext(e, row, reg())}
+                                >
+                                  {part.text}
+                                </span>
                               )}
                             </Show>
                           )}
@@ -1486,46 +1680,43 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                             const reg = tokenReg(token);
                             const addr = tokenAddr(token);
                             return (
-                              <>
-                                <span
-                                  class={`${tokenClass(token)}${reg ? " op-reg" : ""}`}
-                                  classList={{
-                                    selected: !!reg && reg === normalizeReg(props.selectedReg),
-                                  }}
-                                  data-a={addr ?? undefined}
-                                  data-reg={reg ?? undefined}
-                                  title={
-                                    reg
-                                      ? `${reg} · click nearest def/use · double-click last write · right-click actions`
-                                      : addr
-                                        ? `${addr} · double-click jump to nearest trace PC`
-                                        : undefined
-                                  }
-                                  onClick={(e) => {
-                                    if (!reg) return;
+                              <span
+                                class={`${tokenClass(token)}${reg ? " op-reg" : ""}`}
+                                classList={{
+                                  selected: !!reg && reg === normalizeReg(props.selectedReg),
+                                }}
+                                data-a={addr ?? undefined}
+                                data-reg={reg ?? undefined}
+                                title={
+                                  reg
+                                    ? `${reg} · click selects register and shows def/use arrow · double-click jumps to last write · right-click for actions`
+                                    : addr
+                                      ? `${addr} · double-click jump to nearest trace PC`
+                                      : undefined
+                                }
+                                onClick={(e) => {
+                                  if (!reg) return;
+                                  e.stopPropagation();
+                                  void selectRegFlow(row, reg);
+                                }}
+                                onDblClick={(e) => {
+                                  if (reg) {
                                     e.stopPropagation();
-                                    void selectRegFlow(row, reg);
-                                  }}
-                                  onDblClick={(e) => {
-                                    if (reg) {
-                                      e.stopPropagation();
-                                      void jumpLastWrite(row.idx, reg);
-                                    } else if (addr) {
-                                      e.stopPropagation();
-                                      void jumpPcValue(addr, row.idx);
-                                    }
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    if (reg) void loadRegTitle(e.currentTarget, row.idx, reg);
-                                  }}
-                                  onContextMenu={(e) => {
-                                    if (reg) void openRegContext(e, row, reg);
-                                  }}
-                                >
-                                  {tokenText(token)}
-                                </span>
-                                {reg ? renderRegFlowInline(row, reg) : null}
-                              </>
+                                    void jumpLastWrite(row.idx, reg);
+                                  } else if (addr) {
+                                    e.stopPropagation();
+                                    void jumpPcValue(addr, row.idx);
+                                  }
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (reg) void loadRegTitle(e.currentTarget, row.idx, reg);
+                                }}
+                                onContextMenu={(e) => {
+                                  if (reg) void openRegContext(e, row, reg);
+                                }}
+                              >
+                                {tokenText(token)}
+                              </span>
                             );
                           }}
                         </For>
@@ -1551,6 +1742,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
               );
             }}
           </For>
+          {renderRegFlowOverlay()}
           <Show when={regContext()}>
             {(ctx) => (
               <div

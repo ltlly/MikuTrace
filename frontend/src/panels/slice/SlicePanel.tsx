@@ -215,9 +215,12 @@ export default function SlicePanel(props: SlicePanelProps) {
           </button>
         </div>
         <p class="dim small">
-          Backward slice walks the persistent dependency CSR from the cursor (and an optional
-          second seed) to find every row the seeds transitively depend on. Forward dep tree walks
-          def→use, listing later rows that consumed the cursor's value.
+          Backward = "this row's transitive ancestors via dep CSR" (BFS-discovery order from
+          single seed, or idx-ascending after multi-seed AND/OR). Forward = "later rows that
+          consumed the cursor's value" (def→use DAG, sorted by depth then idx). Filling a second
+          seed and switching to <strong>intersection</strong> gives the common ancestors of two
+          operations. <strong>Slice</strong> is the fast structural query — for full
+          per-instruction propagation with through_mem / cross_fn use the Taint tab.
         </p>
       </div>
       <Show when={response()}>

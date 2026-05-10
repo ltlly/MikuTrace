@@ -639,7 +639,7 @@ export default function CfgPanel(props: CfgPanelProps) {
             queueMicrotask(applySvgPanZoom);
           }}
           class="cfg-svg-canvas"
-          onDblClick={onSvgClick}
+          onClick={onSvgClick}
           innerHTML={svg}
         />
       </div>
