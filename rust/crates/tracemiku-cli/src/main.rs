@@ -419,43 +419,67 @@ enum Cmd {
         #[arg(long)]
         idx_hi: Option<usize>,
     },
-    /// GET /api/forward-taint.
+    /// GET /api/forward-taint — index-accelerated forward propagation from
+    /// (start, reg) following def/use through registers and (optionally)
+    /// memory. Use when you need per-instruction propagation steps with
+    /// parent_idxs / taint_depth; for "all rows that depend on this" use
+    /// `bfs-slice` (backward) or `forward-dep-tree` (downstream) instead.
     TaintFwd {
         trace_dir: PathBuf,
+        /// Trace index where propagation starts.
         #[arg(long)]
         start: usize,
+        /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
+        /// Maximum hits returned. Server cap = 5000.
         #[arg(long)]
         max_count: Option<usize>,
+        /// Follow stores/loads through MemShadow (memory taint propagation).
         #[arg(long)]
         through_mem: bool,
+        /// Drop control-flow / addressing-reg edges; only follow value flow.
         #[arg(long)]
         data_only: bool,
+        /// Allow taint to cross function-call boundaries.
         #[arg(long)]
         cross_fn_call: bool,
         /// GumTrace-style watchdog: stop walk after N consecutive iterations
         /// with zero new hits. Pass 0 to disable. Omit to use server default.
+        /// Response carries `stop_reason` (`completed` | `max_count` |
+        /// `scan_limit`) and the echoed `scan_limit_used`.
         #[arg(long)]
         scan_limit: Option<usize>,
     },
-    /// GET /api/backward-taint.
+    /// GET /api/backward-taint — chase the lineage of (start, reg) backwards
+    /// through register defs and (optionally) memory writes. Returns each
+    /// upstream row with parent_idxs, taint_depth, and edge_kind. For "what
+    /// rows did this seed depend on" without per-instruction modeling, use
+    /// `bfs-slice` instead (much faster).
     TaintBwd {
         trace_dir: PathBuf,
+        /// Trace index where the lineage chase starts (the sink).
         #[arg(long)]
         start: usize,
+        /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
+        /// Maximum hits returned. Server cap = 5000.
         #[arg(long)]
         max_count: Option<usize>,
+        /// Follow stores/loads through MemShadow (memory taint propagation).
         #[arg(long)]
         through_mem: bool,
+        /// Drop control-flow / addressing-reg edges; only follow value flow.
         #[arg(long)]
         data_only: bool,
+        /// Allow taint to cross function-call boundaries.
         #[arg(long)]
         cross_fn_call: bool,
         /// GumTrace-style watchdog: stop walk after N consecutive iterations
         /// with zero new hits. Pass 0 to disable. Omit to use server default.
+        /// Response carries `stop_reason` (`completed` | `max_count` |
+        /// `scan_limit`) and the echoed `scan_limit_used`.
         #[arg(long)]
         scan_limit: Option<usize>,
     },
@@ -500,7 +524,8 @@ enum Cmd {
         /// Single seed by trace index.
         #[arg(long)]
         idx: Option<usize>,
-        /// Multi-seed by indices, comma-separated, e.g. "1234,5678".
+        /// Multi-seed by indices, comma-separated, e.g. "1234,5678". Up to
+        /// 16 seeds per query.
         #[arg(long)]
         idxs: Option<String>,
         /// Single seed by register (last def before --before).
@@ -515,6 +540,8 @@ enum Cmd {
         /// Multi-seed by addresses, comma-separated.
         #[arg(long)]
         addrs: Option<String>,
+        /// Lookup cutoff for `--reg` / `--regs` / `--addr` / `--addrs`.
+        /// Default = trace.len().
         #[arg(long)]
         before: Option<usize>,
         /// Drop control-flow edges. Default: include them.
@@ -523,7 +550,8 @@ enum Cmd {
         /// Maximum slice rows. Server cap = 200_000.
         #[arg(long, default_value_t = 5_000)]
         limit: usize,
-        /// `union` (default) or `intersection`.
+        /// `union` (default) or `intersection`. Multi-seed only —
+        /// intersection across one seed equals the seed's slice.
         #[arg(long, default_value = "union")]
         mode: String,
     },
@@ -532,17 +560,22 @@ enum Cmd {
     /// `dep-graph` / `bfs-slice`.
     ForwardDepTree {
         trace_dir: PathBuf,
+        /// Single seed by trace index.
         #[arg(long)]
         idx: Option<usize>,
+        /// Seed by register (last def before --before).
         #[arg(long)]
         reg: Option<String>,
+        /// Seed by memory address (last write before --before).
         #[arg(long)]
         addr: Option<String>,
+        /// Lookup cutoff for `--reg` / `--addr` resolution. Default = trace.len().
         #[arg(long)]
         before: Option<usize>,
         /// Maximum BFS depth. depth=0 means seed only.
         #[arg(long, default_value_t = 8)]
         depth: usize,
+        /// Maximum nodes in returned graph. Server cap = 2000.
         #[arg(long, default_value_t = 160)]
         limit: usize,
         /// Drop control-flow edges. Default: include them.
