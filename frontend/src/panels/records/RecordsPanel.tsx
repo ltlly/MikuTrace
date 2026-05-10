@@ -1125,7 +1125,13 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   /// SVG sticks to the visible viewport (top = scrollTop, height = view).
   /// Arrow coordinates are viewport-relative, so scrolling re-positions
   /// the overlay correctly without painting a 30M-pixel-tall element.
+  ///
+  /// Path shape is `[`-bracket: short horizontal stub at source row, vertical
+  /// down/up to target row's y, short horizontal stub ending in a small
+  /// arrowhead pointing into the target row's content. Avoids the cramped
+  /// look when target is the very next row.
   function renderRegFlowOverlay() {
+    const STUB = 6; // horizontal stub length in px
     return (
       <Show when={regFlowArrows()}>
         {(data) => (
@@ -1145,67 +1151,74 @@ export default function RecordsPanel(props: RecordsPanelProps) {
             <defs>
               <marker
                 id="rf-arrow-def"
-                viewBox="0 0 10 10"
-                refX="8"
-                refY="5"
-                markerWidth="8"
-                markerHeight="8"
+                viewBox="0 0 6 6"
+                refX="5.5"
+                refY="3"
+                markerWidth="5"
+                markerHeight="5"
                 orient="auto-start-reverse"
               >
-                <path d="M0,0 L10,5 L0,10 z" fill="var(--err, #f78166)" />
+                <path d="M0,0 L6,3 L0,6 z" fill="var(--err, #f78166)" />
               </marker>
               <marker
                 id="rf-arrow-use"
-                viewBox="0 0 10 10"
-                refX="8"
-                refY="5"
-                markerWidth="8"
-                markerHeight="8"
+                viewBox="0 0 6 6"
+                refX="5.5"
+                refY="3"
+                markerWidth="5"
+                markerHeight="5"
                 orient="auto-start-reverse"
               >
-                <path d="M0,0 L10,5 L0,10 z" fill="var(--ok, #56d364)" />
+                <path d="M0,0 L6,3 L0,6 z" fill="var(--ok, #56d364)" />
               </marker>
             </defs>
             <For each={data().arrows}>
-              {(arrow) => (
-                <g style={{ "pointer-events": "none" }}>
-                  <line
-                    x1={data().x}
-                    y1={arrow.srcY}
-                    x2={data().x}
-                    y2={arrow.tgtY}
-                    stroke={arrow.color}
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    marker-end={`url(#rf-arrow-${arrow.kind})`}
-                    style={{ "pointer-events": "stroke", cursor: "pointer" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      jumpRegFlowTarget(arrow.kind);
-                    }}
-                  >
-                    <title>{arrow.title}</title>
-                  </line>
-                  <Show when={arrow.label}>
-                    <text
-                      x={data().x + 8}
-                      y={arrow.tgtY + (arrow.tgtOff === "top" ? 12 : -4)}
-                      fill={arrow.color}
-                      font-size="10"
-                      style={{ "pointer-events": "visiblePainted", cursor: "pointer" }}
+              {(arrow) => {
+                const baseX = data().x;
+                const stemX = baseX - STUB; // vertical leg sits to the left of the row content
+                const tgtX = baseX; // arrowhead tip sits at the row's left edge
+                // Build a single polyline for the [-shape:
+                //   start at (baseX, srcY), go LEFT STUB to stemX, vertical to tgtY, RIGHT STUB to tgtX.
+                const path = `M ${baseX},${arrow.srcY} L ${stemX},${arrow.srcY} L ${stemX},${arrow.tgtY} L ${tgtX},${arrow.tgtY}`;
+                return (
+                  <g style={{ "pointer-events": "none" }}>
+                    <path
+                      d={path}
+                      fill="none"
+                      stroke={arrow.color}
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      marker-end={`url(#rf-arrow-${arrow.kind})`}
+                      style={{ "pointer-events": "stroke", cursor: "pointer" }}
                       onClick={(e) => {
                         e.stopPropagation();
                         jumpRegFlowTarget(arrow.kind);
                       }}
                     >
-                      {arrow.label}
                       <title>{arrow.title}</title>
-                    </text>
-                  </Show>
-                  {/* anchor dot at source row — decorative, no events */}
-                  <circle cx={data().x} cy={arrow.srcY} r="3" fill={arrow.color} />
-                </g>
-              )}
+                    </path>
+                    <Show when={arrow.label}>
+                      <text
+                        x={baseX + 4}
+                        y={arrow.tgtY + (arrow.tgtOff === "top" ? 10 : -3)}
+                        fill={arrow.color}
+                        font-size="10"
+                        style={{ "pointer-events": "visiblePainted", cursor: "pointer" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          jumpRegFlowTarget(arrow.kind);
+                        }}
+                      >
+                        {arrow.label}
+                        <title>{arrow.title}</title>
+                      </text>
+                    </Show>
+                    {/* anchor dot at the source row — decorative, no events */}
+                    <circle cx={baseX} cy={arrow.srcY} r="2.5" fill={arrow.color} />
+                  </g>
+                );
+              }}
             </For>
           </svg>
         )}

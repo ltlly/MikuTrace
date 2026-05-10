@@ -26,8 +26,13 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     setLimit(DEFAULT_TRACE_PC_LIMIT);
   });
 
+  // Fetch on every cursor change, regardless of whether the bottom tab is
+  // currently showing this panel. The user expectation is "switch to Trace
+  // for PC and the latest cursor's history is already there", not "click
+  // tab, wait for fetch". The render itself is gated below by `Show when`,
+  // so the data is ready in the cache when the user flips to this tab.
   const [record] = createResource(
-    () => (props.active ? props.idx : undefined),
+    () => props.idx,
     (idx) => fetchRecord(idx),
   );
   const currentRecord = createMemo(() => {
@@ -35,7 +40,6 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     return r && r.idx === props.idx ? r : undefined;
   });
   const source = createMemo<IpcSource | undefined>((prev) => {
-    if (!props.active) return undefined;
     const r = currentRecord();
     if (!r) return undefined;
     const next = { pc: r.pc, idx: props.idx, limit: limit() };
