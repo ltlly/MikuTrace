@@ -7,13 +7,16 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use tracemiku_core::disasm::{decode, normalize_disasm_reg};
-use tracemiku_core::prelude::{backward_taint, default_frame_reg_set};
+use tracemiku_core::prelude::{
+    backward_taint_ext, default_frame_reg_set, TaintOptions, TaintStopReason,
+};
 
 use crate::state::AppState;
 use crate::taint_graph::{build_taint_graph, empty_taint_graph, TaintGraph, TaintGraphRow};
 
 const MAX_COUNT_CEILING: usize = 5_000;
 const DEFAULT_MAX_COUNT: usize = 5_000;
+const DEFAULT_SCAN_LIMIT: usize = 200_000;
 
 #[derive(Debug, Deserialize)]
 pub struct BackwardTaintQuery {
@@ -27,6 +30,10 @@ pub struct BackwardTaintQuery {
     pub data_only: bool,
     #[serde(default)]
     pub cross_fn_call: bool,
+    /// Optional GumTrace-style watchdog: stop after this many BFS pops with
+    /// zero new hits. Defaults to [`DEFAULT_SCAN_LIMIT`] when absent so long
+    /// noisy traces cannot hang the panel; pass `0` to disable.
+    pub scan_limit: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +63,9 @@ pub struct BackwardTaintResponse {
     pub graph: TaintGraph,
     pub stopped_at_max: bool,
     pub max_count_used: usize,
+    /// One of `"completed"`, `"max_count"`, `"scan_limit"`.
+    pub stop_reason: &'static str,
+    pub scan_limit_used: Option<usize>,
 }
 
 impl TaintGraphRow for TaintChainRow {
@@ -108,6 +118,8 @@ pub async fn backward_taint_handler(
                 chain: Vec::new(),
                 stopped_at_max: true,
                 max_count_used: 0,
+                stop_reason: "error",
+                scan_limit_used: None,
             }
         });
     Json(response)
@@ -137,23 +149,35 @@ fn backward_taint_response(
                     chain: Vec::new(),
                     stopped_at_max: false,
                     max_count_used: eff,
+                    stop_reason: "memshadow_unavailable",
+                    scan_limit_used: None,
                 };
             }
         }
     } else {
         None
     };
-    let (hits, stopped) = backward_taint(
+    let scan_limit = effective_scan_limit(q.scan_limit);
+    let walk = backward_taint_ext(
         &inner.trace,
         &inner.index,
         q.start,
         &reg,
         eff,
         &exclude,
-        q.through_mem,
         mem_arg,
-        q.data_only,
+        TaintOptions {
+            through_mem: q.through_mem,
+            data_only: q.data_only,
+            scan_limit,
+        },
     );
+    let stop_reason_str = stop_reason_str(walk.stop_reason);
+    let stopped = matches!(
+        walk.stop_reason,
+        TaintStopReason::MaxCount | TaintStopReason::ScanLimit
+    );
+    let hits = walk.hits;
 
     let rows: Vec<TaintChainRow> = hits
         .into_iter()
@@ -193,6 +217,8 @@ fn backward_taint_response(
         graph,
         stopped_at_max: stopped,
         max_count_used: eff,
+        stop_reason: stop_reason_str,
+        scan_limit_used: scan_limit,
     }
 }
 
@@ -200,14 +226,51 @@ fn effective_max_count(raw: Option<usize>) -> usize {
     raw.unwrap_or(DEFAULT_MAX_COUNT).min(MAX_COUNT_CEILING)
 }
 
+/// Convert the optional caller-supplied scan limit into the effective one.
+/// `None` -> route default; `Some(0)` -> watchdog disabled; otherwise the
+/// supplied value (caller-trusted).
+fn effective_scan_limit(raw: Option<usize>) -> Option<usize> {
+    match raw {
+        None => Some(DEFAULT_SCAN_LIMIT),
+        Some(0) => None,
+        Some(n) => Some(n),
+    }
+}
+
+fn stop_reason_str(reason: TaintStopReason) -> &'static str {
+    match reason {
+        TaintStopReason::Completed => "completed",
+        TaintStopReason::MaxCount => "max_count",
+        TaintStopReason::ScanLimit => "scan_limit",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{effective_max_count, DEFAULT_MAX_COUNT, MAX_COUNT_CEILING};
+    use super::{
+        effective_max_count, effective_scan_limit, stop_reason_str, DEFAULT_MAX_COUNT,
+        DEFAULT_SCAN_LIMIT, MAX_COUNT_CEILING,
+    };
+    use tracemiku_core::prelude::TaintStopReason;
 
     #[test]
     fn effective_max_count_caps_extreme_requests() {
         assert_eq!(effective_max_count(None), DEFAULT_MAX_COUNT);
         assert_eq!(effective_max_count(Some(10)), 10);
         assert_eq!(effective_max_count(Some(usize::MAX)), MAX_COUNT_CEILING);
+    }
+
+    #[test]
+    fn effective_scan_limit_routes_zero_to_disabled() {
+        assert_eq!(effective_scan_limit(None), Some(DEFAULT_SCAN_LIMIT));
+        assert_eq!(effective_scan_limit(Some(0)), None);
+        assert_eq!(effective_scan_limit(Some(5)), Some(5));
+    }
+
+    #[test]
+    fn stop_reason_str_round_trip() {
+        assert_eq!(stop_reason_str(TaintStopReason::Completed), "completed");
+        assert_eq!(stop_reason_str(TaintStopReason::MaxCount), "max_count");
+        assert_eq!(stop_reason_str(TaintStopReason::ScanLimit), "scan_limit");
     }
 }

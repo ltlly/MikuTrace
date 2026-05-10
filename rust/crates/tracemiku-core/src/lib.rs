@@ -10,10 +10,12 @@
 #![warn(clippy::all)]
 
 pub mod analysis_index;
+pub mod bfs_slice;
 pub mod calltree;
 pub mod cfg;
 pub mod decompiler;
 pub mod disasm;
+pub mod forward_dep_tree;
 pub mod function_index;
 pub mod hashfin;
 pub mod index;

@@ -113,6 +113,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "analysis_index.rs",
     "auto_phase.rs",
     "backward_taint.rs",
+    "bfs_slice.rs",
     "bn_hlil.rs",
     "call_tree.rs",
     "cfg.rs",
@@ -125,6 +126,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "dep_graph.rs",
     "diff_traces.rs",
     "fn_summary.rs",
+    "forward_dep_tree.rs",
     "forward_taint.rs",
     "functions.rs",
     "hash_finalize.rs",
@@ -164,6 +166,7 @@ const LIGHT_ROUTE_FILES: &[&str] = &[
     "record.rs",
     "reg_value_at.rs",
     "search_pc.rs",
+    "seed_resolver.rs",
 ];
 
 const HEAVY_ROUTE_HANDLERS: &[(&str, &str)] = &[

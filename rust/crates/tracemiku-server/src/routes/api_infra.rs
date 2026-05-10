@@ -224,6 +224,8 @@ fn openapi_paths() -> Value {
         ("/api/hash-input-search", "post"),
         ("/api/auto-phase-detect", "get"),
         ("/api/dep-graph", "get"),
+        ("/api/forward-dep-tree", "get"),
+        ("/api/bfs-slice", "get"),
         ("/api/diff-traces", "post"),
         ("/api/fn-summary", "get"),
         ("/api/dec/summary", "get"),

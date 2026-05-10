@@ -89,6 +89,56 @@ async fn dep_graph_idx_seed_walks_mem_and_reg_dependencies() {
 }
 
 #[tokio::test]
+async fn dep_graph_self_loop_does_not_double_visit() {
+    // After the HashSet→Bitset migration (audit P2-6), confirm the BFS
+    // correctly handles a self-edge without re-pushing the seed.
+    let tmp = tempfile::tempdir().unwrap();
+    let run = tmp.path().join("run");
+    let cd = run.join("calls").join("call_001_tid100_3r_2ms");
+    fs::create_dir_all(&cd).unwrap();
+
+    let mut trace_file = fs::File::create(cd.join("trace.bin")).unwrap();
+    let regs0 = [0u64; 31];
+    let regs1 = [0u64; 31];
+    let regs2 = [0u64; 31];
+    // Each row: `add x0, x0, #1` (self-RMW on x0).
+    for (pc, regs, sp, inst) in [
+        (0x100000u64, regs0, 0x7000u64, 0x91000400u32),
+        (0x100004u64, regs1, 0x7000u64, 0x91000400u32),
+        (0x100008u64, regs2, 0x7000u64, 0x91000400u32),
+    ] {
+        let mut buf = [0u8; 272];
+        buf[0..8].copy_from_slice(&pc.to_le_bytes());
+        for (i, value) in regs.iter().enumerate() {
+            let start = 8 + i * 8;
+            buf[start..start + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        buf[256..264].copy_from_slice(&sp.to_le_bytes());
+        buf[268..272].copy_from_slice(&inst.to_le_bytes());
+        trace_file.write_all(&buf).unwrap();
+    }
+    fs::write(cd.join("meta.json"), r#"{"records":3}"#).unwrap();
+    fs::write(
+        run.join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let (status, v) = get(cd, "/api/dep-graph?idx=2&depth=4&limit=16").await;
+    assert_eq!(status, StatusCode::OK);
+    let nodes = v["graph"]["nodes"].as_array().unwrap();
+    let mut idxs: Vec<u64> = nodes.iter().map(|n| n["idx"].as_u64().unwrap()).collect();
+    idxs.sort();
+    idxs.dedup();
+    let count = idxs.len();
+    let total = nodes.len();
+    assert_eq!(
+        count, total,
+        "Bitset visited set must dedup self-loops: {nodes:?}"
+    );
+}
+
+#[tokio::test]
 async fn dep_graph_resolves_reg_and_addr_seeds() {
     let (_tmp, cd) = synth_call_dir();
     let (status, reg) = get(cd.clone(), "/api/dep-graph?reg=x1&before=3").await;

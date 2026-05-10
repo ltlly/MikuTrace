@@ -3,6 +3,7 @@ pub mod api_infra;
 pub mod asm_tokens;
 pub mod auto_phase;
 pub mod backward_taint;
+pub mod bfs_slice;
 pub mod bn_hlil;
 pub mod call_tree;
 pub mod cfg;
@@ -19,6 +20,7 @@ pub mod diff_traces;
 pub mod field_at;
 pub mod fn_summary;
 pub mod fork_events;
+pub mod forward_dep_tree;
 pub mod forward_taint;
 pub mod functions;
 pub mod hash_finalize;
@@ -45,6 +47,7 @@ pub mod records;
 pub mod reg_value_at;
 pub mod search;
 pub mod search_pc;
+pub mod seed_resolver;
 pub mod so_stats;
 pub mod string_provenance;
 pub mod strings;
@@ -87,6 +90,11 @@ pub fn router(state: AppState) -> Router {
             get(auto_phase::auto_phase_detect_handler),
         )
         .route("/api/dep-graph", get(dep_graph::dep_graph_handler))
+        .route(
+            "/api/forward-dep-tree",
+            get(forward_dep_tree::forward_dep_tree_handler),
+        )
+        .route("/api/bfs-slice", get(bfs_slice::bfs_slice_handler))
         .route("/api/jni-events", get(jni_events::jni_events_handler))
         .route("/api/jni-calls", get(jni_calls::jni_calls_handler))
         .route("/api/jobj-history", get(jobj_history::jobj_history_handler))

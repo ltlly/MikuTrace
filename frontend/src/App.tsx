@@ -14,6 +14,7 @@ import QueryPanel, { type QueryRunRequest } from "./panels/query/QueryPanel";
 import RecordsPanel, { type RecordsTaintOverlay, type RecordsTaintOverlayMode, type RecordsVisibleNavigator } from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
 import SettingsPanel from "./panels/settings/SettingsPanel";
+import SlicePanel from "./panels/slice/SlicePanel";
 import SoFilterPanel from "./panels/sofilter/SoFilterPanel";
 import StringsPanel from "./panels/strings/StringsPanel";
 import StringProvenancePanel, { type StringProvenanceRequest } from "./panels/strings/StringProvenancePanel";
@@ -30,6 +31,7 @@ type LeftTab =
   | "forks"
   | "strings"
   | "taint"
+  | "slice"
   | "xref"
   | "sofilter"
   | "settings";
@@ -870,6 +872,7 @@ export default function App() {
       forks: "Forks",
       strings: "Strings",
       taint: "Taint",
+      slice: "Slice",
       xref: "Refs",
       sofilter: "SO Filter",
       settings: "Settings",
@@ -978,6 +981,7 @@ export default function App() {
     if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
     if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。单击跳到第一次写入/触碰该字符串地址的 trace；双击会在底部 Provenance 展示每个字符是谁写入、谁读取。";
     if (leftTab() === "taint") return "Taint 默认从当前 traceIdx 和当前寄存器开始；当前寄存器会随 Disassembly 里选中的指令自动更新。Forward 看后续传播，Backward 追溯值来源。Tree 视图按 taint parent/depth 缩进；Timeline 视图按 trace 顺序显示命中项，可带 call depth 信息。";
+    if (leftTab() === "slice") return "Slice 在持久化依赖 CSR 上做 BFS。Backward 把当前 cursor 作为 sink，列出所有它直接/间接依赖的 trace 行；填第二个 idx 后可切换 union/intersection，intersection 只保留两个种子的共同祖先。Forward 反方向（def→use）展开当前行的下游使用者。data only 复选框会丢弃控制流依赖。";
     if (leftTab() === "xref") return "Refs 上半部分是当前 PC 在 trace 中的其它执行位置；下半部分是按解码后的汇编文本做正则搜索。它不是静态代码引用分析，ret 这类通用指令只有在提交文本搜索后才会列出匹配。";
     if (leftTab() === "settings") return "Settings 显示后端 API、MemShadow 状态、密度和调试开关。API debug log 可在需要定位前端/后端交互时打开。";
     return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
@@ -1037,6 +1041,7 @@ export default function App() {
           {vtab("forks", "Forks", "fork/clone 事件")}
           {vtab("strings", "Strings", "MemShadow 字符串")}
           {vtab("taint", "Taint", "寄存器/内存污点追踪")}
+          {vtab("slice", "Slice", "依赖图反向 slice 与 def→use 树（同/反方向各一棵）")}
           {vtab("xref", "Refs", "当前 PC 执行历史和汇编文本搜索")}
           {vtab("sofilter", "SO Filter", "multi-SO 过滤状态")}
           {vtab("settings", "Settings", "显示和 API 状态")}
@@ -1087,6 +1092,14 @@ export default function App() {
                 active={leftTab() === "taint"}
                 onTaskUpdate={reportTask}
                 onOverlayChange={updateTaintOverlay}
+              />
+            </div>
+            <div class="lp-tab" classList={{ active: leftTab() === "slice" }}>
+              <SlicePanel
+                idx={selectedIdx()}
+                reg={selectedReg()}
+                onSelect={setSelectedIdx}
+                active={leftTab() === "slice"}
               />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>

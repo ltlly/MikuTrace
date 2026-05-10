@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::disasm::decode;
+use tracemiku_core::forward_dep_tree::DependencyUsers;
 use tracemiku_core::hashfin::{HashFinalizeCandidate, HashFinalizeIndex};
 use tracemiku_core::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use tracemiku_core::prelude::{
@@ -70,6 +71,7 @@ pub struct AppStateInner {
     pub cfg: CFG,
     pub function_index: FunctionIndex,
     analysis_index: OnceLock<AnalysisIndex>,
+    dep_users: OnceLock<DependencyUsers>,
     memshadow: OnceLock<MemShadow>,
     memshadow_status: AtomicU8,
     call_tree: OnceLock<CallNode>,
@@ -228,6 +230,7 @@ impl AppState {
             cfg,
             function_index,
             analysis_index: OnceLock::new(),
+            dep_users: OnceLock::new(),
             memshadow,
             memshadow_status,
             call_tree: OnceLock::new(),
@@ -471,6 +474,16 @@ impl AppStateInner {
         } else {
             "idle"
         }
+    }
+
+    /// Lazily compute the inverted dependency CSR (def→use direction).
+    ///
+    /// This is what powers `/api/forward-dep-tree`. Cost is O(edges) the first
+    /// time and O(1) after; for a 24M-row trace the build is roughly the same
+    /// order as one analysis-index sidecar pass over edges.
+    pub fn dep_users(&self) -> &DependencyUsers {
+        self.dep_users
+            .get_or_init(|| DependencyUsers::build(&self.analysis_index().deps, self.trace.len()))
     }
 
     pub fn call_tree(&self) -> &CallNode {

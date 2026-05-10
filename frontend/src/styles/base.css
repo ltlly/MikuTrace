@@ -1749,6 +1749,74 @@ ul {
   overflow-wrap: anywhere;
 }
 
+.slice-panel .slice-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slice-panel .slice-direction {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.slice-panel .slice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.slice-panel .slice-row label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.slice-panel .slice-row input[type="number"] {
+  width: 96px;
+}
+
+.slice-panel .slice-seed-notes {
+  list-style: none;
+  padding-left: 0;
+  margin: 4px 0 0 0;
+}
+
+.slice-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.slice-table th,
+.slice-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slice-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.slice-table tbody tr {
+  cursor: pointer;
+}
+
+.slice-table tbody tr:hover {
+  background: rgba(98, 160, 234, 0.08);
+}
+
+.slice-table code {
+  background: transparent;
+  padding: 0;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));

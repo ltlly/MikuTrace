@@ -99,6 +99,13 @@ Recent AI-analysis additions include:
   tree reuse, and `/api/analysis-index` compact performance/coverage summaries;
 - dependency DAG queries through `/api/dep-graph` and `tracemiku-cli dep-graph`,
   seeded from a trace index, register last-def, or memory-address last writer;
+- backward BFS slicing over the persistent dependency CSR via `/api/bfs-slice`
+  with multi-seed `idxs/regs/addrs` and `mode=union|intersection` for
+  "common ancestors" queries, plus a forward def→use DAG via
+  `/api/forward-dep-tree` (peer-trace-tools §1.8/§1.9 algorithms; see
+  `docs/peer-trace-tools-implementation.md`);
+- GumTrace-style `SCAN_LIMIT_REACHED` watchdog on `/api/forward-taint` and
+  `/api/backward-taint` (`scan_limit=` query, `stop_reason` in the response);
 - taint provenance graph expressions, Records taint-only filtering, JSON/TXT
   taint export, a Records minimap, call-frame folding, and local function
   renames for large-trace navigation;
@@ -169,6 +176,10 @@ Current source-of-truth docs are:
   product/UI direction, and current bug triage.
 - `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
   historical Rust/Solid cutover design and parity map.
+- `docs/peer-trace-tools-survey.md` / `docs/peer-trace-tools-algorithms.md` /
+  `docs/peer-trace-tools-implementation.md`: peer-tool review and the
+  current implementation log for the BFS-slice / forward-dep-tree /
+  scan-limit / multi-seed work.
 
 ## Trace Format
 

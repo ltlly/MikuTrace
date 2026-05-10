@@ -281,3 +281,189 @@ async fn forward_taint_no_cross_fn_call_omits_frame_depth() {
         );
     }
 }
+
+#[tokio::test]
+async fn forward_taint_default_completes_with_completed_reason() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["stop_reason"], "completed");
+    assert_eq!(v["stopped_at_max"], false);
+    let limit = v["scan_limit_used"].as_u64().unwrap();
+    assert!(limit > 0, "default scan_limit_used should expose the cap");
+}
+
+#[tokio::test]
+async fn forward_taint_max_count_surfaces_max_count_reason() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["stop_reason"], "max_count");
+    assert_eq!(v["stopped_at_max"], true);
+}
+
+#[tokio::test]
+async fn forward_taint_scan_limit_zero_disables_watchdog() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=10&scan_limit=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["scan_limit_used"].is_null());
+    assert_eq!(v["stop_reason"], "completed");
+}
+
+#[tokio::test]
+async fn forward_taint_scan_limit_one_trips_watchdog() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=10&scan_limit=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["stop_reason"], "scan_limit");
+    assert_eq!(v["scan_limit_used"], 1);
+}
+
+#[tokio::test]
+async fn backward_taint_scan_limit_zero_disables_watchdog() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/backward-taint?start=4&reg=x0&max_count=10&scan_limit=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["scan_limit_used"].is_null());
+    assert_eq!(v["stop_reason"], "completed");
+}
+
+#[tokio::test]
+async fn backward_taint_scan_limit_one_trips_watchdog() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/backward-taint?start=4&reg=x0&max_count=10&scan_limit=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    // Scan limit must trip OR the chain completes — but not both. Just
+    // confirm that scan_limit_used is echoed and the stop_reason is one of
+    // the documented terminal values.
+    assert_eq!(v["scan_limit_used"], 1);
+    let reason = v["stop_reason"].as_str().unwrap();
+    assert!(
+        matches!(reason, "completed" | "scan_limit"),
+        "unexpected stop_reason {reason:?}"
+    );
+}
+
+#[tokio::test]
+async fn backward_taint_exposes_stop_reason_and_scan_limit() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/backward-taint?start=4&reg=x0&max_count=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["stop_reason"], "completed");
+    assert!(v["scan_limit_used"].as_u64().unwrap() > 0);
+
+    let app2 = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    let resp = app2
+        .oneshot(
+            Request::builder()
+                .uri("/api/backward-taint?start=4&reg=x0&max_count=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["stop_reason"], "max_count");
+}

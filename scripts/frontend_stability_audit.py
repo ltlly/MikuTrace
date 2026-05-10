@@ -26,6 +26,7 @@ EXPECTED_GUARDED_SOURCES = {
     ("panels/memory/MemoryPanel.tsx", "dumpSource"),
     ("panels/records/RecordsPanel.tsx", "range"),
     ("panels/forks/ForksPanel.tsx", "source"),
+    ("panels/slice/SlicePanel.tsx", "query"),
     ("panels/strings/StringProvenancePanel.tsx", "source"),
     ("panels/strings/StringsPanel.tsx", "source"),
     ("panels/tracepc/TraceForPcPanel.tsx", "source"),
@@ -119,6 +120,15 @@ STABILITY_TOKENS = {
         "prev.idx === next.idx",
         "prev.limit === next.limit",
         "? prev : next",
+    ],
+    ("panels/slice/SlicePanel.tsx", "query"): [
+        "createMemo<SliceQuery | undefined>((prev?: SliceQuery)",
+        "prev.direction === next.direction",
+        "prev.primaryIdx === next.primaryIdx",
+        "prev.secondaryIdx === next.secondaryIdx",
+        "prev.token === next.token",
+        "? prev",
+        ": next",
     ],
     ("panels/xref/XrefPanel.tsx", "pcSource"): [
         "createMemo<PcRefSource | undefined>((prev)",

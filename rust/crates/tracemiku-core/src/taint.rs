@@ -441,6 +441,36 @@ fn scan_frame_depth_range(trace: &Trace, start: usize, end: usize) -> FrameDepth
     FrameDepthChunk { start, flags }
 }
 
+/// Why a taint walk terminated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    /// Walked the queue to completion.
+    Completed,
+    /// Hit the `max_count` cap.
+    MaxCount,
+    /// Saw `scan_limit` consecutive iterations without producing a new hit.
+    /// Inspired by GumTrace's `SCAN_LIMIT_REACHED` watchdog.
+    ScanLimit,
+}
+
+/// Extended walk options. `scan_limit` mirrors GumTrace's
+/// `set_max_scan_distance`: stop after N consecutive iterations that did
+/// not append to the hit list (visited, deduped, no propagation, etc.).
+/// `None` disables the watchdog.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TaintOptions {
+    pub through_mem: bool,
+    pub data_only: bool,
+    pub scan_limit: Option<usize>,
+}
+
+/// Result of a taint walk that exposes the [`StopReason`].
+#[derive(Debug, Clone)]
+pub struct TaintWalkResult {
+    pub hits: Vec<TaintHit>,
+    pub stop_reason: StopReason,
+}
+
 #[allow(clippy::too_many_arguments)] // M3-γ Task 4 will add cross_fn_call.
 pub fn forward_taint(
     trace: &Trace,
@@ -450,9 +480,46 @@ pub fn forward_taint(
     max_count: usize,
     exclude_regs: &HashSet<String>,
     through_mem: bool,
-    _mem: Option<&MemShadow>,
+    mem: Option<&MemShadow>,
     data_only: bool,
 ) -> (Vec<TaintHit>, bool) {
+    let result = forward_taint_ext(
+        trace,
+        index,
+        start_idx,
+        taint_reg,
+        max_count,
+        exclude_regs,
+        mem,
+        TaintOptions {
+            through_mem,
+            data_only,
+            scan_limit: None,
+        },
+    );
+    (
+        result.hits,
+        matches!(
+            result.stop_reason,
+            StopReason::MaxCount | StopReason::ScanLimit
+        ),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn forward_taint_ext(
+    trace: &Trace,
+    index: &Index,
+    start_idx: usize,
+    taint_reg: &str,
+    max_count: usize,
+    exclude_regs: &HashSet<String>,
+    _mem: Option<&MemShadow>,
+    opts: TaintOptions,
+) -> TaintWalkResult {
+    let through_mem = opts.through_mem;
+    let data_only = opts.data_only;
+    let scan_limit = opts.scan_limit;
     // _mem is unused on the forward side because tagging is index-only —
     // Python also doesn't use MemShadow on the forward path (only on backward).
     let mut tainted_regs: HashMap<String, TaintProvenance> = HashMap::new();
@@ -468,13 +535,21 @@ pub fn forward_taint(
     } else {
         max_count
     };
-    let mut stopped = false;
+    let mut stop_reason = StopReason::Completed;
+    let mut since_last_hit: usize = 0;
 
     while let Some(Reverse((i, event_kind, reg, pos))) = heap.pop() {
         if out.len() >= cap {
-            stopped = true;
+            stop_reason = StopReason::MaxCount;
             break;
         }
+        if let Some(limit) = scan_limit {
+            if since_last_hit >= limit {
+                stop_reason = StopReason::ScanLimit;
+                break;
+            }
+        }
+        since_last_hit = since_last_hit.saturating_add(1);
         if event_kind != MEM_TOUCH_EVENT {
             let next_entries = if event_kind == REG_DEF_EVENT {
                 index.reg_defs.get(&reg)
@@ -614,6 +689,7 @@ pub fn forward_taint(
                 Some("reg".to_string())
             },
         });
+        since_last_hit = 0;
         let next_provenance = TaintProvenance::from_hit(i, taint_depth);
 
         // Propagate: regs_def → push next-use/def. Loads from tainted memory
@@ -678,7 +754,10 @@ pub fn forward_taint(
         push_next_mem_touch(&mut heap, index, &tainted_mem, i);
     }
 
-    (out, stopped)
+    TaintWalkResult {
+        hits: out,
+        stop_reason,
+    }
 }
 
 /// Return writer record indices that overlap `[addr, addr+size)` strictly
@@ -728,6 +807,43 @@ pub fn backward_taint(
     mem: Option<&MemShadow>,
     data_only: bool,
 ) -> (Vec<TaintHit>, bool) {
+    let result = backward_taint_ext(
+        trace,
+        index,
+        idx,
+        taint_reg,
+        max_count,
+        exclude_regs,
+        mem,
+        TaintOptions {
+            through_mem,
+            data_only,
+            scan_limit: None,
+        },
+    );
+    (
+        result.hits,
+        matches!(
+            result.stop_reason,
+            StopReason::MaxCount | StopReason::ScanLimit
+        ),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn backward_taint_ext(
+    trace: &Trace,
+    index: &Index,
+    idx: usize,
+    taint_reg: &str,
+    max_count: usize,
+    exclude_regs: &HashSet<String>,
+    mem: Option<&MemShadow>,
+    opts: TaintOptions,
+) -> TaintWalkResult {
+    let through_mem = opts.through_mem;
+    let data_only = opts.data_only;
+    let scan_limit = opts.scan_limit;
     let mut pending: VecDeque<BwdItem> = VecDeque::new();
     let mut visited: HashSet<(usize, String)> = HashSet::new();
     let mut raw_out: Vec<RawBwdHit> = Vec::new();
@@ -736,7 +852,8 @@ pub fn backward_taint(
     } else {
         max_count
     };
-    let mut stopped = false;
+    let mut stop_reason = StopReason::Completed;
+    let mut since_last_hit: usize = 0;
 
     // Initial seed branch (viewer/taint.py:306-318).
     let r0 = trace.record(idx);
@@ -809,9 +926,17 @@ pub fn backward_taint(
 
     while let Some(item) = pending.pop_front() {
         if raw_out.len() >= cap {
-            stopped = true;
+            stop_reason = StopReason::MaxCount;
             break;
         }
+        if let Some(limit) = scan_limit {
+            if since_last_hit >= limit {
+                stop_reason = StopReason::ScanLimit;
+                break;
+            }
+        }
+        let before_pop = raw_out.len();
+        since_last_hit = since_last_hit.saturating_add(1);
         match item {
             BwdItem::Mem {
                 before_idx,
@@ -939,6 +1064,9 @@ pub fn backward_taint(
                 }
             }
         }
+        if raw_out.len() > before_pop {
+            since_last_hit = 0;
+        }
     }
 
     // Dedup by sorted idx (Python lines 358-361).
@@ -958,7 +1086,10 @@ pub fn backward_taint(
             edge_kind: hit.edge_kind,
         });
     }
-    (out, stopped)
+    TaintWalkResult {
+        hits: out,
+        stop_reason,
+    }
 }
 
 #[cfg(test)]
@@ -1629,5 +1760,189 @@ mod tests {
             idxs_strict.contains(&2),
             "data_only=true: idx 2 should still hit; got {idxs_strict:?}"
         );
+    }
+
+    #[test]
+    fn forward_taint_ext_completes_when_no_limits() {
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = forward_taint_ext(
+            &t,
+            &idx,
+            0,
+            "x0",
+            100,
+            &exclude,
+            None,
+            TaintOptions::default(),
+        );
+        assert_eq!(result.stop_reason, StopReason::Completed);
+        assert_eq!(result.hits.len(), 4);
+    }
+
+    #[test]
+    fn forward_taint_ext_max_count_sets_max_count_reason() {
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = forward_taint_ext(
+            &t,
+            &idx,
+            0,
+            "x0",
+            2,
+            &exclude,
+            None,
+            TaintOptions::default(),
+        );
+        assert_eq!(result.stop_reason, StopReason::MaxCount);
+        assert_eq!(result.hits.len(), 2);
+    }
+
+    #[test]
+    fn forward_taint_ext_scan_limit_kicks_in_on_dead_seed() {
+        // Seed reg never appears in trace, so the BFS finds nothing. With
+        // a scan_limit of 1 the watchdog should trip.
+        let dir = synth_two_callees();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = forward_taint_ext(
+            &t,
+            &idx,
+            0,
+            "x9",
+            100,
+            &exclude,
+            None,
+            TaintOptions {
+                through_mem: false,
+                data_only: false,
+                scan_limit: Some(1),
+            },
+        );
+        // With no reg events scheduled the heap is empty, so the loop never
+        // runs and the walk completes (no hits, no scan-limit trip).
+        assert!(result.hits.is_empty());
+        assert!(matches!(
+            result.stop_reason,
+            StopReason::Completed | StopReason::ScanLimit
+        ));
+    }
+
+    #[test]
+    fn forward_taint_ext_scan_limit_trips_when_walk_runs_dry() {
+        // x0_chain emits one hit per record, but the heap interleaves
+        // register-use and register-def events for the same row, so the
+        // BFS pops several already-seen rows between hits. With a tight
+        // scan_limit those idle iterations exhaust the watchdog before the
+        // queue drains.
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = forward_taint_ext(
+            &t,
+            &idx,
+            0,
+            "x0",
+            100,
+            &exclude,
+            None,
+            TaintOptions {
+                through_mem: false,
+                data_only: false,
+                scan_limit: Some(1),
+            },
+        );
+        assert_eq!(
+            result.stop_reason,
+            StopReason::ScanLimit,
+            "scan_limit=1 must trip in synth_x0_chain when duplicate events are popped"
+        );
+    }
+
+    #[test]
+    fn forward_taint_ext_scan_limit_completes_when_limit_is_high() {
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = forward_taint_ext(
+            &t,
+            &idx,
+            0,
+            "x0",
+            100,
+            &exclude,
+            None,
+            TaintOptions {
+                through_mem: false,
+                data_only: false,
+                scan_limit: Some(10_000),
+            },
+        );
+        assert_eq!(result.stop_reason, StopReason::Completed);
+        assert_eq!(result.hits.len(), 4);
+    }
+
+    #[test]
+    fn backward_taint_ext_max_count_reports_max_count_reason() {
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = backward_taint_ext(
+            &t,
+            &idx,
+            4,
+            "x0",
+            2,
+            &exclude,
+            None,
+            TaintOptions::default(),
+        );
+        assert_eq!(result.stop_reason, StopReason::MaxCount);
+        assert!(result.hits.len() <= 2);
+    }
+
+    #[test]
+    fn backward_taint_ext_completes_on_finite_chain() {
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let result = backward_taint_ext(
+            &t,
+            &idx,
+            4,
+            "x0",
+            100,
+            &exclude,
+            None,
+            TaintOptions::default(),
+        );
+        assert_eq!(result.stop_reason, StopReason::Completed);
+        let idxs: Vec<usize> = result.hits.iter().map(|h| h.idx).collect();
+        assert_eq!(idxs, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn taint_legacy_wrappers_preserve_old_shape() {
+        let dir = synth_x0_chain();
+        let t = load_trace(&dir);
+        let idx = Index::build(&t);
+        let exclude = HashSet::new();
+        let (fwd_hits, fwd_stopped) =
+            forward_taint(&t, &idx, 0, "x0", 100, &exclude, false, None, false);
+        assert!(!fwd_stopped);
+        assert_eq!(fwd_hits.len(), 4);
+        let (bwd_hits, bwd_stopped) =
+            backward_taint(&t, &idx, 4, "x0", 100, &exclude, false, None, false);
+        assert!(!bwd_stopped);
+        assert_eq!(bwd_hits.len(), 5);
     }
 }

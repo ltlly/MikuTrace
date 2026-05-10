@@ -7,6 +7,10 @@ pub use crate::analysis_index::{
     AnalysisIndex, AnalysisSummary, DepEdge, DepKind, DependencyIndex, FunctionSummary,
     MemLastDefEntry, PcSummary, RegCheckpoint,
 };
+pub use crate::bfs_slice::{
+    bfs_slice, bfs_slice_multi, bfs_slice_one, slice_edge_stats, Bitset, SliceEdgeStats, SliceMode,
+    SliceOptions, SliceResult,
+};
 pub use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 pub use crate::cfg::{Block, CFG};
 pub use crate::decompiler::backend::{
@@ -31,6 +35,10 @@ pub use crate::decompiler::type_anchor::{
 };
 pub use crate::decompiler::vm_candidate::detect_vm_candidates;
 pub use crate::disasm::{decode, normalize_disasm_reg, DecodedInsn};
+pub use crate::forward_dep_tree::{
+    forward_dep_tree, DependencyUsers, ForwardEdge, ForwardNode, ForwardOptions, ForwardTree,
+    UserEdge,
+};
 pub use crate::function_index::{
     build_from_symbols as build_function_index, make_bn_id, make_sym_addr_id, make_sym_id,
     make_trace_id, parse_id, FunctionEntry, FunctionIndex,
@@ -49,8 +57,9 @@ pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
 pub use crate::ollvmdet::{ollvm_detect_vm, OllvmFinding};
 pub use crate::symbols::{build_from_trace, ModuleResolver, SymbolMap};
 pub use crate::taint::{
-    backward_taint, build_frame_depth_map, default_frame_reg_set, forward_taint, TaintHit,
-    DEFAULT_FRAME_REGS,
+    backward_taint, backward_taint_ext, build_frame_depth_map, default_frame_reg_set,
+    forward_taint, forward_taint_ext, StopReason as TaintStopReason, TaintHit, TaintOptions,
+    TaintWalkResult, DEFAULT_FRAME_REGS,
 };
 pub use crate::trace::{
     CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, REC_NUM_REGS, REC_SIZE,

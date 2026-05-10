@@ -59,6 +59,28 @@ The current branch focus is interaction latency and parity hardening:
 - Memory provenance must keep range selection, writers/readers separation, and
   partial-result notices.
 
+### P2 - Slice / Forward DAG (peer-trace-tools follow-on)
+
+Landed 2026-05-10: `/api/bfs-slice` (BFS over the persistent CSR with
+multi-seed union/intersection), `/api/forward-dep-tree` (def→use DAG),
+GumTrace-style `scan_limit` and `stop_reason` on forward/backward taint,
+the `Slice` left-tab panel, and the shared `routes::seed_resolver` module.
+See `docs/peer-trace-tools-implementation.md` for the implementation log.
+
+Remaining follow-ons (intentional deferral, implementation doc §8):
+
+- Chunked CSR + patch-row sidecar for >10⁸-row traces.
+- Exhaustive `InsnClass` enum replacing the Capstone-driven `def_use`
+  path, to land alongside a wider lift overhaul.
+- SAILR-style structuring passes and DecompileBench replacement loops on
+  the LLIL/decompiler side.
+- Roaring bitmaps for very sparse slice results (when current
+  `bfs_slice::Bitset`'s 1-bit-per-row footprint stops winning).
+- Drop the legacy `(Vec<TaintHit>, bool)` shape from `forward_taint` /
+  `backward_taint`; convert ~25 in-module tests to the `_ext` API.
+- Right-size `forward_dep_tree::DependencyUsers::build` allocations to
+  the actual `deps` row count rather than `n_rows`.
+
 ### P2 - Decompiler
 
 - Keep both decompile routes:

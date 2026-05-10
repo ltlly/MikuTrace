@@ -647,3 +647,131 @@ export async function fetchHlilForPc(
   out.request_pc = pc;
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Slice / forward-dep-tree (peer-trace-tools-style backward + forward DAGs)
+// ---------------------------------------------------------------------------
+
+export interface BfsSliceSeed {
+  kind: "idx" | "reg" | "addr" | "none";
+  idx: number | null;
+  reg: string | null;
+  addr: string | null;
+  before: number | null;
+  note: string | null;
+}
+
+export interface BfsSliceEdgeStats {
+  reg: number;
+  address: number;
+  mem: number;
+  control: number;
+  total: number;
+}
+
+export interface DepNode {
+  id: string;
+  idx: number;
+  depth: number;
+  pc: string;
+  func: string | null;
+  asm: string;
+  via: string;
+  expression: string;
+}
+
+export interface BfsSliceResponse {
+  status: "ready" | "error";
+  seed: BfsSliceSeed;
+  seeds: BfsSliceSeed[];
+  slice: number[];
+  /// First N rows of `slice` enriched with pc/asm/func; capped server-side.
+  rows: DepNode[];
+  rows_capped: boolean;
+  slice_count: number;
+  truncated: boolean;
+  node_limit: number;
+  data_only: boolean;
+  edge_stats: BfsSliceEdgeStats;
+  mode: "union" | "intersection";
+}
+
+interface SeedQueryOpts {
+  idx?: number;
+  idxs?: readonly number[];
+  reg?: string;
+  regs?: readonly string[];
+  addr?: string;
+  addrs?: readonly string[];
+  before?: number;
+  dataOnly?: boolean;
+  limit?: number;
+}
+
+function appendSeedQueryParams(params: URLSearchParams, opts: SeedQueryOpts): URLSearchParams {
+  if (opts.idx !== undefined) params.set("idx", String(opts.idx));
+  if (opts.idxs && opts.idxs.length > 0) params.set("idxs", opts.idxs.join(","));
+  if (opts.reg) params.set("reg", opts.reg);
+  if (opts.regs && opts.regs.length > 0) params.set("regs", opts.regs.join(","));
+  if (opts.addr) params.set("addr", opts.addr);
+  if (opts.addrs && opts.addrs.length > 0) params.set("addrs", opts.addrs.join(","));
+  if (opts.before !== undefined) params.set("before", String(opts.before));
+  if (opts.dataOnly) params.set("data_only", "true");
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  return params;
+}
+
+export interface FetchBfsSliceOpts extends SeedQueryOpts {
+  mode?: "union" | "intersection";
+  signal?: AbortSignal;
+}
+
+export async function fetchBfsSlice(opts: FetchBfsSliceOpts = {}): Promise<BfsSliceResponse> {
+  const params = appendSeedQueryParams(new URLSearchParams(), opts);
+  if (opts.mode) params.set("mode", opts.mode);
+  const qs = params.toString();
+  const r = await fx(`/api/bfs-slice${qs ? "?" + qs : ""}`, { signal: opts.signal });
+  if (!r.ok) throw new Error(`/api/bfs-slice ${r.status}: ${await r.text()}`);
+  return (await r.json()) as BfsSliceResponse;
+}
+
+export type ForwardDepTreeNode = DepNode;
+
+export interface ForwardDepTreeEdge {
+  from: string;
+  to: string;
+  kind: "reg" | "addr" | "mem" | "control";
+  label: string;
+}
+
+export interface ForwardDepTreeResponse {
+  status: "ready" | "error";
+  seed: BfsSliceSeed;
+  graph: {
+    nodes: ForwardDepTreeNode[];
+    edges: ForwardDepTreeEdge[];
+    node_count: number;
+    edge_count: number;
+    hidden_edges: number;
+    truncated: boolean;
+    depth_limit: number;
+    node_limit: number;
+    data_only: boolean;
+  };
+}
+
+export interface FetchForwardDepTreeOpts extends SeedQueryOpts {
+  depth?: number;
+  signal?: AbortSignal;
+}
+
+export async function fetchForwardDepTree(
+  opts: FetchForwardDepTreeOpts = {},
+): Promise<ForwardDepTreeResponse> {
+  const params = appendSeedQueryParams(new URLSearchParams(), opts);
+  if (opts.depth !== undefined) params.set("depth", String(opts.depth));
+  const qs = params.toString();
+  const r = await fx(`/api/forward-dep-tree${qs ? "?" + qs : ""}`, { signal: opts.signal });
+  if (!r.ok) throw new Error(`/api/forward-dep-tree ${r.status}: ${await r.text()}`);
+  return (await r.json()) as ForwardDepTreeResponse;
+}
