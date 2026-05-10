@@ -434,6 +434,10 @@ enum Cmd {
         data_only: bool,
         #[arg(long)]
         cross_fn_call: bool,
+        /// GumTrace-style watchdog: stop walk after N consecutive iterations
+        /// with zero new hits. Pass 0 to disable. Omit to use server default.
+        #[arg(long)]
+        scan_limit: Option<usize>,
     },
     /// GET /api/backward-taint.
     TaintBwd {
@@ -450,6 +454,10 @@ enum Cmd {
         data_only: bool,
         #[arg(long)]
         cross_fn_call: bool,
+        /// GumTrace-style watchdog: stop walk after N consecutive iterations
+        /// with zero new hits. Pass 0 to disable. Omit to use server default.
+        #[arg(long)]
+        scan_limit: Option<usize>,
     },
     /// GET /api/data-chase.
     DataChase {
@@ -481,6 +489,65 @@ enum Cmd {
         depth: usize,
         #[arg(long, default_value_t = 160)]
         limit: usize,
+    },
+    /// GET /api/bfs-slice — backward BFS slice on the persistent dependency
+    /// CSR, with multi-seed union/intersection. Use this when you want every
+    /// trace row a value transitively depends on, faster than taint and
+    /// without having to model propagation. Multi-seed `intersection` finds
+    /// the common ancestors of two operations.
+    BfsSlice {
+        trace_dir: PathBuf,
+        /// Single seed by trace index.
+        #[arg(long)]
+        idx: Option<usize>,
+        /// Multi-seed by indices, comma-separated, e.g. "1234,5678".
+        #[arg(long)]
+        idxs: Option<String>,
+        /// Single seed by register (last def before --before).
+        #[arg(long)]
+        reg: Option<String>,
+        /// Multi-seed by registers, comma-separated, e.g. "x9,x10".
+        #[arg(long)]
+        regs: Option<String>,
+        /// Single seed by memory address (last write before --before).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Multi-seed by addresses, comma-separated.
+        #[arg(long)]
+        addrs: Option<String>,
+        #[arg(long)]
+        before: Option<usize>,
+        /// Drop control-flow edges. Default: include them.
+        #[arg(long)]
+        data_only: bool,
+        /// Maximum slice rows. Server cap = 200_000.
+        #[arg(long, default_value_t = 5_000)]
+        limit: usize,
+        /// `union` (default) or `intersection`.
+        #[arg(long, default_value = "union")]
+        mode: String,
+    },
+    /// GET /api/forward-dep-tree — def→use DAG. Returns rows that
+    /// transitively consumed the seed's value. Inverse direction of
+    /// `dep-graph` / `bfs-slice`.
+    ForwardDepTree {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        idx: Option<usize>,
+        #[arg(long)]
+        reg: Option<String>,
+        #[arg(long)]
+        addr: Option<String>,
+        #[arg(long)]
+        before: Option<usize>,
+        /// Maximum BFS depth. depth=0 means seed only.
+        #[arg(long, default_value_t = 8)]
+        depth: usize,
+        #[arg(long, default_value_t = 160)]
+        limit: usize,
+        /// Drop control-flow edges. Default: include them.
+        #[arg(long)]
+        data_only: bool,
     },
     /// GET /api/reg-timeline.
     RegTimeline {
@@ -1627,8 +1694,17 @@ async fn main() -> anyhow::Result<()> {
             through_mem,
             data_only,
             cross_fn_call,
+            scan_limit,
         }) => {
-            let params = taint_params(start, reg, max_count, through_mem, data_only, cross_fn_call);
+            let params = taint_params(
+                start,
+                reg,
+                max_count,
+                through_mem,
+                data_only,
+                cross_fn_call,
+                scan_limit,
+            );
             route_get_json(trace_dir, route_path("/api/forward-taint", &params)).await
         }
         Some(Cmd::TaintBwd {
@@ -1639,8 +1715,17 @@ async fn main() -> anyhow::Result<()> {
             through_mem,
             data_only,
             cross_fn_call,
+            scan_limit,
         }) => {
-            let params = taint_params(start, reg, max_count, through_mem, data_only, cross_fn_call);
+            let params = taint_params(
+                start,
+                reg,
+                max_count,
+                through_mem,
+                data_only,
+                cross_fn_call,
+                scan_limit,
+            );
             route_get_json(trace_dir, route_path("/api/backward-taint", &params)).await
         }
         Some(Cmd::DataChase {
@@ -1681,6 +1766,76 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("before", before.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/dep-graph", &params)).await
+        }
+        Some(Cmd::BfsSlice {
+            trace_dir,
+            idx,
+            idxs,
+            reg,
+            regs,
+            addr,
+            addrs,
+            before,
+            data_only,
+            limit,
+            mode,
+        }) => {
+            let mut params = vec![
+                ("limit", limit.to_string()),
+                ("data_only", data_only.to_string()),
+                ("mode", mode),
+            ];
+            if let Some(v) = idx {
+                params.push(("idx", v.to_string()));
+            }
+            if let Some(v) = idxs {
+                params.push(("idxs", v));
+            }
+            if let Some(v) = reg {
+                params.push(("reg", v));
+            }
+            if let Some(v) = regs {
+                params.push(("regs", v));
+            }
+            if let Some(v) = addr {
+                params.push(("addr", v));
+            }
+            if let Some(v) = addrs {
+                params.push(("addrs", v));
+            }
+            if let Some(v) = before {
+                params.push(("before", v.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/bfs-slice", &params)).await
+        }
+        Some(Cmd::ForwardDepTree {
+            trace_dir,
+            idx,
+            reg,
+            addr,
+            before,
+            depth,
+            limit,
+            data_only,
+        }) => {
+            let mut params = vec![
+                ("depth", depth.to_string()),
+                ("limit", limit.to_string()),
+                ("data_only", data_only.to_string()),
+            ];
+            if let Some(v) = idx {
+                params.push(("idx", v.to_string()));
+            }
+            if let Some(v) = reg {
+                params.push(("reg", v));
+            }
+            if let Some(v) = addr {
+                params.push(("addr", v));
+            }
+            if let Some(v) = before {
+                params.push(("before", v.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/forward-dep-tree", &params)).await
         }
         Some(Cmd::RegTimeline {
             trace_dir,
@@ -15347,6 +15502,7 @@ fn read_json_opt(path: &Path) -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn taint_params(
     start: usize,
     reg: String,
@@ -15354,6 +15510,7 @@ fn taint_params(
     through_mem: bool,
     data_only: bool,
     cross_fn_call: bool,
+    scan_limit: Option<usize>,
 ) -> Vec<(&'static str, String)> {
     let mut params = vec![
         ("start", start.to_string()),
@@ -15364,6 +15521,9 @@ fn taint_params(
     ];
     if let Some(max) = max_count {
         params.push(("max_count", max.to_string()));
+    }
+    if let Some(scan) = scan_limit {
+        params.push(("scan_limit", scan.to_string()));
     }
     params
 }
@@ -19054,6 +19214,50 @@ mod tests {
     fn base64_decoder_accepts_unpadded_output() {
         let decoded = base64_decoded_bytes("SGVsbG8sIHdvcmxkIQ").unwrap();
         assert_eq!(decoded, b"Hello, world!");
+    }
+
+    #[test]
+    fn taint_params_include_scan_limit_when_set() {
+        let params = super::taint_params(
+            12,
+            "x9".to_string(),
+            Some(500),
+            true,
+            true,
+            false,
+            Some(50_000),
+        );
+        let map: std::collections::HashMap<&str, String> = params.into_iter().collect();
+        assert_eq!(map.get("start").unwrap(), "12");
+        assert_eq!(map.get("reg").unwrap(), "x9");
+        assert_eq!(map.get("max_count").unwrap(), "500");
+        assert_eq!(map.get("through_mem").unwrap(), "true");
+        assert_eq!(map.get("data_only").unwrap(), "true");
+        assert_eq!(map.get("cross_fn_call").unwrap(), "false");
+        assert_eq!(map.get("scan_limit").unwrap(), "50000");
+    }
+
+    #[test]
+    fn taint_params_omit_scan_limit_when_none() {
+        let params = super::taint_params(0, "x0".to_string(), None, false, false, false, None);
+        let map: std::collections::HashMap<&str, String> = params.into_iter().collect();
+        assert!(!map.contains_key("scan_limit"));
+        assert!(!map.contains_key("max_count"));
+        assert_eq!(map.get("through_mem").unwrap(), "false");
+    }
+
+    #[test]
+    fn route_path_encodes_query_params() {
+        let qp = vec![
+            ("limit", "5000".to_string()),
+            ("idxs", "1234,5678".to_string()),
+            ("mode", "intersection".to_string()),
+        ];
+        let url = super::route_path("/api/bfs-slice", &qp);
+        assert!(url.starts_with("/api/bfs-slice?"));
+        assert!(url.contains("limit=5000"));
+        assert!(url.contains("idxs=1234%2C5678"));
+        assert!(url.contains("mode=intersection"));
     }
 }
 

@@ -310,3 +310,56 @@ forward direction symmetrically and lock in the existing
 **totals**: 626 workspace tests passing (up from 594 at end of round 1).
 `make test-v2` green end-to-end (cargo fmt, core/server/cli, frontend
 build, parity smoke, stability/UI/cap audits).
+
+## 10. CLI surface (round 3, 2026-05-10)
+
+The new APIs ship as first-class `tracemiku-cli` subcommands so AI agents
+can drive them without falling back to the generic `./tracemiku api …`
+escape hatch. Same flag surface as the routes; wire format is unchanged.
+
+```text
+tracemiku-cli bfs-slice <call_dir>
+    --idx <usize> | --idxs <i1,i2,…>
+    --reg <name>  | --regs <r1,r2,…>
+    --addr <hex>  | --addrs <a1,a2,…>
+    [--before <usize>] [--data-only] [--limit 5000]
+    [--mode union|intersection]
+
+tracemiku-cli forward-dep-tree <call_dir>
+    --idx <usize> | --reg <name> | --addr <hex>
+    [--before <usize>] [--depth 8] [--limit 160] [--data-only]
+
+tracemiku-cli taint-fwd <call_dir> --start <idx> --reg <name>
+    [--max-count N] [--through-mem] [--data-only] [--cross-fn-call]
+    [--scan-limit N]   ← new
+
+tracemiku-cli taint-bwd <call_dir> --start <idx> --reg <name>
+    [--max-count N] [--through-mem] [--data-only] [--cross-fn-call]
+    [--scan-limit N]   ← new
+```
+
+Smoke tests (`rust/crates/tracemiku-cli/tests/cli_smoke.rs`):
+
+* `bfs_slice_wrapper_returns_enriched_rows` — single-seed slice ships
+  `rows[]` with pc/asm/func.
+* `bfs_slice_intersection_combines_two_seeds` — `--idxs 1,2 --mode intersection`
+  resolves to two seeds, mode echoed.
+* `forward_dep_tree_wrapper_uses_server_wire_shape` — graph node/edge shape
+  matches the route.
+* `taint_wrappers_pass_scan_limit` — `--scan-limit 0` produces
+  `scan_limit_used: null` and a documented `stop_reason`.
+
+Plus three unit tests around `taint_params` / `route_path` to lock the
+query-string format that AI tooling depends on.
+
+**Documentation index:**
+
+* `docs/ai-cli-xsign-workflow.md` — new "Dependency slice / forward DAG
+  (peer-trace-tools)" section and "GumTrace `SCAN_LIMIT_REACHED` watchdog"
+  subsection. AI agents should read this before hand-rolling
+  `./tracemiku api` calls.
+* `README.md` — top-level flag surface for `bfs-slice` / `forward-dep-tree`
+  and the `--scan-limit` extension on the taint commands.
+* `TODO.md` §"Slice / Forward DAG" — landed list and deferred items
+  (chunked CSR, exhaustive `InsnClass`, SAILR, Roaring bitmaps, legacy
+  taint wrapper drop, allocation right-sizing).

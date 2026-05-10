@@ -64,8 +64,11 @@ The current branch focus is interaction latency and parity hardening:
 Landed 2026-05-10: `/api/bfs-slice` (BFS over the persistent CSR with
 multi-seed union/intersection), `/api/forward-dep-tree` (def→use DAG),
 GumTrace-style `scan_limit` and `stop_reason` on forward/backward taint,
-the `Slice` left-tab panel, and the shared `routes::seed_resolver` module.
-See `docs/peer-trace-tools-implementation.md` for the implementation log.
+the `Slice` left-tab panel, the shared `routes::seed_resolver` module,
+and matching `tracemiku-cli` subcommands (`bfs-slice`, `forward-dep-tree`,
+`taint-fwd --scan-limit`, `taint-bwd --scan-limit`) with smoke tests.
+See `docs/peer-trace-tools-implementation.md` and the "Dependency slice /
+forward DAG" section in `docs/ai-cli-xsign-workflow.md`.
 
 Remaining follow-ons (intentional deferral, implementation doc §8):
 

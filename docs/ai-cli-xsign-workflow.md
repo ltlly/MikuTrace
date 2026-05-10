@@ -225,6 +225,84 @@ When `--auto-seed-suggestions` is also enabled, the nested
 queue for an AI agent because it follows `effective_seed_slots` instead of the
 raw suggestion list.
 
+## Dependency slice / forward DAG (peer-trace-tools)
+
+`bfs-slice` and `forward-dep-tree` are dataflow questions answered against the
+persistent dependency CSR (`trace.bin.analysis-full.v1.bin`) — much faster than
+the per-instruction taint walk and well-suited as a first probe before deciding
+whether to fire `taint-fwd` / `taint-bwd`.
+
+Use **`bfs-slice` (backward)** when you need to know "every trace row this
+seed transitively depends on":
+
+```bash
+rust/target/debug/tracemiku-cli bfs-slice <call_dir> --idx <idx> --limit 5000
+rust/target/debug/tracemiku-cli bfs-slice <call_dir> --reg x9 --before <idx>
+rust/target/debug/tracemiku-cli bfs-slice <call_dir> --addr 0x7626079240 --before <idx>
+rust/target/debug/tracemiku-cli bfs-slice <call_dir> --idx <idx> --data-only
+```
+
+Use **multi-seed intersection** to find the *common ancestors* of two
+operations. This is the single algorithm answer for the question
+"which trace rows feed both x-sign and x-umt?":
+
+```bash
+rust/target/debug/tracemiku-cli bfs-slice <call_dir> \
+  --idxs <idx1>,<idx2> --mode intersection
+rust/target/debug/tracemiku-cli bfs-slice <call_dir> \
+  --regs x0,x1 --before <idx> --mode intersection
+```
+
+Use **`forward-dep-tree`** when you need the inverse — "every later row that
+consumed this value":
+
+```bash
+rust/target/debug/tracemiku-cli forward-dep-tree <call_dir> --idx <idx> --depth 8
+rust/target/debug/tracemiku-cli forward-dep-tree <call_dir> --reg x0 --before <idx>
+```
+
+Output contracts an AI agent should treat as stable:
+
+| Field | Meaning |
+| --- | --- |
+| `slice[]` | Trace indices the seed depends on (bfs-slice). Single-seed: BFS-discovery order. Multi-seed: ascending idx after union/AND. |
+| `rows[]` | First N (default 2000) rows enriched with `pc`, `func`, `asm`, `via`, `expression`. Use this to read the slice without per-row `/api/record` round trips. |
+| `rows_capped` | True when the trace had more rows than the row-detail budget. Tail rows are present in `slice[]` only. |
+| `seeds[]` | Per-seed envelopes: `kind` (idx/reg/addr/none), resolved `idx`, `reg`, `addr`, `before`, optional `note` for invalid or out-of-trace seeds. |
+| `mode` | Echoed `union` or `intersection`. |
+| `edge_stats.{reg,address,mem,control,total}` | Per-kind counts of dependency edges *within* the slice. A high `mem` count means the slice depends heavily on memory state; high `control` means branch decisions. |
+| `truncated` / `node_limit` | Set when `--limit` truncated the BFS. |
+| `graph.nodes[]` (forward-dep-tree) | Each node carries `idx`, `depth`, `pc`, `func`, `asm`, `via`, `expression`. Inverse of `dep-graph`. |
+| `graph.edges[].kind` | `reg` / `addr` / `mem` / `control`. |
+| `graph.hidden_edges` | Edges trimmed by `--depth` or `--limit`. |
+
+When to prefer `bfs-slice` / `forward-dep-tree` over `taint-fwd` / `taint-bwd`:
+
+- "Is this row reachable from that one's lineage?" — `bfs-slice` answers in
+  one query without modeling propagation.
+- "What rows are common to both lineages?" — only `bfs-slice --mode intersection`
+  has this as a primitive.
+- "Where does this value go downstream?" — `forward-dep-tree` returns the
+  full def→use DAG.
+- Need `through_mem` / `cross_fn_call` / explicit per-instruction
+  propagation steps with `parent_idxs` / `taint_depth` — use
+  `taint-fwd` / `taint-bwd`.
+
+### GumTrace `SCAN_LIMIT_REACHED` watchdog
+
+`taint-fwd` / `taint-bwd` accept `--scan-limit N`. The walk stops after N
+consecutive BFS pops with zero new hits. Pass `--scan-limit 0` to disable.
+The response carries `stop_reason` (`completed` | `max_count` | `scan_limit`)
+and `scan_limit_used` so the agent can tell whether the result is exhaustive
+or watchdog-truncated:
+
+```bash
+rust/target/debug/tracemiku-cli taint-fwd <call_dir> \
+  --start <idx> --reg x9 --max-count 5000 --scan-limit 200000
+rust/target/debug/tracemiku-cli taint-bwd <call_dir> \
+  --start <idx> --reg x0 --through-mem --scan-limit 0
+```
+
 ### Current VM CLI closure boundary
 
 For the current libsgmainso investigation, the VM CLI layer is strong enough to

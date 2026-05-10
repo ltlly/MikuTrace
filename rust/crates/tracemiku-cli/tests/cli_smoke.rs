@@ -546,6 +546,82 @@ fn dep_graph_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
+fn bfs_slice_wrapper_returns_enriched_rows() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "bfs-slice".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "1".into(),
+        "--limit".into(),
+        "32".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["mode"], "union");
+    assert_eq!(v["seed"]["kind"], "idx");
+    let slice = v["slice"].as_array().unwrap();
+    assert!(slice.contains(&serde_json::json!(1)));
+    let rows = v["rows"].as_array().unwrap();
+    assert!(!rows.is_empty(), "rows must be enriched: {v}");
+    assert!(rows[0]["pc"].as_str().unwrap_or("").starts_with("0x"));
+}
+
+#[test]
+fn bfs_slice_intersection_combines_two_seeds() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "bfs-slice".into(),
+        cd.display().to_string(),
+        "--idxs".into(),
+        "1,2".into(),
+        "--mode".into(),
+        "intersection".into(),
+    ]);
+    assert_eq!(v["mode"], "intersection");
+    let seeds = v["seeds"].as_array().unwrap();
+    assert_eq!(seeds.len(), 2);
+}
+
+#[test]
+fn forward_dep_tree_wrapper_uses_server_wire_shape() {
+    let (_tmp, cd) = synth_call_dir();
+    let v = run_json(&[
+        "forward-dep-tree".into(),
+        cd.display().to_string(),
+        "--idx".into(),
+        "0".into(),
+        "--depth".into(),
+        "4".into(),
+        "--limit".into(),
+        "16".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    let nodes = v["graph"]["nodes"].as_array().unwrap();
+    assert!(!nodes.is_empty());
+    assert_eq!(nodes[0]["idx"], 0);
+}
+
+#[test]
+fn taint_wrappers_pass_scan_limit() {
+    let (_tmp, cd) = synth_taint_tree_call_dir();
+    let v = run_json(&[
+        "taint-fwd".into(),
+        cd.display().to_string(),
+        "--start".into(),
+        "0".into(),
+        "--reg".into(),
+        "x0".into(),
+        "--max-count".into(),
+        "10".into(),
+        "--scan-limit".into(),
+        "0".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert!(v["scan_limit_used"].is_null());
+    assert!(v["stop_reason"].as_str().is_some());
+}
+
+#[test]
 fn taint_wrappers_include_dependency_metadata() {
     let (_tmp, cd) = synth_taint_tree_call_dir();
     let v = run_json(&[

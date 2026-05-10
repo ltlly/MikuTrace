@@ -103,9 +103,15 @@ Recent AI-analysis additions include:
   with multi-seed `idxs/regs/addrs` and `mode=union|intersection` for
   "common ancestors" queries, plus a forward def→use DAG via
   `/api/forward-dep-tree` (peer-trace-tools §1.8/§1.9 algorithms; see
-  `docs/peer-trace-tools-implementation.md`);
+  `docs/peer-trace-tools-implementation.md`). Both routes have CLI
+  wrappers `tracemiku-cli bfs-slice` and `tracemiku-cli forward-dep-tree`
+  with the same flag surface (`--idx`, `--idxs 1,2`, `--reg`, `--regs`,
+  `--addr`, `--addrs`, `--before`, `--data-only`, `--limit`, `--mode`,
+  `--depth`);
 - GumTrace-style `SCAN_LIMIT_REACHED` watchdog on `/api/forward-taint` and
-  `/api/backward-taint` (`scan_limit=` query, `stop_reason` in the response);
+  `/api/backward-taint` (`scan_limit=` query, `stop_reason` in the
+  response). CLI: `tracemiku-cli taint-fwd ... --scan-limit N` and
+  `taint-bwd ... --scan-limit N`. Pass 0 to disable the watchdog;
 - taint provenance graph expressions, Records taint-only filtering, JSON/TXT
   taint export, a Records minimap, call-frame folding, and local function
   renames for large-trace navigation;
