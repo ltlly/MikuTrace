@@ -661,16 +661,40 @@ export default function CfgPanel(props: CfgPanelProps) {
     const svg = canvas?.querySelector<SVGSVGElement>("svg") ?? frame?.querySelector<SVGSVGElement>(".cfg-svg-canvas > svg");
     if (!svg) return;
     const group = ensureSvgPanZoomGroup(svg);
-    const viewBox = svgViewBoxSize(svg);
+    const naturalViewBox = svgViewBoxSize(svg);
     const cssSize = rememberSvgCssSize(svg);
-    if (!viewBox || !cssSize) return;
+    if (!naturalViewBox || !cssSize) return;
+
+    // Make the SVG element fit the frame and use a viewBox that matches the
+    // frame's CSS pixel dimensions 1:1, so user-coord positions inside the
+    // graph render at their natural pixel sizes (no squish) AND content
+    // translated by the inner pan group beyond the visible region is
+    // clipped by SVG natively — both visually and at the
+    // getBoundingClientRect level. Without this, the parent frame's
+    // `overflow: hidden` clips painting only; SVG anchors keep their
+    // pre-clip DOM geometry, so a click at a panel-header pixel can land
+    // on a `<p>` overlay that visually has nothing to do with the SVG
+    // anchor "underneath" (whose visual is clipped away).
+    if (frame) {
+      const fw = Math.max(1, frame.clientWidth);
+      const fh = Math.max(1, frame.clientHeight);
+      const widthAttr = String(fw);
+      const heightAttr = String(fh);
+      const viewBoxAttr = `0 0 ${fw} ${fh}`;
+      if (svg.getAttribute("width") !== widthAttr) svg.setAttribute("width", widthAttr);
+      if (svg.getAttribute("height") !== heightAttr) svg.setAttribute("height", heightAttr);
+      if (svg.getAttribute("viewBox") !== viewBoxAttr) svg.setAttribute("viewBox", viewBoxAttr);
+      svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+      svg.style.display = "block";
+    }
 
     const current = pan();
-    const userUnitsPerCssX = viewBox.width / cssSize.width;
-    const userUnitsPerCssY = viewBox.height / cssSize.height;
+    // Pan signal is in CSS px and the viewBox is also CSS-px-aligned, so
+    // user-units-per-css = 1 in both axes regardless of the SVG's natural
+    // viewBox.
     group.setAttribute(
       "transform",
-      `translate(${current.x * userUnitsPerCssX} ${current.y * userUnitsPerCssY}) scale(${current.scale})`,
+      `translate(${current.x} ${current.y}) scale(${current.scale})`,
     );
   }
 
