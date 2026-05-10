@@ -178,6 +178,11 @@ Current source-of-truth docs are:
   provenance, VM, memory, JNI, and output-mapping commands.
 - `docs/xsign-reconstruction-progress.md`: target-specific example progress
   report for the current `libsgmainso` trace corpus.
+- `docs/xsign-algorithm-spec.md`: human-readable spec of the recovered
+  call_001 x-sign algorithm — 76-byte layout, head formulas for words
+  0/1, the `(boundary << 24) | (xor_state >> 8)` shift register for
+  words 2..11, the input parameter list, and what still requires
+  extracting from libsgmainso.so.
 - `docs/android-analysis-frontier-report.md`: Android analysis pain points,
   product/UI direction, and current bug triage.
 - `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
