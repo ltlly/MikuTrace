@@ -229,3 +229,83 @@ turn `portable_algorithm_ready` to `true`. That is a binary-RE step on
 the SO, not a trace-analysis step, and it is intentionally outside the
 scope of traceMiku's tool-development goal (per CLAUDE.md "the project
 goal is the tool, not a single SO target").
+
+## Why the SO alone is not enough — appendix on the protector layout
+
+Pulling
+`example/106_d9da290cacaffd471ee1231d16b59190/lib/arm64-v8a/libsgmainso-6.8.260403.so`
+apart shows the protector explicitly does NOT keep the run-time
+constants in static `.rodata`. Specifically:
+
+* The ELF section table is wiped (every `Address` reads
+  `0xffffffff…`, every `Size` is `0x10`); only the LOAD program
+  headers are intact.
+* LOAD2 (RW relro) entropy is `0.59` — sparse PLT/GOT.
+* LOAD3 (RW data, `0x12da30` bytes) entropy is `7.88` — the high
+  end of "encrypted/compressed". Its top non-zero 8-byte windows
+  (`010000002b110008`, `3c0c820f03e2ffff`, `eb0400004301ffff`) look
+  like bytecode templates with embedded `0xffffffff` placeholders, not
+  plain ARM code.
+* A literal byte search for every documented runtime constant
+  (`0x5851f42d4c957f2d`, `0x2cabac28`, `0x05203a10`, `0x006dcbf8`)
+  returns **zero** hits inside the SO. None of them live in static
+  bytes; they are either constructed at runtime by VM ops or stored
+  encrypted in LOAD3.
+* `tracemiku-cli resolve-trace-addr` for both `x21 = 0x74fbf70370`
+  (the VM dispatcher pointer) and `0x75ebae5ad8` (the xor-ladder
+  bytecode source) returns `status: miss` against the trace's 466
+  module mappings — both addresses are heap, not SO-mapped.
+* `tracemiku-cli byte-writer-map` of `0x74fbf70370` shows the bytes
+  there are **written by the VM dispatcher itself** at idx 11272709
+  inside `sub_16ae04` (the inner instruction at idx 11272709 is
+  `strh w3, [x23]` with `w3 = 0x252`, inside a tight `ubfx/sbfx/strb`
+  sequence — the VM is building its own next-step state).
+* `tracemiku-cli byte-writer-map` of `0x75ebae5ad8` shows **no
+  observed writer** — the data was deposited before our trace started,
+  by the SO's loader/initialiser path.
+* Zero records inside the trace touch the LOAD3 region of the SO
+  (`/api/query kind=reads addr_lo=0x7601bce000 addr_hi=0x7601cfc880`
+  returns `count: 0`). The decoder ran during JNI_OnLoad / first-call
+  init, well before the trace recording window.
+
+So the path "decompile static SO → portable simulator" requires three
+extra reverse-engineering steps that the trace cannot bootstrap:
+
+1. Locate the LOAD3-decryption stub (or the runtime decoder that
+   feeds the VM dispatcher heap regions).
+2. Rebuild that decoder in Python so the heap state can be produced
+   from static SO bytes alone.
+3. Detangle the VM-of-VM control flow inside `sub_16ae04`, which
+   constructs each next dispatch slot byte-by-byte.
+
+The cheaper-and-correct alternative — and what
+`xsign_partial_sim.py`'s `current_trace_model_input_manifest` is
+designed for — is to **extract the decoded heap regions once on a
+running device** and supply them as a parameter:
+
+```bash
+# On a rooted device after libsgmainso has loaded but before the
+# x-sign call.
+adb shell cat /proc/<pid>/maps | grep "\[anon"
+adb shell dd if=/proc/<pid>/mem of=/sdcard/bc1.bin bs=1 \
+    skip=$((0x74fbf70370)) count=$((0x10000))
+adb shell dd if=/proc/<pid>/mem of=/sdcard/bc2.bin bs=1 \
+    skip=$((0x75ebae5000)) count=$((0x10000))
+adb pull /sdcard/bc1.bin /sdcard/bc2.bin .
+```
+
+These two heap dumps, plus the per-call `time_t`, `stat_mtim_tv_sec`,
+and `process_id`, are the true minimal portable-input set. Once the
+dumps are present, `current_trace_model_simulation` produces the exact
+x-sign offline; the simulator's `portable_algorithm_ready` flag would
+then be flipped to true. Note that the heap addresses depend on the
+process's allocator state and shift across loads — extract them once,
+treat them as opaque blobs, and re-anchor through the dispatcher
+register `x21` rather than hard-coding the pointer.
+
+The bottom line: **the SO is a packed/encrypted VM container**. The
+algorithm has been spelled out completely from the trace evidence; what
+"the SO contains" is a packed implementation of the same algorithm
+behind a runtime decoder, not a more-portable form of it. Static
+extraction without reverse-engineering the protector is strictly
+weaker evidence than the trace already gives.
