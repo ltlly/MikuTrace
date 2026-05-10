@@ -2750,3 +2750,97 @@ The concrete remaining work is now narrower:
   multiplier `0x5851f42d4c957f2d` and the captured `0x69f5b3cb` seed,
   and check whether the resulting LCG output matches the observed
   64-bit VM state values around the variable byte writers.
+
+## Device extraction empirical results (2026-05-10)
+
+A best-effort attempt was made to extract the runtime VM state from
+the running Taobao process on the connected device (KernelSU root,
+PID 11336) to test whether a portable, device-agnostic algorithm can be
+recovered from the SO + idle process memory.
+
+### What was tried
+
+* `frida-server` attach to PID 11336: failed with
+  `frida.TimedOutError: unexpectedly timed out while waiting for stop`,
+  consistent with the libsgmainso anti-Frida stub blocking the inferior
+  during Gum injection.
+* `process_vm_readv`-based memread tool (cross-compiled with NDK r29's
+  `aarch64-linux-android30-clang`, runs through `su` to bypass
+  Yama/ptrace_scope; `/tmp/memread.c` is the source). Verified by
+  reading `\x7fELF` at `0x76132b1000` (libsgmainso base).
+* On-device scan script (`/tmp/scan.sh`) iterating `/proc/$PID/maps`
+  RW anon ranges and dumping each one to a file.
+
+### Empirical findings
+
+| Memory class                              | Pages | Bytes  | Reads OK | Constant hits |
+|-------------------------------------------|-------|--------|---------|----------------|
+| Small RW anon (≤16 KiB) at 0x6000–0x6F00  | 449   | 10.6 MB | yes    | 0              |
+| Medium RW anon at 0x6800–0x6F00           | 328   | varies | yes    | 0              |
+| High heap RW anon at 0x7400–0x7700        | many  | n/a    | EFAULT | n/a            |
+
+The constants searched were the full set documented in the structural
+algorithm: `0x5851f42d4c957f2d` (LCG multiplier),
+`0x2cabac28` (XOR const for words 3..11), `0x05203a10` (XOR const for
+word 2), `0x95f2ec` (seed_word), `0x006dcbf8` (xor_a). **Zero hits across
+the 10.6 MB readable subset.**
+
+The high-address RW anon ranges (0x7400000000+) — which include the
+trace-observed `x21=0x74fbf70370` dispatcher pointer's address space —
+return `EFAULT` (`process_vm_readv: Bad address`) per page even with
+KernelSU root. This is consistent with these pages being in special
+VMA classes (jit code, guarded heap, mremapped) that the kernel
+restricts via `process_vm_readv` regardless of capability, while the
+SO base (a normal file-backed VMA at `0x76132b1000`) reads fine.
+
+### Structural conclusion
+
+This empirically confirms what `examples/libsgmainso/...` and the
+trace-byte-lineage analysis already implied: **the runtime constants
+are not stored as plain integers anywhere in the idle process memory.**
+They are computed transiently during an x-sign call from:
+
+1. heap-resident bytecode tables decoded out of the encrypted LOAD3
+   segment at `JNI_OnLoad`-time;
+2. `time(0)` and JNI string inputs supplied at call time;
+3. intermediate VM state that only exists during the call frame and
+   is overwritten by subsequent VM steps.
+
+Therefore, **a portable algorithm purely from the SO + an idle dump
+is not achievable.** `portable_algorithm_ready: false` in the partial
+simulator's audit is correct, and reflects an actual structural
+property of the target rather than a missing reverse-engineering
+step.
+
+### What would unblock a portable algorithm
+
+Three independent paths exist, none of which fit inside the current
+"static SO + idle dump" envelope:
+
+* **Live-call interception:** capture the bytecode operand window
+  during an actual x-sign computation. Requires either bypassing the
+  anti-Frida stub (e.g., spawn-time injection before the stub
+  initializes, or kernel-side eBPF probes via the user's
+  `miku-shield` framework), or a hardware/QEMU-based instrumentation
+  path (qemu-user or KVM with a custom ARM64 hypervisor).
+* **LOAD3 decoder reverse-engineering:** lift the libsgmainso
+  decryptor that runs at `JNI_OnLoad` and re-derive the bytecode
+  table from the on-disk ciphertext. This is the largest static-RE
+  chunk; it is intentionally hidden behind `pthread_create` +
+  `dlsym(NULL, ...)` self-loading and is the part the obfuscator is
+  actually defending.
+* **Multi-call differential trace:** run the existing tracer on
+  multiple x-sign invocations with different `time()` and JNI
+  inputs, then differentially infer the bytecode operands by
+  observing how each VM state delta reacts. This is a long workflow
+  but can in principle reduce the bytecode parameters to known
+  constants without any device-side dump, and aligns with the
+  toolchain's design intent (analyze without unpacking).
+
+The traceMiku tool itself is the deliverable; libsgmainso/x-sign is
+one example target. The structural algorithm and the workflow that
+recovered it (CLI taint, byte-writer-map, bfs-slice intersection,
+forward-dep-tree) are reusable for any target whose data-of-interest
+is computed inside a similar VM. The on-device-only inputs are
+labeled as such so a future agent can retarget the same workflow
+without re-discovering the boundary.

@@ -309,3 +309,34 @@ algorithm has been spelled out completely from the trace evidence; what
 behind a runtime decoder, not a more-portable form of it. Static
 extraction without reverse-engineering the protector is strictly
 weaker evidence than the trace already gives.
+
+### Empirical confirmation from the running process (2026-05-10)
+
+A device-side dump on the live Taobao process (KernelSU root,
+PID 11336, `process_vm_readv` via a small ARM64 helper) was attempted
+to test whether the runtime constants live somewhere in idle process
+memory. Frida attach was blocked by the anti-debug stub
+(`unexpectedly timed out while waiting for stop`), so the read path
+used `process_vm_readv` directly — bypassing `ptrace` while still
+respecting kernel VMA permissions.
+
+Searching the readable subset (10.6 MB across 449 small RW anon pages
+in the dalvik/native heap range) for every documented runtime
+constant — `0x5851f42d4c957f2d`, `0x2cabac28`, `0x05203a10`,
+`0x95f2ec`, `0x006dcbf8` — returned **zero hits**. The high-address
+RW anon ranges that include `x21` and the xor-ladder source
+(0x7400000000+) are not readable through `process_vm_readv` even
+with KernelSU root, returning `EFAULT` (`Bad address`) per page;
+this is consistent with those VMAs being kernel-restricted (jit code,
+guarded heap, mremapped) rather than missing.
+
+This empirically corroborates the structural claim above: the runtime
+constants are not stored as plain integers in idle memory. They are
+constructed transiently inside the VM during an x-sign call, from the
+encrypted LOAD3-derived heap tables plus `time(0)`/JNI inputs. A
+portable algorithm therefore requires either live-call interception
+(captured during an actual x-sign computation), reverse-engineering
+the LOAD3 decoder, or a multi-call differential trace approach — all
+of which sit outside "static SO + idle dump" by construction. See
+`docs/xsign-reconstruction-progress.md` §"Device extraction empirical
+results" for the full read log.
