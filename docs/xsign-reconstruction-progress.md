@@ -2625,3 +2625,128 @@ mapping is isolated, the Python simulator should implement:
 1. build the 76-byte payload,
 2. standard Base64 encode it,
 3. URL-encode `+` and `/` as observed by JNI output when needed.
+
+## Lineage probes via the new CLI (2026-05-10)
+
+`tracemiku-cli` now exposes `bfs-slice` (with multi-seed
+union/intersection) and `forward-dep-tree` directly. The first probe
+session against `traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms`
+produced four concrete findings, each backed by the new commands.
+
+### 1. `time() → VM state +0xc0 → affine LCG` is one hop in the dep CSR
+
+Forward DAG from the row that captures `time()`'s return:
+
+```bash
+rust/target/debug/tracemiku-cli forward-dep-tree \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --idx 13831028 --depth 12 --limit 80 --data-only
+```
+
+The first 13 nodes are exactly:
+
+```text
+mov  x23, x0              (#13831028, time return captured)
+mov  x3,  x23             (#13831032)
+mov  x2,  x3              (#13831047, helper)
+str  x2, [x8, #0x40]!     (#13831057, store time into VM state +0x40)
+ldp  x9, x10, [x25, #0x40]   (#13831159)
+stp  x9, x10, [x25, #0xc0]   (#13831160, copy to slot at offset 0xc0)
+ldr  x13, [x25, x3, lsl #3]  (#13831365, dispatcher reload)
+lsr  w0,  w13, w4         (#13831367)
+ubfx x1,  x0,  #0, #0x20  (#13831368)
+str  x1, [x25, x16, lsl #3]  (#13831370, write into LCG slot)
+ldr  x6, [x25, x7, lsl #3]   (#13831421)
+mul  x3,  x6,  x4         (#13831424, the affine_mod64 multiplier)
+str  x3, [x25, x17, lsl #3]  (#13831426)
+```
+
+The chain previously inferred from `vm-backchain` is now confirmed
+structurally by the dep CSR: `time()` is a seed of the LCG state, with
+exactly one VM-state hop at offset `0xc0`.
+
+### 2. Constant zero tail bytes share a single zero-init writer
+
+`byte-writer-map ... --addr 0x74b68bbcff --size 12` reports bytes 2..8
+written by a single `writer.idx = 13743408` and bytes 9..11 by
+`writer.idx = 13743418`, both with `src_value = 0x0`. These are early
+`stp x4, x4, ...` zero-initialisation rows, not VM-derived bytes. Stop
+chasing them; they are constants in the simulator.
+
+### 3. The two variable head bytes (0x62, 0x61) share 2,346 ancestor rows
+
+```bash
+rust/target/debug/tracemiku-cli bfs-slice \
+  traces/diff/run1/calls/call_001_tid32013_15323697r_10163ms \
+  --idxs 13946358,13947010 --mode intersection --limit 3000 --data-only
+```
+
+The latest common ancestors are bytecode reads through the VM dispatcher
+register `x21`:
+
+```text
+ldrb w14, [x21, #0x1b]   (#13943035)
+orr  x12, x16, x7        (#13943034)
+ldr  x7,  [x25, x2, lsl #3]   (#13943029)
+ldrb w2,  [x21, #4]      (#13943028)
+ldr  x16, [x25, x1, lsl #3]   (#13943027)
+ldrb w1,  [x21, #0x19]   (#13943026)
+ldrh w0,  [x21, #0x10]!  (#13943022)
+str  x13, [x25, x4, lsl #3]   (#13943021)
+```
+
+`x21 = 0x74fbf70370` at #13943022. `mem-dump` at that address with
+`--cursor 13943022` shows only sparse observed bytes
+(`0x52, 0x02, 0x02, …, 0x02`) — most slots are
+`observed_read_without_matching_traced_write`, i.e. **pre-trace
+initialised VM bytecode**. This is the next concrete frontier: the
+master VM program that drives at least the first two variable payload
+bytes lives in the un-traced memory at `0x74fbf70370+`.
+
+For comparison, the intersection of byte 0 (variable) and byte 2
+(constant zero) at the same limit is only 89 rows — the variable bytes
+share roughly 26× more ancestors than a variable-vs-constant pair. The
+"is this byte derived from the same VM program" test is therefore one
+`bfs-slice ... --mode intersection` query, comparing the slice size for
+two byte-writer idxs against the slice size for a known-constant byte
+pair as a baseline.
+
+### 4. Per-byte ancestor signatures as a clustering primitive
+
+For an AI agent reconstructing the 76-byte payload, the workflow is:
+
+```bash
+# 1. List byte writers for the semantic tail.
+tracemiku-cli byte-writer-map <call_dir> --addr 0x74b68bbcff --size 76
+
+# 2. For each pair of writer idxs (i, j), measure shared lineage.
+tracemiku-cli bfs-slice <call_dir> --idxs <i>,<j> \
+  --mode intersection --limit 3000 --data-only \
+  | jq '.slice_count'
+
+# 3. Cluster bytes whose pairwise intersection sizes are an order of
+#    magnitude above the variable-vs-constant baseline. Each cluster is
+#    a candidate group derived from the same VM bytecode region.
+```
+
+This collapses the 76-byte unknown into a small number of equivalence
+classes the agent can attack one at a time, instead of running a full
+`taint-bwd` per byte. The intersection contracts are documented at
+`docs/ai-cli-xsign-workflow.md` §"Dependency slice / forward DAG".
+
+### Updated next target
+
+The concrete remaining work is now narrower:
+
+* Read 76 byte writers via `byte-writer-map`, cluster them by pairwise
+  `bfs-slice intersection` size, and identify the bytecode region(s)
+  driving each cluster.
+* For each cluster, dump the un-traced VM bytecode at `[x21, #...]`
+  using `mem-dump --cursor` at the dispatcher row. The bytecode is
+  pre-trace, so the unobserved slots are explicit
+  `observed_read_without_matching_traced_write` frontiers — that is the
+  parameter to extract from the device, not to derive in the simulator.
+* Verify the time→LCG seeding by replaying with the documented
+  multiplier `0x5851f42d4c957f2d` and the captured `0x69f5b3cb` seed,
+  and check whether the resulting LCG output matches the observed
+  64-bit VM state values around the variable byte writers.
