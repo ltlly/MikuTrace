@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::llil::lift::lift_arm64;
 use crate::llil::pass_flag_elim::flag_elim_block;
-use crate::llil::pass_var_unify::{unify_vars, VarNameMap};
+use crate::llil::pass_var_unify::unify_vars;
 use crate::llil::render::render_llil_block_with_names;
 use crate::llil::ssa::ssa_block;
 use crate::mlil::lower::{lower_llil_to_mlil, LowerStats as MlilLowerStats};

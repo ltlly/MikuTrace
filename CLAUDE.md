@@ -127,7 +127,10 @@ rust/crates/tracemiku-core/src/
   taint.rs                        forward/backward taint with dependency metadata
   memshadow.rs                    sparse byte-level memory shadow sidecar
   symbols.rs                      PC to module/function resolution
-  decompiler/ and llil/           IR markdown and in-house LLIL routes
+  decompiler/                     TraceIR (LLM-friendly skeleton IR), il_pipeline (full three-layer)
+  llil/                           in-house Low-Level IL (ARM64 lifter, SSA, flag elim, restructure)
+  mlil/                           in-house Medium-Level IL (variable-based, flag-free, struct aware)
+  hlil/                           in-house High-Level IL (structured control flow, C-like rendering)
 rust/crates/tracemiku-server/src/
   main.rs                         axum app, static frontend, cache headers
   state.rs                        shared TraceState and warmers
@@ -154,12 +157,19 @@ route tests for the affected surface. For user-visible web behavior, also run
 Both decompile routes are active but the web decompile/LLM UI can be hidden while
 latency work is in progress.
 
-- IR markdown + optional LLM: Rust `tracemiku-core::decompiler` plus server
+- TraceIR (LLM-friendly): Rust `tracemiku-core::decompiler` plus server
   `/api/dec/*` routes.
-- LLIL: Rust `tracemiku-core::llil` plus `/api/llil/*` routes. This path does
-  not depend on an LLM.
+- In-house three-layer IL pipeline: Rust `tracemiku-core::llil`,
+  `tracemiku-core::mlil`, `tracemiku-core::hlil`. LLIL→MLIL→HLIL lowering
+  with C-like rendering. This path does not depend on an LLM or BN.
+- Trace-enhanced decompiler: `tracemiku-core::decompiler::il_pipeline` lifts
+  ARM64 through all three layers enriched with runtime trace values.
+- Eval tool: `cargo run --example decompile_trace --release -- <call_dir>`
+  measures coverage, timing, and layer statistics on real traces.
 
-Do not merge or delete either route without an explicit project decision.
+Do not merge or delete any of these routes without an explicit project
+decision. The MLIL and HLIL layers are separate from the LLM-dependent
+TraceIR route; they provide a fully local three-layer decompiler path.
 
 ## Device Notes
 
