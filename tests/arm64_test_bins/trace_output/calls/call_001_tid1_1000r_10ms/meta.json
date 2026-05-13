@@ -1,0 +1,11 @@
+{
+  "callIdx": 1,
+  "pid": 1,
+  "tid": 1,
+  "records": 92823,
+  "bytes": 25247856,
+  "truncated": false,
+  "last_insn_is_ret": true,
+  "first_pc": "0x0000000000400268",
+  "last_pc": "0x000000000045acec"
+}

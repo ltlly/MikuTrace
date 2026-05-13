@@ -1,0 +1,9 @@
+{
+  "module": {
+    "name": "decomp_test_suite",
+    "base": "0x400268",
+    "size": 371332
+  },
+  "pkg": "test",
+  "so": "decomp_test_suite"
+}
