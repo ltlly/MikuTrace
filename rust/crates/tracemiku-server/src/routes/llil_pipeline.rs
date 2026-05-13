@@ -23,6 +23,8 @@ pub struct LlilPipelinePayload {
     pub max_records: usize,
     #[serde(default)]
     pub include_text: bool,
+    #[serde(default)]
+    pub include_call_analysis: bool,
 }
 
 fn default_fn_id() -> String {
@@ -60,6 +62,9 @@ pub struct PipelineResponse {
     pub mlil_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hlil_text: Option<String>,
+    // Call analysis (only when include_call_analysis=true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_analysis: Option<serde_json::Value>,
 }
 
 pub async fn llil_pipeline_handler(
@@ -118,6 +123,17 @@ fn pipeline_response(
 
     let mlil_stats = output.mlil_lower_stats;
 
+    // Optional: Call analysis
+    let call_analysis = if payload.include_call_analysis {
+        let analysis = tracemiku_core::call_analysis::analyze_calls(
+            &inner.trace,
+            &inner.symbols,
+        );
+        serde_json::to_value(&analysis).ok()
+    } else {
+        None
+    };
+
     Ok(PipelineResponse {
         fn_id: payload.fn_id,
         name: fn_.name,
@@ -145,6 +161,7 @@ fn pipeline_response(
         } else {
             None
         },
+        call_analysis,
     })
 }
 

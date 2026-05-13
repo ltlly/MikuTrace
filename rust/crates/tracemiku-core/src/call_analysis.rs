@@ -1,4 +1,6 @@
 //! Call-site parameter analysis from trace data.
+// Called from tracemiku-server routes.
+#![allow(dead_code, unused_variables)]
 //!
 //! For every call (bl/blr) in the trace, extracts x0-x7 register values
 //! (AAPCS64 calling convention) and resolves the call target. Produces

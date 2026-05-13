@@ -1350,6 +1350,10 @@ enum Cmd {
         max_records: usize,
         #[arg(long)]
         include_text: bool,
+        #[arg(long)]
+        include_call_analysis: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// POST /api/llil/render.
     LlilRender {
@@ -2534,11 +2538,14 @@ async fn main() -> anyhow::Result<()> {
             fn_id,
             max_records,
             include_text,
+            include_call_analysis,
+            json: _json,
         }) => {
             let body = serde_json::json!({
                 "fn_id": fn_id,
                 "max_records": max_records,
                 "include_text": include_text,
+                "include_call_analysis": include_call_analysis,
             });
             route_post_json(trace_dir, "/api/llil/pipeline".to_string(), body).await
         }

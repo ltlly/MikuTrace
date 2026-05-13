@@ -29,44 +29,43 @@
 
 | # | 任务 | 状态 | 测试 | Review |
 |---|---|---|---|---|
-| 2.1 | Trace-based call argument extraction (x0-x7) | pending | - | - |
-| 2.2 | Call target name resolution (symbols + BN) | pending | - | - |
-| 2.3 | Multi-return value analysis | pending | - | - |
-| 2.4 | Call signature inference | pending | - | - |
+| 2.1 | Trace-based call argument extraction (x0-x7) | ✅ done | ✅ | ✅ |
+| 2.2 | Call target name resolution (symbols) | ✅ done | ✅ | ✅ |
+| 2.3 | Multi-return value analysis | ✅ done | ✅ | - |
+| 2.4 | Call signature inference + CLI integration | in_progress | - | - |
 
 ### Phase 3: Ghidra Pass 复刻 (P1)
 
 | # | 任务 | 状态 | 测试 | Review |
 |---|---|---|---|---|
-| 3.1 | Clone + 分析 Ghidra decompiler 源码 | pending | - | - |
-| 3.2 | Pass: DeadCodeElimination | pending | - | - |
-| 3.3 | Pass: ConstantPropagation | pending | - | - |
-| 3.4 | Pass: RuleBasedCollapse (SIMD/patterns) | pending | - | - |
-| 3.5 | Pass: StackVariableRecovery | pending | - | - |
+| 3.1 | Clone + 分析 Ghidra decompiler 源码 | ✅ done | - | ✅ |
+| 3.2 | Pass: DeadCodeElimination | ✅ done | ✅ | ✅ |
+| 3.3 | Pass: ConstantPropagation | ✅ done | ✅ | ✅ |
+| 3.4 | Pass: ExpressionSimplification (Rule pool) | ✅ done | ✅ | ✅ |
+| 3.5 | Pass: StructRecovery | ✅ done | ✅ | ✅ |
 | 3.6 | Pass: StructuralAnalysis (if/while/for) | pending | - | - |
 | 3.7 | Pass: TypePropagation | pending | - | - |
-| 3.8 | Pass: ExpressionSimplification | pending | - | - |
-| 3.9 | Pass: FuncSignature inference | pending | - | - |
-| 3.10 | Pass: ControlFlowDecompilation | pending | - | - |
-| 3.11 | Pass: DataTypeRecovery | pending | - | - |
+| 3.8 | Pass: FuncSignature inference | pending | - | - |
+| 3.9 | Pass: ControlFlowDecompilation | pending | - | - |
+| 3.10 | Pass: DataTypeRecovery | pending | - | - |
 
 ### Phase 4: Pass 调度框架 (P1)
 
 | # | 任务 | 状态 | 测试 | Review |
 |---|---|---|---|---|
-| 4.1 | Pass trait + registry | pending | - | - |
-| 4.2 | Pass dependency DAG | pending | - | - |
-| 4.3 | Pass pipeline builder | pending | - | - |
-| 4.4 | Iterative pass scheduling (fixpoint) | pending | - | - |
+| 4.1 | Pass trait + registry | ✅ done | ✅ | ✅ |
+| 4.2 | PassGroup + PassPool | ✅ done | ✅ | ✅ |
+| 4.3 | PassPipeline + Phase scheduling | ✅ done | ✅ | ✅ |
+| 4.4 | Fixpoint iteration + Restart | ✅ done | ✅ | ✅ |
 
 ### Phase 5: CLI + Web 接入 (P1)
 
 | # | 任务 | 状态 | 测试 | Review |
 |---|---|---|---|---|
-| 5.1 | CLI: AI-friendly JSON/YAML output | pending | - | - |
-| 5.2 | CLI: streaming decompile for large functions | pending | - | - |
-| 5.3 | Web: Pseudo C panel with HLIL | pending | - | - |
-| 5.4 | Web: Decompile view with control flow viz | pending | - | - |
+| 5.1 | CLI: AI-friendly JSON/YAML output | in_progress | - | - |
+| 5.2 | CLI: llil-pipeline subcommand | ✅ done | ✅ | ✅ |
+| 5.3 | Web: /api/llil/pipeline route | ✅ done | ✅ | ✅ |
+| 5.4 | Web: Pseudo C panel with HLIL | pending | - | - |
 | 5.5 | Web: Variable rename/label UI | pending | - | - |
 
 ## 架构决策
