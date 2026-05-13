@@ -107,6 +107,7 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         )],
         "ret" => vec![LlilExpr::new(LlilOp::Ret, 8, Vec::new(), d.pc)],
         _ if matches!(base, "cbz" | "cbnz") => lift_cbz(d, base == "cbnz"),
+        _ if matches!(base, "tbz" | "tbnz") => lift_tbz(d, base == "tbnz"),
         _ => vec![intrinsic(d)],
     }
 }
@@ -557,6 +558,38 @@ fn lift_cbz(d: &DecodedInsn, nonzero: bool) -> Vec<LlilExpr> {
         .get(1)
         .and_then(|p| parse_target(p))
         .unwrap_or(d.pc);
+    vec![LlilExpr::new(
+        LlilOp::If,
+        1,
+        vec![
+            expr(cmp),
+            LlilOperand::U64(target),
+            LlilOperand::U64(d.pc.wrapping_add(4)),
+        ],
+        d.pc,
+    )]
+}
+
+/// tbz/tbnz: test bit and branch.  Extract bit N from register, branch if zero/nonzero.
+fn lift_tbz(d: &DecodedInsn, nonzero: bool) -> Vec<LlilExpr> {
+    let parts = split_operands(&d.op_str);
+    // op_str: "x0, #3, #0xc" (register, bit_number, target)
+    let reg_name = parts.first().cloned().unwrap_or_default();
+    let bit_num = parts.get(1).and_then(|p| parse_imm(p)).unwrap_or(0);
+    let target = parts.get(2).and_then(|p| parse_target(p)).unwrap_or(d.pc);
+
+    let lhs = d.regs_use.iter().find(|r| *r != "nzcv").cloned()
+        .unwrap_or(reg_name);
+
+    // Extract bit: (reg >> bit) & 1
+    let shifted = binary(LlilOp::Lsr, reg(lhs.clone()), konst(bit_num));
+    let bit_val = binary(LlilOp::And, shifted, konst(1));
+    let cmp = binary(
+        if nonzero { LlilOp::CmpNe } else { LlilOp::CmpE },
+        bit_val,
+        konst(0),
+    );
+
     vec![LlilExpr::new(
         LlilOp::If,
         1,
