@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod builder;
+pub mod il_pipeline;
 pub mod ir;
 pub mod prompt;
 pub mod render;
