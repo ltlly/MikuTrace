@@ -64,8 +64,11 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "ror" | "rorv" => lift_binary_reg(d, LlilOp::Ror, false),
         "sdiv" => lift_binary_reg(d, LlilOp::DivS, false),
         "udiv" => lift_binary_reg(d, LlilOp::DivU, false),
+        "mneg" => lift_mneg(d),
         "neg" => lift_unary_reg(d, LlilOp::Neg, false),
         "negs" => lift_unary_reg(d, LlilOp::Neg, true),
+        "ngc" => lift_ngc(d, false),
+        "ngcs" => lift_ngc(d, true),
         "mvn" => lift_unary_reg(d, LlilOp::Not, false),
         "cmp" => lift_cmp(d, LlilOp::Sub),
         "cmn" => lift_cmp(d, LlilOp::Add),
@@ -757,6 +760,57 @@ fn lift_bfm(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
     }
 }
 
+/// mneg: multiply-negate.  mneg Xd, Xn, Xm = -(Xn * Xm) = Sub(0, Mul(Xn, Xm))
+fn lift_mneg(d: &DecodedInsn) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let lhs = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 1))
+        .unwrap_or_else(|| konst(0));
+    let rhs = d
+        .regs_use
+        .get(1)
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 2))
+        .unwrap_or_else(|| konst(0));
+    let product = binary(LlilOp::Mul, lhs, rhs);
+    let result = unary(LlilOp::Neg, product);
+    vec![set_reg(dst, result, d.pc)]
+}
+
+/// ngc / ngcs: negate with carry.  ngc Xd, Xn = NOT(Xn) + C.
+/// ngcs additionally sets NZCV flags.
+fn lift_ngc(d: &DecodedInsn, set_flags: bool) -> Vec<LlilExpr> {
+    let Some(dst) = d.regs_def.first().cloned() else {
+        return vec![intrinsic(d)];
+    };
+    let src = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
+        .unwrap_or_else(|| konst(0));
+    let not_src = unary(LlilOp::Not, src);
+    let carry = flag("c");
+    let result = binary(LlilOp::Add, not_src.clone(), carry.clone());
+    let mut out = vec![set_reg(dst, result.clone(), d.pc)];
+    if set_flags {
+        out.extend(nzcv_from_binary(
+            LlilOp::Add,
+            d.pc,
+            &not_src,
+            &carry,
+            &result,
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,5 +910,115 @@ mod tests {
         let lifted = lift_arm64(0x1000, 0x93c22020);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         assert!(lifted[0].short().contains("|"));
+    }
+
+    // ── new instruction tests ──
+
+    #[test]
+    fn lift_smull() {
+        // smull x0, w1, w2 = 0x9b227c20
+        let lifted = lift_arm64(0x1000, 0x9b227c20);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+        assert!(s.contains("*"), "got: {s}");
+    }
+
+    #[test]
+    fn lift_umull() {
+        // umull x0, w1, w2 = 0x9ba27c20
+        let lifted = lift_arm64(0x1000, 0x9ba27c20);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+        assert!(s.contains("*"), "got: {s}");
+    }
+
+    #[test]
+    fn lift_ldrsw() {
+        // ldrsw x0, [x1] = 0xb9800020
+        let lifted = lift_arm64(0x1000, 0xb9800020);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+        assert!(s.contains("sx"), "expected sign-extension, got: {s}");
+    }
+
+    #[test]
+    fn lift_ldrb() {
+        // ldrb w0, [x1] = 0x39400020
+        let lifted = lift_arm64(0x1000, 0x39400020);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("w0 ="), "got: {s}");
+        assert!(s.contains("zx"), "expected zero-extension, got: {s}");
+    }
+
+    #[test]
+    fn lift_ldrsh() {
+        // ldrsh x0, [x1] = 0x79800020
+        let lifted = lift_arm64(0x1000, 0x79800020);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+        assert!(s.contains("sx"), "expected sign-extension, got: {s}");
+    }
+
+    #[test]
+    fn lift_mrs_tpidr_el0() {
+        // mrs x0, tpidr_el0 = 0xd53bd040
+        let lifted = lift_arm64(0x1000, 0xd53bd040);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+        assert!(s.contains("intrinsic"), "mrs should emit intrinsic, got: {s}");
+    }
+
+    #[test]
+    fn lift_sdiv_w() {
+        // sdiv w0, w1, w2 = 0x1ac20c20
+        let lifted = lift_arm64(0x1000, 0x1ac20c20);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("w0 ="), "got: {s}");
+        assert!(s.contains("/"), "expected division, got: {s}");
+    }
+
+    #[test]
+    fn lift_udiv_w() {
+        // udiv w0, w1, w2 = 0x1ac20820
+        let lifted = lift_arm64(0x1000, 0x1ac20820);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("w0 ="), "got: {s}");
+        assert!(s.contains("/"), "expected division, got: {s}");
+    }
+
+    #[test]
+    fn lift_asrv() {
+        // asrv x0, x1, x2 = 0x9ac22420
+        let lifted = lift_arm64(0x1000, 0x9ac22420);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+        assert!(s.contains(">>"), "expected shift-right, got: {s}");
+    }
+
+    #[test]
+    fn lift_mneg() {
+        // mneg x0, x1, x2 = 0x9b02fc20
+        let lifted = lift_arm64(0x1000, 0x9b02fc20);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
+    }
+
+    #[test]
+    fn lift_ngc() {
+        // ngc x0, x1 = 0xda010400
+        let lifted = lift_arm64(0x1000, 0xda010400);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("x0 ="), "got: {s}");
     }
 }
