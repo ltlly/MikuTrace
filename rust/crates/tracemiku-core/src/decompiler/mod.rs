@@ -16,6 +16,7 @@ pub mod pass_cond_exec;
 pub mod pass_const_prop;
 pub mod pass_dce;
 pub mod pass_registry;
+pub mod pass_ghidra_full;
 pub mod pass_simplify;
 pub mod pass_stack_var;
 pub mod pass_struct_recovery;

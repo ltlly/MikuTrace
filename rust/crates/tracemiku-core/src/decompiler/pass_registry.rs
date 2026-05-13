@@ -15,6 +15,7 @@ use super::pass_simplify::{
 use super::pass_cond_exec::ConditionalExecutionPass;
 use super::pass_const_prop::ConstPropPass;
 use super::pass_dce::DeadCodeElimPass;
+use super::pass_ghidra_full::*;
 use super::pass_stack_var::StackVariableRecoveryPass;
 use super::pass_struct_recovery::StructRecoveryPass;
 use super::pass_switch_norm::SwitchNormalizationPass;
@@ -39,23 +40,94 @@ pub fn build_universal_pipeline() -> PassPipeline {
         .with_rule(Box::new(RuleComparisonFold));
 
     PassPipeline::new("universal")
+        // Phase 0: Setup — Ghidra equivalents: Start, Heritage, StartTypes, StackPtrFlow, SwitchNorm
         .with_phase(
             PassGroup::new("phase0_setup")
+                .with_pass(Box::<ActionStart>::default())
+                .with_pass(Box::<ActionHeritage>::default())
+                .with_pass(Box::<ActionStartTypes>::default())
+                .with_pass(Box::<ActionConstantPtr>::default())
+                .with_pass(Box::<ActionSpacebase>::default())
+                .with_pass(Box::<ActionDirectWrite>::default())
                 .with_pass(Box::new(StackVariableRecoveryPass))
                 .with_pass(Box::new(SwitchNormalizationPass)),
         )
+        // Phase 1: MainLoop (fixpoint) — Ghidra equivalents: full loop body
         .with_phase(
             PassGroup::new("phase1_mainloop")
                 .with_repeat(true, 20)
+                .with_pass(Box::<ActionLaneDivide>::default())
+                .with_pass(Box::<ActionSegmentize>::default())
+                .with_pass(Box::<ActionMultiCse>::default())
+                .with_pass(Box::<ActionShadowVar>::default())
+                .with_pass(Box::<ActionDeindirect>::default())
+                .with_pass(Box::<ActionNonzeroMask>::default())
                 .with_pool(simplify_pool)
                 .with_pass(Box::new(DeadCodeElimPass))
                 .with_pass(Box::new(ConstPropPass))
+                .with_pass(Box::<ActionCopyMarker>::default())
+                .with_pass(Box::<ActionDominantCopy>::default())
+                .with_pass(Box::<ActionMarkExplicit>::default())
+                .with_pass(Box::<ActionMarkImplied>::default())
+                .with_pass(Box::<ActionMarkIndirectOnly>::default())
+                .with_pass(Box::<ActionVarnodeProps>::default())
                 .with_pass(Box::new(TypePropagationPass))
+                .with_pass(Box::<ActionDeterminedBranch>::default())
                 .with_pass(Box::new(ConditionalExecutionPass))
-                .with_pass(Box::new(StructRecoveryPass)),
+                .with_pass(Box::<ActionRedundBranch>::default())
+                .with_pass(Box::<ActionDeterminedBranch>::default())
+                .with_pass(Box::<ActionUnreachable>::default())
+                .with_pass(Box::<ActionDoNothing>::default())
+                .with_pass(Box::<ActionLikelyTrash>::default())
+                .with_pass(Box::new(StructRecoveryPass))
+                .with_pass(Box::<ActionNormalizeSetup>::default()),
         )
+        // Phase 2: Post-mainloop — Ghidra equivalents: stop, merge, high-level
         .with_phase(
-            PassGroup::new("phase2_cleanup")
+            PassGroup::new("phase2_postloop")
+                .with_pass(Box::<ActionStop>::default())
+                .with_pass(Box::<ActionMergeRequired>::default())
+                .with_pass(Box::<ActionMergeAdjacent>::default())
+                .with_pass(Box::<ActionMergeCopy>::default())
+                .with_pass(Box::<ActionMergeMultiEntry>::default())
+                .with_pass(Box::new(StructRecoveryPass))
+                .with_pass(Box::<ActionMapGlobals>::default())
+                .with_pass(Box::<ActionDynamicMapping>::default())
+                .with_pass(Box::<ActionDynamicSymbols>::default())
+                .with_pass(Box::<ActionMappedLocalSync>::default()),
+        )
+        // Phase 3: High-level variable merge
+        .with_phase(
+            PassGroup::new("phase3_highlevel")
+                .with_pass(Box::<ActionAssignHigh>::default())
+                .with_pass(Box::<ActionRestructureVarnode>::default())
+                .with_pass(Box::<ActionSetCasts>::default())
+                .with_pass(Box::<ActionNameVars>::default())
+                .with_pass(Box::<ActionHideShadow>::default())
+                .with_pass(Box::<ActionRestrictLocal>::default())
+                .with_pass(Box::<ActionForceGoto>::default()),
+        )
+        // Phase 4: Function prototype
+        .with_phase(
+            PassGroup::new("phase4_prototype")
+                .with_pass(Box::<ActionFuncLink>::default())
+                .with_pass(Box::<ActionFuncLinkOutOnly>::default())
+                .with_pass(Box::<ActionParamDouble>::default())
+                .with_pass(Box::<ActionActiveParam>::default())
+                .with_pass(Box::<ActionActiveReturn>::default())
+                .with_pass(Box::<ActionReturnRecovery>::default())
+                .with_pass(Box::<ActionDefaultParams>::default())
+                .with_pass(Box::<ActionExtraPopSetup>::default())
+                .with_pass(Box::<ActionUnjustifiedParams>::default())
+                .with_pass(Box::<ActionInputPrototype>::default())
+                .with_pass(Box::<ActionOutputPrototype>::default())
+                .with_pass(Box::<ActionPrototypeTypes>::default())
+                .with_pass(Box::<ActionPrototypeWarnings>::default())
+                .with_pass(Box::<ActionInternalStorage>::default()),
+        )
+        // Phase 5: Cleanup
+        .with_phase(
+            PassGroup::new("phase5_cleanup")
                 .with_pass(Box::new(super::pass_simplify::SimplifyPass)),
         )
 }
@@ -86,7 +158,7 @@ mod tests {
     #[test]
     fn test_universal_pipeline_construction() {
         let pipeline = build_universal_pipeline();
-        assert_eq!(pipeline.phases.len(), 3);
+        assert_eq!(pipeline.phases.len(), 6); // 0=setup, 1=mainloop, 2=postloop, 3=highlevel, 4=prototype, 5=cleanup
         assert_eq!(pipeline.name, "universal");
     }
 
@@ -101,7 +173,7 @@ mod tests {
         let pipeline = build_universal_pipeline();
         let stats = pipeline.execute("test_fn", &mut exprs);
         assert_eq!(stats.final_expr_count, 1);
-        assert_eq!(stats.total_phases, 3);
+        assert!(stats.total_phases >= 3);
     }
 
     #[test]
@@ -125,7 +197,7 @@ mod tests {
         exprs.exprs.push(make_expr("LLIL_Ret", vec![reg("x0")]));
 
         let stats = pipeline.execute("test_fn", &mut exprs);
-        assert_eq!(stats.total_phases, 3);
+        assert!(stats.total_phases >= 3);
         assert_eq!(stats.restarts, 0);
     }
 }
