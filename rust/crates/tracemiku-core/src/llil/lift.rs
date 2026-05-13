@@ -417,8 +417,36 @@ fn lift_adr(d: &DecodedInsn) -> Vec<LlilExpr> {
     vec![set_reg(dst, const_ptr(target), d.pc)]
 }
 
+/// Handle PC-relative literal loads (ldr/ldrsw/ldrsh literal form).
+/// These have no memory operand in Capstone — the address is PC + imm*4.
+fn lift_load_literal(d: &DecodedInsn, signed_ext: bool) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    // Parse "x4, #0x6f7a908824" → extract target address
+    let parts = split_operands(&d.op_str);
+    let target = parts.get(1).and_then(|p| parse_target(p)).unwrap_or(d.pc);
+    let load = LlilExpr::new(
+        LlilOp::Load,
+        4, // literal loads are always 32-bit or 64-bit
+        vec![expr(const_ptr(target))],
+        d.pc,
+    );
+    let result = if signed_ext {
+        sx(4, load)
+    } else {
+        load
+    };
+    vec![set_reg(dst, result, d.pc)]
+}
+
 fn lift_load(d: &DecodedInsn) -> Vec<LlilExpr> {
-    if d.mem_op.is_empty() || d.regs_def.is_empty() {
+    if d.mem_op.is_empty() {
+        // Try PC-relative literal load
+        if d.regs_def.is_empty() {
+            return vec![intrinsic(d)];
+        }
+        return lift_load_literal(d, false);
+    }
+    if d.regs_def.is_empty() {
         return vec![intrinsic(d)];
     }
     d.mem_op
@@ -668,7 +696,14 @@ fn lift_mull(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
 /// Load + sign/zero-extension.  Handles ldrb/ldrh/ldurb (zero-extend) and
 /// ldrsb/ldrsh/ldrsw (sign-extend).  Extension width is derived from mem_op.
 fn lift_load_ext(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
-    if d.mem_op.is_empty() || d.regs_def.is_empty() {
+    if d.mem_op.is_empty() {
+        // Try PC-relative literal load with extension
+        if d.regs_def.is_empty() {
+            return vec![intrinsic(d)];
+        }
+        return lift_load_literal(d, signed);
+    }
+    if d.regs_def.is_empty() {
         return vec![intrinsic(d)];
     }
     d.mem_op

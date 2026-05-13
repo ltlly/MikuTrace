@@ -177,6 +177,13 @@ fn lower_expr(e: &MlilExpr) -> Option<HlilExpr> {
         }
 
         // Control flow
+        MlilOp::Jump => {
+            let target = match e.operands.first() {
+                Some(o) => lower_operand(o),
+                _ => return None,
+            };
+            Some(HlilExpr::new(HlilOp::Jump, e.size, vec![target], pc))
+        }
         MlilOp::Goto => {
             let t = match e.operands.first() {
                 Some(MlilOperand::U64(v)) => *v,
