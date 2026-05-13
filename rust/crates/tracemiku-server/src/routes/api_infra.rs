@@ -234,6 +234,7 @@ fn openapi_paths() -> Value {
         ("/api/dec/models", "get"),
         ("/api/llil/llm", "post"),
         ("/api/llil/render", "post"),
+        ("/api/llil/pipeline", "post"),
         ("/ws/jobs", "get"),
         ("/openapi.json", "get"),
     ] {

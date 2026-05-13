@@ -33,6 +33,7 @@ pub mod jni_strings;
 pub mod jobj_history;
 pub mod last_write_of_reg;
 pub mod llil_llm;
+pub mod llil_pipeline;
 pub mod llil_render;
 pub mod mem_dump;
 pub mod mem_flow;
@@ -144,6 +145,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/dec/models", get(dec_models::dec_models_handler))
         .route("/api/llil/llm", post(llil_llm::llil_llm_handler))
         .route("/api/llil/render", post(llil_render::llil_render_handler))
+        .route(
+            "/api/llil/pipeline",
+            post(llil_pipeline::llil_pipeline_handler),
+        )
         .route(
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),

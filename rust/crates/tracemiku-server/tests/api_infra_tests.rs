@@ -136,6 +136,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "jni_strings.rs",
     "jobj_history.rs",
     "llil_llm.rs",
+    "llil_pipeline.rs",
     "llil_render.rs",
     "mem_dump.rs",
     "mem_flow.rs",
@@ -175,6 +176,7 @@ const HEAVY_ROUTE_HANDLERS: &[(&str, &str)] = &[
     ("navigation.rs", "call_chain_handler"),
     ("query.rs", "query_handler"),
     ("records.rs", "records_handler"),
+    ("llil_pipeline.rs", "llil_pipeline_handler"),
 ];
 
 // Endpoint surface from main:webui/server.py. Keep this list normalized with
@@ -220,6 +222,7 @@ const PYTHON_WEB_API_METHODS: &[(&str, &str)] = &[
     ("/api/last-write-of-addr", "get"),
     ("/api/last-write-of-reg", "get"),
     ("/api/llil/llm", "post"),
+    ("/api/llil/pipeline", "post"),
     ("/api/llil/render", "post"),
     ("/api/loops", "get"),
     ("/api/mem-diff", "get"),

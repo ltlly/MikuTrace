@@ -67,6 +67,122 @@ async fn llil_render_route_returns_pseudocode() {
 }
 
 #[tokio::test]
+async fn llil_pipeline_route_returns_all_layers() {
+    let dir = synth_trace();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/llil/pipeline")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"fn_id":"trace:F0","max_records":3,"include_text":true}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 256 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    // All 14 response fields verified
+    assert_eq!(v["fn_id"], "trace:F0");
+    assert!(v["name"].as_str().is_some());
+    assert!(v["records"].as_u64().unwrap() > 0);
+    assert_eq!(v["truncated"], false);
+    assert!(v["unique_pcs"].as_u64().unwrap() > 0);
+    assert!(v["llil_count"].as_u64().is_some());
+    assert!(v["mlil_count"].as_u64().is_some());
+    assert!(v["hlil_count"].as_u64().is_some());
+    assert!(v["llil_coverage"].as_f64().unwrap() > 0.5);
+    assert!(v["struct_loads"].as_u64().is_some());
+    assert!(v["struct_stores"].as_u64().is_some());
+    // When include_text=true, all layer texts should be present
+    assert!(v["llil_text"].as_str().is_some());
+    assert!(v["mlil_text"].as_str().is_some());
+    assert!(v["hlil_text"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn llil_pipeline_route_omits_text_when_not_requested() {
+    let dir = synth_trace();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    // Omit include_text — should default to false
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/llil/pipeline")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"fn_id":"trace:F0","max_records":3}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["fn_id"], "trace:F0");
+    // Text fields should be omitted when include_text is false
+    assert!(v.get("llil_text").is_none());
+    assert!(v.get("mlil_text").is_none());
+    assert!(v.get("hlil_text").is_none());
+}
+
+#[tokio::test]
+async fn llil_pipeline_route_rejects_bad_fn_id() {
+    let dir = synth_trace();
+    let cd = dir
+        .path()
+        .join("run")
+        .join("calls")
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/llil/pipeline")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"fn_id":"trace:NO_SUCH_FN"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn llil_llm_route_returns_model_error_without_key() {
     let dir = synth_trace();
     let cd = dir

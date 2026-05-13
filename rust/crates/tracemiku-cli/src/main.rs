@@ -1341,6 +1341,16 @@ enum Cmd {
     },
     /// GET /api/dec/models.
     DecModels { trace_dir: PathBuf },
+    /// POST /api/llil/pipeline — full LLIL→MLIL→HLIL decompiler pipeline.
+    LlilPipeline {
+        trace_dir: PathBuf,
+        #[arg(long = "fn-id", default_value = "trace:F0")]
+        fn_id: String,
+        #[arg(long, default_value_t = 500)]
+        max_records: usize,
+        #[arg(long)]
+        include_text: bool,
+    },
     /// POST /api/llil/render.
     LlilRender {
         trace_dir: PathBuf,
@@ -2518,6 +2528,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::DecModels { trace_dir }) => {
             route_get_json(trace_dir, "/api/dec/models".to_string()).await
+        }
+        Some(Cmd::LlilPipeline {
+            trace_dir,
+            fn_id,
+            max_records,
+            include_text,
+        }) => {
+            let body = serde_json::json!({
+                "fn_id": fn_id,
+                "max_records": max_records,
+                "include_text": include_text,
+            });
+            route_post_json(trace_dir, "/api/llil/pipeline".to_string(), body).await
         }
         Some(Cmd::LlilRender {
             trace_dir,
