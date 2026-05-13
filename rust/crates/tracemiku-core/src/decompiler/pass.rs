@@ -525,7 +525,6 @@ pub fn il_op_prefix(level: &str) -> &str {
 
 /// Convert LLIL expressions to PassIlExprs for pass processing.
 pub fn from_llil(exprs: &[crate::llil::expr::LlilExpr]) -> PassIlExprs {
-    use crate::llil::expr::{LlilOp, LlilOperand};
     let mut result = PassIlExprs::new("", "llil");
     for e in exprs {
         let mut pe = PassIlExpr::new(&format!("LLIL_{:?}", e.op), e.size, e.pc);

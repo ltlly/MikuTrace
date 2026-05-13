@@ -819,3 +819,32 @@ export interface HlilForPcResponse extends HlilForFnResponse {
   trace_fn?: HlilTraceFnInfo | null;
   request_pc?: string;
 }
+
+// ---------------------------------------------------------------------------
+// LLIL Pipeline (LLIL → MLIL → HLIL)
+// ---------------------------------------------------------------------------
+
+export interface LlilPipelinePayload {
+  fn_id: string;
+  max_records?: number;
+  include_text?: boolean;
+  include_call_analysis?: boolean;
+}
+
+export interface PipelineResponse {
+  fn_id: string;
+  name: string;
+  records: number;
+  truncated: boolean;
+  unique_pcs: number;
+  llil_count: number;
+  llil_coverage: number;
+  mlil_count: number;
+  struct_loads: number;
+  struct_stores: number;
+  hlil_count: number;
+  llil_text?: string;
+  mlil_text?: string;
+  hlil_text?: string;
+  call_analysis?: unknown;
+}

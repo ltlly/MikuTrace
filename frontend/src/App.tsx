@@ -10,6 +10,7 @@ import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
+import PseudoCPanel from "./panels/PseudoCPanel";
 import QueryPanel, { type QueryRunRequest } from "./panels/query/QueryPanel";
 import RecordsPanel, { type RecordsTaintOverlay, type RecordsTaintOverlayMode, type RecordsVisibleNavigator } from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
@@ -35,7 +36,7 @@ type LeftTab =
   | "xref"
   | "sofilter"
   | "settings";
-type RightTab = "cfg" | "regs" | "hlil" | "dec";
+type RightTab = "cfg" | "regs" | "hlil" | "dec" | "pseudoc";
 type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance" | "query";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 type HelpState = { topic: HelpTopic; x: number; y: number };
@@ -885,6 +886,7 @@ export default function App() {
       regs: "Registers",
       hlil: "HLIL",
       dec: "Decompile",
+      pseudoc: "Pseudo C",
     };
     return titles[rightTab()];
   });
@@ -971,6 +973,7 @@ export default function App() {
       if (rightTab() === "cfg") return "CFG 显示当前函数的动态基本块图，默认跟随当前 trace 所在函数，避免直接渲染全 trace 导致 dot 超时。空白处拖动平移（拖动期间不会触发 click），按住 Ctrl 滚轮缩放；单击图中的指令或块头会跳到 trace 中离当前 cursor 最近的一次执行——同时联动 Records、Registers、Memory、HLIL、Trace for PC。";
       if (rightTab() === "regs") return "寄存器窗口显示当前 cursor 的寄存器状态，并像 pwndbg 一样自动高亮相对上一条 trace 发生变化的寄存器；note 会标出 zero、pc、sp/stack 和疑似指针。点击寄存器会把它设为 Taint/Slice 的当前寄存器（不会跳转 cursor）。";
       if (rightTab() === "hlil") return "HLIL 窗口跟随当前汇编 cursor 的 PC；配置了 Binary Ninja sidecar 时显示 Pseudo C 和 HLIL 两种结构化文本，并高亮当前 PC 对应的行。缩进来自 BN 返回的结构化 indent。点击 HLIL 行会跳到该 PC 在 trace 中离当前 cursor 最近的一次执行。";
+      if (rightTab() === "pseudoc") return "Pseudo C 对选中的函数运行完整的三层 decompiler pipeline（LLIL→MLIL→HLIL），展示最终 HLIL 的 C 风格伪代码、各层统计信息和覆盖率。选择 Functions 中的函数后自动运行，可调整参与编译的记录数。大输出（500+ 行）默认折叠。";
       if (rightTab() === "dec") return "Decompile 显示 traceMiku 本地 Trace IR markdown 和 LLIL render。LLIL records 限制参与渲染的 trace 记录数；DCE 是 Dead Code Elimination，会移除计算结果没有被后续使用的临时语句，适合看更短的伪代码，但排查 lift 细节时可以关闭。这里不调用任何 LLM；模型选择和 LLM 输出暂时不在 UI 中开放。";
       return "";
     }
@@ -1273,7 +1276,9 @@ export default function App() {
                 ? cfgDisplayFn() || "select function"
                 : rightTab() === "hlil"
                   ? cursorHint()?.func ?? cursorHint()?.pc ?? "resolving cursor"
-                  : selectedFn() || "no fn selected"}
+                  : rightTab() === "pseudoc"
+                    ? selectedFn() || "no fn selected"
+                    : selectedFn() || "no fn selected"}
             </span>
             {helpButton("right")}
           </div>
@@ -1309,6 +1314,14 @@ export default function App() {
                 onTaskUpdate={reportTask}
               />
             </div>
+            <div class="rbody" classList={{ active: rightTab() === "pseudoc" }}>
+              <PseudoCPanel
+                selectedFn={selectedFn}
+                active={rightTab() === "pseudoc"}
+                selectedIdx={selectedIdx}
+                onTaskUpdate={reportTask}
+              />
+            </div>
             <div class="rbody" classList={{ active: rightTab() === "dec" }}>
               <DecompilerPanel
                 selectedFn={selectedFn}
@@ -1323,6 +1336,7 @@ export default function App() {
           {rtab("cfg", "Graph", "Trace CFG")}
           {rtab("regs", "Registers", "当前 cursor 寄存器")}
           {rtab("hlil", "HLIL", "BN HLIL")}
+          {rtab("pseudoc", "Pseudo C", "HLIL pipeline decompile")}
           {rtab("dec", "Decompile", "Trace IR / LLIL decompile")}
         </aside>
 

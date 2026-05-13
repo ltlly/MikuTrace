@@ -22,8 +22,10 @@
 | 1.3 | ARM64 lifter: mrs (system regs) | ✅ done | ✅ | ✅ |
 | 1.4 | ARM64 lifter: ubfm/sbfm (bitfield) | ✅ done | ✅ | ✅ |
 | 1.5 | Flag elim: cbnz/cbz → direct comparison | ✅ done | ✅ | ✅ |
-| 1.6 | ARM64 lifter: sdiv/udiv/asrv/mneg/ngc | ✅ done | ✅ | - |
-| 1.7 | HLIL: If structured rendering (not goto) | pending | - | - |
+| 1.6 | ARM64 lifter: sdiv/udiv/asrv/mneg/ngc | ✅ done | ✅ | ✅ |
+| 1.7 | ARM64 lifter: PC-relative literal loads | ✅ done | ✅ | ✅ |
+| 1.8 | HLIL: Jump lowering (br/blr fix) | ✅ done | ✅ | ✅ |
+| 1.9 | Coverage: sub_457770 | 100% ✅ | ✅ | ✅ |
 
 ### Phase 2: Call 参数分析 (P0)
 

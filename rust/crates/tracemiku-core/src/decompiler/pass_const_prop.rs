@@ -4,7 +4,6 @@
 //! constant sub-expressions.
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult};
 
@@ -36,16 +35,6 @@ impl ConstPropPass {
             }
         }
         map
-    }
-
-    /// Try to evaluate an operand to a constant integer.
-    fn fold_operand(op: &PassIlOperand, consts: &BTreeMap<String, i64>) -> Option<i64> {
-        match op {
-            PassIlOperand::Imm(v) => Some(*v),
-            PassIlOperand::Var(name) => consts.get(name).copied(),
-            PassIlOperand::Expr(e) => try_eval_expr_const(e, consts),
-            _ => None,
-        }
     }
 }
 

@@ -4,7 +4,6 @@
 //! register and annotates them as struct field accesses.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 
 use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult};
 

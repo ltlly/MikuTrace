@@ -3,8 +3,6 @@
 //! Each rule is a micro-transform on a single IL expression.
 //! Rules are pooled in PassPool and applied until fixpoint.
 
-use std::fmt;
-
 use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult, Rule};
 
 // ============================================================================

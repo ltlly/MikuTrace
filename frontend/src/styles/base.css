@@ -3065,3 +3065,214 @@ html[data-density="dense"] .xref-table td {
   grid-column: 1 / -1;
   color: var(--accent2);
 }
+
+/* ---------------------------------------------------------------------------
+   Pseudo C panel — HLIL pipeline output
+   --------------------------------------------------------------------------- */
+
+.pseudoc-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pseudoc-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.pseudoc-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pseudoc-controls input[type="number"] {
+  width: 6em;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.pseudoc-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+/* Stats bar — sticky header */
+.pseudoc-stats {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  background: var(--bg2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.pseudoc-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+
+.pseudoc-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.pseudoc-stat-label {
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.pseudoc-stat-value {
+  color: var(--fg);
+  font-weight: 500;
+  text-align: right;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.pseudoc-stat-value code {
+  color: var(--accent);
+  background: transparent;
+}
+
+.pseudoc-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pseudoc-btn {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pseudoc-btn:hover {
+  background: var(--bg3);
+}
+
+.pseudoc-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Code body */
+.pseudoc-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.pseudoc-body-collapsed {
+  display: none;
+}
+
+.pseudoc-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+/* Line: line number + code */
+.pseudoc-line {
+  display: grid;
+  grid-template-columns: 4em 1fr;
+  gap: 8px;
+  padding: 1px 8px;
+  border-left: 2px solid transparent;
+  min-width: max-content;
+}
+
+.pseudoc-line:hover {
+  background: var(--bg3);
+}
+
+.pseudoc-ln {
+  color: var(--dim);
+  text-align: right;
+  user-select: none;
+  font-size: 11px;
+  padding-right: 4px;
+}
+
+.pseudoc-code-text {
+  min-width: 0;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  color: var(--fg);
+}
+
+/* C syntax tokens */
+.tok-kw {
+  color: var(--accent2);
+}
+
+.tok-type {
+  color: var(--accent);
+}
+
+.tok-lit {
+  color: var(--good);
+}
+
+.tok-str {
+  color: var(--warn);
+}
+
+.tok-comment {
+  color: var(--dim);
+  font-style: italic;
+}
+
+.pseudoc-truncated-hint {
+  padding: 12px 8px;
+  color: var(--dim);
+  font-size: 12px;
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+
+.pseudoc-inline-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.pseudoc-inline-btn:hover {
+  color: var(--fg);
+}

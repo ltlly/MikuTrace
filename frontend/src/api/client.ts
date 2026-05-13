@@ -40,6 +40,8 @@ import type {
   LlilLlmResponse,
   HlilForFnResponse,
   HlilForPcResponse,
+  LlilPipelinePayload,
+  PipelineResponse,
   AsmTokensResponse,
   CfgSvgResponse,
   BnCfgSvgForPcResponse,
@@ -615,6 +617,18 @@ export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRender
   });
   if (!r.ok) throw new Error(`/api/llil/render ${r.status}: ${await r.text()}`);
   return (await r.json()) as LlilRenderResponse;
+}
+
+export async function fetchLlilPipeline(
+  payload: LlilPipelinePayload,
+): Promise<PipelineResponse> {
+  const r = await fx("/api/llil/pipeline", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`/api/llil/pipeline ${r.status}: ${await r.text()}`);
+  return (await r.json()) as PipelineResponse;
 }
 
 export async function callLlilLlm(payload: LlilLlmPayload): Promise<LlilLlmResponse> {

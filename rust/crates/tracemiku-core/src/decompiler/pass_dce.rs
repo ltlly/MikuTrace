@@ -4,7 +4,6 @@
 //! consumed by any subsequent instruction.
 
 use std::collections::BTreeSet;
-use std::fmt;
 
 use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult};
 
