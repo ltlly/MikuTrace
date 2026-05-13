@@ -146,21 +146,15 @@ impl PassPool {
         self
     }
 
-    /// Apply all rules to all expressions until fixpoint.
+    /// Apply all rules to all expressions (including nested) until fixpoint.
     pub fn execute(&self, exprs: &mut Vec<PassIlExpr>) -> PassResult {
         let mut overall = PassResult::Unchanged;
         for iteration in 0..self.max_iterations {
             let mut changed = false;
             for i in 0..exprs.len() {
-                for rule in &self.rules {
-                    if !rule.check(&exprs[i]) {
-                        continue;
-                    }
-                    if let Some(new_expr) = rule.apply(&exprs[i]) {
-                        exprs[i] = new_expr;
-                        changed = true;
-                        break; // One change per expression per iteration
-                    }
+                if let Some(new_expr) = self.apply_rules_recursive(&exprs[i]) {
+                    exprs[i] = new_expr;
+                    changed = true;
                 }
             }
             if !changed {
@@ -175,6 +169,52 @@ impl PassPool {
             }
         }
         overall
+    }
+
+    /// Try to apply rules to an expression and all its sub-expressions recursively.
+    /// Returns Some(new_expr) if any rule matched, None otherwise.
+    fn apply_rules_recursive(&self, expr: &PassIlExpr) -> Option<PassIlExpr> {
+        // First, recursively process operands
+        let mut new_operands: Vec<PassIlOperand> = expr.operands.clone();
+        let mut operand_changed = false;
+        for (j, op) in expr.operands.iter().enumerate() {
+            match op {
+                PassIlOperand::Expr(child) => {
+                    if let Some(new_child) = self.apply_rules_recursive(child) {
+                        new_operands[j] = PassIlOperand::Expr(Box::new(new_child));
+                        operand_changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let current = if operand_changed {
+            PassIlExpr {
+                op: expr.op.clone(),
+                size: expr.size,
+                pc: expr.pc,
+                operands: new_operands,
+                extra: expr.extra.clone(),
+            }
+        } else {
+            expr.clone()
+        };
+
+        // Now try rules on the (possibly updated) expression itself
+        for rule in &self.rules {
+            if rule.check(&current) && rule.applies_to().contains(&current.op.as_str()) {
+                if let Some(result) = rule.apply(&current) {
+                    // Recurse into the result since it may create new matches
+                    return self.apply_rules_recursive(&result).or(Some(result));
+                }
+            }
+        }
+
+        if operand_changed {
+            Some(current)
+        } else {
+            None
+        }
     }
 }
 
