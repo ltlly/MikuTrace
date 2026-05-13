@@ -12,9 +12,13 @@ use super::pass::{PassGroup, PassPipeline, PassPool};
 use super::pass_simplify::{
     RuleIdentityOp, RuleSubToAdd, RuleDoubleNeg, RuleComparisonFold,
 };
+use super::pass_cond_exec::ConditionalExecutionPass;
 use super::pass_const_prop::ConstPropPass;
 use super::pass_dce::DeadCodeElimPass;
+use super::pass_stack_var::StackVariableRecoveryPass;
 use super::pass_struct_recovery::StructRecoveryPass;
+use super::pass_switch_norm::SwitchNormalizationPass;
+use super::pass_type_inference::TypePropagationPass;
 
 /// Build the universal decompiler pipeline.
 ///
@@ -37,6 +41,8 @@ pub fn build_universal_pipeline() -> PassPipeline {
     PassPipeline::new("universal")
         .with_phase(
             PassGroup::new("phase0_setup")
+                .with_pass(Box::new(StackVariableRecoveryPass))
+                .with_pass(Box::new(SwitchNormalizationPass)),
         )
         .with_phase(
             PassGroup::new("phase1_mainloop")
@@ -44,6 +50,8 @@ pub fn build_universal_pipeline() -> PassPipeline {
                 .with_pool(simplify_pool)
                 .with_pass(Box::new(DeadCodeElimPass))
                 .with_pass(Box::new(ConstPropPass))
+                .with_pass(Box::new(TypePropagationPass))
+                .with_pass(Box::new(ConditionalExecutionPass))
                 .with_pass(Box::new(StructRecoveryPass)),
         )
         .with_phase(
