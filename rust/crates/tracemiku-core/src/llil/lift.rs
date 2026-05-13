@@ -274,7 +274,7 @@ fn lift_csel(d: &DecodedInsn) -> Vec<LlilExpr> {
     let true_val = d
         .regs_use
         .iter()
-        .find(|r| **r == true_reg || true_reg.contains(r.as_str()))
+        .find(|r| **r == true_reg)
         .cloned()
         .map(reg)
         .or_else(|| reg_from_parts(&parts, 1))
@@ -284,7 +284,7 @@ fn lift_csel(d: &DecodedInsn) -> Vec<LlilExpr> {
         .regs_use
         .iter()
         .skip(1)
-        .find(|r| **r == false_reg || false_reg.contains(r.as_str()))
+        .find(|r| **r == false_reg)
         .cloned()
         .map(reg)
         .or_else(|| reg_from_parts(&parts, 2))

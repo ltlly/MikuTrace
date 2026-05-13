@@ -398,6 +398,16 @@ pub fn restructure_cfg(exprs: &[LlilExpr]) -> Vec<StructNode> {
     nodes
 }
 
+fn build_pc_to_block(blocks: &[Block]) -> BTreeMap<u64, usize> {
+    let mut m = BTreeMap::new();
+    for b in blocks {
+        if let Some(e) = b.exprs.first() {
+            m.insert(e.pc, b.id);
+        }
+    }
+    m
+}
+
 fn struct_region(
     blocks: &[Block],
     doms: &[BTreeSet<usize>],
@@ -432,19 +442,16 @@ fn struct_region(
                         (format!("{:#x}", current), "?".to_string())
                     };
 
-                    // Find the false target (exit) and true target (body entry)
                     let mut body_blocks = Vec::new();
-                    if let Some((_, _)) = header_block.if_targets() {
-                        // Body: blocks between true_target and back-edge,
-                        // mark all body blocks visited
-                        for &b in body {
-                            if b != current && !visited[b] {
-                                visited[b] = true;
-                            }
+
+                    // Mark all body blocks visited
+                    for &b in body {
+                        if b != current && !visited[b] {
+                            visited[b] = true;
                         }
                     }
 
-                    // Render body blocks (non-control-flow exprs)
+                    // Render body blocks
                     for &b in body {
                         if b == current {
                             continue;
@@ -469,6 +476,19 @@ fn struct_region(
                         cond: cond_str,
                         body: body_blocks,
                     });
+
+                    // Continue with the exit block (false target of header If)
+                    if let Some((_, false_target)) = header_block.if_targets() {
+                        let pc_to_blk = build_pc_to_block(blocks);
+                        if let Some(&exit_bid) = pc_to_blk.get(&false_target) {
+                            if exit_bid < blocks.len() && !visited[exit_bid] {
+                                struct_region(
+                                    blocks, doms, loop_set, header_set, loops,
+                                    exit_bid, visited, out,
+                                );
+                            }
+                        }
+                    }
                     return;
                 }
                 Some(LoopKind::DoWhile) => {
@@ -513,9 +533,23 @@ fn struct_region(
                             body: body_nodes,
                         });
                     } else {
-                        // Fallback: just render all as statements
                         for node in body_nodes {
                             out.push(node);
+                        }
+                    }
+
+                    // Continue with the exit block (tail successor that's not the header)
+                    for &b in body {
+                        if b == current {
+                            continue;
+                        }
+                        for &succ in &blocks[b].succs {
+                            if succ != current && succ < blocks.len() && !visited[succ] {
+                                struct_region(
+                                    blocks, doms, loop_set, header_set, loops,
+                                    succ, visited, out,
+                                );
+                            }
                         }
                     }
                     return;
@@ -528,13 +562,7 @@ fn struct_region(
     // Try if/else detection: block ends with If
     if blocks[current].is_if() {
         if let Some((true_target, false_target)) = blocks[current].if_targets() {
-            // Map target PCs to block IDs
-            let mut pc_to_block: BTreeMap<u64, usize> = BTreeMap::new();
-            for b in blocks.iter() {
-                if let Some(e) = b.exprs.first() {
-                    pc_to_block.insert(e.pc, b.id);
-                }
-            }
+            let pc_to_block = build_pc_to_block(blocks);
             let true_bid = pc_to_block.get(&true_target);
             let false_bid = pc_to_block.get(&false_target);
 
@@ -594,6 +622,23 @@ fn struct_region(
                     then_body: then_nodes,
                     else_body: else_nodes,
                 });
+
+                // Continue to the merge block (common successor of then/else)
+                let merge_bid = {
+                    let tsuccs: BTreeSet<usize> =
+                        true_bid.map(|&tb| blocks.get(tb).map(|b| b.succs.clone()).unwrap_or_default()).unwrap_or_default().into_iter().collect();
+                    let fsuccs: BTreeSet<usize> =
+                        false_bid.map(|&fb| blocks.get(fb).map(|b| b.succs.clone()).unwrap_or_default()).unwrap_or_default().into_iter().collect();
+                    tsuccs.intersection(&fsuccs).next().copied()
+                };
+                if let Some(merge_bid) = merge_bid {
+                    if merge_bid < blocks.len() && !visited[merge_bid] {
+                        struct_region(
+                            blocks, doms, loop_set, header_set, loops,
+                            merge_bid, visited, out,
+                        );
+                    }
+                }
                 return;
             } else {
                 // Simple if-then, else is fallthrough
@@ -686,13 +731,6 @@ fn build_body_nodes(
     }
     visited[current] = true;
 
-    struct_region_inline(blocks, current, out);
-}
-
-fn struct_region_inline(blocks: &[Block], current: usize, out: &mut Vec<StructNode>) {
-    if current >= blocks.len() {
-        return;
-    }
     let block = &blocks[current];
     for e in &block.exprs {
         if e.is_control_flow() || e.op == LlilOp::If {
@@ -739,6 +777,15 @@ fn struct_region_inline(blocks: &[Block], current: usize, out: &mut Vec<StructNo
             pc: format!("{:#x}", e.pc),
             text: render_stmt(e),
         });
+    }
+
+    // Follow successors that are within the body (non-loop, non-visited)
+    for &succ in &block.succs {
+        if succ < blocks.len() && !visited[succ] && !loop_set.contains(&succ) {
+            build_body_nodes(
+                blocks, _doms, loop_set, _header_set, _loops, succ, visited, out,
+            );
+        }
     }
 }
 

@@ -146,59 +146,13 @@ fn split_blocks(exprs: &[LlilExpr]) -> Vec<PhiBlock> {
     let mut block_start = 0usize;
     for i in 1..=n {
         if i == n || leader[i] {
-            let block_idx = blocks.len();
-            let start = block_start;
-            let end = i;
-
-            let mut successors = Vec::new();
-            let last = &exprs[end - 1];
-            match last.op {
-                LlilOp::Goto => {
-                    if let Some(t) = goto_target(last) {
-                        if let Some(&j) = pc_to_idx.get(&t) {
-                            if j >= start && j < end {
-                                // Self-loop
-                                successors.push(block_idx);
-                            }
-                        }
-                    }
-                    // Fallthrough
-                    if end < n {
-                        successors.push(block_idx + 1);
-                    }
-                }
-                LlilOp::If => {
-                    if let Some(t) = if_false_target(last) {
-                        if let Some(&j) = pc_to_idx.get(&t) {
-                            if j >= start && j < end {
-                                successors.push(block_idx);
-                            }
-                        }
-                    }
-                    if end < n {
-                        successors.push(block_idx + 1);
-                    }
-                }
-                LlilOp::Ret | LlilOp::Tailcall => {
-                    // No successors
-                }
-                LlilOp::Jump => {
-                    // Jump: no known successors
-                }
-                _ => {
-                    // Fallthrough
-                    if end < n {
-                        successors.push(block_idx + 1);
-                    }
-                }
-            }
-
+            let exprs_block = exprs[block_start..i].to_vec();
             blocks.push(PhiBlock {
-                id: block_idx,
-                start_idx: start,
-                end_idx: end,
-                exprs: exprs[start..end].to_vec(),
-                successors,
+                id: blocks.len(),
+                start_idx: block_start,
+                end_idx: i,
+                exprs: exprs_block,
+                successors: Vec::new(),
                 predecessors: Vec::new(),
                 phi_nodes: Vec::new(),
             });
@@ -206,6 +160,54 @@ fn split_blocks(exprs: &[LlilExpr]) -> Vec<PhiBlock> {
                 block_start = i;
             }
         }
+    }
+
+    // Build pc_to_block map for successor resolution
+    let mut pc_to_block: BTreeMap<u64, usize> = BTreeMap::new();
+    for b in &blocks {
+        if let Some(e) = b.exprs.first() {
+            pc_to_block.insert(e.pc, b.id);
+        }
+    }
+    for b in &blocks {
+        for e in &b.exprs {
+            pc_to_block.entry(e.pc).or_insert(b.id);
+        }
+    }
+
+    // Resolve successors
+    for i in 0..blocks.len() {
+        let mut succs = Vec::new();
+        if let Some(last) = blocks[i].exprs.last() {
+            match last.op {
+                LlilOp::Goto => {
+                    if let Some(t) = goto_target(last) {
+                        if let Some(&bid) = pc_to_block.get(&t) {
+                            succs.push(bid);
+                        }
+                    }
+                }
+                LlilOp::If => {
+                    if let Some(t) = if_true_target(last) {
+                        if let Some(&bid) = pc_to_block.get(&t) {
+                            succs.push(bid);
+                        }
+                    }
+                    if let Some(t) = if_false_target(last) {
+                        if let Some(&bid) = pc_to_block.get(&t) {
+                            succs.push(bid);
+                        }
+                    }
+                }
+                LlilOp::Ret | LlilOp::Tailcall => {}
+                _ => {
+                    if i + 1 < blocks.len() {
+                        succs.push(i + 1);
+                    }
+                }
+            }
+        }
+        blocks[i].successors = succs;
     }
 
     // Build predecessor lists
@@ -365,19 +367,12 @@ fn insert_phi_nodes(blocks: &mut [PhiBlock], vars: &[String], df: &[BTreeSet<usi
             }
         }
 
-        // Create phi nodes
-        let n_phi_args = blocks.len().max(1);
+        // Create phi nodes (start with just destination, fill_phi_arg adds pairs)
         for &b_id in &phis {
             let phi = LlilExpr::new(
                 LlilOp::SetReg,
                 8,
-                {
-                    let mut ops = vec![LlilOperand::Reg(var.clone())];
-                    for _ in 0..n_phi_args * 2 {
-                        ops.push(LlilOperand::Imm(0)); // placeholder
-                    }
-                    ops
-                },
+                vec![LlilOperand::Reg(var.clone())],
                 0,
             )
             .with_extra("phi", var.clone())

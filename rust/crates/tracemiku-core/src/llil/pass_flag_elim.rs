@@ -52,8 +52,8 @@ pub fn flag_elim_block(exprs: &[LlilExpr]) -> FlagElimResult {
         {
             if !matches!(e.op, LlilOp::If) && !matches!(e.op, LlilOp::SetFlag) {
                 // Control flow or side-effecting instruction: flush remaining pending
-                for (_, (pc, val)) in std::mem::take(&mut pending_flags).into_iter() {
-                    let restored = set_flag_from_val(pc, &val);
+                for (flag_name, (pc, val)) in std::mem::take(&mut pending_flags).into_iter() {
+                    let restored = set_flag_from_val(&flag_name, pc, &val);
                     out.push(restored);
                 }
             }
@@ -65,8 +65,8 @@ pub fn flag_elim_block(exprs: &[LlilExpr]) -> FlagElimResult {
     }
 
     // Flush remaining flags at end of block
-    for (_, (pc, val)) in pending_flags.into_iter() {
-        let restored = set_flag_from_val(pc, &val);
+    for (flag_name, (pc, val)) in pending_flags.into_iter() {
+        let restored = set_flag_from_val(&flag_name, pc, &val);
         out.push(restored);
     }
 
@@ -211,14 +211,12 @@ fn invert_z_for_ne(z_val: LlilExpr) -> Option<LlilExpr> {
     }
 }
 
-fn set_flag_from_val(pc: u64, val: &LlilExpr) -> LlilExpr {
-    // Reconstruct a SetFlag with an appropriate flag name.
-    // This is used to emit un-consumed flag definitions.
-    // We embed the original value expression as the flag value with generic name.
+fn set_flag_from_val(flag_name: &str, pc: u64, val: &LlilExpr) -> LlilExpr {
+    // Reconstruct a SetFlag with the preserved flag name.
     LlilExpr::new(
         LlilOp::SetFlag,
         1,
-        vec![LlilOperand::Flag("cmp".to_string()), expr(val.clone())],
+        vec![LlilOperand::Flag(flag_name.to_string()), expr(val.clone())],
         pc,
     )
 }
