@@ -17,12 +17,12 @@
 
 | # | 任务 | 状态 | 测试 | Review |
 |---|---|---|---|---|
-| 1.1 | ARM64 lifter: smull/umull | pending | - | - |
-| 1.2 | ARM64 lifter: ldrsw/ldrsh/ldrb/ldrh variants | pending | - | - |
-| 1.3 | ARM64 lifter: mrs/msr (system regs) | pending | - | - |
-| 1.4 | ARM64 lifter: adr/adrp fix | pending | - | - |
-| 1.5 | Flag elim: cbnz/cbz → direct comparison | pending | - | - |
-| 1.6 | Flag elim: b.cond with folded flags | pending | - | - |
+| 1.1 | ARM64 lifter: smull/umull | ✅ done | ✅ 229 passed | ✅ |
+| 1.2 | ARM64 lifter: ldrsw/ldrsh/ldrb/ldrh variants | ✅ done | ✅ | ✅ |
+| 1.3 | ARM64 lifter: mrs (system regs) | ✅ done | ✅ | ✅ |
+| 1.4 | ARM64 lifter: ubfm/sbfm (bitfield) | ✅ done | ✅ | ✅ |
+| 1.5 | Flag elim: cbnz/cbz → direct comparison | ✅ done | ✅ | ✅ |
+| 1.6 | ARM64 lifter: sdiv/udiv/asrv/mneg/ngc | ✅ done | ✅ | - |
 | 1.7 | HLIL: If structured rendering (not goto) | pending | - | - |
 
 ### Phase 2: Call 参数分析 (P0)

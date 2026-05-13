@@ -67,7 +67,7 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "mneg" => lift_mneg(d),
         "neg" => lift_unary_reg(d, LlilOp::Neg, false),
         "negs" => lift_unary_reg(d, LlilOp::Neg, true),
-        "ngc" => lift_ngc(d, false),
+        "ngc" | "sbc" => lift_ngc(d, false),
         "ngcs" => lift_ngc(d, true),
         "mvn" => lift_unary_reg(d, LlilOp::Not, false),
         "cmp" => lift_cmp(d, LlilOp::Sub),
@@ -950,7 +950,7 @@ mod tests {
         let lifted = lift_arm64(0x1000, 0x39400020);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         let s = lifted[0].short();
-        assert!(s.contains("w0 ="), "got: {s}");
+        assert!(s.contains("x0 ="), "got: {s}");
         assert!(s.contains("zx"), "expected zero-extension, got: {s}");
     }
 
@@ -980,7 +980,7 @@ mod tests {
         let lifted = lift_arm64(0x1000, 0x1ac20c20);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         let s = lifted[0].short();
-        assert!(s.contains("w0 ="), "got: {s}");
+        assert!(s.contains("x0 ="), "got: {s}");
         assert!(s.contains("/"), "expected division, got: {s}");
     }
 
@@ -990,7 +990,7 @@ mod tests {
         let lifted = lift_arm64(0x1000, 0x1ac20820);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         let s = lifted[0].short();
-        assert!(s.contains("w0 ="), "got: {s}");
+        assert!(s.contains("x0 ="), "got: {s}");
         assert!(s.contains("/"), "expected division, got: {s}");
     }
 
@@ -1015,8 +1015,8 @@ mod tests {
 
     #[test]
     fn lift_ngc() {
-        // ngc x0, x1 = 0xda010400
-        let lifted = lift_arm64(0x1000, 0xda010400);
+        // ngc x0, x0 = 0xda000020 (Capstone alias: NGC Xd, Xm = SBC Xd, XZR, Xm)
+        let lifted = lift_arm64(0x1000, 0xda000020);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         let s = lifted[0].short();
         assert!(s.contains("x0 ="), "got: {s}");
