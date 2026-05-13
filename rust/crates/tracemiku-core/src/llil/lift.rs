@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::disasm::{decode, DecodedInsn};
 use crate::llil::expr::{
-    binary, const_ptr, csel as csel_expr, expr, flag_cond, konst, reg, set_flag, set_reg, sx,
+    binary, const_ptr, csel as csel_expr, expr, flag, flag_cond, konst, reg, set_flag, set_reg, sx,
     unary, zx, LlilExpr, LlilOp, LlilOperand,
 };
 
@@ -52,6 +52,8 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "sub" => lift_binary_reg(d, LlilOp::Sub, false),
         "subs" => lift_binary_reg(d, LlilOp::Sub, true),
         "mul" => lift_binary_reg(d, LlilOp::Mul, false),
+        "smull" => lift_mull(d, true),
+        "umull" => lift_mull(d, false),
         "and" => lift_binary_reg(d, LlilOp::And, false),
         "ands" => lift_binary_reg(d, LlilOp::And, true),
         "orr" => lift_binary_reg(d, LlilOp::Or, false),
@@ -79,8 +81,13 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "msub" => lift_madd(d, LlilOp::Sub),
         "extr" => lift_extr(d),
         "adr" | "adrp" => lift_adr(d),
-        "ldr" | "ldrb" | "ldrh" | "ldur" | "ldp" | "ldnp" => lift_load(d),
-        "str" | "strb" | "strh" | "stur" | "stp" | "stnp" => lift_store(d),
+        "ldr" | "ldur" | "ldp" | "ldnp" => lift_load(d),
+        "ldrb" | "ldrh" | "ldurb" => lift_load_ext(d, false),
+        "ldrsb" | "ldrsh" | "ldrsw" => lift_load_ext(d, true),
+        "str" | "strb" | "strh" | "stur" | "stp" | "stnp" | "sturb" => lift_store(d),
+        "mrs" => lift_mrs(d),
+        "ubfm" => lift_bfm(d, false),
+        "sbfm" => lift_bfm(d, true),
         _ if is_b_cond(d) => lift_b_cond(d),
         "b" => lift_b(d),
         "bl" | "blr" => vec![LlilExpr::new(
@@ -492,10 +499,22 @@ fn lift_b_cond(d: &DecodedInsn) -> Vec<LlilExpr> {
 }
 
 fn lift_cbz(d: &DecodedInsn, nonzero: bool) -> Vec<LlilExpr> {
+    // cbz/cbnz reads a general-purpose register AND flags.
+    // Capstone reports implicit flag reads (nzcv) in regs_use BEFORE the
+    // explicit register operand. Use the LAST non-flag register.
     let lhs = d
         .regs_use
-        .first()
+        .iter()
+        .filter(|r| *r != "nzcv")
+        .last()
         .cloned()
+        .or_else(|| {
+            // Fallback: parse first operand from op_str "x0, #0x1c"
+            split_operands(&d.op_str)
+                .first()
+                .filter(|s| !s.starts_with('#'))
+                .cloned()
+        })
         .map(reg)
         .unwrap_or_else(|| reg("xzr"));
     let cmp = binary(
@@ -614,6 +633,128 @@ fn parse_imm(s: &str) -> Option<i64> {
 
 fn parse_target(s: &str) -> Option<u64> {
     parse_imm(s).map(|v| v as u64)
+}
+
+/// smull/umull: multiply two 32-bit values, produce 64-bit result.
+fn lift_mull(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let mul_lhs = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 1))
+        .unwrap_or_else(|| konst(0));
+    let mul_rhs = d
+        .regs_use
+        .get(1)
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 2))
+        .unwrap_or_else(|| konst(0));
+
+    let lhs_ext = if signed { sx(4, mul_lhs) } else { zx(4, mul_lhs) };
+    let rhs_ext = if signed { sx(4, mul_rhs) } else { zx(4, mul_rhs) };
+
+    // SMULL/UMULL produce 64-bit results; create Mul node explicitly at 8 bytes
+    let product = LlilExpr::new(LlilOp::Mul, 8, vec![expr(lhs_ext), expr(rhs_ext)], 0);
+    vec![set_reg(dst, product, d.pc)]
+}
+
+/// Load + sign/zero-extension.  Handles ldrb/ldrh/ldurb (zero-extend) and
+/// ldrsb/ldrsh/ldrsw (sign-extend).  Extension width is derived from mem_op.
+fn lift_load_ext(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
+    if d.mem_op.is_empty() || d.regs_def.is_empty() {
+        return vec![intrinsic(d)];
+    }
+    d.mem_op
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let dst = if !m.src_reg.is_empty() {
+                m.src_reg.clone()
+            } else {
+                d.regs_def.get(i).cloned().unwrap_or_else(|| first_def(d))
+            };
+            let load_sz = m.size as u8;
+            let load = LlilExpr::new(
+                LlilOp::Load,
+                load_sz,
+                vec![expr(mem_addr_expr(&m.base, &m.idx, m.disp))],
+                d.pc,
+            );
+            let result = if signed { sx(load_sz, load) } else { zx(load_sz, load) };
+            set_reg(dst, result, d.pc)
+        })
+        .collect()
+}
+
+/// mrs: move from system register (e.g. tpidr_el0).
+/// Model as Intrinsic so downstream passes know it is not a regular load, but
+/// with structured operands for readability.
+fn lift_mrs(d: &DecodedInsn) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let sysreg = parts.get(1).cloned().unwrap_or_else(|| "?".to_string());
+    let intrinsic = LlilExpr::new(
+        LlilOp::Intrinsic,
+        8,
+        vec![
+            LlilOperand::Str("mrs".to_string()),
+            LlilOperand::Str(sysreg),
+        ],
+        d.pc,
+    )
+    .with_extra("mnem", "mrs");
+    vec![set_reg(dst, intrinsic, d.pc)]
+}
+
+/// ubfm/sbfm: unsigned/signed bitfield move.  Common case (immr == 0) is
+/// extracted with And+Zx/Sx for unsigned, or the shift-trick for sub-byte
+/// signed extensions.  Complex cases fall through to Intrinsic.
+fn lift_bfm(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let src = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
+        .unwrap_or_else(|| konst(0));
+    let immr = parts.get(2).and_then(|p| parse_imm(p)).unwrap_or(0) as u32;
+    let imms = parts.get(3).and_then(|p| parse_imm(p)).unwrap_or(0) as u32;
+
+    if immr == 0 {
+        let bits = imms + 1;
+        if bits >= 64 {
+            return vec![set_reg(dst, src, d.pc)];
+        }
+        let mask = (1u64 << bits) - 1;
+        let masked = binary(LlilOp::And, src, konst(mask as i64));
+
+        if signed {
+            // Sign-extend via Asr(Lsl(masked, 64-bits), 64-bits)
+            let shift_amount = 64 - bits;
+            let lsl = binary(LlilOp::Lsl, masked, konst(shift_amount as i64));
+            let result = binary(LlilOp::Asr, lsl, konst(shift_amount as i64));
+            vec![set_reg(dst, result, d.pc)]
+        } else {
+            // Zero-extend by rounding up to the nearest byte boundary
+            let bytes = if bits <= 8 {
+                1
+            } else if bits <= 16 {
+                2
+            } else if bits <= 32 {
+                4
+            } else {
+                8
+            };
+            vec![set_reg(dst, zx(bytes, masked), d.pc)]
+        }
+    } else {
+        vec![intrinsic(d)]
+    }
 }
 
 #[cfg(test)]
