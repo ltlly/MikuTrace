@@ -55,6 +55,7 @@ pub enum LlilOp {
     Ret,
     Intrinsic,
     Bp,
+    Csel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -113,6 +114,13 @@ impl LlilExpr {
         )
     }
 
+    pub fn is_control_flow(&self) -> bool {
+        matches!(
+            self.op,
+            LlilOp::Goto | LlilOp::Jump | LlilOp::If | LlilOp::Ret | LlilOp::Tailcall
+        )
+    }
+
     pub fn short(&self) -> String {
         match self.op {
             LlilOp::Nop => "nop".to_string(),
@@ -151,6 +159,15 @@ impl LlilExpr {
                 let mnem = self.extra.get("mnem").map(String::as_str).unwrap_or("?");
                 format!("intrinsic({mnem})")
             }
+            LlilOp::Csel => format!(
+                "csel({}, {}, {})",
+                fmt_operand(self.operands.first()),
+                fmt_operand(self.operands.get(1)),
+                fmt_operand(self.operands.get(2))
+            ),
+            LlilOp::Sx => format!("sx.{}({})", self.size, fmt_operand(self.operands.first())),
+            LlilOp::Zx => format!("zx.{}({})", self.size, fmt_operand(self.operands.first())),
+            LlilOp::LowPart => format!("low_part({})", fmt_operand(self.operands.first())),
             op if is_binary(op) => format!(
                 "({} {} {})",
                 fmt_operand(self.operands.first()),
@@ -213,6 +230,28 @@ pub fn unary(op: LlilOp, value: LlilExpr) -> LlilExpr {
 pub fn binary(op: LlilOp, left: LlilExpr, right: LlilExpr) -> LlilExpr {
     let size = left.size.max(right.size);
     LlilExpr::new(op, size, vec![expr(left), expr(right)], 0)
+}
+
+pub fn sx(size: u8, value: LlilExpr) -> LlilExpr {
+    LlilExpr::new(LlilOp::Sx, size, vec![expr(value)], 0)
+}
+
+pub fn zx(size: u8, value: LlilExpr) -> LlilExpr {
+    LlilExpr::new(LlilOp::Zx, size, vec![expr(value)], 0)
+}
+
+pub fn low_part(size: u8, value: LlilExpr) -> LlilExpr {
+    LlilExpr::new(LlilOp::LowPart, size, vec![expr(value)], 0)
+}
+
+pub fn csel(cond: LlilExpr, true_val: LlilExpr, false_val: LlilExpr) -> LlilExpr {
+    let size = true_val.size.max(false_val.size);
+    LlilExpr::new(
+        LlilOp::Csel,
+        size,
+        vec![expr(cond), expr(true_val), expr(false_val)],
+        0,
+    )
 }
 
 fn fmt_operand(op: Option<&LlilOperand>) -> String {

@@ -159,6 +159,21 @@ fn infer_expr(e: &LlilExpr, env: &mut TypeEnv) -> TypeKind {
             }
             TypeKind::Bool
         }
+        LlilOp::Sx | LlilOp::Zx | LlilOp::LowPart => {
+            for op in &e.operands {
+                infer_operand(op, env);
+            }
+            TypeKind::Int
+        }
+        LlilOp::Csel => {
+            for op in &e.operands {
+                infer_operand(op, env);
+            }
+            join_type(
+                infer_operand(e.operands.get(1).unwrap_or(&LlilOperand::Imm(0)), env),
+                infer_operand(e.operands.get(2).unwrap_or(&LlilOperand::Imm(0)), env),
+            )
+        }
         _ => {
             for op in &e.operands {
                 infer_operand(op, env);

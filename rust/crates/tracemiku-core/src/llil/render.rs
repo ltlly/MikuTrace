@@ -60,6 +60,12 @@ fn render_stmt_with_names(e: &LlilExpr, names: &VarNameMap) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        LlilOp::Csel => format!(
+            "({} ? {} : {});",
+            render_operand(e.operands.first(), names),
+            render_operand(e.operands.get(1), names),
+            render_operand(e.operands.get(2), names)
+        ),
         _ => format!("{};", render_expr_with_names(e, names)),
     }
 }
@@ -80,6 +86,27 @@ fn render_expr_with_names(e: &LlilExpr, names: &VarNameMap) -> String {
         ),
         LlilOp::Neg => render_neg(e.operands.first(), names),
         LlilOp::Not => format!("~{}", render_operand(e.operands.first(), names)),
+        LlilOp::Sx => format!(
+            "((int{}_t)({}) )",
+            e.size * 8,
+            render_operand(e.operands.first(), names)
+        ),
+        LlilOp::Zx => format!(
+            "((uint{}_t)({}))",
+            e.size * 8,
+            render_operand(e.operands.first(), names)
+        ),
+        LlilOp::LowPart => format!(
+            "((uint{}_t)({}))",
+            e.size * 8,
+            render_operand(e.operands.first(), names)
+        ),
+        LlilOp::Csel => format!(
+            "({} ? {} : {})",
+            render_operand(e.operands.first(), names),
+            render_operand(e.operands.get(1), names),
+            render_operand(e.operands.get(2), names)
+        ),
         op if binary_symbol(op).is_some() => {
             if e.op == LlilOp::Add {
                 if let (Some(left), Some(right)) = (e.operands.first(), e.operands.get(1)) {

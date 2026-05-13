@@ -62,6 +62,33 @@ fn fold_unary(e: &LlilExpr) -> Option<i64> {
     match e.op {
         LlilOp::Neg => Some(v.wrapping_neg()),
         LlilOp::Not => Some(!v),
+        LlilOp::Sx => {
+            let bits = (e.size as u32) * 8;
+            if bits >= 64 {
+                Some(v)
+            } else {
+                let shift = 64 - bits;
+                Some(((v << shift) as i64 >> shift) as i64)
+            }
+        }
+        LlilOp::Zx => {
+            let bits = (e.size as u32) * 8;
+            if bits >= 64 {
+                Some(v)
+            } else {
+                let mask = (1_u64 << bits).wrapping_sub(1);
+                Some((v as u64 & mask) as i64)
+            }
+        }
+        LlilOp::LowPart => {
+            let bits = (e.size as u32) * 8;
+            if bits >= 64 {
+                Some(v)
+            } else {
+                let mask = (1_u64 << bits).wrapping_sub(1);
+                Some((v as u64 & mask) as i64)
+            }
+        }
         _ => None,
     }
 }
