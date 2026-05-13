@@ -11,6 +11,7 @@
 
 pub mod analysis_index;
 pub mod bfs_slice;
+pub mod call_analysis;
 pub mod calltree;
 pub mod cfg;
 pub mod decompiler;
