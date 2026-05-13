@@ -1,0 +1,415 @@
+{
+  "total_functions": 56,
+  "binaries": [
+    "decomp_test_suite",
+    "test_strings",
+    "test_linkedlist",
+    "test_arrays",
+    "test_hash",
+    "test_fsm",
+    "test_fp"
+  ],
+  "by_category": {
+    "general": 39,
+    "strings": 9,
+    "list": 2,
+    "sort": 1,
+    "hash": 2,
+    "fp": 3
+  },
+  "functions": [
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_add",
+      "addr": "0x400740",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_sub",
+      "addr": "0x400760",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_mul",
+      "addr": "0x400780",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_div_s",
+      "addr": "0x4007a0",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_div_u",
+      "addr": "0x4007c0",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_mod_s",
+      "addr": "0x4007e0",
+      "insn_count": 10,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_mull",
+      "addr": "0x40080c",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_umull",
+      "addr": "0x40082c",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_neg",
+      "addr": "0x40084c",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_and",
+      "addr": "0x400864",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_or",
+      "addr": "0x400884",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_xor",
+      "addr": "0x4008a4",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_not",
+      "addr": "0x4008c4",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_lsl",
+      "addr": "0x4008dc",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_lsr",
+      "addr": "0x4008fc",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_asr",
+      "addr": "0x40091c",
+      "insn_count": 7,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_if_else",
+      "addr": "0x40093c",
+      "insn_count": 14,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_if_nested",
+      "addr": "0x400978",
+      "insn_count": 24,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_while_loop",
+      "addr": "0x4009dc",
+      "insn_count": 18,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_for_loop",
+      "addr": "0x400a28",
+      "insn_count": 18,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_do_while",
+      "addr": "0x400a74",
+      "insn_count": 12,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_call_two_args",
+      "addr": "0x400aa8",
+      "insn_count": 15,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_call_four_args",
+      "addr": "0x400ae8",
+      "insn_count": 13,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_call_eight_args",
+      "addr": "0x400b20",
+      "insn_count": 25,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_struct_field_read",
+      "addr": "0x400b88",
+      "insn_count": 8,
+      "category": "strings"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_struct_field_write",
+      "addr": "0x400bac",
+      "insn_count": 12,
+      "category": "strings"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_struct_nested_read",
+      "addr": "0x400be0",
+      "insn_count": 5,
+      "category": "strings"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_stack_spill",
+      "addr": "0x400bf8",
+      "insn_count": 63,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_bitfield_extract",
+      "addr": "0x400cf8",
+      "insn_count": 6,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_bitfield_sign_extend",
+      "addr": "0x400d14",
+      "insn_count": 6,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_bit_test",
+      "addr": "0x400d30",
+      "insn_count": 10,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ptr_arith",
+      "addr": "0x400d5c",
+      "insn_count": 9,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ptr_write",
+      "addr": "0x400d84",
+      "insn_count": 12,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ptr_diff",
+      "addr": "0x400db8",
+      "insn_count": 8,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_factorial",
+      "addr": "0x400ddc",
+      "insn_count": 15,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_switch",
+      "addr": "0x400e1c",
+      "insn_count": 23,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ldrsb",
+      "addr": "0x400e7c",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ldrsh",
+      "addr": "0x400e94",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ldrsw",
+      "addr": "0x400eac",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ldrb",
+      "addr": "0x400ec4",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_ldrh",
+      "addr": "0x400edc",
+      "insn_count": 5,
+      "category": "general"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_strb",
+      "addr": "0x400ef4",
+      "insn_count": 8,
+      "category": "strings"
+    },
+    {
+      "binary": "decomp_test_suite",
+      "name": "test_strh",
+      "addr": "0x400f18",
+      "insn_count": 8,
+      "category": "strings"
+    },
+    {
+      "binary": "test_strings",
+      "name": "test_strlen",
+      "addr": "0x400740",
+      "insn_count": 15,
+      "category": "strings"
+    },
+    {
+      "binary": "test_strings",
+      "name": "test_strcpy",
+      "addr": "0x400780",
+      "insn_count": 19,
+      "category": "strings"
+    },
+    {
+      "binary": "test_strings",
+      "name": "test_strcmp",
+      "addr": "0x4007d0",
+      "insn_count": 27,
+      "category": "strings"
+    },
+    {
+      "binary": "test_strings",
+      "name": "test_memcpy",
+      "addr": "0x400840",
+      "insn_count": 27,
+      "category": "strings"
+    },
+    {
+      "binary": "test_linkedlist",
+      "name": "test_list_sum",
+      "addr": "0x400740",
+      "insn_count": 17,
+      "category": "list"
+    },
+    {
+      "binary": "test_linkedlist",
+      "name": "test_list_reverse",
+      "addr": "0x400788",
+      "insn_count": 19,
+      "category": "list"
+    },
+    {
+      "binary": "test_arrays",
+      "name": "test_sum_array",
+      "addr": "0x400740",
+      "insn_count": 24,
+      "category": "general"
+    },
+    {
+      "binary": "test_arrays",
+      "name": "test_bubble_sort",
+      "addr": "0x4007a4",
+      "insn_count": 65,
+      "category": "sort"
+    },
+    {
+      "binary": "test_hash",
+      "name": "test_djb2",
+      "addr": "0x400740",
+      "insn_count": 22,
+      "category": "hash"
+    },
+    {
+      "binary": "test_hash",
+      "name": "test_fnv1a",
+      "addr": "0x40079c",
+      "insn_count": 30,
+      "category": "hash"
+    },
+    {
+      "binary": "test_fp",
+      "name": "test_fadd",
+      "addr": "0x400740",
+      "insn_count": 8,
+      "category": "fp"
+    },
+    {
+      "binary": "test_fp",
+      "name": "test_fmul",
+      "addr": "0x400764",
+      "insn_count": 8,
+      "category": "fp"
+    },
+    {
+      "binary": "test_fp",
+      "name": "test_faddf",
+      "addr": "0x400788",
+      "insn_count": 8,
+      "category": "fp"
+    }
+  ],
+  "timestamp": "2026-05-14T07:45:35.361040"
+}
