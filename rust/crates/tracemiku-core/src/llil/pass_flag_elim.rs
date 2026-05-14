@@ -135,12 +135,17 @@ fn fold_if_from_flags(
 
 /// Build the comparison expression for a condition given pending flag values.
 ///
-/// Each pending flag has a value expression. For example, if Z flag was set to
-/// `CmpE(result, 0)`, then condition "eq" (Z == 1) becomes the same `CmpE(result, 0)`.
+/// First tries to recognize simple compare patterns (e.g. `cmp X, #0`).
+/// Falls back to building the expression from raw NZCV flag values.
 fn cond_expr_from_flags(
     cond: &str,
     pending: &BTreeMap<String, (u64, LlilExpr)>,
 ) -> Option<LlilExpr> {
+    // Optimisation: if all flags come from the same cmp X, Y, produce a direct comparison
+    if let Some(simple) = try_simple_cmp_fold(cond, pending) {
+        return Some(simple);
+    }
+
     let get = |flag: &str| pending.get(flag).map(|(_, v)| v.clone());
 
     match cond {
@@ -193,6 +198,127 @@ fn cond_expr_from_flags(
         }
         _ => None,
     }
+}
+
+/// Try to fold a cmp+b.cond into a simple comparison when all flags come from the same sub.
+///
+/// Pattern: `cmp X, Y` sets N/Z/C/V via sub. We extract X and Y from the flag
+/// expressions and produce a direct `X <comp> Y` instead of the full flag logic.
+fn try_simple_cmp_fold(
+    cond: &str,
+    pending: &BTreeMap<String, (u64, LlilExpr)>,
+) -> Option<LlilExpr> {
+    // Extract lhs/rhs from N flag: N = CmpSlt(result, 0) = CmpSlt(X - Y, 0)
+    // If we can find a common (lhs, rhs) pair across all flags, fold directly.
+    let n_val = pending.get("n")?.1.clone();
+    let z_val = pending.get("z")?.1.clone();
+
+    // N is CmpSlt(sub_result, 0). Extract the sub_result.
+    let sub_result = extract_sub_result(&n_val)?;
+
+    // Z is CmpE(sub_result, 0). Extract and check consistency.
+    let z_sub = extract_sub_result_from_z(&z_val)?;
+    if !expr_eq(&sub_result, &z_sub) {
+        return None; // Inconsistent — flags from different instructions
+    }
+
+    // sub_result = X - Y. Extract X and Y.
+    let (lhs, rhs) = extract_binary_operands(&sub_result, LlilOp::Sub)?;
+
+    // Now produce the direct comparison based on the condition
+    map_cond_to_comparison(cond, lhs, rhs)
+}
+
+/// Extract the sub_result from N = CmpSlt(sub_result, 0).
+fn extract_sub_result(n: &LlilExpr) -> Option<LlilExpr> {
+    if n.op != LlilOp::CmpSlt || n.operands.len() != 2 {
+        return None;
+    }
+    let rhs = match n.operands.get(1) {
+        Some(LlilOperand::Imm(0)) => true,
+        Some(LlilOperand::Expr(e)) if e.op == LlilOp::Const =>
+            matches!(e.operands.first(), Some(LlilOperand::Imm(0))),
+        _ => false,
+    };
+    if !rhs { return None; }
+    match n.operands.first() {
+        Some(LlilOperand::Expr(e)) => Some(*e.clone()),
+        _ => None,
+    }
+}
+
+/// Extract sub_result from Z = CmpE(sub_result, 0).
+fn extract_sub_result_from_z(z: &LlilExpr) -> Option<LlilExpr> {
+    if z.op != LlilOp::CmpE || z.operands.len() != 2 {
+        return None;
+    }
+    let rhs = match z.operands.get(1) {
+        Some(LlilOperand::Imm(0)) => true,
+        Some(LlilOperand::Expr(e)) if e.op == LlilOp::Const =>
+            matches!(e.operands.first(), Some(LlilOperand::Imm(0))),
+        _ => false,
+    };
+    if !rhs { return None; }
+    match z.operands.first() {
+        Some(LlilOperand::Expr(e)) => Some(*e.clone()),
+        _ => None,
+    }
+}
+
+/// Extract (lhs, rhs) from a binary expression: lhs - rhs or lhs + rhs.
+fn extract_binary_operands(e: &LlilExpr, expected_op: LlilOp) -> Option<(LlilExpr, LlilExpr)> {
+    if e.op != expected_op || e.operands.len() != 2 {
+        return None;
+    }
+    let lhs = match e.operands.first() {
+        Some(LlilOperand::Expr(v)) => *v.clone(),
+        _ => return None,
+    };
+    let rhs = match e.operands.get(1) {
+        Some(LlilOperand::Expr(v)) => *v.clone(),
+        Some(LlilOperand::Imm(v)) => LlilExpr::new(LlilOp::Const, 8, vec![LlilOperand::Imm(*v)], 0),
+        _ => return None,
+    };
+    Some((lhs, rhs))
+}
+
+/// Map an ARM condition code to a direct comparison between lhs and rhs.
+fn map_cond_to_comparison(cond: &str, lhs: LlilExpr, rhs: LlilExpr) -> Option<LlilExpr> {
+    match cond {
+        "eq" => Some(binary(LlilOp::CmpE, lhs, rhs)),
+        "ne" => Some(binary(LlilOp::CmpNe, lhs, rhs)),
+        "cs" | "hs" => Some(binary(LlilOp::CmpUge, lhs, rhs)),
+        "cc" | "lo" => Some(binary(LlilOp::CmpUlt, lhs, rhs)),
+        "mi" => Some(binary(LlilOp::CmpSlt, lhs, konst(0))),  // N flag: result < 0
+        "pl" => Some(binary(LlilOp::CmpSge, lhs, konst(0))),  // !N
+        "vs" => None, // Overflow flag — keep complex expression
+        "vc" => None,
+        "hi" => Some(binary(LlilOp::CmpUgt, lhs, rhs)),
+        "ls" => Some(binary(LlilOp::CmpUle, lhs, rhs)),
+        "ge" => Some(binary(LlilOp::CmpSge, lhs, rhs)),
+        "lt" => Some(binary(LlilOp::CmpSlt, lhs, rhs)),
+        "gt" => Some(binary(LlilOp::CmpSgt, lhs, rhs)),
+        "le" => Some(binary(LlilOp::CmpSle, lhs, rhs)),
+        _ => None,
+    }
+}
+
+/// Quick structural equality check for two expression trees.
+fn expr_eq(a: &LlilExpr, b: &LlilExpr) -> bool {
+    if a.op != b.op || a.operands.len() != b.operands.len() {
+        return false;
+    }
+    for (ao, bo) in a.operands.iter().zip(b.operands.iter()) {
+        match (ao, bo) {
+            (LlilOperand::Expr(ae), LlilOperand::Expr(be)) => {
+                if !expr_eq(ae, be) { return false; }
+            }
+            _ => {
+                if ao != bo { return false; }
+            }
+        }
+    }
+    true
 }
 
 /// If Z = CmpE(X, 0) then ne = CmpNe(X, 0)
