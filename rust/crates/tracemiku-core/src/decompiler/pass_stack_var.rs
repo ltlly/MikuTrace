@@ -96,9 +96,35 @@ impl StackVariableRecoveryPass {
         else { format!("var_m{:x}", -offset) }
     }
 
-    fn insert_declarations(exprs: &mut Vec<PassIlExpr>, offsets: &BTreeSet<i64>, base_reg: &str) {
+    /// Heuristic-based auto-naming: produces a semantically meaningful name
+    /// based on stack slot usage patterns (size, read/write ratio, context).
+    fn auto_name(offset: i64, group: &[&StackAccess]) -> String {
+        let total = group.len();
+        let reads = group.iter().filter(|a| a.kind == "load").count();
+        let writes = group.iter().filter(|a| a.kind == "store").count();
+        let max_size = group.iter().map(|a| a.size).max().unwrap_or(8);
+        // Call-target heuristic: slot is only read at 8 bytes → fn ptr candidate
+        if max_size == 8 && writes == 0 && reads > 0 && reads == total {
+            return format!("fn_ptr_{:x}", if offset >= 0 { offset as u64 } else { (-offset) as u64 });
+        }
+        // Write-only of 8 bytes → saved register slot
+        if max_size == 8 && reads == 0 && writes > 0 {
+            return format!("saved_{:x}", if offset >= 0 { offset as u64 } else { (-offset) as u64 });
+        }
+        // Small read-write (1-4 bytes) → data field
+        if max_size <= 4 && reads > 0 && writes > 0 {
+            return format!("field_{:x}", if offset >= 0 { offset as u64 } else { (-offset) as u64 });
+        }
+        // 8-byte read-write → pointer/ref
+        if max_size == 8 && reads > 0 && writes > 0 {
+            return format!("ptr_{:x}", if offset >= 0 { offset as u64 } else { (-offset) as u64 });
+        }
+        Self::var_name(offset)
+    }
+
+    fn insert_declarations(exprs: &mut Vec<PassIlExpr>, offsets: &BTreeSet<i64>, base_reg: &str, offset_names: &BTreeMap<i64, String>) {
         let mut decls: Vec<PassIlExpr> = offsets.iter().map(|&off| {
-            let var = Self::var_name(off);
+            let var = offset_names.get(&off).cloned().unwrap_or_else(|| Self::var_name(off));
             let addr_op = if off >= 0 {
                 PassIlOperand::Expr(Box::new(PassIlExpr {
                     op: "LLIL_Add".to_string(), size: 8, pc: 0,
@@ -173,8 +199,14 @@ impl Pass for StackVariableRecoveryPass {
             base_reg = base;
         }
 
+        // Compute names first so decls and annotations are consistent
+        let mut offset_names: BTreeMap<i64, String> = BTreeMap::new();
         for (&offset, group) in &by_offset {
-            let var_name = Self::var_name(offset);
+            offset_names.insert(offset, Self::auto_name(offset, group));
+        }
+
+        for (&offset, group) in &by_offset {
+            let var_name = offset_names.get(&offset).cloned().unwrap_or_else(|| Self::var_name(offset));
             for access in group {
                 let e = &mut exprs.exprs[access.expr_index];
                 let already = e.extra.iter().any(|(k, v)| k == "stack_var" && v == &var_name);
@@ -192,7 +224,7 @@ impl Pass for StackVariableRecoveryPass {
         let offsets: BTreeSet<i64> = by_offset.keys().copied().collect();
         let has_existing_decls = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, _)| k == "stack_decl"));
         if !has_existing_decls && !offsets.is_empty() {
-            Self::insert_declarations(&mut exprs.exprs, &offsets, &base_reg);
+            Self::insert_declarations(&mut exprs.exprs, &offsets, &base_reg, &offset_names);
             changed = true;
         }
 
@@ -221,8 +253,8 @@ mod tests {
         let pass = StackVariableRecoveryPass;
         let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
         let _ = pass.run(&ctx, &mut exprs);
-        let has_var = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "var_10"));
-        assert!(has_var, "should find var_10 annotation");
+        let has_var = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "fn_ptr_10"));
+        assert!(has_var, "should find fn_ptr_10 annotation");
     }
 
     #[test]
@@ -232,9 +264,9 @@ mod tests {
         let pass = StackVariableRecoveryPass;
         let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
         let _ = pass.run(&ctx, &mut exprs);
-        let has_var = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "var_8"));
+        let has_var = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "saved_8"));
         let has_store = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_kind" && v == "store"));
-        assert!(has_var, "should find var_8 annotation");
+        assert!(has_var, "should find saved_8 annotation");
         assert!(has_store, "should find store annotation");
     }
 
@@ -249,10 +281,10 @@ mod tests {
         let pass = StackVariableRecoveryPass;
         let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
         let _ = pass.run(&ctx, &mut exprs);
-        let has_var0 = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "var_0"));
-        let has_var8 = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "var_8"));
-        assert!(has_var0, "should have var_0 annotation");
-        assert!(has_var8, "should have var_8 annotation");
+        let has_var0 = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "fn_ptr_0"));
+        let has_var8 = exprs.exprs.iter().any(|e| e.extra.iter().any(|(k, v)| k == "stack_var" && v == "saved_8"));
+        assert!(has_var0, "should have fn_ptr_0 annotation");
+        assert!(has_var8, "should have saved_8 annotation");
     }
 
     #[test]

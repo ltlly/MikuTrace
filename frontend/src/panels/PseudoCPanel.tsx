@@ -54,6 +54,35 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   // Decompile history (back/forward navigation)
   const [historyStack, setHistoryStack] = createSignal<string[]>([]);
   const [historyPos, setHistoryPos] = createSignal(-1);
+
+  // Decompile diff
+  const [diffBaseline, setDiffBaseline] = createSignal<string | null>(null);
+  const [diffMode, setDiffMode] = createSignal(false);
+
+  function snapshotBaseline() {
+    const text = levelText(currentPipeline());
+    setDiffBaseline(text || null);
+    setDiffMode(!!text);
+  }
+
+  function clearDiff() {
+    setDiffBaseline(null);
+    setDiffMode(false);
+  }
+
+  const diffLines = createMemo(() => {
+    if (!diffMode() || !diffBaseline()) return null;
+    const text = levelText(currentPipeline());
+    if (!text) return null;
+    const oldLines = diffBaseline()!.split("\n");
+    const newLines = text.split("\n");
+    // Simple set-based diff: new lines not in old → added, otherwise same
+    const oldSet = new Set(oldLines);
+    return newLines.map((line, i) => ({
+      line,
+      kind: (!oldSet.has(line) ? "added" : i < oldLines.length && oldLines[i] === line ? "same" : "changed") as "added" | "same" | "changed",
+    }));
+  });
   let historyPushing = false;
 
   // Track viewed functions in history
@@ -309,13 +338,33 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   function cancelRename() { setRenaming(null); }
 
   // Variable type: right-click → set type
+  // Also handles address tokens for xrefs
+  const [xrefMenu, setXrefMenu] = createSignal<{ addr: string; x: number; y: number } | null>(null);
+  const [xrefResults, setXrefResults] = createSignal<{ addr: string; hits: Array<{ idx: number; pc: string; asm: string }>; loading: boolean } | null>(null);
+
   function handleVarContext(e: MouseEvent) {
     const target = e.target as HTMLElement;
     const varSpan = target.closest?.("[data-var]") as HTMLElement | null;
-    if (!varSpan) { setTypeMenu(null); return; }
-    const name = varSpan.dataset.var!;
-    e.preventDefault();
-    setTypeMenu({ name, x: e.clientX, y: e.clientY });
+    if (varSpan) {
+      const name = varSpan.dataset.var!;
+      e.preventDefault();
+      setTypeMenu({ name, x: e.clientX, y: e.clientY });
+      setXrefMenu(null);
+      return;
+    }
+    // Check for address token (.tok-lit or containing 0x...)
+    const litSpan = target.closest?.(".tok-lit") as HTMLElement | null;
+    if (litSpan) {
+      const m = litSpan.textContent?.match(/0x([0-9a-fA-F]{8,})/);
+      if (m) {
+        e.preventDefault();
+        setXrefMenu({ addr: m[0], x: e.clientX, y: e.clientY });
+        setTypeMenu(null);
+        return;
+      }
+    }
+    setTypeMenu(null);
+    setXrefMenu(null);
   }
 
   function applyVarType(typeName: string) {
@@ -324,6 +373,27 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     setTypedVars((prev) => ({ ...prev, [m.name]: typeName }));
     setTypeMenu(null);
   }
+
+  async function fetchXrefs(addr: string) {
+    setXrefMenu(null);
+    setXrefResults({ addr, hits: [], loading: true });
+    try {
+      // Use regex search for the address pattern in instruction text
+      const resp = await fetch(
+        `/api/search?pattern=${encodeURIComponent(addr.replace("0x", "0x"))}&max_results=200`
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        setXrefResults({ addr, hits: data.hits || [], loading: false });
+      } else {
+        setXrefResults({ addr, hits: [], loading: false });
+      }
+    } catch {
+      setXrefResults({ addr, hits: [], loading: false });
+    }
+  }
+
+  function closeXrefs() { setXrefResults(null); }
 
   const highlightedLines = createMemo(() => {
     const text = levelText(currentPipeline());
@@ -631,6 +701,20 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                     disabled={!levelText(r())} onClick={() => downloadC(r())}>
                     Download .c
                   </button>
+                  <button type="button" class="pseudoc-btn"
+                    disabled={!levelText(r())} onClick={snapshotBaseline}>
+                    Snapshot
+                  </button>
+                  <Show when={diffBaseline()}>
+                    <button type="button" class="pseudoc-btn"
+                      onClick={() => setDiffMode((v) => !v)}>
+                      {diffMode() ? "Hide diff" : "Diff"}
+                    </button>
+                    <button type="button" class="pseudoc-btn"
+                      onClick={clearDiff}>
+                      Clear
+                    </button>
+                  </Show>
                   <Show when={lineCount() > 500}>
                     <button type="button" class="pseudoc-btn"
                       onClick={() => setExpandedView((v) => !v)}>
@@ -652,6 +736,22 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
             <Show when={showText() && !collapsed()}>
               <div class="pseudoc-body" classList={{"pseudoc-body-collapsed": collapsed()}}>
+                {/* Diff mode */}
+                <Show when={diffMode() && diffLines()}>
+                  <div class="pseudoc-code pseudoc-diff">
+                    <For each={diffLines()!}>
+                      {(dl, i) => (
+                        <div class={`pseudoc-diff-line pseudoc-diff-${dl.kind}`}>
+                          <span class="pseudoc-diff-prefix">{dl.kind === "added" ? "+" : dl.kind === "changed" ? "~" : " "}</span>
+                          <span class="pseudoc-ln">{i() + 1}</span>
+                          <span class="pseudoc-code-text" innerHTML={highlightLine(dl.line, typedVars(), searchQuery())} />
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                {/* Normal mode */}
+                <Show when={!diffMode()}>
                 <Show when={levelText(r())} fallback={<p class="dim">no {ilLevel().toUpperCase()} text output</p>}>
                   <div class="pseudoc-code" ref={highlightEl}
                     onMouseOver={handleVarHover}
@@ -697,6 +797,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                       </div>
                     </Show>
                   </div>
+                </Show>
                 </Show>
               </div>
             </Show>
@@ -753,9 +854,62 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
         )}
       </Show>
 
+      {/* Xref context menu */}
+      <Show when={xrefMenu()}>
+        {(m) => (
+          <div class="pseudoc-type-menu"
+            style={{ left: `${m().x}px`, top: `${m().y}px` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="pseudoc-type-menu-hdr">address <code>{m().addr}</code></div>
+            <button type="button" class="pseudoc-type-menu-item"
+              onClick={() => { navigator.clipboard.writeText(m().addr); setXrefMenu(null); }}>
+              Copy address
+            </button>
+            <button type="button" class="pseudoc-type-menu-item"
+              onClick={() => fetchXrefs(m().addr)}>
+              Find references
+            </button>
+            <button type="button" class="pseudoc-type-menu-item"
+              onClick={() => setXrefMenu(null)}>
+              cancel
+            </button>
+          </div>
+        )}
+      </Show>
+
+      {/* Xref results panel */}
+      <Show when={xrefResults()}>
+        {(r) => (
+          <div class="pseudoc-xrefs">
+            <div class="pseudoc-xrefs-hdr">
+              <span>references to <code>{r().addr}</code> ({r().hits.length} hits)</span>
+              <button type="button" class="pseudoc-search-btn" onClick={closeXrefs}>✕</button>
+            </div>
+            <Show when={r().loading}>
+              <p class="dim">searching…</p>
+            </Show>
+            <div class="pseudoc-xrefs-list">
+              <For each={r().hits.slice(0, 100)}>
+                {(hit) => (
+                  <div class="pseudoc-xref-item"
+                    onClick={() => props.onSelectIdx?.(hit.idx)}
+                    title="click to jump">
+                    <span class="pseudoc-xref-idx">#{hit.idx}</span>
+                    <code class="pseudoc-xref-pc">{hit.pc}</code>
+                    <span class="pseudoc-xref-asm">{hit.asm}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        )}
+      </Show>
+
       {/* Dismiss type menu on outside click */}
-      <Show when={typeMenu()}>
-        <div class="pseudoc-type-backdrop" onClick={() => setTypeMenu(null)} />
+      <Show when={typeMenu() || xrefMenu()}>
+        <div class="pseudoc-type-backdrop"
+          onClick={() => { setTypeMenu(null); setXrefMenu(null); }} />
       </Show>
     </section>
   );

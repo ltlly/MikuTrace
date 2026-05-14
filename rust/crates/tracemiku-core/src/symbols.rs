@@ -14,6 +14,13 @@ use crate::trace::{ModuleInfo, Trace};
 const PARALLEL_MIN_RECORDS: usize = 250_000;
 const MIN_CHUNK_RECORDS: usize = 200_000;
 
+/// Symbol kind: function (code) or data (global variable, import stub, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolKind {
+    Function,
+    Data,
+}
+
 /// One function/symbol entry. `module_*` is optional to preserve the old
 /// single-address-space behavior for callers that do not have module metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +30,7 @@ pub struct SymbolEntry {
     pub module: Option<String>,
     pub module_base: Option<u64>,
     pub module_end: Option<u64>,
+    pub kind: SymbolKind,
 }
 
 impl SymbolEntry {
@@ -70,6 +78,7 @@ impl SymbolMap {
             module: None,
             module_base: None,
             module_end: None,
+            kind: SymbolKind::Function,
         });
         self.sorted = false;
     }
@@ -83,6 +92,20 @@ impl SymbolMap {
             module: Some(module.name.clone()),
             module_base: Some(base),
             module_end: Some(end),
+            kind: SymbolKind::Function,
+        });
+        self.sorted = false;
+    }
+
+    /// Add a data symbol (global variable, import stub, etc.).
+    pub fn add_data(&mut self, pc: u64, name: String) {
+        self.functions.push(SymbolEntry {
+            pc,
+            name,
+            module: None,
+            module_base: None,
+            module_end: None,
+            kind: SymbolKind::Data,
         });
         self.sorted = false;
     }

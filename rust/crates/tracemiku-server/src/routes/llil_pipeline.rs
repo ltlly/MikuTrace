@@ -298,6 +298,29 @@ fn reg_num_to_name(rn: u32) -> String {
     }.to_string()
 }
 
+/// Classify a call argument value with type hints for type recovery.
+fn classify_arg(val: u64, symbols: &tracemiku_core::symbols::SymbolMap) -> String {
+    if val == 0 {
+        return "NULL".to_string();
+    }
+    let (name, off) = symbols.lookup(val);
+    if !name.is_empty() {
+        if off == 0 {
+            return format!("&{name} /* 0x{val:x} */");
+        }
+        return format!("&{name}+0x{off:x} /* 0x{val:x} */");
+    }
+    // Check if value looks like a pointer (top 16 bits set, typical .so range)
+    if val > 0x10000 && val < 0x7fffffffffff {
+        return format!("(void*)0x{val:x}");
+    }
+    // Small integer / enum value
+    if val < 0x10000 {
+        return format!("0x{val:x}");
+    }
+    format!("0x{val:x}")
+}
+
 fn is_call(inst: u32) -> bool {
     let is_bl = (inst >> 26) == 0b100101;
     let is_blr = (inst & 0xFFFFFC1F) == 0xD63F0000;
@@ -345,7 +368,7 @@ fn annotate_calls_in_text(
                         let args_str = call_site_regs.get(&addr)
                             .map(|regs| {
                                 regs.iter()
-                                    .map(|(r, v)| format!("{r}=0x{v:x}"))
+                                    .map(|(r, v)| format!("{r}={}", classify_arg(*v as u64, symbols)))
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             })
@@ -353,6 +376,17 @@ fn annotate_calls_in_text(
                         result.push_str(&format!("{display}({args_str})"));
                         while i < chars.len() && chars[i] != ')' { i += 1; }
                         if i < chars.len() { i += 1; }
+                        continue;
+                    }
+                }
+                // Non-call hex address — try global/data symbol resolution
+                if let Ok(addr) = u64::from_str_radix(&hex_str, 16) {
+                    let (name, off) = symbols.lookup(addr);
+                    if !name.is_empty() && off > 0 {
+                        result.push_str(&format!("(&{name}+0x{off:x})"));
+                        continue;
+                    } else if !name.is_empty() {
+                        result.push_str(&format!("(&{name})"));
                         continue;
                     }
                 }
@@ -381,7 +415,7 @@ fn annotate_calls_in_text(
                         let args_str = call_site_regs.get(&target)
                             .map(|regs| {
                                 regs.iter()
-                                    .map(|(r, v)| format!("{r}=0x{v:x}"))
+                                    .map(|(r, v)| format!("{r}={}", classify_arg(*v as u64, symbols)))
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             })

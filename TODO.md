@@ -23,11 +23,11 @@
 
 ## P2 — Analysis
 
-- [ ] Xrefs from decompile: right-click → show all references to variable
-- [ ] Decompile diff: compare two trace snapshots
-- [ ] Global variable resolution from ELF symbols
-- [ ] Stack variable auto-naming
-- [ ] Type recovery through call boundaries
+- [x] Xrefs from decompile: right-click → show all references to variable
+- [x] Decompile diff: compare two trace snapshots
+- [x] Global variable resolution from ELF symbols
+- [x] Stack variable auto-naming
+- [x] Type recovery through call boundaries
 
 ## P3 — Polish
 

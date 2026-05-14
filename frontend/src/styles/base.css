@@ -3308,3 +3308,18 @@ html[data-density="dense"] .xref-table td {
 .pseudoc-history-btn { padding: 1px 6px; font-size: 11px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg2); color: var(--dim); cursor: pointer; line-height: 16px; }
 .pseudoc-history-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--dim); }
 .pseudoc-history-btn:disabled { opacity: 0.3; cursor: default; }
+.pseudoc-xrefs { margin: 8px 0; border: 1px solid var(--border); border-radius: 4px; background: var(--bg2); max-height: 200px; overflow: hidden; display: flex; flex-direction: column; }
+.pseudoc-xrefs-hdr { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--dim); }
+.pseudoc-xrefs-list { overflow-y: auto; flex: 1; }
+.pseudoc-xref-item { display: flex; gap: 8px; padding: 2px 8px; font-size: 11px; cursor: pointer; align-items: baseline; }
+.pseudoc-xref-item:hover { background: var(--accent-light); }
+.pseudoc-xref-idx { color: var(--dim); min-width: 60px; }
+.pseudoc-xref-pc { color: var(--accent); font-size: 11px; }
+.pseudoc-xref-asm { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pseudoc-diff { font-family: var(--mono); }
+.pseudoc-diff-line { display: flex; gap: 4px; padding: 0 4px; line-height: 18px; }
+.pseudoc-diff-added { background: rgba(0, 200, 0, 0.1); }
+.pseudoc-diff-changed { background: rgba(200, 180, 0, 0.1); }
+.pseudoc-diff-added .pseudoc-diff-prefix { color: #0a0; }
+.pseudoc-diff-changed .pseudoc-diff-prefix { color: #b80; }
+.pseudoc-diff-prefix { width: 12px; flex-shrink: 0; text-align: center; font-size: 10px; }
