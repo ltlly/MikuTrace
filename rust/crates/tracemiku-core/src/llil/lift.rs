@@ -132,12 +132,14 @@ fn lift_mov(d: &DecodedInsn) -> LlilExpr {
     let value = parts
         .get(1)
         .and_then(|p| parse_imm(p).map(konst))
-        .unwrap_or_else(|| {
-            d.regs_use
-                .first()
-                .map(|r| reg(r.clone()))
-                .unwrap_or_else(|| intrinsic(d))
-        });
+        .or_else(|| {
+            // xzr/wzr → konst(0) (Capstone filters these from regs_use)
+            parts.get(1).filter(|p| *p == "xzr" || *p == "wzr").map(|_| konst(0))
+        })
+        .or_else(|| {
+            d.regs_use.first().map(|r| reg(r.clone()))
+        })
+        .unwrap_or_else(|| intrinsic(d));
     set_reg(dst, value, d.pc)
 }
 
@@ -620,11 +622,18 @@ fn target_expr(d: &DecodedInsn) -> LlilExpr {
     if let Some(target) = parse_target(&d.op_str) {
         return const_ptr(target);
     }
-    d.regs_use
-        .first()
-        .cloned()
-        .map(reg)
-        .unwrap_or_else(|| intrinsic(d))
+    // Try regs_use first (skip implicit nzcv reads like for cbnz)
+    if let Some(r) = d.regs_use.iter().find(|r| *r != "nzcv") {
+        return reg(r.clone());
+    }
+    // Fallback: parse register from op_str (e.g. "x8" for blr x8)
+    let parts = split_operands(&d.op_str);
+    if let Some(first) = parts.first() {
+        if !first.starts_with('#') && !first.is_empty() {
+            return reg(first.clone());
+        }
+    }
+    intrinsic(d)
 }
 
 fn mem_addr_expr(base: &str, idx: &str, disp: i64) -> LlilExpr {

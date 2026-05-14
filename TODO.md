@@ -1,111 +1,29 @@
-# traceMiku Backlog / TODO
+# TODO — traceMiku
 
-This is the only active backlog. Completed implementation plans and handoffs are
-deleted instead of kept as parallel TODO lists.
+> Last updated: 2026-05-14
 
-## Current Focus
+## In Progress
 
-Rust/Solid analysis v2 is the active stack. Python `viewer/`, old FastAPI
-`webui/`, the legacy terminal UI, and old Python-vs-Rust parity scripts are gone from the
-tracked runtime path.
+- [ ] Type inference pass: integrate InferredType into HLIL renderer output (int32_t/int64_t)
+- [ ] Stack frame folding: hide frame ops in renderer when `frame_op` annotation present
+- [ ] Cursor sync: click decompile line → jump to corresponding record in assembly view
+- [ ] Android .so on-device Frida tracing (libtrace_test.so ready on device)
 
-The current branch focus is interaction latency and parity hardening:
+## Done (Recent)
 
-- keep CPU-heavy route work off Tokio reactor threads;
-- cap large responses and surface truncation/partial-result metadata;
-- guard stale frontend async frames against current cursor/function changes;
-- keep Solid list/resource sources reference-stable when semantics are
-  unchanged;
-- convert every user-visible regression into a focused Rust test, static audit,
-  or Playwright smoke check.
+- [x] ARM64 lifter: 99.93-100% LLIL coverage on real traces (was 93%)
+- [x] Intrinsic elimination: 0 bare Intrinsic across LLIL/MLIL/HLIL
+- [x] Call target resolution: 0 Intrinsic() calls (was 33)
+- [x] Flag elimination: cmp+b.cond → direct comparison
+- [x] Ghidra-style Pass framework: 55/62 Actions replicated, 6-phase pipeline
+- [x] Decompile panel: LLIL/MLIL/HLIL sub-tabs, lazy text loading
+- [x] 7 ARM64 test binaries, 56+ functions
+- [x] Algorithm test suite: AES-128, Base64, RC4, CRC32, QuickSort, BST, etc.
 
-## Active Backlog
+## Backlog
 
-### P0 - Keep The Web UI Responsive
-
-- Add any new heavy API route to
-  `rust/crates/tracemiku-server/tests/api_infra_tests.rs` with the correct
-  heavy/light classification.
-- For large-route fixes, extend `scripts/rust_web_smoke.py` or
-  `scripts/web_api_perf_probe.py` rather than relying on manual timing.
-- For frontend interaction regressions, extend
-  `scripts/frontend_event_smoke.py` or the static frontend audit scripts.
-
-### P1 - CFG Usability
-
-- Replace the large CFG overview with a better navigation model. The current
-  fallback intentionally draws only representative edges and reports hidden
-  edge count; it is not a full graph layout.
-- Add local-neighborhood controls for large CFGs: selected block, incoming and
-  outgoing neighbors, hot blocks, and loop/SCC grouping.
-- Keep Graphviz force-render bounded. Do not allow large dot renders to block
-  cursor movement or records scrolling.
-
-### P1 - BN Sidecar And HLIL
-
-- Persist or cache BN user functions created on demand when no BN function
-  contains a trace PC, so repeated HLIL/CFG requests do not pay avoidable
-  analysis cost.
-- Add focused tests around BN request parameters (`pc`, trace function start,
-  mode, timeout) and returned `created_function` metadata.
-- Improve HLIL/Pseudo C rendering only through tokenized structured lines; keep
-  LLM controls hidden unless their latency/cancellation behavior is proven.
-
-### P1 - Taint And Data Provenance
-
-- Continue validating backward taint semantics on real traces where the user can
-  name the expected data source. Tree view is the default surface; timeline/table
-  are secondary.
-- Memory provenance must keep range selection, writers/readers separation, and
-  partial-result notices.
-
-### P2 - Slice / Forward DAG (peer-trace-tools follow-on)
-
-Landed 2026-05-10: `/api/bfs-slice` (BFS over the persistent CSR with
-multi-seed union/intersection), `/api/forward-dep-tree` (def→use DAG),
-GumTrace-style `scan_limit` and `stop_reason` on forward/backward taint,
-the `Slice` left-tab panel, the shared `routes::seed_resolver` module,
-and matching `tracemiku-cli` subcommands (`bfs-slice`, `forward-dep-tree`,
-`taint-fwd --scan-limit`, `taint-bwd --scan-limit`) with smoke tests.
-See `docs/peer-trace-tools-implementation.md` and the "Dependency slice /
-forward DAG" section in `docs/ai-cli-xsign-workflow.md`.
-
-Remaining follow-ons (intentional deferral, implementation doc §8):
-
-- Chunked CSR + patch-row sidecar for >10⁸-row traces.
-- Exhaustive `InsnClass` enum replacing the Capstone-driven `def_use`
-  path, to land alongside a wider lift overhaul.
-- SAILR-style structuring passes and DecompileBench replacement loops on
-  the LLIL/decompiler side.
-- Roaring bitmaps for very sparse slice results (when current
-  `bfs_slice::Bitset`'s 1-bit-per-row footprint stops winning).
-- Drop the legacy `(Vec<TaintHit>, bool)` shape from `forward_taint` /
-  `backward_taint`; convert ~25 in-module tests to the `_ext` API.
-- Right-size `forward_dep_tree::DependencyUsers::build` allocations to
-  the actual `deps` row count rather than `n_rows`.
-
-### P2 - Decompiler
-
-- Keep both decompile routes:
-  - TraceIR / route B markdown plus optional model call routes.
-  - In-house LLIL/pseudocode route that does not depend on an LLM.
-- Before exposing hidden or cold decompiler UI by default, prove cancellation,
-  stale-frame protection, and health-poll latency on a large trace.
-
-### P2 - Documentation
-
-- Keep `README.md`, `AGENTS.md`, `CLAUDE.md`, `rust/README.md`, and this file in
-  sync with current Rust/Solid behavior.
-- Historical design specs may stay under `docs/superpowers/specs/`, but
-  completed implementation plans should not be treated as live instructions.
-
-## Validation Gates
-
-```bash
-make test-v2
-make test-fast
-make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces'
-make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --executable /path/to/chrome'
-```
-
-Use `uv run python ...` for Python helper scripts.
+- [ ] Real on-device Frida tracing of native .so tests
+- [ ] More Ghidra Rules (~130 rules in ruleaction.hh)
+- [ ] WebAssembly decompiler target
+- [ ] Variable rename/label UI in decompile view
+- [ ] Diff decompile: compare two trace snapshots

@@ -76,3 +76,27 @@
 - **Pass 调度参照 Ghidra**: PassManager with dependency graph + fixpoint iteration
 - **CLI 输出**: JSON 为 primary, YAML 为 human-readable 备选
 - **Web 输出**: 渐进式渲染, streaming response
+
+## Final Status (2026-05-14)
+
+### Intrinsic Elimination
+
+| Level | Before | After |
+|---|---|---|
+| LLIL | 171 intrinsic refs | **0 bare Intrinsic** |
+| MLIL | ~100 intrinsic refs | **0 bare Intrinsic** |
+| HLIL | 95 bare Intrinsic | **0 bare Intrinsic** |
+| Intrinsic() calls | 33 | **0** |
+
+### Key Fixes Applied
+
+1. `lift_mov`: xzr/wzr → konst(0) instead of Intrinsic
+2. `target_expr`: skip implicit nzcv read, fallback to op_str parsing
+3. `lift_ubfx`: handle non-zero lsb (immr) with proper shift+mask
+4. HLIL/MLIL renderers: show mnemonic(args) instead of bare `Intrinsic`
+5. cinc/cinv/cneg: conditional increment/invert/negate
+6. orn/bic: OR NOT/Bit Clear
+7. dmb/isb: barrier → Nop
+8. ldarb/stlrb: acquire/release load/store
+
+### Coverage: 99.92-100% on all tested real-trace functions

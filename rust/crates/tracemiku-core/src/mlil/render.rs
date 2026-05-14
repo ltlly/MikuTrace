@@ -149,6 +149,11 @@ pub fn render_expr(e: &MlilExpr) -> String {
                 render_operand(e.operands.get(1))
             )
         }
+        MlilOp::Intrinsic => {
+            let mnem = e.extra.get("mnem").map(String::as_str).unwrap_or("?");
+            let args = e.operands.iter().map(|o| render_operand(Some(o))).collect::<Vec<_>>().join(", ");
+            format!("{mnem}({args})")
+        }
         MlilOp::Undef => "/* undef */".to_string(),
         _ => e.short(),
     }

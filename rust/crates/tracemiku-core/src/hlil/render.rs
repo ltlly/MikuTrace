@@ -295,6 +295,12 @@ pub fn render_expr(e: &HlilExpr) -> String {
                 render_operand(e.operands.get(1))
             )
         }
+        HlilOp::Intrinsic => {
+            let mnem = e.extra.get("mnem").map(String::as_str).unwrap_or("?");
+            let args = e.operands.iter().map(|o| render_operand(Some(o))).collect::<Vec<_>>().join(", ");
+            if args.is_empty() || args == "?" { format!("{mnem}()") }
+            else { format!("{mnem}({args})") }
+        }
         _ => e.short(),
     }
 }
