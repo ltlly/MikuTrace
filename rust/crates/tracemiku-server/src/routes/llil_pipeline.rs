@@ -123,6 +123,12 @@ fn pipeline_response(
 
     let mlil_stats = output.mlil_lower_stats;
 
+    // Post-process: annotate call targets with symbol names and args
+    let symbols = &inner.symbols;
+    let annotate = |text: String| -> String {
+        annotate_calls_in_text(&text, symbols, &inner.trace, &insns)
+    };
+
     // Optional: Call analysis
     let call_analysis = if payload.include_call_analysis {
         let analysis = tracemiku_core::call_analysis::analyze_calls(
@@ -147,17 +153,17 @@ fn pipeline_response(
         struct_stores: mlil_stats.struct_stores as u64,
         hlil_count: output.hlil_count,
         llil_text: if payload.include_text {
-            Some(output.llil_ssa_text)
+            Some(annotate(output.llil_ssa_text))
         } else {
             None
         },
         mlil_text: if payload.include_text {
-            Some(output.mlil_text)
+            Some(annotate(output.mlil_text))
         } else {
             None
         },
         hlil_text: if payload.include_text {
-            Some(output.hlil_text)
+            Some(annotate(output.hlil_text))
         } else {
             None
         },
@@ -213,4 +219,78 @@ fn parse_u64(s: &str) -> Option<u64> {
     } else {
         s.parse::<u64>().ok()
     }
+}
+
+/// Annotate call targets in decompiled text with symbol names.
+/// Replaces `0x6f7a9057b0()` with `sub_457b0(arg1=0x..., ...)` when possible.
+fn annotate_calls_in_text(
+    text: &str,
+    symbols: &tracemiku_core::symbols::SymbolMap,
+    trace: &tracemiku_core::trace::Trace,
+    insns: &[(u64, u32)],
+) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 10);
+    for line in text.lines() {
+        let mut annotated = line.to_string();
+
+        // Find `0xHEX()` patterns and replace with resolved names
+        let mut result = String::new();
+        let chars: Vec<char> = annotated.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '0' && i + 1 < chars.len() && chars[i + 1] == 'x' {
+                // Try to parse hex address
+                let start = i;
+                i += 2; // skip "0x"
+                let mut hex_str = String::new();
+                while i < chars.len() && chars[i].is_ascii_hexdigit() {
+                    hex_str.push(chars[i]);
+                    i += 1;
+                }
+                // Check if followed by "()"
+                if i < chars.len() && chars[i] == '(' {
+                    if let Ok(addr) = u64::from_str_radix(&hex_str, 16) {
+                        let (name, _) = symbols.lookup(addr);
+                        let display = if name.is_empty() {
+                            format!("sub_{addr:x}")
+                        } else {
+                            name
+                        };
+                        // Try to extract call args from trace
+                        let args_str = extract_call_args(addr, trace, insns);
+                        result.push_str(&format!("{display}({args_str})"));
+                        // Skip the "()" part
+                        while i < chars.len() && chars[i] != ')' {
+                            i += 1;
+                        }
+                        if i < chars.len() { i += 1; } // skip ')'
+                        continue;
+                    }
+                }
+                // Not a call pattern, write back the hex
+                result.push_str(&format!("0x{hex_str}"));
+                // Write any remaining chars we consumed
+                while i < chars.len() && chars[i].is_ascii_alphanumeric() {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                continue;
+            }
+            result.push(chars[i]);
+            i += 1;
+        }
+        out.push_str(&result);
+        out.push('\n');
+    }
+    out
+}
+
+/// Try to extract call arguments from trace records before the call.
+fn extract_call_args(
+    _target: u64,
+    _trace: &tracemiku_core::trace::Trace,
+    _insns: &[(u64, u32)],
+) -> String {
+    // For now, return empty — full implementation requires trace context
+    String::new()
 }
