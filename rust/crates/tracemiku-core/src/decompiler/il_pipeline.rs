@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::llil::lift::lift_arm64;
 use crate::llil::pass_flag_elim::flag_elim_block;
+use crate::llil::pass_frame_fold::frame_fold_block;
 use crate::llil::pass_var_unify::unify_vars;
 use crate::llil::render::render_llil_block_with_names;
 use crate::llil::ssa::ssa_block;
@@ -107,8 +108,9 @@ pub fn decompile_trace(
         1.0 - (intrinsic_count as f64 / total_llil as f64)
     };
 
-    // Phase 2: Flag elimination + SSA
-    let flag_elim = flag_elim_block(&llil_exprs);
+    // Phase 2: Frame folding + flag elimination + SSA
+    let frame_fold = frame_fold_block(&llil_exprs);
+    let flag_elim = flag_elim_block(&frame_fold.exprs);
     let ssa = ssa_block(&flag_elim.exprs);
     let names = unify_vars(&ssa.exprs);
 

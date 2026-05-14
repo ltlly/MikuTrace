@@ -9,6 +9,7 @@ pub mod lift;
 pub mod pass_constfold;
 pub mod pass_dce;
 pub mod pass_flag_elim;
+pub mod pass_frame_fold;
 pub mod pass_phi;
 pub mod pass_restructure;
 pub mod pass_struct;
