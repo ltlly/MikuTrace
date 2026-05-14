@@ -100,6 +100,8 @@ fn pipeline_response(
     let mut insns: Vec<(u64, u32)> = Vec::new();
     let mut call_site_regs: std::collections::BTreeMap<u64, Vec<(String, i64)>> =
         std::collections::BTreeMap::new();
+    let mut blr_resolutions: std::collections::BTreeMap<String, u64> =
+        std::collections::BTreeMap::new();
 
     // Track whether we've seen the function's ret.
     // After returning, subsequent instructions belong to the caller.
@@ -120,6 +122,9 @@ fn pipeline_response(
                 // Record the call site args before stopping
                 let caller_pc = rec.pc;
                 let target = decode_call_target(caller_pc, inst, &rec);
+                // Record blr register→target resolution for indirect call display
+                let rn = (inst >> 5) & 0x1F;
+                blr_resolutions.insert(reg_num_to_name(rn), target);
                 let regs: Vec<(String, i64)> = ["x0","x1","x2","x3","x4","x5","x6","x7"]
                     .iter()
                     .filter_map(|r| rec.reg(r).map(|v| (r.to_string(), v as i64)))
@@ -152,6 +157,11 @@ fn pipeline_response(
             if is_call(inst) {
                 let caller_pc = rec.pc;
                 let target = decode_call_target(caller_pc, inst, &rec);
+                // Record blr register→target resolution for indirect call display
+                if (inst & 0xFFFFFC1F) == 0xD63F0000 {
+                    let rn = (inst >> 5) & 0x1F;
+                    blr_resolutions.insert(reg_num_to_name(rn), target);
+                }
                 let regs: Vec<(String, i64)> = ["x0","x1","x2","x3","x4","x5","x6","x7"]
                     .iter()
                     .filter_map(|r| rec.reg(r).map(|v| (r.to_string(), v as i64)))
@@ -179,7 +189,7 @@ fn pipeline_response(
     // Post-process: annotate call targets with symbol names and args
     let symbols = &inner.symbols;
     let annotate = |text: String| -> String {
-        annotate_calls_in_text(&text, symbols, &call_site_regs)
+        annotate_calls_in_text(&text, symbols, &call_site_regs, &blr_resolutions)
     };
 
     // Optional: Call analysis
@@ -273,15 +283,19 @@ fn decode_call_target(pc: u64, inst: u32, rec: &tracemiku_core::trace::record::R
     } else {
         // blr: target is in the register
         let rn = (inst >> 5) & 0x1F;
-        let reg_name = match rn {
-            0=>"x0",1=>"x1",2=>"x2",3=>"x3",4=>"x4",5=>"x5",6=>"x6",7=>"x7",
-            8=>"x8",9=>"x9",10=>"x10",11=>"x11",12=>"x12",13=>"x13",14=>"x14",15=>"x15",
-            16=>"x16",17=>"x17",18=>"x18",19=>"x19",20=>"x20",21=>"x21",22=>"x22",
-            23=>"x23",24=>"x24",25=>"x25",26=>"x26",27=>"x27",28=>"x28",29=>"fp",30=>"lr",
-            _=>"xzr"
-        };
-        rec.reg(reg_name).unwrap_or(pc)
+        let reg_name = reg_num_to_name(rn);
+        rec.reg(&reg_name).unwrap_or(pc)
     }
+}
+
+fn reg_num_to_name(rn: u32) -> String {
+    match rn {
+        0=>"x0",1=>"x1",2=>"x2",3=>"x3",4=>"x4",5=>"x5",6=>"x6",7=>"x7",
+        8=>"x8",9=>"x9",10=>"x10",11=>"x11",12=>"x12",13=>"x13",14=>"x14",15=>"x15",
+        16=>"x16",17=>"x17",18=>"x18",19=>"x19",20=>"x20",21=>"x21",22=>"x22",
+        23=>"x23",24=>"x24",25=>"x25",26=>"x26",27=>"x27",28=>"x28",29=>"fp",30=>"lr",
+        _=>"xzr"
+    }.to_string()
 }
 
 fn is_call(inst: u32) -> bool {
@@ -304,6 +318,7 @@ fn annotate_calls_in_text(
     text: &str,
     symbols: &tracemiku_core::symbols::SymbolMap,
     call_site_regs: &std::collections::BTreeMap<u64, Vec<(String, i64)>>,
+    blr_resolutions: &std::collections::BTreeMap<String, u64>,
 ) -> String {
     let mut out = String::with_capacity(text.len() + text.len() / 10);
     for line in text.lines() {
@@ -311,6 +326,7 @@ fn annotate_calls_in_text(
         let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
         while i < chars.len() {
+            // match 0xHEX(...) — direct call target
             if chars[i] == '0' && i + 1 < chars.len() && chars[i + 1] == 'x' {
                 i += 2; // skip "0x"
                 let mut hex_str = String::new();
@@ -326,7 +342,6 @@ fn annotate_calls_in_text(
                         } else {
                             name
                         };
-                        // Get call-site register values
                         let args_str = call_site_regs.get(&addr)
                             .map(|regs| {
                                 regs.iter()
@@ -343,6 +358,44 @@ fn annotate_calls_in_text(
                 }
                 result.push_str(&format!("0x{hex_str}"));
                 while i < chars.len() && chars[i].is_ascii_alphanumeric() { result.push(chars[i]); i += 1; }
+                continue;
+            }
+            // match reg_name(...) — indirect call target (blr xN), e.g. "x8("
+            if (chars[i] == 'x' || chars[i] == 'f' || chars[i] == 'l')
+                && chars[i..].iter().take_while(|c| c.is_alphanumeric() || **c == '_').count() > 0
+            {
+                let mut reg_name = String::new();
+                let mut j = i;
+                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                    reg_name.push(chars[j]);
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '(' {
+                    if let Some(&target) = blr_resolutions.get(&reg_name) {
+                        let (name, _) = symbols.lookup(target);
+                        let display = if name.is_empty() {
+                            format!("sub_{target:x}")
+                        } else {
+                            name
+                        };
+                        let args_str = call_site_regs.get(&target)
+                            .map(|regs| {
+                                regs.iter()
+                                    .map(|(r, v)| format!("{r}=0x{v:x}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        result.push_str(&format!("{display}({args_str})"));
+                        i = j + 1;
+                        while i < chars.len() && chars[i] != ')' { i += 1; }
+                        if i < chars.len() { i += 1; }
+                        continue;
+                    }
+                }
+                // Not a known blr target call — emit the chars we consumed
+                result.push_str(&reg_name);
+                i = j;
                 continue;
             }
             result.push(chars[i]);

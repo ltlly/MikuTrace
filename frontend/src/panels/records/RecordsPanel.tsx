@@ -27,7 +27,7 @@ import { createGuardedResource } from "~/utils/resourceGuards";
 
 const ROW_HEIGHT = 18;
 const OVERSCAN = 18;
-const SAFE_SCROLL_HEIGHT = 30_000_000;
+const SAFE_SCROLL_HEIGHT = 15_000_000;
 const FOLDED_FETCH_BATCH_RANGES = 24;
 const REG_RE = /\b(?:x(?:[0-9]|1[0-9]|2[0-9]|30)|w(?:[0-9]|1[0-9]|2[0-9]|30)|sp|fp|lr)\b/gi;
 const ROW_MARKS_PREFIX = "tracemiku-row-marks:";
