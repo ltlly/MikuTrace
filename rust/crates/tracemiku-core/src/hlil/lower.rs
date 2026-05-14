@@ -13,14 +13,13 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
-use crate::llil::pass_var_unify::VarNameMap;
-use crate::mlil::expr::{MlilExpr, MlilOp, MlilOperand};
 use crate::hlil::expr::{
-    assign, binary, deref, deref_field,
-    expr, goto, if_else, label, ret as hlil_ret, var as hlil_var,
-    HlilExpr, HlilOp, HlilOperand,
+    assign, binary, deref, deref_field, expr, goto, if_else, label, ret as hlil_ret,
+    var as hlil_var, HlilExpr, HlilOp, HlilOperand,
 };
 use crate::hlil::pass_restructure::restructure_hlil;
+use crate::llil::pass_var_unify::VarNameMap;
+use crate::mlil::expr::{MlilExpr, MlilOp, MlilOperand};
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LowerStats {
@@ -164,27 +163,15 @@ fn lower_expr(e: &MlilExpr) -> Option<HlilExpr> {
 
         // Constants
         MlilOp::Const => {
-            let ops: Vec<HlilOperand> = e
-                .operands
-                .iter()
-                .map(lower_operand)
-                .collect();
+            let ops: Vec<HlilOperand> = e.operands.iter().map(lower_operand).collect();
             Some(HlilExpr::new(HlilOp::Const, e.size, ops, pc))
         }
         MlilOp::ConstPtr => {
-            let ops: Vec<HlilOperand> = e
-                .operands
-                .iter()
-                .map(lower_operand)
-                .collect();
+            let ops: Vec<HlilOperand> = e.operands.iter().map(lower_operand).collect();
             Some(HlilExpr::new(HlilOp::ConstPtr, e.size, ops, pc))
         }
         MlilOp::ConstData => {
-            let ops: Vec<HlilOperand> = e
-                .operands
-                .iter()
-                .map(lower_operand)
-                .collect();
+            let ops: Vec<HlilOperand> = e.operands.iter().map(lower_operand).collect();
             Some(HlilExpr::new(HlilOp::ConstData, e.size, ops, pc))
         }
 
@@ -304,11 +291,7 @@ fn lower_expr(e: &MlilExpr) -> Option<HlilExpr> {
 
         // Intrinsic / Trap / Bp
         MlilOp::Intrinsic => {
-            let ops: Vec<HlilOperand> = e
-                .operands
-                .iter()
-                .map(lower_operand)
-                .collect();
+            let ops: Vec<HlilOperand> = e.operands.iter().map(lower_operand).collect();
             let mut out = HlilExpr::new(HlilOp::Intrinsic, e.size, ops, pc);
             out.extra = e.extra.clone();
             Some(out)
@@ -322,7 +305,12 @@ fn lower_expr(e: &MlilExpr) -> Option<HlilExpr> {
                 Some(MlilOperand::Expr(v)) => lower_expr(v)?,
                 _ => return None,
             };
-            Some(HlilExpr::new(HlilOp::AddressOf, e.size, vec![expr(val)], pc))
+            Some(HlilExpr::new(
+                HlilOp::AddressOf,
+                e.size,
+                vec![expr(val)],
+                pc,
+            ))
         }
         MlilOp::AddressOfField => {
             let base = match e.operands.first() {
@@ -347,12 +335,10 @@ fn lower_expr(e: &MlilExpr) -> Option<HlilExpr> {
 
 fn lower_operand(op: &MlilOperand) -> HlilOperand {
     match op {
-        MlilOperand::Expr(e) => {
-            match lower_expr(e) {
-                Some(hlil_e) => expr(hlil_e),
-                None => HlilOperand::Str("__unimpl".into()),
-            }
-        }
+        MlilOperand::Expr(e) => match lower_expr(e) {
+            Some(hlil_e) => expr(hlil_e),
+            None => HlilOperand::Str("__unimpl".into()),
+        },
         MlilOperand::Var(v) => HlilOperand::Var(v.clone()),
         MlilOperand::Imm(v) => HlilOperand::Imm(*v),
         MlilOperand::U64(v) => HlilOperand::U64(*v),
@@ -413,7 +399,6 @@ fn insert_labels(exprs: &mut Vec<HlilExpr>) {
         i += 1;
     }
 }
-
 
 /// Recursively collect every address targeted by a `Goto` op (at the top
 /// level or nested inside `If`, `Block`, `While`, `DoWhile` bodies).
@@ -476,17 +461,24 @@ fn map_binary_op(op: MlilOp) -> HlilOp {
 
 #[cfg(test)]
 mod tests {
+    use crate::hlil::render::render_hlil;
+    use crate::llil::expr::{
+        binary as llil_binary, csel as llil_csel, expr as llil_expr, flag_cond as llil_flag_cond,
+        konst as llil_konst, reg as llil_reg, set_flag as llil_set_flag, set_reg as llil_set_reg,
+        LlilExpr, LlilOp, LlilOperand,
+    };
+    use crate::llil::pass_constfold::constfold_block;
+    use crate::llil::pass_dce::dce_block;
+    use crate::llil::pass_flag_elim::flag_elim_block;
+    use crate::llil::pass_frame_fold::frame_fold_block;
+    use crate::llil::pass_var_unify::{unify_vars, VarNameMap};
+    use crate::llil::ssa::ssa_block;
     use crate::mlil::expr::{
         binary as mlil_binary, expr as mlil_expr, konst as mlil_konst, load as mlil_load,
         load_struct as mlil_load_struct, set_var as mlil_set_var, store as mlil_store,
         store_struct as mlil_store_struct, var as mlil_var, MlilExpr, MlilOp, MlilOperand,
     };
-    use crate::mlil::lower::{LowerStats as MlilLowerStats, lower_llil_to_mlil};
-    use crate::llil::expr::{
-        binary as llil_binary, konst as llil_konst, reg as llil_reg,
-        set_reg as llil_set_reg, LlilExpr, LlilOp, LlilOperand,
-    };
-    use crate::llil::pass_var_unify::VarNameMap;
+    use crate::mlil::lower::{lower_llil_to_mlil, LowerStats as MlilLowerStats};
 
     use super::*;
 
@@ -543,7 +535,13 @@ mod tests {
         ];
         let (hlil, _) = lower_mlil_to_hlil(&mlil_exprs, &VarNameMap::new());
         // The output should contain a Label before the target
-        assert_eq!(hlil.len(), 3, "expected 3 exprs: goto + label + assign, got {}: {:#?}", hlil.len(), hlil);
+        assert_eq!(
+            hlil.len(),
+            3,
+            "expected 3 exprs: goto + label + assign, got {}: {:#?}",
+            hlil.len(),
+            hlil
+        );
         assert_eq!(hlil[0].op, HlilOp::Goto, "first should be Goto");
         assert_eq!(hlil[1].op, HlilOp::Label, "second should be Label");
         assert_eq!(hlil[2].op, HlilOp::Assign, "third should be Assign");
@@ -578,15 +576,23 @@ mod tests {
         let (hlil, _) = lower_mlil_to_hlil(&mlil_exprs, &VarNameMap::new());
         // After restructuring: If(cond, Block([Assign v1=1]), None) + Label + assign v2=2
         // The false branch (0x1010) is the fallthrough (no convergence), so it's an if-then.
-        assert!(hlil.len() >= 2, "expected at least 2 exprs, got {}: {:#?}", hlil.len(), hlil);
+        assert!(
+            hlil.len() >= 2,
+            "expected at least 2 exprs, got {}: {:#?}",
+            hlil.len(),
+            hlil
+        );
         assert_eq!(hlil[0].op, HlilOp::If, "first should be structured If");
         // The If should have a block body (not just a goto)
         if let Some(HlilOperand::Expr(body)) = hlil[0].operands.get(1) {
             assert_eq!(body.op, HlilOp::Block, "If body should be Block");
             // The block should contain the assign
-            assert!(body.operands.iter().any(|o| {
-                matches!(o, HlilOperand::Expr(e) if e.op == HlilOp::Assign)
-            }), "If block body should contain an Assign");
+            assert!(
+                body.operands
+                    .iter()
+                    .any(|o| { matches!(o, HlilOperand::Expr(e) if e.op == HlilOp::Assign) }),
+                "If block body should contain an Assign"
+            );
         } else {
             panic!("If should have a Block body, got: {:?}", hlil[0]);
         }
@@ -613,5 +619,158 @@ mod tests {
         let (hlil, stats) = lower_mlil_to_hlil(&mlil, &names);
         assert!(stats.hlil_count >= 2);
         assert_eq!(hlil.last().unwrap().op, HlilOp::Ret);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Comprehensive end-to-end quality test
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Feeds real LLIL patterns through the ENTIRE pipeline and checks rendered
+    // output for known-bad patterns:
+    //
+    //   • Empty LHS in assignments  (" = 42;"   →  bug: dropped SetReg dest)
+    //   • Empty call targets        ("();"      →  bug: dropped Call target)
+    //   • Csel with FlagCond leak   (was silently dropped → instruction loss)
+    //   • Empty ternary branches    ("?  :"     →  bug: dropped Csel arm)
+    //   • Missing return statement  (dropped by restructure or lowering)
+
+    #[test]
+    fn comprehensive_pipeline_output_quality() {
+        // Build a realistic LLIL sequence that exercises every known bug area.
+        //
+        //   mov  x0, #1
+        //   mov  x1, #2
+        //   add  x0, x0, x1
+        //   cmp  x2, x3            → SetFlag n/z/c/v
+        //   csel x4, x5, x6, eq    → SetReg(x4, Csel(FlagCond("eq"), x5, x6))
+        //   blr  x7                → Call(Reg(x7))
+        //   ret
+        //
+        // Plain register names are used so the SSA pass versions them.
+        let llil_exprs: Vec<LlilExpr> = vec![
+            llil_set_reg("x0", llil_konst(1), 0x1000),
+            llil_set_reg("x1", llil_konst(2), 0x1004),
+            llil_set_reg(
+                "x0",
+                llil_binary(LlilOp::Add, llil_reg("x0"), llil_reg("x1")),
+                0x1008,
+            ),
+            // cmp x2, x3 — produces flags for n/z/c
+            llil_set_flag(
+                "n",
+                llil_binary(LlilOp::CmpSlt, llil_reg("x2"), llil_konst(0)),
+                0x100c,
+            ),
+            llil_set_flag(
+                "z",
+                llil_binary(LlilOp::CmpE, llil_reg("x2"), llil_konst(0)),
+                0x1010,
+            ),
+            llil_set_flag("c", llil_konst(1), 0x1014),
+            llil_set_flag("v", llil_konst(0), 0x1018),
+            // csel x4, x5, x6, eq  →  SetReg(x4, Csel(FlagCond("eq"), x5, x6))
+            llil_set_reg(
+                "x4",
+                llil_csel(llil_flag_cond("eq"), llil_reg("x5"), llil_reg("x6")),
+                0x101c,
+            ),
+            // blr x7  →  Call(Reg(x7))
+            LlilExpr::new(LlilOp::Call, 8, vec![llil_expr(llil_reg("x7"))], 0x1020),
+            // ret
+            LlilExpr::new(LlilOp::Ret, 8, vec![], 0x1024),
+        ];
+
+        // ── Full pipeline: lift → frame_fold → flag_elim → SSA → var_unify
+        //    → constfold → DCE → MLIL → HLIL → restructure → render
+
+        let frame_fold = frame_fold_block(&llil_exprs);
+        let flag_elim = flag_elim_block(&frame_fold.exprs);
+        let ssa = ssa_block(&flag_elim.exprs);
+        let names = unify_vars(&ssa.exprs);
+        let constfolded = constfold_block(&ssa.exprs);
+        let dce = dce_block(&constfolded);
+
+        let (mlil, _mlil_stats) = lower_llil_to_mlil(&dce.exprs, &names);
+        let (hlil, _hlil_stats) = lower_mlil_to_hlil(&mlil, &names);
+        let rendered = render_hlil(&hlil);
+
+        // ── Quality assertions ───────────────────────────────────────────────
+
+        // 1. Every assignment must have a non-empty LHS.
+        //    Scan each line: if it contains "=" and is not a comment, the
+        //    part before "=" must be non-empty.
+        for line in rendered.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains('=') && !trimmed.starts_with("/*") {
+                let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    let lhs = parts[0].trim();
+                    assert!(
+                        !lhs.is_empty(),
+                        "LHS of assignment is empty in: {:?}\nFull output:\n{}",
+                        trimmed,
+                        rendered
+                    );
+                }
+            }
+        }
+
+        // 2. No empty call target — no line should be exactly "();" or start
+        //    with "();" (which means the call target expression was empty).
+        for line in rendered.lines() {
+            let trimmed = line.trim();
+            assert!(
+                !trimmed.starts_with("();"),
+                "Empty call target found at line {:?} in output:\n{}",
+                trimmed,
+                rendered
+            );
+        }
+
+        // 3. No comment-rendered control flow (e.g. "/* goto").
+        //    Jump/Goto must be rendered as "goto *<target>;" / "goto loc_<target>;".
+        assert!(
+            !rendered.contains("/* goto"),
+            "Control flow rendered as comment in output:\n{}",
+            rendered
+        );
+
+        // 4. There must be a return statement.
+        assert!(
+            rendered.contains("return;"),
+            "No return statement in output:\n{}",
+            rendered
+        );
+
+        // 5. The Csel-derived ternary must not have empty branches.
+        assert!(
+            !rendered.contains("?  :"),
+            "Csel ternary with empty branch in output:\n{}",
+            rendered
+        );
+    }
+
+    /// Verifies that HlilOp::Jump renders as "goto *<target>;" (not as a comment).
+    /// Uses a single Jump expression directly (no restructure pass) to isolate
+    /// the rendering path.
+    #[test]
+    fn renders_jump_as_goto_star() {
+        let jump = HlilExpr::new(
+            HlilOp::Jump,
+            8,
+            vec![HlilOperand::Var("x14_v4".into())],
+            0x2000,
+        );
+        let rendered = render_hlil(&[jump]);
+        assert!(
+            rendered.contains("goto *x14_v4;"),
+            "Jump should render as goto *var; got:\n{}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("/* goto"),
+            "Jump must NOT render as a comment. Got:\n{}",
+            rendered
+        );
     }
 }

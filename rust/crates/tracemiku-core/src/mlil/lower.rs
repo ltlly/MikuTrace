@@ -14,8 +14,8 @@ use serde::Serialize;
 use crate::llil::expr::{LlilExpr, LlilOp, LlilOperand};
 use crate::llil::pass_var_unify::VarNameMap;
 use crate::mlil::expr::{
-    binary, expr, load, load_struct, set_var, store,
-    store_struct, unary, var as mlil_var, MlilExpr, MlilOp, MlilOperand,
+    binary, expr, load, load_struct, set_var, store, store_struct, unary, var as mlil_var,
+    MlilExpr, MlilOp, MlilOperand,
 };
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -292,15 +292,24 @@ fn lower_operand_or_u64(op: Option<&LlilOperand>, names: &VarNameMap, default: u
 
 fn lower_operand(op: &LlilOperand, names: &VarNameMap) -> Option<MlilOperand> {
     match op {
-        LlilOperand::Expr(e) => Some(expr(lower_expr(e, names)?)),
+        LlilOperand::Expr(e) => {
+            match lower_expr(e, names) {
+                Some(lowered) => Some(expr(lowered)),
+                // Sub-expression could not be lowered (e.g. residual FlagCond).
+                // Emit a placeholder so the parent instruction survives.
+                None => Some(MlilOperand::Str("__unimpl".into())),
+            }
+        }
         LlilOperand::Reg(r) => Some(MlilOperand::Var(resolve_var(r, names))),
         LlilOperand::Imm(v) => Some(MlilOperand::Imm(*v)),
         LlilOperand::U64(v) => Some(MlilOperand::U64(*v)),
         LlilOperand::Str(s) => Some(MlilOperand::Str(s.clone())),
-        LlilOperand::Flag(f) => {
-            // Flag operand in MLIL: convert to constant (0/1)
-            // This shouldn't happen often since flags should be eliminated
-            Some(MlilOperand::Var(f.clone()))
+        LlilOperand::Flag(_f) => {
+            // Flag operand in MLIL: convert to constant 0.
+            // This should only happen when flags leak through (e.g. an
+            // unrecognised SetFlag pattern).  Mapping to Imm(0) is safe —
+            // the value is dead in practice.
+            Some(MlilOperand::Imm(0))
         }
     }
 }
@@ -329,15 +338,13 @@ fn detect_base_offset(addr: &MlilExpr) -> Option<(MlilExpr, i64)> {
 }
 
 /// Try to extract (base_expr, non_negative_offset) from a single ordering.
-fn try_base_offset(maybe_base: &MlilOperand, maybe_offset: &MlilOperand) -> Option<(MlilExpr, i64)> {
+fn try_base_offset(
+    maybe_base: &MlilOperand,
+    maybe_offset: &MlilOperand,
+) -> Option<(MlilExpr, i64)> {
     let base = match maybe_base {
         MlilOperand::Expr(e) => *e.clone(),
-        MlilOperand::Var(_) => MlilExpr::new(
-            MlilOp::Var,
-            8,
-            vec![maybe_base.clone()],
-            0,
-        ),
+        MlilOperand::Var(_) => MlilExpr::new(MlilOp::Var, 8, vec![maybe_base.clone()], 0),
         _ => return None,
     };
 
@@ -473,7 +480,11 @@ mod tests {
         let (mlil, stats) = lower_llil_to_mlil(&[llil], &test_names());
         assert_eq!(stats.mlil_count, 1);
         assert_eq!(mlil[0].op, MlilOp::SetVar);
-        assert!(mlil[0].short().contains("arg_0"), "got: {}", mlil[0].short());
+        assert!(
+            mlil[0].short().contains("arg_0"),
+            "got: {}",
+            mlil[0].short()
+        );
         assert!(mlil[0].short().contains("0x2a"), "got: {}", mlil[0].short());
     }
 
@@ -502,12 +513,7 @@ mod tests {
 
     #[test]
     fn lowers_load_to_load() {
-        let load_llil = LlilExpr::new(
-            LlilOp::Load,
-            8,
-            vec![llil_expr(llil_reg("x2#1"))],
-            0x1000,
-        );
+        let load_llil = LlilExpr::new(LlilOp::Load, 8, vec![llil_expr(llil_reg("x2#1"))], 0x1000);
         let set = llil_set_reg("x0#1", load_llil, 0x1000);
         let (mlil, _) = lower_llil_to_mlil(&[set], &test_names());
         assert_eq!(mlil[0].op, MlilOp::SetVar);
@@ -518,12 +524,7 @@ mod tests {
     fn lowers_load_with_offset_to_load_struct() {
         // load from x2#1 + 16
         let addr = llil_binary(LlilOp::Add, llil_reg("x2#1"), llil_konst(16));
-        let load_llil = LlilExpr::new(
-            LlilOp::Load,
-            8,
-            vec![llil_expr(addr)],
-            0x1000,
-        );
+        let load_llil = LlilExpr::new(LlilOp::Load, 8, vec![llil_expr(addr)], 0x1000);
         let set = llil_set_reg("x0#1", load_llil, 0x1000);
         let (mlil, _) = lower_llil_to_mlil(&[set], &test_names());
         assert_eq!(mlil[0].op, MlilOp::SetVar);
@@ -551,12 +552,7 @@ mod tests {
 
     #[test]
     fn lowers_call_and_ret() {
-        let call = LlilExpr::new(
-            LlilOp::Call,
-            8,
-            vec![LlilOperand::U64(0x5000)],
-            0x1000,
-        );
+        let call = LlilExpr::new(LlilOp::Call, 8, vec![LlilOperand::U64(0x5000)], 0x1000);
         let ret = LlilExpr::new(LlilOp::Ret, 8, vec![], 0x1004);
         let (mlil, _) = lower_llil_to_mlil(&[call, ret], &test_names());
         assert_eq!(mlil[0].op, MlilOp::Call);

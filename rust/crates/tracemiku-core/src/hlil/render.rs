@@ -81,7 +81,11 @@ fn render_expr_to(out: &mut String, e: &HlilExpr, indent: usize) {
                         push_line(out, &prefix, "}");
                     } else if else_e.op == HlilOp::If {
                         push_line(out, &prefix, "}");
-                        push_line(out, &prefix, &format!("else if ({})", render_operand(else_e.operands.first())));
+                        push_line(
+                            out,
+                            &prefix,
+                            &format!("else if ({})", render_operand(else_e.operands.first())),
+                        );
                         // Handle chained else-if
                         // Simplified: just render the else
                     } else {
@@ -204,6 +208,22 @@ fn render_expr_to(out: &mut String, e: &HlilExpr, indent: usize) {
             let f = render_operand(e.operands.get(2));
             push_line(out, &prefix, &format!("({c} ? {t} : {f});"));
         }
+        HlilOp::Jump => {
+            let t = render_operand(e.operands.first());
+            push_line(out, &prefix, &format!("goto *{t};"));
+        }
+        HlilOp::Trap => {
+            push_line(out, &prefix, "__builtin_trap();");
+        }
+        HlilOp::Bp => {
+            push_line(out, &prefix, "__breakpoint();");
+        }
+        HlilOp::Unimpl => {
+            push_line(out, &prefix, &format!("/* unimpl at {:#x} */", e.pc));
+        }
+        HlilOp::Undef => {
+            push_line(out, &prefix, "/* undef */");
+        }
         _ => push_line(out, &prefix, &format!("/* {} */", e.short())),
     }
 }
@@ -220,7 +240,11 @@ pub fn render_expr(e: &HlilExpr) -> String {
             render_operand(e.operands.first())
         }
         HlilOp::Deref => {
-            format!("*({} *)({})", c_type(e.size), render_operand(e.operands.first()))
+            format!(
+                "*({} *)({})",
+                c_type(e.size),
+                render_operand(e.operands.first())
+            )
         }
         HlilOp::DerefField => {
             let base = render_operand(e.operands.first());
@@ -297,9 +321,17 @@ pub fn render_expr(e: &HlilExpr) -> String {
         }
         HlilOp::Intrinsic => {
             let mnem = e.extra.get("mnem").map(String::as_str).unwrap_or("?");
-            let args = e.operands.iter().map(|o| render_operand(Some(o))).collect::<Vec<_>>().join(", ");
-            if args.is_empty() || args == "?" { format!("{mnem}()") }
-            else { format!("{mnem}({args})") }
+            let args = e
+                .operands
+                .iter()
+                .map(|o| render_operand(Some(o)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if args.is_empty() || args == "?" {
+                format!("{mnem}()")
+            } else {
+                format!("{mnem}({args})")
+            }
         }
         _ => e.short(),
     }
@@ -331,9 +363,7 @@ fn negative_addend(op: &HlilOperand) -> Option<u64> {
             let magnitude = v.unsigned_abs();
             (magnitude <= MAX_RENDERED_NEGATIVE_ADDEND).then_some(magnitude)
         }
-        HlilOperand::Expr(e)
-            if matches!(e.op, HlilOp::Const | HlilOp::ConstPtr) =>
-        {
+        HlilOperand::Expr(e) if matches!(e.op, HlilOp::Const | HlilOp::ConstPtr) => {
             e.operands.first().and_then(negative_addend)
         }
         _ => None,
@@ -485,11 +515,7 @@ mod tests {
                             binary(HlilOp::Add, var("result"), var("i")),
                             0x1008,
                         ),
-                        assign(
-                            var("i"),
-                            binary(HlilOp::Add, var("i"), konst(1)),
-                            0x100c,
-                        ),
+                        assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x100c),
                     ],
                     0x1008,
                 ),
@@ -501,7 +527,10 @@ mod tests {
         assert!(rendered.contains("int64_t result = 0;"), "got: {rendered}");
         assert!(rendered.contains("int64_t i = 0;"), "got: {rendered}");
         assert!(rendered.contains("while ("), "got: {rendered}");
-        assert!(rendered.contains("result = (result + i);"), "got: {rendered}");
+        assert!(
+            rendered.contains("result = (result + i);"),
+            "got: {rendered}"
+        );
         assert!(rendered.contains("return;"), "got: {rendered}");
     }
 }

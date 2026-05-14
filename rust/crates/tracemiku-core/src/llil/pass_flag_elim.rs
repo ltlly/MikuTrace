@@ -42,6 +42,16 @@ pub fn flag_elim_block(exprs: &[LlilExpr]) -> FlagElimResult {
                 }
             }
         }
+
+        // NEW: Fold FlagCond in any non-If expression (e.g. Csel inside SetReg).
+        // This resolves the case where Csel(FlagCond("eq"), ...) reaches MLIL
+        // lower and causes the entire instruction to be silently dropped.
+        if contains_flag_cond(e) {
+            let folded = fold_flags_in_expr(e, &pending_flags);
+            out.push(folded);
+            // Flags stay in pending (they are read-only and may be reused).
+            continue;
+        }
         // Flush any pending flags that were used as non-branch setflags
         if e.op == LlilOp::If
             || e.is_control_flow()
@@ -236,11 +246,14 @@ fn extract_sub_result(n: &LlilExpr) -> Option<LlilExpr> {
     }
     let rhs = match n.operands.get(1) {
         Some(LlilOperand::Imm(0)) => true,
-        Some(LlilOperand::Expr(e)) if e.op == LlilOp::Const =>
-            matches!(e.operands.first(), Some(LlilOperand::Imm(0))),
+        Some(LlilOperand::Expr(e)) if e.op == LlilOp::Const => {
+            matches!(e.operands.first(), Some(LlilOperand::Imm(0)))
+        }
         _ => false,
     };
-    if !rhs { return None; }
+    if !rhs {
+        return None;
+    }
     match n.operands.first() {
         Some(LlilOperand::Expr(e)) => Some(*e.clone()),
         _ => None,
@@ -254,11 +267,14 @@ fn extract_sub_result_from_z(z: &LlilExpr) -> Option<LlilExpr> {
     }
     let rhs = match z.operands.get(1) {
         Some(LlilOperand::Imm(0)) => true,
-        Some(LlilOperand::Expr(e)) if e.op == LlilOp::Const =>
-            matches!(e.operands.first(), Some(LlilOperand::Imm(0))),
+        Some(LlilOperand::Expr(e)) if e.op == LlilOp::Const => {
+            matches!(e.operands.first(), Some(LlilOperand::Imm(0)))
+        }
         _ => false,
     };
-    if !rhs { return None; }
+    if !rhs {
+        return None;
+    }
     match z.operands.first() {
         Some(LlilOperand::Expr(e)) => Some(*e.clone()),
         _ => None,
@@ -289,8 +305,8 @@ fn map_cond_to_comparison(cond: &str, lhs: LlilExpr, rhs: LlilExpr) -> Option<Ll
         "ne" => Some(binary(LlilOp::CmpNe, lhs, rhs)),
         "cs" | "hs" => Some(binary(LlilOp::CmpUge, lhs, rhs)),
         "cc" | "lo" => Some(binary(LlilOp::CmpUlt, lhs, rhs)),
-        "mi" => Some(binary(LlilOp::CmpSlt, lhs, konst(0))),  // N flag: result < 0
-        "pl" => Some(binary(LlilOp::CmpSge, lhs, konst(0))),  // !N
+        "mi" => Some(binary(LlilOp::CmpSlt, lhs, konst(0))), // N flag: result < 0
+        "pl" => Some(binary(LlilOp::CmpSge, lhs, konst(0))), // !N
         "vs" => None, // Overflow flag — keep complex expression
         "vc" => None,
         "hi" => Some(binary(LlilOp::CmpUgt, lhs, rhs)),
@@ -311,10 +327,14 @@ fn expr_eq(a: &LlilExpr, b: &LlilExpr) -> bool {
     for (ao, bo) in a.operands.iter().zip(b.operands.iter()) {
         match (ao, bo) {
             (LlilOperand::Expr(ae), LlilOperand::Expr(be)) => {
-                if !expr_eq(ae, be) { return false; }
+                if !expr_eq(ae, be) {
+                    return false;
+                }
             }
             _ => {
-                if ao != bo { return false; }
+                if ao != bo {
+                    return false;
+                }
             }
         }
     }
@@ -335,6 +355,49 @@ fn invert_z_for_ne(z_val: LlilExpr) -> Option<LlilExpr> {
     } else {
         None
     }
+}
+
+/// Check if an expression tree contains a FlagCond at any depth.
+fn contains_flag_cond(e: &LlilExpr) -> bool {
+    if e.op == LlilOp::FlagCond {
+        return true;
+    }
+    for op in &e.operands {
+        if let LlilOperand::Expr(child) = op {
+            if contains_flag_cond(child) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Recursively fold every FlagCond in an expression tree using pending flags.
+///
+/// When the required flags are available, the FlagCond is replaced with a
+/// direct comparison expression (e.g. `CmpE(x, y)`).  When flags are missing
+/// the FlagCond is left in place — it will be caught later by the MLIL
+/// fallback path.
+fn fold_flags_in_expr(e: &LlilExpr, pending: &BTreeMap<String, (u64, LlilExpr)>) -> LlilExpr {
+    let mut out = e.clone();
+    for i in 0..out.operands.len() {
+        match &out.operands[i] {
+            LlilOperand::Expr(child) => {
+                if child.op == LlilOp::FlagCond {
+                    if let Some(LlilOperand::Str(cond_str)) = child.operands.first() {
+                        if let Some(folded) = cond_expr_from_flags(cond_str.as_str(), pending) {
+                            out.operands[i] = expr(folded);
+                        }
+                    }
+                } else {
+                    let folded = fold_flags_in_expr(child, pending);
+                    out.operands[i] = expr(folded);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn set_flag_from_val(flag_name: &str, pc: u64, val: &LlilExpr) -> LlilExpr {
