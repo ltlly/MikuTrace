@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor } from "solid-js";
 
-import { fetchLlilPipeline } from "~/api/client";
+import { fetchIdxsForPc, fetchLlilPipeline } from "~/api/client";
 import type { PipelineResponse } from "~/api/types";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
@@ -119,14 +119,42 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
   createEffect(() => { if (isLarge()) setCollapsed(true); });
 
+  // Extract PC from a line (first hex address)
+  function extractPc(line: string): number | null {
+    const m = line.match(/0x([0-9a-f]{8,})/i);
+    if (m) return parseInt(m[1], 16);
+    return null;
+  }
+
+  // Handle line click → jump assembly to that PC
+  async function handleLineClick(raw: string) {
+    const pc = extractPc(raw);
+    if (pc === null || !props.onSelectIdx) return;
+    try {
+      const pcHex = "0x" + pc.toString(16);
+      const cur = props.selectedIdx();
+      const resp = await fetchIdxsForPc(pcHex, cur, 30);
+      // Find the best match: prefer after current cursor
+      const candidates = [...(resp?.after || []), ...(resp?.before || [])];
+      if (candidates.length > 0) {
+        let best = candidates[0];
+        for (const ix of candidates) {
+          if (ix >= cur) { best = ix; break; }
+        }
+        props.onSelectIdx(best);
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   const highlightedLines = createMemo(() => {
     const text = levelText(currentPipeline());
-    if (!text) return [] as { raw: string; html: string }[];
+    if (!text) return [] as { raw: string; html: string; pc: number | null }[];
     const lines = text.split("\n");
     const displayLines = expandedView() ? lines : lines.slice(0, 500);
     return displayLines.map((raw) => ({
       raw,
       html: highlightLine(raw),
+      pc: extractPc(raw),
     }));
   });
 
@@ -281,7 +309,15 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                   <div class="pseudoc-code">
                     <For each={highlightedLines()}>
                       {(line, i) => (
-                        <div class="pseudoc-line">
+                        <div
+                          class="pseudoc-line"
+                          classList={{
+                            "pseudoc-line-active": line.pc !== null && currentPipeline() != null,
+                          }}
+                          onClick={() => handleLineClick(line.raw)}
+                          title={line.pc ? `PC: 0x${line.pc.toString(16)} — click to jump` : undefined}
+                          style={{ cursor: line.pc ? "pointer" : "default" }}
+                        >
                           <span class="pseudoc-ln">{i() + 1}</span>
                           <span
                             class="pseudoc-code-text"

@@ -1,20 +1,20 @@
 # TODO — traceMiku Decompiler
 
-> Last updated: 2026-05-14
+> Last updated: 2026-05-14 (late)
 
 ## P0 — Core Correctness
 
 - [x] ARM64 lifter: 99.93-100% LLIL coverage, 0 bare Intrinsic
 - [x] Call target name resolution: `0xHEX()` → `sub_xxx()`
 - [x] Flag elimination: cmp+b.cond → direct comparison
-- [ ] **Call parameters**: show `sub_xxx(arg1=0x.., arg2=0x..)` with trace values
+- [x] **Call parameters**: trace x0-x7 values extracted and displayed at call sites
 - [ ] **Indirect call resolution**: blr x8 → resolve actual target from trace data
-- [ ] **Function boundaries**: stop at first ret; don't include dead code after return
+- [x] **Function boundaries**: ret/blr boundary detection, sub_8a7b8: 438→75 lines
 
 ## P1 — Decompile UI (对标 IDA/BN/Ghidra)
 
-- [ ] **Cursor sync**: decompile panel ↔ assembly bidirectional scroll
-- [ ] **Line click → jump**: click decompile line → jump assembly cursor to that PC
+- [x] **Cursor sync (click→jump)**: click decompile line → jump assembly cursor to matching PC
+- [x] **Line click → jump**: extract PC from line, resolve via /api/idxs-for-pc, jump
 - [ ] **Variable hover**: mouseover variable → show value(s) from trace records
 - [ ] **Variable rename**: double-click var → rename, propagate across function
 - [ ] **Variable type**: right-click → set type (int32_t/uint64_t/char*/struct*)
