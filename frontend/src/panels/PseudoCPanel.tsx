@@ -5,6 +5,7 @@ import { fetchIdxsForPc, fetchLlilPipeline, fetchRecords, fetchRegValueAt } from
 import type { PipelineResponse } from "~/api/types";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
+import { parseCType } from "~/utils/cTypeParser";
 
 export interface PseudoCPanelProps {
   selectedFn: Accessor<string>;
@@ -452,13 +453,20 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
   let typeInputEl: HTMLInputElement | undefined;
   const [typeInput, setTypeInput] = createSignal("");
+  const [typeError, setTypeError] = createSignal<string | null>(null);
   function applyVarType() {
     const m = typeMenu();
     const t = typeInput().trim();
-    if (!m || !t) { setTypeMenu(null); return; }
-    setTypedVars((prev) => ({ ...prev, [m.name]: t }));
+    if (!m || !t) { setTypeMenu(null); setTypeError(null); return; }
+    const result = parseCType(t);
+    if (!result.valid) {
+      setTypeError(result.error ?? "invalid type");
+      return;
+    }
+    setTypedVars((prev) => ({ ...prev, [m.name]: result.normalized }));
     setTypeMenu(null);
     setTypeInput("");
+    setTypeError(null);
   }
 
   async function fetchXrefs(addr: string) {
@@ -934,7 +942,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
               <input ref={typeInputEl} class="pseudoc-rename-input"
                 placeholder="int32_t / char* / struct foo* ..."
                 value={typeInput()}
-                onInput={(e) => setTypeInput(e.currentTarget.value)}
+                onInput={(e) => { setTypeInput(e.currentTarget.value); setTypeError(null); }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") applyVarType();
                   else if (e.key === "Escape") { setTypeMenu(null); setTypeInput(""); }
@@ -942,6 +950,9 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
               />
               <button type="button" class="pseudoc-search-btn" onClick={applyVarType}>OK</button>
             </div>
+            <Show when={typeError()}>
+              <div class="pseudoc-type-err">{typeError()}</div>
+            </Show>
           </div>
         )}
       </Show>
