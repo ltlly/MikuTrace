@@ -13,6 +13,7 @@
 
 pub mod expr;
 pub mod lower;
+pub mod pass_restructure;
 pub mod render;
 
 pub use expr::{

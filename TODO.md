@@ -59,10 +59,11 @@
 
 ## Bugs — Remaining
 
-- [ ] **Single-click variable → same-name highlighting**: not yet implemented.
-- [ ] **HLIL/MLIL/LLIL structural differences**: passes wired but structured loop detection (while/for) pending.
-- [ ] **Goto label double-click navigation**: frontend handler for label click to jump to definition pending.
+_All known bugs fixed. See fixed list below._
 
 ## Bugs — Fixed (Previous)
 
-- [x] **Assembly scroll freeze**: SAFE_SCROLL_HEIGHT 30M→15M to stay within browser scrollable height limits.
+- [x] **Assembly scroll freeze**: SAFE_SCROLL_HEIGHT 30M→15M
+- [x] **Single-click variable highlighting**: highlights all same-name variables in function; toggle on re-click
+- [x] **Goto label double-click navigation**: double-click label ref → scroll to label definition
+- [x] **HLIL structural control flow**: CFG-based restructuring pass converts flat goto into if/else, while, do-while. HLIL/MLIL/LLIL now structurally different.

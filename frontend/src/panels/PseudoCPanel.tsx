@@ -47,6 +47,8 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   const [typeMenu, setTypeMenu] = createSignal<{ name: string; x: number; y: number } | null>(null);
   const [tooltipVar, setTooltipVar] = createSignal<{ name: string; x: number; y: number } | null>(null);
   const [tooltipValue, setTooltipValue] = createSignal<string | null>(null);
+  // Variable same-name highlighting (single-click to highlight all occurrences)
+  const [highlightedVar, setHighlightedVar] = createSignal<string | null>(null);
   // Search state
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchActive, setSearchActive] = createSignal(false);
@@ -262,6 +264,23 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     } catch (_) { /* ignore */ }
   }
 
+  // Handle click on code container: variable clicks toggle same-name highlighting,
+  // otherwise navigate to the nearest trace record matching the clicked line's PC.
+  function handleCodeClick(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    const varSpan = target.closest?.("[data-var]") as HTMLElement | null;
+    if (varSpan) {
+      const name = varSpan.dataset.var!;
+      setHighlightedVar((prev) => prev === name ? null : name);
+      return;
+    }
+    setHighlightedVar(null);
+    const lineDiv = target.closest?.(".pseudoc-line") as HTMLElement | null;
+    if (!lineDiv) return;
+    const raw = lineDiv.dataset.raw;
+    if (raw) handleLineClick(raw);
+  }
+
   // Cursor sync: when selectedIdx changes in Records panel, fetch the
   // PC at that index and highlight the matching decompile line.
   createEffect(() => {
@@ -336,6 +355,29 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     if (!related?.closest?.("[data-var]")) {
       setTooltipVar(null);
       setTooltipValue(null);
+    }
+  }
+
+  // Goto label double-click: navigate to label definition
+  function handleLabelDblClick(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    const labelSpan = target.closest?.("[data-label]") as HTMLElement | null;
+    if (!labelSpan) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const labelName = labelSpan.dataset.label!;
+    const text = levelText(currentPipeline());
+    if (!text) return;
+    const lines = text.split("\n");
+    const targetLineIdx = lines.findIndex(
+      (l) => new RegExp("^\\s*" + escapeRegExp(labelName) + ":").test(l)
+    );
+    if (targetLineIdx < 0) return;
+    // Map to displayed line in highlightedLines (accounts for folded/hidden)
+    const displayIdx = highlightedLines().findIndex((l) => l.lineIdx === targetLineIdx);
+    if (displayIdx >= 0 && highlightEl) {
+      const row = highlightEl.children[displayIdx] as HTMLElement | undefined;
+      if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
     }
   }
 
@@ -485,7 +527,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
       const depth = foldStackDepth(displayLines, lineIdx);
       return [{
         raw,
-        html: highlightLine(raw, types, searchQuery()),
+        html: highlightLine(raw, types, searchQuery(), highlightedVar()),
         pc,
         isCurrent: curPc !== null && pc !== null && pc === curPc,
         lineIdx,
@@ -789,7 +831,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                         <div class={`pseudoc-diff-line pseudoc-diff-${dl.kind}`}>
                           <span class="pseudoc-diff-prefix">{dl.kind === "added" ? "+" : dl.kind === "changed" ? "~" : " "}</span>
                           <span class="pseudoc-ln">{i() + 1}</span>
-                          <span class="pseudoc-code-text" innerHTML={highlightLine(dl.line, typedVars(), searchQuery())} />
+                          <span class="pseudoc-code-text" innerHTML={highlightLine(dl.line, typedVars(), searchQuery(), highlightedVar())} />
                         </div>
                       )}
                     </For>
@@ -801,8 +843,9 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                   <div class="pseudoc-code" ref={highlightEl}
                     onMouseOver={handleVarHover}
                     onMouseOut={handleVarOut}
-                    onDblClick={handleVarDblClick}
+                    onDblClick={(e) => { handleLabelDblClick(e); handleVarDblClick(e); }}
                     onContextMenu={handleVarContext}
+                    onClick={handleCodeClick}
                   >
                     <For each={highlightedLines()}>
                       {(line, i) => (
@@ -812,9 +855,9 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                             "pseudoc-line-active": line.pc !== null && currentPipeline() != null,
                             "pseudoc-line-current": line.isCurrent,
                           }}
-                          onClick={() => handleLineClick(line.raw)}
                           title={line.pc ? `PC: 0x${line.pc.toString(16)} — click to jump` : undefined}
                           style={{ cursor: line.pc ? "pointer" : "default", "padding-left": `${8 + line.foldDepth * 16}px` }}
+                          data-raw={line.raw}
                         >
                           <span class="pseudoc-ln">{i() + 1}</span>
                           {line.isFoldOpen && (
@@ -986,7 +1029,10 @@ const C_TYPE_KEYWORDS = new Set([
   "unsigned", "signed", "struct", "union", "enum",
 ]);
 
-function highlightLine(line: string, types?: Record<string, string>, searchQuery?: string): string {
+function highlightLine(line: string, types?: Record<string, string>, searchQuery?: string, highlightVar?: string | null): string {
+  // Pre-compute: is this line a label definition (e.g. "loc_1008:")?
+  const isLabelLine = /^\s*loc_[0-9a-fA-F]+:/.test(line);
+
   // Step 1: syntax highlighting on RAW text (before HTML escaping, so
   // entities like &gt; are not split by the regex).
   let html = line.replace(
@@ -1003,6 +1049,13 @@ function highlightLine(line: string, types?: Record<string, string>, searchQuery
       }
       if (match.startsWith('"') || match.startsWith("'")) {
         return `\x00tok-str\x00${match}\x00/tok-str\x00`;
+      }
+      // Label reference/detection (before C_KEYWORDS so "goto loc_1008" works)
+      if (/^loc_[0-9a-fA-F]+$/.test(match)) {
+        if (isLabelLine) {
+          return `\x00tok-label\x00${match}\x00/tok-label\x00`;
+        }
+        return `\x00lblref\x00${match}\x00/lblref\x00`;
       }
       if (C_KEYWORDS.has(match)) {
         if (C_TYPE_KEYWORDS.has(match)) {
@@ -1023,11 +1076,16 @@ function highlightLine(line: string, types?: Record<string, string>, searchQuery
   // Variable token: \x00V\x00name\x00type\x00/V\x00
   html = html.replace(/\x00V\x00([^\x00]*)\x00([^\x00]*)\x00\/V\x00/g, (_m, name, type) => {
     const attrName = escapeAttr(name);
+    const hlClass = name === highlightVar ? ' tok-var-highlight' : '';
     if (type) {
       const attrType = escapeAttr(type);
-      return `<span class="tok-var" data-var="${attrName}" data-type="${attrType}" title="${attrType} ${attrName}">`;
+      return `<span class="tok-var${hlClass}" data-var="${attrName}" data-type="${attrType}" title="${attrType} ${attrName}">`;
     }
-    return `<span class="tok-var" data-var="${attrName}">`;
+    return `<span class="tok-var${hlClass}" data-var="${attrName}">`;
+  });
+  // Label reference markers: \x00lblref\x00name\x00/lblref\x00
+  html = html.replace(/\x00lblref\x00([^\x00]+)\x00\/lblref\x00/g, (_m, name) => {
+    return `<span class="tok-label" data-label="${escapeAttr(name)}">${name}</span>`;
   });
   // Other token types: \x00tok-XXX\x00 ... \x00/tok-XXX\x00
   html = html.replace(/\x00tok-([^\x00]+)\x00/g, '<span class="tok-$1">');

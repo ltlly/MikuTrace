@@ -16,9 +16,11 @@ use serde::Serialize;
 use crate::llil::pass_var_unify::VarNameMap;
 use crate::mlil::expr::{MlilExpr, MlilOp, MlilOperand};
 use crate::hlil::expr::{
-    assign, binary, deref, deref_field, expr, goto, if_else, label, ret as hlil_ret, var as hlil_var,
+    assign, binary, deref, deref_field,
+    expr, goto, if_else, label, ret as hlil_ret, var as hlil_var,
     HlilExpr, HlilOp, HlilOperand,
 };
+use crate::hlil::pass_restructure::restructure_hlil;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LowerStats {
@@ -48,6 +50,9 @@ pub fn lower_mlil_to_hlil(exprs: &[MlilExpr], _names: &VarNameMap) -> (Vec<HlilE
     // Insert Label expressions at all Goto/If target addresses so the
     // renderer produces loc_*: labels alongside goto loc_*; statements.
     insert_labels(&mut out);
+    // Restructure flat goto-based HLIL into structured control flow
+    // (if/else, while, do-while).
+    out = restructure_hlil(&out);
     stats.hlil_count = out.len();
 
     (out, stats)
@@ -409,6 +414,7 @@ fn insert_labels(exprs: &mut Vec<HlilExpr>) {
     }
 }
 
+
 /// Recursively collect every address targeted by a `Goto` op (at the top
 /// level or nested inside `If`, `Block`, `While`, `DoWhile` bodies).
 fn collect_goto_targets(exprs: &[HlilExpr]) -> BTreeSet<u64> {
@@ -550,9 +556,10 @@ mod tests {
     }
 
     #[test]
-    fn inserts_labels_at_if_targets() {
+    fn restructures_if_at_targets() {
         // MLIL If: cond=v0, true=0x1008, false=0x1010
         // Then expressions at 0x1008 and 0x1010
+        // After restructuring, the If should have a structured body.
         let cond = mlil_var("v0");
         let mlil_exprs = vec![
             MlilExpr::new(
@@ -569,13 +576,20 @@ mod tests {
             mlil_set_var("v2", mlil_konst(2), 0x1010),
         ];
         let (hlil, _) = lower_mlil_to_hlil(&mlil_exprs, &VarNameMap::new());
-        // Should have: If, Label(loc_1008), assign v1=1, Label(loc_1010), assign v2=2
-        assert_eq!(hlil.len(), 5, "expected 5 exprs: If + 2 labels + 2 assigns, got {}: {:#?}", hlil.len(), hlil);
-        assert_eq!(hlil[0].op, HlilOp::If, "first should be If");
-        assert_eq!(hlil[1].op, HlilOp::Label, "second should be Label for 0x1008");
-        assert_eq!(hlil[2].op, HlilOp::Assign, "third should be Assign");
-        assert_eq!(hlil[3].op, HlilOp::Label, "fourth should be Label for 0x1010");
-        assert_eq!(hlil[4].op, HlilOp::Assign, "fifth should be Assign");
+        // After restructuring: If(cond, Block([Assign v1=1]), None) + Label + assign v2=2
+        // The false branch (0x1010) is the fallthrough (no convergence), so it's an if-then.
+        assert!(hlil.len() >= 2, "expected at least 2 exprs, got {}: {:#?}", hlil.len(), hlil);
+        assert_eq!(hlil[0].op, HlilOp::If, "first should be structured If");
+        // The If should have a block body (not just a goto)
+        if let Some(HlilOperand::Expr(body)) = hlil[0].operands.get(1) {
+            assert_eq!(body.op, HlilOp::Block, "If body should be Block");
+            // The block should contain the assign
+            assert!(body.operands.iter().any(|o| {
+                matches!(o, HlilOperand::Expr(e) if e.op == HlilOp::Assign)
+            }), "If block body should contain an Assign");
+        } else {
+            panic!("If should have a Block body, got: {:?}", hlil[0]);
+        }
     }
 
     #[test]

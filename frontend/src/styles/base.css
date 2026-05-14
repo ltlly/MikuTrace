@@ -3289,6 +3289,10 @@ html[data-density="dense"] .xref-table td {
 .pseudoc-code-fold-open { margin-left: -20px; }
 .tok-var { color: var(--fg); cursor: help; }
 .tok-var:hover { text-decoration: underline; color: var(--accent); }
+.tok-var-highlight { background: rgba(255, 200, 0, 0.3); border-radius: 2px; }
+.tok-label { color: var(--accent2); font-weight: 700; }
+.tok-label[data-label] { cursor: pointer; }
+.tok-label[data-label]:hover { text-decoration: underline; }
 .pseudoc-tooltip { position: fixed; z-index: 1000; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px; max-width: 360px; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); white-space: nowrap; }
 .pseudoc-tooltip code { color: var(--accent); }
 .pseudoc-tooltip-val { color: var(--dim); margin-left: 4px; }
