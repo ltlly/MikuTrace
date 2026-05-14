@@ -89,15 +89,18 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "ldrsb" | "ldrsh" | "ldrsw" => lift_load_ext(d, true),
         "str" | "strb" | "strh" | "stur" | "stp" | "stnp" | "sturb" => lift_store(d),
         "mrs" => lift_mrs(d),
-        "ubfm" | "ubfx" | "bfxil" => lift_bfm(d, false),
-        "sbfm" | "sbfx" => lift_bfm(d, true),
+        "ubfm" | "bfxil" => lift_bfm(d, false),
+        "sbfm" => lift_bfm(d, true),
+        "ubfx" => lift_ubfx(d, false),
+        "sbfx" => lift_ubfx(d, true),
         // orn = ~(a & ~b) = ~a | b  →  Not(And(Not(a), b))
         "orn" => lift_orn(d),
         "bic" => lift_bic(d),
         "dmb" | "isb" => vec![LlilExpr::new(LlilOp::Nop, 0, Vec::new(), d.pc)],
         "ldarb" | "ldaxrb" => lift_load_ext(d, false),
         "stlrb" => lift_store(d),
-        "ccmp" => vec![intrinsic(d)],
+        // ccmp: conditional compare — complex semantics, keep as intrinsic for now
+        "ccmp" | "ccmn" => vec![intrinsic(d)],
         _ if is_b_cond(d) => lift_b_cond(d),
         "b" => lift_b(d),
         "bl" | "blr" => vec![LlilExpr::new(
@@ -791,6 +794,30 @@ fn lift_mrs(d: &DecodedInsn) -> Vec<LlilExpr> {
 /// ubfm/sbfm: unsigned/signed bitfield move.  Common case (immr == 0) is
 /// extracted with And+Zx/Sx for unsigned, or the shift-trick for sub-byte
 /// signed extensions.  Complex cases fall through to Intrinsic.
+/// ubfx/sbfx: unsigned/signed bitfield extract.
+/// Capstone reports op_str as "dst, src, #lsb, #width" (unlike ubfm: "#immr, #imms").
+fn lift_ubfx(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let src = d.regs_use.first().cloned().map(reg)
+        .or_else(|| reg_from_parts(&parts, 1))
+        .unwrap_or_else(|| konst(0));
+    let lsb = parts.get(2).and_then(|p| parse_imm(p)).unwrap_or(0) as u32;
+    let width = parts.get(3).and_then(|p| parse_imm(p)).unwrap_or(0) as u32;
+    if width == 0 || width >= 64 { return vec![intrinsic(d)]; }
+    // Extract: (src >> lsb) & mask
+    let shift = if lsb > 0 { binary(LlilOp::Lsr, src.clone(), konst(lsb as i64)) } else { src };
+    let mask = (1u64 << width) - 1;
+    let masked = binary(LlilOp::And, shift, konst(mask as i64));
+    let result = if signed && width > 0 {
+        // Sign-extend: (masked << (64-width)) >> (64-width)
+        let sh = 64 - width;
+        let lsl = binary(LlilOp::Lsl, masked, konst(sh as i64));
+        binary(LlilOp::Asr, lsl, konst(sh as i64))
+    } else { masked };
+    vec![set_reg(dst, result, d.pc)]
+}
+
 fn lift_bfm(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
     let dst = first_def(d);
     let parts = split_operands(&d.op_str);
