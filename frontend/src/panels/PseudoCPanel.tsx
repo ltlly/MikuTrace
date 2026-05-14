@@ -20,8 +20,8 @@ interface PipelineSource {
 
 const DEFAULT_MAX_RECORDS = 500;
 
-function sourceKey(s: PipelineSource): string {
-  return `${s.fn_id}\0${s.max_records}`;
+function sourceKey(s: PipelineSource, showText: boolean): string {
+  return `${s.fn_id}\0${s.max_records}\0${showText}`;
 }
 
 export default function PseudoCPanel(props: PseudoCPanelProps) {
@@ -29,6 +29,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   const [collapsed, setCollapsed] = createSignal(false);
   const [copied, setCopied] = createSignal(false);
   const [expandedView, setExpandedView] = createSignal(false);
+  const [showText, setShowText] = createSignal(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
   onCleanup(() => {
@@ -43,7 +44,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
       fn_id: fnId,
       max_records: Math.max(1, Math.min(5000, maxRecords())),
     };
-    if (prev && sourceKey(prev) === sourceKey(next)) return prev;
+    if (prev && sourceKey(prev, showText()) === sourceKey(next, showText())) return prev;
     return next;
   });
 
@@ -56,7 +57,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
       fetchLlilPipeline({
         fn_id: s.fn_id,
         max_records: s.max_records,
-        include_text: true,
+        include_text: showText(),
       }),
     (r, s) => r.fn_id === s.fn_id,
   );
@@ -241,50 +242,40 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
               </div>
 
               <div class="pseudoc-actions">
-                <button
-                  type="button"
-                  class="pseudoc-btn"
-                  disabled={!r().hlil_text}
-                  onClick={copyToClipboard}
-                >
-                  {copied() ? "Copied ✓" : "Copy"}
-                </button>
-                <Show when={lineCount() > 500}>
-                  <button
-                    type="button"
-                    class="pseudoc-btn"
-                    onClick={() => setExpandedView((v) => !v)}
-                  >
-                    {expandedView()
-                      ? "Show first 500"
-                      : `Show all (${lineCount()})`}
+                <Show when={!showText() && !resource.loading}>
+                  <button type="button" class="pseudoc-btn pseudoc-btn-primary"
+                    onClick={() => setShowText(true)}>
+                    Show decompiled code
                   </button>
                 </Show>
-                <button
-                  type="button"
-                  class="pseudoc-btn"
-                  onClick={() => setCollapsed((v) => !v)}
-                  title={collapsed() ? "expand code" : "collapse code"}
-                >
-                  {collapsed() ? "Expand" : "Collapse"}
-                </button>
+                <Show when={showText()}>
+                  <button type="button" class="pseudoc-btn"
+                    disabled={!r().hlil_text} onClick={copyToClipboard}>
+                    {copied() ? "Copied ✓" : "Copy"}
+                  </button>
+                  <Show when={lineCount() > 500}>
+                    <button type="button" class="pseudoc-btn"
+                      onClick={() => setExpandedView((v) => !v)}>
+                      {expandedView() ? "Show first 500" : `Show all (${lineCount()})`}
+                    </button>
+                  </Show>
+                  <button type="button" class="pseudoc-btn"
+                    onClick={() => setCollapsed((v) => !v)}
+                    title={collapsed() ? "expand code" : "collapse code"}>
+                    {collapsed() ? "Expand" : "Collapse"}
+                  </button>
+                  <button type="button" class="pseudoc-btn"
+                    onClick={() => { setShowText(false); setExpandedView(false); }}>
+                    Hide code
+                  </button>
+                </Show>
               </div>
             </div>
 
-            {/* HLIL text body */}
-            <Show when={!collapsed()}>
-              <div
-                class="pseudoc-body"
-                classList={{
-                  "pseudoc-body-collapsed": collapsed(),
-                }}
-              >
-                <Show
-                  when={r().hlil_text}
-                  fallback={
-                    <p class="dim">no HLIL text output</p>
-                  }
-                >
+            {/* HLIL text body — only render when showText */}
+            <Show when={showText() && !collapsed()}>
+              <div class="pseudoc-body" classList={{"pseudoc-body-collapsed": collapsed()}}>
+                <Show when={r().hlil_text} fallback={<p class="dim">no HLIL text output</p>}>
                   <div class="pseudoc-code">
                     <For each={highlightedLines()}>
                       {(line, i) => (

@@ -73,7 +73,7 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "cmp" => lift_cmp(d, LlilOp::Sub),
         "cmn" => lift_cmp(d, LlilOp::Add),
         "tst" => lift_cmp(d, LlilOp::And),
-        "csel" | "csinc" | "csinv" | "csneg" => lift_csel(d),
+        "csel" | "csinc" | "csinv" | "csneg" | "cinc" | "cinv" | "cneg" => lift_csel(d),
         "cset" | "csetm" => lift_cset(d),
         "sxtb" => lift_extend(d, 1, true),
         "sxth" => lift_extend(d, 2, true),
@@ -89,8 +89,15 @@ pub fn lift_decoded(d: &DecodedInsn) -> Vec<LlilExpr> {
         "ldrsb" | "ldrsh" | "ldrsw" => lift_load_ext(d, true),
         "str" | "strb" | "strh" | "stur" | "stp" | "stnp" | "sturb" => lift_store(d),
         "mrs" => lift_mrs(d),
-        "ubfm" => lift_bfm(d, false),
-        "sbfm" => lift_bfm(d, true),
+        "ubfm" | "ubfx" | "bfxil" => lift_bfm(d, false),
+        "sbfm" | "sbfx" => lift_bfm(d, true),
+        // orn = ~(a & ~b) = ~a | b  →  Not(And(Not(a), b))
+        "orn" => lift_orn(d),
+        "bic" => lift_bic(d),
+        "dmb" | "isb" => vec![LlilExpr::new(LlilOp::Nop, 0, Vec::new(), d.pc)],
+        "ldarb" | "ldaxrb" => lift_load_ext(d, false),
+        "stlrb" => lift_store(d),
+        "ccmp" => vec![intrinsic(d)],
         _ if is_b_cond(d) => lift_b_cond(d),
         "b" => lift_b(d),
         "bl" | "blr" => vec![LlilExpr::new(
@@ -302,9 +309,9 @@ fn lift_csel(d: &DecodedInsn) -> Vec<LlilExpr> {
         .unwrap_or_else(|| konst(0));
 
     let false_val = match mnem {
-        "csinc" => binary(LlilOp::Add, false_val, konst(1)),
-        "csinv" => unary(LlilOp::Not, false_val),
-        "csneg" => unary(LlilOp::Neg, false_val),
+        "csinc" | "cinc" => binary(LlilOp::Add, false_val, konst(1)),
+        "csinv" | "cinv" => unary(LlilOp::Not, false_val),
+        "csneg" | "cneg" => unary(LlilOp::Neg, false_val),
         _ => false_val,
     };
 
@@ -829,6 +836,33 @@ fn lift_bfm(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
 }
 
 /// mneg: multiply-negate.  mneg Xd, Xn, Xm = -(Xn * Xm) = Sub(0, Mul(Xn, Xm))
+/// orn Xd, Xn, Xm = Xd = Xn | ~Xm = ~(~Xn & Xm)
+fn lift_orn(d: &DecodedInsn) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let lhs = d.regs_use.first().cloned().map(reg)
+        .or_else(|| reg_from_parts(&parts, 1)).unwrap_or_else(|| konst(0));
+    let rhs = d.regs_use.get(1).cloned().map(reg)
+        .or_else(|| reg_from_parts(&parts, 2)).unwrap_or_else(|| konst(0));
+    // a | ~b
+    let not_rhs = unary(LlilOp::Not, rhs);
+    let result = binary(LlilOp::Or, lhs, not_rhs);
+    vec![set_reg(dst, result, d.pc)]
+}
+
+/// bic Xd, Xn, Xm = Xd = Xn & ~Xm
+fn lift_bic(d: &DecodedInsn) -> Vec<LlilExpr> {
+    let dst = first_def(d);
+    let parts = split_operands(&d.op_str);
+    let lhs = d.regs_use.first().cloned().map(reg)
+        .or_else(|| reg_from_parts(&parts, 1)).unwrap_or_else(|| konst(0));
+    let rhs = d.regs_use.get(1).cloned().map(reg)
+        .or_else(|| reg_from_parts(&parts, 2)).unwrap_or_else(|| konst(0));
+    let not_rhs = unary(LlilOp::Not, rhs);
+    let result = binary(LlilOp::And, lhs, not_rhs);
+    vec![set_reg(dst, result, d.pc)]
+}
+
 fn lift_mneg(d: &DecodedInsn) -> Vec<LlilExpr> {
     let dst = first_def(d);
     let parts = split_operands(&d.op_str);
