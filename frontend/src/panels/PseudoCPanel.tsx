@@ -106,22 +106,21 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     });
   });
 
-  // Detect large output (> 500 lines)
+  function levelText(r: PipelineResponse | undefined): string {
+    if (!r) return "";
+    switch (ilLevel()) { case "llil": return r.llil_text || ""; case "mlil": return r.mlil_text || ""; default: return r.hlil_text || ""; }
+  }
+
   const lineCount = createMemo(() => {
-    const text = currentPipeline()?.[ilLevel() + "_text" as keyof PipelineResponse];
-    if (!text) return 0;
-    return text.split("\n").length;
+    const text = levelText(currentPipeline());
+    return text ? text.split("\n").length : 0;
   });
   const isLarge = createMemo(() => lineCount() > 500);
 
-  // Auto-collapse large output
-  createEffect(() => {
-    if (isLarge()) setCollapsed(true);
-  });
+  createEffect(() => { if (isLarge()) setCollapsed(true); });
 
-  // Highlighted HLIL text lines
   const highlightedLines = createMemo(() => {
-    const text = currentPipeline()?.[ilLevel() + "_text" as keyof PipelineResponse];
+    const text = levelText(currentPipeline());
     if (!text) return [] as { raw: string; html: string }[];
     const lines = text.split("\n");
     const displayLines = expandedView() ? lines : lines.slice(0, 500);
@@ -132,7 +131,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   });
 
   async function copyToClipboard() {
-    const text = currentPipeline()?.[ilLevel() + "_text" as keyof PipelineResponse];
+    const text = levelText(currentPipeline());
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -253,7 +252,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                 </Show>
                 <Show when={showText()}>
                   <button type="button" class="pseudoc-btn"
-                    disabled={!r().hlil_text} onClick={copyToClipboard}>
+                    disabled={!levelText(r())} onClick={copyToClipboard}>
                     {copied() ? "Copied ✓" : "Copy"}
                   </button>
                   <Show when={lineCount() > 500}>
@@ -278,7 +277,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
             {/* HLIL text body — only render when showText */}
             <Show when={showText() && !collapsed()}>
               <div class="pseudoc-body" classList={{"pseudoc-body-collapsed": collapsed()}}>
-                <Show when={r().hlil_text} fallback={<p class="dim">no HLIL text output</p>}>
+                <Show when={levelText(r())} fallback={<p class="dim">no {ilLevel().toUpperCase()} text output</p>}>
                   <div class="pseudoc-code">
                     <For each={highlightedLines()}>
                       {(line, i) => (
