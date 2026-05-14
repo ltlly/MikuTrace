@@ -3276,3 +3276,7 @@ html[data-density="dense"] .xref-table td {
 .pseudoc-inline-btn:hover {
   color: var(--fg);
 }
+.pseudoc-subtabs { display:flex; gap:4px; margin:8px 0; border-bottom:1px solid var(--border); padding-bottom:8px; }
+.pseudoc-subtab { padding:4px 12px; border:1px solid var(--border); border-radius:4px 4px 0 0; background:var(--bg2); color:var(--dim); cursor:pointer; font-size:11px; font-weight:600; }
+.pseudoc-subtab-active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.pseudoc-btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }

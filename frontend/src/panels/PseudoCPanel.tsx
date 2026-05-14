@@ -10,8 +10,11 @@ export interface PseudoCPanelProps {
   selectedFn: Accessor<string>;
   active: boolean;
   selectedIdx: Accessor<number>;
+  onSelectIdx?: (idx: number) => void;
   onTaskUpdate?: UiTaskReporter;
 }
+
+type IlLevel = "hlil" | "mlil" | "llil";
 
 interface PipelineSource {
   fn_id: string;
@@ -30,6 +33,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   const [copied, setCopied] = createSignal(false);
   const [expandedView, setExpandedView] = createSignal(false);
   const [showText, setShowText] = createSignal(false);
+  const [ilLevel, setIlLevel] = createSignal<IlLevel>("hlil");
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
   onCleanup(() => {
@@ -104,7 +108,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
   // Detect large output (> 500 lines)
   const lineCount = createMemo(() => {
-    const text = currentPipeline()?.hlil_text;
+    const text = currentPipeline()?.[ilLevel() + "_text" as keyof PipelineResponse];
     if (!text) return 0;
     return text.split("\n").length;
   });
@@ -117,7 +121,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
   // Highlighted HLIL text lines
   const highlightedLines = createMemo(() => {
-    const text = currentPipeline()?.hlil_text;
+    const text = currentPipeline()?.[ilLevel() + "_text" as keyof PipelineResponse];
     if (!text) return [] as { raw: string; html: string }[];
     const lines = text.split("\n");
     const displayLines = expandedView() ? lines : lines.slice(0, 500);
@@ -128,7 +132,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   });
 
   async function copyToClipboard() {
-    const text = currentPipeline()?.hlil_text;
+    const text = currentPipeline()?.[ilLevel() + "_text" as keyof PipelineResponse];
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -153,26 +157,25 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
   return (
     <section class="panel pseudoc-panel">
-      <h2>Pseudo C</h2>
+      <h2>Decompile</h2>
 
       <div class="pseudoc-controls">
-        <label>
-          records
-          <input
-            type="number"
-            min="1"
-            max="5000"
-            step="100"
-            value={maxRecords()}
-            onInput={(e) =>
-              setMaxRecords(Math.max(1, Math.min(5000, Number(e.currentTarget.value) || DEFAULT_MAX_RECORDS)))
-            }
-          />
+        <label>records <input type="number" min="1" max="5000" step="100"
+          value={maxRecords()}
+          onInput={(e) => setMaxRecords(Math.max(1, Math.min(5000, Number(e.currentTarget.value) || DEFAULT_MAX_RECORDS)))} />
         </label>
-        <span class="dim small">
-          {props.selectedFn() || "no function selected"} · cursor #
-          {props.selectedIdx()}
-        </span>
+        <span class="dim small">{props.selectedFn() || "no function selected"} · cursor #{props.selectedIdx()}</span>
+      </div>
+
+      {/* Sub-tabs: HLIL | MLIL | LLIL */}
+      <div class="pseudoc-subtabs">
+        {(["hlil","mlil","llil"] as IlLevel[]).map((lvl) => (
+          <button type="button"
+            classList={{"pseudoc-subtab": true, "pseudoc-subtab-active": ilLevel() === lvl}}
+            onClick={() => setIlLevel(lvl)}>
+            {lvl.toUpperCase()}
+          </button>
+        ))}
       </div>
 
       <Show when={!props.selectedFn()}>

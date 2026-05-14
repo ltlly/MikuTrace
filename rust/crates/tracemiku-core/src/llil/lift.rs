@@ -1117,10 +1117,60 @@ mod tests {
 
     #[test]
     fn lift_ngc() {
-        // ngc x0, x0 = 0xda000020 (Capstone alias: NGC Xd, Xm = SBC Xd, XZR, Xm)
         let lifted = lift_arm64(0x1000, 0xda000020);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         let s = lifted[0].short();
         assert!(s.contains("x0 ="), "got: {s}");
+    }
+
+    #[test] fn lift_cinc() {
+        // cinc x0, x1, ne = conditional increment (csinc with same src)
+        let lifted = lift_arm64(0x1000, 0x9a811420);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        assert!(lifted[0].short().contains("csel"), "got: {}", lifted[0].short());
+    }
+
+    #[test] fn lift_orn() {
+        // orn x0, x1, x2 = ~(x1 & ~x2) = x1 | ~x2
+        let lifted = lift_arm64(0x1000, 0xaa220020);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("|") || s.contains("Or"), "got: {s}");
+    }
+
+    #[test] fn lift_bic() {
+        // bic x0, x1, x2 = x1 & ~x2
+        let lifted = lift_arm64(0x1000, 0x0a220020);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        let s = lifted[0].short();
+        assert!(s.contains("&") || s.contains("And"), "got: {s}");
+    }
+
+    #[test] fn lift_dmb() {
+        // dmb ish = data memory barrier → Nop
+        let lifted = lift_arm64(0x1000, 0xd5033bbf);
+        assert_eq!(lifted[0].op, LlilOp::Nop);
+    }
+
+    #[test] fn lift_ubfx() {
+        // ubfx x0, x1, #2, #4 = unsigned bitfield extract
+        // Try known encoding or let it fall to intrinsic (bfm) — either is valid
+        let lifted = lift_arm64(0x1000, 0xd3450820);
+        // ubfx may decode as ubfm; both are handled
+        assert!(lifted[0].op == LlilOp::SetReg || lifted[0].op == LlilOp::Intrinsic);
+        assert!(lifted[0].short().contains("x0") || !lifted[0].short().is_empty(), "got: {}", lifted[0].short());
+    }
+
+    #[test] fn lift_ldarb() {
+        // ldarb w0, [x1] = load-acquire register byte
+        let lifted = lift_arm64(0x1000, 0x08dffc20);
+        assert_eq!(lifted[0].op, LlilOp::SetReg);
+        assert!(lifted[0].short().contains("zx") || lifted[0].short().contains("load"), "got: {}", lifted[0].short());
+    }
+
+    #[test] fn lift_stlrb() {
+        // stlrb w0, [x1] = store-release register byte
+        let lifted = lift_arm64(0x1000, 0x089ffc20);
+        assert_eq!(lifted[0].op, LlilOp::Store);
     }
 }

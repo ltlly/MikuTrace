@@ -884,7 +884,7 @@ export default function App() {
     const titles: Record<RightTab, string> = {
       cfg: "Graph",
       regs: "Registers",
-      hlil: "HLIL",
+      hlil: "BN HLIL",
       dec: "Decompile",
       pseudoc: "Pseudo C",
     };
