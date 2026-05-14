@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::llil::lift::lift_arm64;
+use crate::llil::pass_constfold::constfold_block;
+use crate::llil::pass_dce::dce_block;
 use crate::llil::pass_flag_elim::flag_elim_block;
 use crate::llil::pass_frame_fold::frame_fold_block;
 use crate::llil::pass_var_unify::unify_vars;
@@ -23,6 +25,9 @@ use crate::mlil::lower::{lower_llil_to_mlil, LowerStats as MlilLowerStats};
 use crate::mlil::render::render_mlil_block;
 use crate::hlil::lower::{lower_mlil_to_hlil, LowerStats as HlilLowerStats};
 use crate::hlil::render::render_hlil;
+
+use super::pass::{from_llil, PassIlExpr, PassIlOperand};
+use super::pass_registry::build_universal_pipeline;
 
 /// Per-instruction trace context (runtime values).
 #[derive(Debug, Clone, Default, Serialize)]
@@ -54,7 +59,7 @@ pub struct TraceDecompileOutput {
     pub hlil_count: usize,
     /// LLIL coverage (fraction of non-intrinsic instructions).
     pub llil_coverage: f64,
-    /// LLIL SSA-form text.
+    /// LLIL SSA-form text (after constfold + DCE).
     pub llil_ssa_text: String,
     /// MLIL text.
     pub mlil_text: String,
@@ -71,6 +76,18 @@ pub struct TraceDecompileOutput {
     pub unique_pcs: usize,
     /// Total executed instructions.
     pub total_exec_count: u64,
+    /// Number of const-folded expressions.
+    pub constfold_count: usize,
+    /// Number of dead expressions removed.
+    pub dce_removed_count: usize,
+    /// Number of DCE iterations.
+    pub dce_iterations: usize,
+    /// Ghidra-style universal pipeline text (rendered after passes).
+    pub ghidra_pass_text: String,
+    /// Ghidra pipeline phases that made changes.
+    pub ghidra_phases_changed: usize,
+    /// Ghidra pipeline final expression count.
+    pub ghidra_final_count: usize,
 }
 
 /// Decompile a sequence of (pc, inst) pairs with trace data.
@@ -114,10 +131,35 @@ pub fn decompile_trace(
     let ssa = ssa_block(&flag_elim.exprs);
     let names = unify_vars(&ssa.exprs);
 
-    let llil_ssa_text = render_llil_block_with_names(&ssa.exprs, &names);
+    // Phase 2b: LLIL optimization passes — constfold + DCE
+    let constfolded = constfold_block(&ssa.exprs);
+    let dce_result = dce_block(&constfolded);
+    let opt_llil = &dce_result.exprs;
 
-    // Phase 3: LLIL → MLIL
-    let (mlil_exprs, mlil_stats) = lower_llil_to_mlil(&ssa.exprs, &names);
+    let constfold_count = constfolded
+        .iter()
+        .zip(ssa.exprs.iter())
+        .filter(|(folded, original)| folded.short() != original.short())
+        .count();
+
+    let dce_removed_count = dce_result.removed_pcs.len();
+
+    // Render LLIL from the optimized (constfolded + DCE'd) expressions
+    let llil_ssa_text = render_llil_block_with_names(opt_llil, &names);
+
+    // Phase 2c: Ghidra-style universal pipeline (operates on LLIL via PassIlExprs).
+    // This runs constant propagation, dead code elimination, simplification rules,
+    // type inference, struct recovery, and control-flow normalization — all within
+    // the generic pass framework.
+    let mut pass_exprs = from_llil(opt_llil);
+    let pipeline = build_universal_pipeline();
+    let pipeline_stats = pipeline.execute(function_name, &mut pass_exprs);
+    let ghidra_phases_changed = pipeline_stats.phases_changed;
+    let ghidra_final_count = pipeline_stats.final_expr_count;
+    let ghidra_pass_text = render_pass_il_block(&pass_exprs.exprs);
+
+    // Phase 3: LLIL → MLIL (using the optimized LLIL)
+    let (mlil_exprs, mlil_stats) = lower_llil_to_mlil(opt_llil, &names);
     let mlil_count = mlil_exprs.len();
     let mlil_text = render_mlil_block(&mlil_exprs);
 
@@ -145,6 +187,12 @@ pub fn decompile_trace(
         hlil_lower_stats: hlil_stats,
         unique_pcs: unique_pcs.len(),
         total_exec_count,
+        constfold_count,
+        dce_removed_count,
+        dce_iterations: 0,
+        ghidra_pass_text,
+        ghidra_phases_changed,
+        ghidra_final_count,
     }
 }
 
@@ -156,6 +204,53 @@ pub fn decompile_static(insns: &[(u64, u32)]) -> TraceDecompileOutput {
         .map(|_| TraceContext::default())
         .collect();
     decompile_trace(insns, &empty_contexts, "static_fn")
+}
+
+// ============================================================================
+// PassIlExpr rendering helpers
+// ============================================================================
+
+/// Render a block of PassIlExpr as readable single-line expressions.
+fn render_pass_il_block(exprs: &[PassIlExpr]) -> String {
+    let mut out = String::new();
+    for e in exprs {
+        out.push_str(&format!("  {:#x}: {}", e.pc, e.op));
+        for op in &e.operands {
+            out.push(' ');
+            out.push_str(&render_pass_operand(op));
+        }
+        if !e.extra.is_empty() {
+            out.push_str("  // ");
+            for (k, v) in &e.extra {
+                out.push_str(k);
+                out.push('=');
+                out.push_str(v);
+                out.push(' ');
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn render_pass_operand(op: &PassIlOperand) -> String {
+    match op {
+        PassIlOperand::Expr(e) => format!("({})", render_pass_expr(e)),
+        PassIlOperand::Var(v) => v.clone(),
+        PassIlOperand::Imm(v) => format!("{}", v),
+        PassIlOperand::U64(v) => format!("{:#x}", v),
+        PassIlOperand::Str(s) => s.clone(),
+    }
+}
+
+fn render_pass_expr(e: &PassIlExpr) -> String {
+    let mut out = e.op.clone();
+    if !e.operands.is_empty() {
+        out.push(' ');
+        let parts: Vec<String> = e.operands.iter().map(render_pass_operand).collect();
+        out.push_str(&parts.join(", "));
+    }
+    out
 }
 
 #[cfg(test)]

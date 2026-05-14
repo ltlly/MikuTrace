@@ -9,12 +9,14 @@
 //!   4. STORE         → ASSIGN(DEREF(addr), value)
 //!   5. STORE_STRUCT  → ASSIGN(DEREF_FIELD(addr, offset), value)
 
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 
 use crate::llil::pass_var_unify::VarNameMap;
 use crate::mlil::expr::{MlilExpr, MlilOp, MlilOperand};
 use crate::hlil::expr::{
-    assign, binary, deref, deref_field, expr, goto, if_else, ret as hlil_ret, var as hlil_var,
+    assign, binary, deref, deref_field, expr, goto, if_else, label, ret as hlil_ret, var as hlil_var,
     HlilExpr, HlilOp, HlilOperand,
 };
 
@@ -42,6 +44,11 @@ pub fn lower_mlil_to_hlil(exprs: &[MlilExpr], _names: &VarNameMap) -> (Vec<HlilE
             stats.unresolved += 1;
         }
     }
+
+    // Insert Label expressions at all Goto/If target addresses so the
+    // renderer produces loc_*: labels alongside goto loc_*; statements.
+    insert_labels(&mut out);
+    stats.hlil_count = out.len();
 
     (out, stats)
 }
@@ -379,6 +386,57 @@ fn is_mlil_binary(op: MlilOp) -> bool {
     )
 }
 
+// ============================================================================
+// Label insertion — post-lowering pass
+// ============================================================================
+
+/// After lowering, scan HLIL for `goto` and `if` targets and insert a `Label`
+/// expression before the first HLIL expression whose address matches each
+/// unique target.  This ensures the renderer produces `loc_xxx:` labels.
+fn insert_labels(exprs: &mut Vec<HlilExpr>) {
+    let targets = collect_goto_targets(exprs);
+    if targets.is_empty() {
+        return;
+    }
+    let mut i = 0;
+    while i < exprs.len() {
+        if exprs[i].op != HlilOp::Label && targets.contains(&exprs[i].pc) {
+            let name = format!("loc_{:x}", exprs[i].pc);
+            exprs.insert(i, label(&name, exprs[i].pc));
+            i += 1; // skip past the newly inserted label
+        }
+        i += 1;
+    }
+}
+
+/// Recursively collect every address targeted by a `Goto` op (at the top
+/// level or nested inside `If`, `Block`, `While`, `DoWhile` bodies).
+fn collect_goto_targets(exprs: &[HlilExpr]) -> BTreeSet<u64> {
+    let mut targets = BTreeSet::new();
+    for e in exprs {
+        collect_targets_from_expr(e, &mut targets);
+    }
+    targets
+}
+
+fn collect_targets_from_expr(e: &HlilExpr, targets: &mut BTreeSet<u64>) {
+    match e.op {
+        HlilOp::Goto => {
+            if let Some(HlilOperand::U64(t)) = e.operands.first() {
+                targets.insert(*t);
+            }
+        }
+        HlilOp::If | HlilOp::Block | HlilOp::While | HlilOp::DoWhile => {
+            for op in &e.operands {
+                if let HlilOperand::Expr(child) = op {
+                    collect_targets_from_expr(child, targets);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn map_binary_op(op: MlilOp) -> HlilOp {
     match op {
         MlilOp::Add => HlilOp::Add,
@@ -466,6 +524,58 @@ mod tests {
         let mlil = mlil_load_struct(4, mlil_var("ptr"), 0x10, 0x1000);
         let (hlil, _) = lower_mlil_to_hlil(&[mlil], &test_names());
         assert_eq!(hlil[0].op, HlilOp::DerefField);
+    }
+
+    #[test]
+    fn insert_labels_at_goto_targets() {
+        // Two instructions: a goto at 0x1000 targeting 0x1008, then a set_var at 0x1008
+        let mlil_exprs = vec![
+            // Goto to 0x1008
+            MlilExpr::new(MlilOp::Goto, 8, vec![MlilOperand::U64(0x1008)], 0x1000),
+            // Target instruction at 0x1008
+            mlil_set_var("v0", mlil_konst(42), 0x1008),
+        ];
+        let (hlil, _) = lower_mlil_to_hlil(&mlil_exprs, &VarNameMap::new());
+        // The output should contain a Label before the target
+        assert_eq!(hlil.len(), 3, "expected 3 exprs: goto + label + assign, got {}: {:#?}", hlil.len(), hlil);
+        assert_eq!(hlil[0].op, HlilOp::Goto, "first should be Goto");
+        assert_eq!(hlil[1].op, HlilOp::Label, "second should be Label");
+        assert_eq!(hlil[2].op, HlilOp::Assign, "third should be Assign");
+        // Verify label name
+        if let Some(HlilOperand::Str(name)) = hlil[1].operands.first() {
+            assert_eq!(name, "loc_1008");
+        } else {
+            panic!("Label operand should be a Str");
+        }
+    }
+
+    #[test]
+    fn inserts_labels_at_if_targets() {
+        // MLIL If: cond=v0, true=0x1008, false=0x1010
+        // Then expressions at 0x1008 and 0x1010
+        let cond = mlil_var("v0");
+        let mlil_exprs = vec![
+            MlilExpr::new(
+                MlilOp::If,
+                1,
+                vec![
+                    mlil_expr(cond),
+                    MlilOperand::U64(0x1008),
+                    MlilOperand::U64(0x1010),
+                ],
+                0x1000,
+            ),
+            mlil_set_var("v1", mlil_konst(1), 0x1008),
+            mlil_set_var("v2", mlil_konst(2), 0x1010),
+        ];
+        let (hlil, _) = lower_mlil_to_hlil(&mlil_exprs, &VarNameMap::new());
+        // Should have: If, Label(loc_1008), assign v1=1, Label(loc_1010), assign v2=2
+        assert_eq!(hlil.len(), 5, "expected 5 exprs: If + 2 labels + 2 assigns, got {}: {:#?}", hlil.len(), hlil);
+        assert_eq!(hlil[0].op, HlilOp::If, "first should be If");
+        assert_eq!(hlil[1].op, HlilOp::Label, "second should be Label for 0x1008");
+        assert_eq!(hlil[2].op, HlilOp::Assign, "third should be Assign");
+        assert_eq!(hlil[3].op, HlilOp::Label, "fourth should be Label for 0x1010");
+        assert_eq!(hlil[4].op, HlilOp::Assign, "fifth should be Assign");
     }
 
     #[test]

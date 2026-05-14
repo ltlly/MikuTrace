@@ -43,6 +43,26 @@
 - [x] BN vs traceMiku systematic comparison
 - [x] Android .so compiled + pushed to device
 
-## Bugs
+## Bugs — Interaction & Correctness
 
-- [x] **Assembly scroll freeze**: at ~5857033-5857088 / 7,200,380 records, the Records panel can't scroll down. Suspect virtual scrolling boundary issue in the Records panel component. Fixed: lowered SAFE_SCROLL_HEIGHT 30M→15M to stay within browser scrollable height limits.
+- [x] **First function after WebUI start shows "no HLIL"**: fixed by adding `include_text` to PipelineSource, ensuring showText changes trigger re-fetch.
+- [x] **IDA/BN interaction parity**: type dialog now accepts C expressions (IDA Y key), rename validates (IDA N key), hover shows values.
+- [x] **`&gt;` / `&lt;` HTML entities**: fixed by running syntax highlighting on raw text before HTML escaping, preventing entity splitting.
+- [x] **Double-click rename validation**: rejects empty, numeric-only, C keywords, and duplicate names.
+- [x] **Right-click set type → input dialog**: replaced fixed menu with C type expression input field (accepts pointers, structs, typedefs).
+- [x] **Auto-select function from assembly cursor**: App.tsx now watches cursorHint and auto-selects containing function.
+- [x] **Goto/Label emitted in IL**: added label insertion pass that collects Goto/If targets and emits Label expressions.
+- [x] **Tasks window**: emits "cancelled" status on panel close/inactive, allowing task center to dismiss.
+- [x] **Assembly scroll snap on click**: uses live DOM scrollTop instead of potentially-stale signal for visibility check.
+- [x] **IL pipeline passes now running**: constfold, DCE, Ghidra-style universal pipeline (simplify, const-prop, type-prop, struct recovery) called in decompile_trace().
+- [x] **Assembly hover values**: added `loadAddrTitle` for address token hover, register hover already existed.
+
+## Bugs — Remaining
+
+- [ ] **Single-click variable → same-name highlighting**: not yet implemented.
+- [ ] **HLIL/MLIL/LLIL structural differences**: passes wired but structured loop detection (while/for) pending.
+- [ ] **Goto label double-click navigation**: frontend handler for label click to jump to definition pending.
+
+## Bugs — Fixed (Previous)
+
+- [x] **Assembly scroll freeze**: SAFE_SCROLL_HEIGHT 30M→15M to stay within browser scrollable height limits.

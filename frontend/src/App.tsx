@@ -291,9 +291,20 @@ export default function App() {
     }
   }
   const [meta] = createResource(fetchMeta);
+  const [functions] = createResource(fetchFunctions);
   const functionRenameKey = createMemo(() => {
     const path = meta()?.path;
     return path ? `${FUNCTION_RENAMES_PREFIX}${path}` : null;
+  });
+
+  // Auto-select function from assembly cursor
+  createEffect(() => {
+    const hint = cursorHint();
+    const fns = functions()?.functions;
+    if (!hint?.func || !fns) return;
+    const curFn = selectedFn();
+    const match = fns.find((f) => f.name === hint.func);
+    if (match && match.id !== curFn) setSelectedFn(match.id);
   });
   const [functionRenames, setFunctionRenames] = createSignal<Map<string, string>>(new Map());
   const helpTopic = createMemo(() => helpState()?.topic ?? null);

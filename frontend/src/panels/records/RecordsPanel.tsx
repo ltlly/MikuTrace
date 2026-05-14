@@ -713,20 +713,25 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       // against the visible idx range instead.
       const maxScroll = Math.max(1, innerHeight() - h);
       const maxStart = Math.max(0, total - visibleRows());
-      const currentStart = Math.floor((scrollTop() / maxScroll) * maxStart);
+      const liveTop = viewport.scrollTop;
+      const currentStart = Math.floor((liveTop / maxScroll) * maxStart);
       const visibleEnd = currentStart + visibleRows();
       if (idx >= currentStart + 2 && idx <= visibleEnd - 2) return;
       const targetStart = clamp(idx - Math.floor(visibleRows() / 3), 0, maxStart);
       const next =
         maxStart > 0 ? Math.round((targetStart / maxStart) * maxScroll) : 0;
+      if (next === liveTop) return;
       viewport.scrollTop = next;
       setScrollTop(next);
       return;
     }
     const rowTop = idx * ROW_HEIGHT;
     const rowBottom = rowTop + ROW_HEIGHT;
-    if (rowTop >= scrollTop() && rowBottom <= scrollTop() + h) return;
+    // Use live DOM scrollTop to avoid stale signal causing false visibility check
+    const liveTop = viewport.scrollTop;
+    if (rowTop >= liveTop && rowBottom <= liveTop + h) return;
     const next = clamp(rowTop - Math.floor(h / 3), 0, Math.max(0, innerHeight() - h));
+    if (next === liveTop) return;
     viewport.scrollTop = next;
     setScrollTop(next);
   });
@@ -1345,6 +1350,19 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     else setRegContext((current) => (current ? { ...current, err: "block not executed in trace" } : current));
   }
 
+  async function loadAddrTitle(el: HTMLElement, idx: number, addrStr: string) {
+    const key = `${idx}:addr:${addrStr}`;
+    const cached = regValueTitleCache.get(key);
+    if (cached) { el.title = cached; return; }
+    try {
+      const r = await fetchRegValueAt(idx, addrStr);
+      const annotation = r.annotation ? ` ${r.annotation}` : "";
+      const title = r.status === "ready" ? `${addrStr}${annotation}` : addrStr;
+      regValueTitleCache.set(key, title);
+      el.title = title;
+    } catch { el.title = addrStr; }
+  }
+
   async function loadRegTitle(el: HTMLElement, idx: number, reg: string) {
     const key = `${idx}:${reg}`;
     const cached = regValueTitleCache.get(key);
@@ -1723,6 +1741,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                                 }}
                                 onMouseEnter={(e) => {
                                   if (reg) void loadRegTitle(e.currentTarget, row.idx, reg);
+                                  else if (addr) void loadAddrTitle(e.currentTarget, row.idx, addr);
                                 }}
                                 onContextMenu={(e) => {
                                   if (reg) void openRegContext(e, row, reg);

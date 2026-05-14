@@ -20,12 +20,13 @@ type IlLevel = "hlil" | "mlil" | "llil";
 interface PipelineSource {
   fn_id: string;
   max_records: number;
+  include_text: boolean;
 }
 
 const DEFAULT_MAX_RECORDS = 500;
 
-function sourceKey(s: PipelineSource, showText: boolean): string {
-  return `${s.fn_id}\0${s.max_records}\0${showText}`;
+function sourceKey(s: PipelineSource): string {
+  return `${s.fn_id}\0${s.max_records}\0${s.include_text}`;
 }
 
 export default function PseudoCPanel(props: PseudoCPanelProps) {
@@ -132,6 +133,27 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
 
   onCleanup(() => {
     if (copyTimer) clearTimeout(copyTimer);
+    // Emit terminal status so tasks window can dismiss
+    props.onTaskUpdate?.({
+      id: "pseudoc",
+      surface: "Pseudo C",
+      label: source()?.fn_id ?? "?",
+      status: "cancelled",
+      detail: "panel closed",
+    });
+  });
+
+  // When panel becomes inactive, emit terminal status for any running task
+  createEffect(() => {
+    if (!props.active && lastTaskFnId) {
+      props.onTaskUpdate?.({
+        id: "pseudoc",
+        surface: "Pseudo C",
+        label: lastTaskFnId,
+        status: "cancelled",
+        detail: "completed",
+      });
+    }
   });
 
   const source = createMemo<PipelineSource | undefined>((prev) => {
@@ -141,8 +163,9 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     const next: PipelineSource = {
       fn_id: fnId,
       max_records: Math.max(1, Math.min(5000, maxRecords())),
+      include_text: showText(),
     };
-    if (prev && sourceKey(prev, showText()) === sourceKey(next, showText())) return prev;
+    if (prev && sourceKey(prev) === sourceKey(next)) return prev;
     return next;
   });
 
@@ -155,7 +178,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
       fetchLlilPipeline({
         fn_id: s.fn_id,
         max_records: s.max_records,
-        include_text: showText(),
+        include_text: s.include_text,
       }),
     (r, s) => r.fn_id === s.fn_id,
   );
@@ -328,16 +351,33 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     setTimeout(() => renameInputEl?.focus(), 0);
   }
 
+  function isValidVarName(name: string): boolean {
+    if (!name) return false;
+    if (/^\d+$/.test(name)) return false; // numeric-only
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return false; // not a C identifier
+    if (C_KEYWORDS.has(name)) return false;
+    // Check duplicates within current function context
+    const text = levelText(currentPipeline());
+    if (text) {
+      const renames = renamedVars();
+      const allRenamed = new Set(Object.values(renames));
+      if (allRenamed.has(name)) return false;
+    }
+    return true;
+  }
+
   function commitRename() {
     const r = renaming();
-    if (!r || r.newName === r.oldName || !r.newName.trim()) { setRenaming(null); return; }
-    setRenamedVars((prev) => ({ ...prev, [r.oldName]: r.newName.trim() }));
+    if (!r || r.newName === r.oldName) { setRenaming(null); return; }
+    const trimmed = r.newName.trim();
+    if (!isValidVarName(trimmed)) { setRenaming(null); return; }
+    setRenamedVars((prev) => ({ ...prev, [r.oldName]: trimmed }));
     setRenaming(null);
   }
 
   function cancelRename() { setRenaming(null); }
 
-  // Variable type: right-click → set type
+  // Variable type: right-click → set type (IDA Y key: C type input dialog)
   // Also handles address tokens for xrefs
   const [xrefMenu, setXrefMenu] = createSignal<{ addr: string; x: number; y: number } | null>(null);
   const [xrefResults, setXrefResults] = createSignal<{ addr: string; hits: Array<{ idx: number; pc: string; asm: string }>; loading: boolean } | null>(null);
@@ -350,6 +390,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
       e.preventDefault();
       setTypeMenu({ name, x: e.clientX, y: e.clientY });
       setXrefMenu(null);
+      setTimeout(() => typeInputEl?.focus(), 0);
       return;
     }
     // Check for address token (.tok-lit or containing 0x...)
@@ -367,11 +408,15 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     setXrefMenu(null);
   }
 
-  function applyVarType(typeName: string) {
+  let typeInputEl: HTMLInputElement | undefined;
+  const [typeInput, setTypeInput] = createSignal("");
+  function applyVarType() {
     const m = typeMenu();
-    if (!m) return;
-    setTypedVars((prev) => ({ ...prev, [m.name]: typeName }));
+    const t = typeInput().trim();
+    if (!m || !t) { setTypeMenu(null); return; }
+    setTypedVars((prev) => ({ ...prev, [m.name]: t }));
     setTypeMenu(null);
+    setTypeInput("");
   }
 
   async function fetchXrefs(addr: string) {
@@ -834,7 +879,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
         )}
       </Show>
 
-      {/* Type context menu */}
+      {/* Type input dialog (IDA Y key style): C type expression input */}
       <Show when={typeMenu()}>
         {(m) => (
           <div class="pseudoc-type-menu"
@@ -842,14 +887,18 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div class="pseudoc-type-menu-hdr">set type for <code>{m().name}</code></div>
-            {(["int32_t","uint32_t","int64_t","uint64_t","char*","void*","size_t","struct"] as string[]).map((t) => (
-              <button type="button" class="pseudoc-type-menu-item" onClick={() => applyVarType(t)}>
-                {t}
-              </button>
-            ))}
-            <button type="button" class="pseudoc-type-menu-item" onClick={() => setTypeMenu(null)}>
-              cancel
-            </button>
+            <div class="pseudoc-type-input-row">
+              <input ref={typeInputEl} class="pseudoc-rename-input"
+                placeholder="int32_t / char* / struct foo* ..."
+                value={typeInput()}
+                onInput={(e) => setTypeInput(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyVarType();
+                  else if (e.key === "Escape") { setTypeMenu(null); setTypeInput(""); }
+                }}
+              />
+              <button type="button" class="pseudoc-search-btn" onClick={applyVarType}>OK</button>
+            </div>
           </div>
         )}
       </Show>
@@ -938,34 +987,51 @@ const C_TYPE_KEYWORDS = new Set([
 ]);
 
 function highlightLine(line: string, types?: Record<string, string>, searchQuery?: string): string {
-  let html = escapeHtml(line).replace(
+  // Step 1: syntax highlighting on RAW text (before HTML escaping, so
+  // entities like &gt; are not split by the regex).
+  let html = line.replace(
     /\b(?:0x[0-9a-fA-F]+|[0-9]+(?:\.[0-9]+)?[fFuUlL]{0,3})\b|\b[a-zA-Z_][a-zA-Z0-9_]*\b|\/\/.*$|\/\*[\s\S]*?\*\/|".*?"|'.*?'/g,
     (match) => {
       if (/^(?:0x[0-9a-fA-F]+|[0-9])/.test(match)) {
-        return `<span class="tok-lit">${match}</span>`;
+        return `\x00tok-lit\x00${match}\x00/tok-lit\x00`;
       }
       if (match.startsWith("//")) {
-        return `<span class="tok-comment">${match}</span>`;
+        return `\x00tok-comment\x00${match}\x00/tok-comment\x00`;
       }
       if (match.startsWith("/*")) {
-        return `<span class="tok-comment">${match}</span>`;
+        return `\x00tok-comment\x00${match}\x00/tok-comment\x00`;
       }
       if (match.startsWith('"') || match.startsWith("'")) {
-        return `<span class="tok-str">${match}</span>`;
+        return `\x00tok-str\x00${match}\x00/tok-str\x00`;
       }
       if (C_KEYWORDS.has(match)) {
         if (C_TYPE_KEYWORDS.has(match)) {
-          return `<span class="tok-type">${match}</span>`;
+          return `\x00tok-type\x00${match}\x00/tok-type\x00`;
         }
-        return `<span class="tok-kw">${match}</span>`;
+        return `\x00tok-kw\x00${match}\x00/tok-kw\x00`;
       }
       const type = types?.[match];
       if (type) {
-        return `<span class="tok-var" data-var="${match}" data-type="${type}" title="${type} ${match}">${match}</span>`;
+        return `\x00V\x00${match}\x00${type}\x00/V\x00`;
       }
-      return `<span class="tok-var" data-var="${match}">${match}</span>`;
+      return `\x00V\x00${match}\x00\x00/V\x00`;
     },
   );
+  // Step 2: escape HTML in non-token text
+  html = escapeHtml(html);
+  // Step 3: convert \x00 markers to real HTML tags
+  // Variable token: \x00V\x00name\x00type\x00/V\x00
+  html = html.replace(/\x00V\x00([^\x00]*)\x00([^\x00]*)\x00\/V\x00/g, (_m, name, type) => {
+    const attrName = escapeAttr(name);
+    if (type) {
+      const attrType = escapeAttr(type);
+      return `<span class="tok-var" data-var="${attrName}" data-type="${attrType}" title="${attrType} ${attrName}">`;
+    }
+    return `<span class="tok-var" data-var="${attrName}">`;
+  });
+  // Other token types: \x00tok-XXX\x00 ... \x00/tok-XXX\x00
+  html = html.replace(/\x00tok-([^\x00]+)\x00/g, '<span class="tok-$1">');
+  html = html.replace(/\x00\/tok-([^\x00]+)\x00/g, '</span>');
   // Highlight search matches (case-insensitive, outside HTML tags)
   if (searchQuery && searchQuery.length > 0) {
     const escaped = escapeRegExp(searchQuery);
@@ -983,9 +1049,12 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function escapeAttr(s: string): string {
+  return s.replace(/"/g, "&quot;").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/</g, "&lt;");
 }

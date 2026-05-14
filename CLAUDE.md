@@ -194,3 +194,64 @@ classes already seen in this branch:
   parity.
 
 Prefer turning each class into a test or smoke gate when fixing it.
+
+## Interaction Design (对标 IDA / Ghidra / Binary Ninja)
+
+WebUI interaction MUST align with IDA Pro, Ghidra, and Binary Ninja conventions:
+
+- **Single-click variable**: highlight all occurrences of the same variable
+  (IDA/Ghidra behaviour). Do NOT select/highlight on single-click — use it
+  for cross-reference highlighting.
+- **Double-click variable**: rename variable (inline edit, IDA shortcut `N`).
+  Validate against empty names, numeric-only names (e.g. `123`), keyword
+  collisions, and duplicate names within the same function.
+- **Right-click variable**: set variable type. Show an input dialog (not a
+  fixed menu) that accepts C type expressions including pointers (`int*`,
+  `char**`), structs (`struct MyStruct`), and typedefs. Parse with an
+  embedded C type parser (consider tree-sitter-c or similar). Future:
+  support user-defined struct types.
+- **Hover variable/register/address**: show runtime value from trace records.
+  Must work for registers (`x0`–`x30`, `fp`, `lr`, `sp`), memory addresses
+  (`0xHEX`), and named variables (`var_*`).
+- **Hover in assembly window**: registers and memory addresses must also
+  show runtime values on hover (not just in decompile).
+- **Goto labels**: IL must emit labels for jump targets (Goto/Label).
+  Double-click on label name → jump to corresponding label definition.
+- **Assembly scroll on click**: clicking a record should keep the viewport
+  centred on the clicked row. Do NOT snap the viewport so the clicked row
+  ends up at the top — keep surrounding context visible (centre or
+  near-centre).
+
+## Decompile Pipeline Quality
+
+- LLIL → MLIL → HLIL must show meaningful structural differences. MLIL
+  should eliminate register indirection; HLIL must show structured control
+  flow (if/else, while, do-while, for, switch) and eliminate goto where
+  possible. If the three layers look identical, the lowering passes are
+  not running correctly.
+- Run the Ghidra-style pass framework (6-phase pipeline) on every
+  decompile request. The passes include: stack variable recovery, struct
+  access detection, control flow structuring, dead code elimination,
+  constant folding, and type propagation.
+- When a feature exists in Ghidra, prefer to read Ghidra's Java source,
+  understand the algorithm, and re-implement in Rust with equivalent
+  semantics. Do not invent novel decompiler algorithms when established
+  ones exist.
+
+## Workflow Rules
+
+- When starting a task, FIRST read and update `TODO.md` to reflect current
+  status. `TODO.md` is the single source of truth for the backlog.
+- Break large tasks into independent sub-tasks. Use AgentTeam or parallel
+  sub-agents to accelerate work when subtasks are independent.
+- After completing a task set, run agent-based or sub-agent audits to verify
+  correctness, edge cases, and code quality before committing.
+- Every feature must include tests. If a Ghidra feature is ported, include
+  equivalent test cases from Ghidra's test suite.
+- Feature implementation order: `tracemiku-core` (analysis) → `tracemiku-cli`
+  (CLI surface) → `tracemiku-server` (API route) → `frontend` (WebUI).
+  CLI output should be JSON-structured for AI consumption; WebUI should be
+  human-friendly with reference to IDA/Ghidra/BN UX patterns.
+- Destructive updates are acceptable as long as code quality and tool
+  effectiveness improve. Do not preserve backwards compatibility at the
+  expense of correctness or UX.
