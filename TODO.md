@@ -42,3 +42,7 @@
 - [x] 7 ARM64 test binaries, 56+ functions, 563+ tests
 - [x] BN vs traceMiku systematic comparison
 - [x] Android .so compiled + pushed to device
+
+## Bugs
+
+- [ ] **Assembly scroll freeze**: at ~5857033-5857088 / 7,200,380 records, the Records panel can't scroll down. Suspect virtual scrolling boundary issue in the Records panel component.
