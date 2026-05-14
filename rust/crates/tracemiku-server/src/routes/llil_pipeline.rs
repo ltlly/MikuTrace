@@ -55,6 +55,13 @@ pub struct PipelineResponse {
     pub struct_stores: u64,
     // HLIL stats
     pub hlil_count: usize,
+    // Pass statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constfold_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dce_removed_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dce_iterations: Option<usize>,
     // Text output (only when include_text=true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llil_text: Option<String>,
@@ -215,6 +222,9 @@ fn pipeline_response(
         struct_loads: mlil_stats.struct_loads as u64,
         struct_stores: mlil_stats.struct_stores as u64,
         hlil_count: output.hlil_count,
+        constfold_count: Some(output.constfold_count),
+        dce_removed_count: Some(output.dce_removed_count),
+        dce_iterations: Some(output.dce_iterations),
         llil_text: if payload.include_text {
             Some(annotate(output.llil_ssa_text))
         } else {
