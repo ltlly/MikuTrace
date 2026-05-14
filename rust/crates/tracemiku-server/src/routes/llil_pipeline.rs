@@ -101,20 +101,56 @@ fn pipeline_response(
     let mut call_site_regs: std::collections::BTreeMap<u64, Vec<(String, i64)>> =
         std::collections::BTreeMap::new();
 
+    // Track whether we've seen the function's ret.
+    // After returning, subsequent instructions belong to the caller.
+    let mut fn_ret_seen = false;
+
     if start <= end {
         for idx in start..=end {
             if insns.len() >= max_records {
                 break;
             }
             let rec = inner.trace.record(idx);
+            let inst = rec.inst;
+
+            // Function boundary: blr creates a new function context.
+            // Stop collecting after blr — the following code is the callee's.
+            let is_blr = (inst & 0xFFFFFC1F) == 0xD63F0000;
+            if is_blr && !insns.is_empty() {
+                // Record the call site args before stopping
+                let caller_pc = rec.pc;
+                let target = decode_call_target(caller_pc, inst, &rec);
+                let regs: Vec<(String, i64)> = ["x0","x1","x2","x3","x4","x5","x6","x7"]
+                    .iter()
+                    .filter_map(|r| rec.reg(r).map(|v| (r.to_string(), v as i64)))
+                    .filter(|(_, v)| *v != 0)
+                    .collect();
+                if !regs.is_empty() {
+                    call_site_regs.entry(target).or_insert(regs);
+                }
+                if seen.insert((rec.pc, inst)) {
+                    insns.push((rec.pc, inst));
+                }
+                break; // Stop at blr boundary
+            }
+
+            // Detect ret: the first meaningful ret generally ends the function
+            let is_ret = (inst & 0xFFFFFC1F) == 0xD65F0000;
+            if is_ret {
+                if seen.insert((rec.pc, inst)) {
+                    insns.push((rec.pc, inst));
+                }
+                fn_ret_seen = true;
+                break; // Stop at ret
+            }
+
             if seen.insert((rec.pc, rec.inst)) {
                 insns.push((rec.pc, rec.inst));
             }
+
             // Collect register values for call instructions, keyed by TARGET
-            let inst = rec.inst;
             if is_call(inst) {
                 let caller_pc = rec.pc;
-                // Resolve call target: for bl, decode from inst; for blr, read register
                 let target = decode_call_target(caller_pc, inst, &rec);
                 let regs: Vec<(String, i64)> = ["x0","x1","x2","x3","x4","x5","x6","x7"]
                     .iter()
