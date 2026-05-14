@@ -95,9 +95,11 @@ fn pipeline_response(
     let start = fn_.entry_idx.min(trace_len);
     let end = fn_.exit_idx.min(trace_len.saturating_sub(1));
 
-    // Collect unique (pc, inst) pairs from the function's trace range
+    // Collect unique (pc, inst) pairs + call-site register values
     let mut seen = std::collections::BTreeSet::new();
     let mut insns: Vec<(u64, u32)> = Vec::new();
+    let mut call_site_regs: std::collections::BTreeMap<u64, Vec<(String, i64)>> =
+        std::collections::BTreeMap::new();
 
     if start <= end {
         for idx in start..=end {
@@ -107,6 +109,21 @@ fn pipeline_response(
             let rec = inner.trace.record(idx);
             if seen.insert((rec.pc, rec.inst)) {
                 insns.push((rec.pc, rec.inst));
+            }
+            // Collect register values for call instructions, keyed by TARGET
+            let inst = rec.inst;
+            if is_call(inst) {
+                let caller_pc = rec.pc;
+                // Resolve call target: for bl, decode from inst; for blr, read register
+                let target = decode_call_target(caller_pc, inst, &rec);
+                let regs: Vec<(String, i64)> = ["x0","x1","x2","x3","x4","x5","x6","x7"]
+                    .iter()
+                    .filter_map(|r| rec.reg(r).map(|v| (r.to_string(), v as i64)))
+                    .filter(|(_, v)| *v != 0)
+                    .collect();
+                if !regs.is_empty() {
+                    call_site_regs.entry(target).or_insert(regs);
+                }
             }
         }
     }
@@ -126,7 +143,7 @@ fn pipeline_response(
     // Post-process: annotate call targets with symbol names and args
     let symbols = &inner.symbols;
     let annotate = |text: String| -> String {
-        annotate_calls_in_text(&text, symbols, &inner.trace, &insns)
+        annotate_calls_in_text(&text, symbols, &call_site_regs)
     };
 
     // Optional: Call analysis
@@ -212,6 +229,31 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
     }
 }
 
+fn decode_call_target(pc: u64, inst: u32, rec: &tracemiku_core::trace::record::Record) -> u64 {
+    let is_bl = (inst >> 26) == 0b100101;
+    if is_bl {
+        let offset = ((inst & 0x03FF_FFFF) as i32) << 2;
+        pc.wrapping_add(offset as u64)
+    } else {
+        // blr: target is in the register
+        let rn = (inst >> 5) & 0x1F;
+        let reg_name = match rn {
+            0=>"x0",1=>"x1",2=>"x2",3=>"x3",4=>"x4",5=>"x5",6=>"x6",7=>"x7",
+            8=>"x8",9=>"x9",10=>"x10",11=>"x11",12=>"x12",13=>"x13",14=>"x14",15=>"x15",
+            16=>"x16",17=>"x17",18=>"x18",19=>"x19",20=>"x20",21=>"x21",22=>"x22",
+            23=>"x23",24=>"x24",25=>"x25",26=>"x26",27=>"x27",28=>"x28",29=>"fp",30=>"lr",
+            _=>"xzr"
+        };
+        rec.reg(reg_name).unwrap_or(pc)
+    }
+}
+
+fn is_call(inst: u32) -> bool {
+    let is_bl = (inst >> 26) == 0b100101;
+    let is_blr = (inst & 0xFFFFFC1F) == 0xD63F0000;
+    is_bl || is_blr
+}
+
 fn parse_u64(s: &str) -> Option<u64> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -221,33 +263,25 @@ fn parse_u64(s: &str) -> Option<u64> {
     }
 }
 
-/// Annotate call targets in decompiled text with symbol names.
-/// Replaces `0x6f7a9057b0()` with `sub_457b0(arg1=0x..., ...)` when possible.
+/// Annotate call targets with symbol names and call-site register values.
 fn annotate_calls_in_text(
     text: &str,
     symbols: &tracemiku_core::symbols::SymbolMap,
-    trace: &tracemiku_core::trace::Trace,
-    insns: &[(u64, u32)],
+    call_site_regs: &std::collections::BTreeMap<u64, Vec<(String, i64)>>,
 ) -> String {
     let mut out = String::with_capacity(text.len() + text.len() / 10);
     for line in text.lines() {
-        let mut annotated = line.to_string();
-
-        // Find `0xHEX()` patterns and replace with resolved names
         let mut result = String::new();
-        let chars: Vec<char> = annotated.chars().collect();
+        let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
         while i < chars.len() {
             if chars[i] == '0' && i + 1 < chars.len() && chars[i + 1] == 'x' {
-                // Try to parse hex address
-                let start = i;
                 i += 2; // skip "0x"
                 let mut hex_str = String::new();
                 while i < chars.len() && chars[i].is_ascii_hexdigit() {
                     hex_str.push(chars[i]);
                     i += 1;
                 }
-                // Check if followed by "()"
                 if i < chars.len() && chars[i] == '(' {
                     if let Ok(addr) = u64::from_str_radix(&hex_str, 16) {
                         let (name, _) = symbols.lookup(addr);
@@ -256,24 +290,23 @@ fn annotate_calls_in_text(
                         } else {
                             name
                         };
-                        // Try to extract call args from trace
-                        let args_str = extract_call_args(addr, trace, insns);
+                        // Get call-site register values
+                        let args_str = call_site_regs.get(&addr)
+                            .map(|regs| {
+                                regs.iter()
+                                    .map(|(r, v)| format!("{r}=0x{v:x}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
                         result.push_str(&format!("{display}({args_str})"));
-                        // Skip the "()" part
-                        while i < chars.len() && chars[i] != ')' {
-                            i += 1;
-                        }
-                        if i < chars.len() { i += 1; } // skip ')'
+                        while i < chars.len() && chars[i] != ')' { i += 1; }
+                        if i < chars.len() { i += 1; }
                         continue;
                     }
                 }
-                // Not a call pattern, write back the hex
                 result.push_str(&format!("0x{hex_str}"));
-                // Write any remaining chars we consumed
-                while i < chars.len() && chars[i].is_ascii_alphanumeric() {
-                    result.push(chars[i]);
-                    i += 1;
-                }
+                while i < chars.len() && chars[i].is_ascii_alphanumeric() { result.push(chars[i]); i += 1; }
                 continue;
             }
             result.push(chars[i]);
@@ -291,6 +324,5 @@ fn extract_call_args(
     _trace: &tracemiku_core::trace::Trace,
     _insns: &[(u64, u32)],
 ) -> String {
-    // For now, return empty — full implementation requires trace context
     String::new()
 }
