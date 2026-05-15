@@ -230,22 +230,93 @@ ${simdWrite}${semanticWrite}
     log(`[+] CModule loaded: on_insn @ ${STATE.cm.on_insn} (SPSC lock-free, simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"})`);
 }
 
+// Fixed ensureTraceDir with fallback for attach-pid mode
 function ensureTraceDir() {
     if (STATE.traceDir) return;
+
+    // Try multiple methods to get package name
     if (!STATE.pkg) {
+        // Method 1: Read /proc/self/cmdline
         try {
             const cmdF = new File("/proc/self/cmdline", "rb");
             const buf = cmdF.read(256);
             cmdF.close();
-            STATE.pkg = String.fromCharCode.apply(null, new Uint8Array(buf)).split('\0')[0] || "unknown";
-        } catch (e) { STATE.pkg = "unknown"; }
+            const pkg = String.fromCharCode.apply(null, new Uint8Array(buf)).split('\0')[0];
+            if (pkg && pkg.length > 0 && pkg !== "unknown") {
+                STATE.pkg = pkg;
+            }
+        } catch (e) { /* fallback to next method */ }
     }
-    STATE.traceDir = `/data/data/${STATE.pkg}/cache/.miku`;
+
+    // Method 2: Try to get from /proc/<pid>/attr/current (SELinux context may contain pkg)
+    if (!STATE.pkg || STATE.pkg === "unknown") {
+        try {
+            const attrF = new File("/proc/self/attr/current", "rb");
+            const buf = attrF.read(256);
+            attrF.close();
+            const context = String.fromCharCode.apply(null, new Uint8Array(buf)).split('\0')[0];
+            // Parse u:r:untrusted_app:s0:c123,c456,<pkg> format
+            const parts = context.split(':');
+            if (parts.length >= 4) {
+                const lastPart = parts[3];
+                const commaParts = lastPart.split(',');
+                for (const part of commaParts) {
+                    if (part.includes('.') && part.length > 3) {
+                        // Likely a package name
+                        STATE.pkg = part;
+                        break;
+                    }
+                }
+            }
+        } catch (e) { /* fallback to next method */ }
+    }
+
+    // Method 3: Try to deduce from executable path
+    if (!STATE.pkg || STATE.pkg === "unknown") {
+        try {
+            const exeLink = new File("/proc/self/exe", "rb");
+            // Readlink not directly available, try alternative
+            exeLink.close();
+        } catch (e) { /* fallback */ }
+    }
+
+    // Fallback: Use process ID based path when pkg is unknown
+    if (!STATE.pkg || STATE.pkg === "unknown") {
+        STATE.pkg = "unknown";
+    }
+
+    // Try primary location first (only if pkg is not "unknown")
+    if (STATE.pkg !== "unknown") {
+        const primaryDir = `/data/data/${STATE.pkg}/cache/.miku`;
+        try {
+            const mkdir = new NativeFunction(getExport('mkdir'), 'int', ['pointer','int']);
+            const result = mkdir(Memory.allocUtf8String(primaryDir), 0o755);
+            if (result === 0 || result === -1) { // 0 = success, -1 = EEXIST
+                STATE.traceDir = primaryDir;
+                log(`[+] trace dir = ${STATE.traceDir}`);
+                return;
+            }
+        } catch (e) {
+            log(`[!] mkdir primary failed (will try fallback)`);
+        }
+    }
+
+    // Fallback: Use /data/local/tmp with PID suffix (world-writable on most devices)
+    log("[!] pkg not detected or primary dir failed, using fallback trace dir");
+    const fallbackDir = `/data/local/tmp/.miku_${Process.id}`;
+    STATE.traceDir = fallbackDir;
     try {
         const mkdir = new NativeFunction(getExport('mkdir'), 'int', ['pointer','int']);
-        mkdir(Memory.allocUtf8String(STATE.traceDir), 0o755);
-    } catch (e) { log(`[!] mkdir 失败 (可能已存在): ${e}`); }
-    log(`[+] trace dir = ${STATE.traceDir}`);
+        const result = mkdir(Memory.allocUtf8String(STATE.traceDir), 0o755);
+        if (result === 0 || result === -1) {
+            log(`[+] trace dir (fallback) = ${STATE.traceDir}`);
+            return;
+        }
+    } catch (e) {
+        log(`[!] mkdir fallback failed: ${e}`);
+    }
+
+    log(`[!] All trace dir attempts failed, will try to continue with ${STATE.traceDir}`);
 }
 
 function openTraceFile(callIdx, tid) {
@@ -1514,24 +1585,62 @@ function installFnHook(fp, onInsn) {
                 // SOs (libsgsecuritybody, libsgavmp etc dlopen'd after agent init).
                 buildIncludeRanges();
                 const ranges = STATE.includeRanges.map(r => ({base: r.base, end: r.end}));
+                // Build a fast lookup for ranges (target SO only by default for stability)
+                const targetBase = STATE.target ? STATE.target.base : null;
+                const targetEnd = STATE.target ? STATE.target.end : null;
+
                 Stalker.follow(this._tid, {
                     events: { call:false, ret:false, exec:false, block:false, compile:false },
                     transform(iter) {
-                        let ins;
-                        while ((ins = iter.next()) !== null) {
-                            const a = ins.address;
-                            // Multi-SO: putCallout if PC in ANY of include ranges
-                            let inRange = false;
-                            for (let i = 0; i < ranges.length; i++) {
-                                const r = ranges[i];
-                                if (a.compare(r.base) >= 0 && a.compare(r.end) < 0) {
-                                    inRange = true; break;
+                        try {
+                            let ins;
+                            let count = 0;
+                            const MAX_INSNS = 100000; // Safety limit per block
+
+                            while ((ins = iter.next()) !== null) {
+                                count++;
+                                if (count > MAX_INSNS) {
+                                    log(`[!] transform: block exceeds ${MAX_INSNS} insns, truncating`);
+                                    break;
                                 }
+
+                                const a = ins.address;
+
+                                // Fast path: check if in target SO range first
+                                let inRange = false;
+                                if (targetBase && targetEnd) {
+                                    if (a.compare(targetBase) >= 0 && a.compare(targetEnd) < 0) {
+                                        inRange = true;
+                                    }
+                                }
+
+                                // Multi-SO: also check include ranges if not in target
+                                if (!inRange && ranges.length > 0) {
+                                    for (let i = 0; i < ranges.length; i++) {
+                                        const r = ranges[i];
+                                        if (a.compare(r.base) >= 0 && a.compare(r.end) < 0) {
+                                            inRange = true;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (inRange) {
+                                    try {
+                                        iter.putCallout(onInsn);
+                                    } catch (e) {
+                                        // putCallout can fail on some instructions, continue
+                                    }
+                                }
+                                iter.keep();
                             }
-                            if (inRange) {
-                                iter.putCallout(onInsn);
+                        } catch (e) {
+                            log(`[!] transform error: ${e}`);
+                            // Continue to keep the block even if transform fails
+                            let ins;
+                            while ((ins = iter.next()) !== null) {
+                                iter.keep();
                             }
-                            iter.keep();
                         }
                     }
                 });
