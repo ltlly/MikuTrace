@@ -656,8 +656,8 @@ def cmd_trace(args):
         "methodName": args.method,
         "exportName": args.export,
         "fnOffset": int(args.fn_offset, 16) if args.fn_offset else None,
-        "cmdArg": args.cmd_arg,
-        "cmdValue": args.cmd or 0,
+        **({"cmdArg": args.cmd_arg if args.cmd_arg is not None else 2} if args.cmd is not None else {}),
+        **({"cmdValue": args.cmd} if args.cmd is not None else {}),
         "maxRecords": args.max_records,
         "followAllThreads": args.follow_workers,
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
@@ -1435,8 +1435,8 @@ def main():
     p_tr.add_argument("--method", help="JNI 注册方法名 (动态注册)")
     p_tr.add_argument("--export", help="SO 导出函数名 (静态导出)")
     p_tr.add_argument("--fn-offset", help="SO 内函数偏移 (16进制如 0x57770)")
-    p_tr.add_argument("--cmd", type=int, help="cmd id 过滤值 (默认 0=不过滤)")
-    p_tr.add_argument("--cmd-arg", type=int, default=2, help="cmd id 在第几个参数 (默认 2)")
+    p_tr.add_argument("--cmd", type=int, help="cmd id 过滤值 (不传则不过滤)")
+    p_tr.add_argument("--cmd-arg", type=int, default=None, help="cmd id 在第几个参数 (需配合 --cmd 使用)")
     p_tr.add_argument("--include-so", default="", dest="include_so",
                       help="逗号分隔, 额外 trace 这些 SO (除目标外). e.g."
                            " 'libsgsecuritybody,libsgavmp,libcrypto'."

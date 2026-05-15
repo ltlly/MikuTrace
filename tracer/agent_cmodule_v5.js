@@ -17,7 +17,7 @@
 
 const STATE = {
     soPattern: null, fnOffset: null,        // 必传, 见 init() — 不再有项目特定默认
-    cmdValue: 0, cmdArg: 2, pkg: null,
+    cmdValue: null, cmdArg: null, pkg: null,
     target: null, fnHooked: false, excluded: false, fnEntered: false,
     cm: null, onInsnPtr: null,
     ringBuf: null,
@@ -1380,8 +1380,8 @@ rpc.exports = {
         // suicidePatchSpec: parsed JSON of tools/hooks/<x>_suicide.json (per-version).
         // 空 = 不打 patch. 项目特定偏移全部来自 spec 文件, agent 不硬编码.
         STATE.suicidePatchSpec = opts.suicidePatchSpec || null;
-        STATE.cmdValue = opts.cmdValue || 0;
-        STATE.cmdArg = opts.cmdArg !== undefined ? opts.cmdArg : 2;
+        if (opts.cmdValue !== undefined) STATE.cmdValue = opts.cmdValue;
+        if (opts.cmdArg !== undefined) STATE.cmdArg = opts.cmdArg;
         STATE.pkg = opts.pkg || null;
         // Multi-SO trace: array of patterns to ALSO trace (in addition to target).
         // e.g. ['libsgsecuritybody','libsgavmp','libcrypto']. HARD_EXCL still applies.
@@ -1522,7 +1522,7 @@ function installFnHook(fp, onInsn) {
     // so late-dlopen'd SOs are picked up. Each onEnter rebuilds the list.
         Interceptor.attach(fp, {
             onEnter(args) {
-                if (STATE.cmdValue) {
+                if (STATE.cmdValue != null && STATE.cmdArg != null) {
                     const c = args[STATE.cmdArg].toInt32();
                     if (c !== STATE.cmdValue) { this._skip = true; return; }
                 }
