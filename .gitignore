@@ -43,6 +43,12 @@ dist/
 !/tools/probe_deep_safe.js
 !/tools/hooks/
 !/tools/hooks/*
+!/tools/spawn_sign_scan.py
+!/tools/spawn_trace_jni_onload.py
+!/tools/spawn_hook.py
+!/tools/native_sign_hooks.js
+!/tools/native_sign_hooks_v4.js
+!/tools/quick_test_all.js
 
 # v2 Rust + frontend (added 2026-05-03)
 rust/target/

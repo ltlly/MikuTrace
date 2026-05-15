@@ -37,6 +37,7 @@ const STATE = {
     flushTimer: null, hbTimer: null, batchSeq: 0, started: 0, callIdx: 0, primaryTid: 0,
     traceFile: null, traceFilePath: null, traceDir: null,
     lastTotal: 0, stuckSecs: 0, stuckThreshold: 15,
+    selfKillBlocked: false, blockSelfKill: false,
 };
 const REC_SIZE = 272;
 const RING_RECS = 65536;             // ~17.6 MB

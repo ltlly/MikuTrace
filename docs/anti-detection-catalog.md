@@ -350,6 +350,19 @@ svc #0
 - **类型**: 工具交互限制（非反调试）
 - **解决方向**: 延长 duration、手动触发 SO 加载路径后重新 attach
 
+### #6 — 签名函数仅在特定操作触发 (2026-05-16)
+- **触发**: spawn hook 后正常刷 feed/搜索均未调用 nativeVerifySignBlock 或 nativeUpdateRsaPublicKeys
+- **表现**: Hook 成功放置，60s+ 交互窗口内 0 次调用
+- **根因**: 签名验证（verify）仅在特定操作触发（发布内容、支付等），非 feed 浏览
+- **影响 SO**: liblynxsecurity.so（com.ss.android.ugc.aweme）
+- **已确认 JNI 导出名**:
+  - `Java_com_bytedance_lynx_service_security_LynxSecurityService_nativeVerifySignBlock`
+  - `Java_com_bytedance_lynx_service_security_LynxSecurityService_nativeUpdateRsaPublicKeys`
+- **工具**: tools/spawn_hook.py + tools/native_sign_hooks_v4.js
+- **侧信道方案**: hook liblynxbase.so md5 函数（在普通浏览时可触发）:
+  - `_ZN4lynx4base3md5ERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE` (md5 string)
+  - `_ZN4lynx4base3md5EPKcm` (md5 data + length)
+
 ### #2 — fork-based anti-debug (race-attach 架构限制)
 - **触发**: fork() 子进程做 ptrace 守护
 - **表现**: `--child-trace-mode full` → attach F3 timeout
