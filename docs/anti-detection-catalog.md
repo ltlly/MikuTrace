@@ -327,6 +327,21 @@ svc #0
   - 扩展 consent driver 支持更多 UI 模式
   - 添加自定义 UI 自动化脚本支持
 
+### #6 — Spawn 模式成功 trace JNI_OnLoad (2026-05-16) ✅
+- **触发**: Python Frida API spawn → 注入 agent_cmodule_v5.js → device.resume()
+- **表现**: 成功 hook libkwsgmain.so JNI_OnLoad @ offset 0x45854
+- **结果**: 75,414 records / 92ms / 819,717 rec/s / dropped=0 / ret=0x10004 (JNI_VERSION_1_4)
+- **App**: com.kuaishou.nebula (快手)
+- **关键**: spawn 模式在进程启动前注入 → init 函数被成功拦截
+- **工具**: tools/spawn_trace_jni_onload.py
+
+### #7 — 抖音签名算法 SO 全貌 (2026-05-16)
+- **发现**: 抖音不使用 libcms.so/libnms.so，签名完全在 liblynxsecurity.so 中
+- **核心函数**: nativeVerifySignBlock (RSA 签名验证), nativeUpdateRsaPublicKeys
+- **已成功 trace**: nativeVerifySignBlock → 2,756 records / 149ms / dropped=0
+- **网络层**: 多个 BoringSSL 变体 (libssl.so, stable_cronet_libssl.so, libttboringssl.so)
+- **工具**: tools/spawn_sign_scan.py
+
 ### #5 — SO 懒加载，trace 窗口内未加载 (2026-05-16)
 - **触发**: agent attach 后等待 dlopen → SO 在 60s trace 窗口内从未加载
 - **表现**: `init -> waiting-dlopen` → trace 结束 → 0 calls
