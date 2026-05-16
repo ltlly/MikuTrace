@@ -22,6 +22,7 @@ import StringProvenancePanel, { type StringProvenanceRequest } from "./panels/st
 import TaintPanel, { type TaintOverlayResult } from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
+import CryptoPanel from "./panels/crypto/CryptoPanel";
 import type { FunctionEntry, RecordRow, TaintRow } from "./api/types";
 import type { UiTaskEntry, UiTaskReporter, UiTaskUpdate } from "./utils/taskCenter";
 
@@ -35,7 +36,8 @@ type LeftTab =
   | "slice"
   | "xref"
   | "sofilter"
-  | "settings";
+  | "settings"
+  | "crypto";
 type RightTab = "cfg" | "regs" | "hlil" | "dec" | "pseudoc";
 type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance" | "query";
 type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
@@ -888,6 +890,7 @@ export default function App() {
       xref: "Refs",
       sofilter: "SO Filter",
       settings: "Settings",
+      crypto: "Crypto",
     };
     return titles[leftTab()];
   });
@@ -1003,6 +1006,7 @@ export default function App() {
     if (leftTab() === "slice") return "Slice 在持久化依赖 CSR 上做一次 BFS，比 Taint 快得多。Backward 把当前 cursor 当 sink，列出所有它直接/间接依赖的 trace 行；填第二个 idx + 切到 intersection，会得到两个 cursor 的「共同祖先」（dataflow 交点）。Forward 是反方向 def→use，列出当前行的下游使用者。data only 丢弃控制流依赖。结果按 BFS 发现顺序（单种子）或 idx 升序（多种子求交/并）排列——不是按时间或函数。Slice 不模拟传播过程也没有 through_mem/cross_fn 这些开关；要看传播细节用 Taint。";
     if (leftTab() === "xref") return "Refs 上半部分是当前 PC 在 trace 中的其它执行位置；下半部分是按解码后的汇编文本做正则搜索。它不是静态代码引用分析，ret 这类通用指令只有在提交文本搜索后才会列出匹配。";
     if (leftTab() === "settings") return "Settings 显示后端 API、MemShadow 状态、密度和调试开关。API debug log 可在需要定位前端/后端交互时打开。";
+    if (leftTab() === "crypto") return "Crypto 面板整合了三层密码学检测：Memory（MemShadow 字节级常数匹配）、Instructions（trace 指令级立即数/寄存器常数命中，带 Real/ALU/Weak 判定）、Hardware（ARM Crypto Extensions 硬件指令统计）。Summary bar 给出综合判定（Software/Hardware/Mixed/None）。";
     return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
   });
 
@@ -1064,6 +1068,7 @@ export default function App() {
           {vtab("xref", "Refs", "当前 PC 执行历史和汇编文本搜索")}
           {vtab("sofilter", "SO Filter", "multi-SO 过滤状态")}
           {vtab("settings", "Settings", "显示和 API 状态")}
+          {vtab("crypto", "Crypto", "密码学常数扫描 + ARM CE 检测")}
         </aside>
 
         <section id="left-panel">
@@ -1134,6 +1139,13 @@ export default function App() {
                 apiDebug={apiDebug()}
                 onDebugVisibleChange={setDebugVisible}
                 onApiDebugChange={setApiDebug}
+              />
+            </div>
+            <div class="lp-tab" classList={{ active: leftTab() === "crypto" }}>
+              <CryptoPanel
+                idx={selectedIdx()}
+                onSelect={setSelectedIdx}
+                active={leftTab() === "crypto"}
               />
             </div>
           </div>

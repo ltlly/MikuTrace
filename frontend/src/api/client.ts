@@ -45,6 +45,7 @@ import type {
   AsmTokensResponse,
   CfgSvgResponse,
   BnCfgSvgForPcResponse,
+  CryptoAnalysisResponse,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -788,4 +789,10 @@ export async function fetchForwardDepTree(
   const r = await fx(`/api/forward-dep-tree${qs ? "?" + qs : ""}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/forward-dep-tree ${r.status}: ${await r.text()}`);
   return (await r.json()) as ForwardDepTreeResponse;
+}
+
+export async function fetchCryptoAnalysis(): Promise<CryptoAnalysisResponse> {
+  const r = await fx("/api/crypto-analysis");
+  if (!r.ok) throw new Error(`/api/crypto-analysis ${r.status}: ${await r.text()}`);
+  return (await r.json()) as CryptoAnalysisResponse;
 }

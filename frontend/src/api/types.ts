@@ -848,3 +848,74 @@ export interface PipelineResponse {
   hlil_text?: string;
   call_analysis?: unknown;
 }
+
+// ── /api/crypto-analysis ─────────────────────────────────────────────────
+
+export interface CryptoMemHit {
+  addr: string;
+  first_idx: number | null;
+}
+
+export interface CryptoMemPrimitive {
+  name: string;
+  pattern: string;
+  hit_count: number;
+  hits: CryptoMemHit[];
+}
+
+export interface CryptoMemScan {
+  status: string;
+  scanned: number;
+  primitives: CryptoMemPrimitive[];
+  any_hit: boolean;
+}
+
+export type ConstHitSource = "imm" | "reg" | "mem_r";
+export type ConstHitVerdict = "real" | "real_simd" | "alu_only" | "weak";
+export type ConstCategory = "hash" | "sym_cipher" | "ecc" | "crc" | "mac";
+
+export interface ConstHit {
+  fingerprint: string;
+  category: ConstCategory;
+  alg: string;
+  idx: number;
+  pc: string;
+  source: ConstHitSource;
+  verdict: ConstHitVerdict;
+  sample_value: number;
+}
+
+export interface FingerprintSummary {
+  name: string;
+  category: ConstCategory;
+  alg: string;
+  total_hits: number;
+  first_idx: number | null;
+  sample_idxs: number[];
+  verdict: ConstHitVerdict;
+}
+
+export interface ConstScanResult {
+  hits: ConstHit[];
+  summaries: FingerprintSummary[];
+  records_scanned: number;
+}
+
+export interface CryptoInstrHit {
+  mnemonic: string;
+  alg: string;
+  count: number;
+  first_idx: number | null;
+  sample_idxs: number[];
+}
+
+export interface CryptoInstrResult {
+  hits: CryptoInstrHit[];
+  records_scanned: number;
+}
+
+export interface CryptoAnalysisResponse {
+  mem_scan: CryptoMemScan;
+  const_scan: ConstScanResult;
+  crypto_instrs: CryptoInstrResult;
+}
