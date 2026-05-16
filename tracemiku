@@ -1718,6 +1718,10 @@ def main():
                       help="block 渲染粒度: full=全部 asm; hot=top exec_count + 冷块 stub "
                            "(默认, 单 fn 通常 < 60KB 适合 LLM); summary=只 fn 概要")
 
+    # crypto
+    p_crypto = sp.add_parser("crypto", help="Combined crypto analysis (constant scan + ARM CE detection)")
+    p_crypto.add_argument("call_dir", help="Per-call trace directory")
+
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="Rust v2 Solid SPA")
     p_web.add_argument("path", help="trace 目录 (run 或 per-call)")
@@ -1756,6 +1760,7 @@ def main():
     if args.subcommand == "info":    return cmd_info(args)
     if args.subcommand == "finalize":return cmd_finalize(args)
     if args.subcommand == "web":     return cmd_web(args)
+    if args.subcommand == "crypto":  return _run_rust_cli(["crypto", args.call_dir])
     if args.subcommand == "dec":     return cmd_dec(args)
     if args.subcommand == "probe":   return cmd_probe(args)
     ap.print_help(); return 1

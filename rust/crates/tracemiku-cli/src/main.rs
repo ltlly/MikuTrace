@@ -699,6 +699,11 @@ enum Cmd {
     },
     /// GET /api/crypto-scan.
     CryptoScan { trace_dir: PathBuf },
+    /// Run combined crypto analysis (const scan + crypto instr detection).
+    Crypto {
+        /// Per-call trace directory.
+        trace_dir: PathBuf,
+    },
     /// GET /api/hash-finalize-detect.
     HashFinalizeDetect {
         trace_dir: PathBuf,
@@ -2019,6 +2024,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::CryptoScan { trace_dir }) => {
             route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
+        }
+        Some(Cmd::Crypto { trace_dir }) => {
+            route_get_json(trace_dir, "/api/crypto-analysis".to_string()).await
         }
         Some(Cmd::HashFinalizeDetect {
             trace_dir,
