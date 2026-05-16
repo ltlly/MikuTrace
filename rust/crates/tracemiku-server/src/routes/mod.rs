@@ -8,6 +8,7 @@ pub mod bn_hlil;
 pub mod call_tree;
 pub mod cfg;
 pub mod cfg_svg;
+pub mod crypto_analysis;
 pub mod crypto_scan;
 pub mod data_chase;
 pub mod dec_fn;
@@ -77,6 +78,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/query", get(query::query_handler))
         .route("/api/search-pc", get(search_pc::search_pc_handler))
         .route("/api/crypto-scan", get(crypto_scan::crypto_scan_handler))
+        .route(
+            "/api/crypto-analysis",
+            get(crypto_analysis::crypto_analysis_handler),
+        )
         .route(
             "/api/hash-finalize-detect",
             get(hash_finalize::hash_finalize_detect_handler),

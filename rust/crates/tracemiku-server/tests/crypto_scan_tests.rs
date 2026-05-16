@@ -95,3 +95,20 @@ async fn crypto_scan_reports_zero_hits_for_non_crypto_bytes() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(v["any_hit"], false);
 }
+
+#[tokio::test]
+async fn crypto_analysis_returns_all_three_scan_types() {
+    let (_tmp, cd) = synth_call_dir(0x67452301);
+    let (status, v) = get(cd, "/api/crypto-analysis").await;
+    assert_eq!(status, StatusCode::OK);
+    // Check mem_scan present
+    assert!(v["mem_scan"]["scanned"].as_u64().unwrap() > 0);
+    assert!(v["mem_scan"]["primitives"].is_array());
+    // Check const_scan present
+    assert!(v["const_scan"]["records_scanned"].as_u64().unwrap() > 0);
+    assert!(v["const_scan"]["hits"].is_array());
+    assert!(v["const_scan"]["summaries"].is_array());
+    // Check crypto_instrs present
+    assert!(v["crypto_instrs"]["records_scanned"].as_u64().unwrap() > 0);
+    assert!(v["crypto_instrs"]["hits"].is_array());
+}

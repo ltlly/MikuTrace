@@ -43,10 +43,5 @@ fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanRespon
             any_hit: false,
         };
     }
-    if let Some(cached) = inner.crypto_scan.get() {
-        return cached.clone();
-    }
-    let response = scan_crypto_memory(mem);
-    let _ = inner.crypto_scan.set(response.clone());
-    response
+    scan_crypto_memory(mem)
 }
