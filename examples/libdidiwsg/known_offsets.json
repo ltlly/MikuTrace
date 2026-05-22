@@ -1,0 +1,36 @@
+{
+  "target": "libdidiwsg.so",
+  "app": "com.taxis99",
+  "version": "6.60.6",
+  "functions": {
+    "wsg_cipher": {
+      "offset": "0x30d6a4",
+      "signature": "void wsg_cipher(uint8_t key[10], uint8_t input[8], uint8_t output[8])",
+      "records": 1846,
+      "description": "Fully-unrolled SPN cipher, 124 S-box lookups + ~900 bitwise ops"
+    }
+  },
+  "data": {
+    "sbox": {
+      "offset": "0x24ac0",
+      "size": 2560,
+      "description": "256-byte S-box × 10 identical copies (register pressure optimization)"
+    },
+    "whitebox_tboxes": {
+      "offset": "0x20400",
+      "size": 163840,
+      "description": "10 rounds × 16 T-boxes × 1024 bytes (Chow white-box AES)"
+    },
+    "modified_sbox": {
+      "offset": "0x1f3d0",
+      "size": 256,
+      "description": "Modified AES S-box (permutation of standard AES S-box)"
+    }
+  },
+  "trace_config": {
+    "module_base_example": "0x6fad227000",
+    "trace_dir": "traces/99_wsgsig_v2",
+    "calls": 75,
+    "records_per_call": 1846
+  }
+}
