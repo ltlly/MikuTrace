@@ -57,6 +57,13 @@
 - [x] **IL pipeline passes now running**: constfold, DCE, Ghidra-style universal pipeline (simplify, const-prop, type-prop, struct recovery) called in decompile_trace().
 - [x] **Assembly hover values**: added `loadAddrTitle` for address token hover, register hover already existed.
 
+## Done — Infrastructure & Reliability (2025-06)
+
+- [x] **maxRecords CModule enforcement**: agent CModule `on_insn` checks hard cap, ring heartbeat auto-finalizes with `truncated: true`
+- [x] **`--remote` default USB-first**: `--remote` default changed from `"127.0.0.1:6699"` to `None`; USB is now default connection
+- [x] **`tracemiku probe`**: lightweight Interceptor export counting mode (no Stalker, no trace.bin); reports call frequency and avg latency
+- [x] **`make test-device`**: device integration test — cross-compile ARM64 C target, push, trace, verify output alignment/records
+
 ## Bugs — Remaining
 
 _All known bugs fixed. See fixed list below._

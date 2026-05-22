@@ -2,9 +2,9 @@ PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
-PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py tools/vm_replay_plan_eval.py examples/llm_cookbook.py
+PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py scripts/device_trace_integration.py tools/vm_replay_plan_eval.py examples/llm_cookbook.py
 
-.PHONY: help fmt test test-v2 test-fast test-slow smoke-web smoke-ui webui clean
+.PHONY: help fmt test test-v2 test-fast test-slow test-device smoke-web smoke-ui webui clean
 
 help:
 	@echo "make fmt       - rust cargo fmt"
@@ -47,6 +47,10 @@ test-fast:
 
 test-slow:
 	@echo "No separate v2 slow suite is defined. Use 'make test-v2'."
+
+test-device:
+	@echo "=== Device integration: cross-compile → push → trace → verify ==="
+	$(PYTHON) scripts/device_trace_integration.py
 
 smoke-web:
 	@if [ -z "$(RUN)" ]; then echo "usage: make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"; exit 2; fi

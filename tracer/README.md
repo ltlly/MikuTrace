@@ -8,12 +8,52 @@ JNI native fn 完整执行轨迹, dropped=0 保完整性.
 
 | 文件 | 模式 | 用途 |
 |---|---|---|
-| **`agent_cmodule_v5.js`** | **默认 (`--mode cmodule`)** | CModule on_insn + SPSC lock-free ring + 设备落盘. 1.5M rec/s, dropped=0, 完整保 |
-| `agent_cmodule_v3.js` | `--mode cmodule-v3` | 旧 cmodule, send blob via IPC. IPC 瓶颈 (~5MB/s), 高速 callout 下 91% drop. 留作回归对比. |
-| `agent_generic.js` | `--mode js` | JS putCallout, 无 cmodule. ~17K rec/s, dropped=0 (callout 慢匹配 IPC). CModule 不可用时手动 `--mode js`. |
+| **`_agent.js`** | **默认 (`--mode cmodule`)** | 模块化 TS agent (frida-compile 编译). CModule + SPSC lock-free ring + 设备落盘 + 插件化 anti-detect. 1.5M rec/s, dropped=0 |
+| `agent_cmodule_v5.js` | `--mode legacy` | 旧版单文件 agent (兼容回退) |
+| `src/` | — | TypeScript 模块化源码 |
 | `README.md` | — | 本文档 |
 
-## 架构: v5 设备落盘 (默认 cmodule 模式)
+## 模块化架构 (src/)
+
+```
+src/
+├── agent.ts              入口: rpc.exports + init + installFnHook
+├── core/
+│   ├── state.ts          全局 STATE 单例 + 常量 + 类型
+│   ├── utils.ts          通用工具 (log, getExport, ptrToStringMaybe, syscall names)
+│   ├── cmodule.ts        CModule C 源码生成 + 编译 (SPSC ring producer)
+│   ├── ring.ts           V8 consumer: flush ring to disk + watchdog + ensureTraceDir
+│   └── stalker.ts        Stalker.exclude + include-ranges + transform callback
+├── sidecar/
+│   ├── simd.ts           可选 SIMD/Q 寄存器 ring + flush
+│   └── semantic.ts       语义事件: libc/syscall/inline-SVC hooks
+├── hooks/
+│   ├── jni_vtable.ts     JSON-driven JNI vtable Interceptor hooks
+│   ├── fork_monitor.ts   fork/vfork/clone event logging
+│   └── boundary_diff.ts  Boundary memory diff (external write detection)
+└── anti_detect/
+    ├── plugin_interface.ts   AntiDetectPlugin 接口 + 注册表
+    ├── hide_rwx_maps.ts      隐藏 /proc/self/maps 中的 RWX 匿名页
+    └── patch_suicide.ts      Spec-driven patch obfuscated tgkill thunks
+```
+
+### 构建
+
+```bash
+cd tracer
+npm install          # 首次
+npm run build        # frida-compile src/agent.ts → _agent.js
+npm run watch        # 开发模式 (监听文件变动自动重编译)
+```
+
+### 添加新 anti-detect 插件
+
+1. 在 `src/anti_detect/` 创建 `my_plugin.ts`
+2. 实现 `AntiDetectPlugin` 接口 (`id`, `name`, `description`, `install()`)
+3. 在 `plugin_interface.ts` 的 `BUILTIN_PLUGINS` 注册
+4. 用户通过 `--anti-detect my_plugin` 启用
+
+## 架构: 设备落盘 (默认 cmodule 模式)
 
 ```
 [target app + frida-agent.so]                  [host]
@@ -45,7 +85,7 @@ trace 结束 (onLeave):
                                   rm device file
 ```
 
-**关键点 (vs 上一代 v3):**
+**关键点:**
 
 1. **不走 IPC**: agent 不 send blob 给 host. host 收的只是 trace-end metadata.
    trace data 走设备本地 UFS (~500MB/s) → adb gzip pipeline (~320MB/s effective).
@@ -63,18 +103,6 @@ trace 结束 (onLeave):
    实测压缩比 ~26x, 1.74 GB → 67 MB. pipeline `adb exec-out gzip -c | host gunzip`
    流式, 实测 1.74 GB pull 5.2s (USB 物理 21 MB/s × 15.4x).
 
-## 实测性能 (TB libsgmainso `doCommandNative` cmd=70102 cold-launch)
-
-| 模式 | 采集 rate | 完整 6.8M records 时长 | dropped | truncated |
-|---|---:|---:|---|---|
-| `js` (baseline) | 17K rec/s | 405s | 0 | False |
-| `cmodule-v3` | (callout 7.9M/s, IPC 5MB/s) | — | **91% 丢** | False |
-| **`cmodule` (v5)** | **1.56M rec/s** | **~7-9s** | **0** | **False** |
-
-14 calls / 67M records / 16 GB raw / 93s wall (43s 采集 + 50s gzip pull) **全 dropped=0**.
-
-总加速: baseline 跑 67M records 需要 ~3940s, v5 = 93.6s, **~42x**.
-
 ## 二进制 trace 格式
 
 每条记录 272 字节, little-endian:
@@ -89,7 +117,7 @@ trace 结束 (onLeave):
 0x10C  u32  inst         (raw 4-byte 机器码)
 ```
 
-Rust core / server / CLI 共用此格式, mode (v3/v5/js) 不影响 record 物理大小.
+Rust core / server / CLI 共用此格式.
 
 ## 可选 sidecar
 
@@ -109,9 +137,7 @@ GumTrace 类语义信息, 不改变主 trace 合同.
 ```
 
 默认 `--simd-sample-stride 1` 表示每条指令保存一次 q0-q31. 大 trace 可调高步长,
-例如 `--simd-sample-stride 8`, 降低额外 I/O 和磁盘放大. Host 拉回后会在
-`meta.json` 写入 `simd_sidecar = {file, bytes, record_size, records, dropped,
-sample_stride}`.
+例如 `--simd-sample-stride 8`, 降低额外 I/O 和磁盘放大.
 
 ### 语义事件 (`--semantic-events`)
 
@@ -125,27 +151,24 @@ sample_stride}`.
 - `source="jni_vtable"`: 已有 JSON-driven JNI hook 的镜像事件, 方便把 JNI 字符串
   与 syscall/libc 事件放进同一条时间线.
 
-`meta.json` 只保留 `semantic_events_count` 和前 200 条
-`semantic_events_sample`; 完整数据在 JSONL 中, 避免 meta 无界膨胀.
-
 ## 启动
 
 入口是仓库根的 `tracemiku trace ...`, 详见根 README. 这里只列直接的 mode 选项:
 
 ```bash
-# 默认 cmodule (v5, 推荐)
+# 默认 (模块化 agent)
 ./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
   --fn-offset 0x57770 --cmd 70102 --duration 600 \
   --cold-launch --out traces/run1
 
-# 强制 js 模式 (cmodule 不可用时)
-./tracemiku trace ... --mode js ...
-
-# v3 回归对比
-./tracemiku trace ... --mode cmodule-v3 ...
+# 旧版单文件 agent (兼容回退)
+./tracemiku trace ... --mode legacy ...
 
 # 可选: 采集 SIMD/Q 寄存器和 syscall/JNI/libc 语义事件
 ./tracemiku trace ... --simd-sidecar --simd-sample-stride 4 --semantic-events ...
+
+# 可选: 启用 anti-detect 插件
+./tracemiku trace ... --anti-detect hide_rwx_maps,patch_suicide ...
 ```
 
 ## Deep-trace 模式 (`--trace-deep`)
@@ -158,65 +181,26 @@ sample_stride}`.
 MemShadow 重建. 它不需要 `--trace-deep`; 非 deep 模式下目标函数所在模块仍会
 Stalker.exclude, 只额外挂 Interceptor 抓外部写副作用.
 
-```js
-// agent_cmodule_v5.js 关键变量
-STALKER_EXCLUDE_PATTERNS         // 安全可 Stalker.exclude 的 hostile 列表
-DEFAULT_BOUNDARY_DIFF_PATTERNS   // 默认空, 由 host --boundary-diff-patterns 注入
-DEEP_KEEP_EXCL = ["linker","linker64","libdl.so"]  // 任何模式下都 exclude
-```
-
-**坑**: `DEFAULT_BOUNDARY_DIFF_PATTERNS` 千万别塞 `pthread_*` / `malloc` /
-`__atomic_*` — Frida Interceptor 会自递归 SIGABRT (Frida 自己内部就用这些).
-所以默认空, host 显式传哪些就跟哪些. 对 x-sign 这类路径/文件元数据输入,
-优先传精确版本化片段, 例如 `--boundary-diff-patterns stat@@,stat64@@,fstatat@@`.
-`@@` 后缀会同时匹配 Bionic 的未版本化符号 `stat` 和带版本后缀的
-`stat@@LIBC`, 避免退化成过宽的 `stat` 子串匹配。
-
-## JSON-driven JNI hooks (Task #56)
+## JSON-driven JNI hooks
 
 `--jni-hooks tools/hooks/libart_jni.json` 加载一份 JSON spec, agent 据此用
 `Interceptor` 装 JNIEnv vtable 上的字符串相关函数. 输出走 `type='jni-hooks'` IPC
 消息, host 落盘 per-call `jni_hooks.jsonl`, schema = `{id, trace_idx, args:{...}, ret}`.
 
-JNIEnv 解析: Frida 17 删掉了 `Java` 全局, 直接 dlsym `JNI_GetCreatedJavaVMs` →
-`JavaVM->GetEnv` (vtable 偏移 `0x30`). 见 `getJNIEnvDirect()`.
+## Anti-detect 插件
 
-支持 arg type: `ptr / int / long / void / cstring / utf16 / bytes`. cstring 实现踩过
-坑 — `readUtf8String(maxLen)` 在 maxLen 跨过 unmapped page 时会 throw, 必须先 try
-不带 maxLen 的版本 (内部读到 NUL 就停).
+| 插件 ID | 说明 |
+|---|---|
+| `hide_rwx_maps` | hook libc `open/openat/read/pread64`, 当 fd 指向 `/proc/self/maps` 时把 anon rwx 行 (Frida 8MB block cache) 从结果里去掉 |
+| `patch_suicide` | 按 `--suicide-patch-spec` JSON spec overwrite 目标 SO 内联 svc#0 (tgkill 自杀) 入口. 需要版本化 spec 文件 |
 
-扩展新 hook 改 JSON 不改 JS. JSON 里 `vtable_offset` 是 hex 字符串, 例如
-`"0x538"` = NewStringUTF (libart Android 14/15 ABI).
-
-## Anti-debug 主动绕过 hooks
-
-| flag | agent 函数 | 说明 |
-|---|---|---|
-| `--patch-suicide` | `patchSgmainsoSuicide()` | 按 `--suicide-patch-spec` JSON spec overwrite 目标 SO 内联 svc#0 (tgkill 自杀) 入口. 默认 spec 为 `tools/hooks/sgmainso_6.8.260403_suicide.json`, 覆盖 libsgmainso 6.8.260403 的 6 个入口; 其他版本需传新 spec. |
-| `--hide-rwx-maps` | `installRwxMapsHider()` | hook libc `open/openat/read/pread64`, 当 fd 指向 `/proc/self/maps` 时把 anon rwx 行 (Frida 8MB block cache) 从结果里去掉 |
-| `--enable-fork-hook` | `installForkHooksOnce()` | hook libc `fork` / `vfork` / `clone` / `__bionic_clone` 抓 fork-event Tier 1 (parent_pc, child_pid, clone_flags), 写 per-call meta.json `fork_events`. P1-C M1, 反调试 fork 检测必开. **真机 PASS**, vfork() 因 Bionic 调用约定 hook 不到 (已知 gap). |
-| `--child-trace-mode={off,full,safe}` | host race-attach (P1-C M2) | full = fork-event 一到立即 attach child + 注入 same agent. 注意: ptrace-based Frida server (含 miku-srv) 上 attach fork()'d child 全部 F3 timeout (架构限制, child 继承 parent 的 ptrace 关系). 真正的 fork-based anti-debug 突破需 miku-shield (eBPF). |
-| `--no-fork-poll-child` | host bg poll (P1-C M3) | 默认开. fork-event 抓到 child PID 后起后台线程轮询 `/proc/<pid>/stat` 直到 child 退出, 记录 runtime_ms / last_state / comm 到 fork-event lifecycle. Tier 3 数据, 不依赖 attach. |
-
-**绕不过的层** (见根 [TODO.md](../TODO.md)): L3 fork+ptrace+SIGSEGV (race-attach
-F3, 架构性), L4 `frida_agent_main` symbol scan, L5 glib `gmain` 线程名.
-
-**实测警告 — `--trace-deep` 触发 anti-debug** (2026-05-02 真机, libsgmainso
-6.8.260403): Stalker per-symbol exclude libart 时, inline-hook libart `.text`
-被 anti-debug worker 检测 → tgkill self-kill. 完整复盘见
-[docs/anti-debug-libart.md](../docs/anti-debug-libart.md). P0-6 诊断已扩展自动
-建议关 `--trace-deep` (commit 6616d97).
+插件通过 `--anti-detect <id1>,<id2>` 或 `antiDetect: ["id1","id2"]` init opts 启用.
+新插件只需实现 `AntiDetectPlugin` 接口并注册, 无需改动 agent 核心代码.
 
 ## 已知问题
 
 - **anti-debug 检测线程名**: stealth server 把 `gum-js-loop` 改 `miku-js-loop`,
   pool-frida 改 pool-miku. 但 frida 仍创建 `gmain` / `gdbus` (glib 内部, 非 frida 特征).
-  详见 `vendor/frida-patched/README.md`.
 - **设备 UFS 容量**: 单次 cold-path 1.7 GB, 14 calls 16 GB. 设备 cache dir 写满会
-  触发 `pm clear` 时 throwm. 默认每次 trace 完 host pull 后 `rm` device 文件, 不
-  累积.
+  触发 `pm clear` 时 throw. 默认每次 trace 完 host pull 后 `rm` device 文件, 不累积.
 - **frida_agent_main symbol** 仍可被 anti-detect 扫到 (改它需要重 link agent.so).
-  当前 trace 工作正常, 后续 stealth 增强可考虑.
-- **Frida 真机 crash 三类根因** (memory `feedback_frida_crash_modes`):
-  Interceptor 自递归 / Stalker block-cache RWX 被反检测扫 / 冻结无 tombstone.
-  排查关键: tombstone 看 SI_USER + 1 帧 = anti-debug 自杀.

@@ -82,6 +82,12 @@ cargo test --manifest-path rust/Cargo.toml -p tracemiku-server --test test_taint
 uv run python scripts/rust_web_smoke.py <call_dir> --timeout 180
 uv run python scripts/web_api_perf_probe.py http://127.0.0.1:18900 --visible-ui-only
 
+# Device integration test (cross-compile + push + trace + verify)
+make test-device
+
+# Lightweight export profiling (no Stalker, no trace.bin)
+./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
+
 # Run the web UI
 ./tracemiku web <call_dir> --port 18900
 ./tracemiku web <call_dir> --so /path/to/libtarget.so --port 18900

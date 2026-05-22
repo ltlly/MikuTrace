@@ -1,0 +1,17 @@
+{
+  "name": "tracemiku-agent",
+  "version": "5.0.0",
+  "private": true,
+  "description": "traceMiku Frida agent — ARM64 instruction-level trace",
+  "main": "_agent.js",
+  "scripts": {
+    "build": "frida-compile src/agent.ts -o _agent.js -c",
+    "watch": "frida-compile src/agent.ts -o _agent.js -w",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/frida-gum": "^18.7.1",
+    "frida-compile": "^19.0.5",
+    "typescript": "^5.6.3"
+  }
+}

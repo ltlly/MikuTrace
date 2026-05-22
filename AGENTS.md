@@ -86,6 +86,12 @@ make webui RUN=<trace_dir> PORT=18900
 ./tracemiku query <call_dir> forward-taint --from 0 --reg x0 --max 500
 ./tracemiku dec <call_dir> --summary
 ./tracemiku dec <call_dir> --fn trace:F0 --tier hot
+
+# Lightweight export profiling (no Stalker)
+./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
+
+# Device integration test (requires NDK + adb device)
+make test-device
 ```
 
 The local Python environment is managed with `uv`; use `uv run python ...` for
