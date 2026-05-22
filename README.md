@@ -1,12 +1,18 @@
 # traceMiku
 
+> **[English](#english)** | **[中文](#中文)**
+
+---
+
+## English
+
 traceMiku is an Android real-device ARM64 instruction-level trace toolchain.
 
 The analysis v2 cutover is complete: Python `viewer/`, the old FastAPI `webui/`,
 and the old pytest parity suite have been removed. Runtime analysis now lives in
 Rust crates plus the Solid frontend.
 
-## Layout
+### Layout
 
 ```text
 tracer/                         Frida device agents
@@ -19,12 +25,22 @@ examples/                       sample target metadata/specs
 docs/                           design notes and parity history
 ```
 
-`./tracemiku` remains the top-level convenience wrapper:
+### Quick Start
+
+`./tracemiku` is the top-level convenience wrapper:
 
 ```bash
+# Capture a trace
 ./tracemiku trace --pkg com.example.app --so libtarget.so --method nativeFn --out traces/run1
+
+# Lightweight export profiling (no Stalker, no trace.bin)
+./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
+
+# Inspect traces
 ./tracemiku list traces/run1 --json
 ./tracemiku info traces/run1/calls/call_001_tid1_100r_1ms --json
+
+# Launch web UI
 ./tracemiku web traces/run1/calls/call_001_tid1_100r_1ms --port 18900
 ./tracemiku view traces/run1/calls/call_001_tid1_100r_1ms
 ```
@@ -39,7 +55,7 @@ For BN-backed HLIL, pass the target SO:
 The wrapper maps `--so` to `TRACEMIKU_BN_SO`. The BN sidecar command defaults to
 `tracemiku-bn-sidecar` and can be overridden with `TRACEMIKU_BN_SIDECAR`.
 
-## Current Web UI
+### Current Web UI
 
 The Solid UI is the primary workflow surface:
 
@@ -63,7 +79,7 @@ The Solid UI is the primary workflow surface:
   containing a trace PC, the sidecar can create a user function at the trace
   symbol entry or current PC, then retry HLIL/CFG.
 
-## Rust CLI
+### Rust CLI
 
 The Rust CLI can be run directly during development:
 
@@ -145,11 +161,12 @@ same scratch payload stream, rather than as a separate magic secret.
 See `docs/ai-cli-xsign-workflow.md` and `docs/xsign-reconstruction-progress.md`
 for the detailed workflow and proof log.
 
-## Development
+### Development
 
 ```bash
 make fmt
 make test-v2
+make test-device   # NDK cross-compile + adb push + trace + verify
 make smoke-web RUN=traces/debug_minimal/calls/call_001_tid22371_15426904r_11325ms SMOKE_ARGS='--all-surfaces'
 make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --executable /path/to/chrome'
 ```
@@ -158,11 +175,13 @@ make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --ex
 core/server/CLI tests, and the Solid frontend production build.
 `make smoke-web` runs the live Rust server API/perf gate. `make smoke-ui` runs
 the Playwright browser event smoke against an already running web server.
+`make test-device` cross-compiles an ARM64 test binary, pushes to device, traces
+it, and verifies the trace output is valid (requires NDK + adb device).
 
 The Rust server serves API routes under `/api/*`, `/openapi.json`, `/ws/jobs`,
 and falls back to the built SPA in `frontend/dist`.
 
-## Documentation
+### Documentation
 
 Current source-of-truth docs are:
 
@@ -192,7 +211,7 @@ Current source-of-truth docs are:
   current implementation log for the BFS-slice / forward-dep-tree /
   scan-limit / multi-seed work.
 
-## Trace Format
+### Trace Format
 
 `trace.bin` records are 272 bytes. Per-call directories use:
 
@@ -201,3 +220,146 @@ calls/call_<idx>_tid<T>_<records>r_<ms>ms/
 ```
 
 Format changes require an explicit meta version bump and migration path.
+
+---
+
+## 中文
+
+traceMiku 是一个安卓真机 ARM64 指令级 trace 全栈工具链。
+
+分析层 v2 迁移已完成：旧版 Python `viewer/`、FastAPI `webui/`、pytest 对等测试套件均已删除。
+运行时分析现在完全基于 Rust crates + Solid 前端。
+
+### 目录结构
+
+```text
+tracer/                         Frida 设备 agent
+frontend/                       Solid + Vite 单页应用
+rust/crates/tracemiku-core/     trace 解析、反汇编、CFG、污点、MemShadow、LLIL
+rust/crates/tracemiku-server/   axum API 服务器、静态前端、BN sidecar 桥
+rust/crates/tracemiku-cli/      Rust JSON CLI 包装和文件系统命令
+tools/hooks/                    JSON hook/类型 spec
+examples/                       示例目标元数据/spec
+docs/                           设计文档和迁移历史
+```
+
+### 快速上手
+
+`./tracemiku` 是顶层便捷入口：
+
+```bash
+# 采集 trace
+./tracemiku trace --pkg com.example.app --so libtarget.so --method nativeFn --out traces/run1
+
+# 轻量级导出函数计数 (不启动 Stalker, 无 trace.bin)
+./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
+
+# 查看 trace
+./tracemiku list traces/run1 --json
+./tracemiku info traces/run1/calls/call_001_tid1_100r_1ms --json
+
+# 启动 Web UI
+./tracemiku web traces/run1/calls/call_001_tid1_100r_1ms --port 18900
+./tracemiku view traces/run1/calls/call_001_tid1_100r_1ms
+```
+
+`web` 和 `view` 都会启动 Rust v2 服务器并提供 `frontend/dist` 静态文件。
+如需 Binary Ninja HLIL 支持，传入目标 SO：
+
+```bash
+./tracemiku web <call_dir> --so /path/to/libtarget.so
+```
+
+包装器将 `--so` 映射到 `TRACEMIKU_BN_SO`。BN sidecar 命令默认为
+`tracemiku-bn-sidecar`，可通过 `TRACEMIKU_BN_SIDECAR` 环境变量覆盖。
+
+### 当前 Web UI
+
+Solid UI 是主要工作面：
+
+- Records 虚拟滚动、键盘导航，在范围重取时保持稳定行标识。
+- Records 可叠加污点分析结果实时高亮命中行或淡化非命中行，不影响虚拟滚动布局。
+- Records 支持右键菜单的 trace-local 行标记：颜色、笔记、删除线、淡化状态。
+  标记持久化在浏览器 localStorage 中（按 trace 路径隔离，不修改 trace 文件）。
+- `g` 打开跳转命令：`#240` 或 `240` 跳到 trace 索引，`0x...` 跳到该 PC 首次执行的记录。
+- CFG 面板在同步开启时跟随光标。从函数列表手动选择函数会切换到 CFG 并暂停同步，
+  避免当前光标立即覆盖手动选择。
+- 大 trace CFG 使用代表性概览 SVG；API 报告已绘制和隐藏边数，不会与完整图混淆。
+- CFG 平移/缩放交互式操作；`Ctrl+滚轮` 以鼠标为中心缩放。
+- BN HLIL/Pseudo C 跟随当前 trace PC。如果 BN 中没有包含该 PC 的函数，
+  sidecar 会在 trace 符号入口或当前 PC 创建用户函数后重试。
+
+### Rust CLI
+
+开发期间可直接运行 Rust CLI：
+
+```bash
+cd rust
+cargo run -p tracemiku-cli -- info <call_dir> --json
+cargo run -p tracemiku-cli -- records <call_dir> --start 0 --count 50
+cargo run -p tracemiku-cli -- functions <call_dir>
+cargo run -p tracemiku-cli -- dec-summary <call_dir>
+cargo run -p tracemiku-cli -- dec-fn <call_dir> trace:F0 --tier hot
+```
+
+CLI 也是 LLM 友好的 trace 分析主界面，提供带类型的 JSON 命令用于 web API
+路由和更高层次的溯源工具：
+
+```bash
+./tracemiku api <call_dir> /api/backtrace -p idx=443 -p limit=64
+rust/target/debug/tracemiku-cli output-map <call_dir> --key x-sign --summary --semantic-writer-map
+rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr 0x1234 --before-idx 1000 --compact
+rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --summary
+```
+
+最近的 AI 分析功能包括：
+
+- 持久化 `analysis-index.v2.bin` / `analysis-full.v1.bin` sidecar 索引，支持指纹失效
+- 依赖 DAG 查询 (`/api/dep-graph`, `dep-graph` CLI)，从 trace 索引/寄存器/内存地址出发
+- 反向 BFS 切片 (`/api/bfs-slice`)，多种子 union/intersection 模式，用于"共同祖先"查询
+- 正向 def→use DAG (`/api/forward-dep-tree`)
+- 污点扫描限制看门狗 (`scan_limit`/`stop_reason`)
+- 输出驱动工作流：从 JNI 字符串或已知字节追踪到内存写入者
+- 通用 VM 动态 trace 辅助工具 (`vm-slice`, `vm-ops`, `vm-backstep`, `vm-backchain`)
+- `crypto-scan`：检测常见加密/散列魔数常量（MD5、SHA、AES、SM3/4、CRC32C 等）
+
+### 开发
+
+```bash
+make fmt
+make test-v2
+make test-device   # NDK 交叉编译 + adb push + trace + 验证
+make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces'
+make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium'
+```
+
+`make test-v2` 运行 Python 语法检查、Rust fmt 检查、Rust 各 crate 测试、Solid 前端生产构建。
+`make smoke-web` 运行实时 Rust 服务器 API/性能关卡。
+`make smoke-ui` 运行 Playwright 浏览器事件冒烟测试。
+`make test-device` 交叉编译 ARM64 测试二进制，推送到设备，trace 并验证输出
+（需要 NDK + adb 设备连接）。
+
+Rust 服务器在 `/api/*`、`/openapi.json`、`/ws/jobs` 下提供 API，
+其余路径回退到 `frontend/dist` 中的构建产物。
+
+### 文档
+
+当前权威文档：
+
+- `README.md`：面向用户的快速上手和当前 UI 行为。
+- `AGENTS.md` / `CLAUDE.md`：仓库内 agent 规则和工作流。
+- `TODO.md`：唯一的 backlog。完成的实施计划不保留为活跃 TODO。
+- `REFERENCES.md`：外部算法/工具引用和当前测试关卡。
+- `docs/PER_CALL_TRACE_DESIGN.md`：per-call trace 布局和记录合同。
+- `docs/trace-decompiler-design.md`：反编译器/BN/HLIL 路由设计。
+- `docs/ai-cli-xsign-workflow.md`：使用 CLI 溯源/VM/内存/JNI 命令的 AI 工作流。
+
+### Trace 格式
+
+`trace.bin` 每条记录 272 字节。Per-call 目录命名：
+
+```text
+calls/call_<idx>_tid<T>_<records>r_<ms>ms/
+```
+
+格式变更需要显式 meta 版本号升级和迁移路径。
