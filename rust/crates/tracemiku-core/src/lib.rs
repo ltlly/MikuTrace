@@ -14,6 +14,7 @@ pub mod bfs_slice;
 pub mod call_analysis;
 pub mod calltree;
 pub mod cfg;
+pub mod crypto_scan;
 pub mod decompiler;
 pub mod disasm;
 pub mod forward_dep_tree;

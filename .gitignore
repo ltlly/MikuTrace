@@ -56,7 +56,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 uv.lock
-
 # Tracer (frida-compile)
 tracer/node_modules/
 tracer/_agent.js
+.claude/scheduled_tasks.lock
