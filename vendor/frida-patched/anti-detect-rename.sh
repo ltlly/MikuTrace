@@ -45,7 +45,12 @@ apply_sed () {
   fi
   local before
   before=$(grep -c "$(echo "$pat" | sed 's|s/||; s|/g$||; s|/[^/]*$||')" "$file" 2>/dev/null || echo 0)
-  sed -i "$pat" "$file"
+  # macOS BSD sed 需要 -i '' ; GNU sed 用 -i
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$pat" "$file"
+  else
+    sed -i '' "$pat" "$file"
+  fi
   echo "  [✓] $desc — $file (matches before: $before)"
 }
 
