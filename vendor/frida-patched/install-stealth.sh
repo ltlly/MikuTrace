@@ -11,7 +11,7 @@
 
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BIN="$HERE/frida-server-17-stealth"
+BIN="$HERE/miku-trace-server-17.9.11"
 PORT="${1:-6699}"
 DEVICE_PATH="/data/local/tmp/.miku-srv"
 

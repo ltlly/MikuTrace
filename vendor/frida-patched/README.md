@@ -6,11 +6,7 @@
 
 | 文件 | 体积 | 基线 | 说明 |
 |---|---:|---|---|
-| `miku-trace-server-17.9.11` | 51MB | frida 17.9.11 | **最新**: 全量 patches (见下) |
-| `frida-server-17-patched`   | 53MB | frida 17.9.x  | 旧 — 仅 codeslab fallback |
-| `frida-server-17-stealth`   | 53MB | frida 17.9.x  | 旧 — codeslab + sed 重命名 |
-
-**新项目请用 `miku-trace-server-17.9.11`**.
+| `miku-trace-server-17.9.11` | 51MB | frida 17.9.11 | 全量 patches (见下), 已验证 attach + Stalker |
 
 ## 集成 Patches
 
@@ -62,11 +58,15 @@ ARM64 + ARM32 Stalker `is_out_of_space()` 未计算 pending literal pool 大小,
 | 0008: pool-frida       | 线程池名前缀去特征 |
 | 0009: memfd-name-jit-cache | memfd 名称从 `frida-*` → `jit-cache` 伪装 |
 
-### 5. frida_agent_main 符号名重命名
+### 5. frida_agent_main 符号保留 (Florida 0003 回退)
 
-来源: Florida 0003 (手动应用, 解决行号冲突)
+来源: Florida 0003 patch 原本将 `frida_agent_main` → `main`, 但 Vala 编译器生成的
+符号名是 `frida_agent_main` (由 `namespace Frida.Agent` + `main()` 自动生成),
+且 linker export files (.def/.version/.symbols) 必须与之匹配. 重命名 caller 侧而
+不修改 Vala 源码会导致 `undefined symbol: main` → agent 注入失败.
 
-所有 `"frida_agent_main"` 入口符号 → `"main"`, 防止 SO 符号表扫描检测 frida agent 注入.
+**当前状态**: 已回退, 保持 `frida_agent_main` 原始符号. 检测规避依赖其他 patches
+(agent SO UUID 随机化 + memfd jit-cache 重命名) 来隐藏 agent 存在.
 
 ### 参考但未直接应用
 
@@ -94,9 +94,10 @@ ARM64 + ARM32 Stalker `is_out_of_space()` 未计算 pending literal pool 大小,
 ./build-from-source.sh
 ```
 
-工作目录: `<repo>/build/frida-build/` (gitignored), 包含:
-- `frida/` — frida 17.9.11 源码 (`--depth 1`)
-- frida 会自动下载 toolchain + SDK 到 `frida/deps/`
+源码目录: `~/Code/frida/` (持久化, 可重复修改和重编译), 包含:
+- frida 17.9.11 完整源码 + 已 apply 的 patches
+- `patches-ref/florida/` 和 `patches-ref/rusda/` — 参考 patch repos
+- frida 会自动下载 toolchain + SDK 到 `deps/`
 - 需要 `ANDROID_NDK_ROOT` 指向 NDK r29
 
 代理设置: `export https_proxy=http://127.0.0.1:7897` 或脚本自动检测.
@@ -117,15 +118,12 @@ ARM64 + ARM32 Stalker `is_out_of_space()` 未计算 pending literal pool 大小,
 
 | 文件 | 说明 |
 |---|---|
-| `miku-trace-server-17.9.11`  | **最新** binary — 全量 patches |
-| `frida-server-17-patched`    | 旧 — 仅 codeslab fallback |
-| `frida-server-17-stealth`    | 旧 — codeslab + sed 重命名 |
+| `miku-trace-server-17.9.11`  | binary — 全量 patches, 51MB ELF arm64 |
 | `gummemory-posix.patch`      | codeslab fallback patch (可供参考) |
 | `anti-detect-rename.sh`      | 反检测重命名脚本 (sed-based, idempotent) |
 | `build-from-source-mac.sh`   | macOS 一键构建脚本 |
 | `build-from-source.sh`       | Linux 一键构建脚本 |
-| `install.sh`                 | 安装旧 patched 版 |
-| `install-stealth.sh`         | 安装 stealth 版到设备 |
+| `install-stealth.sh`         | 推送 + 启动 stealth server 到设备 |
 | `SHA256SUMS`                 | 完整性校验 |
 
 ## 上游引用
