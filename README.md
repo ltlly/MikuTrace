@@ -55,6 +55,24 @@ For BN-backed HLIL, pass the target SO:
 The wrapper maps `--so` to `TRACEMIKU_BN_SO`. The BN sidecar command defaults to
 `tracemiku-bn-sidecar` and can be overridden with `TRACEMIKU_BN_SIDECAR`.
 
+#### Frida runtime
+
+Tracing on hardened targets uses a self-built, patched frida-server vendored at
+`vendor/frida-patched/miku-trace-server-17.9.11` (frida 17.9.11, arm64, ~53 MB).
+It bundles the Stalker literal-pool overflow fix (frida-gum PR #1113), an
+Android-14 codeslab allocation fallback, and `frida`→`miku` anti-detect renames.
+Push and launch it with:
+
+```bash
+cd vendor/frida-patched
+./install-stealth.sh        # → /data/local/tmp/.miku-srv + adb forward tcp:6699
+```
+
+Host-side `frida-python`/`frida-tools` are unmodified (the D-Bus wire protocol is
+unchanged). See `vendor/frida-patched/README.md` for the full patch list and the
+from-source build scripts, and `docs/anti-detection-catalog.md` for the
+detection-vector coverage matrix.
+
 ### Current Web UI
 
 The Solid UI is the primary workflow surface:
@@ -78,6 +96,10 @@ The Solid UI is the primary workflow surface:
 - BN-backed HLIL/Pseudo C follows the current trace PC. If BN has no function
   containing a trace PC, the sidecar can create a user function at the trace
   symbol entry or current PC, then retry HLIL/CFG.
+- The Crypto panel (`frontend/src/panels/crypto/CryptoPanel.tsx`) has Memory,
+  Instructions, and Hardware sub-tabs over `/api/crypto-analysis`: MemShadow
+  byte-pattern matches, instruction-level cryptographic-constant hits with a
+  verdict, and ARM Crypto Extensions hardware-instruction counts.
 
 ### Rust CLI
 
@@ -150,6 +172,11 @@ Recent AI-analysis additions include:
 - `crypto-scan` covers common crypto/hash magic constants beyond IVs, including
   MD5/SHA round constants, AES/SM3/SM4 tables, CRC32C, FNV, Murmur3, xxHash,
   Poly1305, ChaCha20, and RC4 identity-table markers.
+- `./tracemiku crypto <call_dir>` (Rust CLI `crypto` subcommand) runs the
+  combined `/api/crypto-analysis`: MemShadow byte-pattern matches, instruction
+  constant hits with verdict classification, and ARM Crypto Extensions hardware
+  instruction counts in one JSON payload (`/api/crypto-scan` for constants
+  only).
 
 The current `libsgmainso`/`x-sign` reconstruction is tracked as an example, not
 as hardcoded tool behavior. The partial simulator in
@@ -204,6 +231,8 @@ Current source-of-truth docs are:
   extracting from libsgmainso.so.
 - `docs/android-analysis-frontier-report.md`: Android analysis pain points,
   product/UI direction, and current bug triage.
+- `docs/anti-detection-catalog.md`: L1–L10 anti-debug / anti-trace / anti-Frida
+  detection-vector taxonomy and traceMiku's current coverage status.
 - `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
   historical Rust/Solid cutover design and parity map.
 - `docs/peer-trace-tools-survey.md` / `docs/peer-trace-tools-algorithms.md` /
@@ -273,6 +302,22 @@ docs/                           设计文档和迁移历史
 包装器将 `--so` 映射到 `TRACEMIKU_BN_SO`。BN sidecar 命令默认为
 `tracemiku-bn-sidecar`，可通过 `TRACEMIKU_BN_SIDECAR` 环境变量覆盖。
 
+#### Frida 运行时
+
+对加固目标采集 trace 使用自构建的 patched frida-server，路径
+`vendor/frida-patched/miku-trace-server-17.9.11`（frida 17.9.11，arm64，约 53 MB）。
+集成 Stalker literal-pool 越界修复（frida-gum PR #1113）、Android 14 codeslab
+分配兜底、`frida`→`miku` 反检测重命名。推送并启动：
+
+```bash
+cd vendor/frida-patched
+./install-stealth.sh        # → /data/local/tmp/.miku-srv + adb forward tcp:6699
+```
+
+Host 端 `frida-python`/`frida-tools` 不改（D-Bus wire protocol 未变）。完整 patch
+列表和源码构建脚本见 `vendor/frida-patched/README.md`，检测手段覆盖矩阵见
+`docs/anti-detection-catalog.md`。
+
 ### 当前 Web UI
 
 Solid UI 是主要工作面：
@@ -288,6 +333,10 @@ Solid UI 是主要工作面：
 - CFG 平移/缩放交互式操作；`Ctrl+滚轮` 以鼠标为中心缩放。
 - BN HLIL/Pseudo C 跟随当前 trace PC。如果 BN 中没有包含该 PC 的函数，
   sidecar 会在 trace 符号入口或当前 PC 创建用户函数后重试。
+- Crypto 面板（`frontend/src/panels/crypto/CryptoPanel.tsx`）含 Memory /
+  Instructions / Hardware 子标签，基于 `/api/crypto-analysis`：MemShadow 字节
+  模式命中、指令级加密常量命中（带 verdict 判定）、ARM Crypto Extensions 硬件
+  指令计数。
 
 ### Rust CLI
 
@@ -322,6 +371,9 @@ rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --summ
 - 输出驱动工作流：从 JNI 字符串或已知字节追踪到内存写入者
 - 通用 VM 动态 trace 辅助工具 (`vm-slice`, `vm-ops`, `vm-backstep`, `vm-backchain`)
 - `crypto-scan`：检测常见加密/散列魔数常量（MD5、SHA、AES、SM3/4、CRC32C 等）
+- `./tracemiku crypto <call_dir>`（Rust CLI `crypto` 子命令）：运行组合
+  `/api/crypto-analysis`，一次返回 MemShadow 字节模式命中、指令常量命中（带
+  verdict）和 ARM Crypto Extensions 硬件指令计数（仅常量用 `/api/crypto-scan`）
 
 ### 开发
 
@@ -353,6 +405,8 @@ Rust 服务器在 `/api/*`、`/openapi.json`、`/ws/jobs` 下提供 API，
 - `docs/PER_CALL_TRACE_DESIGN.md`：per-call trace 布局和记录合同。
 - `docs/trace-decompiler-design.md`：反编译器/BN/HLIL 路由设计。
 - `docs/ai-cli-xsign-workflow.md`：使用 CLI 溯源/VM/内存/JNI 命令的 AI 工作流。
+- `docs/anti-detection-catalog.md`：L1–L10 反调试/反 trace/反 Frida 检测手段
+  分类目录与 traceMiku 当前覆盖状态。
 
 ### Trace 格式
 

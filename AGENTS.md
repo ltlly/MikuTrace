@@ -133,7 +133,13 @@ browser automation, or a real adb device.
 - `rust/crates/tracemiku-core/src/cfg.rs`: trace CFG rebuild and graph metadata.
 - `rust/crates/tracemiku-core/src/taint.rs`: forward/backward taint with dependency metadata.
 - `rust/crates/tracemiku-core/src/memshadow.rs`: sparse byte-level memory shadow sidecar.
-- `rust/crates/tracemiku-core/src/decompiler/` and `llil/`: IR markdown and in-house LLIL.
+- `rust/crates/tracemiku-core/src/decompiler/`: TraceIR (LLM-friendly skeleton
+  IR) plus `il_pipeline` (trace-enhanced ARM64 lift through all three layers).
+- `rust/crates/tracemiku-core/src/llil/`, `mlil/`, `hlil/`: in-house three-layer
+  IL (Low/Medium/High-Level IL) with LLIL→MLIL→HLIL lowering and C-like
+  rendering. No LLM or BN dependency.
+- `rust/crates/tracemiku-core/src/crypto_scan.rs`: constant-fingerprint + ARM
+  Crypto Extensions scan (backs `/api/crypto-scan` and `/api/crypto-analysis`).
 - `rust/crates/tracemiku-server/src/routes/`: JSON API route handlers.
 - `rust/crates/tracemiku-cli/src/`: Rust CLI command implementations.
 - `scripts/rust_web_smoke.py`: real server smoke/perf gate.
@@ -175,15 +181,23 @@ when possible, `scripts/rust_web_smoke.py` on a real large trace.
 
 ## Decompile Routes
 
-Both decompile routes are active, but web decompile/LLM UI can be hidden while
-latency work is in progress.
+All decompile routes below are active, but the web decompile/LLM UI can be
+hidden while latency work is in progress. This mirrors the CLAUDE.md "Decompile
+Routes" section — keep the two files in sync.
 
-- IR markdown + optional LLM: Rust `tracemiku-core::decompiler` plus server
-  `/api/dec/*` routes.
-- LLIL: Rust `tracemiku-core::llil` plus `/api/llil/*` routes. This path does
-  not depend on an LLM.
+- TraceIR (LLM-friendly): Rust `tracemiku-core::decompiler` plus server
+  `/api/dec/*` routes. Skeleton IR designed to be fed to a model; the LLM call
+  path is opt-in.
+- In-house three-layer IL pipeline: Rust `tracemiku-core::llil`,
+  `tracemiku-core::mlil`, `tracemiku-core::hlil` plus `/api/llil/*` routes.
+  LLIL→MLIL→HLIL lowering with C-like rendering. Does not depend on an LLM or BN.
+- Trace-enhanced decompiler: `tracemiku-core::decompiler::il_pipeline` lifts
+  ARM64 through all three layers enriched with runtime trace values.
 
-Do not merge or delete either route without an explicit project decision.
+Do not merge or delete any of these routes (TraceIR LLM route, the in-house
+three-layer LLIL→MLIL→HLIL pipeline, or `il_pipeline`) without an explicit
+project decision. The MLIL/HLIL layers are separate from the LLM-dependent
+TraceIR route; together they provide a fully local three-layer decompiler path.
 
 ## Device Notes
 

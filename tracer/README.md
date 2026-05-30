@@ -7,8 +7,9 @@
 ## English
 
 Frida 17 Stalker full-instruction + full-register trace agent collection.
-Works with the stealth frida-server (`vendor/frida-patched/frida-server-17-stealth`)
-to capture complete execution traces of JNI native functions in OLLVM-protected
+Works with the patched stealth frida-server
+(`vendor/frida-patched/miku-trace-server-17.9.11`, frida 17.9.11) to capture
+complete execution traces of JNI native functions in OLLVM-protected
 large libraries on ARM64 Android real devices, with dropped=0 integrity guarantee.
 
 ### Files
@@ -162,9 +163,9 @@ Entry point is `tracemiku trace ...` from the repo root. Mode options:
 
 ## 中文
 
-Frida 17 Stalker 全指令 + 全寄存器 trace 的 agent 集合。配合 stealth frida-server
-(`vendor/frida-patched/frida-server-17-stealth`) 在 ARM64 Android 真机抓 OLLVM 大库
-JNI native fn 完整执行轨迹，dropped=0 保完整性。
+Frida 17 Stalker 全指令 + 全寄存器 trace 的 agent 集合。配合 patched stealth
+frida-server (`vendor/frida-patched/miku-trace-server-17.9.11`，frida 17.9.11)
+在 ARM64 Android 真机抓 OLLVM 大库 JNI native fn 完整执行轨迹，dropped=0 保完整性。
 
 ### 文件
 
