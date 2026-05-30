@@ -432,6 +432,8 @@ fn strip_trailing_goto(exprs: &mut Vec<HlilExpr>) {
 /// Restructure flat goto-based HLIL into structured HLIL with If/Else,
 /// While, and DoWhile expressions.
 pub fn restructure_hlil(exprs: &[HlilExpr]) -> Vec<HlilExpr> {
+    // Defensive: ensure the recursion counter starts clean for this top-level call.
+    RESTRUCTURE_DEPTH.with(|d| d.set(0));
     let blocks = build_cfg(exprs);
     if blocks.len() <= 1 {
         return exprs.to_vec();
