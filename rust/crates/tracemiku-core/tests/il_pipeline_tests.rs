@@ -4,12 +4,12 @@
 //! including the trace-enhanced decompiler.
 
 use tracemiku_core::decompiler::il_pipeline::{decompile_static, decompile_trace, TraceContext};
+use tracemiku_core::hlil::lower::lower_mlil_to_hlil;
 use tracemiku_core::llil::lift::lift_arm64;
 use tracemiku_core::llil::pass_flag_elim::flag_elim_block;
 use tracemiku_core::llil::pass_var_unify::unify_vars;
 use tracemiku_core::llil::ssa::ssa_block;
 use tracemiku_core::mlil::lower::lower_llil_to_mlil;
-use tracemiku_core::hlil::lower::lower_mlil_to_hlil;
 
 /// Helper: lift a single instruction and return LLIL expressions.
 fn lift(pc: u64, inst: u32) -> Vec<tracemiku_core::llil::expr::LlilExpr> {
@@ -94,14 +94,12 @@ fn llil_lifts_csel() {
 #[test]
 fn flag_elim_folds_cmp_into_if_eq() {
     let cmp = lift(0x1000, 0xeb01001f); // cmp x0, x1 -> n, z, c, v
-    // b.eq 0x2000
+                                        // b.eq 0x2000
     let beq = tracemiku_core::llil::expr::LlilExpr::new(
         tracemiku_core::llil::expr::LlilOp::If,
         1,
         vec![
-            tracemiku_core::llil::expr::expr(
-                tracemiku_core::llil::expr::flag_cond("eq"),
-            ),
+            tracemiku_core::llil::expr::expr(tracemiku_core::llil::expr::flag_cond("eq")),
             tracemiku_core::llil::expr::LlilOperand::U64(0x2000),
             tracemiku_core::llil::expr::LlilOperand::U64(0x1008),
         ],
@@ -191,7 +189,9 @@ fn llil_to_mlil_converts_regs_to_vars() {
     // MLIL should have SetVar (not SetReg)
     assert_eq!(mlil[0].op, tracemiku_core::mlil::expr::MlilOp::SetVar);
     // The return should be preserved
-    assert!(mlil.iter().any(|e| e.op == tracemiku_core::mlil::expr::MlilOp::Ret));
+    assert!(mlil
+        .iter()
+        .any(|e| e.op == tracemiku_core::mlil::expr::MlilOp::Ret));
 }
 
 #[test]
@@ -208,7 +208,10 @@ fn llil_to_mlil_detects_struct_access() {
     let rendered = tracemiku_core::mlil::render::render_mlil_block(&mlil);
     // LoadStruct renders as *(type *)((base) + offset) — clean C dereference
     assert!(rendered.contains("*"), "expected deref in: {rendered}");
-    assert!(rendered.contains("0x10"), "expected 0x10 offset in: {rendered}");
+    assert!(
+        rendered.contains("0x10"),
+        "expected 0x10 offset in: {rendered}"
+    );
 }
 
 // ============================================================================
@@ -217,8 +220,8 @@ fn llil_to_mlil_detects_struct_access() {
 
 #[test]
 fn mlil_to_hlil_converts_setvar_to_assign() {
-    use tracemiku_core::mlil::expr::*;
     use tracemiku_core::llil::pass_var_unify::VarNameMap;
+    use tracemiku_core::mlil::expr::*;
     let mlil = vec![
         set_var("v0", konst(42), 0x1000),
         MlilExpr::new(MlilOp::Ret, 8, vec![], 0x1004),
@@ -231,8 +234,8 @@ fn mlil_to_hlil_converts_setvar_to_assign() {
 
 #[test]
 fn mlil_to_hlil_converts_load_to_deref() {
-    use tracemiku_core::mlil::expr::*;
     use tracemiku_core::llil::pass_var_unify::VarNameMap;
+    use tracemiku_core::mlil::expr::*;
     let mlil = vec![load(8, var("ptr"), 0x1000)];
     let names = VarNameMap::new();
     let (hlil, _) = lower_mlil_to_hlil(&mlil, &names);
@@ -241,8 +244,8 @@ fn mlil_to_hlil_converts_load_to_deref() {
 
 #[test]
 fn mlil_to_hlil_converts_store_to_assign_deref() {
-    use tracemiku_core::mlil::expr::*;
     use tracemiku_core::llil::pass_var_unify::VarNameMap;
+    use tracemiku_core::mlil::expr::*;
     let mlil = vec![store(4, var("ptr"), var("val"), 0x1000)];
     let names = VarNameMap::new();
     let (hlil, _) = lower_mlil_to_hlil(&mlil, &names);
@@ -321,8 +324,11 @@ fn full_pipeline_multi_instruction_block() {
         (0x1024, 0xd65f03c0), // ret
     ]);
     // Every instruction in this set is supported
-    assert!(output.llil_coverage > 0.9,
-        "low coverage: {:.2}", output.llil_coverage);
+    assert!(
+        output.llil_coverage > 0.9,
+        "low coverage: {:.2}",
+        output.llil_coverage
+    );
     assert!(output.mlil_count > 0);
     assert!(output.hlil_count > 0);
 }
@@ -346,6 +352,67 @@ fn full_pipeline_with_trace_context() {
     // Trace contexts should be preserved
     assert_eq!(output.trace_contexts.len(), 1);
     assert_eq!(output.trace_contexts[0].exec_count, 1);
+}
+
+#[test]
+fn decompile_trace_surfaces_observed_runtime_values() {
+    // ldr x0, [x1]; str x0, [x1]; ret
+    // The ldr survives DCE because str consumes x0, so its rendered LLIL line
+    // is a stable target for the observed-value annotation.
+    let insns = vec![
+        (0x1000u64, 0xf9400020u32), // ldr x0, [x1]
+        (0x1004u64, 0xf9000020u32), // str x0, [x1]
+        (0x1008u64, 0xd65f03c0u32), // ret
+    ];
+
+    // Context positionally aligned to insns: the ldr loaded 0x2a into x0.
+    let mut ldr_ctx = TraceContext {
+        exec_count: 1,
+        ..Default::default()
+    };
+    ldr_ctx.regs_before.insert("x0".to_string(), 0);
+    ldr_ctx.regs_before.insert("x1".to_string(), 0x4000);
+    ldr_ctx.regs_after.insert("x0".to_string(), 0x2a); // loaded value
+    ldr_ctx.regs_after.insert("x1".to_string(), 0x4000); // unchanged
+    let contexts = vec![
+        ldr_ctx,
+        TraceContext {
+            exec_count: 1,
+            ..Default::default()
+        },
+        TraceContext {
+            exec_count: 1,
+            ..Default::default()
+        },
+    ];
+
+    let output = decompile_trace(&insns, &contexts, "f");
+
+    // Structured: the value the ldr produced (x0 changed 0 -> 0x2a) is surfaced,
+    // and the unchanged x1 is NOT reported.
+    assert!(
+        output
+            .observed_annotations
+            .iter()
+            .any(|a| a.pc == 0x1000 && a.text.contains("x0=0x2a")),
+        "missing structured observed annotation; got {:?}",
+        output.observed_annotations
+    );
+    assert!(
+        !output
+            .observed_annotations
+            .iter()
+            .any(|a| a.pc == 0x1000 && a.text.contains("x1")),
+        "unchanged register x1 should not be reported as observed: {:?}",
+        output.observed_annotations
+    );
+
+    // Rendered into the LLIL text the user/UI sees.
+    assert!(
+        output.llil_ssa_text.contains("observed: x0=0x2a"),
+        "observed value not injected into LLIL text:\n{}",
+        output.llil_ssa_text
+    );
 }
 
 #[test]
@@ -381,8 +448,11 @@ fn coverage_high_for_common_instructions() {
         (0x1024, 0xd65f03c0), // ret
     ];
     let output = decompile_static(&common_insns);
-    assert!(output.llil_coverage > 0.8,
-        "coverage too low: {:.2}", output.llil_coverage);
+    assert!(
+        output.llil_coverage > 0.8,
+        "coverage too low: {:.2}",
+        output.llil_coverage
+    );
 }
 
 #[test]
@@ -409,13 +479,20 @@ fn struct_access_lowers_through_all_layers() {
     // LLIL → MLIL should create LoadStruct (nested inside SetVar)
     let (mlil, _) = lower_llil_to_mlil(&ssa.exprs, &names);
     let mlil_text = tracemiku_core::mlil::render::render_mlil_block(&mlil);
-    assert!(mlil_text.contains("*"),
-        "expected deref in MLIL text: {mlil_text}");
+    assert!(
+        mlil_text.contains("*"),
+        "expected deref in MLIL text: {mlil_text}"
+    );
     // MLIL → HLIL should create DerefField
     let (hlil, _) = lower_mlil_to_hlil(&mlil, &names);
     let hlil_text = tracemiku_core::hlil::render::render_hlil(&hlil);
-    assert!(hlil_text.contains("0x20"),
-        "expected 0x20 offset in HLIL text: {hlil_text}");
+    assert!(
+        hlil_text.contains("0x20"),
+        "expected 0x20 offset in HLIL text: {hlil_text}"
+    );
     // HLIL should have either DerefField or Deref
-    assert!(hlil_text.contains("*"), "expected deref * in HLIL text: {hlil_text}");
+    assert!(
+        hlil_text.contains("*"),
+        "expected deref * in HLIL text: {hlil_text}"
+    );
 }

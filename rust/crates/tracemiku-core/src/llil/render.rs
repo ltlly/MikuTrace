@@ -18,6 +18,31 @@ pub fn render_llil_block_with_names(exprs: &[LlilExpr], names: &VarNameMap) -> S
     out
 }
 
+/// Render a block, appending `// observed: ...` comments from trace data.
+///
+/// `annotations` maps an instruction PC to a description of the runtime value(s)
+/// it produced. Each PC is annotated at most once (on its first surviving
+/// statement) so multi-expr instructions don't repeat the comment.
+pub fn render_llil_block_with_names_annotated(
+    exprs: &[LlilExpr],
+    names: &VarNameMap,
+    annotations: &std::collections::BTreeMap<u64, String>,
+) -> String {
+    let mut out = String::new();
+    let mut done: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    for e in exprs {
+        out.push_str(&render_stmt_with_names(e, names));
+        if let Some(anno) = annotations.get(&e.pc) {
+            if done.insert(e.pc) {
+                out.push_str("  // observed: ");
+                out.push_str(anno);
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
 pub fn render_stmt(e: &LlilExpr) -> String {
     render_stmt_with_names(e, &VarNameMap::new())
 }

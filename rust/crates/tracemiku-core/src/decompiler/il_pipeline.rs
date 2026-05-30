@@ -13,18 +13,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
+use crate::hlil::lower::{lower_mlil_to_hlil, LowerStats as HlilLowerStats};
+use crate::hlil::render::render_hlil;
 use crate::llil::lift::lift_arm64;
 use crate::llil::pass_constfold::constfold_block;
 use crate::llil::pass_dce::dce_block;
 use crate::llil::pass_flag_elim::flag_elim_block;
 use crate::llil::pass_frame_fold::frame_fold_block;
 use crate::llil::pass_var_unify::unify_vars;
-use crate::llil::render::render_llil_block_with_names;
+use crate::llil::render::{render_llil_block_with_names, render_llil_block_with_names_annotated};
 use crate::llil::ssa::ssa_block;
 use crate::mlil::lower::{lower_llil_to_mlil, LowerStats as MlilLowerStats};
 use crate::mlil::render::render_mlil_block;
-use crate::hlil::lower::{lower_mlil_to_hlil, LowerStats as HlilLowerStats};
-use crate::hlil::render::render_hlil;
 
 use super::pass::{from_llil, PassIlExpr, PassIlOperand};
 use super::pass_registry::build_universal_pipeline;
@@ -44,6 +44,17 @@ pub struct TraceContext {
     pub exec_count: u64,
     /// Whether this instruction is on a taken branch path.
     pub branch_taken: Option<bool>,
+}
+
+/// A runtime value observed at an instruction, surfaced into the IL.
+///
+/// `text` lists the register(s) the instruction produced and their observed
+/// value(s), e.g. `"x0=0x2a"`. This is the trace-aware advantage a static
+/// decompiler cannot have: the actual value computed at runtime.
+#[derive(Debug, Clone, Serialize)]
+pub struct ObservedAnnotation {
+    pub pc: u64,
+    pub text: String,
 }
 
 /// Result of decompiling a sequence of trace records through all three IL layers.
@@ -69,6 +80,8 @@ pub struct TraceDecompileOutput {
     pub function_name: String,
     /// Trace-recorded runtime values (per instruction).
     pub trace_contexts: Vec<TraceContext>,
+    /// Observed runtime values folded out of the trace, keyed by PC.
+    pub observed_annotations: Vec<ObservedAnnotation>,
     /// Stats from each lowering pass.
     pub mlil_lower_stats: MlilLowerStats,
     pub hlil_lower_stats: HlilLowerStats,
@@ -144,8 +157,33 @@ pub fn decompile_trace(
 
     let dce_removed_count = dce_result.removed_pcs.len();
 
-    // Render LLIL from the optimized (constfolded + DCE'd) expressions
-    let llil_ssa_text = render_llil_block_with_names(opt_llil, &names);
+    // Trace-aware: surface the runtime value each instruction produced.
+    // contexts[i] is positionally aligned to insns[i]; a register whose value
+    // changed across the instruction is exactly what that instruction computed.
+    let mut anno_by_pc: BTreeMap<u64, String> = BTreeMap::new();
+    let mut observed_annotations: Vec<ObservedAnnotation> = Vec::new();
+    for (ctx, (pc, _)) in contexts.iter().zip(insns.iter()) {
+        let mut parts: Vec<String> = Vec::new();
+        for (reg, after) in &ctx.regs_after {
+            if ctx.regs_before.get(reg) != Some(after) {
+                parts.push(format!("{reg}=0x{:x}", *after as u64));
+            }
+        }
+        if parts.is_empty() {
+            continue;
+        }
+        let text = parts.join(", ");
+        anno_by_pc.entry(*pc).or_insert_with(|| text.clone());
+        observed_annotations.push(ObservedAnnotation { pc: *pc, text });
+    }
+
+    // Render LLIL from the optimized (constfolded + DCE'd) expressions, folding
+    // the observed runtime values inline where the producing instruction survived.
+    let llil_ssa_text = if anno_by_pc.is_empty() {
+        render_llil_block_with_names(opt_llil, &names)
+    } else {
+        render_llil_block_with_names_annotated(opt_llil, &names, &anno_by_pc)
+    };
 
     // Phase 2c: Ghidra-style universal pipeline (operates on LLIL via PassIlExprs).
     // This runs constant propagation, dead code elimination, simplification rules,
@@ -183,6 +221,7 @@ pub fn decompile_trace(
         hlil_text,
         function_name: function_name.to_string(),
         trace_contexts: contexts.to_vec(),
+        observed_annotations,
         mlil_lower_stats: mlil_stats,
         hlil_lower_stats: hlil_stats,
         unique_pcs: unique_pcs.len(),
@@ -199,10 +238,7 @@ pub fn decompile_trace(
 /// Simple decompilation from raw instructions (no trace data).
 /// Useful for static analysis.
 pub fn decompile_static(insns: &[(u64, u32)]) -> TraceDecompileOutput {
-    let empty_contexts: Vec<TraceContext> = insns
-        .iter()
-        .map(|_| TraceContext::default())
-        .collect();
+    let empty_contexts: Vec<TraceContext> = insns.iter().map(|_| TraceContext::default()).collect();
     decompile_trace(insns, &empty_contexts, "static_fn")
 }
 
