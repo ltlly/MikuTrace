@@ -125,7 +125,7 @@ export default function HlilPanel(props: HlilPanelProps) {
 
   const [hlil, currentHlil] = createGuardedResource<HlilSource, HlilForPcResponse>(
     source,
-    (s) => fetchHlilForPc(s.pc),
+    (s, signal) => fetchHlilForPc(s.pc, signal),
     (r, s) => r.request_pc === s.pc,
   );
 

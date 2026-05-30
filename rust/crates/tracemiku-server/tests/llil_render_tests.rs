@@ -110,6 +110,8 @@ async fn llil_pipeline_route_returns_all_layers() {
     assert!(v["llil_coverage"].as_f64().unwrap() > 0.5);
     assert!(v["struct_loads"].as_u64().is_some());
     assert!(v["struct_stores"].as_u64().is_some());
+    assert_eq!(v["trace_contexts"], 3);
+    assert!(v["total_exec_count"].as_u64().unwrap() >= 3);
     // When include_text=true, all layer texts should be present
     assert!(v["llil_text"].as_str().is_some());
     assert!(v["mlil_text"].as_str().is_some());

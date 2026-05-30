@@ -44,9 +44,14 @@ export default function XrefPanel(props: XrefPanelProps) {
     setPcRefLimit(DEFAULT_PC_REF_LIMIT);
   });
 
+  let recordAbort: AbortController | undefined;
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
-    (idx) => fetchRecord(idx),
+    (idx) => {
+      recordAbort?.abort();
+      recordAbort = new AbortController();
+      return fetchRecord(idx, recordAbort.signal);
+    },
   );
   const currentRecord = createMemo(() => {
     const r = record();
@@ -61,7 +66,7 @@ export default function XrefPanel(props: XrefPanelProps) {
   });
   const [pcRefs, currentPcRefs] = createGuardedResource<PcRefSource, Awaited<ReturnType<typeof fetchIdxsForPc>>>(
     pcSource,
-    (s) => fetchIdxsForPc(s.pc, s.idx, s.limit),
+    (s, signal) => fetchIdxsForPc(s.pc, s.idx, s.limit, signal),
     (r, s) =>
       r.request_pc === s.pc &&
       r.request_cursor === s.idx &&
@@ -84,7 +89,7 @@ export default function XrefPanel(props: XrefPanelProps) {
   });
   const [asmRefs, currentAsmRefs] = createGuardedResource<AsmSearchSource, Awaited<ReturnType<typeof fetchSearch>>>(
     asmSource,
-    (s) => fetchSearch(s.pattern, s.limit, undefined, s.cursor),
+    (s, signal) => fetchSearch(s.pattern, s.limit, signal, s.cursor),
     (r, s) =>
       r.request_pattern === s.pattern &&
       r.request_max_results === s.limit &&

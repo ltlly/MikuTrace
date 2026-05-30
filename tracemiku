@@ -1722,6 +1722,17 @@ def main():
     p_crypto = sp.add_parser("crypto", help="Combined crypto analysis (constant scan + ARM CE detection)")
     p_crypto.add_argument("call_dir", help="Per-call trace directory")
 
+    # watchpoints
+    p_watch = sp.add_parser("watch", help="Trace watchpoint scan (reg-change/reg-equals/mem-touch)")
+    p_watch.add_argument("call_dir", help="Per-call trace directory")
+    p_watch.add_argument("--kind", default="reg-change", choices=("reg-change", "reg-equals", "mem-touch"))
+    p_watch.add_argument("--reg", default=None)
+    p_watch.add_argument("--addr", default=None)
+    p_watch.add_argument("--value", default=None)
+    p_watch.add_argument("--size", type=int, default=1)
+    p_watch.add_argument("--cursor", type=int, default=0)
+    p_watch.add_argument("--limit", type=int, default=200)
+
     # web (single-page IDA-style SPA, 推荐替代 view)
     p_web = sp.add_parser("web", help="Rust v2 Solid SPA")
     p_web.add_argument("path", help="trace 目录 (run 或 per-call)")
@@ -1761,6 +1772,13 @@ def main():
     if args.subcommand == "finalize":return cmd_finalize(args)
     if args.subcommand == "web":     return cmd_web(args)
     if args.subcommand == "crypto":  return _run_rust_cli(["crypto", args.call_dir])
+    if args.subcommand == "watch":
+        cmd = ["watch", args.call_dir, "--kind", args.kind, "--size", str(args.size),
+               "--cursor", str(args.cursor), "--limit", str(args.limit)]
+        if args.reg: cmd += ["--reg", args.reg]
+        if args.addr: cmd += ["--addr", args.addr]
+        if args.value: cmd += ["--value", args.value]
+        return _run_rust_cli(cmd)
     if args.subcommand == "dec":     return cmd_dec(args)
     if args.subcommand == "probe":   return cmd_probe(args)
     ap.print_help(); return 1

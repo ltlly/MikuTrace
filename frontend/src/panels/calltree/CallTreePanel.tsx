@@ -114,7 +114,7 @@ export default function CallTreePanel(props: CallTreePanelProps) {
   });
   const [resp, currentResp] = createGuardedResource(
     source,
-    (s) => fetchCallTree(s.depth),
+    (s, signal) => fetchCallTree(s.depth, signal),
     (r, s) => r.request_max_depth === s.depth,
   );
   const truncatedChildren = createMemo(() => {

@@ -255,6 +255,24 @@ enum Cmd {
         #[arg(long)]
         after: Option<usize>,
     },
+    /// GET /api/watchpoints.
+    Watch {
+        trace_dir: PathBuf,
+        #[arg(long, default_value = "reg-change")]
+        kind: String,
+        #[arg(long)]
+        reg: Option<String>,
+        #[arg(long)]
+        addr: Option<String>,
+        #[arg(long)]
+        value: Option<String>,
+        #[arg(long, default_value_t = 1)]
+        size: u64,
+        #[arg(long, default_value_t = 0)]
+        cursor: usize,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// GET /api/functions.
     Functions { trace_dir: PathBuf },
     /// GET /api/fork-events.
@@ -1538,6 +1556,33 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("after", after.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/next-use-of-reg", &params)).await
+        }
+        Some(Cmd::Watch {
+            trace_dir,
+            kind,
+            reg,
+            addr,
+            value,
+            size,
+            cursor,
+            limit,
+        }) => {
+            let mut params = vec![
+                ("kind", kind),
+                ("size", size.to_string()),
+                ("cursor", cursor.to_string()),
+                ("limit", limit.to_string()),
+            ];
+            if let Some(reg) = reg {
+                params.push(("reg", reg));
+            }
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(value) = value {
+                params.push(("value", value));
+            }
+            route_get_json(trace_dir, route_path("/api/watchpoints", &params)).await
         }
         Some(Cmd::Functions { trace_dir }) => {
             route_get_json(trace_dir, "/api/functions".to_string()).await
@@ -15062,6 +15107,7 @@ fn route_needs_memshadow(path: &str, body: Option<&serde_json::Value>) -> bool {
     if matches!(
         endpoint,
         "/api/auto-phase-detect"
+            | "/api/crypto-analysis"
             | "/api/crypto-scan"
             | "/api/find-mem-pattern"
             | "/api/hash-finalize-detect"

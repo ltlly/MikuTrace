@@ -53,7 +53,7 @@ export default function StringsPanel(props: StringsPanelProps) {
   });
   const [resp, currentResp] = createGuardedResource<StringsSource, Awaited<ReturnType<typeof fetchStrings>>>(
     source,
-    ({ minLen, q, limit, cursor }) => fetchStrings(minLen, q, limit, cursor),
+    ({ minLen, q, limit, cursor }, signal) => fetchStrings(minLen, q, limit, cursor, signal),
     (r, s) =>
       r.request_min_len === s.minLen &&
       r.request_q === s.q &&

@@ -274,7 +274,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [meta] = createResource(fetchMeta);
   const [callTreeResp, currentCallTreeResp] = createGuardedResource<number, CallTreeResponse>(
     () => (foldTreeRequested() ? 50 : undefined),
-    (depth) => fetchCallTree(depth),
+    (depth, signal) => fetchCallTree(depth, signal),
     (resp, depth) => (resp.request_max_depth ?? 50) === depth,
   );
   const regValueTitleCache = new Map<string, string>();
@@ -435,7 +435,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     RecordsResponse
   >(
     range,
-    (r) => fetchRecords({ start: r.start, count: r.count }),
+    (r, signal) => fetchRecords({ start: r.start, count: r.count, signal }),
     (r, s) => r.request_start === s.start && r.request_count === s.count,
   );
   function stabilizeRows(rows: RecordRow[]): RecordRow[] {

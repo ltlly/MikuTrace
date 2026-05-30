@@ -9,6 +9,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use clap::Parser;
+use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
 
@@ -48,26 +49,35 @@ async fn main() -> anyhow::Result<()> {
     let app = tracemiku_server::build_router(cli.trace_dir.clone()).context("build router")?;
     let static_dir = cli.static_dir.unwrap_or_else(default_static_dir);
     let index_path = Arc::new(static_dir.join("index.html"));
+    let cached_index: Arc<Option<Arc<str>>> = Arc::new(
+        tokio::fs::read_to_string(&*index_path)
+            .await
+            .ok()
+            .map(Arc::<str>::from),
+    );
     let app = app
         .route(
             "/",
             get({
                 let index_path = index_path.clone();
-                move || serve_index(index_path.clone())
+                let cached_index = cached_index.clone();
+                move || serve_index(index_path.clone(), cached_index.clone())
             }),
         )
         .route(
             "/index.html",
             get({
                 let index_path = index_path.clone();
-                move || serve_index(index_path.clone())
+                let cached_index = cached_index.clone();
+                move || serve_index(index_path.clone(), cached_index.clone())
             }),
         )
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .fallback_service(
             ServeDir::new(&static_dir)
                 .not_found_service(ServeFile::new(static_dir.join("index.html"))),
-        );
+        )
+        .layer(CompressionLayer::new());
     let addr: SocketAddr = format!("{}:{}", cli.host, cli.port).parse()?;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -80,7 +90,17 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn serve_index(index_path: Arc<PathBuf>) -> impl IntoResponse {
+async fn serve_index(index_path: Arc<PathBuf>, cached_index: Arc<Option<Arc<str>>>) -> impl IntoResponse {
+    if let Some(html) = cached_index.as_ref().as_ref() {
+        return (
+            [
+                (CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
+                (PRAGMA, "no-cache"),
+            ],
+            Html(html.to_string()),
+        )
+            .into_response();
+    }
     match tokio::fs::read_to_string(&*index_path).await {
         Ok(html) => (
             [

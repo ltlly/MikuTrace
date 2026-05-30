@@ -69,7 +69,7 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
   });
   const [resp, currentResp] = createGuardedResource<Source, Awaited<ReturnType<typeof fetchStringProvenance>>>(
     source,
-    (s) => fetchStringProvenance(s.addr, s.len),
+    (s, signal) => fetchStringProvenance(s.addr, s.len, signal),
     (r, s) => r.addr === s.addr && r.length === s.len,
   );
   const readyResp = createMemo(() => {

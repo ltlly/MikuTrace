@@ -33,6 +33,9 @@ pub async fn crypto_analysis_handler(
 }
 
 fn crypto_analysis(inner: &crate::state::AppStateInner) -> Result<CryptoAnalysisResponse, StatusCode> {
+    if let Some(cached) = inner.crypto_analysis.get() {
+        return Ok(cached.clone());
+    }
     let mem_scan = {
         let mem = inner.memshadow_ready_or_block_if_idle()
             .map_err(|status| {
@@ -54,9 +57,11 @@ fn crypto_analysis(inner: &crate::state::AppStateInner) -> Result<CryptoAnalysis
     let (const_scan, crypto_instrs) =
         tracemiku_core::crypto_scan::scan_combined(&inner.trace);
 
-    Ok(CryptoAnalysisResponse {
+    let response = CryptoAnalysisResponse {
         mem_scan,
         const_scan,
         crypto_instrs,
-    })
+    };
+    let _ = inner.crypto_analysis.set(response.clone());
+    Ok(response)
 }

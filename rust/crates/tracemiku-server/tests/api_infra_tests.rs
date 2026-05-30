@@ -118,6 +118,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "call_tree.rs",
     "cfg.rs",
     "cfg_svg.rs",
+    "crypto_analysis.rs",
     "crypto_scan.rs",
     "data_chase.rs",
     "dec_fn.rs",
@@ -150,6 +151,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "string_provenance.rs",
     "strings.rs",
     "timeline_diff.rs",
+    "watchpoints.rs",
 ];
 
 const LIGHT_ROUTE_FILES: &[&str] = &[
@@ -195,7 +197,9 @@ const PYTHON_WEB_API_METHODS: &[(&str, &str)] = &[
     ("/api/call-tree", "get"),
     ("/api/cfg", "get"),
     ("/api/cfg-svg", "get"),
+    ("/api/crypto-analysis", "get"),
     ("/api/crypto-scan", "get"),
+    ("/api/watchpoints", "get"),
     ("/api/data-chase", "get"),
     ("/api/dec/fn/{}", "get"),
     ("/api/dec/llm-call", "post"),

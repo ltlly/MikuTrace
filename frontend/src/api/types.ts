@@ -424,6 +424,28 @@ export interface NextUseOfRegResponse {
   err?: string;
 }
 
+// ── /api/watchpoints ─────────────────────────────────────────────────────
+
+export type WatchpointKind = "reg-change" | "reg-equals" | "mem-touch";
+
+export interface WatchpointHit {
+  idx: number;
+  kind: "reg_change" | "reg_equals" | "mem_touch" | string;
+  reg: string | null;
+  addr: number | null;
+  value: number | null;
+  previous: number | null;
+  pc: number;
+}
+
+export interface WatchpointsResponse {
+  status: string;
+  returned: number;
+  total_matches: number;
+  truncated: boolean;
+  hits: WatchpointHit[];
+}
+
 // ── /api/call-tree ────────────────────────────────────────────────────────
 
 export interface CallNode {

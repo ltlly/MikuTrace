@@ -73,7 +73,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   });
   const [summary, currentSummary] = createGuardedResource<SummarySource, Awaited<ReturnType<typeof fetchDecSummary>>>(
     summarySource,
-    (s) => fetchDecSummary(decIrOptions(s)),
+    (s, signal) => fetchDecSummary(decIrOptions(s), signal),
     (r, s) =>
       r.request_split_top_k === s.splitTopK &&
       r.request_split_min_records === s.splitMinRecords &&
@@ -101,7 +101,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   });
   const [fnResp, currentFnResp] = createGuardedResource<FnSource, Awaited<ReturnType<typeof fetchDecFn>>>(
     fnSource,
-    (s) => fetchDecFn(s.fnId, s.tier, decIrOptions(s)),
+    (s, signal) => fetchDecFn(s.fnId, s.tier, decIrOptions(s), signal),
     (r, s) =>
       r.request_fn_id === s.fnId &&
       r.request_tier === s.tier &&

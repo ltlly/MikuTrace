@@ -54,6 +54,7 @@ pub mod so_stats;
 pub mod string_provenance;
 pub mod strings;
 pub mod timeline_diff;
+pub mod watchpoints;
 
 use axum::routing::{any, get, post};
 use axum::Router;
@@ -82,6 +83,7 @@ pub fn router(state: AppState) -> Router {
             "/api/crypto-analysis",
             get(crypto_analysis::crypto_analysis_handler),
         )
+        .route("/api/watchpoints", get(watchpoints::watchpoints_handler))
         .route(
             "/api/hash-finalize-detect",
             get(hash_finalize::hash_finalize_detect_handler),

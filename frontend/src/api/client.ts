@@ -24,6 +24,8 @@ import type {
   RegValueAtResponse,
   LastWriteOfRegResponse,
   NextUseOfRegResponse,
+  WatchpointKind,
+  WatchpointsResponse,
   CallTreeResponse,
   BacktraceResponse,
   ForkEventsResponse,
@@ -116,6 +118,7 @@ export interface FetchRecordsOpts {
   start?: number;
   count?: number;
   regs?: string;
+  signal?: AbortSignal;
 }
 
 export async function fetchRecords(opts: FetchRecordsOpts = {}): Promise<RecordsResponse> {
@@ -124,7 +127,7 @@ export async function fetchRecords(opts: FetchRecordsOpts = {}): Promise<Records
   if (opts.count !== undefined) params.set("count", String(opts.count));
   if (opts.regs) params.set("regs", opts.regs);
   const qs = params.toString();
-  const r = await fx(`/api/records${qs ? "?" + qs : ""}`);
+  const r = await fx(`/api/records${qs ? "?" + qs : ""}`, { signal: opts.signal });
   if (!r.ok) throw new Error(`/api/records returned ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as RecordsResponse;
   out.request_start = opts.start ?? 0;
@@ -132,8 +135,8 @@ export async function fetchRecords(opts: FetchRecordsOpts = {}): Promise<Records
   return out;
 }
 
-export async function fetchRecord(idx: number): Promise<RecordDetail> {
-  const r = await fx(`/api/record/${idx}`);
+export async function fetchRecord(idx: number, signal?: AbortSignal): Promise<RecordDetail> {
+  const r = await fx(`/api/record/${idx}`, { signal });
   if (!r.ok) throw new Error(`/api/record/${idx} returned ${r.status}: ${await r.text()}`);
   return (await r.json()) as RecordDetail;
 }
@@ -199,12 +202,13 @@ export async function fetchStrings(
   q = "",
   limit = 500,
   cursor = -1,
+  signal?: AbortSignal,
 ): Promise<StringsResponse> {
   const params = new URLSearchParams({ min_len: String(minLen) });
   if (q) params.set("q", q);
   if (limit > 0) params.set("limit", String(limit));
   if (cursor >= 0) params.set("cursor", String(cursor));
-  const r = await fx(`/api/strings?${params}`);
+  const r = await fx(`/api/strings?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as StringsResponse;
   out.request_min_len = minLen;
@@ -217,9 +221,10 @@ export async function fetchStrings(
 export async function fetchStringProvenance(
   addr: string,
   length = 64,
+  signal?: AbortSignal,
 ): Promise<StringProvenanceResponse> {
   const params = new URLSearchParams({ addr, length: String(length) });
-  const r = await fx(`/api/string-provenance?${params}`);
+  const r = await fx(`/api/string-provenance?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/string-provenance ${r.status}: ${await r.text()}`);
   return (await r.json()) as StringProvenanceResponse;
 }
@@ -262,9 +267,13 @@ export async function fetchIdxsTouchingRange(
   return out;
 }
 
-export async function fetchMemDump(addr: string, count = 128): Promise<MemDumpResponse> {
+export async function fetchMemDump(
+  addr: string,
+  count = 128,
+  signal?: AbortSignal,
+): Promise<MemDumpResponse> {
   const params = new URLSearchParams({ addr, count: String(count) });
-  const r = await fx(`/api/mem-dump?${params}`);
+  const r = await fx(`/api/mem-dump?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as MemDumpResponse;
   out.request_addr = addr;
@@ -276,13 +285,14 @@ export async function fetchMemDiff(
   idx: number,
   addr: string,
   size = 16,
+  signal?: AbortSignal,
 ): Promise<MemDiffResponse> {
   const params = new URLSearchParams({
     idx: String(idx),
     addr,
     size: String(size),
   });
-  const r = await fx(`/api/mem-diff?${params}`);
+  const r = await fx(`/api/mem-diff?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/mem-diff ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as MemDiffResponse;
   out.request_idx = idx;
@@ -413,9 +423,33 @@ export async function fetchNextUseOfReg(
   return (await r.json()) as NextUseOfRegResponse;
 }
 
-export async function fetchCallTree(maxDepth = 10): Promise<CallTreeResponse> {
+export interface FetchWatchpointsOpts {
+  kind: WatchpointKind;
+  reg?: string;
+  addr?: string;
+  value?: string;
+  size?: number;
+  cursor?: number;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export async function fetchWatchpoints(opts: FetchWatchpointsOpts): Promise<WatchpointsResponse> {
+  const params = new URLSearchParams({ kind: opts.kind });
+  if (opts.reg) params.set("reg", opts.reg);
+  if (opts.addr) params.set("addr", opts.addr);
+  if (opts.value) params.set("value", opts.value);
+  if (opts.size !== undefined) params.set("size", String(opts.size));
+  if (opts.cursor !== undefined) params.set("cursor", String(opts.cursor));
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const r = await fx(`/api/watchpoints?${params}`, { signal: opts.signal });
+  if (!r.ok) throw new Error(`/api/watchpoints ${r.status}: ${await r.text()}`);
+  return (await r.json()) as WatchpointsResponse;
+}
+
+export async function fetchCallTree(maxDepth = 10, signal?: AbortSignal): Promise<CallTreeResponse> {
   const params = new URLSearchParams({ max_depth: String(maxDepth) });
-  const r = await fx(`/api/call-tree?${params}`);
+  const r = await fx(`/api/call-tree?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as CallTreeResponse;
   out.request_max_depth = maxDepth;
@@ -502,11 +536,14 @@ function appendDecIrOptions(params: URLSearchParams, opts: DecIrOptions = {}) {
   if (opts.splitMinRecords !== undefined) params.set("split_min_records", String(opts.splitMinRecords));
 }
 
-export async function fetchDecSummary(opts: DecIrOptions = {}): Promise<DecSummaryResponse> {
+export async function fetchDecSummary(
+  opts: DecIrOptions = {},
+  signal?: AbortSignal,
+): Promise<DecSummaryResponse> {
   const params = new URLSearchParams();
   appendDecIrOptions(params, opts);
   const qs = params.toString();
-  const r = await fx(`/api/dec/summary${qs ? "?" + qs : ""}`);
+  const r = await fx(`/api/dec/summary${qs ? "?" + qs : ""}`, { signal });
   if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as DecSummaryResponse;
   out.request_split_top_k = opts.splitTopK;
@@ -519,10 +556,11 @@ export async function fetchDecFn(
   fnId: string,
   tier = "hot",
   opts: DecIrOptions = {},
+  signal?: AbortSignal,
 ): Promise<DecFnResponse> {
   const params = new URLSearchParams({ tier });
   appendDecIrOptions(params, opts);
-  const r = await fx(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`);
+  const r = await fx(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`, { signal });
   if (!r.ok) throw new Error(`/api/dec/fn/${fnId} ${r.status}: ${await r.text()}`);
   const out = (await r.json()) as DecFnResponse;
   out.request_fn_id = fnId;
@@ -622,11 +660,13 @@ export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRender
 
 export async function fetchLlilPipeline(
   payload: LlilPipelinePayload,
+  signal?: AbortSignal,
 ): Promise<PipelineResponse> {
   const r = await fx("/api/llil/pipeline", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   if (!r.ok) throw new Error(`/api/llil/pipeline ${r.status}: ${await r.text()}`);
   return (await r.json()) as PipelineResponse;

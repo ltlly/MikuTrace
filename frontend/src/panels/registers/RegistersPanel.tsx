@@ -155,9 +155,14 @@ export default function RegistersPanel(props: RegistersPanelProps) {
   const [deltaW, setDeltaW] = createSignal(initialCols.delta);
   const [noteW, setNoteW] = createSignal(initialCols.note);
   let lastWriteSeq = 0;
+  let recordAbort: AbortController | undefined;
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
-    (idx) => fetchRecord(idx),
+    (idx) => {
+      recordAbort?.abort();
+      recordAbort = new AbortController();
+      return fetchRecord(idx, recordAbort.signal);
+    },
   );
   const currentRecord = createMemo(() => {
     const r = record();

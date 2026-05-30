@@ -31,3 +31,4 @@ pub mod prelude;
 pub mod symbols;
 pub mod taint;
 pub mod trace;
+pub mod watchpoints;

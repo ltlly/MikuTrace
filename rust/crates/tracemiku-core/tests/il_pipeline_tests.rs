@@ -416,6 +416,53 @@ fn decompile_trace_surfaces_observed_runtime_values() {
 }
 
 #[test]
+fn decompile_trace_prunes_untaken_branch_from_context() {
+    let insns = vec![
+        (0x1000u64, 0x34000040u32), // cbz w0, 0x1008
+        (0x1004u64, 0xd2800021u32), // mov x1, #1 (fallthrough path)
+        (0x1008u64, 0xd2800042u32), // mov x2, #2 (branch target)
+        (0x100cu64, 0xd65f03c0u32), // ret
+    ];
+    let contexts = vec![
+        TraceContext {
+            exec_count: 1,
+            branch_taken: Some(false),
+            ..Default::default()
+        },
+        TraceContext {
+            exec_count: 1,
+            ..Default::default()
+        },
+        TraceContext {
+            exec_count: 0,
+            ..Default::default()
+        },
+        TraceContext {
+            exec_count: 1,
+            ..Default::default()
+        },
+    ];
+
+    let output = decompile_trace(&insns, &contexts, "path_specialized");
+
+    assert!(
+        output.llil_ssa_text.contains("trace_pruned_branch"),
+        "expected pruning annotation in LLIL:\n{}",
+        output.llil_ssa_text
+    );
+    assert!(
+        output.llil_ssa_text.contains("goto loc_1004"),
+        "expected fallthrough target to be kept:\n{}",
+        output.llil_ssa_text
+    );
+    assert!(
+        !output.llil_ssa_text.contains("else goto loc_1004"),
+        "conditional branch should be specialized:\n{}",
+        output.llil_ssa_text
+    );
+}
+
+#[test]
 fn trace_decompile_preserves_all_layers() {
     let insns = vec![
         (0x1000, 0xd2800020), // mov x0, #1

@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::hlil::lower::{lower_mlil_to_hlil, LowerStats as HlilLowerStats};
 use crate::hlil::render::render_hlil;
 use crate::llil::lift::lift_arm64;
+use crate::llil::expr::{LlilExpr, LlilOp, LlilOperand};
 use crate::llil::pass_constfold::constfold_block;
 use crate::llil::pass_dce::dce_block;
 use crate::llil::pass_flag_elim::flag_elim_block;
@@ -139,6 +140,8 @@ pub fn decompile_trace(
     };
 
     // Phase 2: Frame folding + flag elimination + SSA
+    let llil_exprs = specialize_trace_branches(&llil_exprs, insns, contexts);
+
     let frame_fold = frame_fold_block(&llil_exprs);
     let flag_elim = flag_elim_block(&frame_fold.exprs);
     let ssa = ssa_block(&flag_elim.exprs);
@@ -233,6 +236,67 @@ pub fn decompile_trace(
         ghidra_phases_changed,
         ghidra_final_count,
     }
+}
+
+fn specialize_trace_branches(
+    exprs: &[LlilExpr],
+    insns: &[(u64, u32)],
+    contexts: &[TraceContext],
+) -> Vec<LlilExpr> {
+    let branch_by_pc: BTreeMap<u64, bool> = insns
+        .iter()
+        .zip(contexts.iter())
+        .filter_map(|((pc, _), ctx)| ctx.branch_taken.map(|taken| (*pc, taken)))
+        .collect();
+    if branch_by_pc.is_empty() {
+        return exprs.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(exprs.len());
+    for e in exprs {
+        if e.op != LlilOp::If {
+            out.push(e.clone());
+            continue;
+        }
+        let Some(taken) = branch_by_pc.get(&e.pc).copied() else {
+            out.push(e.clone());
+            continue;
+        };
+        let chosen = branch_target(e, taken);
+        let pruned = branch_target(e, !taken);
+        match (chosen, pruned) {
+            (Some(chosen), Some(pruned)) => {
+                out.push(pruned_branch_note(e.pc, taken, pruned));
+                out.push(LlilExpr::new(
+                    LlilOp::Goto,
+                    8,
+                    vec![LlilOperand::U64(chosen)],
+                    e.pc,
+                ));
+            }
+            _ => out.push(e.clone()),
+        }
+    }
+    out
+}
+
+fn branch_target(e: &LlilExpr, taken: bool) -> Option<u64> {
+    let idx = if taken { 1 } else { 2 };
+    match e.operands.get(idx) {
+        Some(LlilOperand::U64(v)) => Some(*v),
+        _ => None,
+    }
+}
+
+fn pruned_branch_note(pc: u64, taken: bool, pruned_target: u64) -> LlilExpr {
+    LlilExpr::new(
+        LlilOp::Intrinsic,
+        0,
+        vec![LlilOperand::U64(pruned_target)],
+        pc,
+    )
+    .with_extra("mnem", "trace_pruned_branch")
+    .with_extra("taken", if taken { "true" } else { "false" })
 }
 
 /// Simple decompilation from raw instructions (no trace data).

@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Instant;
 
+use tracemiku_core::call_analysis::CallAnalysis;
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::disasm::decode;
 use tracemiku_core::forward_dep_tree::DependencyUsers;
@@ -28,6 +29,8 @@ const MEMSHADOW_NOT_STARTED: u8 = 0;
 const MEMSHADOW_LOADING: u8 = 1;
 const MEMSHADOW_READY: u8 = 2;
 const INTERACTIVE_WARM_DELAY_MS: u64 = 250;
+const INTERACTIVE_WARM_MAX_RECORDS: usize = 1_500_000;
+const TRACE_IR_CACHE_MAX_ENTRIES: usize = 2;
 const BN_RESPONSE_CACHE_VERSION: u64 = 1;
 const BN_RESPONSE_CACHE_FILE: &str = "trace.bin.bn-sidecar-cache.v1.json";
 
@@ -81,6 +84,7 @@ pub struct AppStateInner {
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
     pub(crate) crypto_analysis: OnceLock<crate::routes::crypto_analysis::CryptoAnalysisResponse>,
+    call_analysis: OnceLock<CallAnalysis>,
     hash_finalize_index: OnceLock<HashFinalizeIndex>,
     top_ir: OnceLock<TopIR>,
     type_spec_paths: Vec<PathBuf>,
@@ -88,7 +92,7 @@ pub struct AppStateInner {
     pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
     ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
     auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
-    trace_ir_cache: Mutex<HashMap<TraceIrBuildOptions, Arc<TopIR>>>,
+    trace_ir_cache: Mutex<Vec<(TraceIrBuildOptions, Arc<TopIR>)>>,
     pub(crate) reg_timeline_cache: Mutex<HashMap<String, Arc<Vec<(usize, u64)>>>>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
     pub(crate) bn_response_cache: Mutex<HashMap<String, serde_json::Value>>,
@@ -240,6 +244,7 @@ impl AppState {
             asm_groups: OnceLock::new(),
             jni_calls: OnceLock::new(),
             crypto_analysis: OnceLock::new(),
+            call_analysis: OnceLock::new(),
             hash_finalize_index: OnceLock::new(),
             top_ir: OnceLock::new(),
             type_spec_paths: spec_paths,
@@ -247,7 +252,7 @@ impl AppState {
             cfg_svg_cache: Mutex::new(HashMap::new()),
             ollvm_cache: Mutex::new(HashMap::new()),
             auto_phase_cache: Mutex::new(HashMap::new()),
-            trace_ir_cache: Mutex::new(HashMap::new()),
+            trace_ir_cache: Mutex::new(Vec::new()),
             reg_timeline_cache: Mutex::new(HashMap::new()),
             bn_sidecar: Mutex::new(BnSidecarManager::from_env_with_default_base(
                 (primary_base != 0).then_some(primary_base),
@@ -359,22 +364,32 @@ impl AppStateInner {
     }
 
     pub fn build_top_ir_with_options(&self, opts: &TraceIrBuildOptions) -> Arc<TopIR> {
-        if let Some(cached) = self
-            .trace_ir_cache
-            .lock()
-            .expect("trace-ir cache poisoned")
-            .get(opts)
-            .cloned()
         {
-            return cached;
+            let mut cache = self
+                .trace_ir_cache
+                .lock()
+                .expect("trace-ir cache poisoned");
+            if let Some(pos) = cache.iter().position(|(cached_opts, _)| cached_opts == opts) {
+                let (cached_opts, top) = cache.remove(pos);
+                cache.push((cached_opts, top.clone()));
+                return top;
+            }
         }
         let top = Arc::new(self.build_top_ir_uncached(opts));
-        self.trace_ir_cache
+        let mut cache = self
+            .trace_ir_cache
             .lock()
-            .expect("trace-ir cache poisoned")
-            .entry(opts.clone())
-            .or_insert_with(|| top.clone())
-            .clone()
+            .expect("trace-ir cache poisoned");
+        if let Some(pos) = cache.iter().position(|(cached_opts, _)| cached_opts == opts) {
+            let (_, existing) = cache.remove(pos);
+            cache.push((opts.clone(), existing.clone()));
+            return existing;
+        }
+        cache.push((opts.clone(), top.clone()));
+        while cache.len() > TRACE_IR_CACHE_MAX_ENTRIES {
+            cache.remove(0);
+        }
+        top
     }
 
     fn build_top_ir_uncached(&self, opts: &TraceIrBuildOptions) -> TopIR {
@@ -567,6 +582,11 @@ impl AppStateInner {
         })
     }
 
+    pub fn call_analysis(&self) -> &CallAnalysis {
+        self.call_analysis
+            .get_or_init(|| tracemiku_core::call_analysis::analyze_calls(&self.trace, &self.symbols))
+    }
+
     pub fn ollvm_findings(&self, min_entries: usize, threshold: f64) -> Vec<OllvmFinding> {
         let key = OllvmCacheKey {
             min_entries,
@@ -650,6 +670,16 @@ fn spawn_interactive_cache_warmer(inner: Arc<AppStateInner>) {
         .name("tracemiku-ui-warm".to_string())
         .spawn(move || {
             thread::sleep(std::time::Duration::from_millis(INTERACTIVE_WARM_DELAY_MS));
+            if inner.trace.len() > INTERACTIVE_WARM_MAX_RECORDS {
+                tracing::info!(
+                    target: "tracemiku-server",
+                    records = inner.trace.len(),
+                    max_records = INTERACTIVE_WARM_MAX_RECORDS,
+                    "skipping full interactive cache warmer for large trace"
+                );
+                let _ = inner.asm_groups();
+                return;
+            }
             let start = Instant::now();
             tracing::info!(
                 target: "tracemiku-server",

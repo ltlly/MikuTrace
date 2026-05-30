@@ -26,14 +26,14 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
     setLimit(DEFAULT_TRACE_PC_LIMIT);
   });
 
-  // Fetch on every cursor change, regardless of whether the bottom tab is
-  // currently showing this panel. The user expectation is "switch to Trace
-  // for PC and the latest cursor's history is already there", not "click
-  // tab, wait for fetch". The render itself is gated below by `Show when`,
-  // so the data is ready in the cache when the user flips to this tab.
+  let recordAbort: AbortController | undefined;
   const [record] = createResource(
-    () => props.idx,
-    (idx) => fetchRecord(idx),
+    () => (props.active ? props.idx : undefined),
+    (idx) => {
+      recordAbort?.abort();
+      recordAbort = new AbortController();
+      return fetchRecord(idx, recordAbort.signal);
+    },
   );
   const currentRecord = createMemo(() => {
     const r = record();
@@ -41,13 +41,14 @@ export default function TraceForPcPanel(props: TraceForPcPanelProps) {
   });
   const source = createMemo<IpcSource | undefined>((prev) => {
     const r = currentRecord();
+    if (!props.active) return undefined;
     if (!r) return undefined;
     const next = { pc: r.pc, idx: props.idx, limit: limit() };
     return prev && prev.pc === next.pc && prev.idx === next.idx && prev.limit === next.limit ? prev : next;
   });
   const [idxs, currentHistory] = createGuardedResource<IpcSource, IdxsForPcResponse>(
     source,
-    (source) => fetchIdxsForPc(source.pc, source.idx, source.limit),
+    (source, signal) => fetchIdxsForPc(source.pc, source.idx, source.limit, signal),
     (r, s) =>
       r.request_pc === s.pc &&
       r.request_cursor === s.idx &&

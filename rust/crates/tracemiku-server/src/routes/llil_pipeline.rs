@@ -6,10 +6,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
-use tracemiku_core::decompiler::il_pipeline::decompile_trace;
+use tracemiku_core::decompiler::il_pipeline::{decompile_trace, TraceContext};
 use tracemiku_core::function_index::parse_id;
 use tracemiku_core::prelude::FuncIR;
+use tracemiku_core::trace::Record;
 
 use crate::state::AppState;
 
@@ -69,6 +71,9 @@ pub struct PipelineResponse {
     pub mlil_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hlil_text: Option<String>,
+    // Trace data consumed by the pipeline.
+    pub total_exec_count: u64,
+    pub trace_contexts: usize,
     // Call analysis (only when include_call_analysis=true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_analysis: Option<serde_json::Value>,
@@ -103,16 +108,11 @@ fn pipeline_response(
     let end = fn_.exit_idx.min(trace_len.saturating_sub(1));
 
     // Collect unique (pc, inst) pairs + call-site register values
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     let mut insns: Vec<(u64, u32)> = Vec::new();
-    let mut call_site_regs: std::collections::BTreeMap<u64, Vec<(String, i64)>> =
-        std::collections::BTreeMap::new();
-    let mut blr_resolutions: std::collections::BTreeMap<String, u64> =
-        std::collections::BTreeMap::new();
-
-    // Track whether we've seen the function's ret.
-    // After returning, subsequent instructions belong to the caller.
-    let mut fn_ret_seen = false;
+    let mut contexts: Vec<TraceContext> = Vec::new();
+    let mut call_site_regs: BTreeMap<u64, Vec<(String, i64)>> = BTreeMap::new();
+    let mut blr_resolutions: BTreeMap<String, u64> = BTreeMap::new();
 
     if start <= end {
         for idx in start..=end {
@@ -142,6 +142,7 @@ fn pipeline_response(
                 }
                 if seen.insert((rec.pc, inst)) {
                     insns.push((rec.pc, inst));
+                    contexts.push(trace_context_for_idx(inner, idx));
                 }
                 break; // Stop at blr boundary
             }
@@ -151,13 +152,14 @@ fn pipeline_response(
             if is_ret {
                 if seen.insert((rec.pc, inst)) {
                     insns.push((rec.pc, inst));
+                    contexts.push(trace_context_for_idx(inner, idx));
                 }
-                fn_ret_seen = true;
                 break; // Stop at ret
             }
 
             if seen.insert((rec.pc, rec.inst)) {
                 insns.push((rec.pc, rec.inst));
+                contexts.push(trace_context_for_idx(inner, idx));
             }
 
             // Collect register values for call instructions, keyed by TARGET
@@ -189,7 +191,7 @@ fn pipeline_response(
     let truncated = start <= end && (end - start + 1) > max_records;
 
     // Run the full three-layer pipeline
-    let output = decompile_trace(&insns, &[], &fn_.name);
+    let output = decompile_trace(&insns, &contexts, &fn_.name);
 
     let mlil_stats = output.mlil_lower_stats;
 
@@ -201,11 +203,7 @@ fn pipeline_response(
 
     // Optional: Call analysis
     let call_analysis = if payload.include_call_analysis {
-        let analysis = tracemiku_core::call_analysis::analyze_calls(
-            &inner.trace,
-            &inner.symbols,
-        );
-        serde_json::to_value(&analysis).ok()
+        serde_json::to_value(inner.call_analysis()).ok()
     } else {
         None
     };
@@ -240,8 +238,79 @@ fn pipeline_response(
         } else {
             None
         },
+        total_exec_count: output.total_exec_count,
+        trace_contexts: output.trace_contexts.len(),
         call_analysis,
     })
+}
+
+fn trace_context_for_idx(inner: &crate::state::AppStateInner, idx: usize) -> TraceContext {
+    let rec = inner.trace.record(idx);
+    let next = (idx + 1 < inner.trace.len()).then(|| inner.trace.record(idx + 1));
+    let regs_before = record_regs(&rec);
+    let regs_after = next
+        .as_ref()
+        .map(record_regs)
+        .unwrap_or_else(|| regs_before.clone());
+    TraceContext {
+        regs_before,
+        regs_after,
+        mem_reads: mem_values_for_idx(&inner.memshadow_if_ready().map(|m| &m.reads), idx),
+        mem_writes: mem_values_for_idx(&inner.memshadow_if_ready().map(|m| &m.writes), idx),
+        exec_count: inner
+            .index
+            .pc_to_idxs
+            .get(&rec.pc)
+            .map(|idxs| idxs.len() as u64)
+            .unwrap_or(1),
+        branch_taken: branch_taken_at(&rec, next.as_ref()),
+    }
+}
+
+fn record_regs(rec: &Record) -> BTreeMap<String, i64> {
+    let mut regs = BTreeMap::new();
+    for i in 0..=28 {
+        regs.insert(format!("x{i}"), rec.regs[i] as i64);
+    }
+    regs.insert("fp".to_string(), rec.regs[29] as i64);
+    regs.insert("lr".to_string(), rec.regs[30] as i64);
+    regs.insert("sp".to_string(), rec.sp as i64);
+    regs.insert("pc".to_string(), rec.pc as i64);
+    regs.insert("nzcv".to_string(), rec.nzcv as i64);
+    regs
+}
+
+fn mem_values_for_idx(
+    recs: &Option<&Vec<tracemiku_core::prelude::ShadowMemRec>>,
+    idx: usize,
+) -> BTreeMap<u64, Vec<u8>> {
+    let Some(recs) = recs else {
+        return BTreeMap::new();
+    };
+    let mut out = BTreeMap::new();
+    let start = recs.partition_point(|rec| rec.idx < idx);
+    for rec in recs[start..].iter().take_while(|rec| rec.idx == idx) {
+        out.insert(rec.addr, mem_value_bytes(rec.value, rec.size));
+    }
+    out
+}
+
+fn mem_value_bytes(value: u64, size: u32) -> Vec<u8> {
+    let bytes = value.to_le_bytes();
+    bytes[..(size as usize).min(bytes.len())].to_vec()
+}
+
+fn branch_taken_at(rec: &Record, next: Option<&Record>) -> Option<bool> {
+    let inst = rec.inst;
+    if !is_conditional_branch(inst) {
+        return None;
+    }
+    let next_pc = next?.pc;
+    Some(next_pc != rec.pc.wrapping_add(4))
+}
+
+fn is_conditional_branch(inst: u32) -> bool {
+    (inst & 0xff00_0010) == 0x5400_0000 || (inst & 0x7e00_0000) == 0x3400_0000
 }
 
 fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, String)> {
@@ -449,13 +518,4 @@ fn annotate_calls_in_text(
         out.push('\n');
     }
     out
-}
-
-/// Try to extract call arguments from trace records before the call.
-fn extract_call_args(
-    _target: u64,
-    _trace: &tracemiku_core::trace::Trace,
-    _insns: &[(u64, u32)],
-) -> String {
-    String::new()
 }

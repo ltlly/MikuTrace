@@ -98,10 +98,15 @@
 
 ### Known gaps (from the 2026-05-30 audit, not yet shipped)
 
-- [ ] **Trace-aware decompiler is functionally static**: `il_pipeline` receives an empty `TraceContext` slice; observed register/memory/branch values are discarded before lifting (audit §2 Phase 0)
-- [ ] **No value concretization / never-taken branch pruning** in the IL (audit §2 Phase 1–2; OLLVM/VM de-flattening lever)
-- [ ] **HLIL structurer incomplete**: emits only `While`/`DoWhile`; `For`/`Switch`/`Break`/`Continue` variants exist but are never emitted (audit §5)
-- [ ] **No HTTP compression** on the axum server (CFG SVG / IL text / static assets all highly compressible) (audit §3)
+- [x] **Trace-aware decompiler Phase 0/1/2 slice**: `/api/llil/pipeline` now passes real `TraceContext`s, surfaces observed register values, and specializes traced conditional branches with `trace_pruned_branch` annotations.
+- [x] **HTTP compression**: axum responses now use gzip/br compression; `index.html` is cached at boot with disk fallback.
+- [x] **Frontend responsiveness quick wins**: record/trace/decompile/string fetches accept AbortSignal; TraceForPc is inactive-gated; cursor record fetches abort stale requests.
+- [x] **Reverse/time-travel stepping**: `[` / `]` jump previous/next execution of the current PC; `Alt+[` / `Alt+]` jump previous def / next use for the selected register.
+- [x] **Trace watchpoints**: core scan, `/api/watchpoints`, Rust CLI/top-level `tracemiku watch`, and web `w ...` command support reg-change, reg-equals, and memory-touch scans.
+- [x] **HLIL Break/Continue emission**: loop-boundary gotos in structured loop bodies now render as `break;` / `continue;`.
+- [ ] **HLIL structurer still lacks full For/Switch recovery**: `For`/`Switch`/`Case` variants exist but require induction-variable and switch-table recognition before safe emission (audit §5).
+- [ ] **Trace-aware decompiler next steps**: branch pruning is path-specialized at LLIL for observed conditional branches; full executed-edge CFG pruning / OLLVM dispatcher deflattening remains open (audit §2 Phase 2).
+- [ ] **Known pre-existing stack overflow**: `algo_fde_radixsort` can still overflow the HLIL restructurer on pathological CFGs; keep the recursion guard and add a targeted fixture before deeper structurer changes.
 - [ ] **Anti-detection coverage gaps**: L3 fork+ptrace daemon (needs eBPF), L5 `frida_agent_main`/gadget symbol scan (needs agent.so relink), L10 incomplete suicide patch (`docs/anti-detection-catalog.md`)
 - [ ] **Single-thread Stalker follow only**: worker/JNI threads invisible; needs per-thread rings + `pthread_create` hook (audit §4)
 - [ ] **Record-format version field**: `REC_SIZE=272` hardcoded with no `format_version` in `meta.json`; prerequisite for any richer capture (audit §4)

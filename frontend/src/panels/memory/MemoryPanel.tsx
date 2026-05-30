@@ -164,9 +164,14 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   const [dragAnchor, setDragAnchor] = createSignal<string | null>(null);
   const [dumpRetry, setDumpRetry] = createSignal(0);
   const [diffRetry, setDiffRetry] = createSignal(0);
+  let recordAbort: AbortController | undefined;
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
-    (idx) => fetchRecord(idx),
+    (idx) => {
+      recordAbort?.abort();
+      recordAbort = new AbortController();
+      return fetchRecord(idx, recordAbort.signal);
+    },
   );
   const currentRecord = createMemo(() => {
     const r = record();
@@ -285,7 +290,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   });
   const [dump, currentDump] = createGuardedResource<DumpSource, Awaited<ReturnType<typeof fetchMemDump>>>(
     dumpSource,
-    (s) => fetchMemDump(s.addr, s.count),
+    (s, signal) => fetchMemDump(s.addr, s.count, signal),
     (r, s) => r.request_addr === s.addr && r.request_count === s.count,
   );
   const diffSource = createMemo<DiffSource | undefined>((prev) => {
@@ -309,7 +314,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   });
   const [diff, currentDiff] = createGuardedResource<DiffSource, Awaited<ReturnType<typeof fetchMemDiff>>>(
     diffSource,
-    (s) => fetchMemDiff(s.idx, s.addr, s.size),
+    (s, signal) => fetchMemDiff(s.idx, s.addr, s.size, signal),
     (r, s) =>
       r.request_idx === s.idx &&
       r.request_addr === s.addr &&

@@ -1,7 +1,16 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { fetchFunctions, fetchIdxsForPc, fetchMeta, fetchRecord, fetchSearch } from "./api/client";
+import {
+  fetchFunctions,
+  fetchIdxsForPc,
+  fetchLastWriteOfReg,
+  fetchMeta,
+  fetchNextUseOfReg,
+  fetchRecord,
+  fetchSearch,
+  fetchWatchpoints,
+} from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
@@ -198,7 +207,12 @@ export default function App() {
     rowHintCacheVersion();
     return rowHintCache.has(idx) ? undefined : idx;
   });
-  const [cursorRecord] = createResource(cursorRecordSource, fetchRecord);
+  let cursorRecordAbort: AbortController | undefined;
+  const [cursorRecord] = createResource(cursorRecordSource, (idx) => {
+    cursorRecordAbort?.abort();
+    cursorRecordAbort = new AbortController();
+    return fetchRecord(idx, cursorRecordAbort.signal);
+  });
   createEffect(() => {
     const idx = selectedIdx();
     rowHintCacheVersion();
@@ -226,7 +240,7 @@ export default function App() {
   const [hiddenSos, setHiddenSosSignal] = createSignal<Set<string>>(initialHiddenSos());
   const [cmdMode, setCmdMode] = createSignal<CmdMode>("");
   const [cmdValue, setCmdValue] = createSignal("");
-  const [cmdStatus, setCmdStatus] = createSignal("j/k step · g/G edge · / search · : idx · n/N next");
+  const [cmdStatus, setCmdStatus] = createSignal("j/k step · [/ ] same PC · Alt+[/] reg flow · w watch");
   const [searchHits, setSearchHits] = createSignal<number[]>([]);
   const [searchPos, setSearchPos] = createSignal(0);
   const [searchPattern, setSearchPattern] = createSignal("");
@@ -316,6 +330,10 @@ export default function App() {
   let searchSeq = 0;
   let searchAbort: AbortController | undefined;
   let gotoSeq = 0;
+  let timeTravelSeq = 0;
+  let timeTravelAbort: AbortController | undefined;
+  let watchSeq = 0;
+  let watchAbort: AbortController | undefined;
 
   createEffect(() => {
     const key = functionRenameKey();
@@ -342,10 +360,24 @@ export default function App() {
     gotoAbort = undefined;
   }
 
+  function cancelTimeTravel() {
+    timeTravelSeq += 1;
+    timeTravelAbort?.abort();
+    timeTravelAbort = undefined;
+  }
+
+  function cancelWatch() {
+    watchSeq += 1;
+    watchAbort?.abort();
+    watchAbort = undefined;
+  }
+
   onCleanup(() => {
     cancelHashJump();
     cancelSearch();
     cancelGoto();
+    cancelTimeTravel();
+    cancelWatch();
   });
 
   function totalRecords(): number {
@@ -472,6 +504,69 @@ export default function App() {
     }
   }
 
+  async function jumpSamePc(direction: 1 | -1) {
+    const hint = cursorHint();
+    const pc = hint?.pc;
+    if (!pc) {
+      setCmdStatus("same-pc: current PC is not ready");
+      return;
+    }
+    cancelTimeTravel();
+    const seq = ++timeTravelSeq;
+    const abort = new AbortController();
+    timeTravelAbort = abort;
+    const cursor = selectedIdx();
+    setCmdStatus(`${direction < 0 ? "prev" : "next"} execution ${pc}...`);
+    try {
+      const r = await fetchIdxsForPc(pc, direction < 0 ? cursor : cursor + 1, 1, abort.signal);
+      if (seq !== timeTravelSeq || abort.signal.aborted) return;
+      const target = direction < 0 ? r.before[0] : r.after[0];
+      if (target === undefined) {
+        setCmdStatus(`${pc}: no ${direction < 0 ? "previous" : "next"} execution`);
+        return;
+      }
+      jumpToIdx(target);
+      setCmdStatus(`${pc}: jumped to #${target}`);
+    } catch (err) {
+      if (abort.signal.aborted || seq !== timeTravelSeq) return;
+      setCmdStatus(`same-pc failed: ${String(err)}`);
+    } finally {
+      if (timeTravelAbort === abort) timeTravelAbort = undefined;
+    }
+  }
+
+  async function jumpRegFlow(direction: 1 | -1) {
+    const reg = selectedReg();
+    if (!reg) {
+      setCmdStatus("reg flow: no selected register");
+      return;
+    }
+    cancelTimeTravel();
+    const seq = ++timeTravelSeq;
+    const abort = new AbortController();
+    timeTravelAbort = abort;
+    const cursor = selectedIdx();
+    const label = direction < 0 ? "prev def" : "next use";
+    setCmdStatus(`${label} ${reg}...`);
+    try {
+      const r = direction < 0
+        ? await fetchLastWriteOfReg(cursor, reg, abort.signal)
+        : await fetchNextUseOfReg(cursor, reg, abort.signal);
+      if (seq !== timeTravelSeq || abort.signal.aborted) return;
+      if (r.idx === null || r.idx === undefined) {
+        setCmdStatus(`${label} ${reg}: not found`);
+        return;
+      }
+      jumpToIdx(r.idx);
+      setCmdStatus(`${label} ${reg}: #${r.idx}${r.value ? ` value ${r.value}` : ""}`);
+    } catch (err) {
+      if (abort.signal.aborted || seq !== timeTravelSeq) return;
+      setCmdStatus(`${label} ${reg} failed: ${String(err)}`);
+    } finally {
+      if (timeTravelAbort === abort) timeTravelAbort = undefined;
+    }
+  }
+
   function runGoto(raw: string) {
     const text = raw.trim();
     if (!text) return;
@@ -510,6 +605,49 @@ export default function App() {
     }
   }
 
+  async function runWatchCommand(raw: string) {
+    const text = raw.trim();
+    if (!text) {
+      setCmdStatus("watch: expected reg, reg=value, or address");
+      return;
+    }
+    const parts = text.split(/\s+/).filter(Boolean);
+    const first = parts[0] ?? "";
+    const regEquals = first.match(/^([A-Za-z][A-Za-z0-9]*)=(0x[0-9a-f]+|\d+)$/i);
+    const addrMatch = first.match(/^0x[0-9a-f]+$/i);
+    const size = parts[1] ? Number.parseInt(parts[1], 10) : undefined;
+    const cursor = selectedIdx();
+    const opts = regEquals
+      ? { kind: "reg-equals" as const, reg: regEquals[1], value: regEquals[2], cursor, limit: 200 }
+      : addrMatch
+        ? { kind: "mem-touch" as const, addr: first, size: Number.isFinite(size) ? size : 1, cursor, limit: 200 }
+        : { kind: "reg-change" as const, reg: first, cursor, limit: 200 };
+
+    cancelWatch();
+    const seq = ++watchSeq;
+    const abort = new AbortController();
+    watchAbort = abort;
+    setCmdStatus(`watch ${text}: scanning...`);
+    try {
+      const r = await fetchWatchpoints({ ...opts, signal: abort.signal });
+      if (seq !== watchSeq || abort.signal.aborted) return;
+      const firstHit = r.hits[0];
+      if (!firstHit) {
+        setCmdStatus(`watch ${text}: 0 hits`);
+        return;
+      }
+      jumpToIdx(firstHit.idx);
+      if (firstHit.reg) setSelectedReg(firstHit.reg);
+      const partial = r.truncated ? ` · partial ${r.returned}/${r.total_matches}` : "";
+      setCmdStatus(`watch ${text}: #${firstHit.idx} (${r.total_matches} hits${partial})`);
+    } catch (err) {
+      if (abort.signal.aborted || seq !== watchSeq) return;
+      setCmdStatus(`watch ${text} failed: ${String(err)}`);
+    } finally {
+      if (watchAbort === abort) watchAbort = undefined;
+    }
+  }
+
   function runCommand(raw: string) {
     const text = raw.trim();
     if (!text) return;
@@ -541,6 +679,11 @@ export default function App() {
     const queryCmd = text.match(/^query\s+(.+)$/i);
     if (queryCmd) {
       runQueryText(queryCmd[1]);
+      return;
+    }
+    const watchCmd = text.match(/^(?:w|watch)\s+(.+)$/i);
+    if (watchCmd) {
+      void runWatchCommand(watchCmd[1]);
       return;
     }
     runGoto(text);
@@ -745,9 +888,9 @@ export default function App() {
     setCmdStatus(`query: ${text}`);
   }
 
-  function openCmd(mode: CmdMode) {
+  function openCmd(mode: CmdMode, initial = "") {
     setCmdMode(mode);
-    setCmdValue("");
+    setCmdValue(initial);
     queueMicrotask(() => cmdInput?.focus());
   }
 
@@ -858,6 +1001,18 @@ export default function App() {
       } else if (e.key === "End" || e.key === "G") {
         e.preventDefault();
         jumpToIdx(Math.max(0, totalRecords() - 1));
+      } else if (e.key === "[" && e.altKey) {
+        e.preventDefault();
+        void jumpRegFlow(-1);
+      } else if (e.key === "]" && e.altKey) {
+        e.preventDefault();
+        void jumpRegFlow(1);
+      } else if (e.key === "[") {
+        e.preventDefault();
+        void jumpSamePc(-1);
+      } else if (e.key === "]") {
+        e.preventDefault();
+        void jumpSamePc(1);
       }
       else if (e.key === "/") {
         e.preventDefault();
@@ -868,6 +1023,9 @@ export default function App() {
       } else if (e.key === ":") {
         e.preventDefault();
         openCmd(":");
+      } else if (e.key === "w") {
+        e.preventDefault();
+        openCmd(":", "w ");
       } else if (e.key === "n") stepSearch(1);
       else if (e.key === "N") stepSearch(-1);
     };
@@ -1374,7 +1532,7 @@ export default function App() {
             class="inp"
             value={cmdValue()}
             readOnly={!cmdMode()}
-            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "#240, 0xPC, pc 0x..., func name, mem addr len 128, taint bwd x9 @93, query ..." : "press / or g"}
+            placeholder={cmdMode() === "/" ? "search asm..." : cmdMode() === ":" ? "#240, 0xPC, pc 0x..., func name, mem addr len 128, taint bwd x9 @93, w x0, w x0=0x123, query ..." : "press / or g"}
             onInput={(e) => setCmdValue(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") closeCmd();

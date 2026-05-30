@@ -13,13 +13,21 @@
 //!      c. Else if the block ends with If, emit If-then (no else)
 //!      d. Otherwise emit flat (inline Labels/Gotos as needed)
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::hlil::expr::{
     HlilExpr, HlilOp, HlilOperand,
     block as hlil_block, if_else as hlil_if_else,
     while_loop as hlil_while_loop, do_while as hlil_do_while,
+    break_ as hlil_break, continue_ as hlil_continue,
 };
+
+const MAX_RESTRUCTURE_RECURSION: usize = 256;
+
+thread_local! {
+    static RESTRUCTURE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 
 // ============================================================================
 // Block type for internal CFG construction
@@ -386,18 +394,48 @@ fn classify_loop(blocks: &[Block], header: usize, body: &[usize]) -> LoopKind {
 /// Skips the leading Label (implicit in structure) and skips a trailing
 /// Goto or If (flow is implicit in the structure).
 fn collect_block_body(block: &Block) -> Vec<HlilExpr> {
+    collect_block_body_with_loop_flow(block, None, None)
+}
+
+fn collect_loop_block_body(block: &Block, header_pc: u64, exit_pc: Option<u64>) -> Vec<HlilExpr> {
+    collect_block_body_with_loop_flow(block, Some(header_pc), exit_pc)
+}
+
+fn collect_block_body_with_loop_flow(
+    block: &Block,
+    loop_header_pc: Option<u64>,
+    loop_exit_pc: Option<u64>,
+) -> Vec<HlilExpr> {
     let mut out = Vec::new();
     for (i, e) in block.exprs.iter().enumerate() {
         // Skip leading Label
         if i == 0 && e.op == HlilOp::Label {
             continue;
         }
-        // Skip trailing Goto (back edge or branch to merge)
+        // Skip trailing Goto (back edge or branch to merge). A single-edge
+        // block produced from an inner branch remains visible as break/continue
+        // when it targets the current loop boundary.
         if i == block.exprs.len() - 1 && e.op == HlilOp::Goto {
+            let target = match e.operands.first() {
+                Some(HlilOperand::U64(v)) => Some(*v),
+                _ => None,
+            };
+            let single_edge_block = block.exprs.len() <= 2;
+            if single_edge_block && loop_header_pc.is_some() && target == loop_header_pc {
+                out.push(hlil_continue(e.pc));
+            } else if single_edge_block && loop_exit_pc.is_some() && target == loop_exit_pc {
+                out.push(hlil_break(e.pc));
+            }
             continue;
         }
-        // Skip trailing If (do-while condition at bottom)
+        // Skip trailing If (do-while condition at bottom), unless it is an
+        // inner loop-control branch that should become break/continue.
         if i == block.exprs.len() - 1 && e.op == HlilOp::If {
+            if let Some(header_pc) = loop_header_pc {
+                if let Some(rewritten) = rewrite_loop_control_if(e, header_pc, loop_exit_pc) {
+                    out.push(rewritten);
+                }
+            }
             continue;
         }
         out.push(e.clone());
@@ -419,10 +457,84 @@ fn collect_body_from_blocks(block_ids: &[usize], blocks: &[Block]) -> Vec<HlilEx
 }
 
 /// Strip the very last trailing Goto from an expression list (if present).
+#[allow(dead_code)]
 fn strip_trailing_goto(exprs: &mut Vec<HlilExpr>) {
     if exprs.last().map(|e| e.op == HlilOp::Goto).unwrap_or(false) {
         exprs.pop();
     }
+}
+
+/// Rewrite explicit loop-edge gotos inside a structured loop body.
+///
+/// Gotos to the loop header are semantic `continue`; gotos to the loop exit are
+/// semantic `break`. Other gotos are preserved as fallback control flow.
+fn normalize_loop_body_flow(exprs: &mut [HlilExpr], header_pc: u64, exit_pc: Option<u64>) {
+    for e in exprs {
+        if e.op == HlilOp::Goto {
+            let target = match e.operands.first() {
+                Some(HlilOperand::U64(v)) => Some(*v),
+                _ => None,
+            };
+            if target == Some(header_pc) {
+                *e = hlil_continue(e.pc);
+            } else if target == exit_pc {
+                *e = hlil_break(e.pc);
+            }
+            continue;
+        }
+        for op in &mut e.operands {
+            if let HlilOperand::Expr(child) = op {
+                normalize_loop_body_flow(std::slice::from_mut(child.as_mut()), header_pc, exit_pc);
+            }
+        }
+    }
+}
+
+fn rewrite_loop_control_if(e: &HlilExpr, header_pc: u64, exit_pc: Option<u64>) -> Option<HlilExpr> {
+    if e.op != HlilOp::If {
+        return None;
+    }
+    let cond = match e.operands.first() {
+        Some(HlilOperand::Expr(cond)) => (**cond).clone(),
+        _ => return None,
+    };
+    let (then_body, then_changed) = rewrite_loop_branch(e.operands.get(1), header_pc, exit_pc, e.pc);
+    let (else_body, else_changed) = rewrite_loop_branch(e.operands.get(2), header_pc, exit_pc, e.pc);
+    if !then_changed && !else_changed {
+        return None;
+    }
+    Some(hlil_if_else(
+        cond,
+        then_body.unwrap_or_else(|| hlil_block(Vec::new(), e.pc)),
+        else_body,
+        e.pc,
+    ))
+}
+
+fn rewrite_loop_branch(
+    op: Option<&HlilOperand>,
+    header_pc: u64,
+    exit_pc: Option<u64>,
+    pc: u64,
+) -> (Option<HlilExpr>, bool) {
+    let Some(op) = op else {
+        return (None, false);
+    };
+    if let Some(target) = extract_goto_target(op) {
+        if target == header_pc {
+            return (Some(hlil_continue(pc)), true);
+        }
+        if Some(target) == exit_pc {
+            return (Some(hlil_break(pc)), true);
+        }
+        return (None, false);
+    }
+    if let HlilOperand::Expr(expr) = op {
+        let mut out = (**expr).clone();
+        normalize_loop_body_flow(std::slice::from_mut(&mut out), header_pc, exit_pc);
+        return (Some(out), false);
+    }
+    (None, false)
 }
 
 // ============================================================================
@@ -475,6 +587,33 @@ fn walk_region(
     visited: &mut [bool],
     out: &mut Vec<HlilExpr>,
 ) {
+    let depth_ok = RESTRUCTURE_DEPTH.with(|d| {
+        let depth = d.get();
+        if depth >= MAX_RESTRUCTURE_RECURSION {
+            false
+        } else {
+            d.set(depth + 1);
+            true
+        }
+    });
+    if !depth_ok {
+        if current < blocks.len() {
+            for e in &blocks[current].exprs {
+                out.push(e.clone());
+            }
+            visited[current] = true;
+        }
+        return;
+    }
+
+    struct DepthGuard;
+    impl Drop for DepthGuard {
+        fn drop(&mut self) {
+            RESTRUCTURE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+    let _guard = DepthGuard;
+
     if current >= blocks.len() || visited[current] {
         return;
     }
@@ -522,21 +661,23 @@ fn walk_region(
                                 seen.insert(bid);
                                 body_block_ids.push(bid);
                                 for &s in &blocks[bid].succs {
-                                    if s != current && !seen.contains(&s) {
+                                    if body_bids.contains(&s) && s != current && !seen.contains(&s) {
                                         stack.push(s);
                                     }
                                 }
                             }
                         }
 
-                        // Collect body expressions from all body blocks
+                        // Collect body expressions from all body blocks.
+                        // Back-edges and loop exits stay visible as
+                        // continue/break when they occur in nested branches.
                         let mut body_exprs = Vec::new();
                         for &bid in &body_block_ids {
-                            let mut blk_exprs = collect_block_body(&blocks[bid]);
+                            let mut blk_exprs =
+                                collect_loop_block_body(&blocks[bid], header.start_pc, Some(exit_pc));
                             body_exprs.append(&mut blk_exprs);
                         }
-                        // Strip trailing Goto (back edge)
-                        strip_trailing_goto(&mut body_exprs);
+                        normalize_loop_body_flow(&mut body_exprs, header.start_pc, Some(exit_pc));
 
                         out.push(hlil_while_loop(
                             cond,
@@ -572,7 +713,8 @@ fn walk_region(
                         if back_pc == header.start_pc {
                             // Self-loop: the header IS the body.
                             // Collect header body (excluding the trailing If).
-                            let mut body_exprs = collect_block_body(header);
+                            let mut body_exprs =
+                                collect_loop_block_body(header, header.start_pc, Some(exit_pc));
 
                             // Also collect any other body blocks reachable from header
                             // that aren't the header or exit.
@@ -583,10 +725,11 @@ fn walk_region(
                                 }
                             }
                             for &bid in &extra_block_ids {
-                                let mut blk_exprs = collect_block_body(&blocks[bid]);
+                                let mut blk_exprs =
+                                    collect_loop_block_body(&blocks[bid], header.start_pc, Some(exit_pc));
                                 body_exprs.append(&mut blk_exprs);
                             }
-                            strip_trailing_goto(&mut body_exprs);
+                            normalize_loop_body_flow(&mut body_exprs, header.start_pc, Some(exit_pc));
 
                             out.push(hlil_do_while(
                                 hlil_block(body_exprs, header.start_pc),
@@ -629,7 +772,7 @@ fn walk_region(
 
                     let mut body_exprs = Vec::new();
                     for &bid in &body_block_ids {
-                        let mut blk_exprs = collect_block_body(&blocks[bid]);
+                        let mut blk_exprs = collect_loop_block_body(&blocks[bid], header.start_pc, None);
                         body_exprs.append(&mut blk_exprs);
                     }
 
@@ -641,9 +784,9 @@ fn walk_region(
                             // The body already has the latch block content minus the If
                             // (collect_block_body skips trailing If).
                             // Prepend the header's non-If body
-                            let mut full_body = collect_block_body(header);
+                            let mut full_body = collect_loop_block_body(header, header.start_pc, Some(_exit_pc));
                             full_body.append(&mut body_exprs);
-                            strip_trailing_goto(&mut full_body);
+                            normalize_loop_body_flow(&mut full_body, header.start_pc, Some(_exit_pc));
 
                             out.push(hlil_do_while(
                                 hlil_block(full_body, header.start_pc),
@@ -1245,6 +1388,73 @@ mod tests {
         assert!(
             !rendered.contains("goto loc_"),
             "unexpected gotos: {rendered}"
+        );
+    }
+
+    #[test]
+    fn loop_branch_to_exit_becomes_break() {
+        // while (i < 10) {
+        //   if (stop) break;
+        //   i = i + 1;
+        // }
+        // return;
+        let cond = binary(HlilOp::CmpUlt, var("i"), konst(10));
+        let stop = binary(HlilOp::CmpNe, var("stop"), konst(0));
+
+        let flat: Vec<HlilExpr> = vec![
+            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1060, 0x1060)), 0x1000),
+            label("loc_1010", 0x1010),
+            if_else(stop.clone(), goto(0x1060, 0x1060), Some(goto(0x1020, 0x1020)), 0x1010),
+            label("loc_1020", 0x1020),
+            assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1020),
+            goto(0x1000, 0x1028),
+            label("loc_1060", 0x1060),
+            ret(0x1060),
+        ];
+
+        let result = restructure_hlil(&flat);
+        let rendered = render_hlil(&result);
+
+        assert!(rendered.contains("while ("), "expected while in: {rendered}");
+        assert!(rendered.contains("break;"), "expected break in: {rendered}");
+        assert!(
+            !rendered.contains("goto loc_1060"),
+            "unexpected exit goto: {rendered}"
+        );
+    }
+
+    #[test]
+    fn loop_branch_to_header_becomes_continue() {
+        // while (i < 10) {
+        //   if (skip) continue;
+        //   i = i + 1;
+        // }
+        // return;
+        let cond = binary(HlilOp::CmpUlt, var("i"), konst(10));
+        let skip = binary(HlilOp::CmpNe, var("skip"), konst(0));
+
+        let flat: Vec<HlilExpr> = vec![
+            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1060, 0x1060)), 0x1000),
+            label("loc_1010", 0x1010),
+            if_else(skip.clone(), goto(0x1000, 0x1000), Some(goto(0x1020, 0x1020)), 0x1010),
+            label("loc_1020", 0x1020),
+            assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1020),
+            goto(0x1000, 0x1028),
+            label("loc_1060", 0x1060),
+            ret(0x1060),
+        ];
+
+        let result = restructure_hlil(&flat);
+        let rendered = render_hlil(&result);
+
+        assert!(rendered.contains("while ("), "expected while in: {rendered}");
+        assert!(
+            rendered.contains("continue;"),
+            "expected continue in: {rendered}"
+        );
+        assert!(
+            !rendered.contains("goto loc_1000"),
+            "unexpected header goto: {rendered}"
         );
     }
 

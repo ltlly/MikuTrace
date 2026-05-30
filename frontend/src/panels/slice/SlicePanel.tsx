@@ -86,7 +86,7 @@ export default function SlicePanel(props: SlicePanelProps) {
   type GuardedShape = { kind: Direction; token: number; primaryIdx: number; data: SliceResponse };
   const [, response] = createGuardedResource<SliceQuery, GuardedShape>(
     query,
-    async (q) => {
+    async (q, signal) => {
       if (q.direction === "backward") {
         const idxs =
           q.secondaryIdx !== null && q.secondaryIdx !== q.primaryIdx
@@ -98,6 +98,7 @@ export default function SlicePanel(props: SlicePanelProps) {
           dataOnly: q.dataOnly,
           limit: q.limit,
           mode: q.mode,
+          signal,
         });
         return { kind: "backward", token: q.token, primaryIdx: q.primaryIdx, data };
       }
@@ -106,6 +107,7 @@ export default function SlicePanel(props: SlicePanelProps) {
         depth: q.depth,
         limit: q.limit,
         dataOnly: q.dataOnly,
+        signal,
       });
       return { kind: "forward", token: q.token, primaryIdx: q.primaryIdx, data };
     },

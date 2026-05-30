@@ -177,12 +177,12 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     PipelineResponse
   >(
     source,
-    (s) =>
+    (s, signal) =>
       fetchLlilPipeline({
         fn_id: s.fn_id,
         max_records: s.max_records,
         include_text: s.include_text,
-      }),
+      }, signal),
     (r, s) => r.fn_id === s.fn_id,
   );
 
