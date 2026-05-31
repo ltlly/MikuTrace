@@ -9,13 +9,11 @@
 //!   2. Cleanup — final simplification pass
 
 use super::pass::{PassGroup, PassPipeline, PassPool};
-use super::pass_simplify::{
-    RuleIdentityOp, RuleSubToAdd, RuleDoubleNeg, RuleComparisonFold,
-};
 use super::pass_cond_exec::ConditionalExecutionPass;
 use super::pass_const_prop::ConstPropPass;
 use super::pass_dce::DeadCodeElimPass;
 use super::pass_ghidra_full::*;
+use super::pass_simplify::{RuleComparisonFold, RuleDoubleNeg, RuleIdentityOp, RuleSubToAdd};
 use super::pass_stack_var::StackVariableRecoveryPass;
 use super::pass_struct_recovery::StructRecoveryPass;
 use super::pass_switch_norm::SwitchNormalizationPass;
@@ -135,7 +133,7 @@ pub fn build_universal_pipeline() -> PassPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decompiler::pass::{PassIlExprs, PassIlExpr, PassIlOperand};
+    use crate::decompiler::pass::{PassIlExpr, PassIlExprs, PassIlOperand};
 
     fn make_expr(op: &str, operands: Vec<PassIlOperand>) -> PassIlExpr {
         PassIlExpr {
@@ -166,9 +164,7 @@ mod tests {
     fn test_universal_pipeline_simplify() {
         // Simple function: just a ret. Pipeline should execute without error.
         let mut exprs = PassIlExprs::new("test", "llil");
-        exprs.exprs = vec![
-            make_expr("LLIL_Ret", vec![reg("x0")]),
-        ];
+        exprs.exprs = vec![make_expr("LLIL_Ret", vec![reg("x0")])];
 
         let pipeline = build_universal_pipeline();
         let stats = pipeline.execute("test_fn", &mut exprs);

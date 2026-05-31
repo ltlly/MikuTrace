@@ -190,36 +190,13 @@ impl HlilExpr {
             HlilOp::Const => fmt_operand(first()),
             HlilOp::ConstPtr => format!("ptr({})", fmt_operand(first())),
             HlilOp::ConstData => format!("data({})", fmt_operand(first())),
-            HlilOp::Assign => format!(
-                "{} = {}",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
+            HlilOp::Assign => format!("{} = {}", fmt_operand(first()), fmt_operand(second())),
             HlilOp::VarDeclare => format!("var {}", fmt_operand(first())),
-            HlilOp::VarInit => format!(
-                "var {} = {}",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
-            HlilOp::Deref => format!(
-                "*({})",
-                fmt_operand(first())
-            ),
-            HlilOp::DerefField => format!(
-                "*({}.{})",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
-            HlilOp::StructField => format!(
-                "{}.{}",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
-            HlilOp::ArrayIndex => format!(
-                "{}[{}]",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
+            HlilOp::VarInit => format!("var {} = {}", fmt_operand(first()), fmt_operand(second())),
+            HlilOp::Deref => format!("*({})", fmt_operand(first())),
+            HlilOp::DerefField => format!("*({}.{})", fmt_operand(first()), fmt_operand(second())),
+            HlilOp::StructField => format!("{}.{}", fmt_operand(first()), fmt_operand(second())),
+            HlilOp::ArrayIndex => format!("{}[{}]", fmt_operand(first()), fmt_operand(second())),
             HlilOp::If => format!("if ({})", fmt_operand(first())),
             HlilOp::While => format!("while ({})", fmt_operand(first())),
             HlilOp::DoWhile => format!("do {{ ... }} while ({})", fmt_operand(first())),
@@ -248,11 +225,7 @@ impl HlilExpr {
                 op_symbol(op),
                 fmt_operand(second())
             ),
-            op if is_simple_unary(op) => format!(
-                "{}({})",
-                op_symbol(op),
-                fmt_operand(first())
-            ),
+            op if is_simple_unary(op) => format!("{}({})", op_symbol(op), fmt_operand(first())),
             _ => format!("{:?}", self.op),
         }
     }
@@ -291,12 +264,7 @@ pub fn assign(dst: HlilExpr, value: HlilExpr, pc: u64) -> HlilExpr {
 
 pub fn var_declare(name: impl Into<String>, ty: impl Into<String>, pc: u64) -> HlilExpr {
     let name_str = name.into();
-    let mut e = HlilExpr::new(
-        HlilOp::VarDeclare,
-        0,
-        vec![HlilOperand::Var(name_str)],
-        pc,
-    );
+    let mut e = HlilExpr::new(HlilOp::VarDeclare, 0, vec![HlilOperand::Var(name_str)], pc);
     e.extra.insert("type".into(), ty.into());
     e
 }
@@ -316,7 +284,12 @@ pub fn block(body: Vec<HlilExpr>, pc: u64) -> HlilExpr {
     HlilExpr::new(HlilOp::Block, 0, ops, pc)
 }
 
-pub fn if_else(cond: HlilExpr, then_body: HlilExpr, else_body: Option<HlilExpr>, pc: u64) -> HlilExpr {
+pub fn if_else(
+    cond: HlilExpr,
+    then_body: HlilExpr,
+    else_body: Option<HlilExpr>,
+    pc: u64,
+) -> HlilExpr {
     let mut ops = vec![expr(cond), expr(then_body)];
     if let Some(e) = else_body {
         ops.push(expr(e));
@@ -329,30 +302,15 @@ pub fn while_loop(cond: HlilExpr, body: HlilExpr, pc: u64) -> HlilExpr {
 }
 
 pub fn do_while(body: HlilExpr, cond: HlilExpr, pc: u64) -> HlilExpr {
-    HlilExpr::new(
-        HlilOp::DoWhile,
-        1,
-        vec![expr(body), expr(cond)],
-        pc,
-    )
+    HlilExpr::new(HlilOp::DoWhile, 1, vec![expr(body), expr(cond)], pc)
 }
 
 pub fn goto(target: u64, pc: u64) -> HlilExpr {
-    HlilExpr::new(
-        HlilOp::Goto,
-        8,
-        vec![HlilOperand::U64(target)],
-        pc,
-    )
+    HlilExpr::new(HlilOp::Goto, 8, vec![HlilOperand::U64(target)], pc)
 }
 
 pub fn label(name: impl Into<String>, pc: u64) -> HlilExpr {
-    HlilExpr::new(
-        HlilOp::Label,
-        0,
-        vec![HlilOperand::Str(name.into())],
-        pc,
-    )
+    HlilExpr::new(HlilOp::Label, 0, vec![HlilOperand::Str(name.into())], pc)
 }
 
 pub fn ret(pc: u64) -> HlilExpr {
@@ -379,12 +337,7 @@ pub fn deref(size: u8, addr: HlilExpr, pc: u64) -> HlilExpr {
     HlilExpr::new(HlilOp::Deref, size, vec![expr(addr)], pc)
 }
 
-pub fn deref_field(
-    size: u8,
-    base: HlilExpr,
-    offset: i64,
-    pc: u64,
-) -> HlilExpr {
+pub fn deref_field(size: u8, base: HlilExpr, offset: i64, pc: u64) -> HlilExpr {
     HlilExpr::new(
         HlilOp::DerefField,
         size,

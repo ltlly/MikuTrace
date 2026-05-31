@@ -41,7 +41,9 @@ pub fn frame_fold_block(exprs: &[LlilExpr]) -> FrameFoldResult {
                         if let Some(size) = extract_sub_imm(val) {
                             frame_size = size;
                             has_frame = true;
-                            out[i].extra.insert("frame_op".into(), "prologue_sub_sp".into());
+                            out[i]
+                                .extra
+                                .insert("frame_op".into(), "prologue_sub_sp".into());
                         }
                     }
                 }
@@ -50,7 +52,9 @@ pub fn frame_fold_block(exprs: &[LlilExpr]) -> FrameFoldResult {
                 // stp fp, lr, [sp, #offset] or str xN, [sp, #offset]
                 if let Some(LlilOperand::Expr(addr)) = e.operands.first() {
                     if contains_reg(addr, "sp") || contains_reg(addr, "fp") {
-                        out[i].extra.insert("frame_op".into(), "prologue_save".into());
+                        out[i]
+                            .extra
+                            .insert("frame_op".into(), "prologue_save".into());
                         has_frame = true;
                     }
                 }
@@ -66,7 +70,9 @@ pub fn frame_fold_block(exprs: &[LlilExpr]) -> FrameFoldResult {
             LlilOp::Load => {
                 if let Some(LlilOperand::Expr(addr)) = e.operands.first() {
                     if contains_reg(addr, "sp") || contains_reg(addr, "fp") {
-                        out[i].extra.insert("frame_op".into(), "epilogue_restore".into());
+                        out[i]
+                            .extra
+                            .insert("frame_op".into(), "epilogue_restore".into());
                     }
                 }
             }
@@ -76,7 +82,9 @@ pub fn frame_fold_block(exprs: &[LlilExpr]) -> FrameFoldResult {
                 {
                     if dst == "sp" || dst.starts_with("sp#") {
                         if extract_sub_imm(val).map_or(false, |s| s < 0) {
-                            out[i].extra.insert("frame_op".into(), "epilogue_add_sp".into());
+                            out[i]
+                                .extra
+                                .insert("frame_op".into(), "epilogue_add_sp".into());
                         }
                     }
                 }
@@ -133,7 +141,11 @@ mod tests {
     fn test_detect_prologue_sub_sp() {
         // sub sp, sp, #0x30; stp x29, x30, [sp, #0x20]
         let exprs = vec![
-            set_reg("sp#1", binary(LlilOp::Sub, reg("sp#0"), konst(0x30)), 0x1000),
+            set_reg(
+                "sp#1",
+                binary(LlilOp::Sub, reg("sp#0"), konst(0x30)),
+                0x1000,
+            ),
             LlilExpr::new(
                 LlilOp::Store,
                 8,
@@ -148,7 +160,10 @@ mod tests {
         let result = frame_fold_block(&exprs);
         assert!(result.has_frame);
         assert_eq!(result.frame_size, 0x30);
-        assert_eq!(result.exprs[0].extra.get("frame_op").map(String::as_str), Some("prologue_sub_sp"));
+        assert_eq!(
+            result.exprs[0].extra.get("frame_op").map(String::as_str),
+            Some("prologue_sub_sp")
+        );
     }
 
     #[test]

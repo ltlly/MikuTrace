@@ -483,8 +483,8 @@ fn struct_region(
                         if let Some(&exit_bid) = pc_to_blk.get(&false_target) {
                             if exit_bid < blocks.len() && !visited[exit_bid] {
                                 struct_region(
-                                    blocks, doms, loop_set, header_set, loops,
-                                    exit_bid, visited, out,
+                                    blocks, doms, loop_set, header_set, loops, exit_bid, visited,
+                                    out,
                                 );
                             }
                         }
@@ -546,8 +546,7 @@ fn struct_region(
                         for &succ in &blocks[b].succs {
                             if succ != current && succ < blocks.len() && !visited[succ] {
                                 struct_region(
-                                    blocks, doms, loop_set, header_set, loops,
-                                    succ, visited, out,
+                                    blocks, doms, loop_set, header_set, loops, succ, visited, out,
                                 );
                             }
                         }
@@ -625,17 +624,22 @@ fn struct_region(
 
                 // Continue to the merge block (common successor of then/else)
                 let merge_bid = {
-                    let tsuccs: BTreeSet<usize> =
-                        true_bid.map(|&tb| blocks.get(tb).map(|b| b.succs.clone()).unwrap_or_default()).unwrap_or_default().into_iter().collect();
-                    let fsuccs: BTreeSet<usize> =
-                        false_bid.map(|&fb| blocks.get(fb).map(|b| b.succs.clone()).unwrap_or_default()).unwrap_or_default().into_iter().collect();
+                    let tsuccs: BTreeSet<usize> = true_bid
+                        .map(|&tb| blocks.get(tb).map(|b| b.succs.clone()).unwrap_or_default())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+                    let fsuccs: BTreeSet<usize> = false_bid
+                        .map(|&fb| blocks.get(fb).map(|b| b.succs.clone()).unwrap_or_default())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
                     tsuccs.intersection(&fsuccs).next().copied()
                 };
                 if let Some(merge_bid) = merge_bid {
                     if merge_bid < blocks.len() && !visited[merge_bid] {
                         struct_region(
-                            blocks, doms, loop_set, header_set, loops,
-                            merge_bid, visited, out,
+                            blocks, doms, loop_set, header_set, loops, merge_bid, visited, out,
                         );
                     }
                 }
@@ -783,7 +787,14 @@ fn build_body_nodes(
     for &succ in &block.succs {
         if succ < blocks.len() && !visited[succ] && !loop_set.contains(&succ) {
             build_body_nodes(
-                blocks, _doms, loop_set, _header_set, _loops, succ, visited, out,
+                blocks,
+                _doms,
+                loop_set,
+                _header_set,
+                _loops,
+                succ,
+                visited,
+                out,
             );
         }
     }

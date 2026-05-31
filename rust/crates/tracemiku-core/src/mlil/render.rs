@@ -26,7 +26,10 @@ pub fn render_stmt(e: &MlilExpr) -> String {
         MlilOp::SetVarField => format!(
             "{}.{} = {};",
             render_operand(e.operands.first()),
-            e.operands.get(1).map(|o| render_operand(Some(o))).unwrap_or_default(),
+            e.operands
+                .get(1)
+                .map(|o| render_operand(Some(o)))
+                .unwrap_or_default(),
             render_operand(e.operands.get(2))
         ),
         MlilOp::Store => format!(
@@ -39,7 +42,13 @@ pub fn render_stmt(e: &MlilExpr) -> String {
             let base = render_operand(e.operands.first());
             let offset = render_operand(e.operands.get(1));
             let value = render_operand(e.operands.get(2));
-            format!("*({} *)(({}) + {}) = {};", c_type(e.size), base, offset, value)
+            format!(
+                "*({} *)(({}) + {}) = {};",
+                c_type(e.size),
+                base,
+                offset,
+                value
+            )
         }
         MlilOp::Goto => format!("goto loc_{};", render_target(e.operands.first())),
         MlilOp::Jump => format!("goto *{};", render_operand(e.operands.first())),
@@ -70,7 +79,10 @@ pub fn render_stmt(e: &MlilExpr) -> String {
         ),
         MlilOp::Unimpl => format!(
             "/* UNIMPL: {} at {:#x} */",
-            e.operands.first().map(|o| render_operand(Some(o))).unwrap_or_default(),
+            e.operands
+                .first()
+                .map(|o| render_operand(Some(o)))
+                .unwrap_or_default(),
             e.pc
         ),
         _ => format!("{};", render_expr(e)),
@@ -85,7 +97,10 @@ pub fn render_expr(e: &MlilExpr) -> String {
         MlilOp::VarField => format!(
             "{}.{}",
             render_operand(e.operands.first()),
-            e.operands.get(1).map(|o| render_operand(Some(o))).unwrap_or_default()
+            e.operands
+                .get(1)
+                .map(|o| render_operand(Some(o)))
+                .unwrap_or_default()
         ),
         MlilOp::Load => format!(
             "*({} *)({})",
@@ -101,7 +116,10 @@ pub fn render_expr(e: &MlilExpr) -> String {
         MlilOp::AddressOfField => format!(
             "&{}.{}",
             render_operand(e.operands.first()),
-            e.operands.get(1).map(|o| render_operand(Some(o))).unwrap_or_default()
+            e.operands
+                .get(1)
+                .map(|o| render_operand(Some(o)))
+                .unwrap_or_default()
         ),
         MlilOp::Neg => render_neg(e.operands.first()),
         MlilOp::Not => format!("~{}", render_operand(e.operands.first())),
@@ -151,7 +169,12 @@ pub fn render_expr(e: &MlilExpr) -> String {
         }
         MlilOp::Intrinsic => {
             let mnem = e.extra.get("mnem").map(String::as_str).unwrap_or("?");
-            let args = e.operands.iter().map(|o| render_operand(Some(o))).collect::<Vec<_>>().join(", ");
+            let args = e
+                .operands
+                .iter()
+                .map(|o| render_operand(Some(o)))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("{mnem}({args})")
         }
         MlilOp::Undef => "/* undef */".to_string(),
@@ -185,9 +208,7 @@ fn negative_addend(op: &MlilOperand) -> Option<u64> {
             let magnitude = v.unsigned_abs();
             (magnitude <= MAX_RENDERED_NEGATIVE_ADDEND).then_some(magnitude)
         }
-        MlilOperand::Expr(e)
-            if matches!(e.op, MlilOp::Const | MlilOp::ConstPtr) =>
-        {
+        MlilOperand::Expr(e) if matches!(e.op, MlilOp::Const | MlilOp::ConstPtr) => {
             e.operands.first().and_then(negative_addend)
         }
         _ => None,
@@ -228,9 +249,7 @@ fn format_unsigned_literal(v: u64, hex_threshold: u64) -> String {
 }
 
 fn render_target(op: Option<&MlilOperand>) -> String {
-    render_operand(op)
-        .trim_start_matches("0x")
-        .to_string()
+    render_operand(op).trim_start_matches("0x").to_string()
 }
 
 fn binary_symbol(op: MlilOp) -> Option<&'static str> {
@@ -303,10 +322,7 @@ mod tests {
     #[test]
     fn renders_store_struct() {
         let s = store_struct(4, var("ptr"), 8, konst(42), 0x1000);
-        assert_eq!(
-            render_stmt(&s),
-            "*(uint32_t *)((ptr) + 8) = 0x2a;"
-        );
+        assert_eq!(render_stmt(&s), "*(uint32_t *)((ptr) + 8) = 0x2a;");
     }
 
     #[test]
@@ -329,17 +345,19 @@ mod tests {
 
     #[test]
     fn renders_comparisons() {
-        assert_eq!(render_expr(&binary(MlilOp::CmpNe, var("a"), konst(0))), "(a != 0)");
-        assert_eq!(render_expr(&binary(MlilOp::CmpUlt, var("a"), var("b"))), "(a < b)");
+        assert_eq!(
+            render_expr(&binary(MlilOp::CmpNe, var("a"), konst(0))),
+            "(a != 0)"
+        );
+        assert_eq!(
+            render_expr(&binary(MlilOp::CmpUlt, var("a"), var("b"))),
+            "(a < b)"
+        );
     }
 
     #[test]
     fn renders_negative_as_subtraction() {
-        let add_neg = set_var(
-            "v0",
-            binary(MlilOp::Add, var("sp"), konst(-0x20)),
-            0x1000,
-        );
+        let add_neg = set_var("v0", binary(MlilOp::Add, var("sp"), konst(-0x20)), 0x1000);
         assert_eq!(render_stmt(&add_neg), "v0 = (sp - 0x20);");
     }
 
@@ -355,11 +373,7 @@ mod tests {
             set_var("arg_0", konst(1), 0x1000),
             set_var(
                 "result",
-                binary(
-                    MlilOp::Add,
-                    load(8, var("arg_0"), 0x1004),
-                    konst(10),
-                ),
+                binary(MlilOp::Add, load(8, var("arg_0"), 0x1004), konst(10)),
                 0x1004,
             ),
             store(8, var("result"), var("arg_0"), 0x1008),

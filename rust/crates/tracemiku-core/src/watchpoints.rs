@@ -43,8 +43,12 @@ pub fn watchpoint_scan(
     let limit = limit.max(1);
     match spec {
         WatchpointSpec::RegChange { reg } => scan_reg_change(trace, reg, cursor, limit),
-        WatchpointSpec::RegEquals { reg, value } => scan_reg_equals(trace, reg, *value, cursor, limit),
-        WatchpointSpec::MemTouch { addr, size } => scan_mem_touch(trace, index, *addr, *size, cursor, limit),
+        WatchpointSpec::RegEquals { reg, value } => {
+            scan_reg_equals(trace, reg, *value, cursor, limit)
+        }
+        WatchpointSpec::MemTouch { addr, size } => {
+            scan_mem_touch(trace, index, *addr, *size, cursor, limit)
+        }
     }
 }
 
@@ -82,7 +86,13 @@ fn scan_reg_change(trace: &Trace, reg: &str, cursor: usize, limit: usize) -> Wat
     watchpoint_response(hits, total_matches, limit)
 }
 
-fn scan_reg_equals(trace: &Trace, reg: &str, value: u64, cursor: usize, limit: usize) -> WatchpointScan {
+fn scan_reg_equals(
+    trace: &Trace,
+    reg: &str,
+    value: u64,
+    cursor: usize,
+    limit: usize,
+) -> WatchpointScan {
     let reg = canonical_reg(reg);
     let mut hits = Vec::new();
     let mut total_matches = 0usize;
@@ -144,7 +154,11 @@ fn scan_mem_touch(
     watchpoint_response(hits, total_matches, limit)
 }
 
-fn watchpoint_response(hits: Vec<WatchpointHit>, total_matches: usize, limit: usize) -> WatchpointScan {
+fn watchpoint_response(
+    hits: Vec<WatchpointHit>,
+    total_matches: usize,
+    limit: usize,
+) -> WatchpointScan {
     WatchpointScan {
         status: "ready",
         returned: hits.len(),
@@ -184,7 +198,10 @@ mod tests {
             0,
             10,
         );
-        assert!(scan.hits.iter().any(|hit| hit.idx == 1 && hit.value == Some(7)));
+        assert!(scan
+            .hits
+            .iter()
+            .any(|hit| hit.idx == 1 && hit.value == Some(7)));
     }
 
     fn write_trace(path: &std::path::Path, records: &[Record]) {

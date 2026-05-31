@@ -1,4 +1,3 @@
-
 // Auto-generated decompile test for sub_457770 comparison
 use tracemiku_core::decompiler::il_pipeline::decompile_static;
 
@@ -72,7 +71,7 @@ fn decompile_sub_457770_trace() {
         (0x0000006f7a9088a8u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== LLIL SSA ===");
     println!("{}", output.llil_ssa_text);
     println!("=== MLIL ===");
@@ -84,7 +83,7 @@ fn decompile_sub_457770_trace() {
     println!("LLIL exprs: {}", output.llil_count);
     println!("MLIL exprs: {}", output.mlil_count);
     println!("HLIL exprs: {}", output.hlil_count);
-    
+
     // Basic assertions
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());

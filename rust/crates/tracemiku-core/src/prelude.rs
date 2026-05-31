@@ -64,6 +64,4 @@ pub use crate::taint::{
 pub use crate::trace::{
     CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, REC_NUM_REGS, REC_SIZE,
 };
-pub use crate::watchpoints::{
-    watchpoint_scan, WatchpointHit, WatchpointScan, WatchpointSpec,
-};
+pub use crate::watchpoints::{watchpoint_scan, WatchpointHit, WatchpointScan, WatchpointSpec};

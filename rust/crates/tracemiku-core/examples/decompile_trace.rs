@@ -36,7 +36,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let file_size = std::fs::metadata(&trace_path)?.len();
-    println!("Reading trace: {} ({:.2} GB)", trace_path.display(), file_size as f64 / 1e9);
+    println!(
+        "Reading trace: {} ({:.2} GB)",
+        trace_path.display(),
+        file_size as f64 / 1e9
+    );
 
     let start_read = Instant::now();
     let (records, unique_pairs) = read_trace_records(&trace_path)?;
@@ -61,7 +65,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fn_stats.sort_by_key(|(_, len, _)| std::cmp::Reverse(*len));
     fn_stats.truncate(max_fns.min(fns.len()));
 
-    println!("\nDecompiling top {} functions (min {} records each):\n", fn_stats.len(), min_records);
+    println!(
+        "\nDecompiling top {} functions (min {} records each):\n",
+        fn_stats.len(),
+        min_records
+    );
 
     let mut total_llil = 0usize;
     let mut total_mlil = 0usize;
@@ -137,8 +145,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("LLIL total exprs:        {}", total_llil);
     println!("MLIL total exprs:        {}", total_mlil);
     println!("HLIL total exprs:        {}", total_hlil);
-    println!("Expansion LLIL→MLIL:     {:.1}x", total_mlil as f64 / total_llil.max(1) as f64);
-    println!("Expansion MLIL→HLIL:     {:.1}x", total_hlil as f64 / total_mlil.max(1) as f64);
+    println!(
+        "Expansion LLIL→MLIL:     {:.1}x",
+        total_mlil as f64 / total_llil.max(1) as f64
+    );
+    println!(
+        "Expansion MLIL→HLIL:     {:.1}x",
+        total_hlil as f64 / total_mlil.max(1) as f64
+    );
     println!();
     println!("Best LLIL coverage:      {:.1}%", best_coverage * 100.0);
     println!("Worst LLIL coverage:     {:.1}%", worst_coverage * 100.0);
@@ -147,7 +161,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn read_trace_records(path: &Path) -> Result<(Vec<Record>, Vec<(u64, u32)>), Box<dyn std::error::Error>> {
+fn read_trace_records(
+    path: &Path,
+) -> Result<(Vec<Record>, Vec<(u64, u32)>), Box<dyn std::error::Error>> {
     let file = File::open(path)?;
     let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
     let mut records = Vec::new();
@@ -216,7 +232,12 @@ fn decode_mnem(inst: u32) -> String {
     // Use the real decoder from the core crate
     use tracemiku_core::disasm::decode;
     let decoded = decode(0, inst);
-    decoded.mnemonic.split('.').next().unwrap_or(&decoded.mnemonic).to_string()
+    decoded
+        .mnemonic
+        .split('.')
+        .next()
+        .unwrap_or(&decoded.mnemonic)
+        .to_string()
 }
 
 fn parse_flag(args: &[String], name: &str, default: usize) -> usize {

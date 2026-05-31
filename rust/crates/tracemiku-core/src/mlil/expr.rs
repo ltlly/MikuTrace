@@ -146,7 +146,12 @@ impl MlilExpr {
     pub fn is_control_flow(&self) -> bool {
         matches!(
             self.op,
-            MlilOp::Goto | MlilOp::Jump | MlilOp::If | MlilOp::Ret | MlilOp::Noret | MlilOp::Tailcall
+            MlilOp::Goto
+                | MlilOp::Jump
+                | MlilOp::If
+                | MlilOp::Ret
+                | MlilOp::Noret
+                | MlilOp::Tailcall
         )
     }
 
@@ -159,22 +164,14 @@ impl MlilExpr {
             MlilOp::Const => fmt_operand(first()),
             MlilOp::ConstPtr => format!("ptr({})", fmt_operand(first())),
             MlilOp::ConstData => format!("data({})", fmt_operand(first())),
-            MlilOp::SetVar => format!(
-                "{} = {}",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
+            MlilOp::SetVar => format!("{} = {}", fmt_operand(first()), fmt_operand(second())),
             MlilOp::SetVarField => format!(
                 "{}.{} = {}",
                 fmt_operand(first()),
                 fmt_operand(self.operands.get(1)),
                 fmt_operand(self.operands.get(2))
             ),
-            MlilOp::Load => format!(
-                "load.{}({})",
-                self.size,
-                fmt_operand(first())
-            ),
+            MlilOp::Load => format!("load.{}({})", self.size, fmt_operand(first())),
             MlilOp::Store => format!(
                 "store.{}({}, {})",
                 self.size,
@@ -218,27 +215,17 @@ impl MlilExpr {
             MlilOp::Zx => format!("zx.{}({})", self.size, fmt_operand(first())),
             MlilOp::LowPart => format!("low_part({})", fmt_operand(first())),
             MlilOp::AddressOf => format!("&({})", fmt_operand(first())),
-            MlilOp::AddressOfField => format!(
-                "&({}.{})",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
-            MlilOp::VarField => format!(
-                "{}.{}",
-                fmt_operand(first()),
-                fmt_operand(second())
-            ),
+            MlilOp::AddressOfField => {
+                format!("&({}.{})", fmt_operand(first()), fmt_operand(second()))
+            }
+            MlilOp::VarField => format!("{}.{}", fmt_operand(first()), fmt_operand(second())),
             op if is_binary(op) => format!(
                 "({} {} {})",
                 fmt_operand(first()),
                 op_symbol(op),
                 fmt_operand(second())
             ),
-            op if is_unary(op) => format!(
-                "{}({})",
-                op_symbol(op),
-                fmt_operand(first())
-            ),
+            op if is_unary(op) => format!("{}({})", op_symbol(op), fmt_operand(first())),
             _ => format!("{:?}", self.op),
         }
     }
@@ -276,12 +263,7 @@ pub fn set_var(dst: impl Into<String>, value: MlilExpr, pc: u64) -> MlilExpr {
     )
 }
 
-pub fn set_var_field(
-    dst: impl Into<String>,
-    offset: i64,
-    value: MlilExpr,
-    pc: u64,
-) -> MlilExpr {
+pub fn set_var_field(dst: impl Into<String>, offset: i64, value: MlilExpr, pc: u64) -> MlilExpr {
     let size = value.size;
     MlilExpr::new(
         MlilOp::SetVarField,
@@ -322,13 +304,7 @@ pub fn load_struct(size: u8, addr: MlilExpr, offset: i64, pc: u64) -> MlilExpr {
     )
 }
 
-pub fn store_struct(
-    size: u8,
-    addr: MlilExpr,
-    offset: i64,
-    value: MlilExpr,
-    pc: u64,
-) -> MlilExpr {
+pub fn store_struct(size: u8, addr: MlilExpr, offset: i64, value: MlilExpr, pc: u64) -> MlilExpr {
     MlilExpr::new(
         MlilOp::StoreStruct,
         size,
@@ -498,10 +474,7 @@ mod tests {
 
     #[test]
     fn load_store_short_display() {
-        assert_eq!(
-            load(8, var("ptr"), 0x1000).short(),
-            "load.8(var(ptr))"
-        );
+        assert_eq!(load(8, var("ptr"), 0x1000).short(), "load.8(var(ptr))");
         assert_eq!(
             store(4, var("ptr"), konst(7), 0x1000).short(),
             "store.4(var(ptr), 7)"

@@ -90,7 +90,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn serve_index(index_path: Arc<PathBuf>, cached_index: Arc<Option<Arc<str>>>) -> impl IntoResponse {
+async fn serve_index(
+    index_path: Arc<PathBuf>,
+    cached_index: Arc<Option<Arc<str>>>,
+) -> impl IntoResponse {
     if let Some(html) = cached_index.as_ref().as_ref() {
         return (
             [

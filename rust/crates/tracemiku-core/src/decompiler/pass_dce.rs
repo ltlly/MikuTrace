@@ -5,7 +5,9 @@
 
 use std::collections::BTreeSet;
 
-use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult};
+use super::pass::{
+    Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult,
+};
 
 /// DCE pass: removes unused SetReg/SetVar instructions.
 ///
@@ -76,9 +78,7 @@ impl Pass for DeadCodeElimPass {
     fn run(&self, _ctx: &PassContext, exprs: &mut PassIlExprs) -> PassResult {
         let uses = Self::collect_uses(&exprs.exprs);
         let before = exprs.exprs.len();
-        exprs
-            .exprs
-            .retain(|e| !Self::is_dead_def(e, &uses));
+        exprs.exprs.retain(|e| !Self::is_dead_def(e, &uses));
         let after = exprs.exprs.len();
         if after < before {
             PassResult::Changed
@@ -128,7 +128,14 @@ mod tests {
 
         let pass = DeadCodeElimPass;
         // First pass: both x0#1 and x1#1 have no uses → both removed
-        let result = pass.run(&PassContext { function_name: "test", phase: 1, verbose: false }, &mut exprs);
+        let result = pass.run(
+            &PassContext {
+                function_name: "test",
+                phase: 1,
+                verbose: false,
+            },
+            &mut exprs,
+        );
         assert!(result.is_changed());
         assert!(exprs.exprs.is_empty());
     }
@@ -140,17 +147,24 @@ mod tests {
         let mut exprs = PassIlExprs::new("test", "llil");
         exprs.exprs = vec![
             make_expr("LLIL_SetReg", vec![reg("x0#1"), imm(42)]),
-            make_expr("LLIL_SetReg", vec![
-                reg("x1#1"),
-                PassIlOperand::Expr(Box::new(make_expr(
-                    "LLIL_Add",
-                    vec![reg("x0#1"), imm(1)],
-                ))),
-            ]),
+            make_expr(
+                "LLIL_SetReg",
+                vec![
+                    reg("x1#1"),
+                    PassIlOperand::Expr(Box::new(make_expr("LLIL_Add", vec![reg("x0#1"), imm(1)]))),
+                ],
+            ),
         ];
 
         let pass = DeadCodeElimPass;
-        let result = pass.run(&PassContext { function_name: "test", phase: 1, verbose: false }, &mut exprs);
+        let result = pass.run(
+            &PassContext {
+                function_name: "test",
+                phase: 1,
+                verbose: false,
+            },
+            &mut exprs,
+        );
         // x0#1 is used by x1#1 so kept. x1#1 has no use → removed.
         assert!(result.is_changed());
         assert_eq!(exprs.exprs.len(), 1);
@@ -168,7 +182,14 @@ mod tests {
         ];
 
         let pass = DeadCodeElimPass;
-        let result = pass.run(&PassContext { function_name: "test", phase: 1, verbose: false }, &mut exprs);
+        let result = pass.run(
+            &PassContext {
+                function_name: "test",
+                phase: 1,
+                verbose: false,
+            },
+            &mut exprs,
+        );
         assert!(!result.is_changed());
         assert_eq!(exprs.exprs.len(), 2);
     }
@@ -180,23 +201,33 @@ mod tests {
         let mut exprs = PassIlExprs::new("test", "llil");
         exprs.exprs = vec![
             make_expr("LLIL_SetReg", vec![reg("x0#1"), imm(42)]),
-            make_expr("LLIL_SetReg", vec![
-                reg("x1#1"),
-                PassIlOperand::Expr(Box::new(make_expr(
-                    "LLIL_Mul",
-                    vec![
-                        PassIlOperand::Expr(Box::new(make_expr(
-                            "LLIL_Add",
-                            vec![reg("x0#1"), imm(5)],
-                        ))),
-                        imm(3),
-                    ],
-                ))),
-            ]),
+            make_expr(
+                "LLIL_SetReg",
+                vec![
+                    reg("x1#1"),
+                    PassIlOperand::Expr(Box::new(make_expr(
+                        "LLIL_Mul",
+                        vec![
+                            PassIlOperand::Expr(Box::new(make_expr(
+                                "LLIL_Add",
+                                vec![reg("x0#1"), imm(5)],
+                            ))),
+                            imm(3),
+                        ],
+                    ))),
+                ],
+            ),
         ];
 
         let pass = DeadCodeElimPass;
-        let result = pass.run(&PassContext { function_name: "test", phase: 1, verbose: false }, &mut exprs);
+        let result = pass.run(
+            &PassContext {
+                function_name: "test",
+                phase: 1,
+                verbose: false,
+            },
+            &mut exprs,
+        );
         // x0#1 used by inner Add → kept. x1#1 not used → removed.
         assert!(result.is_changed());
         assert_eq!(exprs.exprs.len(), 1);
@@ -216,11 +247,15 @@ mod tests {
 
         let pass = DeadCodeElimPass;
         // First run: x0#1 is used by x1#1, so stays. x1#1 is unused, removed.
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let r1 = pass.run(&ctx, &mut exprs);
         assert!(r1.is_changed());
         assert_eq!(exprs.exprs.len(), 1); // only x0#1 remains
-        // Second run: now x0#1 has no use
+                                          // Second run: now x0#1 has no use
         let r2 = pass.run(&ctx, &mut exprs);
         assert!(r2.is_changed());
         assert!(exprs.exprs.is_empty());

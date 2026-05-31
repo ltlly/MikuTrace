@@ -17,10 +17,9 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::hlil::expr::{
-    HlilExpr, HlilOp, HlilOperand,
-    block as hlil_block, if_else as hlil_if_else,
-    while_loop as hlil_while_loop, do_while as hlil_do_while,
-    break_ as hlil_break, continue_ as hlil_continue,
+    block as hlil_block, break_ as hlil_break, continue_ as hlil_continue,
+    do_while as hlil_do_while, if_else as hlil_if_else, while_loop as hlil_while_loop, HlilExpr,
+    HlilOp, HlilOperand,
 };
 
 const MAX_RESTRUCTURE_RECURSION: usize = 256;
@@ -84,12 +83,10 @@ impl Block {
 
 fn extract_goto_target(op: &HlilOperand) -> Option<u64> {
     match op {
-        HlilOperand::Expr(e) if e.op == HlilOp::Goto => {
-            match e.operands.first() {
-                Some(HlilOperand::U64(v)) => Some(*v),
-                _ => None,
-            }
-        }
+        HlilOperand::Expr(e) if e.op == HlilOp::Goto => match e.operands.first() {
+            Some(HlilOperand::U64(v)) => Some(*v),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -101,12 +98,7 @@ fn extract_goto_target(op: &HlilOperand) -> Option<u64> {
 fn is_terminator(op: HlilOp) -> bool {
     matches!(
         op,
-        HlilOp::Goto
-            | HlilOp::If
-            | HlilOp::Ret
-            | HlilOp::Jump
-            | HlilOp::Tailcall
-            | HlilOp::Noret
+        HlilOp::Goto | HlilOp::If | HlilOp::Ret | HlilOp::Jump | HlilOp::Tailcall | HlilOp::Noret
     )
 }
 
@@ -127,7 +119,12 @@ fn build_cfg(exprs: &[HlilExpr]) -> Vec<Block> {
 
     for (i, e) in exprs.iter().enumerate() {
         match e.op {
-            HlilOp::Goto | HlilOp::If | HlilOp::Jump | HlilOp::Ret | HlilOp::Tailcall | HlilOp::Noret => {
+            HlilOp::Goto
+            | HlilOp::If
+            | HlilOp::Jump
+            | HlilOp::Ret
+            | HlilOp::Tailcall
+            | HlilOp::Noret => {
                 if i + 1 < n {
                     leader[i + 1] = true;
                 }
@@ -145,10 +142,7 @@ fn build_cfg(exprs: &[HlilExpr]) -> Vec<Block> {
     for end in 1..=n {
         if end == n || leader[end] {
             let block_exprs: Vec<HlilExpr> = exprs[start..end].to_vec();
-            let start_pc = block_exprs
-                .first()
-                .map(|e| e.pc)
-                .unwrap_or(0);
+            let start_pc = block_exprs.first().map(|e| e.pc).unwrap_or(0);
             blocks.push(Block {
                 id: blocks.len(),
                 start_pc,
@@ -498,8 +492,10 @@ fn rewrite_loop_control_if(e: &HlilExpr, header_pc: u64, exit_pc: Option<u64>) -
         Some(HlilOperand::Expr(cond)) => (**cond).clone(),
         _ => return None,
     };
-    let (then_body, then_changed) = rewrite_loop_branch(e.operands.get(1), header_pc, exit_pc, e.pc);
-    let (else_body, else_changed) = rewrite_loop_branch(e.operands.get(2), header_pc, exit_pc, e.pc);
+    let (then_body, then_changed) =
+        rewrite_loop_branch(e.operands.get(1), header_pc, exit_pc, e.pc);
+    let (else_body, else_changed) =
+        rewrite_loop_branch(e.operands.get(2), header_pc, exit_pc, e.pc);
     if !then_changed && !else_changed {
         return None;
     }
@@ -661,7 +657,8 @@ fn walk_region(
                                 seen.insert(bid);
                                 body_block_ids.push(bid);
                                 for &s in &blocks[bid].succs {
-                                    if body_bids.contains(&s) && s != current && !seen.contains(&s) {
+                                    if body_bids.contains(&s) && s != current && !seen.contains(&s)
+                                    {
                                         stack.push(s);
                                     }
                                 }
@@ -673,8 +670,11 @@ fn walk_region(
                         // continue/break when they occur in nested branches.
                         let mut body_exprs = Vec::new();
                         for &bid in &body_block_ids {
-                            let mut blk_exprs =
-                                collect_loop_block_body(&blocks[bid], header.start_pc, Some(exit_pc));
+                            let mut blk_exprs = collect_loop_block_body(
+                                &blocks[bid],
+                                header.start_pc,
+                                Some(exit_pc),
+                            );
                             body_exprs.append(&mut blk_exprs);
                         }
                         normalize_loop_body_flow(&mut body_exprs, header.start_pc, Some(exit_pc));
@@ -725,11 +725,18 @@ fn walk_region(
                                 }
                             }
                             for &bid in &extra_block_ids {
-                                let mut blk_exprs =
-                                    collect_loop_block_body(&blocks[bid], header.start_pc, Some(exit_pc));
+                                let mut blk_exprs = collect_loop_block_body(
+                                    &blocks[bid],
+                                    header.start_pc,
+                                    Some(exit_pc),
+                                );
                                 body_exprs.append(&mut blk_exprs);
                             }
-                            normalize_loop_body_flow(&mut body_exprs, header.start_pc, Some(exit_pc));
+                            normalize_loop_body_flow(
+                                &mut body_exprs,
+                                header.start_pc,
+                                Some(exit_pc),
+                            );
 
                             out.push(hlil_do_while(
                                 hlil_block(body_exprs, header.start_pc),
@@ -772,7 +779,8 @@ fn walk_region(
 
                     let mut body_exprs = Vec::new();
                     for &bid in &body_block_ids {
-                        let mut blk_exprs = collect_loop_block_body(&blocks[bid], header.start_pc, None);
+                        let mut blk_exprs =
+                            collect_loop_block_body(&blocks[bid], header.start_pc, None);
                         body_exprs.append(&mut blk_exprs);
                     }
 
@@ -784,9 +792,14 @@ fn walk_region(
                             // The body already has the latch block content minus the If
                             // (collect_block_body skips trailing If).
                             // Prepend the header's non-If body
-                            let mut full_body = collect_loop_block_body(header, header.start_pc, Some(_exit_pc));
+                            let mut full_body =
+                                collect_loop_block_body(header, header.start_pc, Some(_exit_pc));
                             full_body.append(&mut body_exprs);
-                            normalize_loop_body_flow(&mut full_body, header.start_pc, Some(_exit_pc));
+                            normalize_loop_body_flow(
+                                &mut full_body,
+                                header.start_pc,
+                                Some(_exit_pc),
+                            );
 
                             out.push(hlil_do_while(
                                 hlil_block(full_body, header.start_pc),
@@ -838,11 +851,29 @@ fn walk_region(
 
                 // Collect true branch expressions
                 if let Some(tb) = true_bid {
-                    collect_region_between(tb, Some(merge_bid), blocks, &mut then_exprs, visited, loop_header_set, loops, pc_to_block);
+                    collect_region_between(
+                        tb,
+                        Some(merge_bid),
+                        blocks,
+                        &mut then_exprs,
+                        visited,
+                        loop_header_set,
+                        loops,
+                        pc_to_block,
+                    );
                 }
                 // Collect false branch expressions
                 if let Some(fb) = false_bid {
-                    collect_region_between(fb, Some(merge_bid), blocks, &mut else_exprs, visited, loop_header_set, loops, pc_to_block);
+                    collect_region_between(
+                        fb,
+                        Some(merge_bid),
+                        blocks,
+                        &mut else_exprs,
+                        visited,
+                        loop_header_set,
+                        loops,
+                        pc_to_block,
+                    );
                 }
 
                 out.push(hlil_if_else(
@@ -876,7 +907,16 @@ fn walk_region(
                 // stops before it.
                 let mut then_exprs = Vec::new();
                 if let Some(tb) = true_bid {
-                    collect_region_between(tb, false_bid, blocks, &mut then_exprs, visited, loop_header_set, loops, pc_to_block);
+                    collect_region_between(
+                        tb,
+                        false_bid,
+                        blocks,
+                        &mut then_exprs,
+                        visited,
+                        loop_header_set,
+                        loops,
+                        pc_to_block,
+                    );
                 }
 
                 out.push(hlil_if_else(
@@ -992,7 +1032,15 @@ fn collect_region_between(
             // Nested loop — recurse via walk_region
             let _before = out.len();
             let mut tmp = Vec::new();
-            walk_region(bid, blocks, loop_header_set, loops, pc_to_block, visited, &mut tmp);
+            walk_region(
+                bid,
+                blocks,
+                loop_header_set,
+                loops,
+                pc_to_block,
+                visited,
+                &mut tmp,
+            );
             out.extend(tmp);
             // After walk_region, bid may have been marked visited. Skip to next.
             // Find the next unvisited block
@@ -1007,7 +1055,15 @@ fn collect_region_between(
             // Nested if-else — recurse via walk_region
             let _before = out.len();
             let mut tmp = Vec::new();
-            walk_region(bid, blocks, loop_header_set, loops, pc_to_block, visited, &mut tmp);
+            walk_region(
+                bid,
+                blocks,
+                loop_header_set,
+                loops,
+                pc_to_block,
+                visited,
+                &mut tmp,
+            );
             out.extend(tmp);
             // Find the next unvisited block beyond whatever was consumed
             bid = find_next_unvisited(bid + 1, visited, blocks.len());
@@ -1054,11 +1110,7 @@ fn collect_region_between(
 }
 
 /// Find the next unvisited block starting from `start`, stopping before `stop`.
-fn find_next_unvisited(
-    start: usize,
-    visited: &[bool],
-    max: usize,
-) -> usize {
+fn find_next_unvisited(start: usize, visited: &[bool], max: usize) -> usize {
     let mut bid = start;
     while bid < max && visited[bid] {
         bid += 1;
@@ -1091,10 +1143,7 @@ fn mark_region_visited(
 
 #[cfg(test)]
 mod tests {
-    use crate::hlil::expr::{
-        assign, binary, goto, if_else, konst,
-        label, ret, var, HlilOp,
-    };
+    use crate::hlil::expr::{assign, binary, goto, if_else, konst, label, ret, var, HlilOp};
     use crate::hlil::render::render_hlil;
 
     use super::*;
@@ -1111,7 +1160,12 @@ mod tests {
         //   0x1030: loc_1030: return;
         let cond = binary(HlilOp::CmpE, var("x"), konst(0));
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1020, 0x1020)), 0x1000),
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1020, 0x1020)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
             assign(var("v1"), konst(1), 0x1010),
             goto(0x1030, 0x1018),
@@ -1129,7 +1183,10 @@ mod tests {
         assert!(rendered.contains("if ("), "expected if in: {rendered}");
         assert!(rendered.contains("v1 = 1;"), "expected v1=1 in: {rendered}");
         assert!(rendered.contains("v2 = 2;"), "expected v2=2 in: {rendered}");
-        assert!(rendered.contains("return;"), "expected return in: {rendered}");
+        assert!(
+            rendered.contains("return;"),
+            "expected return in: {rendered}"
+        );
         // Should NOT contain gotos (the gotos were merged into structure)
         assert!(
             !rendered.contains("goto loc_1010"),
@@ -1156,7 +1213,12 @@ mod tests {
         //   0x1020: loc_1020: return;
         let cond = binary(HlilOp::CmpE, var("x"), konst(0));
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1020, 0x1020)), 0x1000),
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1020, 0x1020)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
             assign(var("v1"), konst(1), 0x1010),
             goto(0x1020, 0x1018),
@@ -1169,7 +1231,10 @@ mod tests {
 
         assert!(rendered.contains("if ("), "expected if in: {rendered}");
         assert!(rendered.contains("v1 = 1;"), "expected v1=1 in: {rendered}");
-        assert!(rendered.contains("return;"), "expected return in: {rendered}");
+        assert!(
+            rendered.contains("return;"),
+            "expected return in: {rendered}"
+        );
         assert!(
             !rendered.contains("goto loc_1010"),
             "unexpected goto: {rendered}"
@@ -1187,14 +1252,15 @@ mod tests {
         //   0x1030: loc_1030: return;
         let cond = binary(HlilOp::CmpUlt, var("i"), konst(10));
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1030, 0x1030)), 0x1000),
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1030, 0x1030)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
             assign(var("tmp"), konst(1), 0x1010),
-            assign(
-                var("i"),
-                binary(HlilOp::Add, var("i"), konst(1)),
-                0x1014,
-            ),
+            assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1014),
             goto(0x1000, 0x1018),
             label("loc_1030", 0x1030),
             ret(0x1030),
@@ -1211,16 +1277,16 @@ mod tests {
             rendered.contains("i = (i + 1);"),
             "expected body in: {rendered}"
         );
-        assert!(rendered.contains("return;"), "expected return in: {rendered}");
+        assert!(
+            rendered.contains("return;"),
+            "expected return in: {rendered}"
+        );
         assert!(
             !rendered.contains("goto loc_1000"),
             "unexpected back-edge goto: {rendered}"
         );
         // There should be NO gotos in the while loop output
-        assert!(
-            !rendered.contains("goto"),
-            "expected no gotos: {rendered}"
-        );
+        assert!(!rendered.contains("goto"), "expected no gotos: {rendered}");
     }
 
     // -----------------------------------------------------------------------
@@ -1235,12 +1301,13 @@ mod tests {
         let flat: Vec<HlilExpr> = vec![
             label("loc_1000", 0x1000),
             assign(var("tmp"), konst(1), 0x1000),
-            assign(
-                var("i"),
-                binary(HlilOp::Add, var("i"), konst(1)),
-                0x1004,
+            assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1004),
+            if_else(
+                cond.clone(),
+                goto(0x1000, 0x1000),
+                Some(goto(0x1020, 0x1020)),
+                0x1008,
             ),
-            if_else(cond.clone(), goto(0x1000, 0x1000), Some(goto(0x1020, 0x1020)), 0x1008),
             label("loc_1020", 0x1020),
             ret(0x1020),
         ];
@@ -1260,7 +1327,10 @@ mod tests {
             rendered.contains("i = (i + 1);"),
             "expected body in: {rendered}"
         );
-        assert!(rendered.contains("return;"), "expected return in: {rendered}");
+        assert!(
+            rendered.contains("return;"),
+            "expected return in: {rendered}"
+        );
         assert!(
             !rendered.contains("goto loc_1000"),
             "unexpected back-edge goto: {rendered}"
@@ -1303,7 +1373,12 @@ mod tests {
         let cond2 = binary(HlilOp::CmpNe, var("b"), konst(0));
 
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond1.clone(), goto(0x1010, 0x1010), Some(goto(0x1020, 0x1020)), 0x1000),
+            if_else(
+                cond1.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1020, 0x1020)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
             assign(var("v1"), konst(1), 0x1010),
             goto(0x1030, 0x1018),
@@ -1311,7 +1386,12 @@ mod tests {
             assign(var("v2"), konst(2), 0x1020),
             goto(0x1030, 0x1028),
             label("loc_1030", 0x1030),
-            if_else(cond2.clone(), goto(0x1040, 0x1040), Some(goto(0x1050, 0x1050)), 0x1030),
+            if_else(
+                cond2.clone(),
+                goto(0x1040, 0x1040),
+                Some(goto(0x1050, 0x1050)),
+                0x1030,
+            ),
             label("loc_1040", 0x1040),
             assign(var("v3"), konst(3), 0x1040),
             goto(0x1060, 0x1048),
@@ -1334,7 +1414,10 @@ mod tests {
         let if_count = rendered.matches("if (").count();
         assert_eq!(if_count, 2, "expected 2 ifs, got {if_count}: {rendered}");
         // No gotos should remain
-        assert!(!rendered.contains("goto loc_"), "unexpected gotos: {rendered}");
+        assert!(
+            !rendered.contains("goto loc_"),
+            "unexpected gotos: {rendered}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1359,9 +1442,19 @@ mod tests {
         let inner_cond = binary(HlilOp::CmpE, var("x"), konst(0));
 
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1060, 0x1060)), 0x1000),
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1060, 0x1060)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
-            if_else(inner_cond.clone(), goto(0x1020, 0x1020), Some(goto(0x1030, 0x1030)), 0x1010),
+            if_else(
+                inner_cond.clone(),
+                goto(0x1020, 0x1020),
+                Some(goto(0x1030, 0x1030)),
+                0x1010,
+            ),
             label("loc_1020", 0x1020),
             assign(var("v1"), konst(1), 0x1020),
             goto(0x1040, 0x1028),
@@ -1402,9 +1495,19 @@ mod tests {
         let stop = binary(HlilOp::CmpNe, var("stop"), konst(0));
 
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1060, 0x1060)), 0x1000),
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1060, 0x1060)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
-            if_else(stop.clone(), goto(0x1060, 0x1060), Some(goto(0x1020, 0x1020)), 0x1010),
+            if_else(
+                stop.clone(),
+                goto(0x1060, 0x1060),
+                Some(goto(0x1020, 0x1020)),
+                0x1010,
+            ),
             label("loc_1020", 0x1020),
             assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1020),
             goto(0x1000, 0x1028),
@@ -1415,7 +1518,10 @@ mod tests {
         let result = restructure_hlil(&flat);
         let rendered = render_hlil(&result);
 
-        assert!(rendered.contains("while ("), "expected while in: {rendered}");
+        assert!(
+            rendered.contains("while ("),
+            "expected while in: {rendered}"
+        );
         assert!(rendered.contains("break;"), "expected break in: {rendered}");
         assert!(
             !rendered.contains("goto loc_1060"),
@@ -1434,9 +1540,19 @@ mod tests {
         let skip = binary(HlilOp::CmpNe, var("skip"), konst(0));
 
         let flat: Vec<HlilExpr> = vec![
-            if_else(cond.clone(), goto(0x1010, 0x1010), Some(goto(0x1060, 0x1060)), 0x1000),
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1060, 0x1060)),
+                0x1000,
+            ),
             label("loc_1010", 0x1010),
-            if_else(skip.clone(), goto(0x1000, 0x1000), Some(goto(0x1020, 0x1020)), 0x1010),
+            if_else(
+                skip.clone(),
+                goto(0x1000, 0x1000),
+                Some(goto(0x1020, 0x1020)),
+                0x1010,
+            ),
             label("loc_1020", 0x1020),
             assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1020),
             goto(0x1000, 0x1028),
@@ -1447,7 +1563,10 @@ mod tests {
         let result = restructure_hlil(&flat);
         let rendered = render_hlil(&result);
 
-        assert!(rendered.contains("while ("), "expected while in: {rendered}");
+        assert!(
+            rendered.contains("while ("),
+            "expected while in: {rendered}"
+        );
         assert!(
             rendered.contains("continue;"),
             "expected continue in: {rendered}"
@@ -1472,10 +1591,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn single_block_passes_through() {
-        let flat: Vec<HlilExpr> = vec![
-            assign(var("x"), konst(42), 0x1000),
-            ret(0x1004),
-        ];
+        let flat: Vec<HlilExpr> = vec![assign(var("x"), konst(42), 0x1000), ret(0x1004)];
         let result = restructure_hlil(&flat);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].op, HlilOp::Assign);

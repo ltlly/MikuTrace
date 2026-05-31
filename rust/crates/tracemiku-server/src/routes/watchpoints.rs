@@ -58,11 +58,17 @@ pub async fn watchpoints_handler(
 fn parse_spec(q: &WatchpointsQuery) -> Result<WatchpointSpec, (StatusCode, String)> {
     match q.kind.as_str() {
         "reg-change" | "reg_change" | "reg" => {
-            let reg = q.reg.clone().ok_or_else(|| bad_request("reg is required"))?;
+            let reg = q
+                .reg
+                .clone()
+                .ok_or_else(|| bad_request("reg is required"))?;
             Ok(WatchpointSpec::RegChange { reg })
         }
         "reg-equals" | "reg_equals" | "equals" => {
-            let reg = q.reg.clone().ok_or_else(|| bad_request("reg is required"))?;
+            let reg = q
+                .reg
+                .clone()
+                .ok_or_else(|| bad_request("reg is required"))?;
             let value = q
                 .value
                 .as_deref()

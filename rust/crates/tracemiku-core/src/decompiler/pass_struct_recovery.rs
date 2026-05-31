@@ -5,7 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult};
+use super::pass::{
+    Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult,
+};
 
 /// Detected struct access pattern: base register + field offset.
 #[derive(Debug, Clone)]
@@ -104,7 +106,8 @@ impl Pass for StructRecoveryPass {
     fn info(&self) -> PassInfo {
         PassInfo {
             name: "StructRecovery",
-            description: "Detect repeated offset-based Load/Store patterns as struct field accesses",
+            description:
+                "Detect repeated offset-based Load/Store patterns as struct field accesses",
             phase: 1,
             requires: &[],
             invalidates: &[],
@@ -145,11 +148,17 @@ impl Pass for StructRecoveryPass {
                     _ => "uint8_t",
                 };
                 // Add struct field metadata as extra key-value pairs
-                e.extra.push(("struct_base".to_string(), access.base_reg.clone()));
+                e.extra
+                    .push(("struct_base".to_string(), access.base_reg.clone()));
                 e.extra.push(("struct_field".to_string(), field_name));
-                e.extra.push(("struct_offset".to_string(), format!("0x{:x}", access.offset)));
-                e.extra.push(("struct_field_type".to_string(), field_type.to_string()));
-                e.extra.push(("access_kind".to_string(), access.kind.clone()));
+                e.extra.push((
+                    "struct_offset".to_string(),
+                    format!("0x{:x}", access.offset),
+                ));
+                e.extra
+                    .push(("struct_field_type".to_string(), field_type.to_string()));
+                e.extra
+                    .push(("access_kind".to_string(), access.kind.clone()));
                 changed = true;
             }
         }
@@ -196,10 +205,7 @@ mod tests {
         // Load(x0 + 16)
         let mut exprs = PassIlExprs::new("test", "llil");
         let base_offset = |off: i64| -> PassIlOperand {
-            PassIlOperand::Expr(Box::new(make_expr(
-                "LLIL_Add",
-                vec![reg("x0"), imm(off)],
-            )))
+            PassIlOperand::Expr(Box::new(make_expr("LLIL_Add", vec![reg("x0"), imm(off)])))
         };
         exprs.exprs = vec![
             make_expr("LLIL_Load", vec![base_offset(0)]),
@@ -208,7 +214,11 @@ mod tests {
         ];
 
         let pass = StructRecoveryPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(result.is_changed());
 
@@ -234,7 +244,11 @@ mod tests {
         )];
 
         let pass = StructRecoveryPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(!result.is_changed());
         assert!(exprs.exprs[0].extra.is_empty());
@@ -247,7 +261,11 @@ mod tests {
         exprs.exprs = vec![make_expr("LLIL_Add", vec![reg("x0"), imm(5)])];
 
         let pass = StructRecoveryPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(!result.is_changed());
     }
@@ -258,10 +276,7 @@ mod tests {
         // Store(x0+8, val2)
         let mut exprs = PassIlExprs::new("test", "llil");
         let base_offset = |off: i64| -> PassIlOperand {
-            PassIlOperand::Expr(Box::new(make_expr(
-                "LLIL_Add",
-                vec![reg("x0"), imm(off)],
-            )))
+            PassIlOperand::Expr(Box::new(make_expr("LLIL_Add", vec![reg("x0"), imm(off)])))
         };
         exprs.exprs = vec![
             make_expr("LLIL_Store", vec![base_offset(0), imm(42)]),
@@ -269,13 +284,20 @@ mod tests {
         ];
 
         let pass = StructRecoveryPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(result.is_changed());
 
         for e in &exprs.exprs {
             assert!(e.extra.iter().any(|(k, _)| k == "access_kind"));
-            assert!(e.extra.iter().any(|(k, v)| k == "access_kind" && v == "store"));
+            assert!(e
+                .extra
+                .iter()
+                .any(|(k, v)| k == "access_kind" && v == "store"));
         }
     }
 
@@ -286,18 +308,28 @@ mod tests {
         // Each base has only one access → no struct detected
         let mut exprs = PassIlExprs::new("test", "llil");
         exprs.exprs = vec![
-            make_expr("LLIL_Load", vec![PassIlOperand::Expr(Box::new(make_expr(
-                "LLIL_Add",
-                vec![reg("x0"), imm(0)],
-            )))]),
-            make_expr("LLIL_Load", vec![PassIlOperand::Expr(Box::new(make_expr(
-                "LLIL_Add",
-                vec![reg("x1"), imm(0)],
-            )))]),
+            make_expr(
+                "LLIL_Load",
+                vec![PassIlOperand::Expr(Box::new(make_expr(
+                    "LLIL_Add",
+                    vec![reg("x0"), imm(0)],
+                )))],
+            ),
+            make_expr(
+                "LLIL_Load",
+                vec![PassIlOperand::Expr(Box::new(make_expr(
+                    "LLIL_Add",
+                    vec![reg("x1"), imm(0)],
+                )))],
+            ),
         ];
 
         let pass = StructRecoveryPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(!result.is_changed());
     }

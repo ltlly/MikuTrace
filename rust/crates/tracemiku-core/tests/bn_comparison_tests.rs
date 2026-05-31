@@ -2,7 +2,6 @@
 // Generated: 2026-05-14T07:43:42.626495
 use tracemiku_core::decompiler::il_pipeline::decompile_static;
 
-
 #[test]
 fn compare_test_add() {
     let insns: Vec<(u64, u32)> = vec![
@@ -16,7 +15,7 @@ fn compare_test_add() {
         (0x000000000040075cu64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_add (Arithmetic) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -30,7 +29,7 @@ fn compare_test_add() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
     assert!(output.llil_coverage >= 0.85, "low coverage for test_add");
@@ -49,7 +48,7 @@ fn compare_test_mul() {
         (0x000000000040079cu64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_mul (Arithmetic) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -63,7 +62,7 @@ fn compare_test_mul() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
     assert!(output.llil_coverage >= 0.85, "low coverage for test_mul");
@@ -89,7 +88,7 @@ fn compare_test_if_else() {
         (0x0000000000400974u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_if_else (ControlFlow) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -103,10 +102,13 @@ fn compare_test_if_else() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_if_else");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_if_else"
+    );
 }
 
 #[test]
@@ -133,7 +135,7 @@ fn compare_test_while_loop() {
         (0x0000000000400a24u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_while_loop (Loop) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -147,10 +149,13 @@ fn compare_test_while_loop() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_while_loop");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_while_loop"
+    );
 }
 
 #[test]
@@ -174,7 +179,7 @@ fn compare_test_call_two_args() {
         (0x0000000000400ae4u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_call_two_args (FunctionCall) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -188,10 +193,13 @@ fn compare_test_call_two_args() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_call_two_args");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_call_two_args"
+    );
 }
 
 #[test]
@@ -208,7 +216,7 @@ fn compare_test_struct_field_read() {
         (0x0000000000400ba8u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_struct_field_read (Struct) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -222,10 +230,13 @@ fn compare_test_struct_field_read() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_struct_field_read");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_struct_field_read"
+    );
 }
 
 #[test]
@@ -243,7 +254,7 @@ fn compare_test_ptr_arith() {
         (0x0000000000400d80u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_ptr_arith (Pointer) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -257,10 +268,13 @@ fn compare_test_ptr_arith() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_ptr_arith");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_ptr_arith"
+    );
 }
 
 #[test]
@@ -292,7 +306,7 @@ fn compare_test_switch() {
         (0x0000000000400e78u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_switch (Switch) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -306,7 +320,7 @@ fn compare_test_switch() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
     assert!(output.llil_coverage >= 0.85, "low coverage for test_switch");
@@ -333,7 +347,7 @@ fn compare_test_factorial() {
         (0x0000000000400e18u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_factorial (Recursion) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -347,10 +361,13 @@ fn compare_test_factorial() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_factorial");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_factorial"
+    );
 }
 
 #[test]
@@ -367,7 +384,7 @@ fn compare_test_csel() {
         (0x0000000000400f5cu64, 0x14000002u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_csel (Csel) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -381,7 +398,7 @@ fn compare_test_csel() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
     assert!(output.llil_coverage >= 0.85, "low coverage for test_csel");
@@ -456,7 +473,7 @@ fn compare_test_stack_spill() {
         (0x0000000000400cf4u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_stack_spill (StackSpill) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -470,10 +487,13 @@ fn compare_test_stack_spill() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_stack_spill");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_stack_spill"
+    );
 }
 
 #[test]
@@ -487,7 +507,7 @@ fn compare_test_ldrsw() {
         (0x0000000000400ec0u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_ldrsw (LoadStore) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -501,7 +521,7 @@ fn compare_test_ldrsw() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
     assert!(output.llil_coverage >= 0.85, "low coverage for test_ldrsw");
@@ -519,7 +539,7 @@ fn compare_test_bitfield_extract() {
         (0x0000000000400d10u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_bitfield_extract (Bitfield) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -533,10 +553,13 @@ fn compare_test_bitfield_extract() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_bitfield_extract");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_bitfield_extract"
+    );
 }
 
 #[test]
@@ -563,7 +586,7 @@ fn compare_test_for_loop() {
         (0x0000000000400a70u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_for_loop (Loop) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -577,10 +600,13 @@ fn compare_test_for_loop() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_for_loop");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_for_loop"
+    );
 }
 
 #[test]
@@ -601,7 +627,7 @@ fn compare_test_do_while() {
         (0x0000000000400aa4u64, 0xd65f03c0u32),
     ];
     let output = decompile_static(&insns);
-    
+
     println!("=== test_do_while (Loop) ===");
     println!("insns: {}", output.insn_count);
     println!("coverage: {:.1}%", output.llil_coverage * 100.0);
@@ -615,8 +641,11 @@ fn compare_test_do_while() {
     println!("{}", output.mlil_text);
     println!("--- HLIL ---");
     println!("{}", output.hlil_text);
-    
+
     assert!(output.insn_count > 0);
     assert!(!output.hlil_text.is_empty());
-    assert!(output.llil_coverage >= 0.85, "low coverage for test_do_while");
+    assert!(
+        output.llil_coverage >= 0.85,
+        "low coverage for test_do_while"
+    );
 }

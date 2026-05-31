@@ -134,11 +134,12 @@ fn lift_mov(d: &DecodedInsn) -> LlilExpr {
         .and_then(|p| parse_imm(p).map(konst))
         .or_else(|| {
             // xzr/wzr → konst(0) (Capstone filters these from regs_use)
-            parts.get(1).filter(|p| *p == "xzr" || *p == "wzr").map(|_| konst(0))
+            parts
+                .get(1)
+                .filter(|p| *p == "xzr" || *p == "wzr")
+                .map(|_| konst(0))
         })
-        .or_else(|| {
-            d.regs_use.first().map(|r| reg(r.clone()))
-        })
+        .or_else(|| d.regs_use.first().map(|r| reg(r.clone())))
         .unwrap_or_else(|| intrinsic(d));
     set_reg(dst, value, d.pc)
 }
@@ -443,11 +444,7 @@ fn lift_load_literal(d: &DecodedInsn, signed_ext: bool) -> Vec<LlilExpr> {
         vec![expr(const_ptr(target))],
         d.pc,
     );
-    let result = if signed_ext {
-        sx(4, load)
-    } else {
-        load
-    };
+    let result = if signed_ext { sx(4, load) } else { load };
     vec![set_reg(dst, result, d.pc)]
 }
 
@@ -590,7 +587,11 @@ fn lift_tbz(d: &DecodedInsn, nonzero: bool) -> Vec<LlilExpr> {
     let bit_num = parts.get(1).and_then(|p| parse_imm(p)).unwrap_or(0);
     let target = parts.get(2).and_then(|p| parse_target(p)).unwrap_or(d.pc);
 
-    let lhs = d.regs_use.iter().find(|r| *r != "nzcv").cloned()
+    let lhs = d
+        .regs_use
+        .iter()
+        .find(|r| *r != "nzcv")
+        .cloned()
         .unwrap_or(reg_name);
 
     // Extract bit: (reg >> bit) & 1
@@ -737,8 +738,16 @@ fn lift_mull(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
         .or_else(|| reg_from_parts(&parts, 2))
         .unwrap_or_else(|| konst(0));
 
-    let lhs_ext = if signed { sx(4, mul_lhs) } else { zx(4, mul_lhs) };
-    let rhs_ext = if signed { sx(4, mul_rhs) } else { zx(4, mul_rhs) };
+    let lhs_ext = if signed {
+        sx(4, mul_lhs)
+    } else {
+        zx(4, mul_lhs)
+    };
+    let rhs_ext = if signed {
+        sx(4, mul_rhs)
+    } else {
+        zx(4, mul_rhs)
+    };
 
     // SMULL/UMULL produce 64-bit results; create Mul node explicitly at 8 bytes
     let product = LlilExpr::new(LlilOp::Mul, 8, vec![expr(lhs_ext), expr(rhs_ext)], 0);
@@ -774,7 +783,11 @@ fn lift_load_ext(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
                 vec![expr(mem_addr_expr(&m.base, &m.idx, m.disp))],
                 d.pc,
             );
-            let result = if signed { sx(load_sz, load) } else { zx(load_sz, load) };
+            let result = if signed {
+                sx(load_sz, load)
+            } else {
+                zx(load_sz, load)
+            };
             set_reg(dst, result, d.pc)
         })
         .collect()
@@ -808,14 +821,24 @@ fn lift_mrs(d: &DecodedInsn) -> Vec<LlilExpr> {
 fn lift_ubfx(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
     let dst = first_def(d);
     let parts = split_operands(&d.op_str);
-    let src = d.regs_use.first().cloned().map(reg)
+    let src = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
         .or_else(|| reg_from_parts(&parts, 1))
         .unwrap_or_else(|| konst(0));
     let lsb = parts.get(2).and_then(|p| parse_imm(p)).unwrap_or(0) as u32;
     let width = parts.get(3).and_then(|p| parse_imm(p)).unwrap_or(0) as u32;
-    if width == 0 || width >= 64 { return vec![intrinsic(d)]; }
+    if width == 0 || width >= 64 {
+        return vec![intrinsic(d)];
+    }
     // Extract: (src >> lsb) & mask
-    let shift = if lsb > 0 { binary(LlilOp::Lsr, src.clone(), konst(lsb as i64)) } else { src };
+    let shift = if lsb > 0 {
+        binary(LlilOp::Lsr, src.clone(), konst(lsb as i64))
+    } else {
+        src
+    };
     let mask = (1u64 << width) - 1;
     let masked = binary(LlilOp::And, shift, konst(mask as i64));
     let result = if signed && width > 0 {
@@ -823,7 +846,9 @@ fn lift_ubfx(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
         let sh = 64 - width;
         let lsl = binary(LlilOp::Lsl, masked, konst(sh as i64));
         binary(LlilOp::Asr, lsl, konst(sh as i64))
-    } else { masked };
+    } else {
+        masked
+    };
     vec![set_reg(dst, result, d.pc)]
 }
 
@@ -876,10 +901,20 @@ fn lift_bfm(d: &DecodedInsn, signed: bool) -> Vec<LlilExpr> {
 fn lift_orn(d: &DecodedInsn) -> Vec<LlilExpr> {
     let dst = first_def(d);
     let parts = split_operands(&d.op_str);
-    let lhs = d.regs_use.first().cloned().map(reg)
-        .or_else(|| reg_from_parts(&parts, 1)).unwrap_or_else(|| konst(0));
-    let rhs = d.regs_use.get(1).cloned().map(reg)
-        .or_else(|| reg_from_parts(&parts, 2)).unwrap_or_else(|| konst(0));
+    let lhs = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 1))
+        .unwrap_or_else(|| konst(0));
+    let rhs = d
+        .regs_use
+        .get(1)
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 2))
+        .unwrap_or_else(|| konst(0));
     // a | ~b
     let not_rhs = unary(LlilOp::Not, rhs);
     let result = binary(LlilOp::Or, lhs, not_rhs);
@@ -890,10 +925,20 @@ fn lift_orn(d: &DecodedInsn) -> Vec<LlilExpr> {
 fn lift_bic(d: &DecodedInsn) -> Vec<LlilExpr> {
     let dst = first_def(d);
     let parts = split_operands(&d.op_str);
-    let lhs = d.regs_use.first().cloned().map(reg)
-        .or_else(|| reg_from_parts(&parts, 1)).unwrap_or_else(|| konst(0));
-    let rhs = d.regs_use.get(1).cloned().map(reg)
-        .or_else(|| reg_from_parts(&parts, 2)).unwrap_or_else(|| konst(0));
+    let lhs = d
+        .regs_use
+        .first()
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 1))
+        .unwrap_or_else(|| konst(0));
+    let rhs = d
+        .regs_use
+        .get(1)
+        .cloned()
+        .map(reg)
+        .or_else(|| reg_from_parts(&parts, 2))
+        .unwrap_or_else(|| konst(0));
     let not_rhs = unary(LlilOp::Not, rhs);
     let result = binary(LlilOp::And, lhs, not_rhs);
     vec![set_reg(dst, result, d.pc)]
@@ -1109,7 +1154,10 @@ mod tests {
         assert_eq!(lifted[0].op, LlilOp::SetReg);
         let s = lifted[0].short();
         assert!(s.contains("x0 ="), "got: {s}");
-        assert!(s.contains("intrinsic"), "mrs should emit intrinsic, got: {s}");
+        assert!(
+            s.contains("intrinsic"),
+            "mrs should emit intrinsic, got: {s}"
+        );
     }
 
     #[test]
@@ -1159,14 +1207,20 @@ mod tests {
         assert!(s.contains("x0 ="), "got: {s}");
     }
 
-    #[test] fn lift_cinc() {
+    #[test]
+    fn lift_cinc() {
         // cinc x0, x1, ne = conditional increment (csinc with same src)
         let lifted = lift_arm64(0x1000, 0x9a811420);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
-        assert!(lifted[0].short().contains("csel"), "got: {}", lifted[0].short());
+        assert!(
+            lifted[0].short().contains("csel"),
+            "got: {}",
+            lifted[0].short()
+        );
     }
 
-    #[test] fn lift_orn() {
+    #[test]
+    fn lift_orn() {
         // orn x0, x1, x2 = ~(x1 & ~x2) = x1 | ~x2
         let lifted = lift_arm64(0x1000, 0xaa220020);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
@@ -1174,7 +1228,8 @@ mod tests {
         assert!(s.contains("|") || s.contains("Or"), "got: {s}");
     }
 
-    #[test] fn lift_bic() {
+    #[test]
+    fn lift_bic() {
         // bic x0, x1, x2 = x1 & ~x2
         let lifted = lift_arm64(0x1000, 0x0a220020);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
@@ -1182,29 +1237,41 @@ mod tests {
         assert!(s.contains("&") || s.contains("And"), "got: {s}");
     }
 
-    #[test] fn lift_dmb() {
+    #[test]
+    fn lift_dmb() {
         // dmb ish = data memory barrier → Nop
         let lifted = lift_arm64(0x1000, 0xd5033bbf);
         assert_eq!(lifted[0].op, LlilOp::Nop);
     }
 
-    #[test] fn lift_ubfx() {
+    #[test]
+    fn lift_ubfx() {
         // ubfx x0, x1, #2, #4 = unsigned bitfield extract
         // Try known encoding or let it fall to intrinsic (bfm) — either is valid
         let lifted = lift_arm64(0x1000, 0xd3450820);
         // ubfx may decode as ubfm; both are handled
         assert!(lifted[0].op == LlilOp::SetReg || lifted[0].op == LlilOp::Intrinsic);
-        assert!(lifted[0].short().contains("x0") || !lifted[0].short().is_empty(), "got: {}", lifted[0].short());
+        assert!(
+            lifted[0].short().contains("x0") || !lifted[0].short().is_empty(),
+            "got: {}",
+            lifted[0].short()
+        );
     }
 
-    #[test] fn lift_ldarb() {
+    #[test]
+    fn lift_ldarb() {
         // ldarb w0, [x1] = load-acquire register byte
         let lifted = lift_arm64(0x1000, 0x08dffc20);
         assert_eq!(lifted[0].op, LlilOp::SetReg);
-        assert!(lifted[0].short().contains("zx") || lifted[0].short().contains("load"), "got: {}", lifted[0].short());
+        assert!(
+            lifted[0].short().contains("zx") || lifted[0].short().contains("load"),
+            "got: {}",
+            lifted[0].short()
+        );
     }
 
-    #[test] fn lift_stlrb() {
+    #[test]
+    fn lift_stlrb() {
         // stlrb w0, [x1] = store-release register byte
         let lifted = lift_arm64(0x1000, 0x089ffc20);
         assert_eq!(lifted[0].op, LlilOp::Store);

@@ -9,11 +9,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Serialize;
 
-use tracemiku_core::crypto_scan::{
-    ConstScanResult, CryptoInstrResult,
-};
 use crate::crypto_scan::{scan_crypto_memory, CryptoScanResponse};
 use crate::state::AppState;
+use tracemiku_core::crypto_scan::{ConstScanResult, CryptoInstrResult};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CryptoAnalysisResponse {
@@ -32,16 +30,17 @@ pub async fn crypto_analysis_handler(
         .map(Json)
 }
 
-fn crypto_analysis(inner: &crate::state::AppStateInner) -> Result<CryptoAnalysisResponse, StatusCode> {
+fn crypto_analysis(
+    inner: &crate::state::AppStateInner,
+) -> Result<CryptoAnalysisResponse, StatusCode> {
     if let Some(cached) = inner.crypto_analysis.get() {
         return Ok(cached.clone());
     }
     let mem_scan = {
-        let mem = inner.memshadow_ready_or_block_if_idle()
-            .map_err(|status| {
-                tracing::warn!(target: "tracemiku-server", "crypto-analysis: MemShadow {status}");
-                StatusCode::SERVICE_UNAVAILABLE
-            })?;
+        let mem = inner.memshadow_ready_or_block_if_idle().map_err(|status| {
+            tracing::warn!(target: "tracemiku-server", "crypto-analysis: MemShadow {status}");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
         if mem.bytes.is_empty() {
             CryptoScanResponse {
                 status: "ready",
@@ -54,8 +53,7 @@ fn crypto_analysis(inner: &crate::state::AppStateInner) -> Result<CryptoAnalysis
         }
     };
 
-    let (const_scan, crypto_instrs) =
-        tracemiku_core::crypto_scan::scan_combined(&inner.trace);
+    let (const_scan, crypto_instrs) = tracemiku_core::crypto_scan::scan_combined(&inner.trace);
 
     let response = CryptoAnalysisResponse {
         mem_scan,

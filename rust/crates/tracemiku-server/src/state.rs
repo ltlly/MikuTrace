@@ -365,22 +365,22 @@ impl AppStateInner {
 
     pub fn build_top_ir_with_options(&self, opts: &TraceIrBuildOptions) -> Arc<TopIR> {
         {
-            let mut cache = self
-                .trace_ir_cache
-                .lock()
-                .expect("trace-ir cache poisoned");
-            if let Some(pos) = cache.iter().position(|(cached_opts, _)| cached_opts == opts) {
+            let mut cache = self.trace_ir_cache.lock().expect("trace-ir cache poisoned");
+            if let Some(pos) = cache
+                .iter()
+                .position(|(cached_opts, _)| cached_opts == opts)
+            {
                 let (cached_opts, top) = cache.remove(pos);
                 cache.push((cached_opts, top.clone()));
                 return top;
             }
         }
         let top = Arc::new(self.build_top_ir_uncached(opts));
-        let mut cache = self
-            .trace_ir_cache
-            .lock()
-            .expect("trace-ir cache poisoned");
-        if let Some(pos) = cache.iter().position(|(cached_opts, _)| cached_opts == opts) {
+        let mut cache = self.trace_ir_cache.lock().expect("trace-ir cache poisoned");
+        if let Some(pos) = cache
+            .iter()
+            .position(|(cached_opts, _)| cached_opts == opts)
+        {
             let (_, existing) = cache.remove(pos);
             cache.push((opts.clone(), existing.clone()));
             return existing;
@@ -583,8 +583,9 @@ impl AppStateInner {
     }
 
     pub fn call_analysis(&self) -> &CallAnalysis {
-        self.call_analysis
-            .get_or_init(|| tracemiku_core::call_analysis::analyze_calls(&self.trace, &self.symbols))
+        self.call_analysis.get_or_init(|| {
+            tracemiku_core::call_analysis::analyze_calls(&self.trace, &self.symbols)
+        })
     }
 
     pub fn ollvm_findings(&self, min_entries: usize, threshold: f64) -> Vec<OllvmFinding> {

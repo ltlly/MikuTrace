@@ -320,10 +320,7 @@ impl PassGroup {
             overall = PassResult::Changed;
             if iteration == max - 1 && self.repeat_until_fixpoint {
                 if ctx.verbose {
-                    eprintln!(
-                        "PassGroup '{}' reached max repeats ({})",
-                        self.name, max
-                    );
+                    eprintln!("PassGroup '{}' reached max repeats ({})", self.name, max);
                 }
             }
         }
@@ -548,7 +545,11 @@ fn llil_op_to_pass(op: &crate::llil::expr::LlilOperand) -> PassIlOperand {
             size: e.size,
             pc: e.pc,
             operands: e.operands.iter().map(llil_op_to_pass).collect(),
-            extra: e.extra.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            extra: e
+                .extra
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         })),
         LlilOperand::Reg(r) => PassIlOperand::Var(r.clone()),
         LlilOperand::Flag(f) => PassIlOperand::Var(f.clone()),
@@ -584,8 +585,12 @@ mod tests {
         #[derive(Debug)]
         struct IdentityAdd;
         impl Rule for IdentityAdd {
-            fn name(&self) -> &'static str { "IdentityAdd" }
-            fn applies_to(&self) -> &'static [&'static str] { &["LLIL_ADD"] }
+            fn name(&self) -> &'static str {
+                "IdentityAdd"
+            }
+            fn applies_to(&self) -> &'static [&'static str] {
+                &["LLIL_ADD"]
+            }
             fn apply(&self, expr: &PassIlExpr) -> Option<PassIlExpr> {
                 if expr.operands.len() == 2 {
                     if let PassIlOperand::Imm(0) = expr.operands[1] {
@@ -626,7 +631,7 @@ mod tests {
 
     #[test]
     fn from_llil_conversion() {
-        use crate::llil::expr::{set_reg, konst};
+        use crate::llil::expr::{konst, set_reg};
         let llil = vec![set_reg("x0#1", konst(42), 0x1000)];
         let pexprs = from_llil(&llil);
         assert_eq!(pexprs.len(), 1);

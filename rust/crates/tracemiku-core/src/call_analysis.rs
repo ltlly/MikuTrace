@@ -132,8 +132,8 @@ pub fn analyze_calls(trace: &Trace, symbols: &SymbolMap) -> CallAnalysis {
             .collect();
 
         // Find return index (next record at caller_pc + 4)
-        let ret_idx = (idx + 1..total.min(idx + 200))
-            .find(|&i| trace.record(i).pc == rec.pc.wrapping_add(4));
+        let ret_idx =
+            (idx + 1..total.min(idx + 200)).find(|&i| trace.record(i).pc == rec.pc.wrapping_add(4));
 
         let ret_val_x0 = ret_idx.map(|ri| trace.record(ri).reg("x0").unwrap_or(0) as i64);
 
@@ -226,10 +226,7 @@ pub fn render_calls_annotated(analysis: &CallAnalysis) -> String {
             .iter()
             .map(|a| format!("/* {}= */ {:#x}", a.reg, a.value))
             .collect();
-        out.push_str(&format!(
-            "// #{:06} @{:#x}\n",
-            call.idx, call.caller_pc
-        ));
+        out.push_str(&format!("// #{:06} @{:#x}\n", call.idx, call.caller_pc));
         out.push_str(&format!(
             "    {}({}); // {}",
             name,
@@ -264,14 +261,37 @@ fn decode_bl_target(pc: u64, inst: u32) -> u64 {
 fn decode_blr_target_reg(inst: u32) -> &'static str {
     let rn = (inst >> 5) & 0x1F;
     match rn {
-        0 => "x0", 1 => "x1", 2 => "x2", 3 => "x3",
-        4 => "x4", 5 => "x5", 6 => "x6", 7 => "x7",
-        8 => "x8", 9 => "x9", 10 => "x10", 11 => "x11",
-        12 => "x12", 13 => "x13", 14 => "x14", 15 => "x15",
-        16 => "x16", 17 => "x17", 18 => "x18", 19 => "x19",
-        20 => "x20", 21 => "x21", 22 => "x22", 23 => "x23",
-        24 => "x24", 25 => "x25", 26 => "x26", 27 => "x27",
-        28 => "x28", 29 => "fp", 30 => "lr",
+        0 => "x0",
+        1 => "x1",
+        2 => "x2",
+        3 => "x3",
+        4 => "x4",
+        5 => "x5",
+        6 => "x6",
+        7 => "x7",
+        8 => "x8",
+        9 => "x9",
+        10 => "x10",
+        11 => "x11",
+        12 => "x12",
+        13 => "x13",
+        14 => "x14",
+        15 => "x15",
+        16 => "x16",
+        17 => "x17",
+        18 => "x18",
+        19 => "x19",
+        20 => "x20",
+        21 => "x21",
+        22 => "x22",
+        23 => "x23",
+        24 => "x24",
+        25 => "x25",
+        26 => "x26",
+        27 => "x27",
+        28 => "x28",
+        29 => "fp",
+        30 => "lr",
         _ => "xzr",
     }
 }

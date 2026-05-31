@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult};
+use super::pass::{
+    Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult,
+};
 
 /// Constant propagation pass.
 ///
@@ -257,7 +259,11 @@ mod tests {
         ];
 
         let pass = ConstPropPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         // Const prop should either make changes or not — the pass just shouldn't panic
         let _ = result;
@@ -270,17 +276,21 @@ mod tests {
         let mut exprs = PassIlExprs::new("test", "llil");
         exprs.exprs = vec![
             make_expr("LLIL_SetReg", vec![reg("x0#1"), imm(3)]),
-            make_expr("LLIL_SetReg", vec![
-                reg("x1#1"),
-                PassIlOperand::Expr(Box::new(make_expr(
-                    "LLIL_Add",
-                    vec![reg("x0#1"), imm(5)],
-                ))),
-            ]),
+            make_expr(
+                "LLIL_SetReg",
+                vec![
+                    reg("x1#1"),
+                    PassIlOperand::Expr(Box::new(make_expr("LLIL_Add", vec![reg("x0#1"), imm(5)]))),
+                ],
+            ),
         ];
 
         let pass = ConstPropPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(result.is_changed());
         // x1#1 should be set to Imm(8) — the Add folded to constant
@@ -291,12 +301,14 @@ mod tests {
     fn test_no_constants() {
         // x0#1 = y0 (unknown var) — no constants to propagate
         let mut exprs = PassIlExprs::new("test", "llil");
-        exprs.exprs = vec![
-            make_expr("LLIL_SetReg", vec![reg("x0#1"), reg("y0")]),
-        ];
+        exprs.exprs = vec![make_expr("LLIL_SetReg", vec![reg("x0#1"), reg("y0")])];
 
         let pass = ConstPropPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(!result.is_changed());
     }
@@ -309,23 +321,30 @@ mod tests {
         exprs.exprs = vec![
             make_expr("LLIL_SetReg", vec![reg("x0#1"), imm(2)]),
             make_expr("LLIL_SetReg", vec![reg("x1#1"), imm(3)]),
-            make_expr("LLIL_SetReg", vec![
-                reg("x2#1"),
-                PassIlOperand::Expr(Box::new(make_expr(
-                    "LLIL_Mul",
-                    vec![
-                        PassIlOperand::Expr(Box::new(make_expr(
-                            "LLIL_Add",
-                            vec![reg("x0#1"), reg("x1#1")],
-                        ))),
-                        imm(4),
-                    ],
-                ))),
-            ]),
+            make_expr(
+                "LLIL_SetReg",
+                vec![
+                    reg("x2#1"),
+                    PassIlOperand::Expr(Box::new(make_expr(
+                        "LLIL_Mul",
+                        vec![
+                            PassIlOperand::Expr(Box::new(make_expr(
+                                "LLIL_Add",
+                                vec![reg("x0#1"), reg("x1#1")],
+                            ))),
+                            imm(4),
+                        ],
+                    ))),
+                ],
+            ),
         ];
 
         let pass = ConstPropPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(result.is_changed());
         // x2#1 should be set to 20
@@ -339,17 +358,21 @@ mod tests {
         let mut exprs = PassIlExprs::new("test", "llil");
         exprs.exprs = vec![
             make_expr("LLIL_SetReg", vec![reg("x0#1"), imm(5)]),
-            make_expr("LLIL_SetReg", vec![
-                reg("x1#1"),
-                PassIlOperand::Expr(Box::new(make_expr(
-                    "LLIL_Neg",
-                    vec![reg("x0#1")],
-                ))),
-            ]),
+            make_expr(
+                "LLIL_SetReg",
+                vec![
+                    reg("x1#1"),
+                    PassIlOperand::Expr(Box::new(make_expr("LLIL_Neg", vec![reg("x0#1")]))),
+                ],
+            ),
         ];
 
         let pass = ConstPropPass;
-        let ctx = PassContext { function_name: "test", phase: 1, verbose: false };
+        let ctx = PassContext {
+            function_name: "test",
+            phase: 1,
+            verbose: false,
+        };
         let result = pass.run(&ctx, &mut exprs);
         assert!(result.is_changed());
         assert!(matches!(exprs.exprs[1].operands[1], PassIlOperand::Imm(-5)));

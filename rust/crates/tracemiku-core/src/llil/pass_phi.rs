@@ -369,14 +369,9 @@ fn insert_phi_nodes(blocks: &mut [PhiBlock], vars: &[String], df: &[BTreeSet<usi
 
         // Create phi nodes (start with just destination, fill_phi_arg adds pairs)
         for &b_id in &phis {
-            let phi = LlilExpr::new(
-                LlilOp::SetReg,
-                8,
-                vec![LlilOperand::Reg(var.clone())],
-                0,
-            )
-            .with_extra("phi", var.clone())
-            .with_extra("phi_block", b_id.to_string());
+            let phi = LlilExpr::new(LlilOp::SetReg, 8, vec![LlilOperand::Reg(var.clone())], 0)
+                .with_extra("phi", var.clone())
+                .with_extra("phi_block", b_id.to_string());
             blocks[b_id].phi_nodes.push(phi);
         }
     }

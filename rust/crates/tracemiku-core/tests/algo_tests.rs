@@ -1,6 +1,7 @@
 use tracemiku_core::decompiler::il_pipeline::decompile_static;
 
-#[test] fn algo_abort() {
+#[test]
+fn algo_abort() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400300u64, 0xd503233fu32),
         (0x400304u64, 0xd10303ffu32),
@@ -43,11 +44,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400398u64, 0x910003fdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "abort", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "abort",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for abort");
 }
-#[test] fn algo_btree_release_tree_recursively() {
+#[test]
+fn algo_btree_release_tree_recursively() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4003a0u64, 0xd503233fu32),
         (0x4003a4u64, 0xa9bd7bfdu32),
@@ -90,11 +99,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400438u64, 0x14015a72u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "btree_release_tree_recursively", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for btree_release_tree_recursively");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "btree_release_tree_recursively",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for btree_release_tree_recursively"
+    );
 }
-#[test] fn algo_btree_destroy() {
+#[test]
+fn algo_btree_destroy() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400440u64, 0xd503233fu32),
         (0x400444u64, 0xa9be7bfdu32),
@@ -121,11 +141,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400498u64, 0x97ffffc2u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "btree_destroy", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "btree_destroy",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for btree_destroy");
 }
-#[test] fn algo_release_registered_frames() {
+#[test]
+fn algo_release_registered_frames() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4004a0u64, 0xd503233fu32),
         (0x4004a4u64, 0xa9be7bfdu32),
@@ -160,11 +188,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400518u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "release_registered_frames", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for release_registered_frames");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "release_registered_frames",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for release_registered_frames"
+    );
 }
-#[test] fn algo_init_have_lse_atomics() {
+#[test]
+fn algo_init_have_lse_atomics() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400520u64, 0xd503233fu32),
         (0x400524u64, 0xa9bf7bfdu32),
@@ -183,11 +222,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400558u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "init_have_lse_atomics", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for init_have_lse_atomics");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "init_have_lse_atomics",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for init_have_lse_atomics"
+    );
 }
-#[test] fn algo_init_have_sme() {
+#[test]
+fn algo_init_have_sme() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400560u64, 0xd503233fu32),
         (0x400564u64, 0xa9bf7bfdu32),
@@ -236,11 +286,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400610u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "init_have_sme", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "init_have_sme",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for init_have_sme");
 }
-#[test] fn algo_call_weak_fn() {
+#[test]
+fn algo_call_weak_fn() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400618u64, 0xf00004e0u32),
         (0x40061cu64, 0xf947e400u32),
@@ -253,11 +311,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400638u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "call_weak_fn", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "call_weak_fn",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for call_weak_fn");
 }
-#[test] fn algo_deregister_tm_clones() {
+#[test]
+fn algo_deregister_tm_clones() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400640u64, 0xb0000500u32),
         (0x400644u64, 0x91232001u32),
@@ -272,11 +338,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400668u64, 0xd61f0200u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "deregister_tm_clones", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for deregister_tm_clones");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "deregister_tm_clones",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for deregister_tm_clones"
+    );
 }
-#[test] fn algo_register_tm_clones() {
+#[test]
+fn algo_register_tm_clones() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400670u64, 0xb0000500u32),
         (0x400674u64, 0x91232001u32),
@@ -315,11 +392,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4006f8u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "register_tm_clones", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "register_tm_clones",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for register_tm_clones");
 }
-#[test] fn algo_frame_dummy() {
+#[test]
+fn algo_frame_dummy() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400700u64, 0xd503245fu32),
         (0x400704u64, 0xf00004e0u32),
@@ -338,11 +423,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400738u64, 0x17ffffceu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "frame_dummy", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "frame_dummy",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for frame_dummy");
 }
-#[test] fn algo_aes_key_expansion() {
+#[test]
+fn algo_aes_key_expansion() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400740u64, 0xd10143ffu32),
         (0x400744u64, 0xa9047bfdu32),
@@ -487,11 +580,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400970u64, 0x910143ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "aes_key_expansion", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "aes_key_expansion",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for aes_key_expansion");
 }
-#[test] fn algo_aes_add_round_key() {
+#[test]
+fn algo_aes_add_round_key() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400978u64, 0xd10083ffu32),
         (0x40097cu64, 0xf90007e0u32),
@@ -523,11 +624,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4009e4u64, 0x910083ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "aes_add_round_key", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "aes_add_round_key",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for aes_add_round_key");
 }
-#[test] fn algo_aes_sub_bytes() {
+#[test]
+fn algo_aes_sub_bytes() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4009ecu64, 0xd10083ffu32),
         (0x4009f0u64, 0xf90007e0u32),
@@ -557,11 +666,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400a50u64, 0x910083ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "aes_sub_bytes", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "aes_sub_bytes",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for aes_sub_bytes");
 }
-#[test] fn algo_aes_shift_rows() {
+#[test]
+fn algo_aes_shift_rows() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400a58u64, 0xd10083ffu32),
         (0x400a5cu64, 0xf90007e0u32),
@@ -653,11 +770,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400bb4u64, 0x910043ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "aes_shift_rows", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "aes_shift_rows",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for aes_shift_rows");
 }
-#[test] fn algo_aes_mix_columns() {
+#[test]
+fn algo_aes_mix_columns() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400bbcu64, 0xa9bc7bfdu32),
         (0x400bc0u64, 0x910003fdu32),
@@ -803,11 +928,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400df0u64, 0xa8c47bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "aes_mix_columns", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "aes_mix_columns",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for aes_mix_columns");
 }
-#[test] fn algo_aes128_encrypt() {
+#[test]
+fn algo_aes128_encrypt() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400df8u64, 0xd10403ffu32),
         (0x400dfcu64, 0xa90f7bfdu32),
@@ -878,11 +1011,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x400f00u64, 0x910403ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "aes128_encrypt", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "aes128_encrypt",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for aes128_encrypt");
 }
-#[test] fn algo_base64_encode() {
+#[test]
+fn algo_base64_encode() {
     let insns: Vec<(u64, u32)> = vec![
         (0x400f08u64, 0xd100c3ffu32),
         (0x400f0cu64, 0xf9000fe0u32),
@@ -1010,11 +1151,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4010f4u64, 0x9100c3ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "base64_encode", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "base64_encode",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for base64_encode");
 }
-#[test] fn algo_rc4_init() {
+#[test]
+fn algo_rc4_init() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4010fcu64, 0xd100c3ffu32),
         (0x401100u64, 0xf9000fe0u32),
@@ -1086,11 +1235,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401208u64, 0x9100c3ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "rc4_init", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "rc4_init",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for rc4_init");
 }
-#[test] fn algo_rc4_crypt() {
+#[test]
+fn algo_rc4_crypt() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401210u64, 0xd100c3ffu32),
         (0x401214u64, 0xf9000fe0u32),
@@ -1168,11 +1325,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401334u64, 0x9100c3ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "rc4_crypt", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "rc4_crypt",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for rc4_crypt");
 }
-#[test] fn algo_crc32() {
+#[test]
+fn algo_crc32() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40133cu64, 0xd10083ffu32),
         (0x401340u64, 0xf90007e0u32),
@@ -1221,11 +1386,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4013ecu64, 0x910083ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "crc32", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "crc32",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for crc32");
 }
-#[test] fn algo_quicksort() {
+#[test]
+fn algo_quicksort() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4013f4u64, 0xa9bd7bfdu32),
         (0x4013f8u64, 0x910003fdu32),
@@ -1321,11 +1494,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401560u64, 0xa8c37bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "quicksort", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "quicksort",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for quicksort");
 }
-#[test] fn algo_bst_insert() {
+#[test]
+fn algo_bst_insert() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401568u64, 0xa9bd7bfdu32),
         (0x40156cu64, 0x910003fdu32),
@@ -1372,11 +1553,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401610u64, 0xa8c37bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "bst_insert", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "bst_insert",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for bst_insert");
 }
-#[test] fn algo_bst_search() {
+#[test]
+fn algo_bst_search() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401618u64, 0xa9be7bfdu32),
         (0x40161cu64, 0x910003fdu32),
@@ -1410,11 +1599,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40168cu64, 0xa8c27bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "bst_search", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "bst_search",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for bst_search");
 }
-#[test] fn algo_bst_height() {
+#[test]
+fn algo_bst_height() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401694u64, 0xa9bd7bfdu32),
         (0x401698u64, 0x910003fdu32),
@@ -1441,11 +1638,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4016ecu64, 0xa8c37bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "bst_height", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "bst_height",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for bst_height");
 }
-#[test] fn algo_match_pattern() {
+#[test]
+fn algo_match_pattern() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4016f4u64, 0xa9be7bfdu32),
         (0x4016f8u64, 0x910003fdu32),
@@ -1517,11 +1722,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401800u64, 0xa8c27bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "match_pattern", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "match_pattern",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for match_pattern");
 }
-#[test] fn algo_lz77_compress() {
+#[test]
+fn algo_lz77_compress() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401808u64, 0xd10103ffu32),
         (0x40180cu64, 0xf9000fe0u32),
@@ -1642,11 +1855,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4019d8u64, 0x910103ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "lz77_compress", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "lz77_compress",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for lz77_compress");
 }
-#[test] fn algo_huffman_freq() {
+#[test]
+fn algo_huffman_freq() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4019e0u64, 0xa9bc7bfdu32),
         (0x4019e4u64, 0x910003fdu32),
@@ -1682,11 +1903,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401a5cu64, 0xa8c47bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "huffman_freq", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "huffman_freq",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for huffman_freq");
 }
-#[test] fn algo_isqrt() {
+#[test]
+fn algo_isqrt() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401a64u64, 0xd10083ffu32),
         (0x401a68u64, 0xb9000fe0u32),
@@ -1723,11 +1952,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401ae4u64, 0x910083ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "isqrt", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "isqrt",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for isqrt");
 }
-#[test] fn algo_gcd() {
+#[test]
+fn algo_gcd() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401aecu64, 0xa9be7bfdu32),
         (0x401af0u64, 0x910003fdu32),
@@ -1750,11 +1987,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401b34u64, 0xa8c27bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "gcd", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "gcd",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for gcd");
 }
-#[test] fn algo_lcm() {
+#[test]
+fn algo_lcm() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401b3cu64, 0xa9be7bfdu32),
         (0x401b40u64, 0x910003fdu32),
@@ -1771,11 +2016,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401b6cu64, 0xa8c27bfdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "lcm", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "lcm",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for lcm");
 }
-#[test] fn algo_fib_iter() {
+#[test]
+fn algo_fib_iter() {
     let insns: Vec<(u64, u32)> = vec![
         (0x401b74u64, 0xd100c3ffu32),
         (0x401b78u64, 0xb9000fe0u32),
@@ -1803,11 +2056,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x401bd0u64, 0x9100c3ffu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fib_iter", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fib_iter",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for fib_iter");
 }
-#[test] fn algo_call_fini() {
+#[test]
+fn algo_call_fini() {
     let insns: Vec<(u64, u32)> = vec![
         (0x402060u64, 0xd503233fu32),
         (0x402064u64, 0xa9be7bfdu32),
@@ -1894,11 +2155,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4021a8u64, 0x91278000u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "call_fini", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "call_fini",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for call_fini");
 }
-#[test] fn algo_int_mallinfo() {
+#[test]
+fn algo_int_mallinfo() {
     let insns: Vec<(u64, u32)> = vec![
         (0x404504u64, 0xaa0003e5u32),
         (0x404508u64, 0xd503233fu32),
@@ -1996,11 +2265,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x404678u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "int_mallinfo", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "int_mallinfo",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for int_mallinfo");
 }
-#[test] fn algo_malloc_printerr() {
+#[test]
+fn algo_malloc_printerr() {
     let insns: Vec<(u64, u32)> = vec![
         (0x404680u64, 0xd503233fu32),
         (0x404684u64, 0xa9bf7bfdu32),
@@ -2012,11 +2289,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40469cu64, 0x912ee000u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "malloc_printerr", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "malloc_printerr",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for malloc_printerr");
 }
-#[test] fn algo_malloc_printerr_tail() {
+#[test]
+fn algo_malloc_printerr_tail() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4046a4u64, 0xd0000501u32),
         (0x4046a8u64, 0x9117a021u32),
@@ -2028,11 +2313,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4046c0u64, 0x910003fdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "malloc_printerr_tail", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for malloc_printerr_tail");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "malloc_printerr_tail",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for malloc_printerr_tail"
+    );
 }
-#[test] fn algo_munmap_chunk() {
+#[test]
+fn algo_munmap_chunk() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4046c8u64, 0xd503233fu32),
         (0x4046ccu64, 0xa9bd7bfdu32),
@@ -2122,11 +2418,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40481cu64, 0xf9001820u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "munmap_chunk", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "munmap_chunk",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for munmap_chunk");
 }
-#[test] fn algo_unlink_chunk_isra_0() {
+#[test]
+fn algo_unlink_chunk_isra_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x404c30u64, 0xd503233fu32),
         (0x404c34u64, 0xa9bf7bfdu32),
@@ -2253,11 +2557,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x404e18u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "unlink_chunk_isra_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "unlink_chunk_isra_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for unlink_chunk_isra_0");
 }
-#[test] fn algo_new_heap() {
+#[test]
+fn algo_new_heap() {
     let insns: Vec<(u64, u32)> = vec![
         (0x405080u64, 0xaa0003e4u32),
         (0x405084u64, 0xf00004c0u32),
@@ -2301,11 +2613,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40511cu64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "new_heap", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "new_heap",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for new_heap");
 }
-#[test] fn algo_arena_get_retry() {
+#[test]
+fn algo_arena_get_retry() {
     let insns: Vec<(u64, u32)> = vec![
         (0x405640u64, 0xd503233fu32),
         (0x405644u64, 0xa9bd7bfdu32),
@@ -2348,11 +2668,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4056d8u64, 0x97fff72au32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "arena_get_retry", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "arena_get_retry",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for arena_get_retry");
 }
-#[test] fn algo_sysmalloc_mmap() {
+#[test]
+fn algo_sysmalloc_mmap() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4056e0u64, 0xd503233fu32),
         (0x4056e4u64, 0xa9bb7bfdu32),
@@ -2467,11 +2795,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x405898u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "sysmalloc_mmap", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "sysmalloc_mmap",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for sysmalloc_mmap");
 }
-#[test] fn algo_tcache_double_free_verify() {
+#[test]
+fn algo_tcache_double_free_verify() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40930cu64, 0xf00004a1u32),
         (0x409310u64, 0xf9406825u32),
@@ -2527,11 +2863,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4093d8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "tcache_double_free_verify", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for tcache_double_free_verify");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "tcache_double_free_verify",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for tcache_double_free_verify"
+    );
 }
-#[test] fn algo_tcache_free_init() {
+#[test]
+fn algo_tcache_free_init() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4093e0u64, 0xd503233fu32),
         (0x4093e4u64, 0xa9be7bfdu32),
@@ -2546,11 +2893,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x409408u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "tcache_free_init", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "tcache_free_init",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for tcache_free_init");
 }
-#[test] fn algo_next_line() {
+#[test]
+fn algo_next_line() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40c640u64, 0xd503233fu32),
         (0x40c644u64, 0xa9bb7bfdu32),
@@ -2665,11 +3020,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40c7f8u64, 0x94002502u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "next_line", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "next_line",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for next_line");
 }
-#[test] fn algo_read_sysfs_file() {
+#[test]
+fn algo_read_sysfs_file() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40c800u64, 0xd503233fu32),
         (0x40c804u64, 0xa9bc7bfdu32),
@@ -2768,11 +3131,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40c978u64, 0x940003eau32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "read_sysfs_file", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "read_sysfs_file",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for read_sysfs_file");
 }
-#[test] fn algo_is_dst() {
+#[test]
+fn algo_is_dst() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40da80u64, 0xd503233fu32),
         (0x40da84u64, 0xa9bd7bfdu32),
@@ -2839,11 +3210,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40db78u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "is_dst", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "is_dst",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for is_dst");
 }
-#[test] fn algo_is_trusted_path_normalize() {
+#[test]
+fn algo_is_trusted_path_normalize() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40db80u64, 0xb4000621u32),
         (0x40db84u64, 0xd503233fu32),
@@ -2974,11 +3353,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40dd78u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "is_trusted_path_normalize", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for is_trusted_path_normalize");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "is_trusted_path_normalize",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for is_trusted_path_normalize"
+    );
 }
-#[test] fn algo_add_path_constprop_0_isra_0() {
+#[test]
+fn algo_add_path_constprop_0_isra_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40e180u64, 0xb100043fu32),
         (0x40e184u64, 0x54000780u32),
@@ -3045,11 +3435,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40e278u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "add_path_constprop_0_isra_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for add_path_constprop_0_isra_0");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "add_path_constprop_0_isra_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for add_path_constprop_0_isra_0"
+    );
 }
-#[test] fn algo_expand_dynamic_string_token() {
+#[test]
+fn algo_expand_dynamic_string_token() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40eaa4u64, 0xd503233fu32),
         (0x40eaa8u64, 0xa9bc7bfdu32),
@@ -3126,11 +3527,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40ebc4u64, 0x52803102u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "expand_dynamic_string_token", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for expand_dynamic_string_token");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "expand_dynamic_string_token",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for expand_dynamic_string_token"
+    );
 }
-#[test] fn algo_fillin_rpath_isra_0() {
+#[test]
+fn algo_fillin_rpath_isra_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40ebccu64, 0xd503233fu32),
         (0x40ebd0u64, 0xa9b77bfdu32),
@@ -3282,11 +3694,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40ee18u64, 0x9400692au32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fillin_rpath_isra_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fillin_rpath_isra_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for fillin_rpath_isra_0");
 }
-#[test] fn algo_decompose_rpath() {
+#[test]
+fn algo_decompose_rpath() {
     let insns: Vec<(u64, u32)> = vec![
         (0x40ee20u64, 0xd503233fu32),
         (0x40ee24u64, 0xa9bb7bfdu32),
@@ -3403,11 +3823,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x40efe0u64, 0x9105a063u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "decompose_rpath", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "decompose_rpath",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for decompose_rpath");
 }
-#[test] fn algo_do_tunable_update_val() {
+#[test]
+fn algo_do_tunable_update_val() {
     let insns: Vec<(u64, u32)> = vec![
         (0x413940u64, 0xd503233fu32),
         (0x413944u64, 0xa9bf7bfdu32),
@@ -3490,11 +3918,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x413a78u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_tunable_update_val", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for do_tunable_update_val");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_tunable_update_val",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for do_tunable_update_val"
+    );
 }
-#[test] fn algo_fail() {
+#[test]
+fn algo_fail() {
     let insns: Vec<(u64, u32)> = vec![
         (0x414b00u64, 0xd503233fu32),
         (0x414b04u64, 0xa9bf7bfdu32),
@@ -3522,11 +3961,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x414b5cu64, 0x91392000u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fail", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fail",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for fail");
 }
-#[test] fn algo_raise() {
+#[test]
+fn algo_raise() {
     let insns: Vec<(u64, u32)> = vec![
         (0x415d80u64, 0xd503233fu32),
         (0x415d84u64, 0xa9be7bfdu32),
@@ -3649,11 +4096,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x415f58u64, 0x17ffffe3u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "raise", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "raise",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for raise");
 }
-#[test] fn algo_getenv() {
+#[test]
+fn algo_getenv() {
     let insns: Vec<(u64, u32)> = vec![
         (0x415f60u64, 0xd503233fu32),
         (0x415f64u64, 0xa9bb7bfdu32),
@@ -3720,11 +4175,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x416058u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "getenv", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "getenv",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for getenv");
 }
-#[test] fn algo_group_number() {
+#[test]
+fn algo_group_number() {
     let insns: Vec<(u64, u32)> = vec![
         (0x417b00u64, 0xd503233fu32),
         (0x417b04u64, 0xa9bb7bfdu32),
@@ -3799,11 +4262,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x417c18u64, 0x17fffff1u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "group_number", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "group_number",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for group_number");
 }
-#[test] fn algo_new_do_write() {
+#[test]
+fn algo_new_do_write() {
     let insns: Vec<(u64, u32)> = vec![
         (0x41d0a0u64, 0xd503233fu32),
         (0x41d0a4u64, 0xa9bc7bfdu32),
@@ -3894,11 +4365,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x41d1f8u64, 0xa94313e2u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "new_do_write", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "new_do_write",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for new_do_write");
 }
-#[test] fn algo_mmap_remap_check() {
+#[test]
+fn algo_mmap_remap_check() {
     let insns: Vec<(u64, u32)> = vec![
         (0x41d200u64, 0xd503233fu32),
         (0x41d204u64, 0xd10303ffu32),
@@ -4024,11 +4503,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x41d3e4u64, 0x17ffffdeu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "mmap_remap_check", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "mmap_remap_check",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for mmap_remap_check");
 }
-#[test] fn algo_flush_cleanup() {
+#[test]
+fn algo_flush_cleanup() {
     let insns: Vec<(u64, u32)> = vec![
         (0x41f800u64, 0xd503245fu32),
         (0x41f804u64, 0xf0000422u32),
@@ -4106,11 +4593,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x41f924u64, 0x34fffc01u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "flush_cleanup", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "flush_cleanup",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for flush_cleanup");
 }
-#[test] fn algo_strchr() {
+#[test]
+fn algo_strchr() {
     let insns: Vec<(u64, u32)> = vec![
         (0x424d40u64, 0xd503245fu32),
         (0x424d44u64, 0x927cec02u32),
@@ -4161,11 +4656,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x424df8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "strchr", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "strchr",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.50, "low cov for strchr");
 }
-#[test] fn algo_strcmp() {
+#[test]
+fn algo_strcmp() {
     let insns: Vec<(u64, u32)> = vec![
         (0x424e00u64, 0xd503245fu32),
         (0x424e04u64, 0xcb00002au32),
@@ -4289,11 +4792,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x424fdcu64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "strcmp", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "strcmp",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for strcmp");
 }
-#[test] fn algo_strrchr() {
+#[test]
+fn algo_strrchr() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4252c0u64, 0xd503245fu32),
         (0x4252c4u64, 0x927cec02u32),
@@ -4400,11 +4911,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x425458u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "strrchr", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "strrchr",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for strrchr");
 }
-#[test] fn algo_trecurse() {
+#[test]
+fn algo_trecurse() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4281c0u64, 0xd503233fu32),
         (0x4281c4u64, 0xa9bd7bfdu32),
@@ -4463,11 +4982,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x428298u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "trecurse", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "trecurse",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for trecurse");
 }
-#[test] fn algo_trecurse_r() {
+#[test]
+fn algo_trecurse_r() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4282a0u64, 0xd503233fu32),
         (0x4282a4u64, 0xa9bd7bfdu32),
@@ -4526,11 +5053,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x428378u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "trecurse_r", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "trecurse_r",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for trecurse_r");
 }
-#[test] fn algo_tdestroy_recurse() {
+#[test]
+fn algo_tdestroy_recurse() {
     let insns: Vec<(u64, u32)> = vec![
         (0x428380u64, 0xd503233fu32),
         (0x428384u64, 0xa9be7bfdu32),
@@ -4565,11 +5100,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4283f8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "tdestroy_recurse", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "tdestroy_recurse",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for tdestroy_recurse");
 }
-#[test] fn algo_check_match() {
+#[test]
+fn algo_check_match() {
     let insns: Vec<(u64, u32)> = vec![
         (0x429aa0u64, 0xd503233fu32),
         (0x429aa4u64, 0xa9bb7bfdu32),
@@ -4676,11 +5219,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x429c38u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "check_match", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "check_match",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for check_match");
 }
-#[test] fn algo_free_derivation() {
+#[test]
+fn algo_free_derivation() {
     let insns: Vec<(u64, u32)> = vec![
         (0x42cf40u64, 0xd503233fu32),
         (0x42cf44u64, 0xa9bd7bfdu32),
@@ -4731,11 +5282,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x42cff8u64, 0x17ffffefu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "free_derivation", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "free_derivation",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for free_derivation");
 }
-#[test] fn algo_free_modules_db() {
+#[test]
+fn algo_free_modules_db() {
     let insns: Vec<(u64, u32)> = vec![
         (0x42d000u64, 0xd503233fu32),
         (0x42d004u64, 0xa9be7bfdu32),
@@ -4763,11 +5322,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x42d05cu64, 0xb5fffe93u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "free_modules_db", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "free_modules_db",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for free_modules_db");
 }
-#[test] fn algo_derivation_compare() {
+#[test]
+fn algo_derivation_compare() {
     let insns: Vec<(u64, u32)> = vec![
         (0x42d064u64, 0xd503233fu32),
         (0x42d068u64, 0xa9be7bfdu32),
@@ -4849,11 +5416,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x42d198u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "derivation_compare", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "derivation_compare",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for derivation_compare");
 }
-#[test] fn algo_insert_module() {
+#[test]
+fn algo_insert_module() {
     let insns: Vec<(u64, u32)> = vec![
         (0x42e344u64, 0xd503233fu32),
         (0x42e348u64, 0xa9bc7bfdu32),
@@ -4935,11 +5510,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x42e478u64, 0xaa1603e0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "insert_module", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "insert_module",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for insert_module");
 }
-#[test] fn algo_add_alias2_part_0() {
+#[test]
+fn algo_add_alias2_part_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x42e828u64, 0xcb000042u32),
         (0x42e82cu64, 0xd503233fu32),
@@ -4983,11 +5566,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x42e8c4u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "add_alias2_part_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "add_alias2_part_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for add_alias2_part_0");
 }
-#[test] fn algo_find_module_idx() {
+#[test]
+fn algo_find_module_idx() {
     let insns: Vec<(u64, u32)> = vec![
         (0x435580u64, 0xd503233fu32),
         (0x435584u64, 0xa9ba7bfdu32),
@@ -5054,11 +5645,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x435678u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "find_module_idx", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "find_module_idx",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for find_module_idx");
 }
-#[test] fn algo_known_compare() {
+#[test]
+fn algo_known_compare() {
     let insns: Vec<(u64, u32)> = vec![
         (0x436080u64, 0xd503233fu32),
         (0x436084u64, 0xa9bf7bfdu32),
@@ -5069,11 +5668,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x436098u64, 0xf9400021u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "known_compare", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "known_compare",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for known_compare");
 }
-#[test] fn algo_do_release_shlib() {
+#[test]
+fn algo_do_release_shlib() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4360a0u64, 0xd503245fu32),
         (0x4360a4u64, 0x7100003fu32),
@@ -5120,11 +5727,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x436148u64, 0x52801442u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_release_shlib", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_release_shlib",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for do_release_shlib");
 }
-#[test] fn algo_new_composite_name() {
+#[test]
+fn algo_new_composite_name() {
     let insns: Vec<(u64, u32)> = vec![
         (0x436400u64, 0xd503233fu32),
         (0x436404u64, 0xa9ba7bfdu32),
@@ -5264,11 +5879,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x43661cu64, 0xd2800014u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "new_composite_name", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "new_composite_name",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for new_composite_name");
 }
-#[test] fn algo_free_category() {
+#[test]
+fn algo_free_category() {
     let insns: Vec<(u64, u32)> = vec![
         (0x436624u64, 0xd503233fu32),
         (0x436628u64, 0xa9bc7bfdu32),
@@ -5334,11 +5957,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x436718u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "free_category", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "free_category",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for free_category");
 }
-#[test] fn algo_plural_eval() {
+#[test]
+fn algo_plural_eval() {
     let insns: Vec<(u64, u32)> = vec![
         (0x437180u64, 0xaa0003e2u32),
         (0x437184u64, 0xd503233fu32),
@@ -5473,11 +6104,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x437388u64, 0xa94113e3u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "plural_eval", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "plural_eval",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for plural_eval");
 }
-#[test] fn algo_alias_compare() {
+#[test]
+fn algo_alias_compare() {
     let insns: Vec<(u64, u32)> = vec![
         (0x439dc0u64, 0xd503233fu32),
         (0x439dc4u64, 0xa9bf7bfdu32),
@@ -5490,11 +6129,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x439de0u64, 0xf9400021u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "alias_compare", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "alias_compare",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for alias_compare");
 }
-#[test] fn algo_do_swap() {
+#[test]
+fn algo_do_swap() {
     let insns: Vec<(u64, u32)> = vec![
         (0x43bb80u64, 0xd503233fu32),
         (0x43bb84u64, 0xd10103ffu32),
@@ -5596,11 +6243,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x43bd04u64, 0x17ffffb1u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_swap", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_swap",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for do_swap");
 }
-#[test] fn algo_indirect_msort_with_tmp() {
+#[test]
+fn algo_indirect_msort_with_tmp() {
     let insns: Vec<(u64, u32)> = vec![
         (0x43bfa0u64, 0xd503233fu32),
         (0x43bfa4u64, 0xa9ba7bfdu32),
@@ -5683,11 +6338,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x43c0d8u64, 0xaa1a03e1u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "indirect_msort_with_tmp", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for indirect_msort_with_tmp");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "indirect_msort_with_tmp",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for indirect_msort_with_tmp"
+    );
 }
-#[test] fn algo_strcpy() {
+#[test]
+fn algo_strcpy() {
     let insns: Vec<(u64, u32)> = vec![
         (0x445680u64, 0xd503245fu32),
         (0x445684u64, 0x927cec22u32),
@@ -5770,11 +6436,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4457b8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "strcpy", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "strcpy",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for strcpy");
 }
-#[test] fn algo_do_dlopen() {
+#[test]
+fn algo_do_dlopen() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4476e0u64, 0xd503233fu32),
         (0x4476e4u64, 0xa9be7bfdu32),
@@ -5801,11 +6475,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x447738u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_dlopen", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_dlopen",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for do_dlopen");
 }
-#[test] fn algo_dlerror_run() {
+#[test]
+fn algo_dlerror_run() {
     let insns: Vec<(u64, u32)> = vec![
         (0x447740u64, 0xd503233fu32),
         (0x447744u64, 0xd10103ffu32),
@@ -5849,11 +6531,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4477dcu64, 0x17ffffedu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "dlerror_run", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "dlerror_run",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for dlerror_run");
 }
-#[test] fn algo_do_dlsym_private() {
+#[test]
+fn algo_do_dlsym_private() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4477e4u64, 0xd503233fu32),
         (0x4477e8u64, 0xd10103ffu32),
@@ -5898,11 +6588,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x447884u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_dlsym_private", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_dlsym_private",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for do_dlsym_private");
 }
-#[test] fn algo_do_dlsym() {
+#[test]
+fn algo_do_dlsym() {
     let insns: Vec<(u64, u32)> = vec![
         (0x44788cu64, 0xd503233fu32),
         (0x447890u64, 0xa9be7bfdu32),
@@ -5926,11 +6624,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4478d8u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_dlsym", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_dlsym",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for do_dlsym");
 }
-#[test] fn algo_do_dlvsym() {
+#[test]
+fn algo_do_dlvsym() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4478e0u64, 0xd503233fu32),
         (0x4478e4u64, 0xa9be7bfdu32),
@@ -5953,11 +6659,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x447928u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "do_dlvsym", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "do_dlvsym",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for do_dlvsym");
 }
-#[test] fn algo_strspn() {
+#[test]
+fn algo_strspn() {
     let insns: Vec<(u64, u32)> = vec![
         (0x44d040u64, 0xd503245fu32),
         (0x44d044u64, 0x39400022u32),
@@ -6024,11 +6738,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x44d138u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "strspn", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "strspn",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for strspn");
 }
-#[test] fn algo_call_dl_init() {
+#[test]
+fn algo_call_dl_init() {
     let insns: Vec<(u64, u32)> = vec![
         (0x44df80u64, 0xd503233fu32),
         (0x44df84u64, 0xa9bf7bfdu32),
@@ -6040,11 +6762,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x44df9cu64, 0xf9400c00u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "call_dl_init", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "call_dl_init",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for call_dl_init");
 }
-#[test] fn algo_add_to_global_update() {
+#[test]
+fn algo_add_to_global_update() {
     let insns: Vec<(u64, u32)> = vec![
         (0x44dfa4u64, 0xd503233fu32),
         (0x44dfa8u64, 0xa9bb7bfdu32),
@@ -6138,11 +6868,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x44e108u64, 0x52801922u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "add_to_global_update", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for add_to_global_update");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "add_to_global_update",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for add_to_global_update"
+    );
 }
-#[test] fn algo_dl_open_worker() {
+#[test]
+fn algo_dl_open_worker() {
     let insns: Vec<(u64, u32)> = vec![
         (0x44e110u64, 0xd503233fu32),
         (0x44e114u64, 0xa9bb7bfdu32),
@@ -6213,11 +6954,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x44e218u64, 0x97ffff63u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "dl_open_worker", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "dl_open_worker",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for dl_open_worker");
 }
-#[test] fn algo_add_to_global_resize_failure_isra_0() {
+#[test]
+fn algo_add_to_global_resize_failure_isra_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x44e220u64, 0xd503233fu32),
         (0x44e224u64, 0xa9bf7bfdu32),
@@ -6229,11 +6978,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x44e23cu64, 0x52800180u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "add_to_global_resize_failure_isra_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for add_to_global_resize_failure_isra_0");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "add_to_global_resize_failure_isra_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for add_to_global_resize_failure_isra_0"
+    );
 }
-#[test] fn algo_dlinfo_doit() {
+#[test]
+fn algo_dlinfo_doit() {
     let insns: Vec<(u64, u32)> = vec![
         (0x450580u64, 0xd503245fu32),
         (0x450584u64, 0xb9400801u32),
@@ -6356,11 +7116,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x450758u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "dlinfo_doit", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "dlinfo_doit",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for dlinfo_doit");
 }
-#[test] fn algo_dlmopen_doit() {
+#[test]
+fn algo_dlmopen_doit() {
     let insns: Vec<(u64, u32)> = vec![
         (0x450760u64, 0xd503233fu32),
         (0x450764u64, 0xa9be7bfdu32),
@@ -6467,11 +7235,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4508f8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "dlmopen_doit", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "dlmopen_doit",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for dlmopen_doit");
 }
-#[test] fn algo_dlopen_doit() {
+#[test]
+fn algo_dlopen_doit() {
     let insns: Vec<(u64, u32)> = vec![
         (0x450900u64, 0xd503233fu32),
         (0x450904u64, 0xa9be7bfdu32),
@@ -6586,11 +7362,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x450ab8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "dlopen_doit", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "dlopen_doit",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for dlopen_doit");
 }
-#[test] fn algo_dlsym_doit() {
+#[test]
+fn algo_dlsym_doit() {
     let insns: Vec<(u64, u32)> = vec![
         (0x450ac0u64, 0xd503233fu32),
         (0x450ac4u64, 0xa9be7bfdu32),
@@ -6689,11 +7473,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x450c38u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "dlsym_doit", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "dlsym_doit",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for dlsym_doit");
 }
-#[test] fn algo_call_dl_lookup() {
+#[test]
+fn algo_call_dl_lookup() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4525a0u64, 0xd503233fu32),
         (0x4525a4u64, 0xa9be7bfdu32),
@@ -6714,11 +7506,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4525e0u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "call_dl_lookup", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "call_dl_lookup",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for call_dl_lookup");
 }
-#[test] fn algo_init_dwarf_reg_size_table() {
+#[test]
+fn algo_init_dwarf_reg_size_table() {
     let insns: Vec<(u64, u32)> = vec![
         (0x453000u64, 0xd503245fu32),
         (0x453004u64, 0xf0000282u32),
@@ -6809,11 +7609,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x453158u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "init_dwarf_reg_size_table", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for init_dwarf_reg_size_table");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "init_dwarf_reg_size_table",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for init_dwarf_reg_size_table"
+    );
 }
-#[test] fn algo_uw_install_context_1() {
+#[test]
+fn algo_uw_install_context_1() {
     let insns: Vec<(u64, u32)> = vec![
         (0x453160u64, 0xd503233fu32),
         (0x453164u64, 0xa9bb7bfdu32),
@@ -6920,11 +7731,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4532f8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "uw_install_context_1", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for uw_install_context_1");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "uw_install_context_1",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for uw_install_context_1"
+    );
 }
-#[test] fn algo_read_encoded_value() {
+#[test]
+fn algo_read_encoded_value() {
     let insns: Vec<(u64, u32)> = vec![
         (0x453300u64, 0x12001c21u32),
         (0x453304u64, 0x7103fc3fu32),
@@ -7027,11 +7849,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x453488u64, 0xb8804404u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "read_encoded_value", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "read_encoded_value",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for read_encoded_value");
 }
-#[test] fn algo_uw_update_context() {
+#[test]
+fn algo_uw_update_context() {
     let insns: Vec<(u64, u32)> = vec![
         (0x454060u64, 0xd503233fu32),
         (0x454064u64, 0xa9be7bfdu32),
@@ -7098,11 +7928,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x454158u64, 0x17ffffcfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "uw_update_context", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "uw_update_context",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for uw_update_context");
 }
-#[test] fn algo_fde_unencoded_compare() {
+#[test]
+fn algo_fde_unencoded_compare() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456880u64, 0xd503245fu32),
         (0x456884u64, 0xf9400440u32),
@@ -7113,11 +7951,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456898u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_unencoded_compare", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for fde_unencoded_compare");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_unencoded_compare",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for fde_unencoded_compare"
+    );
 }
-#[test] fn algo_frame_downheap() {
+#[test]
+fn algo_frame_downheap() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4568a0u64, 0xd503233fu32),
         (0x4568a4u64, 0xa9ba7bfdu32),
@@ -7184,11 +8033,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456998u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "frame_downheap", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "frame_downheap",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for frame_downheap");
 }
-#[test] fn algo_version_lock_lock_exclusive() {
+#[test]
+fn algo_version_lock_lock_exclusive() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4569a0u64, 0xd503233fu32),
         (0x4569a4u64, 0xa9bd7bfdu32),
@@ -7242,11 +8099,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456a64u64, 0xaa0003f4u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "version_lock_lock_exclusive", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for version_lock_lock_exclusive");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "version_lock_lock_exclusive",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for version_lock_lock_exclusive"
+    );
 }
-#[test] fn algo_read_encoded_value_with_base() {
+#[test]
+fn algo_read_encoded_value_with_base() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456a6cu64, 0x12001c05u32),
         (0x456a70u64, 0x710140bfu32),
@@ -7328,11 +8196,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456ba0u64, 0x910003fdu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "read_encoded_value_with_base", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for read_encoded_value_with_base");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "read_encoded_value_with_base",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for read_encoded_value_with_base"
+    );
 }
-#[test] fn algo_fde_unencoded_extract() {
+#[test]
+fn algo_fde_unencoded_extract() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456ba8u64, 0xd503245fu32),
         (0x456bacu64, 0x7100007fu32),
@@ -7349,11 +8228,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456bd8u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_unencoded_extract", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for fde_unencoded_extract");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_unencoded_extract",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for fde_unencoded_extract"
+    );
 }
-#[test] fn algo_fde_radixsort() {
+#[test]
+fn algo_fde_radixsort() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456be0u64, 0xd503233fu32),
         (0x456be4u64, 0xd12243ffu32),
@@ -7492,11 +8382,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456df8u64, 0xa94573fbu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_radixsort", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_radixsort",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for fde_radixsort");
 }
-#[test] fn algo_version_lock_unlock_exclusive() {
+#[test]
+fn algo_version_lock_unlock_exclusive() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456e00u64, 0xd503233fu32),
         (0x456e04u64, 0xa9be7bfdu32),
@@ -7523,11 +8421,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456e58u64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "version_lock_unlock_exclusive", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for version_lock_unlock_exclusive");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "version_lock_unlock_exclusive",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for version_lock_unlock_exclusive"
+    );
 }
-#[test] fn algo_btree_allocate_node() {
+#[test]
+fn algo_btree_allocate_node() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456e60u64, 0xd503233fu32),
         (0x456e64u64, 0xa9bc7bfdu32),
@@ -7578,11 +8487,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456f18u64, 0xf90002a0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "btree_allocate_node", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "btree_allocate_node",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for btree_allocate_node");
 }
-#[test] fn algo_btree_handle_root_split_part_0() {
+#[test]
+fn algo_btree_handle_root_split_part_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x456f20u64, 0xd503233fu32),
         (0x456f24u64, 0xa9be7bfdu32),
@@ -7626,11 +8543,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x456fbcu64, 0xd50323bfu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "btree_handle_root_split_part_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for btree_handle_root_split_part_0");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "btree_handle_root_split_part_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for btree_handle_root_split_part_0"
+    );
 }
-#[test] fn algo_get_cie_encoding() {
+#[test]
+fn algo_get_cie_encoding() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4574c4u64, 0xd503233fu32),
         (0x4574c8u64, 0xa9bd7bfdu32),
@@ -7706,11 +8634,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4575e0u64, 0x91000842u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "get_cie_encoding", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "get_cie_encoding",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for get_cie_encoding");
 }
-#[test] fn algo_fde_mixed_encoding_extract() {
+#[test]
+fn algo_fde_mixed_encoding_extract() {
     let insns: Vec<(u64, u32)> = vec![
         (0x457d84u64, 0xd503245fu32),
         (0x457d88u64, 0x7100007fu32),
@@ -7772,11 +8708,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x457e68u64, 0xd65f03c0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_mixed_encoding_extract", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for fde_mixed_encoding_extract");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_mixed_encoding_extract",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for fde_mixed_encoding_extract"
+    );
 }
-#[test] fn algo_get_pc_range() {
+#[test]
+fn algo_get_pc_range() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4580e0u64, 0xd503233fu32),
         (0x4580e4u64, 0xa9bd7bfdu32),
@@ -7859,11 +8806,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x458218u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "get_pc_range", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "get_pc_range",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for get_pc_range");
 }
-#[test] fn algo_fde_single_encoding_extract() {
+#[test]
+fn algo_fde_single_encoding_extract() {
     let insns: Vec<(u64, u32)> = vec![
         (0x458220u64, 0xd503233fu32),
         (0x458224u64, 0xa9bc7bfdu32),
@@ -7915,11 +8870,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4582dcu64, 0xa90153f3u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_single_encoding_extract", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for fde_single_encoding_extract");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_single_encoding_extract",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for fde_single_encoding_extract"
+    );
 }
-#[test] fn algo_fde_single_encoding_compare() {
+#[test]
+fn algo_fde_single_encoding_compare() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4582e4u64, 0xd503233fu32),
         (0x4582e8u64, 0xa9bc7bfdu32),
@@ -7969,11 +8935,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x458398u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_single_encoding_compare", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for fde_single_encoding_compare");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_single_encoding_compare",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for fde_single_encoding_compare"
+    );
 }
-#[test] fn algo_fde_mixed_encoding_compare() {
+#[test]
+fn algo_fde_mixed_encoding_compare() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4583a0u64, 0xd503233fu32),
         (0x4583a4u64, 0xa9bc7bfdu32),
@@ -8048,11 +9025,22 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4584b8u64, 0xd503201fu32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "fde_mixed_encoding_compare", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for fde_mixed_encoding_compare");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "fde_mixed_encoding_compare",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for fde_mixed_encoding_compare"
+    );
 }
-#[test] fn algo_add_fdes_isra_0() {
+#[test]
+fn algo_add_fdes_isra_0() {
     let insns: Vec<(u64, u32)> = vec![
         (0x4584c0u64, 0xd503233fu32),
         (0x4584c4u64, 0xa9b97bfdu32),
@@ -8199,11 +9187,19 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4586f8u64, 0x97fe9f02u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "add_fdes_isra_0", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "add_fdes_isra_0",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
     assert!(out.llil_coverage >= 0.60, "low cov for add_fdes_isra_0");
 }
-#[test] fn algo_base_of_encoded_value() {
+#[test]
+fn algo_base_of_encoded_value() {
     let insns: Vec<(u64, u32)> = vec![
         (0x459740u64, 0x12001c00u32),
         (0x459744u64, 0x7103fc1fu32),
@@ -8232,7 +9228,17 @@ use tracemiku_core::decompiler::il_pipeline::decompile_static;
         (0x4597a0u64, 0xaa0103e0u32),
     ];
     let out = decompile_static(&insns);
-    println!("{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
-        "base_of_encoded_value", out.insn_count, out.llil_coverage*100.0, out.llil_count, out.mlil_count, out.hlil_count);
-    assert!(out.llil_coverage >= 0.60, "low cov for base_of_encoded_value");
+    println!(
+        "{:40}: {:4} insns  cov={:5.1}%  L={:4} M={:4} H={:4}",
+        "base_of_encoded_value",
+        out.insn_count,
+        out.llil_coverage * 100.0,
+        out.llil_count,
+        out.mlil_count,
+        out.hlil_count
+    );
+    assert!(
+        out.llil_coverage >= 0.60,
+        "low cov for base_of_encoded_value"
+    );
 }

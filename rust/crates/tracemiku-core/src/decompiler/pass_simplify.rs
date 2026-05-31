@@ -3,7 +3,9 @@
 //! Each rule is a micro-transform on a single IL expression.
 //! Rules are pooled in PassPool and applied until fixpoint.
 
-use super::pass::{Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult, Rule};
+use super::pass::{
+    Pass, PassContext, PassIlExpr, PassIlExprs, PassIlOperand, PassInfo, PassResult, Rule,
+};
 
 // ============================================================================
 // RuleIdentityOp — identity element elimination
@@ -24,7 +26,9 @@ impl Rule for RuleIdentityOp {
     }
 
     fn applies_to(&self) -> &'static [&'static str] {
-        &["LLIL_Add", "LLIL_Sub", "LLIL_Mul", "LLIL_Or", "LLIL_Xor", "LLIL_And"]
+        &[
+            "LLIL_Add", "LLIL_Sub", "LLIL_Mul", "LLIL_Or", "LLIL_Xor", "LLIL_And",
+        ]
     }
 
     fn apply(&self, expr: &PassIlExpr) -> Option<PassIlExpr> {
@@ -187,7 +191,8 @@ impl Pass for SimplifyPass {
     fn info(&self) -> PassInfo {
         PassInfo {
             name: "Simplify",
-            description: "Apply algebraic simplification rules (identity, double-neg, comparison fold)",
+            description:
+                "Apply algebraic simplification rules (identity, double-neg, comparison fold)",
             phase: 1,
             requires: &[],
             invalidates: &[],
@@ -354,10 +359,8 @@ mod tests {
     #[test]
     fn test_comparison_fold() {
         let rule = RuleComparisonFold;
-        let inner = PassIlOperand::Expr(Box::new(make_expr(
-            "LLIL_CmpE",
-            vec![reg("x0"), reg("x1")],
-        )));
+        let inner =
+            PassIlOperand::Expr(Box::new(make_expr("LLIL_CmpE", vec![reg("x0"), reg("x1")])));
         let expr = make_expr("LLIL_CmpE", vec![inner, imm(0)]);
         let result = rule.apply(&expr);
         assert!(result.is_some());

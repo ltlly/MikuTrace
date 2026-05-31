@@ -16,7 +16,11 @@ fn verify_test_add() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_add");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_add");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_add", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_add",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -33,7 +37,11 @@ fn verify_test_and() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_and");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_and");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_and", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_and",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -50,7 +58,11 @@ fn verify_test_asr() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_asr");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_asr");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_asr", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_asr",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -70,7 +82,11 @@ fn verify_test_bit_test() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_bit_test");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_bit_test");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_bit_test", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_bit_test",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -85,8 +101,15 @@ fn verify_test_bitfield_extract() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_bitfield_extract");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_bitfield_extract");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_bitfield_extract", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_bitfield_extract"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_bitfield_extract",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -100,9 +123,19 @@ fn verify_test_bitfield_sign_extend() {
         (0x0000000000400d28u64, 0x910043ffu32),
     ];
     let output = decompile_static(&insns);
-    assert!(output.insn_count > 0, "no insns for test_bitfield_sign_extend");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_bitfield_sign_extend");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_bitfield_sign_extend", output.llil_coverage*100.0);
+    assert!(
+        output.insn_count > 0,
+        "no insns for test_bitfield_sign_extend"
+    );
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_bitfield_sign_extend"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_bitfield_sign_extend",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -136,8 +169,15 @@ fn verify_test_call_eight_args() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_call_eight_args");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_call_eight_args");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_call_eight_args", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_call_eight_args"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_call_eight_args",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -159,8 +199,15 @@ fn verify_test_call_four_args() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_call_four_args");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_call_four_args");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_call_four_args", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_call_four_args"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_call_four_args",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -184,8 +231,15 @@ fn verify_test_call_two_args() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_call_two_args");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_call_two_args");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_call_two_args", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_call_two_args"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_call_two_args",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -323,7 +377,11 @@ fn verify_test_csel() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_csel");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_csel");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_csel", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_csel",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -340,7 +398,11 @@ fn verify_test_div_s() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_div_s");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_div_s");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_div_s", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_div_s",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -357,7 +419,11 @@ fn verify_test_div_u() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_div_u");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_div_u");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_div_u", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_div_u",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -379,7 +445,11 @@ fn verify_test_do_while() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_do_while");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_do_while");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_do_while", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_do_while",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -403,8 +473,15 @@ fn verify_test_factorial() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_factorial");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_factorial");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_factorial", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_factorial"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_factorial",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -432,7 +509,11 @@ fn verify_test_for_loop() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_for_loop");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_for_loop");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_for_loop", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_for_loop",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -456,7 +537,11 @@ fn verify_test_if_else() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_if_else");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_if_else");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_if_else", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_if_else",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -489,8 +574,15 @@ fn verify_test_if_nested() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_if_nested");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_if_nested");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_if_nested", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_if_nested"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_if_nested",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -505,7 +597,11 @@ fn verify_test_ldrb() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ldrb");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ldrb");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ldrb", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ldrb",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -520,7 +616,11 @@ fn verify_test_ldrh() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ldrh");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ldrh");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ldrh", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ldrh",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -535,7 +635,11 @@ fn verify_test_ldrsb() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ldrsb");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ldrsb");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ldrsb", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ldrsb",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -550,7 +654,11 @@ fn verify_test_ldrsh() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ldrsh");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ldrsh");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ldrsh", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ldrsh",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -565,7 +673,11 @@ fn verify_test_ldrsw() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ldrsw");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ldrsw");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ldrsw", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ldrsw",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -582,7 +694,11 @@ fn verify_test_lsl() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_lsl");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_lsl");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_lsl", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_lsl",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -599,7 +715,11 @@ fn verify_test_lsr() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_lsr");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_lsr");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_lsr", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_lsr",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -619,7 +739,11 @@ fn verify_test_mod_s() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_mod_s");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_mod_s");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_mod_s", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_mod_s",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -636,7 +760,11 @@ fn verify_test_mul() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_mul");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_mul");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_mul", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_mul",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -653,7 +781,11 @@ fn verify_test_mull() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_mull");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_mull");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_mull", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_mull",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -668,7 +800,11 @@ fn verify_test_neg() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_neg");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_neg");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_neg", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_neg",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -683,7 +819,11 @@ fn verify_test_not() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_not");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_not");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_not", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_not",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -700,7 +840,11 @@ fn verify_test_or() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_or");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_or");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_or", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_or",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -718,8 +862,15 @@ fn verify_test_ptr_arith() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ptr_arith");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ptr_arith");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ptr_arith", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_ptr_arith"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ptr_arith",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -737,7 +888,11 @@ fn verify_test_ptr_diff() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ptr_diff");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ptr_diff");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ptr_diff", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ptr_diff",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -758,8 +913,15 @@ fn verify_test_ptr_write() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_ptr_write");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_ptr_write");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_ptr_write", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_ptr_write"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_ptr_write",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -831,8 +993,15 @@ fn verify_test_stack_spill() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_stack_spill");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_stack_spill");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_stack_spill", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_stack_spill"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_stack_spill",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -850,7 +1019,11 @@ fn verify_test_strb() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_strb");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_strb");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_strb", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_strb",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -868,7 +1041,11 @@ fn verify_test_strh() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_strh");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_strh");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_strh", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_strh",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -885,8 +1062,15 @@ fn verify_test_struct_field_read() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_struct_field_read");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_struct_field_read");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_struct_field_read", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_struct_field_read"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_struct_field_read",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -906,9 +1090,19 @@ fn verify_test_struct_field_write() {
         (0x0000000000400bd8u64, 0x910043ffu32),
     ];
     let output = decompile_static(&insns);
-    assert!(output.insn_count > 0, "no insns for test_struct_field_write");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_struct_field_write");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_struct_field_write", output.llil_coverage*100.0);
+    assert!(
+        output.insn_count > 0,
+        "no insns for test_struct_field_write"
+    );
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_struct_field_write"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_struct_field_write",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -921,9 +1115,19 @@ fn verify_test_struct_nested_read() {
         (0x0000000000400bf0u64, 0x910043ffu32),
     ];
     let output = decompile_static(&insns);
-    assert!(output.insn_count > 0, "no insns for test_struct_nested_read");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_struct_nested_read");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_struct_nested_read", output.llil_coverage*100.0);
+    assert!(
+        output.insn_count > 0,
+        "no insns for test_struct_nested_read"
+    );
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_struct_nested_read"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_struct_nested_read",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -940,7 +1144,11 @@ fn verify_test_sub() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_sub");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_sub");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_sub", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_sub",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -973,7 +1181,11 @@ fn verify_test_switch() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_switch");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_switch");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_switch", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_switch",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -990,7 +1202,11 @@ fn verify_test_umull() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_umull");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_umull");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_umull", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_umull",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -1017,8 +1233,15 @@ fn verify_test_while_loop() {
     ];
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_while_loop");
-    assert!(!output.hlil_text.is_empty(), "empty HLIL for test_while_loop");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_while_loop", output.llil_coverage*100.0);
+    assert!(
+        !output.hlil_text.is_empty(),
+        "empty HLIL for test_while_loop"
+    );
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_while_loop",
+        output.llil_coverage * 100.0
+    );
 }
 
 #[test]
@@ -1035,6 +1258,9 @@ fn verify_test_xor() {
     let output = decompile_static(&insns);
     assert!(output.insn_count > 0, "no insns for test_xor");
     assert!(!output.hlil_text.is_empty(), "empty HLIL for test_xor");
-    assert!(output.llil_coverage >= 0.90, "low coverage {:.1}% for test_xor", output.llil_coverage*100.0);
+    assert!(
+        output.llil_coverage >= 0.90,
+        "low coverage {:.1}% for test_xor",
+        output.llil_coverage * 100.0
+    );
 }
-
