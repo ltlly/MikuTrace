@@ -21,8 +21,10 @@ SRC = REPO / "frontend" / "src"
 
 ALLOWED_RAW_RESOURCES = {
     ("App.tsx", "cursorRecord"),
+    ("App.tsx", "functions"),
     ("App.tsx", "meta"),
     ("panels/cfg/CfgPanel.tsx", "functions"),
+    ("panels/crypto/CryptoPanel.tsx", "resp"),
     ("panels/functions/FunctionsPanel.tsx", "resp"),
     ("panels/memory/MemoryPanel.tsx", "record"),
     ("panels/meta/MetaPanel.tsx", "meta"),

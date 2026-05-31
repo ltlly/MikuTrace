@@ -26,6 +26,7 @@ EXPECTED_GUARDED_SOURCES = {
     ("panels/memory/MemoryPanel.tsx", "dumpSource"),
     ("panels/records/RecordsPanel.tsx", "range"),
     ("panels/forks/ForksPanel.tsx", "source"),
+    ("panels/PseudoCPanel.tsx", "source"),
     ("panels/slice/SlicePanel.tsx", "query"),
     ("panels/strings/StringProvenancePanel.tsx", "source"),
     ("panels/strings/StringsPanel.tsx", "source"),
@@ -94,6 +95,11 @@ STABILITY_TOKENS = {
         "prev.status === next.status",
         "prev.limit === next.limit",
         "? prev : next",
+    ],
+    ("panels/PseudoCPanel.tsx", "source"): [
+        "createMemo<PipelineSource | undefined>((prev)",
+        "sourceKey(prev) === sourceKey(next)",
+        "return prev",
     ],
     ("panels/strings/StringProvenancePanel.tsx", "source"): [
         "createMemo<Source | undefined>((prev)",
