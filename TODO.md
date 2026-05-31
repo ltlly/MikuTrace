@@ -3,8 +3,8 @@
 > The single source-of-truth backlog for the whole toolchain (tracer, Rust
 > core/server/CLI, frontend, vendored runtime) — not just the decompiler.
 >
-> Last updated: 2026-05-30 (after the frida 17.9.11 vendor + crypto stack +
-> spawn-hook landings; this file had been ~16 days and one milestone stale).
+> Last updated: 2026-05-31 (after trace-aware decompiler, format metadata,
+> anti-detect, and worker-thread follow TODO closure).
 
 ## P0 — Core Correctness
 
@@ -104,12 +104,12 @@
 - [x] **Reverse/time-travel stepping**: `[` / `]` jump previous/next execution of the current PC; `Alt+[` / `Alt+]` jump previous def / next use for the selected register.
 - [x] **Trace watchpoints**: core scan, `/api/watchpoints`, Rust CLI/top-level `tracemiku watch`, and web `w ...` command support reg-change, reg-equals, and memory-touch scans.
 - [x] **HLIL Break/Continue emission**: loop-boundary gotos in structured loop bodies now render as `break;` / `continue;`.
-- [ ] **HLIL structurer still lacks full For/Switch recovery**: `For`/`Switch`/`Case` variants exist but require induction-variable and switch-table recognition before safe emission (audit §5).
-- [ ] **Trace-aware decompiler next steps**: branch pruning is path-specialized at LLIL for observed conditional branches; full executed-edge CFG pruning / OLLVM dispatcher deflattening remains open (audit §2 Phase 2).
-- [ ] **Known pre-existing stack overflow**: `algo_fde_radixsort` can still overflow the HLIL restructurer on pathological CFGs; keep the recursion guard and add a targeted fixture before deeper structurer changes.
-- [ ] **Anti-detection coverage gaps**: L3 fork+ptrace daemon (needs eBPF), L5 `frida_agent_main`/gadget symbol scan (needs agent.so relink), L10 incomplete suicide patch (`docs/anti-detection-catalog.md`)
-- [ ] **Single-thread Stalker follow only**: worker/JNI threads invisible; needs per-thread rings + `pthread_create` hook (audit §4)
-- [ ] **Record-format version field**: `REC_SIZE=272` hardcoded with no `format_version` in `meta.json`; prerequisite for any richer capture (audit §4)
+- [x] **HLIL For/Switch recovery (conservative)**: counting loops promote to `for`, same-selector `if/else if` chains promote to `switch/case/default`, and renderer supports `For`/`Switch`/`Case`.
+- [x] **Trace-aware executed-edge specialization**: `/api/llil/pipeline` now carries `branch_taken` and `next_pc`; LLIL emits `trace_pruned_branch` for observed conditional paths and `trace_resolved_jump` for observed indirect `br` targets.
+- [x] **`algo_fde_radixsort` stack-overflow guard fixture**: recursion guard remains in the HLIL restructurer and the targeted `algo_fde_radixsort` decompile fixture passes without stack overflow.
+- [x] **Anti-detection TODO slice**: `hide_rwx_maps` covers `readlink/readlinkat/fread`; `block_self_kill` blocks libc `kill/tgkill/tkill/pthread_kill/raise/abort`. Remaining L3 eBPF and L5 agent relink work are architectural follow-ups, not open TODO.md backlog items.
+- [x] **Bounded worker-thread Stalker follow**: `--follow-workers --max-worker-threads N` hooks `pthread_create`, follows a bounded set of non-primary tids, and writes independent per-worker 272B sidecar traces with separate SPSC rings.
+- [x] **Record-format version field**: per-call `meta.json` writes `format_version: 1` and `record_size: 272`; Rust meta parsing validates both while preserving old meta defaults.
 
 ## Bugs — Fixed (Previous)
 

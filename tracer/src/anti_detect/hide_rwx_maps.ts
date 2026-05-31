@@ -48,6 +48,11 @@ function _findEx(name: string): NativePointer | null {
     return null;
 }
 
+function _isMapsPath(path: string | null): boolean {
+    return !!path && (path === "/proc/self/maps" ||
+        (path.startsWith("/proc/") && path.endsWith("/maps")));
+}
+
 function install(): void {
     if (STATE.rwxMapsHidden) return;
     let n = 0;
@@ -58,8 +63,7 @@ function install(): void {
             onEnter(args) {
                 try {
                     const path = args[pathIdx].readCString();
-                    if (path && (path === "/proc/self/maps" ||
-                                 (path.startsWith("/proc/") && path.endsWith("/maps")))) {
+                    if (_isMapsPath(path)) {
                         (this as any)._track = true;
                     }
                 } catch (_) {}
@@ -107,6 +111,59 @@ function install(): void {
     hookOpen(_findEx("fopen"), 0, "fopen");
     hookRead(_findEx("read"), "read");
     hookRead(_findEx("pread64"), "pread64");
+
+    const hookReadlink = (p: NativePointer | null, pathIdx: number, bufIdx: number, label: string) => {
+        if (!p) return;
+        Interceptor.attach(p, {
+            onEnter(args) {
+                (this as any)._buf = args[bufIdx];
+                try { (this as any)._track = _isMapsPath(args[pathIdx].readCString()); } catch (_) {}
+            },
+            onLeave(rv) {
+                if (!(this as any)._track) return;
+                const sz = rv.toInt32();
+                if (sz <= 0) return;
+                try {
+                    (this as any)._buf.writeUtf8String("/proc/self/maps");
+                    rv.replace(ptr(Math.min(sz, "/proc/self/maps".length)));
+                } catch (_) {}
+            }
+        });
+        n++;
+        log(`[hide-rwx-maps] hook ${label}`);
+    };
+
+    const hookFread = (p: NativePointer | null) => {
+        if (!p) return;
+        Interceptor.attach(p, {
+            onEnter(args) {
+                (this as any)._buf = args[0];
+                (this as any)._size = args[1].toInt32();
+                (this as any)._nmemb = args[2].toInt32();
+            },
+            onLeave(rv) {
+                const nmemb = rv.toInt32();
+                const total = nmemb * Math.max(1, (this as any)._size || 1);
+                if (total <= 0 || total > 1024 * 1024) return;
+                try {
+                    const bytes = (this as any)._buf.readByteArray(total);
+                    const text = String.fromCharCode.apply(null, new Uint8Array(bytes) as any);
+                    if (text.indexOf("rwx") < 0 && text.indexOf("frida") < 0) return;
+                    const [filtered, dropped] = _filterBuffer(text);
+                    if (dropped === 0) return;
+                    const newBytes: number[] = [];
+                    for (let i = 0; i < filtered.length; i++) newBytes.push(filtered.charCodeAt(i) & 0xff);
+                    while (newBytes.length < total) newBytes.push(0);
+                    (this as any)._buf.writeByteArray(newBytes.slice(0, total));
+                } catch (_) {}
+            }
+        });
+        n++;
+    };
+
+    hookReadlink(_findEx("readlink"), 0, 1, "readlink");
+    hookReadlink(_findEx("readlinkat"), 1, 2, "readlinkat");
+    hookFread(_findEx("fread"));
 
     const close_p = _findEx("close");
     if (close_p) {

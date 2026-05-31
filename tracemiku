@@ -255,6 +255,7 @@ def cmd_trace(args):
         # 兼容 v3/v4: 若 agent 仍 send blob, on_message 在收到第一个 frames 时 lazy-open 写盘.
         md = {"callIdx": call_idx, "pid": pid, "tid": tid,
               "ts_in": time.time(), "started_at": time.time(),
+              "format_version": 1, "record_size": REC_SIZE,
               "records": 0, "bytes": 0,
               "truncated": True, "last_insn_is_ret": None,
               "devicePath": None}
@@ -386,8 +387,38 @@ def cmd_trace(args):
                 }
             except Exception as e:
                 wlog(f"[!] pull SIMD sidecar 失败: {e}")
+        worker_sidecars = []
+        for wt in s["meta"].get("workerTraces") or []:
+            worker_device_path = wt.get("devicePath")
+            if not worker_device_path:
+                continue
+            tid = wt.get("tid", "unknown")
+            try:
+                worker_local_name = f"worker_trace_tid{tid}.bin"
+                worker_local_path = s["dir"] / worker_local_name
+                t0 = time.time()
+                worker_size = adb_pull_device_trace(worker_device_path, str(worker_local_path))
+                wlog(f"  pull worker tid={tid} {worker_device_path} → {worker_size:,} bytes in {time.time()-t0:.1f}s")
+                rec_size = int(wt.get("recordSize") or REC_SIZE)
+                records = int(wt.get("records") or (worker_size // rec_size if rec_size > 0 else 0))
+                worker_sidecars.append({
+                    "tid": wt.get("tid"),
+                    "pthread": wt.get("pthread"),
+                    "start": wt.get("start"),
+                    "file": worker_local_name,
+                    "bytes": worker_size,
+                    "record_size": rec_size,
+                    "records": records,
+                    "dropped": int(wt.get("dropped") or 0),
+                })
+            except Exception as e:
+                wlog(f"[!] pull worker sidecar tid={tid} 失败: {e}")
+        if worker_sidecars:
+            s["meta"]["worker_trace_sidecars"] = worker_sidecars
         md = s["meta"]
         md["truncated"] = bool(truncated)
+        md["format_version"] = int(md.get("format_version") or 1)
+        md["record_size"] = int(md.get("record_size") or REC_SIZE)
         md["closed_at"] = time.time()
         # decode first/last insn
         bin_path = s["dir"]/"trace.bin"
@@ -483,7 +514,7 @@ def cmd_trace(args):
                         if p.get("devicePath"):     # v5
                             s["meta"]["devicePath"] = p["devicePath"]
                         for k in ("simdDevicePath", "simdRecords", "simdDropped",
-                                  "simdRecordSize", "simdSampleStride"):
+                                  "simdRecordSize", "simdSampleStride", "workerTraces"):
                             if p.get(k) is not None:
                                 s["meta"][k] = p.get(k)
                         truncated = bool(p.get("truncated", False))
@@ -558,6 +589,18 @@ def cmd_trace(args):
                             if (ev.get("is_fork_like") and cpid and cpid > 0
                                     and getattr(args, "fork_poll_child", True)):
                                 _spawn_child_poller(ev, s["meta"], wlog, tag)
+                    elif t == "worker-events":
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        evs = p.get("events", [])
+                        s = sess_files[ci]
+                        m_workers = s["meta"].setdefault("worker_events", [])
+                        m_workers.extend(evs)
+                        s["meta"]["worker_events_count"] = len(m_workers)
+                        for ev in evs[:8]:
+                            wlog(f"[{tag}] worker-event status={ev.get('status', '?')} "
+                                 f"tid={ev.get('tid', '?')}")
                     elif t == "ext-write":
                         # Boundary-diff events from --trace-deep mode.
                         # Each event: {attrIdx: u64, addr: "0x...", byte: u8}.
@@ -659,7 +702,8 @@ def cmd_trace(args):
         **({"cmdArg": args.cmd_arg if args.cmd_arg is not None else 2} if args.cmd is not None else {}),
         **({"cmdValue": args.cmd} if args.cmd is not None else {}),
         "maxRecords": args.max_records,
-        "followAllThreads": args.follow_workers,
+        "followWorkers": bool(getattr(args, "follow_workers", False)),
+        "maxWorkerThreads": int(getattr(args, "max_worker_threads", 4) or 4),
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
         "includeSoPatterns": incl_pats,     # multi-SO trace
         "deepTrace": bool(getattr(args, "trace_deep", False)),
@@ -668,6 +712,7 @@ def cmd_trace(args):
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
         "suicidePatchSpec": suicide_spec,
         "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
+        "blockSelfKill": bool(getattr(args, "block_self_kill", False)),
         "jniHooks": jni_hooks_specs,
         "enableForkHook": bool(getattr(args, "enable_fork_hook", False)),
         "semanticEvents": bool(getattr(args, "semantic_events", False)),
@@ -834,6 +879,10 @@ def cmd_trace(args):
             call_summary["simd_sidecar"] = cm.get("simd_sidecar")
         if cm.get("semantic_events_count") is not None:
             call_summary["semantic_events_count"] = cm.get("semantic_events_count")
+        if cm.get("worker_events_count") is not None:
+            call_summary["worker_events_count"] = cm.get("worker_events_count")
+        if cm.get("worker_trace_sidecars") is not None:
+            call_summary["worker_trace_sidecars"] = cm.get("worker_trace_sidecars")
         calls_summary.append(call_summary)
         for ev in (cm.get("fork_events") or []):
             all_fork_events.append((cd.name, ev))
@@ -1605,6 +1654,9 @@ def main():
     p_tr.add_argument("--hide-rwx-maps", action="store_true", dest="hide_rwx_maps",
                       help="在 libc open/read 拦截 /proc/self/maps, 过滤 rwxp 匿名段 — 让反检测"
                            "看不到 Frida Stalker block cache 的 rwx. 通用反检测绕过, 不依赖目标 SO.")
+    p_tr.add_argument("--block-self-kill", action="store_true", dest="block_self_kill",
+                      help="hook libc kill/tgkill/tkill/pthread_kill/raise/abort, 阻断 signal 自杀路径；"
+                           "默认关，和 --patch-suicide 的 inline SVC patch 互补。")
     p_tr.add_argument("--enable-fork-hook", action="store_true", dest="enable_fork_hook",
                       help="hook libc fork/vfork/clone/__bionic_clone, 抓 fork-event Tier 1 "
                            "(parent_pc, child_pid, clone_flags) 写到 meta.json fork_events. "
@@ -1639,6 +1691,8 @@ def main():
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")
+    p_tr.add_argument("--max-worker-threads", type=int, default=4, dest="max_worker_threads",
+                      help="--follow-workers 最多跟踪的新线程数，默认 4，agent clamp 上限 32")
     p_tr.add_argument("--no-workers", action="store_true", help="(deprecated, 默认就是不跟)")
     p_tr.add_argument("--duration", type=int, default=120)
     p_tr.add_argument("--out", required=True, help="输出目录")

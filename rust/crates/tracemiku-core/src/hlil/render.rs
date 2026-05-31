@@ -152,6 +152,45 @@ fn render_expr_to(out: &mut String, e: &HlilExpr, indent: usize) {
                 push_line(out, &prefix, &format!("while ({cond});"));
             }
         }
+        HlilOp::For => {
+            let init = render_for_clause(e.operands.first());
+            let cond = render_for_clause(e.operands.get(1));
+            let update = render_for_clause(e.operands.get(2));
+            let body = match e.operands.get(3) {
+                Some(HlilOperand::Expr(ee)) => ee,
+                _ => {
+                    push_line(
+                        out,
+                        &prefix,
+                        &format!("for ({init}; {cond}; {update}) {{ }}"),
+                    );
+                    return;
+                }
+            };
+            push_line(out, &prefix, &format!("for ({init}; {cond}; {update})"));
+            render_block_like(out, body, indent);
+        }
+        HlilOp::Switch => {
+            let selector = render_operand(e.operands.first());
+            push_line(out, &prefix, &format!("switch ({selector})"));
+            push_line(out, &prefix, "{");
+            for op in e.operands.iter().skip(1) {
+                if let HlilOperand::Expr(case_e) = op {
+                    render_expr_to(out, case_e, indent + 1);
+                }
+            }
+            push_line(out, &prefix, "}");
+        }
+        HlilOp::Case => {
+            let label = match e.operands.first() {
+                Some(HlilOperand::Str(s)) if s == "default" => "default".to_string(),
+                other => format!("case {}", render_operand(other)),
+            };
+            push_line(out, &prefix, &format!("{label}:"));
+            if let Some(HlilOperand::Expr(body)) = e.operands.get(1) {
+                render_case_body(out, body, indent + 1);
+            }
+        }
         HlilOp::Break => {
             push_line(out, &prefix, "break;");
         }
@@ -232,6 +271,45 @@ fn push_line(out: &mut String, prefix: &str, line: &str) {
     out.push_str(prefix);
     out.push_str(line);
     out.push('\n');
+}
+
+fn render_block_like(out: &mut String, body: &HlilExpr, indent: usize) {
+    let prefix = "    ".repeat(indent);
+    push_line(out, &prefix, "{");
+    if body.op == HlilOp::Block {
+        for child in &body.operands {
+            if let HlilOperand::Expr(ee) = child {
+                render_expr_to(out, ee, indent + 1);
+            }
+        }
+    } else {
+        render_expr_to(out, body, indent + 1);
+    }
+    push_line(out, &prefix, "}");
+}
+
+fn render_case_body(out: &mut String, body: &HlilExpr, indent: usize) {
+    if body.op == HlilOp::Block {
+        for child in &body.operands {
+            if let HlilOperand::Expr(ee) = child {
+                render_expr_to(out, ee, indent);
+            }
+        }
+    } else {
+        render_expr_to(out, body, indent);
+    }
+}
+
+fn render_for_clause(op: Option<&HlilOperand>) -> String {
+    match op {
+        Some(HlilOperand::Expr(e)) if e.op == HlilOp::Nop => String::new(),
+        Some(HlilOperand::Expr(e)) if e.op == HlilOp::Assign => {
+            let dst = render_operand(e.operands.first());
+            let val = render_operand(e.operands.get(1));
+            format!("{dst} = {val}")
+        }
+        other => render_operand(other),
+    }
 }
 
 pub fn render_expr(e: &HlilExpr) -> String {

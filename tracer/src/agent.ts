@@ -14,12 +14,24 @@ import {
 } from "./core/state";
 import { log, getExport } from "./core/utils";
 import { buildCModule } from "./core/cmodule";
-import { flushRingToDisk, openTraceFile, closeTraceFile, closeSimdTraceFile, ensureFlushTimer, ensureTraceDir } from "./core/ring";
+import {
+    flushRingToDisk,
+    openTraceFile,
+    closeTraceFile,
+    closeSimdTraceFile,
+    ensureFlushTimer,
+    ensureTraceDir,
+    flushWorkerTraceRings,
+    closeWorkerTraceFiles,
+    unfollowWorkerThreads,
+    workerTraceSummaries,
+} from "./core/ring";
 import { applyExcludesOnce, buildIncludeRanges, createTransform } from "./core/stalker";
 import { flushSimdRingToDisk } from "./sidecar/simd";
 import { createSvcEventCallback, installSemanticHooksOnce, flushSemanticEvents } from "./sidecar/semantic";
 import { installJniHooksOnce, flushJniHookEvents } from "./hooks/jni_vtable";
 import { installForkHooksOnce, flushForkEvents } from "./hooks/fork_monitor";
+import { installPthreadFollowOnce, flushWorkerEvents } from "./hooks/pthread_follow";
 import { refreshWritableRanges, flushExtWriteEvents } from "./hooks/boundary_diff";
 import { BUILTIN_PLUGINS } from "./anti_detect/plugin_interface";
 
@@ -100,6 +112,9 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             if (STATE.semanticEvents) {
                 STATE.semanticEventBuf = [];
             }
+            STATE.workerEvents = [];
+            STATE.followedWorkerTids = {};
+            STATE.workerTraces = {};
             STATE.batchSeq = 0;
 
             openTraceFile((this as any)._callIdx, (this as any)._tid);
@@ -127,6 +142,12 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                     plugin.install({ spec: STATE.suicidePatchSpec });
                 } catch (e) { log(`[patch-suicide][!] ${e}`); }
             }
+            if (STATE.blockSelfKill) {
+                try {
+                    const { plugin } = require("./anti_detect/block_self_kill");
+                    plugin.install();
+                } catch (e) { log(`[block-self-kill][!] ${e}`); }
+            }
 
             applyExcludesOnce();
 
@@ -147,16 +168,20 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 events: { call: false, ret: false, exec: false, block: false, compile: false },
                 transform: createTransform(onInsn, ranges),
             });
+            try { installPthreadFollowOnce(); } catch (e) { log("[pthread-follow][!] " + e); }
             log(`[+] Stalker.follow tid=${(this as any)._tid} (SPSC lock-free, device-spool)`);
             send({ type: "follow", tid: (this as any)._tid });
         },
         onLeave(retv) {
             if ((this as any)._skip) return;
             try { Stalker.unfollow((this as any)._tid); } catch (_) {}
+            unfollowWorkerThreads();
             try { Stalker.flush(); } catch (_) {}
             flushRingToDisk("end");
+            flushWorkerTraceRings("end");
             flushSimdRingToDisk("end");
             closeTraceFile();
+            closeWorkerTraceFiles();
             closeSimdTraceFile();
 
             const elapsed = Date.now() - STATE.started;
@@ -164,12 +189,14 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             const dropped = STATE.droppedBuf!.readU64().toNumber();
             const simdTotal = STATE.simdSidecar ? STATE.simdHeadBuf!.readU64().toNumber() : 0;
             const simdDropped = STATE.simdSidecar ? STATE.simdDroppedBuf!.readU64().toNumber() : 0;
+            const workerTraces = workerTraceSummaries();
             const rate = (total / Math.max(elapsed / 1000, 1e-3)).toFixed(0);
 
             try { flushJniHookEvents((this as any)._callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
             try { flushSemanticEvents((this as any)._callIdx); } catch (e) { log(`[!] flushSemantic: ${e}`); }
             try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
             try { flushForkEvents((this as any)._callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
+            try { flushWorkerEvents((this as any)._callIdx); } catch (e) { log(`[!] flushWorkers: ${e}`); }
 
             log(`[<] call #${(this as any)._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
             send({
@@ -180,7 +207,8 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 simdDevicePath: STATE.simdTraceFilePath,
                 simdRecords: simdTotal, simdDropped: simdDropped,
                 simdRecordSize: SIMD_REC_SIZE,
-                simdSampleStride: STATE.simdSampleStride
+                simdSampleStride: STATE.simdSampleStride,
+                workerTraces
             });
             STATE.fnEntered = false;
         }
@@ -272,6 +300,7 @@ rpc.exports = {
         STATE.suicidePatchSpec = (opts as any).suicidePatchSpec || null;
         STATE.patchSuicide = !!(opts as any).patchSuicide;
         STATE.hideRwxMaps = !!(opts as any).hideRwxMaps;
+        STATE.blockSelfKill = !!(opts as any).blockSelfKill;
 
         if (opts.cmdValue !== undefined) STATE.cmdValue = opts.cmdValue!;
         if (opts.cmdArg !== undefined) STATE.cmdArg = opts.cmdArg!;
@@ -301,6 +330,9 @@ rpc.exports = {
 
         // Fork hook
         STATE.enableForkHook = !!opts.enableForkHook;
+        STATE.followWorkers = !!(opts as any).followWorkers;
+        const workerCap = parseInt(String((opts as any).maxWorkerThreads || 4));
+        STATE.maxWorkerThreads = Number.isFinite(workerCap) && workerCap > 0 ? Math.min(workerCap, 32) : 4;
 
         // maxRecords enforcement (0 = unlimited)
         const maxR = (opts.maxRecords != null && opts.maxRecords > 0) ? opts.maxRecords : 0;
@@ -325,7 +357,8 @@ rpc.exports = {
 
         log(`[*] traceMiku agent (modular) SPSC lock-free, ring=${(RING_BYTES / 1024 / 1024).toFixed(1)}MB ` +
             `(${RING_RECS} recs), flush=${FLUSH_INTERVAL_MS}ms, pkg=${STATE.pkg}, ` +
-            `simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"}`);
+            `simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"}, ` +
+            `workers=${STATE.followWorkers ? STATE.maxWorkerThreads : "off"}`);
         send({ type: "hello", pid: Process.id, frida: Frida.version, mode: "tracemiku-modular-agent" });
 
         // Build CModule

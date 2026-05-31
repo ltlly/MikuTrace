@@ -5,6 +5,8 @@
 export const REC_SIZE = 272;
 export const RING_RECS = 65536;               // ~17.6 MB
 export const RING_BYTES = REC_SIZE * RING_RECS;
+export const WORKER_RING_RECS = 8192;         // ~2.1 MB per optional worker
+export const WORKER_RING_BYTES = REC_SIZE * WORKER_RING_RECS;
 export const SIMD_REC_SIZE = 8 + 32 * 16;     // trace_idx:u64 + q0..q31 = 520
 export const SIMD_RING_RECS = 8192;           // ~4.1 MB
 export const SIMD_RING_BYTES = SIMD_REC_SIZE * SIMD_RING_RECS;
@@ -48,6 +50,26 @@ export interface IncludeRange {
     name: string;
 }
 
+export interface TraceRingState {
+    ringBuf: NativePointer;
+    headBuf: NativePointer;
+    tailBuf: NativePointer;
+    droppedBuf: NativePointer;
+    ringRecsBuf: NativePointer;
+    maxRecordsBuf: NativePointer;
+    ringRecs: number;
+    file: any | null;
+    filePath: string | null;
+}
+
+export interface WorkerTraceState extends TraceRingState {
+    tid: number;
+    pthread: string;
+    start: string;
+    cm: any;
+    onInsnPtr: NativePointer;
+}
+
 export interface InitOptions {
     soPattern: string;
     exportName?: string | null;
@@ -64,6 +86,8 @@ export interface InitOptions {
     // Hooks
     jniHooks?: any[] | null;
     enableForkHook?: boolean;
+    followWorkers?: boolean;
+    maxWorkerThreads?: number;
     // Sidecars
     simdSidecar?: boolean;
     simdSampleStride?: number;
@@ -138,6 +162,12 @@ export interface AgentState {
     enableForkHook: boolean;
     forkEvents: any[];
     forkHooksInstalled: boolean;
+    followWorkers: boolean;
+    maxWorkerThreads: number;
+    followedWorkerTids: Record<string, boolean>;
+    workerEvents: any[];
+    workerTraces: Record<string, WorkerTraceState>;
+    pthreadHooksInstalled: boolean;
 
     diffSyms: any[];
     diffSymAddrs: Record<string, boolean>;
@@ -150,6 +180,8 @@ export interface AgentState {
     suicidePatchSpec: any;
     patchSuicide: boolean;
     hideRwxMaps: boolean;
+    blockSelfKill: boolean;
+    selfKillBlocked: boolean;
 }
 
 export function createInitialState(): AgentState {
@@ -180,12 +212,15 @@ export function createInitialState(): AgentState {
 
         jniHookSpecs: null, jniHookEvents: [], jniHooksInstalled: false,
         enableForkHook: false, forkEvents: [], forkHooksInstalled: false,
+        followWorkers: false, maxWorkerThreads: 4, followedWorkerTids: {},
+        workerEvents: [], workerTraces: {}, pthreadHooksInstalled: false,
 
         diffSyms: [], diffSymAddrs: {}, boundaryHooksInstalled: false,
         extWriteEvents: [], writableRanges: null,
 
         rwxMapsHidden: false, suicidePatched: false,
         suicidePatchSpec: null, patchSuicide: false, hideRwxMaps: false,
+        blockSelfKill: false, selfKillBlocked: false,
     };
 }
 

@@ -5,7 +5,7 @@
  * 支持可选 SIMD sidecar 和 semantic SVC event callback.
  */
 
-import { STATE, REC_SIZE, RING_RECS, SIMD_REC_SIZE, SIMD_RING_RECS } from "./state";
+import { STATE, REC_SIZE, RING_RECS, SIMD_REC_SIZE, SIMD_RING_RECS, TraceRingState } from "./state";
 import { log } from "./utils";
 
 /**
@@ -129,4 +129,52 @@ ${simdWrite}${semanticWrite}
     log(`[+] CModule loaded: on_insn @ ${(STATE.cm as any).on_insn} ` +
         `(SPSC lock-free, simd=${STATE.simdSidecar ? "on" : "off"}, ` +
         `semantic=${STATE.semanticEvents ? "on" : "off"})`);
+}
+
+export function buildTraceRingCModule(ring: TraceRingState): any {
+    const src = `
+#include <gum/gumstalker.h>
+#include <string.h>
+#define REC ${REC_SIZE}
+#define SPIN_MAX 200000000
+
+extern unsigned char ring[];
+extern unsigned long long ring_recs;
+extern volatile unsigned long long head;
+extern volatile unsigned long long tail;
+extern volatile unsigned long long dropped;
+extern unsigned long long max_records;
+
+void on_insn(GumCpuContext *ctx, void *user_data) {
+    unsigned long long h = head;
+    if (max_records > 0 && h >= max_records) return;
+    unsigned long long t = tail;
+    unsigned long long spin = 0;
+    while (h - t >= ring_recs) {
+        if (++spin > SPIN_MAX) { dropped = dropped + 1; return; }
+        t = tail;
+    }
+    unsigned long long off = (h % ring_recs) * REC;
+    unsigned char *p = ring + off;
+    unsigned long long *cu = (unsigned long long *)ctx;
+    *(unsigned long long *)(p + 0) = cu[0];
+    memcpy(p + 8, &cu[3], 29 * 8);
+    *(unsigned long long *)(p + 8 + 29*8) = cu[3+29];
+    *(unsigned long long *)(p + 8 + 30*8) = cu[3+30];
+    *(unsigned long long *)(p + 256) = cu[1];
+    *(unsigned int *)(p + 264) = (unsigned int)(cu[2] & 0xffffffffULL);
+    unsigned int inst = *(unsigned int *)cu[0];
+    *(unsigned int *)(p + 268) = inst;
+    head = h + 1;
+}
+`;
+
+    return new CModule(src, {
+        ring: ring.ringBuf,
+        ring_recs: ring.ringRecsBuf,
+        head: ring.headBuf,
+        tail: ring.tailBuf,
+        dropped: ring.droppedBuf,
+        max_records: ring.maxRecordsBuf,
+    });
 }

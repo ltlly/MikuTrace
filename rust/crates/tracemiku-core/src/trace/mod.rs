@@ -10,5 +10,5 @@ pub mod record;
 pub mod trace;
 
 pub use meta::{CallInfo, MetaError, ModuleInfo, TraceMeta};
-pub use record::{Record, REC_NUM_REGS, REC_SIZE};
+pub use record::{Record, FORMAT_VERSION, REC_NUM_REGS, REC_SIZE};
 pub use trace::Trace;

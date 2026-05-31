@@ -264,6 +264,7 @@ fn trace_context_for_idx(inner: &crate::state::AppStateInner, idx: usize) -> Tra
             .map(|idxs| idxs.len() as u64)
             .unwrap_or(1),
         branch_taken: branch_taken_at(&rec, next.as_ref()),
+        next_pc: next.as_ref().map(|rec| rec.pc),
     }
 }
 

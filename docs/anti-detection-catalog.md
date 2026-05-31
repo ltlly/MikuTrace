@@ -1,7 +1,7 @@
 # 反调试 / 反 Trace / 反 Frida 手段全目录
 
 > traceMiku 失败案例收集 — 所有已知反检测手段及其对 traceMiku 的影响
-> 最后更新: 2026-05-16
+> 最后更新: 2026-05-31
 
 ## 分类体系
 
@@ -16,7 +16,7 @@
 | L7 | 端口/服务 | 27042 端口 / D-Bus name | ✅ 非默认端口 / 无 D-Bus |
 | L8 | 时间 | 执行时间异常 (Stalker 减速) | ⚠️ 不可避免, 不影响结果 |
 | L9 | 文件 | /data/local/tmp 文件检测 | ✅ 改用 app cache dir |
-| L10 | syscall | tgkill/tkill/kill 自杀 | ⚠️ `--patch-suicide` 不完整 |
+| L10 | syscall | tgkill/tkill/kill 自杀 | ✅ libc wrapper 层 `--block-self-kill`; ⚠️ inline SVC 仍需 spec patch |
 
 ---
 
@@ -58,8 +58,10 @@ while (fgets(buf, sizeof(buf), f)) {
 ```
 
 ### traceMiku 现状
-✅ `--hide-rwx-maps`: Interceptor hook libc `open/openat/read/pread64`, 过滤 rwxp 行
-⚠️ 不覆盖 `readlink` / `fread` / 直接 `readlinkat` 路径 — 高强度反检测可能绕过
+✅ `--hide-rwx-maps`: Interceptor hook libc
+`open/openat/fopen/read/pread64/readlink/readlinkat/fread`, 过滤 rwxp 行并遮蔽常见
+`/proc/*/maps` 访问路径。
+⚠️ 仍不覆盖绕过 libc 的直接 syscall / 自带 procfs parser / linker namespace 枚举。
 
 ---
 
@@ -106,7 +108,9 @@ AntiDebugThread (独立线程, 周期 ~1s):
 ⚠️ **已知坑** (libsgmainso 6.8.260403): `--trace-deep` → ~60k records → SI_USER
 ✅ **不用 --trace-deep**: 主流程通跑 (15.4M records)
 📄 详细复现: [docs/anti-debug-libart.md](anti-debug-libart.md)
-🔧 规划: `--block-self-kill` 拦截 tgkill/tkill/kill/pthread_kill/raise
+✅ `--block-self-kill`: libc 层拦截 `kill/tgkill/tkill/pthread_kill/raise/abort`,
+对当前进程 signal 自杀路径返回成功。
+⚠️ 直接 `svc #0` / OLLVM dispatcher syscall 仍需 `--patch-suicide` + JSON spec 或后续 eBPF 层处理。
 
 ---
 
@@ -251,15 +255,18 @@ svc #0
 - 不直接调 syscall, 走 OLLVM 混淆 dispatcher
 
 ### traceMiku 现状
-⚠️ `--patch-suicide` + `--suicide-patch-spec`: NOP 目标 SO 的内联 svc #0
-❌ **不完整**: dispatcher 可能走其他路径 (如 libsgmainso 共 38 个 `movz x?, #131`, 只 patch 6 个)
-🔧 规划: `--block-self-kill` (libc 层 hook tgkill → 拦截所有 signal-based 自杀)
+✅ `--block-self-kill`: libc wrapper 层 hook
+`kill/tgkill/tkill/pthread_kill/raise/abort`, 对 self-kill signal 返回成功。
+⚠️ `--patch-suicide` + `--suicide-patch-spec`: NOP 目标 SO 的内联 svc #0, 但 dispatcher
+可能走其他路径 (如 libsgmainso 共 38 个 `movz x?, #131`, 只 patch 6 个)。
+❌ **仍不完整**: 直接 syscall / OLLVM dispatcher 不经 libc 时, 仍需要 spec-driven inline patch
+或后续 eBPF/miku-shield。
 
 ---
 
 ## 综合反检测能力矩阵
 
-| 检测层级 | 手段 | stealth frida | --hide-rwx-maps | --patch-suicide | --block-self-kill (计划) | miku-shield (计划) |
+| 检测层级 | 手段 | stealth frida | --hide-rwx-maps | --patch-suicide | --block-self-kill | miku-shield (计划) |
 |---------|------|:---:|:---:|:---:|:---:|:---:|
 | L1 ptrace | TracerPid | ✅ | - | - | - | ✅ |
 | L2 maps | rwxp 扫描 | - | ✅ | - | - | ✅ |

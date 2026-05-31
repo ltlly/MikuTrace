@@ -305,6 +305,50 @@ pub fn do_while(body: HlilExpr, cond: HlilExpr, pc: u64) -> HlilExpr {
     HlilExpr::new(HlilOp::DoWhile, 1, vec![expr(body), expr(cond)], pc)
 }
 
+pub fn for_loop(
+    init: Option<HlilExpr>,
+    cond: HlilExpr,
+    update: Option<HlilExpr>,
+    body: HlilExpr,
+    pc: u64,
+) -> HlilExpr {
+    HlilExpr::new(
+        HlilOp::For,
+        1,
+        vec![
+            expr(init.unwrap_or_else(nop)),
+            expr(cond),
+            expr(update.unwrap_or_else(nop)),
+            expr(body),
+        ],
+        pc,
+    )
+}
+
+pub fn switch(selector: HlilExpr, cases: Vec<HlilExpr>, pc: u64) -> HlilExpr {
+    let mut ops = vec![expr(selector)];
+    ops.extend(cases.into_iter().map(expr));
+    HlilExpr::new(HlilOp::Switch, 1, ops, pc)
+}
+
+pub fn case(value: i64, body: HlilExpr, pc: u64) -> HlilExpr {
+    HlilExpr::new(
+        HlilOp::Case,
+        1,
+        vec![HlilOperand::Imm(value), expr(body)],
+        pc,
+    )
+}
+
+pub fn default_case(body: HlilExpr, pc: u64) -> HlilExpr {
+    HlilExpr::new(
+        HlilOp::Case,
+        1,
+        vec![HlilOperand::Str("default".into()), expr(body)],
+        pc,
+    )
+}
+
 pub fn goto(target: u64, pc: u64) -> HlilExpr {
     HlilExpr::new(HlilOp::Goto, 8, vec![HlilOperand::U64(target)], pc)
 }

@@ -8,6 +8,8 @@ fn loads_synth_meta() {
     let meta = TraceMeta::load(&fix.call_dir).expect("load synth meta");
 
     assert_eq!(meta.records, 9);
+    assert_eq!(meta.format_version, FORMAT_VERSION);
+    assert_eq!(meta.record_size, REC_SIZE);
     assert_eq!(meta.method, "f");
     assert_eq!(meta.cmd, Some(1));
     assert_eq!(meta.fn_addr, Some("0x100000".to_string()));
@@ -26,6 +28,70 @@ fn loads_synth_meta() {
     assert_eq!(meta.regs[0], "x0");
     assert_eq!(meta.regs[30], "lr");
     assert_eq!(meta.regs[32], "pc");
+}
+
+#[test]
+fn loads_explicit_trace_format_contract() {
+    use std::fs;
+    let tmp = tempfile::tempdir().unwrap();
+    let run = tmp.path().join("run");
+    fs::create_dir(&run).unwrap();
+    fs::create_dir(run.join("calls")).unwrap();
+    let cd = run.join("calls").join("call_001_tid100_0r_1ms");
+    fs::create_dir(&cd).unwrap();
+    fs::write(cd.join("trace.bin"), []).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        r#"{"records":0,"format_version":1,"record_size":272}"#,
+    )
+    .unwrap();
+    fs::write(run.join("meta.json"), "{}").unwrap();
+
+    let meta = TraceMeta::load(&cd).unwrap();
+    assert_eq!(meta.format_version, FORMAT_VERSION);
+    assert_eq!(meta.record_size, REC_SIZE);
+}
+
+#[test]
+fn rejects_unknown_trace_format_contract() {
+    use std::fs;
+    let tmp = tempfile::tempdir().unwrap();
+    let run = tmp.path().join("run");
+    fs::create_dir(&run).unwrap();
+    fs::create_dir(run.join("calls")).unwrap();
+    let cd = run.join("calls").join("call_001_tid100_0r_1ms");
+    fs::create_dir(&cd).unwrap();
+    fs::write(cd.join("trace.bin"), []).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        r#"{"records":0,"format_version":99,"record_size":272}"#,
+    )
+    .unwrap();
+    fs::write(run.join("meta.json"), "{}").unwrap();
+
+    let err = TraceMeta::load(&cd).unwrap_err().to_string();
+    assert!(err.contains("unsupported trace format_version"), "{err}");
+}
+
+#[test]
+fn rejects_unknown_record_size_contract() {
+    use std::fs;
+    let tmp = tempfile::tempdir().unwrap();
+    let run = tmp.path().join("run");
+    fs::create_dir(&run).unwrap();
+    fs::create_dir(run.join("calls")).unwrap();
+    let cd = run.join("calls").join("call_001_tid100_0r_1ms");
+    fs::create_dir(&cd).unwrap();
+    fs::write(cd.join("trace.bin"), []).unwrap();
+    fs::write(
+        cd.join("meta.json"),
+        r#"{"records":0,"format_version":1,"record_size":520}"#,
+    )
+    .unwrap();
+    fs::write(run.join("meta.json"), "{}").unwrap();
+
+    let err = TraceMeta::load(&cd).unwrap_err().to_string();
+    assert!(err.contains("unsupported trace record_size"), "{err}");
 }
 
 #[test]

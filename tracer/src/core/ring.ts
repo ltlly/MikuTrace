@@ -6,45 +6,100 @@
  *   v8 setInterval 10ms → File.write → device file
  */
 
-import { STATE, REC_SIZE, RING_RECS, FLUSH_INTERVAL_MS } from "./state";
+import { STATE, REC_SIZE, RING_RECS, FLUSH_INTERVAL_MS, TraceRingState, WorkerTraceState } from "./state";
 import { log, getExport } from "./utils";
 import { flushSimdRingToDisk } from "../sidecar/simd";
 
 /** Flush main trace ring to disk */
 export function flushRingToDisk(_reason?: string): void {
     if (!STATE.traceFile) return;
-    const h = STATE.headBuf!.readU64().toNumber();
-    const t = STATE.tailBuf!.readU64().toNumber();
+    const flushed = flushTraceRingToFile({
+        ringBuf: STATE.ringBuf!,
+        headBuf: STATE.headBuf!,
+        tailBuf: STATE.tailBuf!,
+        droppedBuf: STATE.droppedBuf!,
+        ringRecsBuf: STATE.ringRecsBuf!,
+        maxRecordsBuf: STATE.maxRecordsBuf!,
+        ringRecs: RING_RECS,
+        file: STATE.traceFile,
+        filePath: STATE.traceFilePath,
+    });
+    if (flushed) STATE.batchSeq++;
+}
+
+export function flushTraceRingToFile(ring: TraceRingState): boolean {
+    if (!ring.file) return false;
+    const h = ring.headBuf.readU64().toNumber();
+    const t = ring.tailBuf.readU64().toNumber();
     const avail = h - t;
-    if (avail <= 0) return;
+    if (avail <= 0) return false;
 
-    const tOff = t % RING_RECS;
-    const hOff = h % RING_RECS;
+    const tOff = t % ring.ringRecs;
+    const hOff = h % ring.ringRecs;
 
-    if (avail >= RING_RECS) {
+    if (avail >= ring.ringRecs) {
         // Ring wrote full circle
-        STATE.traceFile.write(
-            STATE.ringBuf!.add(tOff * REC_SIZE).readByteArray((RING_RECS - tOff) * REC_SIZE)
+        ring.file.write(
+            ring.ringBuf.add(tOff * REC_SIZE).readByteArray((ring.ringRecs - tOff) * REC_SIZE)
         );
         if (tOff > 0) {
-            STATE.traceFile.write(STATE.ringBuf!.readByteArray(tOff * REC_SIZE));
+            ring.file.write(ring.ringBuf.readByteArray(tOff * REC_SIZE));
         }
     } else if (hOff > tOff) {
         // No wrap: single segment
-        STATE.traceFile.write(
-            STATE.ringBuf!.add(tOff * REC_SIZE).readByteArray(avail * REC_SIZE)
+        ring.file.write(
+            ring.ringBuf.add(tOff * REC_SIZE).readByteArray(avail * REC_SIZE)
         );
     } else {
         // Wrap: two segments
-        STATE.traceFile.write(
-            STATE.ringBuf!.add(tOff * REC_SIZE).readByteArray((RING_RECS - tOff) * REC_SIZE)
+        ring.file.write(
+            ring.ringBuf.add(tOff * REC_SIZE).readByteArray((ring.ringRecs - tOff) * REC_SIZE)
         );
         if (hOff > 0) {
-            STATE.traceFile.write(STATE.ringBuf!.readByteArray(hOff * REC_SIZE));
+            ring.file.write(ring.ringBuf.readByteArray(hOff * REC_SIZE));
         }
     }
-    STATE.tailBuf!.writeU64(h);
-    STATE.batchSeq++;
+    ring.tailBuf.writeU64(h);
+    return true;
+}
+
+export function flushWorkerTraceRings(_reason?: string): void {
+    for (const key of Object.keys(STATE.workerTraces || {})) {
+        flushTraceRingToFile(STATE.workerTraces[key]);
+    }
+}
+
+export function closeWorkerTraceFiles(): void {
+    for (const key of Object.keys(STATE.workerTraces || {})) {
+        const worker = STATE.workerTraces[key];
+        if (worker.file) {
+            try { worker.file.close(); } catch (_) {}
+            worker.file = null;
+        }
+    }
+}
+
+export function workerTraceSummaries(): any[] {
+    const out: any[] = [];
+    for (const key of Object.keys(STATE.workerTraces || {})) {
+        const worker = STATE.workerTraces[key] as WorkerTraceState;
+        out.push({
+            tid: worker.tid,
+            pthread: worker.pthread,
+            start: worker.start,
+            devicePath: worker.filePath,
+            records: worker.headBuf.readU64().toNumber(),
+            dropped: worker.droppedBuf.readU64().toNumber(),
+            recordSize: REC_SIZE,
+        });
+    }
+    return out;
+}
+
+export function unfollowWorkerThreads(): void {
+    for (const key of Object.keys(STATE.workerTraces || {})) {
+        try { Stalker.unfollow(STATE.workerTraces[key].tid); } catch (_) {}
+    }
 }
 
 /** Resolve libc mkdir via getExport (handles linker namespace issues) */
@@ -171,6 +226,7 @@ export function ensureFlushTimer(): void {
 
     STATE.flushTimer = setInterval(() => {
         flushRingToDisk("interval");
+        flushWorkerTraceRings("interval");
         flushSimdRingToDisk("interval");
     }, FLUSH_INTERVAL_MS);
 
@@ -191,10 +247,13 @@ export function ensureFlushTimer(): void {
             if (STATE.fnEntered && STATE.maxRecords > 0 && total >= STATE.maxRecords && ringQueue === 0) {
                 log(`[!] maxRecords cap reached (${total} >= ${STATE.maxRecords}), finalizing call #${STATE.callIdx}`);
                 try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
+                unfollowWorkerThreads();
                 try { Stalker.flush(); } catch (_) {}
                 flushRingToDisk("max-records");
+                flushWorkerTraceRings("max-records");
                 flushSimdRingToDisk("max-records");
                 closeTraceFile();
+                closeWorkerTraceFiles();
                 closeSimdTraceFile();
                 const ms = Date.now() - STATE.started;
                 const dropped = STATE.droppedBuf!.readU64().toNumber();
@@ -203,10 +262,12 @@ export function ensureFlushTimer(): void {
                 const { flushSemanticEvents } = require("../sidecar/semantic");
                 const { flushExtWriteEvents } = require("../hooks/boundary_diff");
                 const { flushForkEvents } = require("../hooks/fork_monitor");
+                const { flushWorkerEvents } = require("../hooks/pthread_follow");
                 try { flushJniHookEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
                 try { flushSemanticEvents(STATE.callIdx); } catch (e) { log(`[!] flushSemantic: ${e}`); }
                 try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
                 try { flushForkEvents(STATE.callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
+                try { flushWorkerEvents(STATE.callIdx); } catch (e) { log(`[!] flushWorkers: ${e}`); }
 
                 const { SIMD_REC_SIZE } = require("./state");
                 send({
@@ -218,7 +279,8 @@ export function ensureFlushTimer(): void {
                     simdRecords: STATE.simdSidecar ? STATE.simdHeadBuf!.readU64().toNumber() : 0,
                     simdDropped: STATE.simdSidecar ? STATE.simdDroppedBuf!.readU64().toNumber() : 0,
                     simdRecordSize: SIMD_REC_SIZE,
-                    simdSampleStride: STATE.simdSampleStride
+                    simdSampleStride: STATE.simdSampleStride,
+                    workerTraces: workerTraceSummaries()
                 });
                 STATE.fnEntered = false;
                 STATE.stuckSecs = 0;
@@ -231,10 +293,13 @@ export function ensureFlushTimer(): void {
                 if (STATE.stuckSecs >= STATE.stuckThreshold) {
                     log(`[!] watchdog: call #${STATE.callIdx} 卡死 ${STATE.stuckSecs}s, 强制结束`);
                     try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
+                    unfollowWorkerThreads();
                     try { Stalker.flush(); } catch (_) {}
                     flushRingToDisk("watchdog");
+                    flushWorkerTraceRings("watchdog");
                     flushSimdRingToDisk("watchdog");
                     closeTraceFile();
+                    closeWorkerTraceFiles();
                     closeSimdTraceFile();
                     const ms = Date.now() - STATE.started;
 
@@ -243,10 +308,12 @@ export function ensureFlushTimer(): void {
                     const { flushSemanticEvents } = require("../sidecar/semantic");
                     const { flushExtWriteEvents } = require("../hooks/boundary_diff");
                     const { flushForkEvents } = require("../hooks/fork_monitor");
+                    const { flushWorkerEvents } = require("../hooks/pthread_follow");
                     try { flushJniHookEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
                     try { flushSemanticEvents(STATE.callIdx); } catch (e) { log(`[!] flushSemantic: ${e}`); }
                     try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
                     try { flushForkEvents(STATE.callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
+                    try { flushWorkerEvents(STATE.callIdx); } catch (e) { log(`[!] flushWorkers: ${e}`); }
 
                     const { SIMD_REC_SIZE } = require("./state");
                     send({
@@ -258,7 +325,8 @@ export function ensureFlushTimer(): void {
                         simdRecords: STATE.simdSidecar ? STATE.simdHeadBuf!.readU64().toNumber() : 0,
                         simdDropped: STATE.simdSidecar ? STATE.simdDroppedBuf!.readU64().toNumber() : 0,
                         simdRecordSize: SIMD_REC_SIZE,
-                        simdSampleStride: STATE.simdSampleStride
+                        simdSampleStride: STATE.simdSampleStride,
+                        workerTraces: workerTraceSummaries()
                     });
                     STATE.fnEntered = false;
                     STATE.stuckSecs = 0;

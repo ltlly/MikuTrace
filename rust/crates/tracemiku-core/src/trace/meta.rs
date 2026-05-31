@@ -8,6 +8,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::trace::record::{FORMAT_VERSION, REC_SIZE};
+
 /// ARM64 GPR + SP + PC names in canonical order (33 entries).
 pub const REG_NAMES: &[&str] = &[
     "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14",
@@ -38,6 +40,10 @@ pub enum MetaError {
     BadHex(String, &'static str),
     #[error("call_dir {0} has no parent/parent (must be <run>/calls/<call_dir>)")]
     InvalidCallDirShape(String),
+    #[error("unsupported trace format_version {found}; expected {expected}")]
+    UnsupportedFormatVersion { found: u32, expected: u32 },
+    #[error("unsupported trace record_size {found}; expected {expected}")]
+    UnsupportedRecordSize { found: usize, expected: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +74,10 @@ impl ModuleInfo {
 #[derive(Debug, Clone, Deserialize)]
 struct PerCallMetaRaw {
     pub records: u64,
+    #[serde(default)]
+    pub format_version: Option<u32>,
+    #[serde(default)]
+    pub record_size: Option<usize>,
     #[serde(default)]
     pub truncated: bool,
     #[serde(default)]
@@ -127,6 +137,8 @@ pub struct CallInfo {
 pub struct TraceMeta {
     pub path: String,
     pub records: u64,
+    pub format_version: u32,
+    pub record_size: usize,
     pub module: Option<ModuleInfo>,
     pub modules: Vec<ModuleInfo>,
     pub method: String,
@@ -152,6 +164,20 @@ impl TraceMeta {
                 path: per_call_path.display().to_string(),
                 source: e,
             })?;
+        let format_version = per_call.format_version.unwrap_or(FORMAT_VERSION);
+        if format_version != FORMAT_VERSION {
+            return Err(MetaError::UnsupportedFormatVersion {
+                found: format_version,
+                expected: FORMAT_VERSION,
+            });
+        }
+        let record_size = per_call.record_size.unwrap_or(REC_SIZE);
+        if record_size != REC_SIZE {
+            return Err(MetaError::UnsupportedRecordSize {
+                found: record_size,
+                expected: REC_SIZE,
+            });
+        }
 
         // Run-level meta lives 2 dirs up: <run>/calls/<call_dir>/meta.json
         let run_dir = call_dir
@@ -189,6 +215,8 @@ impl TraceMeta {
         Ok(TraceMeta {
             path: call_dir.display().to_string(),
             records: per_call.records,
+            format_version,
+            record_size,
             module,
             modules,
             method: run.method.unwrap_or_default(),

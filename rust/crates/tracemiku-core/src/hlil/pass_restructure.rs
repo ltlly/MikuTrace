@@ -17,8 +17,9 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::hlil::expr::{
-    block as hlil_block, break_ as hlil_break, continue_ as hlil_continue,
-    do_while as hlil_do_while, if_else as hlil_if_else, while_loop as hlil_while_loop, HlilExpr,
+    block as hlil_block, break_ as hlil_break, case as hlil_case, continue_ as hlil_continue,
+    default_case as hlil_default_case, do_while as hlil_do_while, for_loop as hlil_for_loop,
+    if_else as hlil_if_else, switch as hlil_switch, while_loop as hlil_while_loop, HlilExpr,
     HlilOp, HlilOperand,
 };
 
@@ -533,6 +534,184 @@ fn rewrite_loop_branch(
     (None, false)
 }
 
+fn promote_counting_while(
+    cond: &HlilExpr,
+    body_exprs: &mut Vec<HlilExpr>,
+    pc: u64,
+) -> Option<HlilExpr> {
+    if body_exprs.is_empty() {
+        return None;
+    }
+    let var = compare_left_var(cond)?;
+    let update = body_exprs.last()?.clone();
+    if !is_simple_increment_of(&update, &var) {
+        return None;
+    }
+    body_exprs.pop();
+    Some(hlil_for_loop(
+        None,
+        cond.clone(),
+        Some(update),
+        hlil_block(std::mem::take(body_exprs), pc),
+        pc,
+    ))
+}
+
+fn compare_left_var(e: &HlilExpr) -> Option<String> {
+    if !matches!(
+        e.op,
+        HlilOp::CmpE
+            | HlilOp::CmpNe
+            | HlilOp::CmpSlt
+            | HlilOp::CmpSle
+            | HlilOp::CmpSgt
+            | HlilOp::CmpSge
+            | HlilOp::CmpUlt
+            | HlilOp::CmpUle
+            | HlilOp::CmpUgt
+            | HlilOp::CmpUge
+    ) {
+        return None;
+    }
+    var_name_from_operand(e.operands.first())
+}
+
+fn var_name_from_operand(op: Option<&HlilOperand>) -> Option<String> {
+    match op {
+        Some(HlilOperand::Expr(e)) if e.op == HlilOp::Var => match e.operands.first() {
+            Some(HlilOperand::Var(name)) => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_simple_increment_of(e: &HlilExpr, var: &str) -> bool {
+    if e.op != HlilOp::Assign {
+        return false;
+    }
+    if var_name_from_operand(e.operands.first()).as_deref() != Some(var) {
+        return false;
+    }
+    let Some(HlilOperand::Expr(rhs)) = e.operands.get(1) else {
+        return false;
+    };
+    if !matches!(rhs.op, HlilOp::Add | HlilOp::Sub) {
+        return false;
+    }
+    var_name_from_operand(rhs.operands.first()).as_deref() == Some(var)
+        && matches!(
+            rhs.operands.get(1),
+            Some(HlilOperand::Expr(v)) if matches!(v.op, HlilOp::Const | HlilOp::ConstPtr)
+        )
+}
+
+fn promote_switch_like_if_chains(exprs: Vec<HlilExpr>) -> Vec<HlilExpr> {
+    exprs
+        .into_iter()
+        .map(|e| {
+            if e.op != HlilOp::If {
+                return e;
+            }
+            promote_switch_chain(e.clone()).unwrap_or(e)
+        })
+        .collect()
+}
+
+fn promote_switch_chain(e: HlilExpr) -> Option<HlilExpr> {
+    let pc = e.pc;
+    let mut cases = Vec::new();
+    let mut explicit_cases = 0usize;
+    let mut selector: Option<String> = None;
+    let mut current = Some(e);
+
+    while let Some(if_e) = current {
+        let (sel, value) = eq_case_selector_value(if_e.operands.first())?;
+        if let Some(existing) = &selector {
+            if existing != &sel {
+                return None;
+            }
+        } else {
+            selector = Some(sel);
+        }
+
+        let then_body = match if_e.operands.get(1) {
+            Some(HlilOperand::Expr(body)) => (**body).clone(),
+            _ => return None,
+        };
+        explicit_cases += 1;
+        cases.push(hlil_case(value, ensure_case_break(then_body), if_e.pc));
+
+        current = match if_e.operands.get(2) {
+            Some(HlilOperand::Expr(else_e)) if else_e.op == HlilOp::If => Some((**else_e).clone()),
+            Some(HlilOperand::Expr(else_e)) => {
+                cases.push(hlil_default_case(
+                    ensure_case_break((**else_e).clone()),
+                    else_e.pc,
+                ));
+                None
+            }
+            _ => None,
+        };
+    }
+
+    if explicit_cases < 2 {
+        return None;
+    }
+    let selector = selector?;
+    Some(hlil_switch(crate::hlil::expr::var(selector), cases, pc))
+}
+
+fn eq_case_selector_value(op: Option<&HlilOperand>) -> Option<(String, i64)> {
+    let Some(HlilOperand::Expr(cond)) = op else {
+        return None;
+    };
+    if cond.op != HlilOp::CmpE {
+        return None;
+    }
+    let left = var_name_from_operand(cond.operands.first())?;
+    let value = const_i64_from_operand(cond.operands.get(1))?;
+    Some((left, value))
+}
+
+fn const_i64_from_operand(op: Option<&HlilOperand>) -> Option<i64> {
+    match op {
+        Some(HlilOperand::Expr(e)) if matches!(e.op, HlilOp::Const | HlilOp::ConstPtr) => {
+            match e.operands.first() {
+                Some(HlilOperand::Imm(v)) => Some(*v),
+                Some(HlilOperand::U64(v)) => i64::try_from(*v).ok(),
+                _ => None,
+            }
+        }
+        Some(HlilOperand::Imm(v)) => Some(*v),
+        Some(HlilOperand::U64(v)) => i64::try_from(*v).ok(),
+        _ => None,
+    }
+}
+
+fn ensure_case_break(mut body: HlilExpr) -> HlilExpr {
+    if body.op != HlilOp::Block {
+        return hlil_block(vec![body, hlil_break(0)], 0);
+    }
+    if !body
+        .operands
+        .last()
+        .and_then(|op| match op {
+            HlilOperand::Expr(e) => Some(matches!(
+                e.op,
+                HlilOp::Break | HlilOp::Continue | HlilOp::Ret
+            )),
+            _ => None,
+        })
+        .unwrap_or(false)
+    {
+        let pc = body.pc;
+        body.operands
+            .push(HlilOperand::Expr(Box::new(hlil_break(pc))));
+    }
+    body
+}
+
 // ============================================================================
 // Main restructuring entry point
 // ============================================================================
@@ -544,7 +723,7 @@ pub fn restructure_hlil(exprs: &[HlilExpr]) -> Vec<HlilExpr> {
     RESTRUCTURE_DEPTH.with(|d| d.set(0));
     let blocks = build_cfg(exprs);
     if blocks.len() <= 1 {
-        return exprs.to_vec();
+        return promote_switch_like_if_chains(exprs.to_vec());
     }
 
     let doms = compute_dominators(&blocks);
@@ -567,7 +746,7 @@ pub fn restructure_hlil(exprs: &[HlilExpr]) -> Vec<HlilExpr> {
         &mut result,
     );
 
-    result
+    promote_switch_like_if_chains(result)
 }
 
 // ============================================================================
@@ -679,11 +858,16 @@ fn walk_region(
                         }
                         normalize_loop_body_flow(&mut body_exprs, header.start_pc, Some(exit_pc));
 
-                        out.push(hlil_while_loop(
-                            cond,
-                            hlil_block(body_exprs, header.start_pc),
-                            header.start_pc,
-                        ));
+                        out.push(
+                            promote_counting_while(&cond, &mut body_exprs, header.start_pc)
+                                .unwrap_or_else(|| {
+                                    hlil_while_loop(
+                                        cond,
+                                        hlil_block(body_exprs, header.start_pc),
+                                        header.start_pc,
+                                    )
+                                }),
+                        );
 
                         // Mark body blocks as visited
                         for &bid in &body_block_ids {
@@ -1269,12 +1453,9 @@ mod tests {
         let result = restructure_hlil(&flat);
         let rendered = render_hlil(&result);
 
+        assert!(rendered.contains("for ("), "expected loop in: {rendered}");
         assert!(
-            rendered.contains("while ("),
-            "expected while loop in: {rendered}"
-        );
-        assert!(
-            rendered.contains("i = (i + 1);"),
+            rendered.contains("i = (i + 1)"),
             "expected body in: {rendered}"
         );
         assert!(
@@ -1471,8 +1652,8 @@ mod tests {
         let rendered = render_hlil(&result);
 
         assert!(
-            rendered.contains("while ("),
-            "expected while in: {rendered}"
+            rendered.contains("while (") || rendered.contains("for ("),
+            "{rendered}"
         );
         assert!(rendered.contains("v1 = 1;"), "v1=1 in: {rendered}");
         assert!(rendered.contains("v2 = 2;"), "v2=2 in: {rendered}");
@@ -1519,8 +1700,8 @@ mod tests {
         let rendered = render_hlil(&result);
 
         assert!(
-            rendered.contains("while ("),
-            "expected while in: {rendered}"
+            rendered.contains("while (") || rendered.contains("for ("),
+            "{rendered}"
         );
         assert!(rendered.contains("break;"), "expected break in: {rendered}");
         assert!(
@@ -1564,8 +1745,8 @@ mod tests {
         let rendered = render_hlil(&result);
 
         assert!(
-            rendered.contains("while ("),
-            "expected while in: {rendered}"
+            rendered.contains("while (") || rendered.contains("for ("),
+            "{rendered}"
         );
         assert!(
             rendered.contains("continue;"),
@@ -1575,6 +1756,67 @@ mod tests {
             !rendered.contains("goto loc_1000"),
             "unexpected header goto: {rendered}"
         );
+    }
+
+    #[test]
+    fn counting_loop_becomes_for() {
+        let cond = binary(HlilOp::CmpUlt, var("i"), konst(10));
+        let flat: Vec<HlilExpr> = vec![
+            if_else(
+                cond.clone(),
+                goto(0x1010, 0x1010),
+                Some(goto(0x1030, 0x1030)),
+                0x1000,
+            ),
+            label("loc_1010", 0x1010),
+            assign(
+                var("sum"),
+                binary(HlilOp::Add, var("sum"), var("i")),
+                0x1010,
+            ),
+            assign(var("i"), binary(HlilOp::Add, var("i"), konst(1)), 0x1014),
+            goto(0x1000, 0x1018),
+            label("loc_1030", 0x1030),
+            ret(0x1030),
+        ];
+
+        let result = restructure_hlil(&flat);
+        let rendered = render_hlil(&result);
+
+        assert!(
+            rendered.contains("for (; (i < 0xa); i = (i + 1))"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("sum = (sum + i);"), "{rendered}");
+        assert!(!rendered.contains("while ("), "{rendered}");
+    }
+
+    #[test]
+    fn if_else_chain_becomes_switch() {
+        let cond0 = binary(HlilOp::CmpE, var("state"), konst(0));
+        let cond1 = binary(HlilOp::CmpE, var("state"), konst(1));
+        let chain = if_else(
+            cond0,
+            hlil_block(vec![assign(var("out"), konst(10), 0x1010)], 0x1010),
+            Some(if_else(
+                cond1,
+                hlil_block(vec![assign(var("out"), konst(20), 0x1020)], 0x1020),
+                Some(hlil_block(
+                    vec![assign(var("out"), konst(99), 0x1030)],
+                    0x1030,
+                )),
+                0x1020,
+            )),
+            0x1000,
+        );
+
+        let result = restructure_hlil(&[chain]);
+        let rendered = render_hlil(&result);
+
+        assert!(rendered.contains("switch (state)"), "{rendered}");
+        assert!(rendered.contains("case 0:"), "{rendered}");
+        assert!(rendered.contains("case 1:"), "{rendered}");
+        assert!(rendered.contains("default:"), "{rendered}");
     }
 
     // -----------------------------------------------------------------------

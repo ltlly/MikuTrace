@@ -45,6 +45,8 @@ pub struct TraceContext {
     pub exec_count: u64,
     /// Whether this instruction is on a taken branch path.
     pub branch_taken: Option<bool>,
+    /// Next executed PC after this instruction, when known.
+    pub next_pc: Option<u64>,
 }
 
 /// A runtime value observed at an instruction, surfaced into the IL.
@@ -140,7 +142,7 @@ pub fn decompile_trace(
     };
 
     // Phase 2: Frame folding + flag elimination + SSA
-    let llil_exprs = specialize_trace_branches(&llil_exprs, insns, contexts);
+    let llil_exprs = specialize_trace_control_flow(&llil_exprs, insns, contexts);
 
     let frame_fold = frame_fold_block(&llil_exprs);
     let flag_elim = flag_elim_block(&frame_fold.exprs);
@@ -238,7 +240,7 @@ pub fn decompile_trace(
     }
 }
 
-fn specialize_trace_branches(
+fn specialize_trace_control_flow(
     exprs: &[LlilExpr],
     insns: &[(u64, u32)],
     contexts: &[TraceContext],
@@ -248,13 +250,32 @@ fn specialize_trace_branches(
         .zip(contexts.iter())
         .filter_map(|((pc, _), ctx)| ctx.branch_taken.map(|taken| (*pc, taken)))
         .collect();
-    if branch_by_pc.is_empty() {
+    let next_pc_by_pc: BTreeMap<u64, Option<u64>> = insns
+        .iter()
+        .zip(contexts.iter())
+        .map(|((pc, _), ctx)| (*pc, ctx.next_pc))
+        .collect();
+    if branch_by_pc.is_empty() && next_pc_by_pc.values().all(Option::is_none) {
         return exprs.to_vec();
     }
 
     let mut out = Vec::with_capacity(exprs.len());
     for e in exprs {
         if e.op != LlilOp::If {
+            if e.op == LlilOp::Jump {
+                if let Some(next_pc) = next_pc_by_pc.get(&e.pc).copied().flatten() {
+                    out.push(resolved_jump_note(e.pc, next_pc));
+                    out.push(LlilExpr::new(
+                        LlilOp::Goto,
+                        8,
+                        vec![LlilOperand::U64(next_pc)],
+                        e.pc,
+                    ));
+                } else {
+                    out.push(e.clone());
+                }
+                continue;
+            }
             out.push(e.clone());
             continue;
         }
@@ -278,6 +299,11 @@ fn specialize_trace_branches(
         }
     }
     out
+}
+
+fn resolved_jump_note(pc: u64, target: u64) -> LlilExpr {
+    LlilExpr::new(LlilOp::Intrinsic, 0, vec![LlilOperand::U64(target)], pc)
+        .with_extra("mnem", "trace_resolved_jump")
 }
 
 fn branch_target(e: &LlilExpr, taken: bool) -> Option<u64> {

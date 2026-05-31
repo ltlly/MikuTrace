@@ -23,4 +23,5 @@ export interface AntiDetectPlugin {
 export const BUILTIN_PLUGINS: Record<string, () => Promise<AntiDetectPlugin>> = {
     "hide_rwx_maps": async () => (await import("./hide_rwx_maps")).plugin,
     "patch_suicide": async () => (await import("./patch_suicide")).plugin,
+    "block_self_kill": async () => (await import("./block_self_kill")).plugin,
 };

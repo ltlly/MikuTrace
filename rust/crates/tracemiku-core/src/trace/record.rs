@@ -10,6 +10,9 @@ use bytemuck::{Pod, Zeroable};
 /// Bytes per record. Stable across all trace.bin files this codebase reads.
 pub const REC_SIZE: usize = 272;
 
+/// Stable trace record format version for the 272-byte ARM64 record contract.
+pub const FORMAT_VERSION: u32 = 1;
+
 /// Number of u64 register slots stored per record (x0..x28 + fp + lr).
 pub const REC_NUM_REGS: usize = 31;
 

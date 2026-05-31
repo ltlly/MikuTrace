@@ -62,6 +62,7 @@ pub use crate::taint::{
     TaintWalkResult, DEFAULT_FRAME_REGS,
 };
 pub use crate::trace::{
-    CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, REC_NUM_REGS, REC_SIZE,
+    CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, FORMAT_VERSION, REC_NUM_REGS,
+    REC_SIZE,
 };
 pub use crate::watchpoints::{watchpoint_scan, WatchpointHit, WatchpointScan, WatchpointSpec};

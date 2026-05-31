@@ -37,11 +37,13 @@ src/
 ├── hooks/
 │   ├── jni_vtable.ts     JSON-driven JNI vtable Interceptor hooks
 │   ├── fork_monitor.ts   fork/vfork/clone event logging
+│   ├── pthread_follow.ts Optional bounded worker-thread Stalker follow
 │   └── boundary_diff.ts  Boundary memory diff (external write detection)
 └── anti_detect/
     ├── plugin_interface.ts   AntiDetectPlugin interface + registry
     ├── hide_rwx_maps.ts      Hide RWX anonymous pages from /proc/self/maps
-    └── patch_suicide.ts      Spec-driven patch of obfuscated tgkill thunks
+    ├── patch_suicide.ts      Spec-driven patch of obfuscated tgkill thunks
+    └── block_self_kill.ts    Block libc self-kill wrappers
 ```
 
 ### Build
@@ -121,7 +123,8 @@ Each record is 272 bytes, little-endian:
 0x10C  u32  inst         (raw 4-byte machine code)
 ```
 
-Shared by Rust core / server / CLI.
+Per-call `meta.json` includes `format_version: 1` and `record_size: 272`.
+Readers reject unsupported versions/sizes. Shared by Rust core / server / CLI.
 
 ### Optional Sidecars
 
@@ -135,6 +138,13 @@ changing the main trace contract.
 **Semantic Events** (`--semantic-events`): writes per-call `semantic_events.jsonl`
 with inline SVC, syscall wrapper, libc, and JNI vtable events.
 
+**Worker Threads** (`--follow-workers --max-worker-threads N`): hooks
+`pthread_create`, follows at most `N` newly created non-primary tids, and writes
+one independent `worker_trace_tid<T>.bin` sidecar per worker. Worker sidecars
+use the same 272B record layout and separate SPSC rings, so the primary
+`trace.bin` contract remains single-producer and unchanged. Per-call
+`meta.json` records `worker_events` and `worker_trace_sidecars`.
+
 ### Usage
 
 Entry point is `tracemiku trace ...` from the repo root. Mode options:
@@ -147,8 +157,12 @@ Entry point is `tracemiku trace ...` from the repo root. Mode options:
 # Optional: SIMD/Q registers and semantic events
 ./tracemiku trace ... --simd-sidecar --simd-sample-stride 4 --semantic-events
 
+# Optional: bounded worker-thread traces
+./tracemiku trace ... --follow-workers --max-worker-threads 2
+
 # Optional: anti-detect plugins
-./tracemiku trace ... --anti-detect hide_rwx_maps,patch_suicide
+./tracemiku trace ... --hide-rwx-maps --block-self-kill
+./tracemiku trace ... --anti-detect hide_rwx_maps,patch_suicide,block_self_kill
 ```
 
 ### Known Issues
@@ -192,11 +206,13 @@ src/
 ├── hooks/
 │   ├── jni_vtable.ts     JSON-driven JNI vtable Interceptor hooks
 │   ├── fork_monitor.ts   fork/vfork/clone event logging
+│   ├── pthread_follow.ts optional bounded worker-thread Stalker follow
 │   └── boundary_diff.ts  Boundary memory diff (external write detection)
 └── anti_detect/
     ├── plugin_interface.ts   AntiDetectPlugin 接口 + 注册表
     ├── hide_rwx_maps.ts      隐藏 /proc/self/maps 中的 RWX 匿名页
-    └── patch_suicide.ts      Spec-driven patch obfuscated tgkill thunks
+    ├── patch_suicide.ts      Spec-driven patch obfuscated tgkill thunks
+    └── block_self_kill.ts    阻断 libc signal 自杀 wrapper
 ```
 
 ### 构建
@@ -276,7 +292,8 @@ trace 结束 (onLeave 或 maxRecords cap):
 0x10C  u32  inst         (raw 4-byte 机器码)
 ```
 
-Rust core / server / CLI 共用此格式.
+per-call `meta.json` 会写入 `format_version: 1` 和 `record_size: 272`;
+Rust reader 会拒绝不支持的版本/记录大小. Rust core / server / CLI 共用此格式.
 
 ### 可选 sidecar
 
@@ -290,6 +307,12 @@ GumTrace 类语义信息, 不改变主 trace 合同.
 **语义事件** (`--semantic-events`): 额外写 per-call `semantic_events.jsonl`.
 事件来源: inline SVC、syscall wrapper、libc、JNI vtable hooks.
 
+**Worker 线程** (`--follow-workers --max-worker-threads N`): hook
+`pthread_create`, 最多跟踪 `N` 个新创建的非主线程, 每个 worker 写独立
+`worker_trace_tid<T>.bin` sidecar. worker sidecar 使用同一 272B record 布局,
+但有独立 SPSC ring, 不会让多线程共写主 `trace.bin`. per-call `meta.json`
+记录 `worker_events` 和 `worker_trace_sidecars`.
+
 ### 启动
 
 入口是仓库根的 `tracemiku trace ...`, 详见根 README. 这里只列直接的 mode 选项:
@@ -302,8 +325,12 @@ GumTrace 类语义信息, 不改变主 trace 合同.
 # 可选: 采集 SIMD/Q 寄存器和 syscall/JNI/libc 语义事件
 ./tracemiku trace ... --simd-sidecar --simd-sample-stride 4 --semantic-events
 
+# 可选: 有界跟踪 worker 线程
+./tracemiku trace ... --follow-workers --max-worker-threads 2
+
 # 可选: 启用 anti-detect 插件
-./tracemiku trace ... --anti-detect hide_rwx_maps,patch_suicide
+./tracemiku trace ... --hide-rwx-maps --block-self-kill
+./tracemiku trace ... --anti-detect hide_rwx_maps,patch_suicide,block_self_kill
 ```
 
 ### Deep-trace 模式 (`--trace-deep`)
@@ -322,8 +349,9 @@ GumTrace 类语义信息, 不改变主 trace 合同.
 
 | 插件 ID | 说明 |
 |---|---|
-| `hide_rwx_maps` | hook libc `open/openat/read/pread64`, 把 anon rwx 行从 `/proc/self/maps` 结果中去掉 |
+| `hide_rwx_maps` | hook libc `open/openat/fopen/read/pread64/readlink/readlinkat/fread`, 把 anon rwx 行从 `/proc/self/maps` 结果中去掉 |
 | `patch_suicide` | 按 `--suicide-patch-spec` JSON spec overwrite 目标 SO 内联 svc#0 (tgkill 自杀) 入口 |
+| `block_self_kill` | hook libc `kill/tgkill/tkill/pthread_kill/raise/abort`, 对 signal 自杀返回成功 |
 
 插件通过 `--anti-detect <id1>,<id2>` 或 `antiDetect: ["id1","id2"]` init opts 启用.
 新插件只需实现 `AntiDetectPlugin` 接口并注册, 无需改动 agent 核心代码.

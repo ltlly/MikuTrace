@@ -10,6 +10,8 @@ export interface ModuleInfo {
 export interface MetaResponse {
   path: string;
   records: number;
+  format_version: number;
+  record_size: number;
   module: ModuleInfo | null;
   modules: ModuleInfo[];
   method: string;

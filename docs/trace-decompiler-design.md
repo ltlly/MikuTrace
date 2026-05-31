@@ -195,12 +195,19 @@ Trace 数据提供**真实执行过的**指令，静态反编译器必须猜测�
 - **寄存器值**: 解析间接调用目标 (`br x8` → 已知的 0x7000 处函数)
 - **内存值**: 解析指针链 (`ldr x0, [x0, #0x20]` → 实际值)
 - **执行计数**: 标注热/冷路径，识别循环体
+- **执行边**: `/api/llil/pipeline` 从连续 record PC 生成 `branch_taken`/`next_pc`,
+  LLIL 层把已观测的条件分支收缩成单一路径并标注 `trace_pruned_branch`;
+  间接 `br xN` 在有 `next_pc` 时转成 `trace_resolved_jump` + `goto loc_xxx`.
 
 ### 3. 反混淆
 
 - OLLVM 扁平化 CFG 在 trace 中**自然展开**
 - 死代码自动排除 (未执行)
 - 虚调用解析为具体调用
+
+当前本地 structurer 采用保守策略: 已支持 counting `while` → `for` 和同一 selector
+的 `if/else if` 链 → `switch/case`；复杂 jump-table dispatcher 的全量 deflatten
+仍依赖 trace-observed indirect edge 与后续模式化恢复。
 
 ### 4. JNI 类型推导
 

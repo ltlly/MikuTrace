@@ -463,6 +463,37 @@ fn decompile_trace_prunes_untaken_branch_from_context() {
 }
 
 #[test]
+fn decompile_trace_resolves_observed_indirect_jump() {
+    let insns = vec![
+        (0x1000u64, 0xd61f0100u32), // br x8
+        (0x2000u64, 0xd65f03c0u32), // ret
+    ];
+    let contexts = vec![
+        TraceContext {
+            exec_count: 1,
+            next_pc: Some(0x2000),
+            ..Default::default()
+        },
+        TraceContext {
+            exec_count: 1,
+            ..Default::default()
+        },
+    ];
+
+    let output = decompile_trace(&insns, &contexts, "resolved_br");
+    assert!(
+        output.llil_ssa_text.contains("trace_resolved_jump"),
+        "expected resolved jump annotation:\n{}",
+        output.llil_ssa_text
+    );
+    assert!(
+        output.llil_ssa_text.contains("goto loc_2000"),
+        "expected br to become observed goto:\n{}",
+        output.llil_ssa_text
+    );
+}
+
+#[test]
 fn trace_decompile_preserves_all_layers() {
     let insns = vec![
         (0x1000, 0xd2800020), // mov x0, #1
