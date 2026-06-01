@@ -3,8 +3,8 @@
 > The single source-of-truth backlog for the whole toolchain (tracer, Rust
 > core/server/CLI, frontend, vendored runtime) — not just the decompiler.
 >
-> Last updated: 2026-05-31 (after trace-aware decompiler, format metadata,
-> anti-detect, and worker-thread follow TODO closure).
+> Last updated: 2026-06-01 (decompiler audit vs Ghidra benchmark, see
+> `docs/decompiler-audit-2026-06-01.md` for full report).
 
 ## P0 — Core Correctness
 
@@ -91,25 +91,48 @@
 
 ## Bugs / Open
 
-- No known correctness bugs in the shipped decompile/trace UI paths (see fixed
-  lists below). Current focus is **latency/responsiveness hardening** and
-  closing the trace-aware decompiler gap, not new feature breadth — see
-  `docs/improvement-audit-2026-05-30.md` for the ranked roadmap.
+- No known correctness bugs in the shipped decompile/trace UI paths.
+  Current focus is closing the trace-aware decompiler gap and structural
+  improvements identified in the 2026-06-01 Ghidra benchmark audit — see
+  `docs/decompiler-audit-2026-06-01.md` for the full ranked report.
 
-### Known gaps (from the 2026-05-30 audit, not yet shipped)
+### Critical — blocking decompiler quality
 
-- [x] **Trace-aware decompiler Phase 0/1/2 slice**: `/api/llil/pipeline` now passes real `TraceContext`s, surfaces observed register values, and specializes traced conditional branches with `trace_pruned_branch` annotations.
-- [x] **HTTP compression**: axum responses now use gzip/br compression; `index.html` is cached at boot with disk fallback.
-- [x] **Frontend responsiveness quick wins**: record/trace/decompile/string fetches accept AbortSignal; TraceForPc is inactive-gated; cursor record fetches abort stale requests.
-- [x] **Reverse/time-travel stepping**: `[` / `]` jump previous/next execution of the current PC; `Alt+[` / `Alt+]` jump previous def / next use for the selected register.
-- [x] **Trace watchpoints**: core scan, `/api/watchpoints`, Rust CLI/top-level `tracemiku watch`, and web `w ...` command support reg-change, reg-equals, and memory-touch scans.
-- [x] **HLIL Break/Continue emission**: loop-boundary gotos in structured loop bodies now render as `break;` / `continue;`.
-- [x] **HLIL For/Switch recovery (conservative)**: counting loops promote to `for`, same-selector `if/else if` chains promote to `switch/case/default`, and renderer supports `For`/`Switch`/`Case`.
-- [x] **Trace-aware executed-edge specialization**: `/api/llil/pipeline` now carries `branch_taken` and `next_pc`; LLIL emits `trace_pruned_branch` for observed conditional paths and `trace_resolved_jump` for observed indirect `br` targets.
-- [x] **`algo_fde_radixsort` stack-overflow guard fixture**: recursion guard remains in the HLIL restructurer and the targeted `algo_fde_radixsort` decompile fixture passes without stack overflow.
-- [x] **Anti-detection TODO slice**: `hide_rwx_maps` covers `readlink/readlinkat/fread`; `block_self_kill` blocks libc `kill/tgkill/tkill/pthread_kill/raise/abort`. Remaining L3 eBPF and L5 agent relink work are architectural follow-ups, not open TODO.md backlog items.
-- [x] **Bounded worker-thread Stalker follow**: `--follow-workers --max-worker-threads N` hooks `pthread_create`, follows a bounded set of non-primary tids, and writes independent per-worker 272B sidecar traces with separate SPSC rings.
-- [x] **Record-format version field**: per-call `meta.json` writes `format_version: 1` and `record_size: 272`; Rust meta parsing validates both while preserving old meta defaults.
+- [ ] **Concretize observed values into IL constants (Phase 1b)**: `collect_observed_values` + `is_const()` exist but constfold path in `il_pipeline.rs` still uses static data only. Wire observed constants into IL — the #1 readability win for a trace decompiler.
+- [ ] **Path specialization → CFG (Phase 2 incomplete)**: `branch_taken` populated, `specialize_trace_control_flow` runs, but HLIL restructurer `build_cfg` never filters by execution. OLLVM dispatchers remain unstructured gotos.
+- [ ] **HLIL For/Switch/Break/Continue unwired**: constructors exist in `expr.rs` but `pass_restructure.rs` never emits them (only While/DoWhile). One-hop convergence (`check_convergence:814`) degrades multi-block if/else to goto tails.
+- [ ] **Cross-block SSA**: `ssa_block` is single-block only — no MULTIEQUAL (Phi) opcodes, no dominance frontiers. Every block boundary breaks SSA; all downstream analysis loses precision at jump targets. Requires Cooper-Harvey-Kennedy O(n) dominator + Bilardi-Pingali Phi placement.
+
+### High — major quality/accuracy improvements
+
+- [ ] **Type system expansion**: 6 TypeKind (Any/Int/Ptr/Handle/Bool/Conflict) vs Ghidra's 18 meta + 24 sub. No signedness, float, struct/array/union. Expand TypeKind + add TypeOp per-opcode rules (start with 15 highest-frequency).
+- [ ] **Simplify rules**: 4 rules (IdentityOp/SubToAdd/DoubleNeg/ComparisonFold) vs Ghidra's 120+. Add per-opcode indexed rule tables; 10 highest-frequency rules as first milestone (ConstBinop, BitwiseIdentity, ExtensionChain, ShiftIdentity, SignBit).
+- [ ] **Variable merging**: Varnode→HighVariable→VariableGroup chain absent. SSA version numbers shown as distinct variables. Implement after cross-block SSA.
+- [ ] **MemShadow → decompiler**: MemShadow cached on shared state but decompiler never reads it. Struct recovery matches only base+non-negative-const — no scaled index, negative offsets, or observed-address clustering.
+- [ ] **Dominator O(n²) → Cooper-Harvey-Kennedy**: both llil.rs and hlil/pass_restructure.rs use BTreeSet with duplicates. Implement shared O(n) engine in `cfg.rs`.
+- [ ] **Parameter identification**: function parameters not discovered/classified/ranked. Ghidra's ParamMeasure ranking has no equivalent. Trace values give us an advantage here (x0-x7 at call sites are directly observed).
+
+### Medium — significant polish
+
+- [ ] **Jump table recovery**: PathMeld + EmulateFunction has no equivalent. Trace records every taken branch target but switch detection doesn't consume them.
+- [ ] **Token-based C rendering**: all 3 renderers produce plain text. Define CToken {text, kind, pc, op_index} and refactor renderers to emit `Vec<CToken>`. Enables single-click highlight, right-click set-type, persistent rename propagation without regex hacks.
+- [ ] **Semantic test verification**: tests check structure (count, not-empty) but not semantic correctness. Add stringmatch-style assertions (like Ghidra's 140+ tests).
+- [ ] **Multi-precision arithmetic merging**: 64-bit/128-bit multi-precision merging (SplitVarnode, AddForm, SubForm, etc.) absent.
+- [ ] **P-code injection / CALLOTHER extension points**: no mechanism for modeling syscalls, JNI calls, or platform-specific instructions.
+- [ ] **Indirect br target resolution → CFG**: blr targets are annotated in text but br xN dispatch (OLLVM/VM) gets no target resolution into IL/CFG.
+- [ ] **Branch bias / loop counts in IL**: EdgeMeta.count exists but not rendered or used for hot/cold path annotation.
+- [ ] **Multi-call value differencing**: cannot classify values as Constant vs InputDependent across calls. Needed for parameter recovery and preventing over-specialized folding.
+- [ ] **Union resolution (ScoreUnionFields)**: memory accessed as different types at different offsets not identified as union candidates.
+- [ ] **BitField transformations**: INSERT/ZPULL/SPULL for sub-byte register access patterns absent.
+
+### Low — future enhancement
+
+- [ ] User-defined type database (persist C typedefs/structs from frontend to backend)
+- [ ] Call signature inference from call site argument types
+- [ ] TraceIR loop bodies populated in render (LoopIR/InductionVarIR structs exist but builder never fills them)
+- [ ] LLM fewshot exemplar in TraceIR prompt
+- [ ] Decompile eval tool semantic accuracy metric (not just coverage/timing)
+- [ ] Frontend keyboard navigation parity with IDA/Ghidra (line cursor in pseudocode, persistent rename/set-type propagation)
 
 ## Bugs — Fixed (Previous)
 
