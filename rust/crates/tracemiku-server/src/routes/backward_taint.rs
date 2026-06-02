@@ -223,7 +223,10 @@ fn backward_taint_response(
 }
 
 fn effective_max_count(raw: Option<usize>) -> usize {
-    raw.unwrap_or(DEFAULT_MAX_COUNT).min(MAX_COUNT_CEILING)
+    match raw {
+        None | Some(0) => DEFAULT_MAX_COUNT,
+        Some(n) => n.min(MAX_COUNT_CEILING),
+    }
 }
 
 /// Convert the optional caller-supplied scan limit into the effective one.
@@ -256,6 +259,7 @@ mod tests {
     #[test]
     fn effective_max_count_caps_extreme_requests() {
         assert_eq!(effective_max_count(None), DEFAULT_MAX_COUNT);
+        assert_eq!(effective_max_count(Some(0)), DEFAULT_MAX_COUNT);
         assert_eq!(effective_max_count(Some(10)), 10);
         assert_eq!(effective_max_count(Some(usize::MAX)), MAX_COUNT_CEILING);
     }

@@ -331,6 +331,30 @@ async fn forward_taint_max_count_surfaces_max_count_reason() {
 }
 
 #[tokio::test]
+async fn forward_taint_max_count_zero_normalizes_to_default_cap() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/forward-taint?start=0&reg=x0&max_count=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["max_count_used"], 5000);
+    assert_eq!(v["stop_reason"], "completed");
+    assert_eq!(v["stopped_at_max"], false);
+}
+
+#[tokio::test]
 async fn forward_taint_scan_limit_zero_disables_watchdog() {
     let dir = synth_x0_chain();
     let cd = call_dir(&dir);
@@ -374,6 +398,30 @@ async fn forward_taint_scan_limit_one_trips_watchdog() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["stop_reason"], "scan_limit");
     assert_eq!(v["scan_limit_used"], 1);
+}
+
+#[tokio::test]
+async fn backward_taint_max_count_zero_normalizes_to_default_cap() {
+    let dir = synth_x0_chain();
+    let cd = call_dir(&dir);
+    let app = tracemiku_server::build_router(cd).expect("router builds");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/backward-taint?start=4&reg=x0&max_count=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["max_count_used"], 5000);
+    assert_eq!(v["stop_reason"], "completed");
+    assert_eq!(v["stopped_at_max"], false);
 }
 
 #[tokio::test]
