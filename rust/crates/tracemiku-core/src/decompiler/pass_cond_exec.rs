@@ -65,10 +65,8 @@ impl ConditionalExecutionPass {
 
     fn annotate_csel_recursive(expr: &mut PassIlExpr) -> bool {
         let mut changed = false;
-        if Self::is_csel(expr) {
-            if Self::annotate_csel(expr) {
-                changed = true;
-            }
+        if Self::is_csel(expr) && Self::annotate_csel(expr) {
+            changed = true;
         }
         for op in &mut expr.operands {
             if let PassIlOperand::Expr(ref mut child) = op {

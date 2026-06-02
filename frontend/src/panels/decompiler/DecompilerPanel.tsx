@@ -4,6 +4,7 @@ import {
   type DecIrOptions,
   fetchDecFn,
   fetchDecSummary,
+  fetchIdxsForPc,
   renderLlil,
 } from "~/api/client";
 import { createGuardedResource } from "~/utils/resourceGuards";
@@ -12,6 +13,8 @@ import type { Accessor, Setter } from "solid-js";
 export interface DecompilerPanelProps {
   selectedFn: Accessor<string>;
   onSelectFn: Setter<string>;
+  selectedIdx: Accessor<number>;
+  onSelectIdx?: (idx: number) => void;
   active: boolean;
 }
 
@@ -46,6 +49,106 @@ function decIrOptions(s: SummarySource): DecIrOptions {
   };
 }
 
+// ── C token helpers ────────────────────────────────────────────────────────
+
+const KNOWN_REGISTERS = /^(?:x(?:[0-9]|1[0-9]|2[0-9]|3[01])|fp|lr|sp|w(?:[0-9]|1[0-9]|2[0-9]|3[01])|pc|xzr|wzr)$/i;
+
+const C_KEYWORDS = new Set([
+  "if", "else", "for", "while", "do", "switch", "case", "default",
+  "break", "continue", "return", "goto",
+  "int", "long", "short", "char", "float", "double", "void",
+  "unsigned", "signed", "const", "volatile", "static", "extern",
+  "sizeof", "typedef", "enum", "struct", "union",
+  "true", "false", "null", "NULL",
+  "int8_t", "int16_t", "int32_t", "int64_t",
+  "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+  "size_t", "ssize_t", "ptrdiff_t", "intptr_t", "uintptr_t", "bool",
+]);
+
+const C_TYPE_KEYWORDS = new Set([
+  "int", "long", "short", "char", "float", "double", "void",
+  "unsigned", "signed", "struct", "union", "enum",
+]);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Build an HTML string with syntax-highlighted tokens for one line of LLIL pseudocode. */
+function highlightLlilLine(
+  line: string,
+  typedVars: Record<string, string>,
+): string {
+  // Step 1: tokenize raw text with sentinel markers
+  let html = line.replace(
+    /\b(?:0x[0-9a-fA-F]+|[0-9]+(?:\.[0-9]+)?[fFuUlL]{0,3})\b|\b[a-zA-Z_][a-zA-Z0-9_]*\b|\/\/.*$|"[^"]*"/g,
+    (match) => {
+      // Numeric literal or hex address
+      if (/^(?:0x[0-9a-fA-F]+|[0-9])/.test(match)) {
+        return `\x00tok-lit\x00${match}\x00/tok-lit\x00`;
+      }
+      // Comment
+      if (match.startsWith("//")) {
+        return `\x00tok-comment\x00${match}\x00/tok-comment\x00`;
+      }
+      // String literal
+      if (match.startsWith('"')) {
+        return `\x00tok-str\x00${match}\x00/tok-str\x00`;
+      }
+      // Register
+      if (KNOWN_REGISTERS.test(match)) {
+        return `\x00tok-reg\x00${match}\x00/tok-reg\x00`;
+      }
+      // C keyword / type keyword
+      if (C_KEYWORDS.has(match)) {
+        if (C_TYPE_KEYWORDS.has(match)) {
+          return `\x00tok-type\x00${match}\x00/tok-type\x00`;
+        }
+        return `\x00tok-kw\x00${match}\x00/tok-kw\x00`;
+      }
+      // Variable (with optional type annotation)
+      const type = typedVars[match];
+      if (type) {
+        return `\x00V\x00${match}\x00${type}\x00/V\x00`;
+      }
+      return `\x00V\x00${match}\x00\x00/V\x00`;
+    },
+  );
+  // Step 2: HTML-escape non-sentinel text
+  html = escapeHtml(html);
+  // Step 3: resolve sentinel markers into real HTML tags
+  // Variable span: \x00V\x00name\x00type\x00/V\x00
+  html = html.replace(/\x00V\x00([^\x00]*)\x00([^\x00]*)\x00\/V\x00/g, (_m, name, type) => {
+    const attrName = escapeAttr(name);
+    if (type) {
+      const attrType = escapeAttr(type);
+      return `<span class="tok-var" data-var="${attrName}" data-type="${attrType}" title="${attrType} ${attrName}">${name}</span>`;
+    }
+    return `<span class="tok-var" data-var="${attrName}">${name}</span>`;
+  });
+  // Other token kinds: \x00tok-XXX\x00 ... \x00/tok-XXX\x00
+  html = html.replace(/\x00tok-([^\x00]+)\x00/g, '<span class="tok-$1">');
+  html = html.replace(/\x00\/tok-([^\x00]+)\x00/g, '</span>');
+  return html;
+}
+
+/** Extract the first hex PC (0x...) from a line of text. */
+function extractPc(line: string): number | null {
+  const m = line.match(/0x([0-9a-f]{8,})/i);
+  if (m) return parseInt(m[1], 16);
+  return null;
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+
 export default function DecompilerPanel(props: DecompilerPanelProps) {
   const [splitTopK, setSplitTopK] = createSignal(40);
   const [splitMinRecords, setSplitMinRecords] = createSignal(10);
@@ -57,6 +160,224 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   const [llilError, setLlilError] = createSignal("");
   const [llilOutput, setLlilOutput] = createSignal("");
   let llilSeq = 0;
+
+  // ── New: keyboard-navigable line cursor ─────────────────────────────────
+  const [cursorLine, setCursorLine] = createSignal(-1);
+  const [renamedVars, setRenamedVars] = createSignal<Record<string, string>>({});
+  const [typedVars, setTypedVars] = createSignal<Record<string, string>>({});
+  const [renameInput, setRenameInput] = createSignal<{ oldName: string; newName: string } | null>(null);
+  const [typeInput, setTypeInput] = createSignal<{ name: string; x: number; y: number } | null>(null);
+  const [typeValue, setTypeValue] = createSignal("");
+  let llilBodyRef: HTMLDivElement | undefined;
+  let renameInputEl: HTMLInputElement | undefined;
+  let typeInputEl: HTMLInputElement | undefined;
+
+  // Clear cursor state when panel goes inactive
+  createEffect(() => {
+    if (!props.active) {
+      setCursorLine(-1);
+    }
+  });
+
+  // ── Split LLIL output into lines, apply variable renames ─────────────────
+  const llilLines = createMemo(() => {
+    const text = llilOutput();
+    if (!text) return [] as string[];
+    let processed = text;
+    const renames = renamedVars();
+    for (const [oldName, newName] of Object.entries(renames)) {
+      processed = processed.replace(
+        new RegExp("\\b" + escapeRegExp(oldName) + "\\b", "g"),
+        newName,
+      );
+    }
+    return processed.split("\n");
+  });
+
+  // ── Highlighted HTML for each line, cached per render tick ───────────────
+  const llilLinesHtml = createMemo(() => {
+    const types = typedVars();
+    return llilLines().map((raw) => highlightLlilLine(raw, types));
+  });
+
+  // ── Track which llil line contains the header/signature vs body ──────────
+  const sigEndLine = createMemo(() => {
+    const lines = llilLines();
+    // heuristic: the function signature ends at the first '{' or at the first
+    // line that looks like a code statement rather than a declaration/header.
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trimEnd();
+      if (trimmed.endsWith("{") || trimmed === "{") return i;
+    }
+    return Math.min(5, lines.length - 1);
+  });
+
+  // ── Jump helpers ─────────────────────────────────────────────────────────
+  async function jumpToPc(pc: number) {
+    if (!props.onSelectIdx) return;
+    try {
+      const pcHex = "0x" + pc.toString(16);
+      const cur = props.selectedIdx();
+      const resp = await fetchIdxsForPc(pcHex, cur, 30);
+      const candidates = [...(resp?.after || []), ...(resp?.before || [])];
+      if (candidates.length > 0) {
+        let best = candidates[0];
+        for (const ix of candidates) {
+          if (ix >= cur) { best = ix; break; }
+        }
+        props.onSelectIdx(best);
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function jumpCurrentLine() {
+    const idx = cursorLine();
+    const lines = llilLines();
+    if (idx < 0 || idx >= lines.length) return;
+    const pc = extractPc(lines[idx]);
+    if (pc !== null) await jumpToPc(pc);
+  }
+
+  // ── Auto-scroll cursor line into view ───────────────────────────────────
+  createEffect(() => {
+    const idx = cursorLine();
+    if (idx < 0 || !llilBodyRef) return;
+    const el = llilBodyRef.querySelector<HTMLElement>(`.dec-llil-line[data-i="${idx}"]`);
+    if (el) el.scrollIntoView({ block: "center" });
+  });
+
+  // ── Keyboard navigation ─────────────────────────────────────────────────
+  function handleKeyDown(e: KeyboardEvent) {
+    const lines = llilLines();
+    if (!lines.length) return;
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setCursorLine((prev) => Math.max(0, prev - 1));
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setCursorLine((prev) => Math.min(lines.length - 1, prev + 1));
+    } else if (e.key === "PageUp") {
+      e.preventDefault();
+      setCursorLine((prev) => Math.max(0, prev - 20));
+    } else if (e.key === "PageDown") {
+      e.preventDefault();
+      setCursorLine((prev) => Math.min(lines.length - 1, prev + 20));
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) setCursorLine(0);
+      else {
+        // Jump to first non-header line (body start)
+        const sigEnd = sigEndLine();
+        setCursorLine(Math.min(sigEnd + 1, lines.length - 1));
+      }
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setCursorLine(lines.length - 1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      jumpCurrentLine();
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      const sigEnd = sigEndLine();
+      const cur = cursorLine();
+      // Toggle between signature region and body region
+      if (cur >= 0 && cur <= sigEnd) {
+        // In signature: jump to first body line
+        setCursorLine(Math.min(sigEnd + 1, lines.length - 1));
+      } else {
+        // In body or no cursor: jump to first signature line
+        setCursorLine(0);
+      }
+    } else if (e.key === "Escape") {
+      setCursorLine(-1);
+    }
+  }
+
+  // ── Variable rename: double-click var → inline prompt ───────────────────
+  function handleVarDblClick(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    const varSpan = target.closest?.("[data-var]") as HTMLElement | null;
+    if (!varSpan) return;
+    const name = varSpan.dataset.var!;
+    if (KNOWN_REGISTERS.test(name)) return;
+    e.preventDefault();
+    setRenameInput({ oldName: name, newName: name });
+    setTimeout(() => renameInputEl?.focus(), 0);
+  }
+
+  function isValidVarName(name: string): boolean {
+    if (!name) return false;
+    if (/^\d+$/.test(name)) return false;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return false;
+    if (C_KEYWORDS.has(name)) return false;
+    // Check duplicate within current rename set
+    const renames = renamedVars();
+    const allRenamed = new Set(Object.values(renames));
+    if (allRenamed.has(name)) return false;
+    return true;
+  }
+
+  function commitRename() {
+    const r = renameInput();
+    if (!r || r.newName === r.oldName) { setRenameInput(null); return; }
+    const trimmed = r.newName.trim();
+    if (!isValidVarName(trimmed)) { setRenameInput(null); return; }
+    setRenamedVars((prev) => ({ ...prev, [r.oldName]: trimmed }));
+    setRenameInput(null);
+  }
+
+  function cancelRename() { setRenameInput(null); }
+
+  // ── Variable type: right-click var → set type ───────────────────────────
+  function handleVarContext(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    const varSpan = target.closest?.("[data-var]") as HTMLElement | null;
+    if (varSpan) {
+      const name = varSpan.dataset.var!;
+      e.preventDefault();
+      setTypeValue(typedVars()[name] || "");
+      setTypeInput({ name, x: e.clientX, y: e.clientY });
+      setTimeout(() => typeInputEl?.focus(), 0);
+    }
+  }
+
+  function applyVarType() {
+    const m = typeInput();
+    const t = typeValue().trim();
+    if (!m) return;
+    if (t) {
+      setTypedVars((prev) => ({ ...prev, [m.name]: t }));
+    } else {
+      // Remove type on empty input
+      setTypedVars((prev) => {
+        const next = { ...prev };
+        delete next[m.name];
+        return next;
+      });
+    }
+    setTypeInput(null);
+    setTypeValue("");
+  }
+
+  // ── Line click: single-click = select, double-click = select + jump ─────
+  function handleLineClick(e: MouseEvent, raw: string) {
+    // If the click landed on a variable span, let the variable handlers deal
+    const target = e.target as HTMLElement;
+    if (target.closest?.("[data-var]")) return;
+    const lineDiv = target.closest?.(".dec-llil-line") as HTMLElement | null;
+    if (!lineDiv) return;
+    const i = Number(lineDiv.dataset.i);
+    if (!Number.isFinite(i)) return;
+    setCursorLine(i);
+    if (e.detail >= 2) {
+      e.preventDefault();
+      const pc = extractPc(raw);
+      if (pc !== null) jumpToPc(pc);
+    }
+  }
+
+  // ── Existing decompiler logic ────────────────────────────────────────────
 
   function decIrSource(): SummarySource {
     return {
@@ -117,6 +438,8 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
       setLlilLoading(false);
       setLlilError("");
       setLlilOutput("");
+      setCursorLine(-1);
+      // Persist renames/types across re-renders (item 5 & 6 in spec)
     }
     return sig;
   });
@@ -145,6 +468,15 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         Math.max(1, Math.min(10000, llilMaxRecords())) !== maxRecords ||
         llilDce() !== dce
       ) return;
+
+      // Seed rename/type maps from the API response on first load
+      if (r.var_names && Object.keys(r.var_names).length > 0) {
+        setRenamedVars((prev) => ({ ...r.var_names, ...prev }));
+      }
+      if (r.types && Object.keys(r.types).length > 0) {
+        setTypedVars((prev) => ({ ...r.types, ...prev }));
+      }
+
       setLlilOutput([
         `fn: ${r.fn_id} · records: ${r.records}${r.truncated ? " · partial result" : ""}`,
         `lift coverage: ${(r.lift_coverage * 100).toFixed(1)}% · intrinsic ${r.lift_intrinsic}/${r.lift_total}`,
@@ -163,7 +495,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   }
 
   return (
-    <section class="panel decompiler-panel">
+    <section class="panel decompiler-panel" tabIndex={-1}>
       <h2>Decompiler</h2>
       <Show when={summary.error}>
         <p class="err">load failed: {String(summary.error)}</p>
@@ -278,7 +610,11 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                   </div>
                 </details>
               </div>
-              <div>
+              <div
+                onKeyDown={handleKeyDown}
+                tabIndex={0}
+                class="dec-llil-pane"
+              >
                 <div class="dec-controls">
                   <label>
                     llil records
@@ -304,6 +640,14 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                   <button type="button" disabled={llilLoading() || !props.selectedFn()} onClick={runLlil}>
                     {llilLoading() ? "rendering…" : "render LLIL"}
                   </button>
+                  <Show when={cursorLine() >= 0}>
+                    <span class="dim small">
+                      line {cursorLine() + 1}/{llilLines().length}
+                      <Show when={extractPc(llilLines()[cursorLine()])}>
+                        <> · PC {(() => { const pc = extractPc(llilLines()[cursorLine()]); return pc !== null ? "0x" + pc!.toString(16) : ""; })()}</>
+                      </Show>
+                    </span>
+                  </Show>
                 </div>
                 <Show when={!fnResp.loading && fnResp.error}>
                   <p class="err">fn load failed: {String(fnResp.error)}</p>
@@ -311,9 +655,42 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
                 <Show when={llilError()}>
                   <p class="err">llil failed: {llilError()}</p>
                 </Show>
-                <Show when={llilOutput()}>
+
+                {/* ── Interactive LLIL pseudocode with line cursor ── */}
+                <Show when={llilOutput() && llilLines().length > 0}>
+                  <div
+                    ref={llilBodyRef}
+                    class="dec-llil-body"
+                    onDblClick={handleVarDblClick}
+                    onContextMenu={handleVarContext}
+                  >
+                    <div class="dec-llil-header dim small">
+                      cursor #{props.selectedIdx()} · arrow keys navigate · Enter = jump to asm · Tab = cycle sig/body · Esc = clear · double-click line = select+jump · double-click var = rename · right-click var = set type
+                    </div>
+                    <For each={llilLines()}>
+                      {(raw, i) => (
+                        <div
+                          class="dec-llil-line"
+                          classList={{
+                            cur: i() === cursorLine(),
+                            "dec-llil-sig": i() <= sigEndLine(),
+                          }}
+                          data-i={i()}
+                          data-pc={(() => { const pc = extractPc(raw); return pc !== null ? "0x" + pc.toString(16) : ""; })()}
+                          onClick={(e) => handleLineClick(e, raw)}
+                          // eslint-disable-next-line solid/no-innerhtml
+                          innerHTML={llilLinesHtml()[i()]}
+                        />
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                {/* fallback: raw pre when body is not yet initialised */}
+                <Show when={llilOutput() && llilLines().length === 0}>
                   <pre class="dec-llil">{llilOutput()}</pre>
                 </Show>
+
                 <Show when={fnResp.loading}>
                   <p class="dim">loading function markdown…</p>
                 </Show>
@@ -323,6 +700,53 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
               </div>
             </div>
           </>
+        )}
+      </Show>
+
+      {/* ── Inline rename input ── */}
+      <Show when={renameInput()}>
+        {(r) => (
+          <div class="dec-tooltip" style={{ position: "fixed", left: "200px", top: "140px", "z-index": "100" }}>
+            rename <code>{r().oldName}</code>:
+            <input
+              ref={renameInputEl}
+              class="dec-rename-input"
+              value={r().newName}
+              onInput={(e) => setRenameInput((prev) => prev ? { ...prev, newName: e.currentTarget.value } : null)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+                else if (e.key === "Escape") cancelRename();
+              }}
+              onBlur={commitRename}
+            />
+          </div>
+        )}
+      </Show>
+
+      {/* ── Type input popup (right-click on variable) ── */}
+      <Show when={typeInput()}>
+        {(m) => (
+          <div
+            class="dec-tooltip dec-type-menu"
+            style={{ position: "fixed", left: `${m().x}px`, top: `${m().y}px`, "z-index": "100" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>set type for <code>{m().name}</code></div>
+            <div style={{ display: "flex", gap: "4px", "margin-top": "4px" }}>
+              <input
+                ref={typeInputEl}
+                class="dec-rename-input"
+                placeholder="int32_t / char* / struct Foo..."
+                value={typeValue()}
+                onInput={(e) => setTypeValue(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyVarType();
+                  else if (e.key === "Escape") { setTypeInput(null); setTypeValue(""); }
+                }}
+              />
+              <button type="button" onClick={applyVarType}>OK</button>
+            </div>
+          </div>
         )}
       </Show>
     </section>

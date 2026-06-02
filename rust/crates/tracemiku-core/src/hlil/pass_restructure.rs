@@ -800,7 +800,7 @@ fn walk_region(
             let mut body_set: BTreeSet<usize> = body_bids.iter().copied().collect();
             // Also collect transitively-reachable blocks within the loop body
             // that may not be in body_bids but are still part of the loop.
-            for b in body_bids.iter().copied().collect::<Vec<_>>() {
+            for b in body_bids.to_vec() {
                 let mut stack = vec![b];
                 while let Some(bid) = stack.pop() {
                     if bid >= blocks.len() || body_set.contains(&bid) {

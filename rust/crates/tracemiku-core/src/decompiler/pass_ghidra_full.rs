@@ -93,7 +93,7 @@ impl Pass for ActionHeritage {
     fn run(&self, _: &PassContext, exprs: &mut PassIlExprs) -> PassResult {
         for (i, e) in exprs.exprs.iter_mut().enumerate() {
             if e.op.contains("SetReg") {
-                e.extra.push(("ssa".into(), format!("idx_{i}").into()));
+                e.extra.push(("ssa".into(), format!("idx_{i}")));
             }
         }
         PassResult::Changed

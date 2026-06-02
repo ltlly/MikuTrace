@@ -200,7 +200,7 @@ impl HlilExpr {
             HlilOp::If => format!("if ({})", fmt_operand(first())),
             HlilOp::While => format!("while ({})", fmt_operand(first())),
             HlilOp::DoWhile => format!("do {{ ... }} while ({})", fmt_operand(first())),
-            HlilOp::For => format!("for (;;)"),
+            HlilOp::For => "for (;;)".to_string(),
             HlilOp::Switch => format!("switch ({})", fmt_operand(first())),
             HlilOp::Case => format!("case {}", fmt_operand(first())),
             HlilOp::Break => "break".to_string(),
@@ -280,7 +280,7 @@ pub fn var_init(name: impl Into<String>, value: HlilExpr, pc: u64) -> HlilExpr {
 }
 
 pub fn block(body: Vec<HlilExpr>, pc: u64) -> HlilExpr {
-    let ops: Vec<HlilOperand> = body.into_iter().map(|e| expr(e)).collect();
+    let ops: Vec<HlilOperand> = body.into_iter().map(expr).collect();
     HlilExpr::new(HlilOp::Block, 0, ops, pc)
 }
 

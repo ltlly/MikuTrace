@@ -203,7 +203,7 @@ fn render_expr_to(out: &mut String, e: &HlilExpr, indent: usize) {
         }
         HlilOp::Label => {
             let name = render_operand(e.operands.first());
-            push_line(out, &prefix.trim_end(), &format!("{name}:"));
+            push_line(out, prefix.trim_end(), &format!("{name}:"));
         }
         HlilOp::Call => {
             let t = render_operand(e.operands.first());

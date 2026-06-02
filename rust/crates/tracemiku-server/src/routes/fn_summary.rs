@@ -144,8 +144,11 @@ fn fn_summary_response(
         if !fn_starts.contains(&src.start_pc) {
             continue;
         }
-        let kind = edge.weight().kind.as_str();
-        if kind != "bl" && kind != "blr" {
+        let is_call = match &edge.weight().kind {
+            tracemiku_core::cfg::EdgeKind::Direct(mnem) => mnem == "bl" || mnem == "blr",
+            _ => false,
+        };
+        if !is_call {
             continue;
         }
         let Some(dst) = inner.cfg.graph.node_weight(edge.target()) else {

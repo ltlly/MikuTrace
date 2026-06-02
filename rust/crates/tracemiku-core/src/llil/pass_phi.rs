@@ -133,10 +133,8 @@ fn split_blocks(exprs: &[LlilExpr]) -> Vec<PhiBlock> {
                     leader[i + 1] = true;
                 }
             }
-            LlilOp::Ret | LlilOp::Tailcall => {
-                if i + 1 < n {
-                    leader[i + 1] = true;
-                }
+            LlilOp::Ret | LlilOp::Tailcall if i + 1 < n => {
+                leader[i + 1] = true;
             }
             _ => {}
         }
@@ -338,7 +336,7 @@ fn insert_phi_nodes(blocks: &mut [PhiBlock], vars: &[String], df: &[BTreeSet<usi
             for e in &b.exprs {
                 if let LlilOp::SetReg = e.op {
                     if let Some(LlilOperand::Reg(dst)) = e.operands.first() {
-                        let base = dst.rsplit_once('#').map(|(n, _)| n).unwrap_or(&dst);
+                        let base = dst.rsplit_once('#').map(|(n, _)| n).unwrap_or(dst);
                         if base == var {
                             def_blocks.insert(b.id);
                         }

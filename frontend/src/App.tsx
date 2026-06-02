@@ -1507,6 +1507,8 @@ export default function App() {
               <DecompilerPanel
                 selectedFn={selectedFn}
                 onSelectFn={setSelectedFn}
+                selectedIdx={selectedIdx}
+                onSelectIdx={setSelectedIdx}
                 active={rightTab() === "dec"}
               />
             </div>

@@ -546,8 +546,7 @@ fn lift_cbz(d: &DecodedInsn, nonzero: bool) -> Vec<LlilExpr> {
     let lhs = d
         .regs_use
         .iter()
-        .filter(|r| *r != "nzcv")
-        .last()
+        .rfind(|r| *r != "nzcv")
         .cloned()
         .or_else(|| {
             // Fallback: parse first operand from op_str "x0, #0x1c"

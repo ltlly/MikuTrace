@@ -91,16 +91,14 @@ impl StackVariableRecoveryPass {
                         }
                     }
                 }
-                "LLIL_Store" | "MLIL_Store" | "HLIL_Store" => {
-                    if e.operands.len() >= 2 {
-                        if let Some((_base, offset)) = Self::parse_stack_address(&e.operands[0]) {
-                            accesses.push(StackAccess {
-                                expr_index: idx,
-                                offset,
-                                kind: "store".to_string(),
-                                size: e.size,
-                            });
-                        }
+                "LLIL_Store" | "MLIL_Store" | "HLIL_Store" if e.operands.len() >= 2 => {
+                    if let Some((_base, offset)) = Self::parse_stack_address(&e.operands[0]) {
+                        accesses.push(StackAccess {
+                            expr_index: idx,
+                            offset,
+                            kind: "store".to_string(),
+                            size: e.size,
+                        });
                     }
                 }
                 _ => {}

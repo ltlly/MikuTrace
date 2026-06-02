@@ -76,7 +76,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
     let pc = e.pc;
     match e.op {
         // Skip flag operations — they should already be eliminated
-        LlilOp::SetFlag | LlilOp::Flag | LlilOp::FlagCond => return None,
+        LlilOp::SetFlag | LlilOp::Flag | LlilOp::FlagCond => None,
 
         // SET_REG → SET_VAR
         LlilOp::SetReg => {
@@ -88,7 +88,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 Some(LlilOperand::Expr(v)) => lower_expr(v, names)?,
                 _ => return Some(intrinsic_mlil(e)),
             };
-            return Some(set_var(dst, value, pc));
+            Some(set_var(dst, value, pc))
         }
 
         // REG → VAR
@@ -98,7 +98,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 _ => return Some(intrinsic_mlil(e)),
             };
             // Treat reg(X) as a VAR. This is used inside expressions.
-            return Some(mlil_var(name));
+            Some(mlil_var(name))
         }
 
         // LOAD → LOAD or LOAD_STRUCT
@@ -111,7 +111,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
             if let Some((base, offset)) = detect_base_offset(&addr) {
                 return Some(load_struct(e.size, base, offset, pc));
             }
-            return Some(load(e.size, addr, pc));
+            Some(load(e.size, addr, pc))
         }
 
         // STORE → STORE or STORE_STRUCT
@@ -127,7 +127,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
             if let Some((base, offset)) = detect_base_offset(&addr) {
                 return Some(store_struct(e.size, base, offset, value, pc));
             }
-            return Some(store(e.size, addr, value, pc));
+            Some(store(e.size, addr, value, pc))
         }
 
         // IF: lower condition, keep targets
@@ -138,27 +138,27 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
             };
             let t = lower_operand_or_u64(e.operands.get(1), names, 0);
             let f = lower_operand_or_u64(e.operands.get(2), names, 0);
-            return Some(MlilExpr::new(
+            Some(MlilExpr::new(
                 MlilOp::If,
                 e.size,
                 vec![expr(cond), t, f],
                 pc,
-            ));
+            ))
         }
 
         // Direct mappings (same operation, just lower operands)
-        LlilOp::Nop => return Some(MlilExpr::new(MlilOp::Nop, 0, vec![], pc)),
-        LlilOp::Ret => return Some(MlilExpr::new(MlilOp::Ret, e.size, vec![], pc)),
+        LlilOp::Nop => Some(MlilExpr::new(MlilOp::Nop, 0, vec![], pc)),
+        LlilOp::Ret => Some(MlilExpr::new(MlilOp::Ret, e.size, vec![], pc)),
         LlilOp::Goto => {
             let t = lower_operand_or_u64(e.operands.first(), names, 0);
-            return Some(MlilExpr::new(MlilOp::Goto, e.size, vec![t], pc));
+            Some(MlilExpr::new(MlilOp::Goto, e.size, vec![t], pc))
         }
         LlilOp::Jump => {
             let t = match e.operands.first() {
                 Some(LlilOperand::Expr(ee)) => expr(lower_expr(ee, names)?),
                 other => lower_operand_or_u64(other, names, 0),
             };
-            return Some(MlilExpr::new(MlilOp::Jump, e.size, vec![t], pc));
+            Some(MlilExpr::new(MlilOp::Jump, e.size, vec![t], pc))
         }
         LlilOp::Call => {
             let ops: Vec<MlilOperand> = e
@@ -166,7 +166,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 .iter()
                 .map(|o| lower_operand(o, names))
                 .collect::<Option<Vec<_>>>()?;
-            return Some(MlilExpr::new(MlilOp::Call, e.size, ops, pc));
+            Some(MlilExpr::new(MlilOp::Call, e.size, ops, pc))
         }
         LlilOp::Tailcall => {
             let ops: Vec<MlilOperand> = e
@@ -174,7 +174,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 .iter()
                 .map(|o| lower_operand(o, names))
                 .collect::<Option<Vec<_>>>()?;
-            return Some(MlilExpr::new(MlilOp::Tailcall, e.size, ops, pc));
+            Some(MlilExpr::new(MlilOp::Tailcall, e.size, ops, pc))
         }
 
         // Intrinsic → Intrinsic
@@ -188,7 +188,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
             for (k, v) in &e.extra {
                 out.extra.insert(k.clone(), v.clone());
             }
-            return Some(out);
+            Some(out)
         }
 
         // Constant expressions
@@ -198,7 +198,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 .iter()
                 .map(|o| lower_operand(o, names))
                 .collect::<Option<Vec<_>>>()?;
-            return Some(MlilExpr::new(MlilOp::Const, e.size, ops, pc));
+            Some(MlilExpr::new(MlilOp::Const, e.size, ops, pc))
         }
         LlilOp::ConstPtr => {
             let ops: Vec<MlilOperand> = e
@@ -206,7 +206,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 .iter()
                 .map(|o| lower_operand(o, names))
                 .collect::<Option<Vec<_>>>()?;
-            return Some(MlilExpr::new(MlilOp::ConstPtr, e.size, ops, pc));
+            Some(MlilExpr::new(MlilOp::ConstPtr, e.size, ops, pc))
         }
 
         // Unary ops
@@ -220,7 +220,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 LlilOp::Not => MlilOp::Not,
                 _ => unreachable!(),
             };
-            return Some(unary(mlil_op, val));
+            Some(unary(mlil_op, val))
         }
 
         // Binary ops
@@ -234,7 +234,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 _ => return Some(intrinsic_mlil(e)),
             };
             let mlil_op = map_binary_op(op);
-            return Some(binary(mlil_op, lhs, rhs));
+            Some(binary(mlil_op, lhs, rhs))
         }
 
         // Sx / Zx / LowPart
@@ -249,7 +249,7 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 LlilOp::LowPart => MlilOp::LowPart,
                 _ => unreachable!(),
             };
-            return Some(MlilExpr::new(mlil_op, e.size, vec![expr(val)], pc));
+            Some(MlilExpr::new(mlil_op, e.size, vec![expr(val)], pc))
         }
 
         // Csel
@@ -266,20 +266,18 @@ fn lower_expr(e: &LlilExpr, names: &VarNameMap) -> Option<MlilExpr> {
                 Some(LlilOperand::Expr(v)) => lower_expr(v, names)?,
                 _ => return Some(intrinsic_mlil(e)),
             };
-            return Some(MlilExpr::new(
+            Some(MlilExpr::new(
                 MlilOp::Csel,
                 e.size,
                 vec![expr(cond), expr(t), expr(f)],
                 pc,
-            ));
+            ))
         }
 
         // Bp
-        LlilOp::Bp => {
-            return Some(MlilExpr::new(MlilOp::Bp, e.size, vec![], pc));
-        }
+        LlilOp::Bp => Some(MlilExpr::new(MlilOp::Bp, e.size, vec![], pc)),
 
-        _ => return Some(intrinsic_mlil(e)),
+        _ => Some(intrinsic_mlil(e)),
     }
 }
 

@@ -139,7 +139,7 @@ fn block_detail_response(inner: &crate::state::AppStateInner, pc: u64) -> Option
         .take(MAX_BLOCK_EXITS)
         .map(|(to, meta)| BlockExit {
             to: format!("{to:#x}"),
-            kind: meta.kind,
+            kind: meta.kind.label(),
         })
         .collect();
     Some(BlockDetail {

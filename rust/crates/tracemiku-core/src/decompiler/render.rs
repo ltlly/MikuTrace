@@ -124,6 +124,63 @@ pub fn render_func_md(fn_: &FuncIR, tier_filter: &str) -> String {
         out.push('\n');
     }
 
+    // Loops section: render detected loops with body blocks, iteration
+    // counts, and induction variable summaries.
+    if !fn_.loops.is_empty() {
+        out.push_str(&format!("## Loops ({})\n\n", fn_.loops.len()));
+        for lp in &fn_.loops {
+            let body_str = lp.body.join(", ");
+            out.push_str(&format!(
+                "- **{}** header=`{}` body=[{}] iters={}\n",
+                lp.id, lp.header, body_str, lp.iters
+            ));
+            if !lp.induction_vars.is_empty() {
+                out.push_str("  - induction vars:\n");
+                for iv in &lp.induction_vars {
+                    let step_str = if iv.step == iv.step.round() {
+                        format!("{}", iv.step as i64)
+                    } else {
+                        format!("{:.1}", iv.step)
+                    };
+                    out.push_str(&format!(
+                        "    - `{}`: {} → {} (step={}, n_iters={}, score={:.2}, {})\n",
+                        iv.reg,
+                        if iv.init >= 0 {
+                            format!("{:#x}", iv.init as u64)
+                        } else {
+                            format!("{}", iv.init)
+                        },
+                        if iv.final_value >= 0 {
+                            format!("{:#x}", iv.final_value as u64)
+                        } else {
+                            format!("{}", iv.final_value)
+                        },
+                        step_str,
+                        iv.n_iters,
+                        iv.linearity_score,
+                        iv.classification
+                    ));
+                    if !iv.samples.is_empty() {
+                        let sample_vals: Vec<String> = iv
+                            .samples
+                            .iter()
+                            .take(8)
+                            .map(|s| {
+                                if *s >= 0 {
+                                    format!("{:#x}", *s as u64)
+                                } else {
+                                    format!("{}", s)
+                                }
+                            })
+                            .collect();
+                        out.push_str(&format!("      samples: [{}]\n", sample_vals.join(", ")));
+                    }
+                }
+            }
+        }
+        out.push('\n');
+    }
+
     if tier_filter == "summary" {
         let hot_count = fn_.blocks.iter().filter(|b| b.tier == "hot").count();
         let warm_count = fn_.blocks.iter().filter(|b| b.tier == "warm").count();

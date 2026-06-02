@@ -53,19 +53,19 @@ pub fn flag_elim_block(exprs: &[LlilExpr]) -> FlagElimResult {
             continue;
         }
         // Flush any pending flags that were used as non-branch setflags
-        if e.op == LlilOp::If
+        if (e.op == LlilOp::If
             || e.is_control_flow()
             || matches!(
                 e.op,
                 LlilOp::SetFlag | LlilOp::Call | LlilOp::Load | LlilOp::Store
-            )
+            ))
+            && !matches!(e.op, LlilOp::If)
+            && !matches!(e.op, LlilOp::SetFlag)
         {
-            if !matches!(e.op, LlilOp::If) && !matches!(e.op, LlilOp::SetFlag) {
-                // Control flow or side-effecting instruction: flush remaining pending
-                for (flag_name, (pc, val)) in std::mem::take(&mut pending_flags).into_iter() {
-                    let restored = set_flag_from_val(&flag_name, pc, &val);
-                    out.push(restored);
-                }
+            // Control flow or side-effecting instruction: flush remaining pending
+            for (flag_name, (pc, val)) in std::mem::take(&mut pending_flags).into_iter() {
+                let restored = set_flag_from_val(&flag_name, pc, &val);
+                out.push(restored);
             }
         }
 
@@ -381,20 +381,17 @@ fn contains_flag_cond(e: &LlilExpr) -> bool {
 fn fold_flags_in_expr(e: &LlilExpr, pending: &BTreeMap<String, (u64, LlilExpr)>) -> LlilExpr {
     let mut out = e.clone();
     for i in 0..out.operands.len() {
-        match &out.operands[i] {
-            LlilOperand::Expr(child) => {
-                if child.op == LlilOp::FlagCond {
-                    if let Some(LlilOperand::Str(cond_str)) = child.operands.first() {
-                        if let Some(folded) = cond_expr_from_flags(cond_str.as_str(), pending) {
-                            out.operands[i] = expr(folded);
-                        }
+        if let LlilOperand::Expr(child) = &out.operands[i] {
+            if child.op == LlilOp::FlagCond {
+                if let Some(LlilOperand::Str(cond_str)) = child.operands.first() {
+                    if let Some(folded) = cond_expr_from_flags(cond_str.as_str(), pending) {
+                        out.operands[i] = expr(folded);
                     }
-                } else {
-                    let folded = fold_flags_in_expr(child, pending);
-                    out.operands[i] = expr(folded);
                 }
+            } else {
+                let folded = fold_flags_in_expr(child, pending);
+                out.operands[i] = expr(folded);
             }
-            _ => {}
         }
     }
     out

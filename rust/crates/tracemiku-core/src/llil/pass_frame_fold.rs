@@ -80,12 +80,12 @@ pub fn frame_fold_block(exprs: &[LlilExpr]) -> FrameFoldResult {
                 if let (Some(LlilOperand::Reg(dst)), Some(LlilOperand::Expr(val))) =
                     (e.operands.first(), e.operands.get(1))
                 {
-                    if dst == "sp" || dst.starts_with("sp#") {
-                        if extract_sub_imm(val).map_or(false, |s| s < 0) {
-                            out[i]
-                                .extra
-                                .insert("frame_op".into(), "epilogue_add_sp".into());
-                        }
+                    if (dst == "sp" || dst.starts_with("sp#"))
+                        && extract_sub_imm(val).is_some_and(|s| s < 0)
+                    {
+                        out[i]
+                            .extra
+                            .insert("frame_op".into(), "epilogue_add_sp".into());
                     }
                 }
             }

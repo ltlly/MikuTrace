@@ -178,14 +178,11 @@ impl PassPool {
         let mut new_operands: Vec<PassIlOperand> = expr.operands.clone();
         let mut operand_changed = false;
         for (j, op) in expr.operands.iter().enumerate() {
-            match op {
-                PassIlOperand::Expr(child) => {
-                    if let Some(new_child) = self.apply_rules_recursive(child) {
-                        new_operands[j] = PassIlOperand::Expr(Box::new(new_child));
-                        operand_changed = true;
-                    }
+            if let PassIlOperand::Expr(child) = op {
+                if let Some(new_child) = self.apply_rules_recursive(child) {
+                    new_operands[j] = PassIlOperand::Expr(Box::new(new_child));
+                    operand_changed = true;
                 }
-                _ => {}
             }
         }
         let current = if operand_changed {
@@ -318,10 +315,8 @@ impl PassGroup {
                 break;
             }
             overall = PassResult::Changed;
-            if iteration == max - 1 && self.repeat_until_fixpoint {
-                if ctx.verbose {
-                    eprintln!("PassGroup '{}' reached max repeats ({})", self.name, max);
-                }
+            if iteration == max - 1 && self.repeat_until_fixpoint && ctx.verbose {
+                eprintln!("PassGroup '{}' reached max repeats ({})", self.name, max);
             }
         }
         overall

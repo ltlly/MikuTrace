@@ -97,10 +97,10 @@ fn removable_set_reg(e: &LlilExpr, idx: usize, uses: &BTreeMap<String, Vec<usize
         return false;
     };
     // Check whether `dst` is read by any expression other than this one.
-    uses.get(dst)
+    !uses
+        .get(dst)
         .map(|idxs| idxs.iter().any(|use_idx| *use_idx != idx))
         .unwrap_or(false)
-        == false
 }
 
 fn operand_has_side_effect(op: &LlilOperand) -> bool {

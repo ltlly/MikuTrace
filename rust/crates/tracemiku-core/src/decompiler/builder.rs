@@ -13,7 +13,9 @@ use std::time::Instant;
 
 use crate::calltree::{build_call_tree, build_call_tree_indexed, CallNode};
 use crate::cfg::CFG;
-use crate::decompiler::ir::{BlockIR, CallIR, EdgeIR, FuncIR, TopIR, TypeAnchorIR};
+use crate::decompiler::ir::{
+    BlockIR, CallIR, EdgeIR, FuncIR, InductionVarIR, LoopIR, TopIR, TypeAnchorIR,
+};
 use crate::decompiler::type_anchor::{find_anchors, find_anchors_indexed, load_type_specs};
 use crate::disasm::decode;
 use crate::function_index::{make_sym_addr_id, make_sym_id};
@@ -181,7 +183,7 @@ fn make_block_ir(
                 .unwrap_or_else(|| format!("ext:{dst_pc:#x}"));
             EdgeIR {
                 dst: dst_id,
-                kind: meta.kind,
+                kind: meta.kind.label(),
                 taken_count: meta.count,
                 not_taken_count: 0,
             }
@@ -803,7 +805,7 @@ fn build_root_only(
                 .get(&b.start_pc)
                 .cloned()
                 .unwrap_or_else(|| format!("B?{:x}", b.start_pc));
-            make_block_ir(b, id, trace, &first_idx, cfg, &block_ids)
+            make_block_ir(b, id, trace, first_idx, cfg, &block_ids)
         })
         .collect();
 
@@ -913,6 +915,387 @@ fn attach_type_anchors_from_matches(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Loop detection (M3-κ): uses CFG SCC info to identify loops, extract body
+// blocks, count iterations, and detect induction variables.
+// ---------------------------------------------------------------------------
+
+/// Map block start_pc → block id for a FuncIR.
+fn build_block_id_map(func: &FuncIR) -> HashMap<u64, String> {
+    func.blocks.iter().map(|b| (b.pc, b.id.clone())).collect()
+}
+
+/// Detect loops for one function by grouping blocks by CFG SCC id.
+///
+/// For each SCC with size > 1 (multi-block cycle), creates one LoopIR.
+/// Single-block self-loops (SCC size 1 with a self-edge) are also detected.
+///
+/// Loop header detection: the block within the SCC whose start_pc is the
+/// target of a back-edge (incoming edge from another SCC member). When
+/// ambiguous, picks the block with the smallest start_pc in the SCC.
+fn detect_loops_for_func(
+    func: &FuncIR,
+    cfg: &CFG,
+    trace: &Trace,
+    index: Option<&Index>,
+) -> Vec<LoopIR> {
+    if func.blocks.is_empty() || trace.is_empty() {
+        return Vec::new();
+    }
+
+    let block_id_by_pc = build_block_id_map(func);
+
+    // Group block start_pcs by CFG SCC id.
+    let mut scc_groups: HashMap<u32, Vec<u64>> = HashMap::new();
+    for b in &func.blocks {
+        if let Some(cfg_block) = cfg.block(b.pc) {
+            scc_groups.entry(cfg_block.scc_id).or_default().push(b.pc);
+        }
+    }
+
+    // Collect all edges among function blocks for back-edge detection.
+    let edge_targets: HashMap<u64, Vec<u64>> = func
+        .blocks
+        .iter()
+        .map(|b| {
+            let targets: Vec<u64> = cfg
+                .edges_from(b.pc)
+                .into_iter()
+                .map(|(dst, _)| dst)
+                .collect();
+            (b.pc, targets)
+        })
+        .collect();
+
+    let mut loops: Vec<LoopIR> = Vec::new();
+    let mut loop_id_counter: usize = 0;
+    let mut handled_sccs: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    for (&scc_id, members) in &scc_groups {
+        if handled_sccs.contains(&scc_id) {
+            continue;
+        }
+        if members.len() < 2 {
+            continue;
+        }
+
+        handled_sccs.insert(scc_id);
+
+        // Determine the header: the block that has an incoming edge from
+        // a block NOT in this SCC (entry edge). If none found, use the
+        // block with the smallest start_pc.
+        let member_set: std::collections::HashSet<u64> = members.iter().copied().collect();
+        let mut header_pc = None;
+        for &pc in members {
+            for (&src, targets) in &edge_targets {
+                if !member_set.contains(&src) && targets.contains(&pc) {
+                    header_pc = Some(pc);
+                    break;
+                }
+            }
+            if header_pc.is_some() {
+                break;
+            }
+        }
+        let header_pc = header_pc.unwrap_or_else(|| members.iter().min().copied().unwrap_or(0));
+
+        let header_id = block_id_by_pc
+            .get(&header_pc)
+            .cloned()
+            .unwrap_or_else(|| format!("ext:{:#x}", header_pc));
+
+        // Body: all SCC member blocks.
+        let body: Vec<String> = members
+            .iter()
+            .filter_map(|pc| block_id_by_pc.get(pc).cloned())
+            .collect();
+
+        // Iteration count: use header exec_count adjusted for the final
+        // exit check. Body exec counts give the iteration count.
+        let header_exec = func
+            .blocks
+            .iter()
+            .find(|b| b.pc == header_pc)
+            .map(|b| b.exec_count)
+            .unwrap_or(1);
+        let body_exec = members
+            .iter()
+            .filter(|&&pc| pc != header_pc)
+            .filter_map(|pc| func.blocks.iter().find(|b| b.pc == *pc))
+            .map(|b| b.exec_count)
+            .max()
+            .unwrap_or(header_exec.saturating_sub(1));
+        let iters = if body_exec > 0 && body_exec < header_exec {
+            body_exec
+        } else {
+            header_exec.saturating_sub(1).max(1)
+        };
+
+        // Induction variable detection: collect trace records where PC is
+        // the header, track register value deltas across iterations.
+        let induction_vars = detect_induction_vars(
+            trace,
+            index,
+            header_pc,
+            func.entry_idx,
+            func.exit_idx,
+            iters,
+        );
+
+        loops.push(LoopIR {
+            id: format!("L{}", loop_id_counter),
+            header: header_id,
+            body,
+            iters,
+            induction_var: None,
+            induction_vars,
+        });
+        loop_id_counter += 1;
+    }
+
+    // Detect single-block self-loops (SCC size 1 with a self-edge).
+    for b in &func.blocks {
+        if let Some(cfg_block) = cfg.block(b.pc) {
+            // Skip if this pc is already covered by a multi-block SCC.
+            let already_covered = scc_groups
+                .get(&cfg_block.scc_id)
+                .is_some_and(|m| m.len() > 1);
+            if already_covered {
+                continue;
+            }
+
+            // Check for self-edge: does this block have an edge to itself?
+            let has_self_edge = edge_targets
+                .get(&b.pc)
+                .is_some_and(|targets| targets.contains(&b.pc));
+            if !has_self_edge {
+                continue;
+            }
+
+            // Single-block self-loop.
+            let iters = if b.exec_count > 1 {
+                b.exec_count.saturating_sub(1)
+            } else {
+                1
+            };
+            let induction_vars =
+                detect_induction_vars(trace, index, b.pc, func.entry_idx, func.exit_idx, iters);
+
+            let body_id = block_id_by_pc
+                .get(&b.pc)
+                .cloned()
+                .unwrap_or_else(|| format!("ext:{:#x}", b.pc));
+            loops.push(LoopIR {
+                id: format!("L{}", loop_id_counter),
+                header: body_id.clone(),
+                body: vec![body_id],
+                iters,
+                induction_var: None,
+                induction_vars,
+            });
+            loop_id_counter += 1;
+        }
+    }
+
+    loops
+}
+
+/// Detect induction variables by scanning trace records at a loop header PC.
+///
+/// An induction variable is a register whose value changes by a near-constant
+/// delta across successive iterations of the loop header.
+fn detect_induction_vars(
+    trace: &Trace,
+    index: Option<&Index>,
+    header_pc: u64,
+    entry_idx: usize,
+    exit_idx: usize,
+    _iters: u64,
+) -> Vec<InductionVarIR> {
+    let n = trace.len();
+    if n == 0 || entry_idx > exit_idx || exit_idx >= n {
+        return Vec::new();
+    }
+
+    // Collect indices of trace records within [entry_idx, exit_idx] where
+    // PC == header_pc.
+    let header_idxs: Vec<usize> = if let Some(index) = index {
+        index
+            .pc_to_idxs
+            .get(&header_pc)
+            .map(|idxs| {
+                let lo = idxs.partition_point(|&i| i < entry_idx);
+                let hi = idxs.partition_point(|&i| i <= exit_idx);
+                idxs[lo..hi].to_vec()
+            })
+            .unwrap_or_default()
+    } else {
+        (entry_idx..=exit_idx)
+            .filter(|&i| trace.pc(i) == header_pc)
+            .collect()
+    };
+
+    if header_idxs.len() < 2 {
+        return Vec::new();
+    }
+
+    // Limit to reasonable number of samples (at most 256).
+    let max_samples = 256;
+    let step = if header_idxs.len() > max_samples {
+        header_idxs.len() / max_samples
+    } else {
+        1
+    };
+    let sampled: Vec<usize> = header_idxs.iter().step_by(step.max(1)).copied().collect();
+
+    if sampled.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut vars: Vec<InductionVarIR> = Vec::new();
+
+    // Check x0..x28.
+    for reg_idx in 0..=28usize {
+        let reg_name = format!("x{}", reg_idx);
+        let values: Vec<i64> = sampled
+            .iter()
+            .map(|&i| {
+                let rec = trace.record(i);
+                rec.regs[reg_idx] as i64
+            })
+            .collect();
+
+        if values.len() < 2 {
+            continue;
+        }
+
+        let init = values[0];
+        let final_value = *values.last().unwrap();
+
+        // Compute per-step deltas.
+        let n_samples = values.len();
+        let mut deltas: Vec<i64> = Vec::new();
+        for i in 0..n_samples.saturating_sub(1) {
+            deltas.push(values[i + 1] - values[i]);
+        }
+
+        if deltas.is_empty() {
+            continue;
+        }
+
+        // Determine step: use the mode of non-zero deltas.
+        let non_zero_deltas: Vec<i64> = deltas.iter().copied().filter(|&d| d != 0).collect();
+        if non_zero_deltas.is_empty() {
+            // Register is invariant — not an induction var.
+            continue;
+        }
+
+        let mut freq: HashMap<i64, usize> = HashMap::new();
+        for &d in &non_zero_deltas {
+            *freq.entry(d).or_default() += 1;
+        }
+        let mode_delta = freq
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(d, _)| d)
+            .unwrap_or(0);
+
+        let step_f = mode_delta as f64;
+
+        // Compute linearity score: fraction of deltas matching the mode.
+        let matching = deltas
+            .iter()
+            .filter(|&&d| d == mode_delta || d == 0)
+            .count();
+        let total = deltas.len().max(1);
+        let linearity_score = matching as f64 / total as f64;
+
+        // Only keep candidates with reasonable linearity.
+        let min_score = 0.5;
+        if linearity_score < min_score && (final_value - init).abs() > 0 {
+            continue;
+        }
+
+        // Estimate n_iters from total delta and step.
+        let n_iters = if step_f != 0.0 {
+            ((final_value - init) as f64 / step_f).abs() as u64
+        } else {
+            0
+        };
+
+        // Classification.
+        let classification = if step_f != 0.0 && step_f == step_f.round() {
+            let abs_step = (step_f.abs()) as u64;
+            if abs_step == 1 || abs_step == 2 {
+                "counter".to_string()
+            } else if abs_step == 4 || abs_step == 8 {
+                "likely_pointer".to_string()
+            } else if abs_step > 8 {
+                "likely_pointer".to_string()
+            } else {
+                "unknown".to_string()
+            }
+        } else if step_f == 0.0 {
+            "invariant".to_string()
+        } else {
+            "unknown".to_string()
+        };
+
+        // Collect evenly-spaced sample values (up to 8).
+        let samples: Vec<i64> = if values.len() <= 8 {
+            values.clone()
+        } else {
+            let n = values.len();
+            (0..8).map(|i| values[i * (n - 1) / 7]).collect()
+        };
+
+        vars.push(InductionVarIR {
+            reg: reg_name,
+            init,
+            final_value,
+            step: step_f,
+            n_iters,
+            classification,
+            linearity_score,
+            samples,
+        });
+    }
+
+    // Sort by linearity_score descending; keep top 4.
+    vars.sort_by(|a, b| {
+        b.linearity_score
+            .partial_cmp(&a.linearity_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    vars.truncate(4);
+
+    vars
+}
+
+/// Attach detected loops to every FuncIR in the TopIR.
+pub fn attach_loops(top: &mut TopIR, trace: &Trace, cfg: &CFG, index: Option<&Index>) {
+    if top.fns.is_empty() || trace.is_empty() {
+        return;
+    }
+    let phase_start = Instant::now();
+    let mut total_loops = 0usize;
+    for f in &mut top.fns {
+        if f.blocks.is_empty() {
+            continue;
+        }
+        let loops = detect_loops_for_func(f, cfg, trace, index);
+        total_loops += loops.len();
+        f.loops = loops;
+    }
+    tracing::debug!(
+        target: "tracemiku-core",
+        fns = top.fns.len(),
+        loops = total_loops,
+        elapsed_ms = phase_start.elapsed().as_millis(),
+        "attached TraceIR loops"
+    );
+}
+
 /// Build a TopIR from a loaded Trace.
 ///
 /// `top_k`: max number of bl-target callees to promote to standalone
@@ -1012,6 +1395,9 @@ pub fn build_trace_ir<P: AsRef<Path>>(
             elapsed_ms = phase_start.elapsed().as_millis(),
             "detected TraceIR VM candidates"
         );
+    }
+    if !top.fns.is_empty() {
+        attach_loops(&mut top, trace, cfg, index);
     }
     let phase_start = Instant::now();
     classify_blocks_by_tier(&mut top, 150);

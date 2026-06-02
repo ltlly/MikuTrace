@@ -82,17 +82,15 @@ impl StructRecoveryPass {
                         }
                     }
                 }
-                "LLIL_Store" | "MLIL_Store" => {
-                    if e.operands.len() >= 2 {
-                        if let Some((base, offset)) = Self::parse_base_offset(&e.operands[0]) {
-                            accesses.push(StructAccess {
-                                base_reg: base,
-                                offset,
-                                expr_index: idx,
-                                kind: "store".to_string(),
-                                size: e.size,
-                            });
-                        }
+                "LLIL_Store" | "MLIL_Store" if e.operands.len() >= 2 => {
+                    if let Some((base, offset)) = Self::parse_base_offset(&e.operands[0]) {
+                        accesses.push(StructAccess {
+                            base_reg: base,
+                            offset,
+                            expr_index: idx,
+                            kind: "store".to_string(),
+                            size: e.size,
+                        });
                     }
                 }
                 _ => {}
@@ -130,7 +128,7 @@ impl Pass for StructRecoveryPass {
         let mut changed = false;
 
         // For bases with ≥2 distinct offsets, annotate as struct fields
-        for (_base_reg, group) in &by_base {
+        for group in by_base.values() {
             // Collect distinct offsets
             let offsets: BTreeSet<i64> = group.iter().map(|a| a.offset).collect();
             if offsets.len() < 2 {

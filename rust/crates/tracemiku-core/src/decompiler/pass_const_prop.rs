@@ -24,12 +24,10 @@ impl ConstPropPass {
         let mut map = BTreeMap::new();
         for e in exprs {
             match e.op.as_str() {
-                "LLIL_SetReg" | "MLIL_SetVar" | "HLIL_SetVar" => {
-                    if e.operands.len() >= 2 {
-                        if let PassIlOperand::Var(name) = &e.operands[0] {
-                            if let Some(val) = try_eval_const(&e.operands[1]) {
-                                map.insert(name.clone(), val);
-                            }
+                "LLIL_SetReg" | "MLIL_SetVar" | "HLIL_SetVar" if e.operands.len() >= 2 => {
+                    if let PassIlOperand::Var(name) = &e.operands[0] {
+                        if let Some(val) = try_eval_const(&e.operands[1]) {
+                            map.insert(name.clone(), val);
                         }
                     }
                 }

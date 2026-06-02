@@ -133,10 +133,10 @@ rust/crates/tracemiku-core/src/
   taint.rs                        forward/backward taint with dependency metadata
   memshadow.rs                    sparse byte-level memory shadow sidecar
   symbols.rs                      PC to module/function resolution
-  decompiler/                     TraceIR (LLM-friendly skeleton IR), il_pipeline (full three-layer)
-  llil/                           in-house Low-Level IL (ARM64 lifter, SSA, flag elim, restructure)
-  mlil/                           in-house Medium-Level IL (variable-based, flag-free, struct aware)
-  hlil/                           in-house High-Level IL (structured control flow, C-like rendering)
+  decompiler/                     TraceIR (LLM-friendly skeleton IR), il_pipeline (full three-layer), pass framework (14 passes)
+  llil/                           in-house Low-Level IL (ARM64 lifter, cross-block SSA, Phi placement, flag elim)
+  mlil/                           in-house Medium-Level IL (variable-based, flag-free, struct aware, type system)
+  hlil/                           in-house High-Level IL (structured control flow, For/Switch/Break/Continue, CToken rendering, branch bias, C-like output)
 rust/crates/tracemiku-server/src/
   main.rs                         axum app, static frontend, cache headers
   state.rs                        shared TraceState and warmers
@@ -144,7 +144,7 @@ rust/crates/tracemiku-server/src/
   bn_sidecar.rs                   BN process bridge
 rust/crates/tracemiku-cli/src/    Rust CLI command implementations
 scripts/                          parity/smoke/perf helper scripts
-docs/                             design notes and migration history
+docs/                             design notes, audit reports, migration history
 ```
 
 ## API/Feature Propagation
@@ -187,19 +187,26 @@ you are actively tracing or debugging.
 
 ## Current Hardening Focus
 
-Recent Rust/Solid work is mainly latency and responsiveness hardening, not new
-feature expansion. Before adding broad UI features, check for the recurring
-classes already seen in this branch:
+2026-06-02: All 26 decompiler audit tasks (Ghidra benchmark gap analysis from
+`docs/decompiler-audit-2026-06-01.md`) have been implemented across 2 parallel
+workflow waves. The decompiler pipeline now has:
 
-- blocking CPU work on async runtime threads;
-- unbounded or misleadingly truncated responses;
-- stale async frames applying to a newer selected record/function;
-- Solid list/resource churn from unstable object identity;
-- expensive CFG/decompile/BN work triggered by fast cursor movement;
-- UI controls without overflow, resize, scrollbar, or keyboard interaction
-  parity.
+- Cross-block SSA with Phi placement (Bilardi-Pingali + CHK dominator)
+- 15+ TypeKind with signedness, float, struct/array/union, TypeOp rules
+- 10 simplify rules, BitField pass, multi-precision arithmetic
+- HLIL For/Switch/Break/Continue, path specialization, 5-hop convergence
+- MemShadow→decompiler integration with scaled index + negative offset
+- Parameter identification, call signature inference, value stability
+- Token-based C rendering (CToken/CTokenKind), branch bias annotations
+- Jump table recovery, indirect br CFG, CALLOTHER/syscall/JNI extension
+- Union resolution, type database, TraceIR loop bodies, LLM fewshot
+- Semantic test framework, eval tool --semantic metric
+- Frontend keyboard navigation parity (line cursor, persistent rename/type)
 
-Prefer turning each class into a test or smoke gate when fixing it.
+One deferred item: Variable merging (Varnode→HighVariable→VariableGroup) —
+depends on Phi node wire-up through MLIL/HLIL lowering.
+
+Focus has shifted from feature expansion to iterative refinement and performance.
 
 ## Interaction Design (对标 IDA / Ghidra / Binary Ninja)
 

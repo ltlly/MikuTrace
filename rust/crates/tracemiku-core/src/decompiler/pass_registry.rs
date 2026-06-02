@@ -9,10 +9,12 @@
 //!   2. Cleanup — final simplification pass
 
 use super::pass::{PassGroup, PassPipeline, PassPool};
+use super::pass_bitfield::BitFieldTransformPass;
 use super::pass_cond_exec::ConditionalExecutionPass;
 use super::pass_const_prop::ConstPropPass;
 use super::pass_dce::DeadCodeElimPass;
 use super::pass_ghidra_full::*;
+use super::pass_multiprecision::MultiPrecisionPass;
 use super::pass_simplify::{RuleComparisonFold, RuleDoubleNeg, RuleIdentityOp, RuleSubToAdd};
 use super::pass_stack_var::StackVariableRecoveryPass;
 use super::pass_struct_recovery::StructRecoveryPass;
@@ -94,9 +96,11 @@ pub fn build_universal_pipeline() -> PassPipeline {
                 .with_pass(Box::<ActionDynamicSymbols>::default())
                 .with_pass(Box::<ActionMappedLocalSync>::default()),
         )
-        // Phase 3: High-level variable merge
+        // Phase 3: High-level variable merge + bitfield + multi-precision detection
         .with_phase(
             PassGroup::new("phase3_highlevel")
+                .with_pass(Box::new(BitFieldTransformPass))
+                .with_pass(Box::new(MultiPrecisionPass))
                 .with_pass(Box::<ActionAssignHigh>::default())
                 .with_pass(Box::<ActionRestructureVarnode>::default())
                 .with_pass(Box::<ActionSetCasts>::default())

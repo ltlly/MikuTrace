@@ -130,7 +130,7 @@ impl Bitset {
 }
 
 /// Options controlling [`bfs_slice`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SliceOptions {
     /// Skip control edges (`DepKind::Control`) when set. Use when the caller
     /// only cares about value-flow ancestors.
@@ -138,15 +138,6 @@ pub struct SliceOptions {
     /// Cap on the number of nodes returned in `idxs` and the BFS frontier.
     /// 0 means uncapped.
     pub max_nodes: usize,
-}
-
-impl Default for SliceOptions {
-    fn default() -> Self {
-        Self {
-            data_only: false,
-            max_nodes: 0,
-        }
-    }
 }
 
 /// Result of [`bfs_slice`].

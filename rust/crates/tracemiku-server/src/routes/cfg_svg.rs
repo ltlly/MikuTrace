@@ -712,7 +712,7 @@ fn local_edges(
             }
             let class = if *src == focus_start || *dst == focus_start {
                 "tm-local-edge tm-local-edge-focus"
-            } else if meta.kind == "call-return" {
+            } else if matches!(meta.kind, tracemiku_core::cfg::EdgeKind::CallReturn) {
                 "tm-local-edge tm-local-edge-call"
             } else if dist.get(dst).copied().unwrap_or(0) <= dist.get(src).copied().unwrap_or(0) {
                 "tm-local-edge tm-local-edge-back"
@@ -724,7 +724,7 @@ fn local_edges(
             out.push(LocalEdge {
                 src: *src,
                 dst: *dst,
-                kind: meta.kind.clone(),
+                kind: meta.kind.label(),
                 count: meta.count,
                 class,
             });
@@ -1020,14 +1020,14 @@ fn build_dot(
                 src.start_pc,
                 dst.start_pc,
                 base,
-                &meta.kind,
+                &meta.kind.label(),
                 meta.count,
             );
             continue;
         }
 
         let (color, font_color, style) = edge_style(src, dst, meta, block_insns.get(&src.start_pc));
-        let label = edge_label(&meta.kind, meta.count);
+        let label = edge_label(&meta.kind.label(), meta.count);
         let font_attr = font_color
             .map(|c| format!(", fontcolor=\"{c}\""))
             .unwrap_or_default();
@@ -1211,11 +1211,20 @@ fn edge_style(
     meta: &tracemiku_core::cfg::EdgeMeta,
     src_insns: Option<&Vec<(u64, u32)>>,
 ) -> (&'static str, Option<&'static str>, Option<&'static str>) {
-    if meta.kind == "call-return" {
+    if matches!(meta.kind, tracemiku_core::cfg::EdgeKind::CallReturn) {
         return ("#bc8cff", Some("#bc8cff"), Some("dashed"));
     }
-    if meta.kind == "fall" {
+    if matches!(meta.kind, tracemiku_core::cfg::EdgeKind::Fall) {
         return ("#444c56", None, None);
+    }
+    if matches!(
+        meta.kind,
+        tracemiku_core::cfg::EdgeKind::IndirectDispatch { .. }
+    ) {
+        return ("#f0883e", Some("#f0883e"), Some("dashed"));
+    }
+    if matches!(meta.kind, tracemiku_core::cfg::EdgeKind::Ret) {
+        return ("#bc8cff", None, None);
     }
 
     let term_mnem = src_insns
@@ -1232,9 +1241,10 @@ fn edge_style(
         return ("#3fb950", Some("#3fb950"), None);
     }
 
-    match meta.kind.as_str() {
-        "ret" => ("#bc8cff", None, None),
-        "bl" | "blr" => ("#bc8cff", None, None),
+    match &meta.kind {
+        tracemiku_core::cfg::EdgeKind::Direct(mnem) if mnem == "bl" || mnem == "blr" => {
+            ("#bc8cff", None, None)
+        }
         _ => ("#58a6ff", None, None),
     }
 }

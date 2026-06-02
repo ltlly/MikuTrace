@@ -157,10 +157,8 @@ fn build_cfg(exprs: &[LlilExpr]) -> Vec<Block> {
                     leader[i + 1] = true;
                 }
             }
-            LlilOp::Ret | LlilOp::Tailcall => {
-                if i + 1 < n {
-                    leader[i + 1] = true;
-                }
+            LlilOp::Ret | LlilOp::Tailcall if i + 1 < n => {
+                leader[i + 1] = true;
             }
             _ => {}
         }
@@ -588,7 +586,7 @@ fn struct_region(
                     if tb < blocks.len() && tb != current {
                         build_body_nodes(
                             blocks,
-                            &doms,
+                            doms,
                             loop_set,
                             header_set,
                             loops,
@@ -602,7 +600,7 @@ fn struct_region(
                     if fb < blocks.len() && fb != current {
                         build_body_nodes(
                             blocks,
-                            &doms,
+                            doms,
                             loop_set,
                             header_set,
                             loops,
@@ -651,7 +649,7 @@ fn struct_region(
                     if tb < blocks.len() && tb != current {
                         build_body_nodes(
                             blocks,
-                            &doms,
+                            doms,
                             loop_set,
                             header_set,
                             loops,

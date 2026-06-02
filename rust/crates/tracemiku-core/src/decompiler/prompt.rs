@@ -64,6 +64,163 @@ pub const SYSTEM_PROMPT_DECOMPILE_ZH: &str = r#"你是 ARM64 Android trace 反�
 整个回答用**中文**, 但代码本身用 C 语法 (注释也用中文).
 "#;
 
+/// Fewshot exemplar that teaches the LLM the TraceIR → C mapping by example.
+/// Placed after the format specification in the system prompt.
+pub const FEWSHOT_EXEMPLAR: &str = r#"
+## Fewshot Exemplar
+
+Below is a complete example mapping source C → ARM64 → TraceIR → decompiled output.
+
+**Source (C)**
+```c
+unsigned long djb2_hash(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++))
+        hash = ((hash << 5) + hash) + c;
+    return hash;
+}
+```
+
+**ARM64 disassembly**
+```
+0x1000: mov w1, #0x1505        // hash = 5381
+0x1004: ldrb w2, [x0], #1      // c = *str++
+0x1008: cbz w2, 0x101c         // if c==0 goto return
+0x100c: lsl w3, w1, #5         // hash << 5
+0x1010: add w1, w3, w1         // + hash
+0x1014: add w1, w1, w2         // + c
+0x1018: b 0x1004               // loop
+0x101c: mov x0, x1             // return hash
+0x1020: ret
+```
+
+**TraceIR (single execution, input "abc")**
+The blocks below encode one execution: B0 init, B1-B4 loop (3 iters), B3 exit.
+```json
+{
+  "id":"F0","name":"djb2_hash","blocks":[
+    {"id":"B0","pc":4096,"exec_count":1,"insns":1,
+     "asm":"mov w1, #0x1505","samples":{"x0":"0x7fff1000"},
+     "exits":[{"dst":"B1","kind":"fall","taken_count":1}]},
+    {"id":"B1","pc":4100,"exec_count":4,"insns":2,
+     "asm":"ldrb w2, [x0], #1\ncbz w2, #0x101c",
+     "exits":[{"dst":"B2","kind":"fall","taken_count":3},
+              {"dst":"B3","kind":"branch","taken_count":1,"not_taken_count":3}]},
+    {"id":"B2","pc":4108,"exec_count":3,"insns":3,
+     "asm":"lsl w3, w1, #5\nadd w1, w3, w1\nadd w1, w1, w2",
+     "exits":[{"dst":"B4","kind":"fall","taken_count":3}]},
+    {"id":"B4","pc":4120,"exec_count":3,"insns":1,
+     "asm":"b #0x1004",
+     "exits":[{"dst":"B1","kind":"branch","taken_count":3}]},
+    {"id":"B3","pc":4124,"exec_count":1,"insns":2,
+     "asm":"mov x0, x1\nret","exits":[]}
+  ],
+  "loops":[{"id":"L0","header":"B1","body":["B1","B2","B4"],"iters":3,
+    "induction_vars":[{"reg":"w2","init":97,"final":0,"n_iters":3}]}]
+}
+```
+
+**Expected decompiled output**
+
+djb2_hash implements the classic djb2 string hash (hash*33 + c per character).
+Entry block B0 sets hash=5381. Loop B1-B2-B4 reads each character (ldrb
+post-increment, cbz on null) and accumulates hash << 5 + hash + c. Block B3
+returns the final hash via x0. Loop iters=3 matches 3 chars before null.
+
+```c
+unsigned long djb2_hash(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++) != 0) {
+        hash = ((hash << 5) + hash) + c;  // hash * 33 + c
+    }
+    return hash;
+}
+```
+
+Assumptions: x0 is string argument (ldrb [x0] usage); return type inferred from
+64-bit mov x0,x1; no side effects beyond hash computation.
+"#;
+
+/// Chinese-language version of the fewshot exemplar.
+pub const FEWSHOT_EXEMPLAR_ZH: &str = r#"
+## 示例 (Fewshot)
+
+以下完整展示 源码C → ARM64 → TraceIR → 反编译输出 的对应关系。
+
+**源码 (C)**
+```c
+unsigned long djb2_hash(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++))
+        hash = ((hash << 5) + hash) + c;
+    return hash;
+}
+```
+
+**ARM64 反汇编**
+```
+0x1000: mov w1, #0x1505        // hash = 5381
+0x1004: ldrb w2, [x0], #1      // c = *str++
+0x1008: cbz w2, 0x101c         // if c==0 goto return
+0x100c: lsl w3, w1, #5         // hash << 5
+0x1010: add w1, w3, w1         // + hash
+0x1014: add w1, w1, w2         // + c
+0x1018: b 0x1004               // loop
+0x101c: mov x0, x1             // return hash
+0x1020: ret
+```
+
+**TraceIR (单次执行，输入 "abc")**
+以下块编码一次执行：B0 初始化，B1-B4 循环(3次迭代)，B3 退出。
+```json
+{
+  "id":"F0","name":"djb2_hash","blocks":[
+    {"id":"B0","pc":4096,"exec_count":1,"insns":1,
+     "asm":"mov w1, #0x1505","samples":{"x0":"0x7fff1000"},
+     "exits":[{"dst":"B1","kind":"fall","taken_count":1}]},
+    {"id":"B1","pc":4100,"exec_count":4,"insns":2,
+     "asm":"ldrb w2, [x0], #1\ncbz w2, #0x101c",
+     "exits":[{"dst":"B2","kind":"fall","taken_count":3},
+              {"dst":"B3","kind":"branch","taken_count":1,"not_taken_count":3}]},
+    {"id":"B2","pc":4108,"exec_count":3,"insns":3,
+     "asm":"lsl w3, w1, #5\nadd w1, w3, w1\nadd w1, w1, w2",
+     "exits":[{"dst":"B4","kind":"fall","taken_count":3}]},
+    {"id":"B4","pc":4120,"exec_count":3,"insns":1,
+     "asm":"b #0x1004",
+     "exits":[{"dst":"B1","kind":"branch","taken_count":3}]},
+    {"id":"B3","pc":4124,"exec_count":1,"insns":2,
+     "asm":"mov x0, x1\nret","exits":[]}
+  ],
+  "loops":[{"id":"L0","header":"B1","body":["B1","B2","B4"],"iters":3,
+    "induction_vars":[{"reg":"w2","init":97,"final":0,"n_iters":3}]}]
+}
+```
+
+**期望的反编译输出**
+
+djb2_hash 实现经典的 djb2 字符串哈希 (每字符 hash*33 + c)。入口块 B0 设
+hash=5381。循环 B1-B2-B4 逐字符读取 (ldrb 后自增, cbz 判空) 并累加
+hash<<5 + hash + c。块 B3 通过 x0 返回最终哈希值。循环 iters=3 对应空字符前
+的 3 个字符。
+
+```c
+unsigned long djb2_hash(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++) != 0) {
+        hash = ((hash << 5) + hash) + c;  // hash * 33 + c
+    }
+    return hash;
+}
+```
+
+假设: x0 是字符串参数 (ldrb [x0] 用法确认); 返回类型由 64-bit mov x0,x1 推断;
+无副作用仅有哈希计算。
+"#;
+
 pub const SYSTEM_PROMPT_SUMMARY: &str = r#"You are an ARM64 Android trace triage assistant. You receive a high-level
 TraceIR summary listing function calls observed in one execution. Your job
 is to identify which functions are likely the most interesting for a
@@ -131,13 +288,14 @@ pub fn build_fn_decompile_prompt(
         "Decompile this function from its execution trace. Output the logical C pseudocode for THIS execution path.\n\n{vm_context}{fn_md}"
     );
     let system = if lang == "zh" {
-        SYSTEM_PROMPT_DECOMPILE_ZH
+        format!("{}{}", SYSTEM_PROMPT_DECOMPILE_ZH, FEWSHOT_EXEMPLAR_ZH)
     } else {
-        SYSTEM_PROMPT_DECOMPILE
+        format!("{}{}", SYSTEM_PROMPT_DECOMPILE, FEWSHOT_EXEMPLAR)
     };
+    let tokens = est_tokens(&system) + est_tokens(&user);
     Bundle {
-        system: system.to_string(),
-        estimated_tokens: est_tokens(system) + est_tokens(&user),
+        system,
+        estimated_tokens: tokens,
         user,
         fn_id: Some(fn_.id.clone()),
     }

@@ -42,19 +42,72 @@ pub struct Block {
     pub scc_id: u32,
 }
 
+/// Classifies the type of a CFG edge.
+///
+/// Variants model the Python `viewer/cfg.py` kind strings plus the
+/// trace-enriched indirect dispatch edge.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum EdgeKind {
+    /// Sequential fall-through into a block start.
+    #[serde(rename = "fall")]
+    Fall,
+    /// bl/blr → ret pair (caller block → post-call PC).
+    #[serde(rename = "call-return")]
+    CallReturn,
+    /// Direct return edge.
+    #[serde(rename = "ret")]
+    Ret,
+    /// Direct branch by mnemonic ("b", "bl", "blr", "br", "b.eq", "cbz", ...).
+    Direct(String),
+    /// Indirect dispatch (br xN, blr xN) with trace-observed target set.
+    IndirectDispatch {
+        targets: Vec<u64>,
+        observed_count: usize,
+    },
+}
+
+impl EdgeKind {
+    /// Return a stable short label used in edge tooltips and labels.
+    pub fn label(&self) -> String {
+        match self {
+            EdgeKind::Fall => "fall".to_string(),
+            EdgeKind::CallReturn => "call-return".to_string(),
+            EdgeKind::Ret => "ret".to_string(),
+            EdgeKind::Direct(s) => s.clone(),
+            EdgeKind::IndirectDispatch {
+                targets,
+                observed_count,
+            } => format!("dispatch ×{} ({} targets)", observed_count, targets.len()),
+        }
+    }
+
+    /// True when the edge should be rendered with a dashed style.
+    pub fn is_indirect_dispatch(&self) -> bool {
+        matches!(self, EdgeKind::IndirectDispatch { .. })
+    }
+}
+
+impl Default for EdgeKind {
+    fn default() -> Self {
+        EdgeKind::Direct(String::new())
+    }
+}
+
 /// CFG edge metadata. Mirrors Python `viewer/cfg.py::CFG.edges` value
 /// dict: `{kind: str, count: int}`.
 ///
-/// `kind` strings (parity with Python):
-/// - `"fall"` — sequential fall-through into a block start.
-/// - `"call-return"` — bl/blr → ret pair (caller block → post-call PC).
-/// - `"b"`, `"bl"`, `"blr"`, `"br"`, `"ret"` — direct branch mnemonic.
-/// - `"b.cond"` (or `"b.eq"`, `"b.ne"`, ...) — conditional branch
-///   (Python uses the full `d.mnemonic` here, e.g. `"b.eq"`).
-/// - `"cbz"`, `"cbnz"`, `"tbz"`, `"tbnz"` — compare-and-branch.
-#[derive(Debug, Clone, Default, Serialize)]
+/// `kind` variants:
+/// - `EdgeKind::Fall` — sequential fall-through into a block start.
+/// - `EdgeKind::CallReturn` — bl/blr → ret pair (caller block → post-call PC).
+/// - `EdgeKind::Ret` — return edge.
+/// - `EdgeKind::Direct(s)` — direct branch with mnemonic string.
+/// - `EdgeKind::IndirectDispatch { targets, observed_count }` — indirect
+///   branch (br xN / blr xN) with trace-observed dispatch targets.
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct EdgeMeta {
-    pub kind: String,
+    pub kind: EdgeKind,
+    /// Number of times this edge was traversed in the trace.
     pub count: u64,
 }
 
@@ -189,7 +242,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
                         s,
                         pc,
                         EdgeMeta {
-                            kind: "fall".to_string(),
+                            kind: EdgeKind::Fall,
                             count: 1,
                         },
                     ));
@@ -228,7 +281,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
                                 caller,
                                 trace.pc(i + 1),
                                 EdgeMeta {
-                                    kind: "call-return".to_string(),
+                                    kind: EdgeKind::CallReturn,
                                     count: 1,
                                 },
                             ));
@@ -237,18 +290,17 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
                 }
 
                 if i + 1 < n {
-                    edges.push((
-                        s,
-                        trace.pc(i + 1),
-                        EdgeMeta {
-                            kind: branch_info
-                                .mnemonics
-                                .get(&i)
-                                .cloned()
-                                .unwrap_or_else(|| "b".to_string()),
-                            count: 1,
-                        },
-                    ));
+                    let mnem = branch_info
+                        .mnemonics
+                        .get(&i)
+                        .cloned()
+                        .unwrap_or_else(|| "b".to_string());
+                    let kind = if mnem == "ret" {
+                        EdgeKind::Ret
+                    } else {
+                        EdgeKind::Direct(mnem)
+                    };
+                    edges.push((s, trace.pc(i + 1), EdgeMeta { kind, count: 1 }));
                 }
                 // Save end_pc and reset current_start.
                 block_meta
@@ -332,6 +384,108 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     }
 
     cfg
+}
+
+/// Resolve indirect branch (br xN, blr xN) dispatch targets from trace data.
+///
+/// For each indirect branch instruction in the trace, collects every unique
+/// successor PC observed immediately after the instruction (the actual jump
+/// target at runtime). These targets can be added to the CFG as
+/// `EdgeKind::IndirectDispatch` edges.
+///
+/// Returns a map `source_pc → Vec<(target_pc, count)>`.
+pub fn resolve_indirect_branch_targets(
+    trace: &crate::trace::Trace,
+) -> HashMap<u64, Vec<(u64, u64)>> {
+    let n = trace.len();
+    if n == 0 {
+        return HashMap::new();
+    }
+
+    let mut dispatch_count: HashMap<u64, HashMap<u64, u64>> = HashMap::new();
+
+    for i in 0..n {
+        let inst = trace.inst(i);
+        let d = crate::disasm::decode(trace.pc(i), inst);
+        let mnem = d.mnemonic.as_str();
+        if mnem != "br" && mnem != "blr" {
+            continue;
+        }
+        if i + 1 >= n {
+            continue;
+        }
+        let src_pc = trace.pc(i);
+        let target_pc = trace.pc(i + 1);
+
+        dispatch_count
+            .entry(src_pc)
+            .or_default()
+            .entry(target_pc)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+    }
+
+    let mut result: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
+    for (src, targets) in dispatch_count {
+        let mut vec: Vec<(u64, u64)> = targets.into_iter().collect();
+        vec.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        result.insert(src, vec);
+    }
+    result
+}
+
+/// Apply indirect branch dispatch targets as CFG edges.
+///
+/// For each indirect-branch source PC, adds `EdgeKind::IndirectDispatch`
+/// edges from the block containing that PC to each observed target block.
+pub fn inject_indirect_dispatch_edges(cfg: &mut CFG, dispatch_map: &HashMap<u64, Vec<(u64, u64)>>) {
+    for (&src_pc, targets) in dispatch_map {
+        let Some(&src_node) = cfg.by_pc.get(&src_pc) else {
+            continue;
+        };
+
+        let observed_count: u64 = targets.iter().map(|(_, c)| *c).sum();
+
+        for &(target_pc, _count) in targets {
+            let dst_node = if let Some(&n) = cfg.by_pc.get(&target_pc) {
+                n
+            } else {
+                let block = Block {
+                    start_pc: target_pc,
+                    end_pc: target_pc,
+                    executions: 0,
+                    fn_name: None,
+                    scc_id: 0,
+                };
+                let node = cfg.graph.add_node(block);
+                cfg.by_pc.insert(target_pc, node);
+                cfg.by_start.insert(target_pc, node);
+                node
+            };
+
+            let already_exists = cfg
+                .graph
+                .edges_directed(src_node, petgraph::Direction::Outgoing)
+                .any(|e| {
+                    e.target() == dst_node
+                        && matches!(e.weight().kind, EdgeKind::IndirectDispatch { .. })
+                });
+
+            if !already_exists {
+                cfg.graph.add_edge(
+                    src_node,
+                    dst_node,
+                    EdgeMeta {
+                        kind: EdgeKind::IndirectDispatch {
+                            targets: targets.iter().map(|(t, _)| *t).collect(),
+                            observed_count: observed_count as usize,
+                        },
+                        count: observed_count,
+                    },
+                );
+            }
+        }
+    }
 }
 
 struct BranchScan {
@@ -459,11 +613,166 @@ mod tests {
         .unwrap();
         let trace = Trace::load(&cd).unwrap();
         let cfg = build_cfg(&trace);
-        // At least one edge must have a non-empty kind (the bl edge).
+        // At least one edge must have a Direct kind (the bl edge).
         assert!(
-            cfg.graph.edge_weights().any(|m| !m.kind.is_empty()),
-            "at least one edge should have a non-empty kind; edges = {:?}",
+            cfg.graph
+                .edge_weights()
+                .any(|m| matches!(m.kind, EdgeKind::Direct(_))),
+            "at least one edge should be Direct; edges = {:?}",
             cfg.graph.edge_weights().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn resolve_indirect_branch_targets_empty_trace() {
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir.path().join("run").join("calls").join("c");
+        std::fs::create_dir_all(&cd).unwrap();
+        std::fs::write(cd.join("trace.bin"), &[]).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":0}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x1000","size":65536}}"#,
+        )
+        .unwrap();
+        let trace = Trace::load(&cd).unwrap();
+        let targets = resolve_indirect_branch_targets(&trace);
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn resolve_indirect_branch_targets_collects_br_blr() {
+        // trace.bin with two br x8 instructions jumping to different targets.
+        // br = 0xd61f0100 (br x8), nop = 0xd503201f
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir.path().join("run").join("calls").join("c");
+        std::fs::create_dir_all(&cd).unwrap();
+        // Sequence: [br x8 @ 0x1000] -> 0x2000, nop, [br x8 @ 0x2000] -> 0x3000, nop
+        let pcs = [0x1000u64, 0x2000, 0x2000, 0x3000]; // br→0x2000, target, br→0x3000, target
+        let insts = [0xd61f0100u32, 0xd503201f, 0xd61f0100, 0xd503201f];
+        let mut buf = vec![0u8; REC_SIZE * 4];
+        for (i, (&pc, &inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x1000","size":65536}}"#,
+        )
+        .unwrap();
+        let trace = Trace::load(&cd).unwrap();
+        let targets = resolve_indirect_branch_targets(&trace);
+
+        // br at 0x1000 should have target 0x2000
+        assert!(targets.contains_key(&0x1000));
+        assert_eq!(targets[&0x1000], vec![(0x2000, 1)]);
+        // br at 0x2000 should have target 0x3000
+        assert!(targets.contains_key(&0x2000));
+        assert_eq!(targets[&0x2000], vec![(0x3000, 1)]);
+    }
+
+    #[test]
+    fn resolve_indirect_branch_multi_target_aggregates() {
+        // Same br PC hitting two different targets at runtime.
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir.path().join("run").join("calls").join("c");
+        std::fs::create_dir_all(&cd).unwrap();
+        // br @ 0x1000 -> 0x2000, br @ 0x1000 -> 0x3000
+        let pcs = [0x1000u64, 0x2000, 0x1000, 0x3000];
+        let insts = [0xd61f0100u32, 0xd503201f, 0xd61f0100, 0xd503201f];
+        let mut buf = vec![0u8; REC_SIZE * 4];
+        for (i, (&pc, &inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x1000","size":65536}}"#,
+        )
+        .unwrap();
+        let trace = Trace::load(&cd).unwrap();
+        let targets = resolve_indirect_branch_targets(&trace);
+        assert!(targets.contains_key(&0x1000));
+        let t = &targets[&0x1000];
+        assert_eq!(t.len(), 2);
+        // Sorted by count descending — each has count 1, order is arbitrary but stable
+        let mut tcs: Vec<_> = t.iter().map(|(target, _)| *target).collect();
+        tcs.sort();
+        assert_eq!(tcs, vec![0x2000, 0x3000]);
+    }
+
+    #[test]
+    fn inject_indirect_dispatch_edges_creates_blocks_and_edges() {
+        // Build a minimal trace with br→target, then verify inject adds edges.
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir.path().join("run").join("calls").join("c");
+        std::fs::create_dir_all(&cd).unwrap();
+        let pcs = [0x1000u64, 0x2000, 0x2000, 0x2004]; // br→0x2000, target, nop, nop (ensures block exists)
+        let insts = [0xd61f0100u32, 0xd503201f, 0xd503201f, 0xd503201f];
+        let mut buf = vec![0u8; REC_SIZE * 4];
+        for (i, (&pc, &inst)) in pcs.iter().zip(insts.iter()).enumerate() {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+        std::fs::write(
+            dir.path().join("run").join("meta.json"),
+            r#"{"module":{"name":"libt.so","base":"0x1000","size":65536}}"#,
+        )
+        .unwrap();
+        let trace = Trace::load(&cd).unwrap();
+        let mut cfg = build_cfg(&trace);
+
+        // Before injection, there should be no IndirectDispatch edges.
+        let before_dispatch = cfg
+            .graph
+            .edge_weights()
+            .any(|m| m.kind.is_indirect_dispatch());
+        assert!(!before_dispatch);
+
+        // Resolve and inject.
+        let dispatch_map = resolve_indirect_branch_targets(&trace);
+        inject_indirect_dispatch_edges(&mut cfg, &dispatch_map);
+
+        // After injection, at least one edge should be IndirectDispatch.
+        let after_dispatch = cfg
+            .graph
+            .edge_weights()
+            .any(|m| matches!(m.kind, EdgeKind::IndirectDispatch { .. }));
+        assert!(
+            after_dispatch,
+            "expected at least one IndirectDispatch edge after injection"
+        );
+
+        // The source block (0x1000) should have an outgoing IndirectDispatch edge to 0x2000.
+        let edges = cfg.edges_from(0x1000);
+        let dispatch_edge = edges
+            .iter()
+            .find(|(_, meta)| meta.kind.is_indirect_dispatch());
+        assert!(
+            dispatch_edge.is_some(),
+            "expected IndirectDispatch edge from block at 0x1000"
+        );
+        if let Some((dst, meta)) = dispatch_edge {
+            assert_eq!(*dst, 0x2000);
+            match &meta.kind {
+                EdgeKind::IndirectDispatch {
+                    targets,
+                    observed_count,
+                } => {
+                    assert_eq!(*observed_count, 1);
+                    assert!(targets.contains(&0x2000));
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 }
