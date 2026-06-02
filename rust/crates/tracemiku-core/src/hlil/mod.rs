@@ -15,6 +15,8 @@ pub mod expr;
 pub mod lower;
 pub mod pass_restructure;
 pub mod render;
+pub mod render_tokens;
+pub mod token;
 
 pub use expr::{
     address_of, address_of_field, array_index, assign, binary, block, break_, call, const_data,
@@ -24,3 +26,5 @@ pub use expr::{
 };
 pub use lower::{lower_mlil_to_hlil, LowerStats};
 pub use render::{render_expr, render_hlil};
+pub use render_tokens::render_hlil_tokens;
+pub use token::{CToken, CTokenKind, CTokenLine, CTokenWire};

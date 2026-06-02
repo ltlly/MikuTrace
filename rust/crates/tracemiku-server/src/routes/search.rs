@@ -228,7 +228,7 @@ fn make_hit(
 ) -> SearchHit {
     let r = inner.trace.record(idx);
     let (func_name, func_off) = inner.symbols.lookup(r.pc);
-    let (func, off) = if func_name == "?" {
+    let (func, off) = if func_name.is_empty() {
         (None, None)
     } else {
         (Some(func_name), Some(format!("{func_off:#x}")))

@@ -99,7 +99,7 @@ fn data_chase_response(
                     .modules
                     .relative_offset(rec.pc)
                     .map(|off| format!("{off:#x}")),
-                func: (func_name != "?").then_some(func_name),
+                func: (!func_name.is_empty()).then_some(func_name),
                 asm: raw.asm,
                 via: raw.via,
                 src: raw.src,

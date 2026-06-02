@@ -855,6 +855,23 @@ export interface LlilPipelinePayload {
   include_call_analysis?: boolean;
 }
 
+// ── Decompiler structured tokens ────────────────────────────────────────
+// Wire format: compact keys to minimize JSON payload.
+
+export interface CToken {
+  /** Display text */
+  t: string;
+  /** Kind: kw=keyword, ty=type, var=variable, lit=literal, op=operator,
+   *  p=punct, fn=func, lbl=label, fld=field, cmt=comment, ws=whitespace */
+  k: string;
+  /** Variable identity (for highlight-all / rename) */
+  v?: string;
+  /** Address (hex string, for jump/xref) */
+  a?: string;
+  /** Runtime value (hex string, for hover tooltip) */
+  rv?: string;
+}
+
 export interface PipelineResponse {
   fn_id: string;
   name: string;
@@ -867,6 +884,11 @@ export interface PipelineResponse {
   struct_loads: number;
   struct_stores: number;
   hlil_count: number;
+  // Structured tokens (preferred rendering path)
+  hlil_tokens?: CToken[][];
+  mlil_tokens?: CToken[][];
+  llil_tokens?: CToken[][];
+  // Plain text fallback (for CLI / backwards compat)
   llil_text?: string;
   mlil_text?: string;
   hlil_text?: string;

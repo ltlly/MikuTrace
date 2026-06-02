@@ -166,6 +166,12 @@ pub struct TraceDecompileOutput {
     pub mlil_text: String,
     /// HLIL C-like text.
     pub hlil_text: String,
+    /// HLIL structured tokens (for frontend rendering).
+    pub hlil_tokens: Vec<crate::hlil::CTokenLine>,
+    /// MLIL structured tokens.
+    pub mlil_tokens: Vec<crate::hlil::CTokenLine>,
+    /// LLIL structured tokens.
+    pub llil_tokens: Vec<crate::hlil::CTokenLine>,
     /// Function name resolution.
     pub function_name: String,
     /// Trace-recorded runtime values (per instruction).
@@ -313,11 +319,16 @@ pub fn decompile_trace(
     let (mlil_exprs, mlil_stats) = lower_llil_to_mlil(opt_llil, &names);
     let mlil_count = mlil_exprs.len();
     let mlil_text = render_mlil_block(&mlil_exprs);
+    let mlil_tokens = crate::mlil::render_tokens::render_mlil_tokens(&mlil_exprs);
+
+    // LLIL tokens (from the optimized LLIL exprs)
+    let llil_tokens = crate::llil::render_tokens::render_llil_tokens(opt_llil, &names);
 
     // Phase 4: MLIL → HLIL
     let (hlil_exprs, hlil_stats) = lower_mlil_to_hlil(&mlil_exprs, &names);
     let hlil_count = hlil_exprs.len();
     let hlil_text = render_hlil(&hlil_exprs);
+    let hlil_tokens = crate::hlil::render_hlil_tokens(&hlil_exprs);
 
     // Collect indirect branch dispatch targets (br xN, blr xN) from trace.
     let indirect_dispatch_targets = collect_indirect_dispatch_targets(insns, contexts);
@@ -338,6 +349,9 @@ pub fn decompile_trace(
         llil_ssa_text,
         mlil_text,
         hlil_text,
+        hlil_tokens,
+        mlil_tokens,
+        llil_tokens,
         function_name: function_name.to_string(),
         trace_contexts: contexts.to_vec(),
         observed_annotations,

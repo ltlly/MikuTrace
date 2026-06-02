@@ -190,7 +190,7 @@ fn forward_taint_response(
                     .modules
                     .relative_offset(r.pc)
                     .map(|off| format!("{off:#x}")),
-                func: if fname == "?" { None } else { Some(fname) },
+                func: if fname.is_empty() { None } else { Some(fname) },
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 why: h.why,
                 edge_kind: h.edge_kind,

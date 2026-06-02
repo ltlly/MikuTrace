@@ -140,7 +140,7 @@ fn records_response(inner: &crate::state::AppStateInner, q: RecordsQuery) -> Rec
         let annotation = if (d.is_call || d.is_branch) && i + 1 < n {
             let next_pc = inner.trace.pc(i + 1);
             let (target_name, target_off) = inner.symbols.lookup(next_pc);
-            if target_name != "?" && target_name != func_name {
+            if !target_name.is_empty() && target_name != func_name {
                 Some(format!("→ {target_name}+{target_off:#x}"))
             } else {
                 None
@@ -152,7 +152,7 @@ fn records_response(inner: &crate::state::AppStateInner, q: RecordsQuery) -> Rec
             .cfg
             .block_containing(r.pc)
             .map(|block| block.executions);
-        let (func, off) = if func_name == "?" {
+        let (func, off) = if func_name.is_empty() {
             (None, None)
         } else {
             (Some(func_name), Some(format!("{func_off:#x}")))

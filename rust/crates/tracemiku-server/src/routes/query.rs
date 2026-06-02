@@ -133,7 +133,7 @@ fn query_records(
             .trim()
             .to_string();
         let (func_name, off) = inner.symbols.lookup(record.pc);
-        let has_func = func_name != "?";
+        let has_func = !func_name.is_empty();
         let func = has_func.then_some(func_name);
         let text = format!("{} {} {}", record.pc, func.as_deref().unwrap_or(""), asm);
         if !matches_query(needle, re.as_ref(), &text) {
@@ -467,7 +467,7 @@ fn record_row(inner: &crate::state::AppStateInner, idx: usize, extra: Value) -> 
     let record = inner.trace.record(idx);
     let decoded = tracemiku_core::disasm::decode(record.pc, record.inst);
     let (func_name, off) = inner.symbols.lookup(record.pc);
-    let has_func = func_name != "?";
+    let has_func = !func_name.is_empty();
     json!({
         "idx": idx,
         "pc": format!("{:#x}", record.pc),

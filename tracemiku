@@ -68,9 +68,11 @@ def _decode_last_inst(pc, inst):
     return _is_ret_inst(inst), f".inst 0x{inst:08x}"
 
 
+REC_SIZE = 272  # trace.bin record size (stable contract)
+
 def _read_trace_tail(bin_path):
     size = bin_path.stat().st_size if bin_path.exists() else 0
-    n = size // 272
+    n = size // REC_SIZE
     first_pc = last_pc = last_inst = None
     if n > 0:
         with open(bin_path, "rb") as bf:

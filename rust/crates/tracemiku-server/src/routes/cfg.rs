@@ -81,7 +81,7 @@ fn cfg_response(inner: &crate::state::AppStateInner, q: CfgQuery) -> CfgResponse
     let mut total_blocks = 0usize;
     for b in cfg.blocks() {
         let (fn_name_str, _off) = symbols.lookup(b.start_pc);
-        let fn_name = if fn_name_str == "?" {
+        let fn_name = if fn_name_str.is_empty() {
             None
         } else {
             Some(fn_name_str)

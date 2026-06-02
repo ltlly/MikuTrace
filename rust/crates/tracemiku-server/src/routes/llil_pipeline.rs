@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tracemiku_core::decompiler::il_pipeline::{decompile_trace, TraceContext};
 use tracemiku_core::function_index::parse_id;
+use tracemiku_core::hlil::{render_hlil_tokens, CTokenWire};
 use tracemiku_core::prelude::FuncIR;
 use tracemiku_core::trace::Record;
 
@@ -64,6 +65,10 @@ pub struct PipelineResponse {
     pub dce_removed_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dce_iterations: Option<usize>,
+    // Structured tokens (always emitted)
+    pub hlil_tokens: Vec<Vec<CTokenWire>>,
+    pub mlil_tokens: Vec<Vec<CTokenWire>>,
+    pub llil_tokens: Vec<Vec<CTokenWire>>,
     // Text output (only when include_text=true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llil_text: Option<String>,
@@ -220,6 +225,9 @@ fn pipeline_response(
         struct_loads: mlil_stats.struct_loads as u64,
         struct_stores: mlil_stats.struct_stores as u64,
         hlil_count: output.hlil_count,
+        hlil_tokens: output.hlil_tokens.iter().map(|line| line.to_wire()).collect(),
+        mlil_tokens: output.mlil_tokens.iter().map(|line| line.to_wire()).collect(),
+        llil_tokens: output.llil_tokens.iter().map(|line| line.to_wire()).collect(),
         constfold_count: Some(output.constfold_count),
         dce_removed_count: Some(output.dce_removed_count),
         dce_iterations: Some(output.dce_iterations),

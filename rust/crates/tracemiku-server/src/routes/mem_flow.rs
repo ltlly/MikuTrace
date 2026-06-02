@@ -153,7 +153,7 @@ fn mem_flow_response(
                     .modules
                     .relative_offset(record.pc)
                     .map(|off| format!("{off:#x}")),
-                func: (func_name != "?").then_some(func_name),
+                func: (!func_name.is_empty()).then_some(func_name),
                 asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
                     .trim()
                     .to_string(),

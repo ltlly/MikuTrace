@@ -192,7 +192,7 @@ fn backward_taint_response(
                     .modules
                     .relative_offset(r.pc)
                     .map(|off| format!("{off:#x}")),
-                func: if fname == "?" { None } else { Some(fname) },
+                func: if fname.is_empty() { None } else { Some(fname) },
                 asm: format!("{} {}", d.mnemonic, d.op_str),
                 via: h.why, // Task 1's backward_taint puts the bare reg name in `why`
                 edge_kind: h.edge_kind,

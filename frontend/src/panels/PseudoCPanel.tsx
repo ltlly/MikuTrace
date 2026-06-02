@@ -226,9 +226,36 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     });
   });
 
+  function levelTokens(r: PipelineResponse | undefined): import("~/api/types").CToken[][] | null {
+    if (!r) return null;
+    switch (ilLevel()) {
+      case "hlil": return r.hlil_tokens ?? null;
+      case "mlil": return r.mlil_tokens ?? null;
+      case "llil": return r.llil_tokens ?? null;
+      default: return r.hlil_tokens ?? null;
+    }
+  }
+
   function levelText(r: PipelineResponse | undefined): string {
     if (!r) return "";
-    switch (ilLevel()) { case "llil": return r.llil_text || ""; case "mlil": return r.mlil_text || ""; default: return r.hlil_text || ""; }
+    // Prefer explicit text; fall back to joining token texts
+    switch (ilLevel()) {
+      case "llil": {
+        if (r.llil_text) return r.llil_text;
+        if (r.llil_tokens) return r.llil_tokens.map(line => line.map(t => t.t).join("")).join("\n");
+        return "";
+      }
+      case "mlil": {
+        if (r.mlil_text) return r.mlil_text;
+        if (r.mlil_tokens) return r.mlil_tokens.map(line => line.map(t => t.t).join("")).join("\n");
+        return "";
+      }
+      default: {
+        if (r.hlil_text) return r.hlil_text;
+        if (r.hlil_tokens) return r.hlil_tokens.map(line => line.map(t => t.t).join("")).join("\n");
+        return "";
+      }
+    }
   }
 
   const lineCount = createMemo(() => {
@@ -829,7 +856,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
               </div>
             </div>
 
-            <Show when={showText() && !collapsed()}>
+            <Show when={(showText() || levelTokens(r())) && !collapsed()}>
               <div class="pseudoc-body" classList={{"pseudoc-body-collapsed": collapsed()}}>
                 {/* Diff mode */}
                 <Show when={diffMode() && diffLines()}>
@@ -847,7 +874,7 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
                 </Show>
                 {/* Normal mode */}
                 <Show when={!diffMode()}>
-                <Show when={levelText(r())} fallback={<p class="dim">no {ilLevel().toUpperCase()} text output</p>}>
+                <Show when={levelText(r()) || levelTokens(r())} fallback={<p class="dim">no {ilLevel().toUpperCase()} text output</p>}>
                   <div class="pseudoc-code" ref={highlightEl}
                     onMouseOver={handleVarHover}
                     onMouseOut={handleVarOut}
@@ -1087,12 +1114,13 @@ function highlightLine(line: string, types?: Record<string, string>, searchQuery
   // Variable token: \x00V\x00name\x00type\x00/V\x00
   html = html.replace(/\x00V\x00([^\x00]*)\x00([^\x00]*)\x00\/V\x00/g, (_m, name, type) => {
     const attrName = escapeAttr(name);
+    const displayName = name.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const hlClass = name === highlightVar ? ' tok-var-highlight' : '';
     if (type) {
       const attrType = escapeAttr(type);
-      return `<span class="tok-var${hlClass}" data-var="${attrName}" data-type="${attrType}" title="${attrType} ${attrName}">`;
+      return `<span class="tok-var${hlClass}" data-var="${attrName}" data-type="${attrType}" title="${attrType} ${attrName}">${displayName}</span>`;
     }
-    return `<span class="tok-var${hlClass}" data-var="${attrName}">`;
+    return `<span class="tok-var${hlClass}" data-var="${attrName}">${displayName}</span>`;
   });
   // Label reference markers: \x00lblref\x00name\x00/lblref\x00
   html = html.replace(/\x00lblref\x00([^\x00]+)\x00\/lblref\x00/g, (_m, name) => {

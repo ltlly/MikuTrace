@@ -131,7 +131,7 @@ where
             let (cf, _off) = if target_pc != 0 {
                 sym.lookup(target_pc)
             } else {
-                ("?".to_string(), 0u64)
+                (String::new(), 0u64)
             };
             let top_depth = stack.last().expect("stack non-empty").depth;
             let new_depth = top_depth + 1;
@@ -144,7 +144,7 @@ where
                 continue;
             }
             let child = CallNode {
-                fn_name: if cf == "?" { None } else { Some(cf) },
+                fn_name: if cf.is_empty() { None } else { Some(cf) },
                 fn_pc: target_pc,
                 enter_idx: i,
                 exit_idx: i,

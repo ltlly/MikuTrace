@@ -77,7 +77,7 @@ pub async fn record_handler(
 
     // Symbol resolution (M2-γ).
     let (func_name, func_off) = inner.symbols.lookup(r.pc);
-    let (func, off) = if func_name == "?" {
+    let (func, off) = if func_name.is_empty() {
         (None, None)
     } else {
         (Some(func_name), Some(format!("{func_off:#x}")))
@@ -154,7 +154,7 @@ pub(crate) fn classify_reg_value(
                 .is_some_and(|m| m.name == module.name)
             {
                 let (fname, foff) = inner.symbols.lookup(cur);
-                if fname != "?" {
+                if !fname.is_empty() {
                     parts.push(format!("[{fname}+{foff:#x}]"));
                 } else {
                     parts.push(format!("[{}+{off:#x}]", module.name));

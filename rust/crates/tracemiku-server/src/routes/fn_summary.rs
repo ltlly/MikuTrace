@@ -165,7 +165,7 @@ fn fn_summary_response(
             let (func_name, _) = inner.symbols.lookup(pc);
             FnSummaryCallee {
                 pc: format!("{pc:#x}"),
-                func: (func_name != "?").then_some(func_name),
+                func: (!func_name.is_empty()).then_some(func_name),
                 count,
             }
         })

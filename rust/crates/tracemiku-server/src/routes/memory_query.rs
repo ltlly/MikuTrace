@@ -130,7 +130,7 @@ fn last_write_of_addr_response(
     let record = inner.trace.record(writer_idx);
     let decoded = decode(record.pc, record.inst);
     let (func_name, _) = inner.symbols.lookup(record.pc);
-    let func = (func_name != "?").then_some(func_name);
+    let func = (!func_name.is_empty()).then_some(func_name);
     let src_reg = source_reg_for_write_at(&decoded, &record, addr);
     let src_value = src_reg
         .as_deref()
@@ -197,7 +197,7 @@ fn last_write_of_addr_response_from_memshadow(
     let record = inner.trace.record(write.idx);
     let decoded = decode(record.pc, record.inst);
     let (func_name, _) = inner.symbols.lookup(record.pc);
-    let func = (func_name != "?").then_some(func_name);
+    let func = (!func_name.is_empty()).then_some(func_name);
     let src_reg = (writer_kind != "x")
         .then(|| source_reg_for_write_at(&decoded, &record, addr))
         .flatten();
@@ -366,7 +366,7 @@ fn mem_writes_in_range_response(
                 .modules
                 .relative_offset(record.pc)
                 .map(|off| format!("{off:#x}")),
-            func: (func_name != "?").then_some(func_name),
+            func: (!func_name.is_empty()).then_some(func_name),
             asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
                 .trim()
                 .to_string(),
@@ -429,7 +429,7 @@ fn mem_writes_in_range_from_memshadow(
                 .modules
                 .relative_offset(record.pc)
                 .map(|off| format!("{off:#x}")),
-            func: (func_name != "?").then_some(func_name),
+            func: (!func_name.is_empty()).then_some(func_name),
             asm: format!("{} {}", decoded.mnemonic, decoded.op_str)
                 .trim()
                 .to_string(),

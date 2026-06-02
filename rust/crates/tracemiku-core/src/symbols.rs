@@ -174,13 +174,13 @@ impl SymbolMap {
         None
     }
 
-    /// `(name, offset_in_func)`. Returns `("?", 0)` if `pc` is before any
+    /// `(name, offset_in_func)`. Returns `("", 0)` if `pc` is before any
     /// known function or no functions exist. Caller must have called
     /// `freeze()` after all adds.
     pub fn lookup(&self, pc: u64) -> (String, u64) {
         self.lookup_entry(pc)
             .map(|entry| (entry.name, entry.off))
-            .unwrap_or_else(|| ("?".to_string(), 0))
+            .unwrap_or_default()
     }
 
     pub fn len(&self) -> usize {

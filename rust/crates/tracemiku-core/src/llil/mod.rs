@@ -17,6 +17,7 @@ pub mod pass_typelat;
 pub mod pass_uidf;
 pub mod pass_var_unify;
 pub mod render;
+pub mod render_tokens;
 pub mod ssa;
 pub mod util;
 

@@ -6,7 +6,7 @@ use tracemiku_core::prelude::*;
 fn symbol_map_lookup_returns_unknown_for_empty() {
     let m = SymbolMap::new();
     let (name, off) = m.lookup(0x100000);
-    assert_eq!(name, "?");
+    assert_eq!(name, "");
     assert_eq!(off, 0);
 }
 
@@ -41,7 +41,7 @@ fn symbol_map_lookup_before_first_returns_unknown() {
     m.add(0x100000, "f".to_string());
     m.freeze();
     let (n, o) = m.lookup(0x0fffff);
-    assert_eq!(n, "?");
+    assert_eq!(n, "");
     assert_eq!(o, 0);
 }
 
@@ -84,7 +84,7 @@ fn symbol_map_respects_module_boundaries() {
     assert_eq!(off, 0x8);
 
     let (name, off) = m.lookup(0x180000);
-    assert_eq!(name, "?");
+    assert_eq!(name, "");
     assert_eq!(off, 0);
 
     let hit = m.lookup_entry(0x200108).expect("libb symbol lookup");
@@ -108,11 +108,11 @@ fn symbol_map_unbounded_entries_do_not_bleed_into_module_aware_maps() {
     m.freeze();
 
     let (name, off) = m.lookup(0x150000);
-    assert_eq!(name, "?");
+    assert_eq!(name, "");
     assert_eq!(off, 0);
 
     let (name, off) = m.lookup(0x200050);
-    assert_eq!(name, "?");
+    assert_eq!(name, "");
     assert_eq!(off, 0);
 
     let (name, off) = m.lookup(0x100000);

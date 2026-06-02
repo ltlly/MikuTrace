@@ -29,7 +29,7 @@ pub struct JniCallRecord {
 
 impl JniCallRecord {
     pub fn func_display(&self) -> Option<String> {
-        (self.func_name != "?").then(|| self.func_name.clone())
+        (!self.func_name.is_empty()).then(|| self.func_name.clone())
     }
 
     pub fn arg(&self, reg: &str) -> Option<u64> {

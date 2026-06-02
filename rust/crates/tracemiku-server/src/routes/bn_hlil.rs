@@ -260,7 +260,7 @@ fn params_for_pc(state: &AppState, pc: u64) -> Value {
 
 fn trace_fn_start(state: &AppState, pc: u64) -> Option<u64> {
     let (name, off) = state.inner.symbols.lookup(pc);
-    if name == "?" || off > pc || off > MAX_TRACE_FN_HINT_SPAN {
+    if name.is_empty() || off > pc || off > MAX_TRACE_FN_HINT_SPAN {
         return None;
     }
     let start = pc - off;
@@ -322,7 +322,7 @@ fn enrich_hlil_for_pc_response(state: &AppState, pc: u64, mut response: Value) -
         .or_insert_with(|| json!(if ok && ready { "ok" } else { "not-ready" }));
 
     let (trace_name, trace_off) = state.inner.symbols.lookup(pc);
-    if trace_name != "?" {
+    if !trace_name.is_empty() {
         obj.insert(
             "trace_fn".to_string(),
             json!({"name": trace_name, "off": format!("{trace_off:#x}")}),

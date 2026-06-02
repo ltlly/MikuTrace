@@ -319,7 +319,7 @@ fn build_calls_for_range(
         let lookup = sym.lookup_entry(callee_pc);
         let callee_fn = lookup
             .as_ref()
-            .filter(|lookup| !lookup.name.is_empty() && lookup.name != "?")
+            .filter(|lookup| !lookup.name.is_empty())
             .map(|lookup| lookup.name.clone());
         let callee_base = lookup
             .as_ref()
@@ -525,7 +525,7 @@ pub fn split_top_k_callees(
         }
 
         let (sym_name, _) = sym.lookup(fn_pc);
-        let name = if sym_name.is_empty() || sym_name == "?" {
+        let name = if sym_name.is_empty() {
             format!("sub_{:x}", fn_pc.wrapping_sub(module_base))
         } else {
             sym_name
@@ -788,7 +788,7 @@ fn build_root_only(
     let pc0 = trace.pc(0);
     let pc_last = trace.pc(n - 1);
     let (root_name, _) = sym.lookup(pc0);
-    let resolved_name = if root_name == "?" {
+    let resolved_name = if root_name.is_empty() {
         format!("sub_{:x}", pc0.wrapping_sub(module_base))
     } else {
         root_name

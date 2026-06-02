@@ -12,6 +12,7 @@
 pub mod expr;
 pub mod lower;
 pub mod render;
+pub mod render_tokens;
 
 pub use expr::{
     address_of, address_of_field, binary, const_data, const_ptr, csel, expr, konst, load,
