@@ -60,3 +60,6 @@ uv.lock
 tracer/node_modules/
 tracer/_agent.js
 .claude/scheduled_tasks.lock
+
+# External tool state
+.omc/

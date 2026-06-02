@@ -90,6 +90,7 @@
 
 ## Bugs / Open
 
+- [ ] Audit Rust server layer for band-aid architecture in `rust/crates/tracemiku-server/src` (text post-processing after semantic rendering, sentinel values, route-level repair logic, flattened response shapes).
 - Known structural improvements completed in Wave 1+2 workflow (2026-06-02).
   See `docs/decompiler-audit-2026-06-01.md` for the full benchmark — all 26
   items from the audit are now implemented. Remaining: variable merging (needs
