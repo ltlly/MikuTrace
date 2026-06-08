@@ -154,6 +154,8 @@ enum Cmd {
         count: usize,
         #[arg(long)]
         regs: Option<String>,
+        #[arg(long)]
+        indices: Option<String>,
     },
     /// GET /api/record/{idx}.
     Record { trace_dir: PathBuf, idx: usize },
@@ -1425,7 +1427,23 @@ async fn main() -> anyhow::Result<()> {
             start,
             count,
             regs,
+            indices,
         }) => {
+            if let Some(idx_str) = indices {
+                let idxs: Vec<usize> = idx_str.split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect();
+                let mut results = Vec::new();
+                for idx in &idxs {
+                    let path = format!("/api/record/{idx}");
+                    match route_get_json_value(trace_dir.clone(), path).await {
+                        Ok(v) => results.push(v),
+                        Err(_) => results.push(serde_json::json!({"idx": idx, "error": "not found"})),
+                    }
+                }
+                print_pretty(&serde_json::Value::Array(results))?;
+                return Ok(());
+            }
             let mut params = vec![("start", start.to_string()), ("count", count.to_string())];
             if let Some(regs) = regs {
                 params.push(("regs", regs));
@@ -2071,7 +2089,22 @@ async fn main() -> anyhow::Result<()> {
             route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
         }
         Some(Cmd::Crypto { trace_dir }) => {
-            route_get_json(trace_dir, "/api/crypto-analysis".to_string()).await
+            let mut value = route_get_json_value(trace_dir, "/api/crypto-analysis".to_string()).await?;
+            if let Some(obj) = value.as_object_mut() {
+                let has_findings = obj.iter().any(|(k, v)| {
+                    (k.contains("findings") || k.contains("hits") || k.contains("instructions"))
+                        && v.as_array().map_or(false, |a| !a.is_empty())
+                });
+                if !has_findings {
+                    obj.insert("note".to_string(), serde_json::json!(
+                        "No crypto constants, byte patterns, or ARM CE instructions detected. \
+                         This may mean: (1) the function doesn't use crypto, (2) crypto is in a \
+                         different call, or (3) constants are obfuscated."
+                    ));
+                }
+            }
+            print_pretty(&value)?;
+            Ok(())
         }
         Some(Cmd::HashFinalizeDetect {
             trace_dir,
@@ -19379,6 +19412,12 @@ mod tests {
 }
 
 fn print_pretty(value: &serde_json::Value) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
+    use std::io::IsTerminal;
+    let s = if std::io::stdout().is_terminal() {
+        serde_json::to_string_pretty(value)?
+    } else {
+        serde_json::to_string(value)?
+    };
+    println!("{s}");
     Ok(())
 }

@@ -96,6 +96,44 @@ make test-device
 The local Python environment is managed with `uv`; use `uv run python ...` for
 Python helper scripts.
 
+## AI Agent Quick Start
+
+When operating as an AI agent, follow this sequence:
+
+1. `cd /Users/ltlly/Code/MikuTrace` (the project root)
+2. `./tracemiku --help` — get all subcommands
+3. `./tracemiku <subcmd> --help` — get exact parameters for any subcommand
+4. Use `./tracemiku api <call_dir> /api/<route> -p key=value` for one-shot JSON
+   API queries (no web server needed, runs route in-process)
+5. Use `./tracemiku query <call_dir> <sub> ...` for common analysis patterns
+6. Use `./tracemiku doctor --pkg <pkg>` before real-device tracing
+
+### Key Rules for AI Agents
+
+- **Never start `tracemiku web` just to curl it** — use `tracemiku api` or CLI
+  subcommands directly. The web server is for human interactive use only.
+- **`./tracemiku` is the canonical entry** — do not invoke `tracemiku-cli` Rust
+  binary directly; the Python wrapper handles binary resolution.
+- **All CLI output is JSON** — pipe-safe for most commands without `--json`.
+- **MemShadow is partial** — only bytes actually accessed during the traced
+  execution are tracked. `None` bytes mean "never observed during this trace",
+  not "memory is zero". Check the `completeness` field in `/api/mem-dump`
+  responses; if <0.7, the data may be insufficient for emulation.
+- **Real-device trace pre-checks** — run `./tracemiku doctor --pkg <pkg>` before
+  tracing to verify frida/SELinux/device state in one pass.
+- **Do not set `--max-records`** unless you specifically want a truncated trace.
+  The default captures the full function execution.
+
+### Common Pitfalls
+
+- `tracemiku web` may compile Rust on first run — compilation output goes to
+  stderr but don't pipe its stdout to JSON parsers during startup.
+- `query search` accepts both `--pattern "bl"` and positional `"bl"` — both work.
+- If `tracemiku api` fails with "No such file", check you're passing a per-call
+  directory (e.g. `traces/run1/calls/call_0_tid123_500r_10ms/`), not the run root.
+- For batch record queries, use `--indices 0,5,10,100` instead of looping
+  individual subprocess calls.
+
 ## Current Web Interaction Contracts
 
 - Global jump command: `g` opens the command bar. `#N` / `N` jumps to trace
@@ -180,6 +218,9 @@ TraceIR route; they provide a fully local three-layer decompiler path.
 ## Device Notes
 
 The usual development device may already be connected with adb, root, and Frida.
+Run `./tracemiku doctor` to verify all prerequisites before tracing. The `trace`
+command also runs a lightweight pre-flight check and warns if issues are detected.
+
 For long interactive sessions, keep the device usable and battery-safe: prevent
 auto-lock when you need app interaction, and turn the screen off again when you
 are done. Avoid repeated heavy UI operations that keep the app/device hot unless

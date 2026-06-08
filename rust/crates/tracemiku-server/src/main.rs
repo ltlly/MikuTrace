@@ -85,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(target: "tracemiku-server",
         "listening on http://{actual}/  trace_dir={}",
         cli.trace_dir.display());
+    println!("{}", serde_json::json!({"event": "ready", "host": actual.ip().to_string(), "port": actual.port()}));
 
     axum::serve(listener, app).await?;
     Ok(())

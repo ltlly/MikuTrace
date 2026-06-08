@@ -34,7 +34,7 @@ def _rust_cli_cmd(args):
     if debug_bin.exists():
         return [str(debug_bin), *args]
     return [
-        "cargo", "run", "--manifest-path", str(HERE / "rust" / "Cargo.toml"),
+        "cargo", "run", "--quiet", "--manifest-path", str(HERE / "rust" / "Cargo.toml"),
         "-p", "tracemiku-cli", "--", *args,
     ]
 
@@ -645,6 +645,13 @@ def cmd_trace(args):
                 if "stack" in m: wlog(m["stack"])
         return cb
 
+    # Pre-flight device check (non-blocking, best-effort)
+    if not args.remote:
+        _, fails, _ = _check_device(
+            pkg=args.pkg, out_dir=None, verbose=False)
+        if fails > 0:
+            wlog("[preflight] 检测到设备问题, 运行 `./tracemiku doctor` 查看详情")
+
     mgr = frida.get_device_manager()
     if args.remote:
         device = mgr.add_remote_device(args.remote)
@@ -737,7 +744,21 @@ def cmd_trace(args):
             r = subprocess.run(["adb","shell","pidof",args.pkg], capture_output=True, text=True)
             if r.stdout.strip(): pid = int(r.stdout.strip().split()[0])
     if pid is None:
-        wlog(f"[!] 找不到目标进程 (pkg={args.pkg}); 先启动 app 或 --attach-pid <pid>")
+        wlog(f"[!] 找不到目标进程 (pkg={args.pkg})")
+        try:
+            procs = [(p.name, p.pid) for p in device.enumerate_processes()]
+            matches = [(n, p) for n, p in procs if args.pkg and args.pkg.lower() in n.lower()]
+            if matches:
+                wlog(f"    可能的匹配进程:")
+                for n, p in matches[:10]:
+                    wlog(f"      {p:>6}  {n}")
+            else:
+                wlog(f"    设备当前进程 (前20):")
+                for n, p in sorted(procs, key=lambda x: x[0])[:20]:
+                    wlog(f"      {p:>6}  {n}")
+        except Exception:
+            pass
+        wlog(f"    提示: 先启动 app 或用 --attach-pid <pid>")
         log_fp.close(); return 1
     wlog(f"attach pid={pid}")
     # P1-C M2: child-attach — race-attach to fork()'d children by PID.
@@ -1221,7 +1242,7 @@ def _run_rust_web(path, host, port, no_browser, so):
         cmd = [bin_path, str(path), "--host", host, "--port", str(port)]
     else:
         cmd = [
-            "cargo", "run", "--manifest-path", str(HERE / "rust" / "Cargo.toml"),
+            "cargo", "run", "--quiet", "--manifest-path", str(HERE / "rust" / "Cargo.toml"),
             "-p", "tracemiku-server", "--", str(path),
             "--host", host, "--port", str(port),
         ]
@@ -1458,7 +1479,10 @@ def cmd_query(args):
     if sub == "cfg":
         return _run_rust_cli(["cfg", path])
     if sub == "search":
-        return _run_rust_cli(["search", path, args.pattern, "--max-results", str(args.max)])
+        pattern = args.pattern or args.pattern_flag
+        if not pattern:
+            print("[!] search 需要 pattern (位置参数或 --pattern)", file=sys.stderr); return 2
+        return _run_rust_cli(["search", path, pattern, "--max-results", str(args.max)])
     if sub == "func-summary":
         return _run_rust_cli(["functions", path])
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
@@ -1472,6 +1496,102 @@ def cmd_api(args):
     if args.json_body is not None:
         cmd += ["--json-body", args.json_body]
     return _run_rust_cli(cmd)
+
+def _check_device(pkg=None, out_dir=None, verbose=True):
+    """Shared device pre-flight checks. Returns (ok_count, fail_count, results_list).
+    Each result is (check_name, passed: bool, detail: str)."""
+    results = []
+
+    def _run(label, cmd):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            return r.returncode, r.stdout.strip(), r.stderr.strip()
+        except FileNotFoundError:
+            return -1, "", f"{cmd[0]} not found"
+        except subprocess.TimeoutExpired:
+            return -2, "", "timeout"
+
+    # 1. ADB connectivity
+    rc, out, err = _run("adb", ["adb", "devices"])
+    devices = [l for l in out.splitlines()[1:] if l.strip() and "device" in l]
+    if rc == 0 and devices:
+        results.append(("adb connectivity", True, f"{len(devices)} device(s) connected"))
+    else:
+        results.append(("adb connectivity", False, "no device found — check USB/WiFi connection"))
+
+    # 2. Root / su access
+    rc, out, _ = _run("root", ["adb", "shell", "id"])
+    if "uid=0" in out:
+        results.append(("root access", True, "running as root"))
+    else:
+        rc2, out2, _ = _run("su", ["adb", "shell", "su", "-c", "id"])
+        if "uid=0" in out2:
+            results.append(("root access", True, "su available"))
+        else:
+            results.append(("root access", False, "no root — run `adb root` or ensure su binary exists"))
+
+    # 3. frida-server running
+    rc, out, _ = _run("frida", ["adb", "shell", "ps -A"])
+    if "miku" in out.lower() or "frida" in out.lower():
+        results.append(("frida-server", True, "process found"))
+    else:
+        results.append(("frida-server", False,
+            "not running — start with: adb shell /data/local/tmp/.miku-srv &"))
+
+    # 4. SELinux state
+    rc, out, _ = _run("selinux", ["adb", "shell", "getenforce"])
+    if "permissive" in out.lower() or "disabled" in out.lower():
+        results.append(("SELinux", True, out))
+    else:
+        results.append(("SELinux", False,
+            f"state={out} — set permissive: adb shell setenforce 0"))
+
+    # 5. Target package exists (optional)
+    if pkg:
+        rc, out, _ = _run("pkg", ["adb", "shell", "pm", "list", "packages"])
+        if f"package:{pkg}" in out:
+            results.append(("target package", True, f"{pkg} installed"))
+        else:
+            # Try partial match
+            partial = [l for l in out.splitlines() if pkg.lower() in l.lower()]
+            if partial:
+                results.append(("target package", False,
+                    f"exact '{pkg}' not found; similar: {partial[0].replace('package:','')}"))
+            else:
+                results.append(("target package", False, f"'{pkg}' not installed on device"))
+
+    # 6. Output directory writable (optional)
+    if out_dir:
+        rc, out, err = _run("write-test",
+            ["adb", "shell", f"touch {out_dir}/.miku_test && rm {out_dir}/.miku_test"])
+        if rc == 0:
+            results.append(("output dir writable", True, out_dir))
+        else:
+            results.append(("output dir writable", False,
+                f"{out_dir} not writable — check SELinux context or use /data/local/tmp"))
+
+    if verbose:
+        for name, passed, detail in results:
+            mark = "\033[32m✓\033[0m" if passed else "\033[31m✗\033[0m"
+            print(f"  {mark} {name}: {detail}")
+
+    ok = sum(1 for _, p, _ in results if p)
+    fail = sum(1 for _, p, _ in results if not p)
+    return ok, fail, results
+
+
+def cmd_doctor(args):
+    """Pre-flight device check for trace readiness."""
+    print("[doctor] 检查设备 trace 前置条件...\n")
+    ok, fail, results = _check_device(pkg=args.pkg, out_dir=args.out, verbose=True)
+    print(f"\n{'='*40}")
+    if fail == 0:
+        print(f"  所有检查通过 ({ok}/{ok})")
+        return 0
+    else:
+        print(f"  {ok} 通过, {fail} 失败 — 请修复上述问题后再执行 trace")
+        return 1
+
 
 def cmd_probe(args):
     """Lightweight Interceptor-based export profiling (no Stalker, no trace)."""
@@ -1741,7 +1861,9 @@ def main():
     q_st = _addj(qsp.add_parser("strings", help="字符串提取")); q_st.add_argument("--min-len", type=int, default=4)
     q_cfg = _addj(qsp.add_parser("cfg", help="CFG 数据"))
     q_se = _addj(qsp.add_parser("search", help="按反汇编 regex 搜"))
-    q_se.add_argument("--pattern", required=True); q_se.add_argument("--max", type=int, default=200)
+    q_se.add_argument("pattern", nargs="?", default=None, help="搜索 regex (也可用 --pattern)")
+    q_se.add_argument("--pattern", dest="pattern_flag", default=None, help="搜索 regex (兼容旧接口)")
+    q_se.add_argument("--max", type=int, default=200)
     q_fs = _addj(qsp.add_parser("func-summary", help="函数命中频次"))
 
     # list
@@ -1801,6 +1923,11 @@ def main():
                        choices=("binja", "ghidra", "none"),
                        help="deprecated; BN uses TRACEMIKU_BN_SO / --so in Rust v2")
 
+    # doctor (pre-flight device check)
+    p_doc = sp.add_parser("doctor", help="检查设备 trace 前置条件 (adb/root/frida/SELinux)")
+    p_doc.add_argument("--pkg", default=None, help="目标 app 包名 (检查是否安装)")
+    p_doc.add_argument("--out", default=None, help="trace 输出目录 (检查是否可写)")
+
     # probe (lightweight Interceptor-only counting, no Stalker)
     p_pb = sp.add_parser("probe",
                          help="轻量级 Interceptor 导出函数计数 (不启动 Stalker, 无 trace.bin)")
@@ -1837,6 +1964,7 @@ def main():
         return _run_rust_cli(cmd)
     if args.subcommand == "dec":     return cmd_dec(args)
     if args.subcommand == "probe":   return cmd_probe(args)
+    if args.subcommand == "doctor":  return cmd_doctor(args)
     ap.print_help(); return 1
 
 

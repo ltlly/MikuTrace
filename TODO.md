@@ -134,6 +134,21 @@
 - [x] Decompile eval tool semantic accuracy metric: `--semantic` flag; control-flow/variable/statement/keyword metrics; per-function + aggregate scores. Wave 2.
 - [x] Frontend keyboard navigation parity: line cursor in pseudocode (arrow keys); Enter→jump assembly; Tab→cycle signature/body; persistent rename/type propagation. Wave 2.
 
+## P4 — Agent DX & Device Ergonomics
+
+- [x] `tracemiku doctor` pre-flight check command
+- [x] Pre-flight checks integrated into `cmd_trace()`
+- [x] `--pkg` failure shows frida-ps process matches
+- [x] CLI `cargo run --quiet` to suppress compilation noise
+- [x] `query search` accepts both positional and `--pattern` arg
+- [x] MemShadow completeness metadata in /api/mem-dump
+- [x] Server ready JSON signal on stdout
+- [x] Non-TTY compact JSON output (is-terminal)
+- [x] Batch `--indices` for Records command
+- [x] `tracemiku crypto` empty result diagnostic message
+- [x] CLAUDE.md "AI Agent Quick Start" section
+- [ ] Shell completion generation (clap_complete) — future
+
 ## Bugs — Fixed (Previous)
 
 - [x] **Assembly scroll freeze**: SAFE_SCROLL_HEIGHT 30M→15M

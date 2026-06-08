@@ -41,6 +41,8 @@ pub struct MemDumpResponse {
     pub addr: String,
     pub count: usize,
     pub cursor: Option<u64>,
+    pub observed_count: usize,
+    pub completeness: f64,
     pub bytes: Vec<MemDumpByte>,
 }
 
@@ -71,6 +73,8 @@ fn mem_dump_response(
                 addr: q.addr,
                 count,
                 cursor: q.cursor,
+                observed_count: 0,
+                completeness: 0.0,
                 bytes: Vec::new(),
             });
         }
@@ -87,11 +91,15 @@ fn mem_dump_response(
             src_idx: src,
         });
     }
+    let observed_count = bytes.iter().filter(|b| b.byte.is_some()).count();
+    let completeness = if count > 0 { observed_count as f64 / count as f64 } else { 1.0 };
     Ok(MemDumpResponse {
         status: "ready",
         addr: q.addr,
         count,
         cursor: q.cursor,
+        observed_count,
+        completeness,
         bytes,
     })
 }
