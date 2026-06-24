@@ -103,26 +103,69 @@ When operating as an AI agent, follow this sequence:
 1. `cd /Users/ltlly/Code/MikuTrace` (the project root)
 2. `./tracemiku --help` — get all subcommands
 3. `./tracemiku <subcmd> --help` — get exact parameters for any subcommand
-4. Use `./tracemiku api <call_dir> /api/<route> -p key=value` for one-shot JSON
-   API queries (no web server needed, runs route in-process)
-5. Use `./tracemiku query <call_dir> <sub> ...` for common analysis patterns
-6. Use `./tracemiku doctor --pkg <pkg>` before real-device tracing
+4. **Always prefer dedicated CLI subcommands** over `tracemiku api`. The CLI has
+   70+ subcommands covering nearly all analysis; run `./tracemiku --help` and the
+   Rust binary `--help` to discover them.
+5. Use `./tracemiku doctor --pkg <pkg>` before real-device tracing
+
+### CLI vs `tracemiku api` — When to Use Which
+
+**Always prefer dedicated CLI subcommands.** They are faster, more ergonomic,
+and many are multi-step orchestration commands that would require dozens of
+sequential `api` calls to replicate:
+
+- `./tracemiku query <call_dir> <sub> ...` — common query patterns (records,
+  search, forward-taint, backward-taint, etc.)
+- `./tracemiku list`, `info`, `stats` — filesystem operations, no router needed
+- `./tracemiku dec <call_dir> --summary` — decompile overview
+- Rust CLI subcommands like `output-backtrace`, `output-map`, `vm-ops`,
+  `byte-lineage`, `vm-backchain` — multi-API orchestration with summary output
+
+**Only use `tracemiku api` as a last resort** when no dedicated CLI subcommand
+exists for the route you need. Currently only 3 callable routes lack a CLI
+wrapper: `/api/analysis-index`, `/api/dec/llm-call`, `/api/llil/llm`.
+
+```bash
+# GOOD — use dedicated subcommands:
+./tracemiku query <call_dir> records --range 0..50 --regs x0,x1,sp
+./tracemiku query <call_dir> forward-taint --from 0 --reg x0 --max 500
+./tracemiku list traces/run1 --json
+./tracemiku info <call_dir> --json
+./tracemiku dec <call_dir> --summary
+
+# Rust CLI subcommands (run the binary directly via the wrapper):
+./tracemiku query <call_dir> backtrace --idx 100
+./tracemiku query <call_dir> mem-dump --addr 0x... --size 256
+./tracemiku query <call_dir> functions
+./tracemiku query <call_dir> cfg --fn trace:F0
+./tracemiku query <call_dir> strings
+
+# BAD — do NOT use api when a CLI subcommand exists:
+./tracemiku api <call_dir> /api/backtrace -p idx=100      # use query backtrace
+./tracemiku api <call_dir> /api/functions                  # use query functions
+./tracemiku api <call_dir> /api/forward-taint -p from=0 -p reg=x0  # use query forward-taint
+
+# OK — api is acceptable when no CLI subcommand exists:
+./tracemiku api <call_dir> /api/analysis-index
+```
 
 ### Key Rules for AI Agents
 
-- **Never start `tracemiku web` just to curl it** — use `tracemiku api` or CLI
-  subcommands directly. The web server is for human interactive use only.
+- **Never start `tracemiku web` just to curl it** — use CLI subcommands
+  directly. The web server is for human interactive use only.
 - **`./tracemiku` is the canonical entry** — do not invoke `tracemiku-cli` Rust
   binary directly; the Python wrapper handles binary resolution.
 - **All CLI output is JSON** — pipe-safe for most commands without `--json`.
 - **MemShadow is partial** — only bytes actually accessed during the traced
   execution are tracked. `None` bytes mean "never observed during this trace",
-  not "memory is zero". Check the `completeness` field in `/api/mem-dump`
-  responses; if <0.7, the data may be insufficient for emulation.
+  not "memory is zero". Check the `completeness` field in mem-dump responses;
+  if <0.7, the data may be insufficient for emulation.
 - **Real-device trace pre-checks** — run `./tracemiku doctor --pkg <pkg>` before
   tracing to verify frida/SELinux/device state in one pass.
 - **Do not set `--max-records`** unless you specifically want a truncated trace.
   The default captures the full function execution.
+- **For batch record queries**, use `--indices 0,5,10,100` instead of looping
+  individual subprocess calls.
 
 ### Common Pitfalls
 
@@ -131,8 +174,6 @@ When operating as an AI agent, follow this sequence:
 - `query search` accepts both `--pattern "bl"` and positional `"bl"` — both work.
 - If `tracemiku api` fails with "No such file", check you're passing a per-call
   directory (e.g. `traces/run1/calls/call_0_tid123_500r_10ms/`), not the run root.
-- For batch record queries, use `--indices 0,5,10,100` instead of looping
-  individual subprocess calls.
 
 ## Current Web Interaction Contracts
 

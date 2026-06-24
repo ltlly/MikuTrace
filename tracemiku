@@ -7,8 +7,8 @@ import os, sys
   trace    采集 trace (任意 app 任意 SO 任意函数)
   probe    轻量级导出函数 Interceptor 计数 (不启动 Stalker, 无 trace)
   view     启动 Rust v2 Web 查看器
-  api      调用任意 Rust v2 JSON API route (AI/脚本兜底入口)
-  query    AI 友好的 JSON 查询接口 (供 Claude Code 等调用)
+  api      调用任意 Rust v2 JSON API route (仅当无专用子命令时使用)
+  query    JSON 查询接口 (优先使用此命令及其他专用子命令)
   list     列出已有 trace
   info     trace 元信息
 
@@ -16,8 +16,8 @@ import os, sys
   tracemiku trace --pkg com.example.app --so libtarget.so \\
     --method nativeEntry --duration 90 --out traces/run1
   tracemiku view traces/run1
-  tracemiku api traces/run1/calls/call_001_tid1_100r_1ms /api/backtrace -p idx=100
   tracemiku query traces/run1 records --range 0..50 --regs x0,x1,x2 --json
+  tracemiku query traces/run1/calls/call_001_tid1_100r_1ms backtrace --idx 100
   tracemiku query traces/run1 forward-taint --from 0 --reg x2 --json
   tracemiku query traces/run1 strings --json
 """
@@ -1835,8 +1835,8 @@ def main():
     p_vw = sp.add_parser("view", help="启动 Rust v2 Web 查看器")
     p_vw.add_argument("path", help="trace 目录或 .bin 文件")
 
-    # query (AI 友好)
-    p_api = sp.add_parser("api", help="调用任意 Rust v2 JSON API route")
+    # api (兜底, 仅当无专用子命令时使用)
+    p_api = sp.add_parser("api", help="调用任意 Rust v2 JSON API route (仅当无专用子命令时使用)")
     p_api.add_argument("path", help="trace per-call 目录")
     p_api.add_argument("route", help="API 路径, 如 /api/backtrace")
     p_api.add_argument("--method", default="GET", choices=("GET", "POST", "get", "post"))

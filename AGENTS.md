@@ -98,6 +98,33 @@ The local Python environment is managed with `uv`; use `uv run python ...` for
 Python helper scripts. Slow tests may require real traces, Binary Ninja,
 browser automation, or a real adb device.
 
+## AI Agent CLI Usage
+
+**Always prefer dedicated CLI subcommands over `tracemiku api`.** The Rust CLI
+has 70+ subcommands that cover nearly all analysis routes. Many are multi-step
+orchestration commands (e.g. `output-backtrace`, `vm-ops`, `byte-lineage`) that
+would require dozens of sequential `api` calls to replicate.
+
+Use `tracemiku api` **only** when no dedicated CLI subcommand exists for the
+route (currently: `/api/analysis-index`, `/api/dec/llm-call`, `/api/llil/llm`).
+
+```bash
+# GOOD — dedicated subcommands:
+./tracemiku query <call_dir> records --range 0..50
+./tracemiku query <call_dir> forward-taint --from 0 --reg x0
+./tracemiku query <call_dir> backtrace --idx 100
+./tracemiku query <call_dir> functions
+./tracemiku list traces/run1 --json
+
+# BAD — do NOT use api when a CLI subcommand exists:
+./tracemiku api <call_dir> /api/backtrace -p idx=100
+./tracemiku api <call_dir> /api/functions
+```
+
+Do not start `tracemiku web` just to query it. Use CLI subcommands directly.
+`./tracemiku` is the canonical entry point — do not invoke `tracemiku-cli` Rust
+binary directly.
+
 ## Current Web Interaction Contracts
 
 - `g` opens the jump command. `#N` / `N` jumps to trace index `N`; `0x...`
