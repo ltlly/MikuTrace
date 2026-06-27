@@ -204,6 +204,7 @@ fn openapi_paths() -> Value {
         ("/api/strings", "get"),
         ("/api/string-provenance", "get"),
         ("/api/mem-dump", "get"),
+        ("/api/mem-export", "get"),
         ("/api/last-write-of-reg", "get"),
         ("/api/next-use-of-reg", "get"),
         ("/api/last-write-of-addr", "get"),

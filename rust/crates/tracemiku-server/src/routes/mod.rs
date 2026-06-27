@@ -38,6 +38,7 @@ pub mod llil_llm;
 pub mod llil_pipeline;
 pub mod llil_render;
 pub mod mem_dump;
+pub mod mem_export;
 pub mod mem_flow;
 pub mod memory_query;
 pub mod meta;
@@ -194,6 +195,7 @@ pub fn router(state: AppState) -> Router {
             get(string_provenance::string_provenance_handler),
         )
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
+        .route("/api/mem-export", get(mem_export::mem_export_handler))
         .route(
             "/api/last-write-of-addr",
             get(memory_query::last_write_of_addr_handler),

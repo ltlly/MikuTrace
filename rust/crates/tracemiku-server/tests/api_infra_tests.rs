@@ -141,6 +141,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "llil_pipeline.rs",
     "llil_render.rs",
     "mem_dump.rs",
+    "mem_export.rs",
     "mem_flow.rs",
     "memory_query.rs",
     "navigation.rs",

@@ -431,6 +431,35 @@ enum Cmd {
         #[arg(long)]
         cstr: bool,
     },
+    /// GET /api/mem-export — export runtime-decrypted bytes by (SO,offset,len).
+    ///
+    /// Reconstructs the real bytes the program saw (MemShadow w/x/i layers) for
+    /// a packed/VMP'd/self-decrypting region a static disassembler can't read.
+    /// Keyed on (SO,offset) or absolute PC. With --out, writes the raw decrypted
+    /// bytes to a file for IDA loadfile / BN / Ghidra import at the same offset;
+    /// otherwise prints the JSON (hex blob + provenance runs + completeness).
+    /// Offsets/len are HEX by default; `d`-prefix forces decimal.
+    MemExport {
+        trace_dir: PathBuf,
+        /// Absolute PC of the range start. Or use --so + --off.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the range start. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+        /// Number of bytes to export (hex by default).
+        #[arg(long)]
+        len: String,
+        /// Time point (record idx); default = end of trace.
+        #[arg(long)]
+        cursor: Option<u64>,
+        /// Write raw decrypted bytes to this file (for disassembler loadfile).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// GET /api/last-write-of-addr.
     LastWriteOfAddr {
         trace_dir: PathBuf,
@@ -1820,6 +1849,36 @@ async fn main() -> anyhow::Result<()> {
                 print_pretty(&mem_dump_summary(&value, cstr))
             } else {
                 route_get_json(trace_dir, path).await
+            }
+        }
+        Some(Cmd::MemExport {
+            trace_dir,
+            addr,
+            so,
+            off,
+            len,
+            cursor,
+            out,
+        }) => {
+            let mut params: Vec<(&str, String)> = vec![("len", len)];
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(cursor) = cursor {
+                params.push(("cursor", cursor.to_string()));
+            }
+            let path = route_path("/api/mem-export", &params);
+            let value = route_get_json_value(trace_dir, path).await?;
+            if let Some(out_path) = out {
+                cmd_mem_export_write(&value, &out_path)
+            } else {
+                print_pretty(&value)
             }
         }
         Some(Cmd::LastWriteOfAddr {
@@ -15312,6 +15371,43 @@ fn split_csv_allow_empty(s: &str) -> Vec<String> {
         return vec![String::new()];
     }
     split_csv(s)
+}
+
+/// Decode the `hex` field of a /api/mem-export response and write the raw
+/// decrypted bytes to `out`. Prints a JSON summary (with completeness +
+/// provenance histogram) so the caller still sees how trustworthy the dump is.
+/// `??` frontier bytes are written as 0x00 — surfaced via completeness < 1.0.
+fn cmd_mem_export_write(value: &serde_json::Value, out: &Path) -> anyhow::Result<()> {
+    let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    if status != "ready" {
+        // Pass the route's miss/ambiguous/error JSON straight through.
+        return print_pretty(value);
+    }
+    let hex = value
+        .get("hex")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("mem-export response missing hex field"))?;
+    if hex.len() % 2 != 0 {
+        bail!("mem-export hex length is odd ({} chars)", hex.len());
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for i in (0..hex.len()).step_by(2) {
+        let b = u8::from_str_radix(&hex[i..i + 2], 16)
+            .with_context(|| format!("bad hex byte at {i}"))?;
+        bytes.push(b);
+    }
+    std::fs::write(out, &bytes).with_context(|| format!("failed to write {}", out.display()))?;
+    let mut summary = value.as_object().cloned().unwrap_or_default();
+    summary.remove("hex"); // raw bytes are now on disk; don't echo the blob
+    summary.insert(
+        "out_file".to_string(),
+        serde_json::Value::String(out.display().to_string()),
+    );
+    summary.insert(
+        "bytes_written".to_string(),
+        serde_json::Value::from(bytes.len()),
+    );
+    print_pretty(&serde_json::Value::Object(summary))
 }
 
 fn cmd_list(path: Option<PathBuf>, dir: PathBuf, json: bool) -> anyhow::Result<()> {

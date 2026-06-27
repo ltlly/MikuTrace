@@ -1559,6 +1559,22 @@ def cmd_query(args):
         if args.min_count is not None:
             cmd += ["--min-count", str(args.min_count)]
         return _run_rust_cli(cmd)
+    if sub == "mem-export":
+        if not args.addr and not (args.so and args.off):
+            print("[!] mem-export 需要 --addr 或 (--so + --off)", file=sys.stderr)
+            return 2
+        cmd = ["mem-export", path, "--len", args.len]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.cursor is not None:
+            cmd += ["--cursor", str(args.cursor)]
+        if args.out:
+            cmd += ["--out", args.out]
+        return _run_rust_cli(cmd)
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
     return 2
 
@@ -1971,6 +1987,16 @@ def main():
     q_it.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
     q_it.add_argument("--off", help="br/blr 源的模块内偏移 (配合 --so)")
     q_it.add_argument("--min-count", type=int, help="过滤命中次数低于此值的目标 (默认1)")
+    # mem-export: 运行时解密内存/代码导出 (P0)
+    q_me = _addj(qsp.add_parser(
+        "mem-export",
+        help="导出运行时解密字节 (SO,偏移,长度); --addr 或 --so+--off; --out 写原始字节供反汇编器 loadfile"))
+    q_me.add_argument("--addr", help="范围起始绝对 PC")
+    q_me.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_me.add_argument("--off", help="范围起始的模块内偏移 (配合 --so)")
+    q_me.add_argument("--len", required=True, help="导出字节数 (默认16进制)")
+    q_me.add_argument("--cursor", type=int, help="时间点 (record idx), 默认 trace 末尾")
+    q_me.add_argument("--out", help="写原始解密字节到此文件 (供 IDA loadfile/BN/Ghidra import)")
 
     # list
     p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")
