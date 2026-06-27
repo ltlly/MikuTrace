@@ -223,6 +223,26 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// GET /api/resolve — tool-neutral (SO, offset) <-> PC translation.
+    ///
+    /// Forward:  --addr 0x... (absolute PC) -> module, offset, exec facts.
+    /// Reverse:  --so libfoo --off 0x...    (module+offset) -> absolute PC.
+    /// `--so` matches full path / basename / basename-prefix / substring, so
+    /// the stable name you read in IDA/BN/Ghidra resolves to the loaded .so.
+    /// Addresses/offsets are HEX by default (disassembler convention): `10`
+    /// means 0x10; prefix with `d` to force decimal (`d16` = 16).
+    Resolve {
+        trace_dir: PathBuf,
+        /// Absolute PC, hex by default (`d`-prefix for decimal). PC -> (SO, offset).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative static offset, hex by default. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+    },
     /// GET /api/reg-value-at.
     RegValueAt {
         trace_dir: PathBuf,
@@ -1430,7 +1450,8 @@ async fn main() -> anyhow::Result<()> {
             indices,
         }) => {
             if let Some(idx_str) = indices {
-                let idxs: Vec<usize> = idx_str.split(',')
+                let idxs: Vec<usize> = idx_str
+                    .split(',')
                     .filter_map(|s| s.trim().parse().ok())
                     .collect();
                 let mut results = Vec::new();
@@ -1438,7 +1459,9 @@ async fn main() -> anyhow::Result<()> {
                     let path = format!("/api/record/{idx}");
                     match route_get_json_value(trace_dir.clone(), path).await {
                         Ok(v) => results.push(v),
-                        Err(_) => results.push(serde_json::json!({"idx": idx, "error": "not found"})),
+                        Err(_) => {
+                            results.push(serde_json::json!({"idx": idx, "error": "not found"}))
+                        }
                     }
                 }
                 print_pretty(&serde_json::Value::Array(results))?;
@@ -1535,6 +1558,24 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let params = vec![("top", top.to_string()), ("all", all.to_string())];
             route_get_json(trace_dir, route_path("/api/so-stats", &params)).await
+        }
+        Some(Cmd::Resolve {
+            trace_dir,
+            addr,
+            so,
+            off,
+        }) => {
+            let mut params: Vec<(&str, String)> = Vec::new();
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            route_get_json(trace_dir, route_path("/api/resolve", &params)).await
         }
         Some(Cmd::RegValueAt {
             trace_dir,
@@ -2089,18 +2130,22 @@ async fn main() -> anyhow::Result<()> {
             route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
         }
         Some(Cmd::Crypto { trace_dir }) => {
-            let mut value = route_get_json_value(trace_dir, "/api/crypto-analysis".to_string()).await?;
+            let mut value =
+                route_get_json_value(trace_dir, "/api/crypto-analysis".to_string()).await?;
             if let Some(obj) = value.as_object_mut() {
                 let has_findings = obj.iter().any(|(k, v)| {
                     (k.contains("findings") || k.contains("hits") || k.contains("instructions"))
                         && v.as_array().map_or(false, |a| !a.is_empty())
                 });
                 if !has_findings {
-                    obj.insert("note".to_string(), serde_json::json!(
-                        "No crypto constants, byte patterns, or ARM CE instructions detected. \
+                    obj.insert(
+                        "note".to_string(),
+                        serde_json::json!(
+                            "No crypto constants, byte patterns, or ARM CE instructions detected. \
                          This may mean: (1) the function doesn't use crypto, (2) crypto is in a \
                          different call, or (3) constants are obfuscated."
-                    ));
+                        ),
+                    );
                 }
             }
             print_pretty(&value)?;

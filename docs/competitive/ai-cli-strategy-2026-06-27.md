@@ -48,12 +48,22 @@ traceMiku 问「实际跳哪」，拿回 `libsgmainso+0x6b20`(命中 152 次)，
 排序准则：(在静态工具里撞墙的频率) × (只有运行时数据能解) × (我们已有数据、
 打磨成本低)。
 
-### P0 — 地址互操作地基（没有它，下面全都接不上静态前端）
+### P0 — 地址互操作地基（没有它，下面全都接不上静态前端）✅ 已实现 (2026-06-27)
 每个 traceMiku 查询都要能用 `(so, 偏移)` 作为一等入口，并在输出里回带
 `(so, 偏移)`。现状：trace 以 PC/idx 为中心，偏移解析依赖 maps/--so。
 要做的是把"SO+偏移"提成统一的查询键和输出键，让人或 AI 在 traceMiku 和任意
 反汇编器(CLI 或 UI)之间无缝换坐标。
 价值：极高（是胶水）。难度：低-中（resolve-* 已有，需统一包装）。
+
+**落地**：`GET /api/resolve` + `tracemiku query <dir> resolve`。双向：
+- 正向 `--addr 0x<PC>` → `{module, module_base, offset, exec_count, first/last_idx, in_module, executed}`
+- 反向 `--so <名> --off 0x<偏移>` → 绝对 PC + 同样的运行时事实
+`--so` 工具中立匹配(全路径/basename/basename前缀/子串)，所以在 IDA/BN/Ghidra
+里读到的稳定名能直接喂进来解析到设备上真正加载的带版本 `.so`。多个候选时返回
+`status:"ambiguous"` 列出全部候选而非乱猜。关键区分:`in_module:true,
+executed:false` = 偏移在模块内但本次未执行(纯静态前端给不了的运行时事实)。
+core: `ModuleResolver::resolve_offset_candidates` / `iter_modules` / `module_names`。
+
 
 ### P0 — 间接跳转/调用解析
 给一个有 `br/blr` 的偏移，返回真实跳转目标分布 + 命中次数。**这是静态逆向

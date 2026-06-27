@@ -47,6 +47,7 @@ pub mod query;
 pub mod record;
 pub mod records;
 pub mod reg_value_at;
+pub mod resolve;
 pub mod search;
 pub mod search_pc;
 pub mod seed_resolver;
@@ -73,6 +74,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/bg-status", get(api_infra::bg_status_handler))
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
+        .route("/api/resolve", get(resolve::resolve_handler))
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/search", get(search::search_handler))

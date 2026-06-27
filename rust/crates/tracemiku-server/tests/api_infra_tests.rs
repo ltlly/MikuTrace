@@ -148,6 +148,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "records.rs",
     "search.rs",
     "so_stats.rs",
+    "resolve.rs",
     "string_provenance.rs",
     "strings.rs",
     "timeline_diff.rs",

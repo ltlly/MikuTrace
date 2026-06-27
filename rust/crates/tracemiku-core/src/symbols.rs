@@ -297,10 +297,78 @@ impl ModuleResolver {
     pub fn len(&self) -> usize {
         self.modules.len()
     }
+
+    /// All module names in base order. Used to surface candidates when a
+    /// `(SO, offset)` query matches zero or several loaded modules.
+    pub fn module_names(&self) -> Vec<String> {
+        self.modules.iter().map(|m| m.name.clone()).collect()
+    }
+
+    /// Iterate `(name, base, end, size)` for every loaded module, base order.
+    pub fn iter_modules(&self) -> impl Iterator<Item = (String, u64, u64, u64)> + '_ {
+        self.modules
+            .iter()
+            .map(|m| (m.name.clone(), m.base, m.end, m.size))
+    }
+
+    /// Resolve a `(module-query, offset)` coordinate to an absolute PC.
+    ///
+    /// `query` is matched tool-neutrally against loaded module names so that a
+    /// human reading `libfoo.so + 0x57a30` in IDA/BN/Ghidra, or an AI that only
+    /// knows the SO basename, can hand the same coordinate straight to
+    /// traceMiku. Matching precedence (first non-empty set wins):
+    ///   1. exact `name`            (e.g. "libsgmainso-6.8.260403.so")
+    ///   2. exact basename          (path stripped to after last '/')
+    ///   3. basename starts-with    (e.g. "libsgmainso" → versioned ".so")
+    ///   4. name contains substring (last-resort fuzzy)
+    ///
+    /// Returns every candidate so the caller can report ambiguity rather than
+    /// silently picking the wrong module. Each tuple is `(name, base, end, pc)`
+    /// where `pc = base + offset`.
+    pub fn resolve_offset_candidates(
+        &self,
+        query: &str,
+        offset: u64,
+    ) -> Vec<(String, u64, u64, u64)> {
+        let q = query.trim();
+
+        let pick = |pred: &dyn Fn(&ModuleResolverEntry) -> bool| -> Vec<&ModuleResolverEntry> {
+            self.modules.iter().filter(|m| pred(m)).collect()
+        };
+
+        let matches = {
+            let exact = pick(&|m| m.name == q);
+            if !exact.is_empty() {
+                exact
+            } else {
+                let exact_base = pick(&|m| module_basename(&m.name) == q);
+                if !exact_base.is_empty() {
+                    exact_base
+                } else {
+                    let prefix = pick(&|m| module_basename(&m.name).starts_with(q));
+                    if !prefix.is_empty() {
+                        prefix
+                    } else {
+                        pick(&|m| m.name.contains(q))
+                    }
+                }
+            }
+        };
+
+        matches
+            .into_iter()
+            .map(|m| (m.name.clone(), m.base, m.end, m.base.wrapping_add(offset)))
+            .collect()
+    }
 }
 
 fn parse_hex_u64(s: &str) -> Option<u64> {
     u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
+}
+
+/// Strip a module path down to its final component (`/a/b/libc.so` → `libc.so`).
+fn module_basename(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
 /// Walk the trace looking for `bl <target>` instructions; each unique target
@@ -467,4 +535,79 @@ fn parse_branch_target(op_str: &str) -> Option<u64> {
         return None;
     }
     u64::from_str_radix(token.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
+}
+
+#[cfg(test)]
+mod resolve_offset_tests {
+    use super::*;
+
+    fn module(name: &str, base: u64, size: u64) -> ModuleInfo {
+        ModuleInfo {
+            name: name.to_string(),
+            base: format!("{base:#x}"),
+            size,
+            end: format!("{:#x}", base + size),
+        }
+    }
+
+    fn sample() -> ModuleResolver {
+        ModuleResolver::from_modules(&[
+            module(
+                "/data/app/libsgmainso-6.8.260403.so",
+                0x7000_0000,
+                0x10_0000,
+            ),
+            module("/system/lib64/libc.so", 0x7100_0000, 0x8_0000),
+            module("libart.so", 0x7200_0000, 0x20_0000),
+        ])
+    }
+
+    #[test]
+    fn exact_full_name_resolves_to_pc() {
+        let r = sample();
+        let c = r.resolve_offset_candidates("/data/app/libsgmainso-6.8.260403.so", 0x57a30);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].3, 0x7000_0000 + 0x57a30);
+    }
+
+    #[test]
+    fn basename_prefix_resolves_versioned_so() {
+        // human/AI types just the stable basename prefix
+        let r = sample();
+        let c = r.resolve_offset_candidates("libsgmainso", 0x6b20);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].0, "/data/app/libsgmainso-6.8.260403.so");
+        assert_eq!(c[0].3, 0x7000_0000 + 0x6b20);
+    }
+
+    #[test]
+    fn exact_basename_resolves() {
+        let r = sample();
+        let c = r.resolve_offset_candidates("libc.so", 0x100);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].3, 0x7100_0000 + 0x100);
+    }
+
+    #[test]
+    fn unknown_module_is_empty() {
+        let r = sample();
+        assert!(r.resolve_offset_candidates("libdoesnotexist", 0).is_empty());
+    }
+
+    #[test]
+    fn round_trip_pc_to_offset_to_pc() {
+        let r = sample();
+        let pc = 0x7000_0000 + 0x1234;
+        let (name, off) = r.resolve_relative(pc).unwrap();
+        let back = r.resolve_offset_candidates(&name, off);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].3, pc);
+    }
+
+    #[test]
+    fn iter_modules_lists_all() {
+        let r = sample();
+        assert_eq!(r.iter_modules().count(), 3);
+        assert_eq!(r.module_names().len(), 3);
+    }
 }

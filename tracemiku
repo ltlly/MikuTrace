@@ -1536,6 +1536,18 @@ def cmd_query(args):
         return _run_rust_cli(["search", path, pattern, "--max-results", str(args.max)])
     if sub == "func-summary":
         return _run_rust_cli(["functions", path])
+    if sub == "resolve":
+        if not args.addr and not (args.so and args.off):
+            print("[!] resolve 需要 --addr 0x.. 或 (--so <名> --off <偏移>)", file=sys.stderr)
+            return 2
+        cmd = ["resolve", path]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        return _run_rust_cli(cmd)
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
     return 2
 
@@ -1933,6 +1945,13 @@ def main():
     q_se.add_argument("--pattern", dest="pattern_flag", default=None, help="搜索 regex (兼容旧接口)")
     q_se.add_argument("--max", type=int, default=200)
     q_fs = _addj(qsp.add_parser("func-summary", help="函数命中频次"))
+    # resolve: (SO,偏移) <-> PC 工具中立坐标互转 (P0 地址互操作地基)
+    q_rs = _addj(qsp.add_parser(
+        "resolve",
+        help="(SO,偏移)<->PC 坐标互转; --addr 绝对PC, 或 --so <名> --off <偏移>"))
+    q_rs.add_argument("--addr", help="绝对 PC (16进制 0x.. 或十进制) -> 模块+偏移")
+    q_rs.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_rs.add_argument("--off", help="模块内静态偏移 (配合 --so) -> 绝对 PC")
 
     # list
     p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")
