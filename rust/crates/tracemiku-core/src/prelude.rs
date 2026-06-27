@@ -53,7 +53,7 @@ pub use crate::llil::{
     LlilOperand, ObservedValues, SsaBlock, SsaVar, StructNode, StructShape, TypeEnv, TypeKind,
     VarNameMap,
 };
-pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow};
+pub use crate::memshadow::{ByteEvent, MemRec as ShadowMemRec, MemShadow, MemSnapshot, SnapRegion};
 pub use crate::ollvmdet::{ollvm_detect_vm, OllvmFinding};
 pub use crate::symbols::{build_from_trace, ModuleResolver, SymbolMap};
 pub use crate::taint::{

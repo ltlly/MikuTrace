@@ -389,6 +389,23 @@ def cmd_trace(args):
                 }
             except Exception as e:
                 wlog(f"[!] pull SIMD sidecar 失败: {e}")
+        # Optional initial memory snapshot: real device memory at t=0, used by
+        # MemShadow as the `i` fallback layer for pre-trace data (decrypted
+        # bytecode tables, .rodata constants). See docs/memory-completeness-design.md.
+        snap_device_path = s["meta"].get("snapshotDevicePath")
+        if snap_device_path:
+            try:
+                snap_local_path = s["dir"] / "memory_snapshot.bin"
+                t0 = time.time()
+                snap_size = adb_pull_device_trace(snap_device_path, str(snap_local_path))
+                wlog(f"  pull snapshot {snap_device_path} → {snap_size:,} bytes in {time.time()-t0:.1f}s")
+                s["meta"]["memory_snapshot"] = {
+                    "file": "memory_snapshot.bin",
+                    "bytes": snap_size,
+                    "regions": int(s["meta"].get("snapshotRegions") or 0),
+                }
+            except Exception as e:
+                wlog(f"[!] pull memory snapshot 失败: {e}")
         worker_sidecars = []
         for wt in s["meta"].get("workerTraces") or []:
             worker_device_path = wt.get("devicePath")
@@ -628,6 +645,17 @@ def cmd_trace(args):
                         ef.flush()
                         s["meta"]["ext_writes"] = s["meta"].get("ext_writes", 0) + len(evs)
                         wlog(f"[{tag}] ext-write call#{ci} +{len(evs)} (total={s['meta']['ext_writes']})")
+                    elif t == "mem-snapshot":
+                        # Initial memory snapshot captured at trace start. Record
+                        # device path on the session so finalize() pulls it.
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        s = sess_files[ci]
+                        s["meta"]["snapshotDevicePath"] = p.get("devicePath")
+                        s["meta"]["snapshotRegions"] = p.get("regions", 0)
+                        wlog(f"[{tag}] mem-snapshot call#{ci}: {p.get('regions',0)} regions, "
+                             f"{int(p.get('bytes',0))/1024/1024:.1f}MB → {p.get('devicePath')}")
                     elif t == "follow": wlog(f"[{tag}] 跟踪 tid={p['tid']} ({p.get('label','?')})")
                     elif t == "cmd-hist":
                         h = p.get("hist", {})
@@ -703,6 +731,26 @@ def cmd_trace(args):
                 wlog(f"[!] failed to load --suicide-patch-spec {sps_path}: {e}")
         else:
             wlog(f"[!] --suicide-patch-spec file not found: {sps_path}")
+    # --trace-all safety rails. Capturing every instruction incl. the full ART
+    # interpreter is the highest-volume mode. Anti-detect stays OPT-IN: the user
+    # enables --hide-rwx-maps / --block-self-kill / --patch-suicide explicitly
+    # when the target is hardened. We do NOT force them on (default off).
+    trace_all = bool(getattr(args, "trace_all", False))
+    if trace_all:
+        # Volume guard: full capture can emit billions of records and reboot the
+        # device. Refuse 0 (unbounded); cap to a sane ceiling if oversized.
+        TRACE_ALL_MAX = 50_000_000
+        if not args.max_records or args.max_records <= 0:
+            wlog(f"[trace-all] max_records unbounded → forcing cap {TRACE_ALL_MAX} "
+                 f"(full capture is extreme volume; --max-records to override)")
+            args.max_records = TRACE_ALL_MAX
+        elif args.max_records > TRACE_ALL_MAX:
+            wlog(f"[trace-all] WARN: max_records={args.max_records} is very high; "
+                 f"device may freeze/reboot. Proceeding as requested.")
+        wlog("[trace-all] capturing EVERY instruction (target + libc/libm + all "
+             "userland/vendor SOs; ART apex family + linker excluded). "
+             "anti-detect is OFF unless --hide-rwx-maps/--block-self-kill/--patch-suicide given.")
+
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -716,6 +764,7 @@ def cmd_trace(args):
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
         "includeSoPatterns": incl_pats,     # multi-SO trace
         "deepTrace": bool(getattr(args, "trace_deep", False)),
+        "traceAll": trace_all,
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
@@ -727,6 +776,8 @@ def cmd_trace(args):
         "semanticEvents": bool(getattr(args, "semantic_events", False)),
         "simdSidecar": bool(getattr(args, "simd_sidecar", False)),
         "simdSampleStride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
+        "snapshotMem": bool(getattr(args, "snapshot_mem", False)),
+        "snapshotMaxBytes": int(getattr(args, "snapshot_max_mb", 512) or 512) * 1024 * 1024,
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1760,6 +1811,16 @@ def main():
                            "Stalker.exclude (interpreter/JIT/GC/atomic primitives 这些 LDXR/STXR "
                            "或 ART 自修改不安全的函数). 大部分 libart 函数 (NewStringUTF / "
                            "GetField 等) 现在能被 Stalker 跟到. linker/libdl 仍整 module 排除.")
+    p_tr.add_argument("--trace-all", action="store_true", dest="trace_all",
+                      help="全量模式: 捕获经过的每一条汇编 — 目标 SO + 所有 userland/vendor SO + "
+                           "libc/libm (现在安全, LDXR/STXR 原子死锁已由 transform 内 iter.memoryAccess "
+                           "逐指令守卫解决). module 级排除 linker/linker64/libdl (结构性递归) 和 "
+                           "ART apex 家族 (libart/libartbase/libartpalette). 注意: ART 解释器/JIT/GC "
+                           "是自修改+运行时重定位代码且 runtime stripped, Stalker 无法跟 (实测必 SIGSEGV), "
+                           "故活的 Java 字节码执行**不可** trace — 这是 Frida 硬限制, 需硬件 trace (ETM). "
+                           "可恢复 stat/time 等 libc 边界写 (x-sign 第一类 gap). 反调试默认**关闭** —— "
+                           "有反检测的目标 (如 libsgmainso) 需显式加 --patch-suicide / --hide-rwx-maps / "
+                           "--block-self-kill.")
     p_tr.add_argument("--stalker-exclude-patterns", default=None, dest="stalker_exclude_patterns",
                       help="逗号分隔, 覆盖默认 Stalker.exclude 名单 (per-symbol). 仅 --trace-deep 下生效.")
     p_tr.add_argument("--boundary-diff-patterns", default=None, dest="boundary_diff_patterns",
@@ -1810,6 +1871,13 @@ def main():
     p_tr.add_argument("--simd-sample-stride", type=int, default=1, dest="simd_sample_stride",
                       help="SIMD sidecar 采样步长: 1=每条指令保存 q0-q31, N=每 N 条保存一次. "
                            "仅 --simd-sidecar 生效.")
+    p_tr.add_argument("--snapshot-mem", action="store_true", dest="snapshot_mem",
+                      help="trace 开始时 (目标函数入口, t=0) 快照真实设备内存到 memory_snapshot.bin. "
+                           "MemShadow 用作 `i` 层 fallback, 补齐 trace 窗口之前初始化的数据 "
+                           "(已解密的 VM 字节码表 / .rodata 常量 / 嵌入密钥 等). "
+                           "捕获目标 SO 各段 + 可读 rw-/匿名/堆区. 见 docs/memory-completeness-design.md.")
+    p_tr.add_argument("--snapshot-max-mb", type=int, default=512, dest="snapshot_max_mb",
+                      help="--snapshot-mem 的字节预算上限 (MB), 默认 512. 保护设备不被大快照拖垮.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")

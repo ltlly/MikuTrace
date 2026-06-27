@@ -28,6 +28,7 @@ import {
 } from "./core/ring";
 import { applyExcludesOnce, buildIncludeRanges, createTransform } from "./core/stalker";
 import { flushSimdRingToDisk } from "./sidecar/simd";
+import { captureMemorySnapshot } from "./sidecar/mem_snapshot";
 import { createSvcEventCallback, installSemanticHooksOnce, flushSemanticEvents } from "./sidecar/semantic";
 import { installJniHooksOnce, flushJniHookEvents } from "./hooks/jni_vtable";
 import { installForkHooksOnce, flushForkEvents } from "./hooks/fork_monitor";
@@ -163,6 +164,13 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
 
             buildIncludeRanges();
             const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
+
+            // Initial memory snapshot (t=0 ground truth for pre-trace data).
+            // Captured here, after excludes/ranges are set but before Stalker
+            // starts, so the bytecode tables / .rodata are in their decrypted
+            // initial state. Best-effort; never throws into the trace path.
+            try { captureMemorySnapshot((this as any)._callIdx); }
+            catch (e) { log(`[mem-snapshot][!] ${e}`); }
 
             Stalker.follow((this as any)._tid, {
                 events: { call: false, ret: false, exec: false, block: false, compile: false },
@@ -307,6 +315,10 @@ rpc.exports = {
         STATE.pkg = opts.pkg || null;
         STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns) ? opts.includeSoPatterns : [];
         STATE.deepTrace = !!opts.deepTrace;
+        STATE.traceAll = !!opts.traceAll;
+        // --trace-all implies the per-symbol deep path machinery (writable-range
+        // tracking etc.), so turn deepTrace on too when traceAll is requested.
+        if (STATE.traceAll) STATE.deepTrace = true;
         STATE.stalkerExcludePatterns = Array.isArray(opts.stalkerExcludePatterns) && opts.stalkerExcludePatterns.length
             ? opts.stalkerExcludePatterns : null;
         STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns) ? opts.boundaryDiffPatterns : null;
@@ -321,6 +333,12 @@ rpc.exports = {
         STATE.semanticHooksInstalled = false;
         if (STATE.semanticEvents && !STATE.onSvcEventCb) {
             STATE.onSvcEventCb = createSvcEventCallback();
+        }
+
+        // Initial memory snapshot
+        STATE.snapshotMem = !!opts.snapshotMem;
+        if (typeof opts.snapshotMaxBytes === "number" && opts.snapshotMaxBytes > 0) {
+            STATE.snapshotMaxBytes = opts.snapshotMaxBytes;
         }
 
         // SIMD sidecar

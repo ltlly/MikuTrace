@@ -63,3 +63,8 @@ tracer/_agent.js
 
 # External tool state
 .omc/
+
+# Local agent/session state + large local-only assets (not source)
+.claude/
+apk_downloads/
+third_party/

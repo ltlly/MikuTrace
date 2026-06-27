@@ -21,6 +21,31 @@ export const HARD_EXCL = [
 // In deep mode, modules that we still exclude entirely
 export const DEEP_KEEP_EXCL = ["linker", "linker64", "libdl.so"];
 
+// TRACE_ALL_KEEP_EXCL: even in --trace-all (capture everything) mode, these
+// stay fully Stalker-excluded at MODULE level. Two distinct reasons:
+//
+// 1. STRUCTURAL re-entrancy (linker/libdl): the dynamic linker runs during
+//    Stalker's own dlopen/symbol-resolve path → instrumenting it makes Stalker
+//    recurse into code it is currently compiling → deadlock/abort.
+//
+// 2. SELF-MODIFYING + STRIPPED (the ART apex family): libart's Nterp
+//    interpreter, JIT, and GC rewrite/relocate their own code at runtime, which
+//    Stalker's block-cache cannot follow (→ SIGSEGV null-deref, verified
+//    2026-06-27: trace-all into nterp_op_new_instance → NterpAllocateObject →
+//    art::gc::Heap::AddFinalizerReference → SEGV_MAPERR @ 0x0). We CANNOT
+//    surgically per-symbol exclude just the unsafe parts because libart is
+//    stripped at runtime (enumerateSymbols returns nothing useful, and looping
+//    it over every module also hangs the traced thread). So the whole ART apex
+//    family is excluded. Consequence: --trace-all captures the target SO, all
+//    userland/vendor SOs, and libc/libm (recovering the stat/time boundary
+//    gaps), but NOT live Java-bytecode execution inside ART. Tracing the live
+//    interpreter/JIT/GC is a hard Frida-Stalker limitation; it needs hardware
+//    trace (CoreSight ETM), not a software instrumenter.
+export const TRACE_ALL_KEEP_EXCL = [
+    "linker", "linker64", "libdl.so",
+    "libart.so", "libartbase.so", "libartpalette.so",
+];
+
 // Stalker-exclude patterns (LDXR/STXR atomic deadlock + self-modifying hot code)
 export const STALKER_EXCLUDE_PATTERNS = [
     "art::interpreter::Execute", "art::interpreter::DoCall",
@@ -32,6 +57,36 @@ export const STALKER_EXCLUDE_PATTERNS = [
     "pthread_rwlock_", "pthread_cond_",
     "__bionic_atomic_", "__atomic_",
     "malloc", "free", "calloc", "realloc",
+];
+
+// SELF_MODIFYING_EXCL: ART internals that Stalker can NEVER safely recompile.
+// Self-modifying / runtime-relocated code: the Nterp interpreter rewrites its
+// own dispatch, the JIT patches entrypoints, and the GC relocates objects +
+// code. Stalker's block-cache assumes code is stable, so following these →
+// stale/null entrypoints → SIGSEGV null-deref (verified 2026-06-27: trace-all
+// into nterp_op_new_instance → NterpAllocateObject →
+// art::gc::Heap::AddFinalizerReference → SEGV_MAPERR @ 0x0, 29-frame real
+// stack, NOT anti-debug). This is a DIFFERENT failure from the LDXR/STXR atomic
+// deadlock (now handled per-instruction) and from anti-debug suicide.
+//
+// NOTE: this list is documentation of WHICH symbols are unsafe, but it canNOT
+// be used for per-symbol Stalker.exclude on a real device: libart is stripped
+// at runtime so enumerateSymbols() does not expose these names, and looping
+// symbol enumeration over every module hangs the traced thread. The working
+// mitigation is module-level exclusion of the whole ART apex family — see
+// TRACE_ALL_KEEP_EXCL above. Kept here as a reference for anyone tempted to
+// re-attempt per-symbol exclusion (it does not work without a symbolized libart).
+export const SELF_MODIFYING_EXCL = [
+    // Nterp (new interpreter) — self-modifying dispatch, executes Java bytecode
+    "nterp_", "Nterp", "ExecuteNterp",
+    // Old interpreter / mterp — computed-goto self-modifying hot loop
+    "art::interpreter::Execute", "art::interpreter::DoCall",
+    "ExecuteSwitchImpl", "ExecuteMterp", "MterpHelpers",
+    // JIT — patches its own entrypoints and code cache
+    "art::jit::Jit", "art::jit::JitCompiler", "art_quick_invoke",
+    // GC — relocates objects and code, rewrites references mid-execution
+    "art::gc::Heap::", "art::gc::collector::", "AddFinalizerReference",
+    "AllocObject", "AllocateObject",
 ];
 
 // SOFT_EXCL: excluded by default, --include-so can override
@@ -81,6 +136,7 @@ export interface InitOptions {
     pkg?: string | null;
     includeSoPatterns?: string[];
     deepTrace?: boolean;
+    traceAll?: boolean;
     stalkerExcludePatterns?: string[] | null;
     boundaryDiffPatterns?: string[] | null;
     // Hooks
@@ -92,6 +148,8 @@ export interface InitOptions {
     simdSidecar?: boolean;
     simdSampleStride?: number;
     semanticEvents?: boolean;
+    snapshotMem?: boolean;
+    snapshotMaxBytes?: number;
     // Anti-detect plugins (list of module ids to load)
     antiDetect?: string[];
     antiDetectConfig?: Record<string, any>;
@@ -113,6 +171,7 @@ export interface AgentState {
     includeSoPatterns: string[];
     includeRanges: IncludeRange[];
     deepTrace: boolean;
+    traceAll: boolean;
     stalkerExcludePatterns: string[] | null;
     boundaryDiffPatterns: string[] | null;
 
@@ -142,6 +201,9 @@ export interface AgentState {
     semanticHooksInstalled: boolean;
     semanticEventSeq: number;
     onSvcEventCb: NativePointer | null;
+
+    snapshotMem: boolean;
+    snapshotMaxBytes: number;
 
     flushTimer: any;
     hbTimer: any;
@@ -191,7 +253,7 @@ export function createInitialState(): AgentState {
         target: null, fnHooked: false, excluded: false, fnEntered: false,
 
         includeSoPatterns: [], includeRanges: [],
-        deepTrace: false, stalkerExcludePatterns: null, boundaryDiffPatterns: null,
+        deepTrace: false, traceAll: false, stalkerExcludePatterns: null, boundaryDiffPatterns: null,
 
         cm: null, onInsnPtr: null,
         ringBuf: null, headBuf: null, tailBuf: null, droppedBuf: null, ringRecsBuf: null,
@@ -204,6 +266,8 @@ export function createInitialState(): AgentState {
 
         semanticEvents: false, semanticEventBuf: [], semanticHooksInstalled: false,
         semanticEventSeq: 0, onSvcEventCb: null,
+
+        snapshotMem: false, snapshotMaxBytes: 512 * 1024 * 1024,
 
         flushTimer: null, hbTimer: null, batchSeq: 0, started: 0,
         callIdx: 0, primaryTid: 0,

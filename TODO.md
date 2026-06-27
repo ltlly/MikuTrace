@@ -32,6 +32,29 @@
 - [x] Stack variable auto-naming
 - [x] Type recovery through call boundaries
 
+## Memory completeness — layered ground-truth oracle
+
+> Design: `docs/memory-completeness-design.md`. MemShadow is now a layered byte
+> oracle: every `byte_at` returns `(value, kind, src)` where kind ∈
+> {w=store, r=load, x=external/syscall, i=initial-snapshot, ??=unknown}.
+
+- [x] **Phase 1 — initial memory snapshot (`--snapshot-mem`)**: agent captures
+  real device memory at t=0 (`tracer/src/sidecar/mem_snapshot.ts`), host pulls
+  `memory_snapshot.bin`, MemShadow loads it as the `i` fallback layer
+  (`memshadow.rs::MemSnapshot`). Verified on libsgmainso x-sign: a
+  snapshot-covered address that the trace never wrote now returns
+  completeness=1.0 with kind `i` (was `??`). Recovers pre-trace data: decrypted
+  VM bytecode tables, `.rodata` constants, embedded keys.
+- [ ] **Phase 2 — syscall output-buffer readback**: extend `semantic.ts` hooks
+  with an out-buffer ABI table (read/recvfrom/stat/gettimeofday/getrandom/...),
+  read the buffer on onLeave, emit as `ext-write` (kind `x`). Precise, universal
+  fix for kernel-written buffers. Reuses `external_writes.bin` channel.
+- [ ] **Phase 3 — live mem-operand capture (`--capture-mem-operands`)**:
+  GumTrace-style — Capstone-decode operands in the callout and `readByteArray`
+  real bytes. Opt-in (slower than register-only snapshot). Deferred.
+- [ ] **Tenet export**: emit `reg=val,mr=addr:bytes,mw=...` per line so traces
+  load in IDA's Tenet plugin for time-travel debugging. Interop, not rebuild.
+
 ## P3 — Polish
 
 - [x] Decompile-to-C export

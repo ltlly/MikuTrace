@@ -3,7 +3,7 @@
  */
 
 import {
-    STATE, HARD_EXCL, SOFT_EXCL, DEEP_KEEP_EXCL,
+    STATE, HARD_EXCL, SOFT_EXCL, DEEP_KEEP_EXCL, TRACE_ALL_KEEP_EXCL,
     STALKER_EXCLUDE_PATTERNS, IncludeRange
 } from "./state";
 import { log } from "./utils";
@@ -22,11 +22,39 @@ export function applyExcludesOnce(): void {
     const userIncl = STATE.includeSoPatterns || [];
     const matchesUser = (name: string) => userIncl.some(pat => name.indexOf(pat) !== -1);
     const deep = !!STATE.deepTrace;
+    const traceAll = !!STATE.traceAll;
     const stalkerPatterns = STATE.stalkerExcludePatterns || STALKER_EXCLUDE_PATTERNS;
     const diffPatterns = STATE.boundaryDiffPatterns || DEFAULT_BOUNDARY_DIFF_PATTERNS;
 
     STATE.diffSyms = [];
     STATE.diffSymAddrs = {};
+
+    // ── --trace-all: capture EVERYTHING safe ─────────────────────────────
+    // Module-level exclude only TRACE_ALL_KEEP_EXCL: the structural linker set
+    // (recursion) + the ART apex family (self-modifying & stripped, see note in
+    // state.ts). Every other module — target SO, vendor/app SOs, libc, libm — is
+    // fully instrumented. The LDXR/STXR atomic deadlock is no longer a reason to
+    // exclude anything (the per-instruction iter.memoryAccess guard in the
+    // transform handles it), so libc/libm atomics ARE traced — that recovers the
+    // stat()/time() boundary-write gaps that the old whitelist lost. We do NOT
+    // enumerateSymbols here: it is useless on stripped libart and hangs the
+    // traced thread when looped over every module.
+    if (traceAll) {
+        let kept = 0, instrumented = 0;
+        for (const m of Process.enumerateModules()) {
+            if (TRACE_ALL_KEEP_EXCL.some(p => m.name.indexOf(p) !== -1)) {
+                try { Stalker.exclude({ base: m.base, size: m.size }); kept++; } catch (_) {}
+            } else {
+                instrumented++;
+            }
+        }
+        log(`[+] TRACE-ALL: instrumenting ${instrumented} modules; module-excluded=${kept} ` +
+            `(${TRACE_ALL_KEEP_EXCL.join(",")}); per-insn exclusive-monitor guard active. ` +
+            `NOTE: live ART interpreter/JIT/GC not traceable (Frida limitation).`);
+        STATE.excluded = true;
+        return;
+    }
+
     let nMod = 0, hard = 0, soft = 0, user_kept = 0, stalkerOnly = 0, diffTargets = 0;
 
     for (const m of Process.enumerateModules()) {
@@ -97,6 +125,21 @@ export function buildIncludeRanges(): void {
 
     const userIncl = STATE.includeSoPatterns || [];
     const deep = !!STATE.deepTrace;
+    const traceAll = !!STATE.traceAll;
+
+    // --trace-all: every module except the structural linker set is in-range.
+    if (traceAll) {
+        for (const m of Process.enumerateModules()) {
+            if (STATE.target && m.name === STATE.target.name) continue;
+            if (TRACE_ALL_KEEP_EXCL.some(p => m.name.indexOf(p) !== -1)) continue;
+            STATE.includeRanges.push({
+                base: m.base, end: m.base.add(m.size), name: m.name
+            });
+        }
+        log(`[+] TRACE-ALL: ${STATE.includeRanges.length} module ranges in-range`);
+        return;
+    }
+
     if (userIncl.length === 0) return;
 
     for (const m of Process.enumerateModules()) {
@@ -163,10 +206,23 @@ export function createTransform(
                 }
 
                 if (inRange) {
-                    try {
-                        iter.putCallout(onInsn);
-                    } catch (_) {
-                        // putCallout can fail on some instructions
+                    // ARM64 exclusive-monitor guard. Inside an LDXR/STXR window
+                    // frida-gum reports iter.memoryAccess === "exclusive". A
+                    // putCallout there emits a FULL_PROLOG (register spill) +
+                    // ring-buffer write between the load-exclusive and the
+                    // store-exclusive. Any such memory access clears the CPU's
+                    // exclusive monitor, so STXR always fails and the lock
+                    // retry loop spins forever (hang) or faults (crash). frida
+                    // suppresses ITS OWN exec/block events here but does NOT
+                    // suppress user callouts — that is on us. Skip the callout;
+                    // we lose a few atomic-spin records, which carry no
+                    // analysis value anyway.
+                    if (iter.memoryAccess !== "exclusive") {
+                        try {
+                            iter.putCallout(onInsn);
+                        } catch (_) {
+                            // putCallout can fail on some instructions
+                        }
                     }
                 }
                 iter.keep();
