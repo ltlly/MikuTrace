@@ -5,6 +5,34 @@
 >
 > Last updated: 2026-06-02 (Wave 1+2 workflow: all 26 decompiler audit tasks implemented, see below)
 
+## AI runtime-truth CLI — tool-neutral (SO,offset) interop (2026-06-27)
+
+> Strategy: `docs/competitive/ai-cli-strategy-2026-06-27.md`. traceMiku owns the
+> runtime-truth axis static tools (IDA/BN/Ghidra, CLI or UI) structurally can't,
+> joined to any disassembler only via the shared `(SO, static-offset)` coordinate.
+> All four P0 commands: tool-neutral, in-process oneshot, CLI+server+wrapper
+>三层贯通, adversarially validated on a real liblynxsecurity trace.
+
+- [x] **P0 — 地址互操作地基**: `GET /api/resolve` + `query resolve`. 双向
+  `(SO,offset)<->PC`, 工具中立名匹配(全路径/basename/前缀/子串), 回带运行时事实
+  (exec_count/first-last_idx/in_module/executed), ambiguous/out_of_range/miss 区分。
+  core `ModuleResolver::resolve_offset_candidates`. 偏移/地址默认 HEX (`d`-前缀十进制)。
+- [x] **P0 — 间接跳转/调用解析**: `GET /api/indirect-targets` + `query indirect-targets`.
+  br/blr 真实跳转目标分布+命中次数, 源/目标都回带坐标, `--min-count` 过滤, 列全部模式。
+  复用 `cfg::resolve_indirect_branch_targets`。
+- [x] **P0 — 运行时解密内存/代码导出**: `GET /api/mem-export` + `query mem-export`.
+  按 `(SO,offset,len)` 导出 MemShadow w/x/i 真值, hex blob + provenance runs + 直方图
+  + completeness, `??` 绝不冒充真零, `--out` 写原始字节供 loadfile。
+- [x] **P0 — 运行时值点查**: `GET /api/reg-at` + `query reg-at`. `(SO,offset)|PC` 处寄存器
+  全执行值 + 跨执行去重值分布(带计数+provenance)。
+
+- [ ] **P1 — 反向数据流/lineage 偏移键化**: `taint-bwd`/`bfs-slice`/`byte-lineage`/
+  `forward-dep-tree` 已有, 补 `(SO,offset)` 入口键 + 示例。
+- [ ] **P1 — 路径覆盖**: 补"已执行边/覆盖率"视图, 把静态全路径 CFG 塌缩到真实路径
+  (已有 `loops`/`call-tree`/`call-chain`)。
+- [ ] **P1 — 内存完整性 Phase 2 (syscall/JNI 回读)**: 给 mem-export/reg-at 补内核写的
+  buffer (read/recv/stat/getrandom)。设计见 `docs/memory-completeness-design.md`。
+
 ## P0 — Core Correctness
 
 - [x] ARM64 lifter: 99.93-100% LLIL coverage, 0 bare Intrinsic

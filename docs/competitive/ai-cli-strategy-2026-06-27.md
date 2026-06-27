@@ -65,22 +65,50 @@ executed:false` = 偏移在模块内但本次未执行(纯静态前端给不了�
 core: `ModuleResolver::resolve_offset_candidates` / `iter_modules` / `module_names`。
 
 
-### P0 — 间接跳转/调用解析
+### P0 — 间接跳转/调用解析 ✅ 已实现 (2026-06-27)
 给一个有 `br/blr` 的偏移，返回真实跳转目标分布 + 命中次数。**这是静态逆向
 混淆/优化代码最高频的墙**，且是纯运行时事实。数据全在 trace 里（每条执行边）。
 价值：极高。难度：低（数据已有，缺一个面向"偏移→目标分布"的命令）。
 
-### P0 — 运行时解密内存/代码导出
+**落地**：`GET /api/indirect-targets` + `tracemiku query <dir> indirect-targets`。
+`--addr` 或 `--so+--off` 查单个源的目标分布；不给源则列全部间接源(按命中降序)。
+源与每个目标都回带完整 `(module,offset,pc,exec_count)` 坐标 + 命中次数/百分比，
+`--min-count` 过滤稀有目标。区分 hit / no_dispatch(非br/blr | 未执行 | trace尾)。
+复用已有 `cfg::resolve_indirect_branch_targets`(idx+1 后继, per-call 单线程成立)。
+真机验证: liblynxsecurity 解出 36 个间接源, `br@+0x7e4c` 是 5 路分发器(纯 VM/
+跳表, 静态工具只显示 `br x8`)。
+
+### P0 — 运行时解密内存/代码导出 ✅ 已实现 (2026-06-27)
 把运行时解密后的真实字节按 `(so, 偏移, 范围)` 导出，让使用者喂回反汇编器
 (IDA loadfile / BN patch / Ghidra import) 重新分析，或直接读。基础已落地
 （`--snapshot-mem` + MemShadow 的 `i` 层 + `mem-dump` 带 provenance）。
 剩：偏移键化 + 一个"导出解密段"的命令。
 价值：极高（壳/VMP/libsgmainso 的关键）。难度：低（地基已建）。
 
-### P0 — 运行时值点查（寄存器/内存）
+**落地**：`GET /api/mem-export` + `tracemiku query <dir> mem-export`。
+`--addr`/`--so+--off` + `--len` (+`--cursor` 时间点)。返回连续 hex blob(通用粘贴)、
+run-length provenance map(哪些子段是 w/x/i 真值 vs `??` 前沿)、per-kind 直方图、
+completeness。`??` 字节填 00 但**绝不冒充真零** —— completeness<1.0 + runs 显式标注
+空洞。256KiB 上限带 truncated 元数据。CLI `--out` 写原始字节到磁盘供 loadfile
+(文件操作留在 CLI 层)。真机验证: 栈写地址 8 字节 round-trip 回精确小端值
+(completeness 1.0); 未观测段全 `??` completeness 0.0。
+
+### P0 — 运行时值点查（寄存器/内存） ✅ 已实现 (2026-06-27)
 "偏移 X 处 x0 是什么 / 这个 buffer 是什么字节"。已有 `reg-value-at`、
 `mem-dump`、`byte-writer-map`、`reg-timeline`。剩：偏移键化 + provenance 标注
 (w/r/x/i/??，已实现)。价值：高。难度：极低（补文档+键化）。
+
+**落地**：`GET /api/reg-at` + `tracemiku query <dir> reg-at --reg x0 --so .. --off ..`。
+解析 `(SO,偏移)|PC` → 该 PC 全部执行 → 读每次的寄存器值。返回逐次命中
+(idx,value,provenance) **以及跨全部执行的去重值分布(带计数)** —— 后者正是静态工具
+结构上给不了的运行时事实(一个静态偏移在 loop/重复调用里通常持有多个值)。值带
+MemShadow/符号 provenance 标注。区分 no_execution / unknown-register / miss /
+ambiguous。真机验证: `br@+0x7e4c` 处 x0 → 5 次执行 5 个不同值, 两个解析到
+sub_7fc0+偏移, 一个 provenance 标 libart?; 内存字节点查走 mem-dump/mem-export。
+
+> **P0 全部完成** (2026-06-27)。四条命令都工具中立(只认 `(SO,偏移)`/PC)、
+> 都走进程内 oneshot、CLI+server+wrapper 三层贯通、全部在真机 liblynxsecurity
+> trace 上对抗性验证(含 round-trip 对拍、边界、错误输入)。下面是 P1。
 
 ### P1 — 反向数据流/lineage（按真实执行）
 "这个值/这段密钥从哪来"——跨函数真实 taint。已有 `taint-bwd`、`bfs-slice`、
