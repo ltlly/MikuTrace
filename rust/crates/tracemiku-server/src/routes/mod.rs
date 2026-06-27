@@ -28,6 +28,7 @@ pub mod hash_finalize;
 pub mod hash_input_search;
 pub mod idxs_for_block;
 pub mod idxs_for_pc;
+pub mod indirect_targets;
 pub mod jni_calls;
 pub mod jni_events;
 pub mod jni_strings;
@@ -75,6 +76,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
         .route("/api/resolve", get(resolve::resolve_handler))
+        .route(
+            "/api/indirect-targets",
+            get(indirect_targets::indirect_targets_handler),
+        )
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/search", get(search::search_handler))

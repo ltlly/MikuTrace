@@ -132,6 +132,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "functions.rs",
     "hash_finalize.rs",
     "hash_input_search.rs",
+    "indirect_targets.rs",
     "jni_calls.rs",
     "jni_events.rs",
     "jni_strings.rs",

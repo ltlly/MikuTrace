@@ -74,7 +74,7 @@ pub async fn resolve_handler(
 /// is hex (`10` -> `0x10`), NOT decimal — otherwise `--off 10` and `--off 6a30`
 /// would silently use different bases. A leading `0x`/`0X` is also accepted.
 /// Use `d`/`D` prefix to force decimal when genuinely needed (`d16` -> 16).
-fn parse_u64(raw: &str) -> Option<u64> {
+pub(crate) fn parse_u64(raw: &str) -> Option<u64> {
     let s = raw.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         u64::from_str_radix(hex, 16).ok()
@@ -85,7 +85,7 @@ fn parse_u64(raw: &str) -> Option<u64> {
     }
 }
 
-fn coord_for_pc(inner: &crate::state::AppStateInner, pc: u64) -> Coord {
+pub(crate) fn coord_for_pc(inner: &crate::state::AppStateInner, pc: u64) -> Coord {
     let idxs = inner.index.pc_to_idxs.get(&pc);
     let exec_count = idxs.map(Vec::len).unwrap_or(0);
     let first_idx = idxs.and_then(|v| v.first().copied());

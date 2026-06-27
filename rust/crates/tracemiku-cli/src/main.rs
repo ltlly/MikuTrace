@@ -243,6 +243,28 @@ enum Cmd {
         #[arg(long)]
         off: Option<String>,
     },
+    /// GET /api/indirect-targets — where a br/blr actually jumped at runtime.
+    ///
+    /// Resolves the real target distribution + hit counts for an indirect
+    /// branch/call, keyed on (SO, offset) or absolute PC. With no source given,
+    /// lists every indirect-branch source in the trace, busiest first. The wall
+    /// static disassemblers (IDA/BN/Ghidra) hit on `br x8` — answered from the
+    /// trace. Addresses/offsets are HEX by default; `d`-prefix forces decimal.
+    IndirectTargets {
+        trace_dir: PathBuf,
+        /// Absolute PC of the br/blr source. PC form.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the br/blr source. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+        /// Drop targets observed fewer than this many times (default 1).
+        #[arg(long)]
+        min_count: Option<u64>,
+    },
     /// GET /api/reg-value-at.
     RegValueAt {
         trace_dir: PathBuf,
@@ -1576,6 +1598,28 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("off", off));
             }
             route_get_json(trace_dir, route_path("/api/resolve", &params)).await
+        }
+        Some(Cmd::IndirectTargets {
+            trace_dir,
+            addr,
+            so,
+            off,
+            min_count,
+        }) => {
+            let mut params: Vec<(&str, String)> = Vec::new();
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(min_count) = min_count {
+                params.push(("min_count", min_count.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/indirect-targets", &params)).await
         }
         Some(Cmd::RegValueAt {
             trace_dir,

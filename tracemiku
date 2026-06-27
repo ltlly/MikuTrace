@@ -1548,6 +1548,17 @@ def cmd_query(args):
         if args.off:
             cmd += ["--off", args.off]
         return _run_rust_cli(cmd)
+    if sub == "indirect-targets":
+        cmd = ["indirect-targets", path]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.min_count is not None:
+            cmd += ["--min-count", str(args.min_count)]
+        return _run_rust_cli(cmd)
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
     return 2
 
@@ -1952,6 +1963,14 @@ def main():
     q_rs.add_argument("--addr", help="绝对 PC (16进制 0x.. 或十进制) -> 模块+偏移")
     q_rs.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
     q_rs.add_argument("--off", help="模块内静态偏移 (配合 --so) -> 绝对 PC")
+    # indirect-targets: br/blr 运行时真实跳转目标分布 (P0 间接跳转解析)
+    q_it = _addj(qsp.add_parser(
+        "indirect-targets",
+        help="br/blr 运行时真实跳转目标+命中次数; --addr 或 --so+--off; 不给则列全部"))
+    q_it.add_argument("--addr", help="br/blr 源绝对 PC")
+    q_it.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_it.add_argument("--off", help="br/blr 源的模块内偏移 (配合 --so)")
+    q_it.add_argument("--min-count", type=int, help="过滤命中次数低于此值的目标 (默认1)")
 
     # list
     p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")
