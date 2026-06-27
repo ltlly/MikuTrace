@@ -265,6 +265,31 @@ enum Cmd {
         #[arg(long)]
         min_count: Option<u64>,
     },
+    /// GET /api/reg-at — runtime register value(s) at a (SO,offset) or PC.
+    ///
+    /// "At libfoo+0x57a30, what was x0?" Reads the register at EVERY execution
+    /// of that PC and returns both the per-hit values and a distinct-value
+    /// distribution with counts — one static offset usually holds many values
+    /// across the run (loops/repeated calls), which static tools can't show.
+    /// Offsets/addr are HEX by default; `d`-prefix forces decimal.
+    RegAt {
+        trace_dir: PathBuf,
+        /// Register name (x0-x30, sp, fp, lr, pc, nzcv, w0-w30).
+        #[arg(long)]
+        reg: String,
+        /// Absolute PC. Or use --so + --off.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+        /// Max per-hit rows returned (distribution covers all hits regardless).
+        #[arg(long)]
+        max: Option<usize>,
+    },
     /// GET /api/reg-value-at.
     RegValueAt {
         trace_dir: PathBuf,
@@ -1649,6 +1674,29 @@ async fn main() -> anyhow::Result<()> {
                 params.push(("min_count", min_count.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/indirect-targets", &params)).await
+        }
+        Some(Cmd::RegAt {
+            trace_dir,
+            reg,
+            addr,
+            so,
+            off,
+            max,
+        }) => {
+            let mut params: Vec<(&str, String)> = vec![("reg", reg)];
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(max) = max {
+                params.push(("max", max.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/reg-at", &params)).await
         }
         Some(Cmd::RegValueAt {
             trace_dir,

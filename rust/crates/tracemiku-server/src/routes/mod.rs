@@ -48,6 +48,7 @@ pub mod ollvm_detect_vm;
 pub mod query;
 pub mod record;
 pub mod records;
+pub mod reg_at;
 pub mod reg_value_at;
 pub mod resolve;
 pub mod search;
@@ -76,6 +77,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/bg-status", get(api_infra::bg_status_handler))
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
+        .route("/api/reg-at", get(reg_at::reg_at_handler))
         .route("/api/resolve", get(resolve::resolve_handler))
         .route(
             "/api/indirect-targets",

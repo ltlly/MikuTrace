@@ -193,6 +193,7 @@ fn openapi_paths() -> Value {
         ("/api/so-stats", "get"),
         ("/api/resolve", "get"),
         ("/api/indirect-targets", "get"),
+        ("/api/reg-at", "get"),
         ("/api/reg-value-at", "get"),
         ("/api/reg-at-idx", "get"),
         ("/api/forward-taint", "get"),

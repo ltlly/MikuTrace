@@ -1575,6 +1575,20 @@ def cmd_query(args):
         if args.out:
             cmd += ["--out", args.out]
         return _run_rust_cli(cmd)
+    if sub == "reg-at":
+        if not args.addr and not (args.so and args.off):
+            print("[!] reg-at 需要 --addr 或 (--so + --off)", file=sys.stderr)
+            return 2
+        cmd = ["reg-at", path, "--reg", args.reg]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.max is not None:
+            cmd += ["--max", str(args.max)]
+        return _run_rust_cli(cmd)
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
     return 2
 
@@ -1997,6 +2011,15 @@ def main():
     q_me.add_argument("--len", required=True, help="导出字节数 (默认16进制)")
     q_me.add_argument("--cursor", type=int, help="时间点 (record idx), 默认 trace 末尾")
     q_me.add_argument("--out", help="写原始解密字节到此文件 (供 IDA loadfile/BN/Ghidra import)")
+    # reg-at: 运行时寄存器值点查 (P0)
+    q_ra = _addj(qsp.add_parser(
+        "reg-at",
+        help="(SO,偏移)/PC 处寄存器运行时值 + 跨执行的去重值分布; --reg 必填"))
+    q_ra.add_argument("--reg", required=True, help="寄存器名 (x0-x30,sp,fp,lr,pc,nzcv,w0-w30)")
+    q_ra.add_argument("--addr", help="绝对 PC")
+    q_ra.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_ra.add_argument("--off", help="模块内偏移 (配合 --so)")
+    q_ra.add_argument("--max", type=int, help="返回的逐次命中行数上限 (分布覆盖全部)")
 
     # list
     p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")

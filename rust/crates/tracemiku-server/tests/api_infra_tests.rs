@@ -148,6 +148,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "ollvm_detect_vm.rs",
     "query.rs",
     "records.rs",
+    "reg_at.rs",
     "search.rs",
     "so_stats.rs",
     "resolve.rs",
