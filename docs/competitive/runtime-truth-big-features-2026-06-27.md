@@ -90,6 +90,14 @@ MemShadow provenance、reg 真值、taint lineage——B 是把这些**编织进
 
 ## 大件 C：内存完整性 Phase 2 —— syscall/JNI 回读（device-agent）
 
+> **重要发现 (2026-06-27)**：host 侧已**完整且经测试**。`external_writes.bin`
+> (17 字节/记录: `idx:u64, addr:u64, byte:u8`) 已被 `memshadow.rs::
+> merge_external_writes` 读入为 `x` 层，单测 `memshadow_loads_external_writes_as_x_events`
+> 已验证。**所以 Phase 2 唯一剩下的是 device 侧捕获** —— agent 在 syscall 返回边界
+> 把内核写入的 buffer 字节按这个**已有格式**追加进 `external_writes.bin` 即可，
+> host/core/mem-export/reg-at 全部自动受益，无需改动。这把 C 从"全栈新功能"
+> 缩成"纯 agent 捕获"，但仍触设备、风险最高，**最后做**。
+
 ### 目标
 补齐"内核写进用户 buffer 但指令流看不到"的字节（`read`/`recvfrom`/`stat`/
 `gettimeofday`/`clock_gettime`/`__system_property_get`/`getrandom` 等），作为
