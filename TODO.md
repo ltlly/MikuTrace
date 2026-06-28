@@ -5,6 +5,44 @@
 >
 > Last updated: 2026-06-02 (Wave 1+2 workflow: all 26 decompiler audit tasks implemented, see below)
 
+## AI runtime-truth CLI — tool-neutral (SO,offset) interop (2026-06-27)
+
+> Strategy: `docs/competitive/ai-cli-strategy-2026-06-27.md`. traceMiku owns the
+> runtime-truth axis static tools (IDA/BN/Ghidra, CLI or UI) structurally can't,
+> joined to any disassembler only via the shared `(SO, static-offset)` coordinate.
+> All four P0 commands: tool-neutral, in-process oneshot, CLI+server+wrapper
+>三层贯通, adversarially validated on a real liblynxsecurity trace.
+
+- [x] **P0 — 地址互操作地基**: `GET /api/resolve` + `query resolve`. 双向
+  `(SO,offset)<->PC`, 工具中立名匹配(全路径/basename/前缀/子串), 回带运行时事实
+  (exec_count/first-last_idx/in_module/executed), ambiguous/out_of_range/miss 区分。
+  core `ModuleResolver::resolve_offset_candidates`. 偏移/地址默认 HEX (`d`-前缀十进制)。
+- [x] **P0 — 间接跳转/调用解析**: `GET /api/indirect-targets` + `query indirect-targets`.
+  br/blr 真实跳转目标分布+命中次数, 源/目标都回带坐标, `--min-count` 过滤, 列全部模式。
+  复用 `cfg::resolve_indirect_branch_targets`。
+- [x] **P0 — 运行时解密内存/代码导出**: `GET /api/mem-export` + `query mem-export`.
+  按 `(SO,offset,len)` 导出 MemShadow w/x/i 真值, hex blob + provenance runs + 直方图
+  + completeness, `??` 绝不冒充真零, `--out` 写原始字节供 loadfile。
+- [x] **P0 — 运行时值点查**: `GET /api/reg-at` + `query reg-at`. `(SO,offset)|PC` 处寄存器
+  全执行值 + 跨执行去重值分布(带计数+provenance)。
+
+- [x] **P1 — 反向数据流/lineage 偏移键化**: `taint-bwd`/`bfs-slice` 加
+  `--so/--off/--occurrence` (CLI `resolve_offset_to_idx` 复用 resolve+idxs-for-pc
+  同一 app)。`forward-dep-tree`/`byte-lineage` 可后续同法键化。
+- [x] **P1 — 路径覆盖**: `GET /api/coverage` + `query coverage`。函数执行块 +
+  分支方向塌缩 (条件分支实际走向/命中次数, one_sided 标注静态歧义塌缩)。
+- [ ] **P1 — 内存完整性 Phase 2 (syscall/JNI 回读)**: 给 mem-export/reg-at 补内核写的
+  buffer (read/recv/stat/getrandom)。**触 device agent, 风险高, 最后做**。设计见
+  `docs/competitive/runtime-truth-big-features-2026-06-27.md` 大件 C。
+
+## 运行时真相大件 (设计已定, 见 runtime-truth-big-features-2026-06-27.md)
+
+- [ ] **大件 A — trace-anchored 重放生成器** (`replay-export`): 用 trace 当 oracle 的
+  确定性重放+校验+填洞。A1 校验式重放(纯host, 顺带 lifter 回归测试)优先。
+- [ ] **大件 B — provenance 注解的 AI 友好反编译**: IL token 流每个值带来源标注
+  (mem/reg/syscall/import/??)。B1 token provenance 优先。
+- [ ] **大件 C — syscall/JNI Phase 2** (= 上面 P1 末项)。
+
 ## P0 — Core Correctness
 
 - [x] ARM64 lifter: 99.93-100% LLIL coverage, 0 bare Intrinsic
@@ -31,6 +69,29 @@
 - [x] Global variable resolution from ELF symbols
 - [x] Stack variable auto-naming
 - [x] Type recovery through call boundaries
+
+## Memory completeness — layered ground-truth oracle
+
+> Design: `docs/memory-completeness-design.md`. MemShadow is now a layered byte
+> oracle: every `byte_at` returns `(value, kind, src)` where kind ∈
+> {w=store, r=load, x=external/syscall, i=initial-snapshot, ??=unknown}.
+
+- [x] **Phase 1 — initial memory snapshot (`--snapshot-mem`)**: agent captures
+  real device memory at t=0 (`tracer/src/sidecar/mem_snapshot.ts`), host pulls
+  `memory_snapshot.bin`, MemShadow loads it as the `i` fallback layer
+  (`memshadow.rs::MemSnapshot`). Verified on libsgmainso x-sign: a
+  snapshot-covered address that the trace never wrote now returns
+  completeness=1.0 with kind `i` (was `??`). Recovers pre-trace data: decrypted
+  VM bytecode tables, `.rodata` constants, embedded keys.
+- [ ] **Phase 2 — syscall output-buffer readback**: extend `semantic.ts` hooks
+  with an out-buffer ABI table (read/recvfrom/stat/gettimeofday/getrandom/...),
+  read the buffer on onLeave, emit as `ext-write` (kind `x`). Precise, universal
+  fix for kernel-written buffers. Reuses `external_writes.bin` channel.
+- [ ] **Phase 3 — live mem-operand capture (`--capture-mem-operands`)**:
+  GumTrace-style — Capstone-decode operands in the callout and `readByteArray`
+  real bytes. Opt-in (slower than register-only snapshot). Deferred.
+- [ ] **Tenet export**: emit `reg=val,mr=addr:bytes,mw=...` per line so traces
+  load in IDA's Tenet plugin for time-travel debugging. Interop, not rebuild.
 
 ## P3 — Polish
 

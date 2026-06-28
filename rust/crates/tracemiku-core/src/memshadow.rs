@@ -56,6 +56,94 @@ const EXTERNAL_WRITE_RECORD_SIZE: usize = 17;
 const PARALLEL_MIN_RECORDS: usize = 250_000;
 const MIN_CHUNK_RECORDS: usize = 200_000;
 
+/// Initial-memory-snapshot sidecar (captured on-device at trace start).
+const SNAPSHOT_FILE: &str = "memory_snapshot.bin";
+const SNAPSHOT_MAGIC: &[u8; 8] = b"TMSNAP\0\0";
+
+/// One contiguous region of real device memory captured at trace start (t=0).
+/// Kept as a compact sorted blob rather than splatted per-byte into the event
+/// map, so a multi-hundred-MB snapshot stays cheap. See
+/// `docs/memory-completeness-design.md`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapRegion {
+    pub base: u64,
+    pub perms: u32,
+    pub data: Vec<u8>,
+}
+
+/// Initial memory snapshot: the baseline `i` layer of the byte oracle. Provides
+/// real bytes for any address that was initialized before the trace window
+/// (pre-trace `.rodata` constants, decrypted runtime tables, etc.) and is never
+/// overwritten by a traced store. Regions are sorted by `base` for binary
+/// search.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MemSnapshot {
+    /// Sorted by `base`, non-overlapping.
+    pub regions: Vec<SnapRegion>,
+}
+
+impl MemSnapshot {
+    /// Parse a `memory_snapshot.bin` blob. Returns `None` on bad magic, short
+    /// header, or truncated region data (best-effort: a corrupt tail is dropped
+    /// but already-parsed regions are kept).
+    pub fn parse(raw: &[u8]) -> Option<Self> {
+        if raw.len() < 16 || &raw[0..8] != SNAPSHOT_MAGIC {
+            return None;
+        }
+        let _version = u32::from_le_bytes(raw[8..12].try_into().ok()?);
+        let count = u32::from_le_bytes(raw[12..16].try_into().ok()?) as usize;
+        let mut regions = Vec::with_capacity(count);
+        let mut off = 16usize;
+        for _ in 0..count {
+            // base u64, size u64, perms u32, flags u32 = 24-byte region header
+            if off + 24 > raw.len() {
+                break;
+            }
+            let base = u64::from_le_bytes(raw[off..off + 8].try_into().ok()?);
+            let size = u64::from_le_bytes(raw[off + 8..off + 16].try_into().ok()?) as usize;
+            let perms = u32::from_le_bytes(raw[off + 16..off + 20].try_into().ok()?);
+            off += 24;
+            if off + size > raw.len() {
+                break;
+            }
+            regions.push(SnapRegion {
+                base,
+                perms,
+                data: raw[off..off + size].to_vec(),
+            });
+            off += size;
+        }
+        if regions.is_empty() {
+            return None;
+        }
+        regions.sort_by_key(|r| r.base);
+        Some(MemSnapshot { regions })
+    }
+
+    /// Load `<call_dir>/memory_snapshot.bin` if present and valid.
+    pub fn load(trace: &Trace) -> Option<Self> {
+        let raw = std::fs::read(trace.call_dir().join(SNAPSHOT_FILE)).ok()?;
+        Self::parse(&raw)
+    }
+
+    /// Return the captured byte at `addr`, or `None` if no region covers it.
+    pub fn byte_at(&self, addr: u64) -> Option<u8> {
+        // Binary search for the region whose base <= addr.
+        let pos = self.regions.partition_point(|r| r.base <= addr);
+        if pos == 0 {
+            return None;
+        }
+        let r = &self.regions[pos - 1];
+        let off = addr.checked_sub(r.base)? as usize;
+        r.data.get(off).copied()
+    }
+
+    /// Total captured bytes across all regions.
+    pub fn total_bytes(&self) -> usize {
+        self.regions.iter().map(|r| r.data.len()).sum()
+    }
+}
+
 /// Sparse byte-level memory shadow over a trace.
 ///
 /// Built once from a [`Trace`]; immutable thereafter. Lookup APIs are
@@ -66,6 +154,9 @@ pub struct MemShadow {
     pub writes: Vec<MemRec>,
     pub reads: Vec<MemRec>,
     pub bytes: BTreeMap<u64, Vec<ByteEvent>>,
+    /// Initial-memory-snapshot fallback layer (kind `i`). `None` when no
+    /// `memory_snapshot.bin` was captured for this trace.
+    pub snapshot: Option<MemSnapshot>,
 }
 
 impl MemShadow {
@@ -77,11 +168,13 @@ impl MemShadow {
     /// Load from a valid v5 sidecar when possible; otherwise cold-build and
     /// best-effort save. Corrupt/stale sidecars are ignored.
     pub fn load_or_build(trace: &Trace) -> Self {
-        if let Some(mem) = Self::try_load_sidecar(trace) {
+        if let Some(mut mem) = Self::try_load_sidecar(trace) {
+            mem.snapshot = MemSnapshot::load(trace);
             return mem;
         }
-        let mem = Self::build_from_trace(trace);
+        let mut mem = Self::build_from_trace(trace);
         let _ = mem.save_sidecar(trace);
+        mem.snapshot = MemSnapshot::load(trace);
         mem
     }
 
@@ -232,6 +325,7 @@ impl MemShadow {
             writes,
             reads,
             bytes,
+            snapshot: None,
         })
     }
 
@@ -242,25 +336,32 @@ impl MemShadow {
     /// `(None, "??", None)` if no event exists at `addr` or if the earliest
     /// event has `idx > t`.
     pub fn byte_at(&self, addr: u64, t: u64) -> (Option<u8>, &'static str, Option<usize>) {
-        let evs = match self.bytes.get(&addr) {
-            Some(e) => e,
-            None => return (None, "??", None),
-        };
-        let mut lo = 0usize;
-        let mut hi = evs.len();
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            if (evs[mid].idx as u64) <= t {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+        if let Some(evs) = self.bytes.get(&addr) {
+            let mut lo = 0usize;
+            let mut hi = evs.len();
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if (evs[mid].idx as u64) <= t {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            if lo != 0 {
+                let ev = &evs[lo - 1];
+                return (Some(ev.byte), ev.kind, Some(ev.idx));
             }
         }
-        if lo == 0 {
-            return (None, "??", None);
+        // No traced event at-or-before `t`: fall back to the initial-snapshot
+        // (`i`, idx 0) layer. Correct for any `t` before the first traced write,
+        // which is exactly when the event map has no qualifying entry. See
+        // docs/memory-completeness-design.md.
+        if let Some(snap) = &self.snapshot {
+            if let Some(b) = snap.byte_at(addr) {
+                return (Some(b), "i", Some(0));
+            }
         }
-        let ev = &evs[lo - 1];
-        (Some(ev.byte), ev.kind, Some(ev.idx))
+        (None, "??", None)
     }
 
     /// Return the idx of the latest WRITE event at `byte_addr` strictly
@@ -407,6 +508,7 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
         writes,
         reads,
         bytes,
+        snapshot: None,
     }
 }
 
@@ -415,6 +517,7 @@ fn merge_partials(partials: Vec<MemShadow>) -> MemShadow {
         writes: Vec::new(),
         reads: Vec::new(),
         bytes: BTreeMap::new(),
+        snapshot: None,
     };
     for mut partial in partials {
         out.writes.append(&mut partial.writes);
@@ -618,6 +721,7 @@ mod tests {
                     kind: "w",
                 }],
             )]),
+            snapshot: None,
         };
         let partial_b = MemShadow {
             writes: vec![MemRec {
@@ -635,6 +739,7 @@ mod tests {
                     kind: "w",
                 }],
             )]),
+            snapshot: None,
         };
 
         let merged = merge_partials(vec![partial_a, partial_b]);
@@ -653,5 +758,76 @@ mod tests {
             merged.writes.iter().map(|rec| rec.idx).collect::<Vec<_>>(),
             vec![1, 3]
         );
+    }
+
+    /// Build a `memory_snapshot.bin` blob with one region.
+    fn snap_blob(base: u64, perms: u32, data: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(SNAPSHOT_MAGIC);
+        v.extend_from_slice(&1u32.to_le_bytes()); // version
+        v.extend_from_slice(&1u32.to_le_bytes()); // count
+        v.extend_from_slice(&base.to_le_bytes());
+        v.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        v.extend_from_slice(&perms.to_le_bytes());
+        v.extend_from_slice(&0u32.to_le_bytes()); // flags
+        v.extend_from_slice(data);
+        v
+    }
+
+    #[test]
+    fn snapshot_parse_and_byte_lookup() {
+        let blob = snap_blob(0x1000, 0b101, &[0xaa, 0xbb, 0xcc, 0xdd]);
+        let snap = MemSnapshot::parse(&blob).expect("valid snapshot");
+        assert_eq!(snap.total_bytes(), 4);
+        assert_eq!(snap.byte_at(0x1000), Some(0xaa));
+        assert_eq!(snap.byte_at(0x1003), Some(0xdd));
+        assert_eq!(snap.byte_at(0x1004), None); // past region
+        assert_eq!(snap.byte_at(0x0fff), None); // before region
+    }
+
+    #[test]
+    fn snapshot_rejects_bad_magic() {
+        assert!(MemSnapshot::parse(b"NOTMAGIC........").is_none());
+        assert!(MemSnapshot::parse(b"short").is_none());
+    }
+
+    #[test]
+    fn byte_at_falls_back_to_snapshot_then_traced_store_overrides() {
+        // Pre-trace byte 0x42 at 0x2000 in the snapshot; a traced store writes
+        // 0x99 there at idx=5.
+        let snap = MemSnapshot::parse(&snap_blob(0x2000, 0b011, &[0x42])).unwrap();
+        let mut bytes = BTreeMap::new();
+        bytes.insert(
+            0x2000u64,
+            vec![ByteEvent {
+                idx: 5,
+                byte: 0x99,
+                kind: "w",
+            }],
+        );
+        let mem = MemShadow {
+            writes: Vec::new(),
+            reads: Vec::new(),
+            bytes,
+            snapshot: Some(snap),
+        };
+
+        // t before the store → snapshot value, kind "i", source idx 0.
+        assert_eq!(mem.byte_at(0x2000, 3), (Some(0x42), "i", Some(0)));
+        // t at/after the store → traced store wins, kind "w".
+        assert_eq!(mem.byte_at(0x2000, 5), (Some(0x99), "w", Some(5)));
+        // An address only in the snapshot, with no traced events at all.
+        assert_eq!(mem.byte_at(0x9999, 100), (None, "??", None));
+    }
+
+    #[test]
+    fn byte_at_no_snapshot_is_unknown() {
+        let mem = MemShadow {
+            writes: Vec::new(),
+            reads: Vec::new(),
+            bytes: BTreeMap::new(),
+            snapshot: None,
+        };
+        assert_eq!(mem.byte_at(0x1000, 10), (None, "??", None));
     }
 }

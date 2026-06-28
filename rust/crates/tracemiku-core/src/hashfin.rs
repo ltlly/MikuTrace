@@ -166,6 +166,7 @@ mod tests {
                 .collect(),
             reads: Vec::new(),
             bytes: BTreeMap::new(),
+            snapshot: None,
         }
     }
 
@@ -230,6 +231,7 @@ mod tests {
             ],
             reads: Vec::new(),
             bytes: BTreeMap::new(),
+            snapshot: None,
         };
         let candidates = HashFinalizeIndex::build(&mem).detect(10, 8);
         assert_eq!(candidates.len(), 1);

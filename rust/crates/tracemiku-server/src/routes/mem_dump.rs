@@ -92,7 +92,11 @@ fn mem_dump_response(
         });
     }
     let observed_count = bytes.iter().filter(|b| b.byte.is_some()).count();
-    let completeness = if count > 0 { observed_count as f64 / count as f64 } else { 1.0 };
+    let completeness = if count > 0 {
+        observed_count as f64 / count as f64
+    } else {
+        1.0
+    };
     Ok(MemDumpResponse {
         status: "ready",
         addr: q.addr,

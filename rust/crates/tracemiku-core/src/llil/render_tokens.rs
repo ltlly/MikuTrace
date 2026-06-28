@@ -81,8 +81,12 @@ fn render_stmt_tokens(e: &LlilExpr, names: &VarNameMap) -> CTokenLine {
         }
         LlilOp::Call => {
             match e.operands.first() {
-                Some(LlilOperand::Reg(name)) => toks.push(CToken::func(&resolve_name(name, names), None)),
-                Some(LlilOperand::U64(addr)) => toks.push(CToken::func(&format!("sub_{addr:x}"), Some(*addr))),
+                Some(LlilOperand::Reg(name)) => {
+                    toks.push(CToken::func(&resolve_name(name, names), None))
+                }
+                Some(LlilOperand::U64(addr)) => {
+                    toks.push(CToken::func(&format!("sub_{addr:x}"), Some(*addr)))
+                }
                 Some(LlilOperand::Expr(inner)) => render_expr_to(&mut toks, inner, names),
                 other => render_operand(&mut toks, other, names),
             }
@@ -97,7 +101,9 @@ fn render_stmt_tokens(e: &LlilExpr, names: &VarNameMap) -> CTokenLine {
             toks.push(CToken::func(mnem, None));
             toks.push(CToken::punct("("));
             for (i, op) in e.operands.iter().enumerate() {
-                if i > 0 { toks.push(CToken::punct(", ")); }
+                if i > 0 {
+                    toks.push(CToken::punct(", "));
+                }
                 render_operand(&mut toks, Some(op), names);
             }
             toks.push(CToken::punct(");"));
@@ -159,7 +165,9 @@ fn render_expr_to(toks: &mut Vec<CToken>, e: &LlilExpr, names: &VarNameMap) {
             toks.push(CToken::func(mnem, None));
             toks.push(CToken::punct("("));
             for (i, op) in e.operands.iter().enumerate() {
-                if i > 0 { toks.push(CToken::punct(", ")); }
+                if i > 0 {
+                    toks.push(CToken::punct(", "));
+                }
                 render_operand(toks, Some(op), names);
             }
             toks.push(CToken::punct(")"));
@@ -198,26 +206,47 @@ fn resolve_name(raw: &str, names: &VarNameMap) -> String {
 fn format_signed(v: i64) -> String {
     if v < 0 {
         let mag = v.unsigned_abs();
-        if mag >= 10 { format!("-0x{mag:x}") } else { format!("-{mag}") }
+        if mag >= 10 {
+            format!("-0x{mag:x}")
+        } else {
+            format!("-{mag}")
+        }
     } else {
         let u = v as u64;
-        if u >= 10 { format!("0x{u:x}") } else { format!("{u}") }
+        if u >= 10 {
+            format!("0x{u:x}")
+        } else {
+            format!("{u}")
+        }
     }
 }
 
 fn binary_symbol(op: LlilOp) -> Option<&'static str> {
     Some(match op {
-        LlilOp::Add => "+", LlilOp::Sub => "-", LlilOp::Mul => "*",
+        LlilOp::Add => "+",
+        LlilOp::Sub => "-",
+        LlilOp::Mul => "*",
         LlilOp::DivS | LlilOp::DivU => "/",
-        LlilOp::And => "&", LlilOp::Or => "|", LlilOp::Xor => "^",
-        LlilOp::Lsl => "<<", LlilOp::Lsr | LlilOp::Asr => ">>",
-        LlilOp::CmpE => "==", LlilOp::CmpNe => "!=",
-        LlilOp::CmpSlt | LlilOp::CmpUlt => "<", LlilOp::CmpSle | LlilOp::CmpUle => "<=",
-        LlilOp::CmpSge | LlilOp::CmpUge => ">=", LlilOp::CmpSgt | LlilOp::CmpUgt => ">",
+        LlilOp::And => "&",
+        LlilOp::Or => "|",
+        LlilOp::Xor => "^",
+        LlilOp::Lsl => "<<",
+        LlilOp::Lsr | LlilOp::Asr => ">>",
+        LlilOp::CmpE => "==",
+        LlilOp::CmpNe => "!=",
+        LlilOp::CmpSlt | LlilOp::CmpUlt => "<",
+        LlilOp::CmpSle | LlilOp::CmpUle => "<=",
+        LlilOp::CmpSge | LlilOp::CmpUge => ">=",
+        LlilOp::CmpSgt | LlilOp::CmpUgt => ">",
         _ => return None,
     })
 }
 
 fn c_type(size: u8) -> &'static str {
-    match size { 1 => "uint8_t", 2 => "uint16_t", 4 => "uint32_t", _ => "uint64_t" }
+    match size {
+        1 => "uint8_t",
+        2 => "uint16_t",
+        4 => "uint32_t",
+        _ => "uint64_t",
+    }
 }

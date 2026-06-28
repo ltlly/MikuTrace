@@ -1627,10 +1627,22 @@ function installFnHook(fp, onInsn) {
                                 }
 
                                 if (inRange) {
-                                    try {
-                                        iter.putCallout(onInsn);
-                                    } catch (e) {
-                                        // putCallout can fail on some instructions, continue
+                                    // ARM64 exclusive-monitor guard: inside an
+                                    // LDXR/STXR window iter.memoryAccess is
+                                    // "exclusive". A putCallout there spills regs
+                                    // + writes the ring buffer between load- and
+                                    // store-exclusive, clearing the CPU monitor →
+                                    // STXR always fails → lock retry loop spins
+                                    // forever (hang) or faults (crash). frida
+                                    // suppresses its own events here but NOT user
+                                    // callouts. Skip; atomic-spin records carry
+                                    // no analysis value.
+                                    if (iter.memoryAccess !== "exclusive") {
+                                        try {
+                                            iter.putCallout(onInsn);
+                                        } catch (e) {
+                                            // putCallout can fail on some instructions, continue
+                                        }
                                     }
                                 }
                                 iter.keep();

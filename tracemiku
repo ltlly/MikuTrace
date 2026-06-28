@@ -389,6 +389,23 @@ def cmd_trace(args):
                 }
             except Exception as e:
                 wlog(f"[!] pull SIMD sidecar 失败: {e}")
+        # Optional initial memory snapshot: real device memory at t=0, used by
+        # MemShadow as the `i` fallback layer for pre-trace data (decrypted
+        # bytecode tables, .rodata constants). See docs/memory-completeness-design.md.
+        snap_device_path = s["meta"].get("snapshotDevicePath")
+        if snap_device_path:
+            try:
+                snap_local_path = s["dir"] / "memory_snapshot.bin"
+                t0 = time.time()
+                snap_size = adb_pull_device_trace(snap_device_path, str(snap_local_path))
+                wlog(f"  pull snapshot {snap_device_path} → {snap_size:,} bytes in {time.time()-t0:.1f}s")
+                s["meta"]["memory_snapshot"] = {
+                    "file": "memory_snapshot.bin",
+                    "bytes": snap_size,
+                    "regions": int(s["meta"].get("snapshotRegions") or 0),
+                }
+            except Exception as e:
+                wlog(f"[!] pull memory snapshot 失败: {e}")
         worker_sidecars = []
         for wt in s["meta"].get("workerTraces") or []:
             worker_device_path = wt.get("devicePath")
@@ -628,6 +645,17 @@ def cmd_trace(args):
                         ef.flush()
                         s["meta"]["ext_writes"] = s["meta"].get("ext_writes", 0) + len(evs)
                         wlog(f"[{tag}] ext-write call#{ci} +{len(evs)} (total={s['meta']['ext_writes']})")
+                    elif t == "mem-snapshot":
+                        # Initial memory snapshot captured at trace start. Record
+                        # device path on the session so finalize() pulls it.
+                        ci = p.get("callIdx") or 0
+                        if ci not in sess_files:
+                            open_call(ci, p.get("tid", 0), pid)
+                        s = sess_files[ci]
+                        s["meta"]["snapshotDevicePath"] = p.get("devicePath")
+                        s["meta"]["snapshotRegions"] = p.get("regions", 0)
+                        wlog(f"[{tag}] mem-snapshot call#{ci}: {p.get('regions',0)} regions, "
+                             f"{int(p.get('bytes',0))/1024/1024:.1f}MB → {p.get('devicePath')}")
                     elif t == "follow": wlog(f"[{tag}] 跟踪 tid={p['tid']} ({p.get('label','?')})")
                     elif t == "cmd-hist":
                         h = p.get("hist", {})
@@ -703,6 +731,26 @@ def cmd_trace(args):
                 wlog(f"[!] failed to load --suicide-patch-spec {sps_path}: {e}")
         else:
             wlog(f"[!] --suicide-patch-spec file not found: {sps_path}")
+    # --trace-all safety rails. Capturing every instruction incl. the full ART
+    # interpreter is the highest-volume mode. Anti-detect stays OPT-IN: the user
+    # enables --hide-rwx-maps / --block-self-kill / --patch-suicide explicitly
+    # when the target is hardened. We do NOT force them on (default off).
+    trace_all = bool(getattr(args, "trace_all", False))
+    if trace_all:
+        # Volume guard: full capture can emit billions of records and reboot the
+        # device. Refuse 0 (unbounded); cap to a sane ceiling if oversized.
+        TRACE_ALL_MAX = 50_000_000
+        if not args.max_records or args.max_records <= 0:
+            wlog(f"[trace-all] max_records unbounded → forcing cap {TRACE_ALL_MAX} "
+                 f"(full capture is extreme volume; --max-records to override)")
+            args.max_records = TRACE_ALL_MAX
+        elif args.max_records > TRACE_ALL_MAX:
+            wlog(f"[trace-all] WARN: max_records={args.max_records} is very high; "
+                 f"device may freeze/reboot. Proceeding as requested.")
+        wlog("[trace-all] capturing EVERY instruction (target + libc/libm + all "
+             "userland/vendor SOs; ART apex family + linker excluded). "
+             "anti-detect is OFF unless --hide-rwx-maps/--block-self-kill/--patch-suicide given.")
+
     AGENT_OPTS = {
         "soPattern": args.so,
         "methodName": args.method,
@@ -716,6 +764,7 @@ def cmd_trace(args):
         "pkg": args.pkg,                    # v5 用来构 /data/data/<pkg>/cache/.miku 路径
         "includeSoPatterns": incl_pats,     # multi-SO trace
         "deepTrace": bool(getattr(args, "trace_deep", False)),
+        "traceAll": trace_all,
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
@@ -727,6 +776,8 @@ def cmd_trace(args):
         "semanticEvents": bool(getattr(args, "semantic_events", False)),
         "simdSidecar": bool(getattr(args, "simd_sidecar", False)),
         "simdSampleStride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
+        "snapshotMem": bool(getattr(args, "snapshot_mem", False)),
+        "snapshotMaxBytes": int(getattr(args, "snapshot_max_mb", 512) or 512) * 1024 * 1024,
     }
     wlog(f"agent opts: {AGENT_OPTS}")
 
@@ -1470,10 +1521,19 @@ def cmd_query(args):
             "--max-count", str(args.max),
         ])
     if sub == "backward-taint":
-        return _run_rust_cli([
-            "taint-bwd", path, "--start", str(args.from_), "--reg", args.reg,
-            "--max-count", str(args.max),
-        ])
+        if args.from_ is None and not (args.so and args.off):
+            print("[!] backward-taint 需要 --from <idx> 或 (--so + --off)", file=sys.stderr)
+            return 2
+        cmd = ["taint-bwd", path, "--reg", args.reg, "--max-count", str(args.max)]
+        if args.from_ is not None:
+            cmd += ["--start", str(args.from_)]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.occurrence:
+            cmd += ["--occurrence", str(args.occurrence)]
+        return _run_rust_cli(cmd)
     if sub == "strings":
         return _run_rust_cli(["strings", path, "--min-len", str(args.min_len)])
     if sub == "cfg":
@@ -1485,6 +1545,73 @@ def cmd_query(args):
         return _run_rust_cli(["search", path, pattern, "--max-results", str(args.max)])
     if sub == "func-summary":
         return _run_rust_cli(["functions", path])
+    if sub == "resolve":
+        if not args.addr and not (args.so and args.off):
+            print("[!] resolve 需要 --addr 0x.. 或 (--so <名> --off <偏移>)", file=sys.stderr)
+            return 2
+        cmd = ["resolve", path]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        return _run_rust_cli(cmd)
+    if sub == "indirect-targets":
+        cmd = ["indirect-targets", path]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.min_count is not None:
+            cmd += ["--min-count", str(args.min_count)]
+        return _run_rust_cli(cmd)
+    if sub == "mem-export":
+        if not args.addr and not (args.so and args.off):
+            print("[!] mem-export 需要 --addr 或 (--so + --off)", file=sys.stderr)
+            return 2
+        cmd = ["mem-export", path, "--len", args.len]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.cursor is not None:
+            cmd += ["--cursor", str(args.cursor)]
+        if args.out:
+            cmd += ["--out", args.out]
+        return _run_rust_cli(cmd)
+    if sub == "reg-at":
+        if not args.addr and not (args.so and args.off):
+            print("[!] reg-at 需要 --addr 或 (--so + --off)", file=sys.stderr)
+            return 2
+        cmd = ["reg-at", path, "--reg", args.reg]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.max is not None:
+            cmd += ["--max", str(args.max)]
+        return _run_rust_cli(cmd)
+    if sub == "coverage":
+        if not args.addr and not (args.so and args.off) and not args.fn_name:
+            print("[!] coverage 需要 --addr / (--so + --off) / --fn", file=sys.stderr)
+            return 2
+        cmd = ["coverage", path]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.fn_name:
+            cmd += ["--fn", args.fn_name]
+        return _run_rust_cli(cmd)
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
     return 2
 
@@ -1760,6 +1887,16 @@ def main():
                            "Stalker.exclude (interpreter/JIT/GC/atomic primitives 这些 LDXR/STXR "
                            "或 ART 自修改不安全的函数). 大部分 libart 函数 (NewStringUTF / "
                            "GetField 等) 现在能被 Stalker 跟到. linker/libdl 仍整 module 排除.")
+    p_tr.add_argument("--trace-all", action="store_true", dest="trace_all",
+                      help="全量模式: 捕获经过的每一条汇编 — 目标 SO + 所有 userland/vendor SO + "
+                           "libc/libm (现在安全, LDXR/STXR 原子死锁已由 transform 内 iter.memoryAccess "
+                           "逐指令守卫解决). module 级排除 linker/linker64/libdl (结构性递归) 和 "
+                           "ART apex 家族 (libart/libartbase/libartpalette). 注意: ART 解释器/JIT/GC "
+                           "是自修改+运行时重定位代码且 runtime stripped, Stalker 无法跟 (实测必 SIGSEGV), "
+                           "故活的 Java 字节码执行**不可** trace — 这是 Frida 硬限制, 需硬件 trace (ETM). "
+                           "可恢复 stat/time 等 libc 边界写 (x-sign 第一类 gap). 反调试默认**关闭** —— "
+                           "有反检测的目标 (如 libsgmainso) 需显式加 --patch-suicide / --hide-rwx-maps / "
+                           "--block-self-kill.")
     p_tr.add_argument("--stalker-exclude-patterns", default=None, dest="stalker_exclude_patterns",
                       help="逗号分隔, 覆盖默认 Stalker.exclude 名单 (per-symbol). 仅 --trace-deep 下生效.")
     p_tr.add_argument("--boundary-diff-patterns", default=None, dest="boundary_diff_patterns",
@@ -1810,6 +1947,13 @@ def main():
     p_tr.add_argument("--simd-sample-stride", type=int, default=1, dest="simd_sample_stride",
                       help="SIMD sidecar 采样步长: 1=每条指令保存 q0-q31, N=每 N 条保存一次. "
                            "仅 --simd-sidecar 生效.")
+    p_tr.add_argument("--snapshot-mem", action="store_true", dest="snapshot_mem",
+                      help="trace 开始时 (目标函数入口, t=0) 快照真实设备内存到 memory_snapshot.bin. "
+                           "MemShadow 用作 `i` 层 fallback, 补齐 trace 窗口之前初始化的数据 "
+                           "(已解密的 VM 字节码表 / .rodata 常量 / 嵌入密钥 等). "
+                           "捕获目标 SO 各段 + 可读 rw-/匿名/堆区. 见 docs/memory-completeness-design.md.")
+    p_tr.add_argument("--snapshot-max-mb", type=int, default=512, dest="snapshot_max_mb",
+                      help="--snapshot-mem 的字节预算上限 (MB), 默认 512. 保护设备不被大快照拖垮.")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--follow-workers", action="store_true",
                       help="跟踪 pthread_create 新生成的 worker 线程 (异步函数才需要; 默认关，不然 TB 类 app 易闪退)")
@@ -1856,8 +2000,12 @@ def main():
     q_r.add_argument("--range", help="范围 a..b (默认全部)"); q_r.add_argument("--regs", help="逗号分隔的寄存器名")
     q_ft = _addj(qsp.add_parser("forward-taint", help="正向污点"))
     q_ft.add_argument("--from", dest="from_", type=int, required=True); q_ft.add_argument("--reg", required=True); q_ft.add_argument("--max", type=int, default=500)
-    q_bt = _addj(qsp.add_parser("backward-taint", help="反向污点"))
-    q_bt.add_argument("--from", dest="from_", type=int, required=True); q_bt.add_argument("--reg", required=True); q_bt.add_argument("--max", type=int, default=500)
+    q_bt = _addj(qsp.add_parser("backward-taint", help="反向污点 (--from idx 或 --so+--off 坐标)"))
+    q_bt.add_argument("--from", dest="from_", type=int, help="起始 idx (汇点); 或用 --so+--off")
+    q_bt.add_argument("--so", help="种子模块名/basename/前缀/子串 (配合 --off)")
+    q_bt.add_argument("--off", help="种子的模块内偏移 (配合 --so)")
+    q_bt.add_argument("--occurrence", type=int, default=0, help="该 PC 的第几次执行 (默认0=首次)")
+    q_bt.add_argument("--reg", required=True); q_bt.add_argument("--max", type=int, default=500)
     q_st = _addj(qsp.add_parser("strings", help="字符串提取")); q_st.add_argument("--min-len", type=int, default=4)
     q_cfg = _addj(qsp.add_parser("cfg", help="CFG 数据"))
     q_se = _addj(qsp.add_parser("search", help="按反汇编 regex 搜"))
@@ -1865,6 +2013,48 @@ def main():
     q_se.add_argument("--pattern", dest="pattern_flag", default=None, help="搜索 regex (兼容旧接口)")
     q_se.add_argument("--max", type=int, default=200)
     q_fs = _addj(qsp.add_parser("func-summary", help="函数命中频次"))
+    # resolve: (SO,偏移) <-> PC 工具中立坐标互转 (P0 地址互操作地基)
+    q_rs = _addj(qsp.add_parser(
+        "resolve",
+        help="(SO,偏移)<->PC 坐标互转; --addr 绝对PC, 或 --so <名> --off <偏移>"))
+    q_rs.add_argument("--addr", help="绝对 PC (16进制 0x.. 或十进制) -> 模块+偏移")
+    q_rs.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_rs.add_argument("--off", help="模块内静态偏移 (配合 --so) -> 绝对 PC")
+    # indirect-targets: br/blr 运行时真实跳转目标分布 (P0 间接跳转解析)
+    q_it = _addj(qsp.add_parser(
+        "indirect-targets",
+        help="br/blr 运行时真实跳转目标+命中次数; --addr 或 --so+--off; 不给则列全部"))
+    q_it.add_argument("--addr", help="br/blr 源绝对 PC")
+    q_it.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_it.add_argument("--off", help="br/blr 源的模块内偏移 (配合 --so)")
+    q_it.add_argument("--min-count", type=int, help="过滤命中次数低于此值的目标 (默认1)")
+    # mem-export: 运行时解密内存/代码导出 (P0)
+    q_me = _addj(qsp.add_parser(
+        "mem-export",
+        help="导出运行时解密字节 (SO,偏移,长度); --addr 或 --so+--off; --out 写原始字节供反汇编器 loadfile"))
+    q_me.add_argument("--addr", help="范围起始绝对 PC")
+    q_me.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_me.add_argument("--off", help="范围起始的模块内偏移 (配合 --so)")
+    q_me.add_argument("--len", required=True, help="导出字节数 (默认16进制)")
+    q_me.add_argument("--cursor", type=int, help="时间点 (record idx), 默认 trace 末尾")
+    q_me.add_argument("--out", help="写原始解密字节到此文件 (供 IDA loadfile/BN/Ghidra import)")
+    # reg-at: 运行时寄存器值点查 (P0)
+    q_ra = _addj(qsp.add_parser(
+        "reg-at",
+        help="(SO,偏移)/PC 处寄存器运行时值 + 跨执行的去重值分布; --reg 必填"))
+    q_ra.add_argument("--reg", required=True, help="寄存器名 (x0-x30,sp,fp,lr,pc,nzcv,w0-w30)")
+    q_ra.add_argument("--addr", help="绝对 PC")
+    q_ra.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_ra.add_argument("--off", help="模块内偏移 (配合 --so)")
+    q_ra.add_argument("--max", type=int, help="返回的逐次命中行数上限 (分布覆盖全部)")
+    # coverage: 执行路径覆盖 + 分支方向塌缩 (P1)
+    q_cv = _addj(qsp.add_parser(
+        "coverage",
+        help="函数执行覆盖+分支方向塌缩; --addr/--so+--off/--fn 任一"))
+    q_cv.add_argument("--addr", help="函数内绝对 PC")
+    q_cv.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_cv.add_argument("--off", help="函数内的模块偏移 (配合 --so)")
+    q_cv.add_argument("--fn", dest="fn_name", help="直接按函数名 (如 sub_7f10)")
 
     # list
     p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")

@@ -159,7 +159,17 @@ wrapper: `/api/analysis-index`, `/api/dec/llm-call`, `/api/llil/llm`.
 - **MemShadow is partial** — only bytes actually accessed during the traced
   execution are tracked. `None` bytes mean "never observed during this trace",
   not "memory is zero". Check the `completeness` field in mem-dump responses;
-  if <0.7, the data may be insufficient for emulation.
+  if <0.7, the data may be insufficient for emulation. Each byte carries a
+  provenance `kind`: `w` (traced store), `r` (traced load), `x` (external/
+  syscall/boundary-diff write), `i` (initial memory snapshot, see below), `??`
+  (never observed). Trust `w`/`x`/`i` as ground truth; `??` is a real frontier.
+- **Initial memory snapshot (`--snapshot-mem`)** — captures real device memory
+  at trace start (t=0) into `memory_snapshot.bin`, used by MemShadow as the `i`
+  fallback layer. This recovers data initialized BEFORE the trace window opened
+  (decrypted VM bytecode tables, `.rodata` constants, embedded keys) that pure
+  instruction tracing cannot see. Use it when a trace shows
+  `observed_read_without_matching_traced_write` frontiers on pre-trace data.
+  See `docs/memory-completeness-design.md` for the layered-oracle design.
 - **Real-device trace pre-checks** — run `./tracemiku doctor --pkg <pkg>` before
   tracing to verify frida/SELinux/device state in one pass.
 - **Do not set `--max-records`** unless you specifically want a truncated trace.
@@ -210,7 +220,7 @@ rust/crates/tracemiku-core/src/
   function_index.rs               stable trace:/sym:/bn: function model
   cfg.rs                          trace CFG rebuild and graph metadata
   taint.rs                        forward/backward taint with dependency metadata
-  memshadow.rs                    sparse byte-level memory shadow sidecar
+  memshadow.rs                    sparse byte-level memory shadow sidecar (w/r/x/i layered oracle)
   symbols.rs                      PC to module/function resolution
   decompiler/                     TraceIR (LLM-friendly skeleton IR), il_pipeline (full three-layer), pass framework (14 passes)
   llil/                           in-house Low-Level IL (ARM64 lifter, cross-block SSA, Phi placement, flag elim)

@@ -223,6 +223,73 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// GET /api/resolve — tool-neutral (SO, offset) <-> PC translation.
+    ///
+    /// Forward:  --addr 0x... (absolute PC) -> module, offset, exec facts.
+    /// Reverse:  --so libfoo --off 0x...    (module+offset) -> absolute PC.
+    /// `--so` matches full path / basename / basename-prefix / substring, so
+    /// the stable name you read in IDA/BN/Ghidra resolves to the loaded .so.
+    /// Addresses/offsets are HEX by default (disassembler convention): `10`
+    /// means 0x10; prefix with `d` to force decimal (`d16` = 16).
+    Resolve {
+        trace_dir: PathBuf,
+        /// Absolute PC, hex by default (`d`-prefix for decimal). PC -> (SO, offset).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative static offset, hex by default. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+    },
+    /// GET /api/indirect-targets — where a br/blr actually jumped at runtime.
+    ///
+    /// Resolves the real target distribution + hit counts for an indirect
+    /// branch/call, keyed on (SO, offset) or absolute PC. With no source given,
+    /// lists every indirect-branch source in the trace, busiest first. The wall
+    /// static disassemblers (IDA/BN/Ghidra) hit on `br x8` — answered from the
+    /// trace. Addresses/offsets are HEX by default; `d`-prefix forces decimal.
+    IndirectTargets {
+        trace_dir: PathBuf,
+        /// Absolute PC of the br/blr source. PC form.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the br/blr source. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+        /// Drop targets observed fewer than this many times (default 1).
+        #[arg(long)]
+        min_count: Option<u64>,
+    },
+    /// GET /api/reg-at — runtime register value(s) at a (SO,offset) or PC.
+    ///
+    /// "At libfoo+0x57a30, what was x0?" Reads the register at EVERY execution
+    /// of that PC and returns both the per-hit values and a distinct-value
+    /// distribution with counts — one static offset usually holds many values
+    /// across the run (loops/repeated calls), which static tools can't show.
+    /// Offsets/addr are HEX by default; `d`-prefix forces decimal.
+    RegAt {
+        trace_dir: PathBuf,
+        /// Register name (x0-x30, sp, fp, lr, pc, nzcv, w0-w30).
+        #[arg(long)]
+        reg: String,
+        /// Absolute PC. Or use --so + --off.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+        /// Max per-hit rows returned (distribution covers all hits regardless).
+        #[arg(long)]
+        max: Option<usize>,
+    },
     /// GET /api/reg-value-at.
     RegValueAt {
         trace_dir: PathBuf,
@@ -331,6 +398,25 @@ enum Cmd {
     },
     /// GET /api/loops.
     Loops { trace_dir: PathBuf },
+    /// GET /api/coverage — executed-path coverage + branch-direction collapse
+    /// for the function at a (SO,offset)/PC, or by --fn name. For each branch:
+    /// which way it actually went and how often (static "both possible" ->
+    /// the real path). one_sided branches = static ambiguity collapsed.
+    Coverage {
+        trace_dir: PathBuf,
+        /// Absolute PC inside the function. Or --so+--off, or --fn.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name/basename/prefix/substring (with --off).
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset inside the function (with --so). HEX default.
+        #[arg(long)]
+        off: Option<String>,
+        /// Scope directly by function name (e.g. sub_7f10).
+        #[arg(long = "fn")]
+        fn_name: Option<String>,
+    },
     /// GET /api/backtrace.
     Backtrace {
         trace_dir: PathBuf,
@@ -388,6 +474,35 @@ enum Cmd {
         /// Interpret the range as a NUL-terminated C string.
         #[arg(long)]
         cstr: bool,
+    },
+    /// GET /api/mem-export — export runtime-decrypted bytes by (SO,offset,len).
+    ///
+    /// Reconstructs the real bytes the program saw (MemShadow w/x/i layers) for
+    /// a packed/VMP'd/self-decrypting region a static disassembler can't read.
+    /// Keyed on (SO,offset) or absolute PC. With --out, writes the raw decrypted
+    /// bytes to a file for IDA loadfile / BN / Ghidra import at the same offset;
+    /// otherwise prints the JSON (hex blob + provenance runs + completeness).
+    /// Offsets/len are HEX by default; `d`-prefix forces decimal.
+    MemExport {
+        trace_dir: PathBuf,
+        /// Absolute PC of the range start. Or use --so + --off.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name / basename / prefix / substring. Use with --off.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the range start. Use with --so.
+        #[arg(long)]
+        off: Option<String>,
+        /// Number of bytes to export (hex by default).
+        #[arg(long)]
+        len: String,
+        /// Time point (record idx); default = end of trace.
+        #[arg(long)]
+        cursor: Option<u64>,
+        /// Write raw decrypted bytes to this file (for disassembler loadfile).
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// GET /api/last-write-of-addr.
     LastWriteOfAddr {
@@ -478,9 +593,20 @@ enum Cmd {
     /// `bfs-slice` instead (much faster).
     TaintBwd {
         trace_dir: PathBuf,
-        /// Trace index where the lineage chase starts (the sink).
+        /// Trace index where the lineage chase starts (the sink). Optional if
+        /// you instead give --so/--off (a tool-neutral (SO,offset) coordinate).
         #[arg(long)]
-        start: usize,
+        start: Option<usize>,
+        /// Module name/basename/prefix/substring for the seed (with --off).
+        /// Resolves (SO,offset) -> PC -> the chosen execution's trace index.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the seed (with --so). HEX by default.
+        #[arg(long)]
+        off: Option<String>,
+        /// Which execution of that PC to seed from (0 = first). Default 0.
+        #[arg(long, default_value_t = 0)]
+        occurrence: usize,
         /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
@@ -574,6 +700,16 @@ enum Cmd {
         /// intersection across one seed equals the seed's slice.
         #[arg(long, default_value = "union")]
         mode: String,
+        /// Module name/basename/prefix/substring for the seed (with --off).
+        /// Resolves (SO,offset) -> PC -> chosen execution's idx as the seed.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the seed (with --so). HEX by default.
+        #[arg(long)]
+        off: Option<String>,
+        /// Which execution of that PC to seed from (0 = first). Default 0.
+        #[arg(long, default_value_t = 0)]
+        occurrence: usize,
     },
     /// GET /api/forward-dep-tree — def→use DAG. Returns rows that
     /// transitively consumed the seed's value. Inverse direction of
@@ -1430,7 +1566,8 @@ async fn main() -> anyhow::Result<()> {
             indices,
         }) => {
             if let Some(idx_str) = indices {
-                let idxs: Vec<usize> = idx_str.split(',')
+                let idxs: Vec<usize> = idx_str
+                    .split(',')
                     .filter_map(|s| s.trim().parse().ok())
                     .collect();
                 let mut results = Vec::new();
@@ -1438,7 +1575,9 @@ async fn main() -> anyhow::Result<()> {
                     let path = format!("/api/record/{idx}");
                     match route_get_json_value(trace_dir.clone(), path).await {
                         Ok(v) => results.push(v),
-                        Err(_) => results.push(serde_json::json!({"idx": idx, "error": "not found"})),
+                        Err(_) => {
+                            results.push(serde_json::json!({"idx": idx, "error": "not found"}))
+                        }
                     }
                 }
                 print_pretty(&serde_json::Value::Array(results))?;
@@ -1535,6 +1674,69 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let params = vec![("top", top.to_string()), ("all", all.to_string())];
             route_get_json(trace_dir, route_path("/api/so-stats", &params)).await
+        }
+        Some(Cmd::Resolve {
+            trace_dir,
+            addr,
+            so,
+            off,
+        }) => {
+            let mut params: Vec<(&str, String)> = Vec::new();
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            route_get_json(trace_dir, route_path("/api/resolve", &params)).await
+        }
+        Some(Cmd::IndirectTargets {
+            trace_dir,
+            addr,
+            so,
+            off,
+            min_count,
+        }) => {
+            let mut params: Vec<(&str, String)> = Vec::new();
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(min_count) = min_count {
+                params.push(("min_count", min_count.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/indirect-targets", &params)).await
+        }
+        Some(Cmd::RegAt {
+            trace_dir,
+            reg,
+            addr,
+            so,
+            off,
+            max,
+        }) => {
+            let mut params: Vec<(&str, String)> = vec![("reg", reg)];
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(max) = max {
+                params.push(("max", max.to_string()));
+            }
+            route_get_json(trace_dir, route_path("/api/reg-at", &params)).await
         }
         Some(Cmd::RegValueAt {
             trace_dir,
@@ -1668,6 +1870,28 @@ async fn main() -> anyhow::Result<()> {
             route_get_json(trace_dir, route_path("/api/block", &[("pc", pc)])).await
         }
         Some(Cmd::Loops { trace_dir }) => route_get_json(trace_dir, "/api/loops".to_string()).await,
+        Some(Cmd::Coverage {
+            trace_dir,
+            addr,
+            so,
+            off,
+            fn_name,
+        }) => {
+            let mut params: Vec<(&str, String)> = Vec::new();
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(fn_name) = fn_name {
+                params.push(("fn", fn_name));
+            }
+            route_get_json(trace_dir, route_path("/api/coverage", &params)).await
+        }
         Some(Cmd::Backtrace {
             trace_dir,
             idx,
@@ -1735,6 +1959,36 @@ async fn main() -> anyhow::Result<()> {
                 print_pretty(&mem_dump_summary(&value, cstr))
             } else {
                 route_get_json(trace_dir, path).await
+            }
+        }
+        Some(Cmd::MemExport {
+            trace_dir,
+            addr,
+            so,
+            off,
+            len,
+            cursor,
+            out,
+        }) => {
+            let mut params: Vec<(&str, String)> = vec![("len", len)];
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(cursor) = cursor {
+                params.push(("cursor", cursor.to_string()));
+            }
+            let path = route_path("/api/mem-export", &params);
+            let value = route_get_json_value(trace_dir, path).await?;
+            if let Some(out_path) = out {
+                cmd_mem_export_write(&value, &out_path)
+            } else {
+                print_pretty(&value)
             }
         }
         Some(Cmd::LastWriteOfAddr {
@@ -1825,6 +2079,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Cmd::TaintBwd {
             trace_dir,
             start,
+            so,
+            off,
+            occurrence,
             reg,
             max_count,
             through_mem,
@@ -1832,6 +2089,18 @@ async fn main() -> anyhow::Result<()> {
             cross_fn_call,
             scan_limit,
         }) => {
+            let path_hint = "/api/backward-taint";
+            let app = build_cli_router(trace_dir, path_hint, None)?;
+            let start = match (start, so.as_ref(), off.as_ref()) {
+                (Some(s), _, _) => s,
+                (None, Some(so), Some(off)) => {
+                    let (idx, _pc) = resolve_offset_to_idx(&app, so, off, occurrence).await?;
+                    idx
+                }
+                (None, _, _) => {
+                    bail!("taint-bwd needs --start <idx> or (--so <name> --off <offset>)")
+                }
+            };
             let params = taint_params(
                 start,
                 reg,
@@ -1841,7 +2110,8 @@ async fn main() -> anyhow::Result<()> {
                 cross_fn_call,
                 scan_limit,
             );
-            route_get_json(trace_dir, route_path("/api/backward-taint", &params)).await
+            let value = route_get_json_value_on(&app, route_path(path_hint, &params)).await?;
+            print_pretty(&value)
         }
         Some(Cmd::DataChase {
             trace_dir,
@@ -1894,13 +2164,30 @@ async fn main() -> anyhow::Result<()> {
             data_only,
             limit,
             mode,
+            so,
+            off,
+            occurrence,
         }) => {
+            let path_hint = "/api/bfs-slice";
+            let app = build_cli_router(trace_dir, path_hint, None)?;
+            // (SO,offset) seed resolves to a concrete idx, joining the existing
+            // idx/reg/addr seed family without touching the server route.
+            let resolved_idx = match (so.as_ref(), off.as_ref()) {
+                (Some(so), Some(off)) => {
+                    let (i, _pc) = resolve_offset_to_idx(&app, so, off, occurrence).await?;
+                    Some(i)
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    bail!("bfs-slice --so and --off must be given together")
+                }
+                (None, None) => None,
+            };
             let mut params = vec![
                 ("limit", limit.to_string()),
                 ("data_only", data_only.to_string()),
                 ("mode", mode),
             ];
-            if let Some(v) = idx {
+            if let Some(v) = resolved_idx.or(idx) {
                 params.push(("idx", v.to_string()));
             }
             if let Some(v) = idxs {
@@ -1921,7 +2208,8 @@ async fn main() -> anyhow::Result<()> {
             if let Some(v) = before {
                 params.push(("before", v.to_string()));
             }
-            route_get_json(trace_dir, route_path("/api/bfs-slice", &params)).await
+            let value = route_get_json_value_on(&app, route_path(path_hint, &params)).await?;
+            print_pretty(&value)
         }
         Some(Cmd::ForwardDepTree {
             trace_dir,
@@ -2089,18 +2377,22 @@ async fn main() -> anyhow::Result<()> {
             route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
         }
         Some(Cmd::Crypto { trace_dir }) => {
-            let mut value = route_get_json_value(trace_dir, "/api/crypto-analysis".to_string()).await?;
+            let mut value =
+                route_get_json_value(trace_dir, "/api/crypto-analysis".to_string()).await?;
             if let Some(obj) = value.as_object_mut() {
                 let has_findings = obj.iter().any(|(k, v)| {
                     (k.contains("findings") || k.contains("hits") || k.contains("instructions"))
                         && v.as_array().map_or(false, |a| !a.is_empty())
                 });
                 if !has_findings {
-                    obj.insert("note".to_string(), serde_json::json!(
-                        "No crypto constants, byte patterns, or ARM CE instructions detected. \
+                    obj.insert(
+                        "note".to_string(),
+                        serde_json::json!(
+                            "No crypto constants, byte patterns, or ARM CE instructions detected. \
                          This may mean: (1) the function doesn't use crypto, (2) crypto is in a \
                          different call, or (3) constants are obfuscated."
-                    ));
+                        ),
+                    );
                 }
             }
             print_pretty(&value)?;
@@ -2749,6 +3041,69 @@ async fn route_get_json_value_on(
     }
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     Ok(value)
+}
+
+/// Resolve a tool-neutral `(SO, offset)` coordinate to a concrete trace record
+/// index, so lineage/taint commands (which seed on an idx) accept the same
+/// coordinate a reverse engineer reads from IDA/BN/Ghidra. `occurrence` picks
+/// which execution of that PC to seed from (0 = first). Reuses the in-process
+/// `/api/resolve` + `/api/idxs-for-pc` routes on the SAME app so the trace is
+/// loaded once. Returns `(idx, pc)`.
+async fn resolve_offset_to_idx(
+    app: &axum::Router,
+    so: &str,
+    off: &str,
+    occurrence: usize,
+) -> anyhow::Result<(usize, u64)> {
+    let rparams = vec![("so", so.to_string()), ("off", off.to_string())];
+    let resolved = route_get_json_value_on(app, route_path("/api/resolve", &rparams)).await?;
+    let status = resolved
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if status != "hit" {
+        bail!(
+            "could not resolve (so={so}, off={off}) to a PC: {}",
+            serde_json::to_string(&resolved).unwrap_or_default()
+        );
+    }
+    let pc_str = resolved
+        .pointer("/coord/pc")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("resolve response missing coord.pc"))?;
+    let pc = parse_u64_str(pc_str)
+        .ok_or_else(|| anyhow::anyhow!("resolve returned unparseable pc: {pc_str}"))?;
+    let executed = resolved
+        .pointer("/coord/executed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !executed {
+        bail!("(so={so}, off={off}) -> {pc_str} was never executed in this trace");
+    }
+    // idxs-for-pc with cursor=0 puts every execution in `after` (ascending).
+    let iparams = vec![
+        ("pc", pc_str.to_string()),
+        ("cursor", "0".to_string()),
+        ("limit", (occurrence + 1).to_string()),
+    ];
+    let idxs = route_get_json_value_on(app, route_path("/api/idxs-for-pc", &iparams)).await?;
+    let after = idxs
+        .get("after")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("idxs-for-pc response missing after[]"))?;
+    let total_after = idxs
+        .get("total_after")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let idx = after
+        .get(occurrence)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "occurrence {occurrence} out of range: PC {pc_str} executed {total_after} time(s)"
+            )
+        })?;
+    Ok((idx as usize, pc))
 }
 
 async fn cmd_byte_writer_map(
@@ -15223,6 +15578,43 @@ fn split_csv_allow_empty(s: &str) -> Vec<String> {
         return vec![String::new()];
     }
     split_csv(s)
+}
+
+/// Decode the `hex` field of a /api/mem-export response and write the raw
+/// decrypted bytes to `out`. Prints a JSON summary (with completeness +
+/// provenance histogram) so the caller still sees how trustworthy the dump is.
+/// `??` frontier bytes are written as 0x00 — surfaced via completeness < 1.0.
+fn cmd_mem_export_write(value: &serde_json::Value, out: &Path) -> anyhow::Result<()> {
+    let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    if status != "ready" {
+        // Pass the route's miss/ambiguous/error JSON straight through.
+        return print_pretty(value);
+    }
+    let hex = value
+        .get("hex")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("mem-export response missing hex field"))?;
+    if hex.len() % 2 != 0 {
+        bail!("mem-export hex length is odd ({} chars)", hex.len());
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for i in (0..hex.len()).step_by(2) {
+        let b = u8::from_str_radix(&hex[i..i + 2], 16)
+            .with_context(|| format!("bad hex byte at {i}"))?;
+        bytes.push(b);
+    }
+    std::fs::write(out, &bytes).with_context(|| format!("failed to write {}", out.display()))?;
+    let mut summary = value.as_object().cloned().unwrap_or_default();
+    summary.remove("hex"); // raw bytes are now on disk; don't echo the blob
+    summary.insert(
+        "out_file".to_string(),
+        serde_json::Value::String(out.display().to_string()),
+    );
+    summary.insert(
+        "bytes_written".to_string(),
+        serde_json::Value::from(bytes.len()),
+    );
+    print_pretty(&serde_json::Value::Object(summary))
 }
 
 fn cmd_list(path: Option<PathBuf>, dir: PathBuf, json: bool) -> anyhow::Result<()> {

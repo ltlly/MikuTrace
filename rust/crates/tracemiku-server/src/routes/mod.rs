@@ -8,6 +8,7 @@ pub mod bn_hlil;
 pub mod call_tree;
 pub mod cfg;
 pub mod cfg_svg;
+pub mod coverage;
 pub mod crypto_analysis;
 pub mod crypto_scan;
 pub mod data_chase;
@@ -28,6 +29,7 @@ pub mod hash_finalize;
 pub mod hash_input_search;
 pub mod idxs_for_block;
 pub mod idxs_for_pc;
+pub mod indirect_targets;
 pub mod jni_calls;
 pub mod jni_events;
 pub mod jni_strings;
@@ -37,6 +39,7 @@ pub mod llil_llm;
 pub mod llil_pipeline;
 pub mod llil_render;
 pub mod mem_dump;
+pub mod mem_export;
 pub mod mem_flow;
 pub mod memory_query;
 pub mod meta;
@@ -46,7 +49,9 @@ pub mod ollvm_detect_vm;
 pub mod query;
 pub mod record;
 pub mod records;
+pub mod reg_at;
 pub mod reg_value_at;
+pub mod resolve;
 pub mod search;
 pub mod search_pc;
 pub mod seed_resolver;
@@ -73,6 +78,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/bg-status", get(api_infra::bg_status_handler))
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
+        .route("/api/reg-at", get(reg_at::reg_at_handler))
+        .route("/api/coverage", get(coverage::coverage_handler))
+        .route("/api/resolve", get(resolve::resolve_handler))
+        .route(
+            "/api/indirect-targets",
+            get(indirect_targets::indirect_targets_handler),
+        )
         .route("/api/records", get(records::records_handler))
         .route("/api/record/:idx", get(record::record_handler))
         .route("/api/search", get(search::search_handler))
@@ -187,6 +199,7 @@ pub fn router(state: AppState) -> Router {
             get(string_provenance::string_provenance_handler),
         )
         .route("/api/mem-dump", get(mem_dump::mem_dump_handler))
+        .route("/api/mem-export", get(mem_export::mem_export_handler))
         .route(
             "/api/last-write-of-addr",
             get(memory_query::last_write_of_addr_handler),

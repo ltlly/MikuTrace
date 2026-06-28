@@ -267,27 +267,50 @@ fn operand_text(op: Option<&MlilOperand>) -> String {
 fn format_signed(v: i64) -> String {
     if v < 0 {
         let mag = v.unsigned_abs();
-        if mag >= 10 { format!("-0x{mag:x}") } else { format!("-{mag}") }
+        if mag >= 10 {
+            format!("-0x{mag:x}")
+        } else {
+            format!("-{mag}")
+        }
     } else {
         let u = v as u64;
-        if u >= 10 { format!("0x{u:x}") } else { format!("{u}") }
+        if u >= 10 {
+            format!("0x{u:x}")
+        } else {
+            format!("{u}")
+        }
     }
 }
 
 fn binary_symbol(op: MlilOp) -> Option<&'static str> {
     Some(match op {
-        MlilOp::Add => "+", MlilOp::Sub => "-", MlilOp::Mul => "*",
-        MlilOp::DivS | MlilOp::DivU => "/", MlilOp::ModS | MlilOp::ModU => "%",
-        MlilOp::And => "&", MlilOp::Or => "|", MlilOp::Xor => "^",
-        MlilOp::Lsl => "<<", MlilOp::Lsr | MlilOp::Asr => ">>",
-        MlilOp::Rol => "<<<", MlilOp::Ror => ">>>",
-        MlilOp::CmpE => "==", MlilOp::CmpNe => "!=",
-        MlilOp::CmpSlt | MlilOp::CmpUlt => "<", MlilOp::CmpSle | MlilOp::CmpUle => "<=",
-        MlilOp::CmpSge | MlilOp::CmpUge => ">=", MlilOp::CmpSgt | MlilOp::CmpUgt => ">",
+        MlilOp::Add => "+",
+        MlilOp::Sub => "-",
+        MlilOp::Mul => "*",
+        MlilOp::DivS | MlilOp::DivU => "/",
+        MlilOp::ModS | MlilOp::ModU => "%",
+        MlilOp::And => "&",
+        MlilOp::Or => "|",
+        MlilOp::Xor => "^",
+        MlilOp::Lsl => "<<",
+        MlilOp::Lsr | MlilOp::Asr => ">>",
+        MlilOp::Rol => "<<<",
+        MlilOp::Ror => ">>>",
+        MlilOp::CmpE => "==",
+        MlilOp::CmpNe => "!=",
+        MlilOp::CmpSlt | MlilOp::CmpUlt => "<",
+        MlilOp::CmpSle | MlilOp::CmpUle => "<=",
+        MlilOp::CmpSge | MlilOp::CmpUge => ">=",
+        MlilOp::CmpSgt | MlilOp::CmpUgt => ">",
         _ => return None,
     })
 }
 
 fn c_type(size: u8) -> &'static str {
-    match size { 1 => "uint8_t", 2 => "uint16_t", 4 => "uint32_t", _ => "uint64_t" }
+    match size {
+        1 => "uint8_t",
+        2 => "uint16_t",
+        4 => "uint32_t",
+        _ => "uint64_t",
+    }
 }
