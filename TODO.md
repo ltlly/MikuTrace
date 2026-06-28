@@ -26,12 +26,22 @@
 - [x] **P0 — 运行时值点查**: `GET /api/reg-at` + `query reg-at`. `(SO,offset)|PC` 处寄存器
   全执行值 + 跨执行去重值分布(带计数+provenance)。
 
-- [ ] **P1 — 反向数据流/lineage 偏移键化**: `taint-bwd`/`bfs-slice`/`byte-lineage`/
-  `forward-dep-tree` 已有, 补 `(SO,offset)` 入口键 + 示例。
-- [ ] **P1 — 路径覆盖**: 补"已执行边/覆盖率"视图, 把静态全路径 CFG 塌缩到真实路径
-  (已有 `loops`/`call-tree`/`call-chain`)。
+- [x] **P1 — 反向数据流/lineage 偏移键化**: `taint-bwd`/`bfs-slice` 加
+  `--so/--off/--occurrence` (CLI `resolve_offset_to_idx` 复用 resolve+idxs-for-pc
+  同一 app)。`forward-dep-tree`/`byte-lineage` 可后续同法键化。
+- [x] **P1 — 路径覆盖**: `GET /api/coverage` + `query coverage`。函数执行块 +
+  分支方向塌缩 (条件分支实际走向/命中次数, one_sided 标注静态歧义塌缩)。
 - [ ] **P1 — 内存完整性 Phase 2 (syscall/JNI 回读)**: 给 mem-export/reg-at 补内核写的
-  buffer (read/recv/stat/getrandom)。设计见 `docs/memory-completeness-design.md`。
+  buffer (read/recv/stat/getrandom)。**触 device agent, 风险高, 最后做**。设计见
+  `docs/competitive/runtime-truth-big-features-2026-06-27.md` 大件 C。
+
+## 运行时真相大件 (设计已定, 见 runtime-truth-big-features-2026-06-27.md)
+
+- [ ] **大件 A — trace-anchored 重放生成器** (`replay-export`): 用 trace 当 oracle 的
+  确定性重放+校验+填洞。A1 校验式重放(纯host, 顺带 lifter 回归测试)优先。
+- [ ] **大件 B — provenance 注解的 AI 友好反编译**: IL token 流每个值带来源标注
+  (mem/reg/syscall/import/??)。B1 token provenance 优先。
+- [ ] **大件 C — syscall/JNI Phase 2** (= 上面 P1 末项)。
 
 ## P0 — Core Correctness
 

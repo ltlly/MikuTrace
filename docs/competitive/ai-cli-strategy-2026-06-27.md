@@ -110,14 +110,26 @@ sub_7fc0+偏移, 一个 provenance 标 libart?; 内存字节点查走 mem-dump/m
 > 都走进程内 oneshot、CLI+server+wrapper 三层贯通、全部在真机 liblynxsecurity
 > trace 上对抗性验证(含 round-trip 对拍、边界、错误输入)。下面是 P1。
 
-### P1 — 反向数据流/lineage（按真实执行）
+### P1 — 反向数据流/lineage（按真实执行）✅ 已实现 (2026-06-27)
 "这个值/这段密钥从哪来"——跨函数真实 taint。已有 `taint-bwd`、`bfs-slice`、
 `byte-lineage`、`forward-dep-tree`。这是 crypto/签名逆向的杀手锏，静态工具的
 函数内数据流(如 BN `uidf`)断在调用边界、且无真实值。价值：高。难度：低（已有，键化+示例）。
 
-### P1 — 路径覆盖
+**落地**：`taint-bwd`/`bfs-slice` 增加 `--so/--off/--occurrence`(`backward-taint`
+wrapper 同步)。CLI `resolve_offset_to_idx` 复用 `/api/resolve`+`/api/idxs-for-pc`
+同一 app(trace 只加载一次)把 `(SO,偏移)` 解析到种子 idx, server route 不动。
+真机验证: `--so liblynxsecurity --off 0x7f1c --reg x16` 解析到 idx 1502(== 直接
+`--start 1502`), 回 2 行 lineage 链; `--occurrence 0/1/2` 选中不同执行。
+
+### P1 — 路径覆盖 ✅ 已实现 (2026-06-27)
 "哪些分支真跑了"，把静态前端展示的全路径 CFG 塌缩到真实执行路径。已有 `loops`、
 `call-tree`、`call-chain`。补一个"覆盖率/已执行边"视图。价值：中。难度：低。
+
+**落地**：`GET /api/coverage` + `tracemiku query <dir> coverage`(--addr/--so+--off/--fn)。
+按函数报告执行块 + **分支方向塌缩**: 每个条件/间接分支实际走向 + 命中次数(静态
+"都可能" → `b.eq` 走 taken 30×/fall 10×)。trace CFG 每条边 count≥1, 所以 one_sided
+信号是"条件分支只保留<2 个后继"(未走方向在本次执行里是死的), 解码块终止指令判定。
+真机验证: sub_41b4 `b.eq` 30/10 bias(非 one-sided), sub_4480 5 个 one-sided 条件分支。
 
 ### P1 — 内存完整性 Phase 2（syscall/JNI 回读）
 给上面的"解密内存/运行时值"补齐内核写的 buffer(read/recv/stat/getrandom)。
