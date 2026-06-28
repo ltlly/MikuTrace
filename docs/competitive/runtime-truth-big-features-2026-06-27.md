@@ -115,6 +115,25 @@ MemShadow `x` 层喂给大件 A/B 与 `mem-export`/`reg-at`。
 (agent→host→meta→core→display)，且真机别搞崩（见项目记忆）。比 A/B 风险高，
 **最后做**，先在易目标上验证 ABI 表正确性。
 
+### 实现路径（2026-06-27 勘察，turnkey）
+agent **两半都已存在**，只差接线：
+1. `tracer/src/sidecar/semantic.ts` 已 hook libc `syscall` wrapper 的 `onEnter`，
+   且已收集 `outStringPtrs`。加一个 `onLeave`：按 per-syscall ABI 表
+   (read=buf@x1/len=ret, recvfrom=buf@x1/len=ret, stat=statbuf@x1/固定长 等)
+   读出内核写入的字节。
+2. 复用 `agent_cmodule_v5.js` 已有的 **`external_writes.bin` 17 字节格式**
+   (`idx:u64, addr:u64, byte:u8`) 追加这些字节 —— host/core 零改动自动吃进 `x` 层
+   (已测 `memshadow_loads_external_writes_as_x_events`)。
+3. ABI 表放 JSON spec (`tools/hooks/syscall_abi.json`)，不硬编码 (项目规则)。
+4. cap：单 syscall buffer 上限 (如 64KiB) + 总量 guard (参照 trace-all 50M)。
+   opt-in、默认 off (参照 anti-detect 默认关 + 不搞崩设备)。
+5. 全链路验证：易目标 (douyin) 上 `read`/`getrandom` → 确认 `mem-export`/`reg-at`
+   对应地址 completeness 从 `??` 变 `x`，字节与设备真值对拍。
+
+**为何本轮未实现**：纯 device-agent 改动 (cross-compile→push→trace→verify 多步)，
+设备崩溃风险最高，且需 ABI 表逐 syscall 校验；按项目"先易目标验证、别搞崩设备、
+重测试不堆量"的纪律，作为下一个专注 session 谨慎做，而非在本轮一并赶出。
+
 ---
 
 ## 推进顺序（建议）
