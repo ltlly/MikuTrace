@@ -595,7 +595,11 @@ mod tests {
     #[test]
     fn simple_assign_tokens() {
         // x0 = (x1 + 42);
-        let expr = assign(var(String::from("x0")), binary(HlilOp::Add, var(String::from("x1")), konst(42)), 0x1000);
+        let expr = assign(
+            var(String::from("x0")),
+            binary(HlilOp::Add, var(String::from("x1")), konst(42)),
+            0x1000,
+        );
         let lines = render_hlil_tokens(&[expr]);
         assert_eq!(lines.len(), 1);
         let line = &lines[0];
@@ -621,7 +625,11 @@ mod tests {
     fn var_tokens_have_var_id() {
         let expr = assign(var(String::from("x8_v1")), konst(0), 0x2000);
         let lines = render_hlil_tokens(&[expr]);
-        let var_tok = lines[0].tokens.iter().find(|t| t.kind == CTokenKind::Var).unwrap();
+        let var_tok = lines[0]
+            .tokens
+            .iter()
+            .find(|t| t.kind == CTokenKind::Var)
+            .unwrap();
         assert_eq!(var_tok.var_id, Some("x8_v1".into()));
     }
 }

@@ -225,9 +225,21 @@ fn pipeline_response(
         struct_loads: mlil_stats.struct_loads as u64,
         struct_stores: mlil_stats.struct_stores as u64,
         hlil_count: output.hlil_count,
-        hlil_tokens: output.hlil_tokens.iter().map(|line| line.to_wire()).collect(),
-        mlil_tokens: output.mlil_tokens.iter().map(|line| line.to_wire()).collect(),
-        llil_tokens: output.llil_tokens.iter().map(|line| line.to_wire()).collect(),
+        hlil_tokens: output
+            .hlil_tokens
+            .iter()
+            .map(|line| line.to_wire())
+            .collect(),
+        mlil_tokens: output
+            .mlil_tokens
+            .iter()
+            .map(|line| line.to_wire())
+            .collect(),
+        llil_tokens: output
+            .llil_tokens
+            .iter()
+            .map(|line| line.to_wire())
+            .collect(),
         constfold_count: Some(output.constfold_count),
         dce_removed_count: Some(output.dce_removed_count),
         dce_iterations: Some(output.dce_iterations),
