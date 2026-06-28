@@ -104,9 +104,41 @@ When operating as an AI agent, follow this sequence:
 2. `./tracemiku --help` — get all subcommands
 3. `./tracemiku <subcmd> --help` — get exact parameters for any subcommand
 4. **Always prefer dedicated CLI subcommands** over `tracemiku api`. The CLI has
-   70+ subcommands covering nearly all analysis; run `./tracemiku --help` and the
+   90+ subcommands covering nearly all analysis; run `./tracemiku --help` and the
    Rust binary `--help` to discover them.
 5. Use `./tracemiku doctor --pkg <pkg>` before real-device tracing
+
+### Runtime-truth commands — keyed on the `(SO, offset)` coordinate
+
+These answer what static tools (IDA/BN/Ghidra) structurally cannot, and accept
+the same `(SO, static-offset)` coordinate you read in any disassembler (or an
+absolute PC). Addresses/offsets are **HEX by default** (`10` = `0x10`); prefix
+with `d` to force decimal (`d16` = 16). Strategy:
+`docs/competitive/ai-cli-strategy-2026-06-27.md`.
+
+```bash
+# (SO,offset) <-> PC, with runtime facts (exec_count, in_module, executed)
+./tracemiku query <call_dir> resolve --addr 0x6f4dc74a30
+./tracemiku query <call_dir> resolve --so libfoo --off 0x6a30
+
+# where a br/blr actually jumped + hit counts (the obfuscation wall)
+./tracemiku query <call_dir> indirect-targets --so libfoo --off 0x7e4c
+./tracemiku query <call_dir> indirect-targets          # list every indirect source
+
+# export runtime-DECRYPTED bytes (packers/VMP); --out writes raw for loadfile
+./tracemiku query <call_dir> mem-export --so libfoo --off 0x1000 --len 0x200 --out dec.bin
+
+# register value(s) at an offset: per-hit + distinct-value distribution
+./tracemiku query <call_dir> reg-at --reg x0 --so libfoo --off 0x7e4c
+
+# executed-path coverage + branch-direction collapse (one_sided = dead branch)
+./tracemiku query <call_dir> coverage --fn sub_7f10
+./tracemiku query <call_dir> coverage --so libfoo --off 0x7e4c
+
+# lineage seeded by (SO,offset): --so/--off/--occurrence on these too
+./tracemiku query <call_dir> backward-taint --so libfoo --off 0x7f1c --reg x16
+# (Rust binary also: bfs-slice / forward-dep-tree accept --so/--off/--occurrence)
+```
 
 ### CLI vs `tracemiku api` — When to Use Which
 
@@ -230,6 +262,11 @@ rust/crates/tracemiku-server/src/
   main.rs                         axum app, static frontend, cache headers
   state.rs                        shared TraceState and warmers
   routes/                         JSON API route handlers
+    resolve.rs                    (SO,offset)<->PC interop (runtime-truth foundation)
+    indirect_targets.rs           br/blr runtime jump-target distribution
+    mem_export.rs                 runtime-decrypted byte export by (SO,offset,len)
+    reg_at.rs                     register value distribution at (SO,offset)/PC
+    coverage.rs                   executed-path + branch-direction collapse
   bn_sidecar.rs                   BN process bridge
 rust/crates/tracemiku-cli/src/    Rust CLI command implementations
 scripts/                          parity/smoke/perf helper scripts

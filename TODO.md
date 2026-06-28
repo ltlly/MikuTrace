@@ -43,6 +43,21 @@
   (mem/reg/syscall/import/??)。B1 token provenance 优先。
 - [ ] **大件 C — syscall/JNI Phase 2** (= 上面 P1 末项)。
 
+## 运行时真相 CLI — 收尾 / 前端接线 (本轮未做, 2026-06-27 勘察)
+
+> 5 个新 route (resolve/indirect-targets/mem-export/reg-at/coverage) 已三层贯通
+> 到 CLI+server+wrapper, 但**前端零接线**。战略上这些主要是 AI/CLI 面 (人走
+> IDA/BN/Ghidra), 所以前端接线**价值存疑**, 只挑人在 Web 看 CFG 时的刚需做。
+
+- [ ] **coverage 叠加到 CFG 视图**: 把 `/api/coverage` 的分支方向塌缩 (one_sided /
+  taken vs fall 命中数) 画到 Web CFG 边上。价值: 人看 CFG 时最直观的运行时事实。
+- [ ] **indirect-targets 画成 CFG 边**: `br x8` 的真实目标分布画成边 + 命中数标签。
+  注意已有 `EdgeKind::IndirectDispatch` + cfg-svg 的 large-overview 通路, 复用。
+- [ ] (可选, 低价值) `resolve`/`reg-at`/`mem-export` 接 client.ts — 更像 CLI/AI 工具,
+  接进 UI 收益低, 仅在确有交互需求时做。
+- [ ] **CLAUDE.md AI 指南已补** (本轮): runtime-truth 命令块 + Code Map 已更新;
+  若后续加命令记得同步该块 + `/openapi.json` route coverage 测试。
+
 ## P0 — Core Correctness
 
 - [x] ARM64 lifter: 99.93-100% LLIL coverage, 0 bare Intrinsic

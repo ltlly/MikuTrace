@@ -120,6 +120,14 @@ count   u32            (region count)
 
 ## Phase 2 — syscall output-buffer readback (DESIGNED)
 
+> **2026-06-27 status**: the HOST side is complete and tested — `external_writes.bin`
+> (17B records: `idx:u64, addr:u64, byte:u8`) already merges into MemShadow as
+> the `x` layer (`memshadow.rs::merge_external_writes`, test
+> `memshadow_loads_external_writes_as_x_events`). So Phase 2's only remaining
+> work is the DEVICE-side `onLeave` capture below — it appends to that existing
+> format and host/core/`mem-export`/`reg-at` benefit with zero changes. Turnkey
+> wiring + safety/validation plan: `docs/competitive/runtime-truth-big-features-2026-06-27.md` 大件 C.
+
 The precise, universal answer to blind spot #2. The existing semantic-event
 hooks (`tracer/src/sidecar/semantic.ts`) already Interceptor-attach libc/syscall
 wrappers and snapshot string args. Extend them with an **output-buffer table**:
