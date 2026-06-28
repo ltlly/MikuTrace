@@ -3609,3 +3609,17 @@ fn route_path_encodes_query_params() {
     assert!(url.contains("idxs=1234%2C5678"));
     assert!(url.contains("mode=intersection"));
 }
+
+#[test]
+fn parse_addr_str_is_hex_default() {
+    use super::{parse_addr_str, parse_u64_str};
+    // address-typed args: bare token is HEX (disassembler convention)
+    assert_eq!(parse_addr_str("0x10"), Some(16));
+    assert_eq!(parse_addr_str("10"), Some(16)); // hex, NOT decimal
+    assert_eq!(parse_addr_str("7fc108c568"), Some(0x7fc108c568));
+    assert_eq!(parse_addr_str("d16"), Some(16)); // explicit decimal escape
+    assert_eq!(parse_addr_str("zz"), None);
+    // size/count args keep decimal-default via parse_u64_str
+    assert_eq!(parse_u64_str("256"), Some(256));
+    assert_eq!(parse_u64_str("0x100"), Some(256));
+}
