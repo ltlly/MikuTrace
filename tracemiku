@@ -1521,10 +1521,19 @@ def cmd_query(args):
             "--max-count", str(args.max),
         ])
     if sub == "backward-taint":
-        return _run_rust_cli([
-            "taint-bwd", path, "--start", str(args.from_), "--reg", args.reg,
-            "--max-count", str(args.max),
-        ])
+        if args.from_ is None and not (args.so and args.off):
+            print("[!] backward-taint 需要 --from <idx> 或 (--so + --off)", file=sys.stderr)
+            return 2
+        cmd = ["taint-bwd", path, "--reg", args.reg, "--max-count", str(args.max)]
+        if args.from_ is not None:
+            cmd += ["--start", str(args.from_)]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.occurrence:
+            cmd += ["--occurrence", str(args.occurrence)]
+        return _run_rust_cli(cmd)
     if sub == "strings":
         return _run_rust_cli(["strings", path, "--min-len", str(args.min_len)])
     if sub == "cfg":
@@ -1977,8 +1986,12 @@ def main():
     q_r.add_argument("--range", help="范围 a..b (默认全部)"); q_r.add_argument("--regs", help="逗号分隔的寄存器名")
     q_ft = _addj(qsp.add_parser("forward-taint", help="正向污点"))
     q_ft.add_argument("--from", dest="from_", type=int, required=True); q_ft.add_argument("--reg", required=True); q_ft.add_argument("--max", type=int, default=500)
-    q_bt = _addj(qsp.add_parser("backward-taint", help="反向污点"))
-    q_bt.add_argument("--from", dest="from_", type=int, required=True); q_bt.add_argument("--reg", required=True); q_bt.add_argument("--max", type=int, default=500)
+    q_bt = _addj(qsp.add_parser("backward-taint", help="反向污点 (--from idx 或 --so+--off 坐标)"))
+    q_bt.add_argument("--from", dest="from_", type=int, help="起始 idx (汇点); 或用 --so+--off")
+    q_bt.add_argument("--so", help="种子模块名/basename/前缀/子串 (配合 --off)")
+    q_bt.add_argument("--off", help="种子的模块内偏移 (配合 --so)")
+    q_bt.add_argument("--occurrence", type=int, default=0, help="该 PC 的第几次执行 (默认0=首次)")
+    q_bt.add_argument("--reg", required=True); q_bt.add_argument("--max", type=int, default=500)
     q_st = _addj(qsp.add_parser("strings", help="字符串提取")); q_st.add_argument("--min-len", type=int, default=4)
     q_cfg = _addj(qsp.add_parser("cfg", help="CFG 数据"))
     q_se = _addj(qsp.add_parser("search", help="按反汇编 regex 搜"))

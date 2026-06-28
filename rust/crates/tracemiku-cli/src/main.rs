@@ -574,9 +574,20 @@ enum Cmd {
     /// `bfs-slice` instead (much faster).
     TaintBwd {
         trace_dir: PathBuf,
-        /// Trace index where the lineage chase starts (the sink).
+        /// Trace index where the lineage chase starts (the sink). Optional if
+        /// you instead give --so/--off (a tool-neutral (SO,offset) coordinate).
         #[arg(long)]
-        start: usize,
+        start: Option<usize>,
+        /// Module name/basename/prefix/substring for the seed (with --off).
+        /// Resolves (SO,offset) -> PC -> the chosen execution's trace index.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the seed (with --so). HEX by default.
+        #[arg(long)]
+        off: Option<String>,
+        /// Which execution of that PC to seed from (0 = first). Default 0.
+        #[arg(long, default_value_t = 0)]
+        occurrence: usize,
         /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
@@ -670,6 +681,16 @@ enum Cmd {
         /// intersection across one seed equals the seed's slice.
         #[arg(long, default_value = "union")]
         mode: String,
+        /// Module name/basename/prefix/substring for the seed (with --off).
+        /// Resolves (SO,offset) -> PC -> chosen execution's idx as the seed.
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset of the seed (with --so). HEX by default.
+        #[arg(long)]
+        off: Option<String>,
+        /// Which execution of that PC to seed from (0 = first). Default 0.
+        #[arg(long, default_value_t = 0)]
+        occurrence: usize,
     },
     /// GET /api/forward-dep-tree — def→use DAG. Returns rows that
     /// transitively consumed the seed's value. Inverse direction of
@@ -2017,6 +2038,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Cmd::TaintBwd {
             trace_dir,
             start,
+            so,
+            off,
+            occurrence,
             reg,
             max_count,
             through_mem,
@@ -2024,6 +2048,18 @@ async fn main() -> anyhow::Result<()> {
             cross_fn_call,
             scan_limit,
         }) => {
+            let path_hint = "/api/backward-taint";
+            let app = build_cli_router(trace_dir, path_hint, None)?;
+            let start = match (start, so.as_ref(), off.as_ref()) {
+                (Some(s), _, _) => s,
+                (None, Some(so), Some(off)) => {
+                    let (idx, _pc) = resolve_offset_to_idx(&app, so, off, occurrence).await?;
+                    idx
+                }
+                (None, _, _) => {
+                    bail!("taint-bwd needs --start <idx> or (--so <name> --off <offset>)")
+                }
+            };
             let params = taint_params(
                 start,
                 reg,
@@ -2033,7 +2069,8 @@ async fn main() -> anyhow::Result<()> {
                 cross_fn_call,
                 scan_limit,
             );
-            route_get_json(trace_dir, route_path("/api/backward-taint", &params)).await
+            let value = route_get_json_value_on(&app, route_path(path_hint, &params)).await?;
+            print_pretty(&value)
         }
         Some(Cmd::DataChase {
             trace_dir,
@@ -2086,13 +2123,30 @@ async fn main() -> anyhow::Result<()> {
             data_only,
             limit,
             mode,
+            so,
+            off,
+            occurrence,
         }) => {
+            let path_hint = "/api/bfs-slice";
+            let app = build_cli_router(trace_dir, path_hint, None)?;
+            // (SO,offset) seed resolves to a concrete idx, joining the existing
+            // idx/reg/addr seed family without touching the server route.
+            let resolved_idx = match (so.as_ref(), off.as_ref()) {
+                (Some(so), Some(off)) => {
+                    let (i, _pc) = resolve_offset_to_idx(&app, so, off, occurrence).await?;
+                    Some(i)
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    bail!("bfs-slice --so and --off must be given together")
+                }
+                (None, None) => None,
+            };
             let mut params = vec![
                 ("limit", limit.to_string()),
                 ("data_only", data_only.to_string()),
                 ("mode", mode),
             ];
-            if let Some(v) = idx {
+            if let Some(v) = resolved_idx.or(idx) {
                 params.push(("idx", v.to_string()));
             }
             if let Some(v) = idxs {
@@ -2113,7 +2167,8 @@ async fn main() -> anyhow::Result<()> {
             if let Some(v) = before {
                 params.push(("before", v.to_string()));
             }
-            route_get_json(trace_dir, route_path("/api/bfs-slice", &params)).await
+            let value = route_get_json_value_on(&app, route_path(path_hint, &params)).await?;
+            print_pretty(&value)
         }
         Some(Cmd::ForwardDepTree {
             trace_dir,
@@ -2945,6 +3000,69 @@ async fn route_get_json_value_on(
     }
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     Ok(value)
+}
+
+/// Resolve a tool-neutral `(SO, offset)` coordinate to a concrete trace record
+/// index, so lineage/taint commands (which seed on an idx) accept the same
+/// coordinate a reverse engineer reads from IDA/BN/Ghidra. `occurrence` picks
+/// which execution of that PC to seed from (0 = first). Reuses the in-process
+/// `/api/resolve` + `/api/idxs-for-pc` routes on the SAME app so the trace is
+/// loaded once. Returns `(idx, pc)`.
+async fn resolve_offset_to_idx(
+    app: &axum::Router,
+    so: &str,
+    off: &str,
+    occurrence: usize,
+) -> anyhow::Result<(usize, u64)> {
+    let rparams = vec![("so", so.to_string()), ("off", off.to_string())];
+    let resolved = route_get_json_value_on(app, route_path("/api/resolve", &rparams)).await?;
+    let status = resolved
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if status != "hit" {
+        bail!(
+            "could not resolve (so={so}, off={off}) to a PC: {}",
+            serde_json::to_string(&resolved).unwrap_or_default()
+        );
+    }
+    let pc_str = resolved
+        .pointer("/coord/pc")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("resolve response missing coord.pc"))?;
+    let pc = parse_u64_str(pc_str)
+        .ok_or_else(|| anyhow::anyhow!("resolve returned unparseable pc: {pc_str}"))?;
+    let executed = resolved
+        .pointer("/coord/executed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !executed {
+        bail!("(so={so}, off={off}) -> {pc_str} was never executed in this trace");
+    }
+    // idxs-for-pc with cursor=0 puts every execution in `after` (ascending).
+    let iparams = vec![
+        ("pc", pc_str.to_string()),
+        ("cursor", "0".to_string()),
+        ("limit", (occurrence + 1).to_string()),
+    ];
+    let idxs = route_get_json_value_on(app, route_path("/api/idxs-for-pc", &iparams)).await?;
+    let after = idxs
+        .get("after")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("idxs-for-pc response missing after[]"))?;
+    let total_after = idxs
+        .get("total_after")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let idx = after
+        .get(occurrence)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "occurrence {occurrence} out of range: PC {pc_str} executed {total_after} time(s)"
+            )
+        })?;
+    Ok((idx as usize, pc))
 }
 
 async fn cmd_byte_writer_map(
