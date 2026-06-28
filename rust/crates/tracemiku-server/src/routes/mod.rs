@@ -8,6 +8,7 @@ pub mod bn_hlil;
 pub mod call_tree;
 pub mod cfg;
 pub mod cfg_svg;
+pub mod coverage;
 pub mod crypto_analysis;
 pub mod crypto_scan;
 pub mod data_chase;
@@ -78,6 +79,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
         .route("/api/reg-at", get(reg_at::reg_at_handler))
+        .route("/api/coverage", get(coverage::coverage_handler))
         .route("/api/resolve", get(resolve::resolve_handler))
         .route(
             "/api/indirect-targets",

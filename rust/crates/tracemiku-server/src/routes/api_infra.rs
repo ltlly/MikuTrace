@@ -191,6 +191,7 @@ fn openapi_paths() -> Value {
         ("/api/query", "get"),
         ("/api/search-pc", "get"),
         ("/api/so-stats", "get"),
+        ("/api/coverage", "get"),
         ("/api/resolve", "get"),
         ("/api/indirect-targets", "get"),
         ("/api/reg-at", "get"),

@@ -118,6 +118,7 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "call_tree.rs",
     "cfg.rs",
     "cfg_svg.rs",
+    "coverage.rs",
     "crypto_analysis.rs",
     "crypto_scan.rs",
     "data_chase.rs",

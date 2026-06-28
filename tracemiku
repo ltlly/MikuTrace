@@ -1598,6 +1598,20 @@ def cmd_query(args):
         if args.max is not None:
             cmd += ["--max", str(args.max)]
         return _run_rust_cli(cmd)
+    if sub == "coverage":
+        if not args.addr and not (args.so and args.off) and not args.fn_name:
+            print("[!] coverage 需要 --addr / (--so + --off) / --fn", file=sys.stderr)
+            return 2
+        cmd = ["coverage", path]
+        if args.addr:
+            cmd += ["--addr", args.addr]
+        if args.so:
+            cmd += ["--so", args.so]
+        if args.off:
+            cmd += ["--off", args.off]
+        if args.fn_name:
+            cmd += ["--fn", args.fn_name]
+        return _run_rust_cli(cmd)
     print(f"[!] unsupported query subcommand: {sub}", file=sys.stderr)
     return 2
 
@@ -2033,6 +2047,14 @@ def main():
     q_ra.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
     q_ra.add_argument("--off", help="模块内偏移 (配合 --so)")
     q_ra.add_argument("--max", type=int, help="返回的逐次命中行数上限 (分布覆盖全部)")
+    # coverage: 执行路径覆盖 + 分支方向塌缩 (P1)
+    q_cv = _addj(qsp.add_parser(
+        "coverage",
+        help="函数执行覆盖+分支方向塌缩; --addr/--so+--off/--fn 任一"))
+    q_cv.add_argument("--addr", help="函数内绝对 PC")
+    q_cv.add_argument("--so", help="模块名/basename/前缀/子串 (配合 --off)")
+    q_cv.add_argument("--off", help="函数内的模块偏移 (配合 --so)")
+    q_cv.add_argument("--fn", dest="fn_name", help="直接按函数名 (如 sub_7f10)")
 
     # list
     p_ls = sp.add_parser("list", help="列出已有 trace (无参=列 runs, <run>=列 calls 降序)")

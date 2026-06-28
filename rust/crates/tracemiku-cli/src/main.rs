@@ -398,6 +398,25 @@ enum Cmd {
     },
     /// GET /api/loops.
     Loops { trace_dir: PathBuf },
+    /// GET /api/coverage — executed-path coverage + branch-direction collapse
+    /// for the function at a (SO,offset)/PC, or by --fn name. For each branch:
+    /// which way it actually went and how often (static "both possible" ->
+    /// the real path). one_sided branches = static ambiguity collapsed.
+    Coverage {
+        trace_dir: PathBuf,
+        /// Absolute PC inside the function. Or --so+--off, or --fn.
+        #[arg(long)]
+        addr: Option<String>,
+        /// Module name/basename/prefix/substring (with --off).
+        #[arg(long)]
+        so: Option<String>,
+        /// Module-relative offset inside the function (with --so). HEX default.
+        #[arg(long)]
+        off: Option<String>,
+        /// Scope directly by function name (e.g. sub_7f10).
+        #[arg(long = "fn")]
+        fn_name: Option<String>,
+    },
     /// GET /api/backtrace.
     Backtrace {
         trace_dir: PathBuf,
@@ -1851,6 +1870,28 @@ async fn main() -> anyhow::Result<()> {
             route_get_json(trace_dir, route_path("/api/block", &[("pc", pc)])).await
         }
         Some(Cmd::Loops { trace_dir }) => route_get_json(trace_dir, "/api/loops".to_string()).await,
+        Some(Cmd::Coverage {
+            trace_dir,
+            addr,
+            so,
+            off,
+            fn_name,
+        }) => {
+            let mut params: Vec<(&str, String)> = Vec::new();
+            if let Some(addr) = addr {
+                params.push(("addr", addr));
+            }
+            if let Some(so) = so {
+                params.push(("so", so));
+            }
+            if let Some(off) = off {
+                params.push(("off", off));
+            }
+            if let Some(fn_name) = fn_name {
+                params.push(("fn", fn_name));
+            }
+            route_get_json(trace_dir, route_path("/api/coverage", &params)).await
+        }
         Some(Cmd::Backtrace {
             trace_dir,
             idx,
