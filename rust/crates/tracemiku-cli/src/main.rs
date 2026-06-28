@@ -3071,7 +3071,7 @@ async fn resolve_offset_to_idx(
         .pointer("/coord/pc")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("resolve response missing coord.pc"))?;
-    let pc = parse_u64_str(pc_str)
+    let pc = parse_addr_str(pc_str)
         .ok_or_else(|| anyhow::anyhow!("resolve returned unparseable pc: {pc_str}"))?;
     let executed = resolved
         .pointer("/coord/executed")
@@ -3121,7 +3121,7 @@ async fn cmd_byte_writer_map(
     vm_profile: VmProfile,
 ) -> anyhow::Result<()> {
     let addr_value =
-        parse_u64_str(&addr).with_context(|| format!("invalid --addr value {addr:?}"))?;
+        parse_addr_str(&addr).with_context(|| format!("invalid --addr value {addr:?}"))?;
     if size == 0 {
         bail!("byte-writer-map requires --size > 0");
     }
@@ -9010,7 +9010,7 @@ async fn cmd_byte_lineage(
     summary: bool,
     compact: bool,
 ) -> anyhow::Result<()> {
-    let addr = parse_u64_str(&addr).with_context(|| format!("parse addr {addr}"))?;
+    let addr = parse_addr_str(&addr).with_context(|| format!("parse addr {addr}"))?;
     if count == 0 {
         bail!("--count must be at least 1");
     }
@@ -9159,7 +9159,7 @@ fn byte_lineage_batch_frontier_groups(results: &[serde_json::Value]) -> Vec<serd
         }
         if let Some(addr) = entry.get("addr").and_then(|v| v.as_str()) {
             group.addrs.push(addr.to_string());
-            if let Some(addr_value) = parse_u64_str(addr) {
+            if let Some(addr_value) = parse_addr_str(addr) {
                 group.addr_values.push(addr_value);
             }
         }
@@ -13947,7 +13947,7 @@ async fn hash_candidate_byte_map(
         .and_then(|v| v.as_str())
         .context("hash candidate missing addr")?;
     let addr =
-        parse_u64_str(addr_raw).with_context(|| format!("invalid candidate addr {addr_raw:?}"))?;
+        parse_addr_str(addr_raw).with_context(|| format!("invalid candidate addr {addr_raw:?}"))?;
     let size = candidate
         .get("size")
         .and_then(|v| v.as_u64())
@@ -15740,7 +15740,7 @@ fn cmd_info(path: PathBuf, json: bool) -> anyhow::Result<()> {
 }
 
 fn cmd_resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<()> {
-    let addr = parse_u64_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
+    let addr = parse_addr_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
     let text = std::fs::read_to_string(&maps_file)
         .with_context(|| format!("failed to read maps file: {}", maps_file.display()))?;
     let out = resolve_addr_in_maps_text(&text, addr).unwrap_or_else(|| {
@@ -15754,7 +15754,7 @@ fn cmd_resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<()> 
 }
 
 fn cmd_resolve_trace_addr(trace_dir: PathBuf, addr: String) -> anyhow::Result<()> {
-    let addr = parse_u64_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
+    let addr = parse_addr_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
     let meta = enriched_trace_meta(&trace_dir);
     let module = module_for_addr(&meta, addr);
     if module.is_null() {
@@ -15776,7 +15776,7 @@ fn cmd_resolve_trace_addr(trace_dir: PathBuf, addr: String) -> anyhow::Result<()
 }
 
 fn cmd_resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<()> {
-    let offset = parse_u64_str(&offset).with_context(|| format!("invalid offset: {offset}"))?;
+    let offset = parse_addr_str(&offset).with_context(|| format!("invalid offset: {offset}"))?;
     let (tool, symbols) = elf_symbols_from_nm(&elf_file)
         .with_context(|| format!("failed to read ELF symbols: {}", elf_file.display()))?;
     let out = resolve_elf_symbol_json(&symbols, offset).unwrap_or_else(|| {
@@ -16141,6 +16141,23 @@ fn parse_u64_str(raw: &str) -> Option<u64> {
         u64::from_str_radix(hex, 16).ok()
     } else {
         s.parse::<u64>().ok()
+    }
+}
+
+/// Parse an ADDRESS/OFFSET/PC the way a reverse engineer writes one: HEX by
+/// default (disassembler convention — `7fc108c568` is hex, not decimal), `0x`
+/// also hex, `d`-prefix forces decimal (`d16` = 16). Matches the P0/P1 commands'
+/// `parse_u64` so the same `--addr`/`--off` means the same thing everywhere.
+/// Use ONLY for address-typed args; size/count/idx keep `parse_u64_str`
+/// (decimal-default, so `--size 256` stays 256).
+fn parse_addr_str(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else if let Some(dec) = s.strip_prefix('d').or_else(|| s.strip_prefix('D')) {
+        dec.parse::<u64>().ok()
+    } else {
+        u64::from_str_radix(s, 16).ok()
     }
 }
 
