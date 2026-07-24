@@ -21,6 +21,10 @@ def read(rel: str) -> str:
     return (SRC / rel).read_text()
 
 
+def read_many(*rels: str) -> str:
+    return "\n".join(read(rel) for rel in rels)
+
+
 def require(name: str, ok: bool, failures: list[str]) -> None:
     if not ok:
         failures.append(name)
@@ -28,11 +32,26 @@ def require(name: str, ok: bool, failures: list[str]) -> None:
 
 def main() -> int:
     app = read("App.tsx")
-    css = read("styles/base.css")
+    app_types = read("app/types.ts")
+    app_persistence = read("app/persistence.ts")
+    task_center_view = read("app/TaskCenter.tsx")
+    help_system = read("app/HelpSystem.tsx")
+    css = read_many(
+        "styles/foundation.css",
+        "styles/records.css",
+        "styles/inspectors.css",
+        "styles/analysis.css",
+        "styles/pseudoc.css",
+    )
     cfg = read("panels/cfg/CfgPanel.tsx")
     memory = read("panels/memory/MemoryPanel.tsx")
     registers = read("panels/registers/RegistersPanel.tsx")
-    records = read("panels/records/RecordsPanel.tsx")
+    records = read_many(
+        "panels/records/RecordsPanel.tsx",
+        "panels/records/RecordsRow.tsx",
+        "panels/records/RecordsOverlays.tsx",
+        "panels/records/recordsModel.ts",
+    )
     settings = read("panels/settings/SettingsPanel.tsx")
     string_prov = read("panels/strings/StringProvenancePanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
@@ -53,7 +72,7 @@ def main() -> int:
         and "callLlilLlm" not in decompiler,
         failures,
     )
-    require("right tabs include cfg/regs/hlil/dec", re.search(r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"\s*\|\s*"dec"', app) is not None, failures)
+    require("right tabs include cfg/regs/hlil/dec", re.search(r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"\s*\|\s*"dec"', app_types) is not None, failures)
 
     require("left panel splitter exists", "layout-splitter-left" in app and 'startPanelResize("left"' in app, failures)
     require("right panel splitter exists", "layout-splitter-right" in app and 'startPanelResize("right"' in app, failures)
@@ -62,8 +81,8 @@ def main() -> int:
         require(f"asm column resize {col}", f'startAsmColResize("{col}"' in app, failures)
     require(
         "ASM default columns keep resize handle inside default center pane",
-        'const LAYOUT_KEY = "tracemiku-layout-v4"' in app
-        and "colAsm: 200" in app
+        'const LAYOUT_KEY = "tracemiku-layout-v4"' in app_persistence
+        and "colAsm: 200" in app_persistence
         and "--col-asm: 200px" in css,
         failures,
     )
@@ -134,8 +153,8 @@ def main() -> int:
     require(
         "Records taint overlay can highlight and dim hits",
         "export interface RecordsTaintOverlay" in records
-        and '"taint-hit": taintHit()' in records
-        and '"taint-dim": taintDimmed()' in records
+        and '"taint-hit": props.taintHit' in records
+        and '"taint-dim": props.taintDimmed' in records
         and "onTaintOverlayModeChange" in records
         and "onOverlayChange={updateTaintOverlay}" in app,
         failures,
@@ -147,7 +166,7 @@ def main() -> int:
         and "function saveRowMarks" in records
         and "rowMarksKey" in records
         and "row-context-menu" in records
-        and '"row-strike": !!mark()?.strike' in records,
+        and '"row-strike": !!props.mark?.strike' in records,
         failures,
     )
 
@@ -339,9 +358,9 @@ def main() -> int:
     )
     require(
         "Refs help clarifies it is not static xref analysis",
-        "不是静态代码引用分析" in app
-        and "按解码后的汇编文本做正则搜索" in app
-        and "ret 这类通用指令" in app,
+        "不是静态代码引用分析" in help_system
+        and "按解码后的汇编文本做正则搜索" in help_system
+        and "ret 这类通用指令" in help_system,
         failures,
     )
 
@@ -419,8 +438,8 @@ def main() -> int:
         and "activeTaskCount" in app
         and "reportTask" in app
         and "task-toggle" in app
-        and "task-center" in app
-        and "elapsed" in app,
+        and "task-center" in task_center_view
+        and "elapsed" in task_center_view,
         failures,
     )
     require(

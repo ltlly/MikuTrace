@@ -1,0 +1,784 @@
+.reg-diff-table tbody tr {
+  cursor: pointer;
+}
+
+.reg-diff-table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.reg-diff-table thead,
+.reg-diff-table tbody {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.reg-diff-table tr {
+  display: grid;
+  grid-template-columns: var(--reg-col-name, 52px) var(--reg-col-value, 150px) var(--reg-col-delta, 76px) minmax(var(--reg-col-note, 220px), 1fr);
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.reg-diff-table th,
+.reg-diff-table td {
+  position: relative;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-bottom: 0;
+  display: flex;
+  align-items: center;
+}
+
+.reg-diff-table th:not(:last-child),
+.reg-diff-table td:not(:last-child) {
+  border-right: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.reg-diff-table thead .col-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.reg-diff-table thead .col-resize:hover,
+.reg-diff-table thead .col-resize:active {
+  background: rgba(88, 166, 255, 0.45);
+}
+
+.reg-diff-table tbody tr:hover {
+  background: var(--bg3);
+}
+
+.reg-diff-table tbody tr.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.reg-diff-table tbody tr.changed {
+  background: rgba(247, 129, 102, 0.16);
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+
+.reg-diff-table tbody tr.changed.selected {
+  background: linear-gradient(90deg, rgba(88, 166, 255, 0.18), rgba(247, 129, 102, 0.14));
+  box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px rgba(88, 166, 255, 0.35);
+}
+
+.reg-diff-table tbody tr.def:not(.changed):not(.selected) {
+  background: rgba(86, 211, 100, 0.105);
+}
+
+.reg-diff-table tbody tr.use:not(.def):not(.changed):not(.selected) {
+  background: rgba(88, 166, 255, 0.085);
+}
+
+.reg-diff-table tbody tr.changed th,
+.reg-diff-table tbody tr.changed td:first-of-type {
+  color: var(--warn);
+}
+
+.reg-diff-table tbody tr.def th {
+  color: var(--accent2);
+}
+
+.reg-diff-table tbody tr.use:not(.def) th {
+  color: var(--accent);
+}
+
+.reg-note {
+  color: var(--dim);
+}
+
+.reg-delta {
+  color: var(--warn);
+}
+
+.memory-hex-table {
+  display: block;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.memory-hex-table thead,
+.memory-hex-table tbody {
+  display: block;
+}
+
+.memory-hex-table tr {
+  display: grid;
+  grid-template-columns: var(--mem-col-addr, 116px) minmax(var(--mem-col-hex, 540px), 1fr) var(--mem-col-ascii, 150px);
+  align-items: start;
+  width: 100%;
+}
+
+.memory-hex-table th,
+.memory-hex-table td {
+  position: relative;
+  min-width: 0;
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  overflow: hidden;
+}
+
+.memory-hex-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.memory-hex-table thead .col-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.memory-hex-table thead .col-resize:hover,
+.memory-hex-table thead .col-resize:active {
+  background: rgba(88, 166, 255, 0.45);
+}
+
+.mem-hex-cells {
+  white-space: pre;
+  font-variant-ligatures: none;
+}
+
+.mem-byte {
+  display: inline-block;
+  width: 2.4ch;
+  margin-right: 0.55ch;
+  text-align: center;
+  border-radius: 2px;
+  cursor: default;
+}
+
+.mem-byte.read { color: var(--accent); }
+.mem-byte.write { color: var(--good); background: rgba(63, 185, 80, 0.1); }
+.mem-byte.external { color: var(--warn); background: rgba(247, 179, 43, 0.12); }
+.mem-byte.unknown { color: var(--dim); }
+.mem-byte.changed { color: white; background: rgba(248, 81, 73, 0.5); }
+.mem-byte.selected { outline: 1px solid var(--accent); background: rgba(88, 166, 255, 0.22); }
+.mem-byte:hover { outline: 1px solid rgba(88, 166, 255, 0.55); }
+
+.mem-ascii {
+  white-space: pre;
+  color: var(--fg);
+}
+
+.memory-context-menu {
+  position: fixed;
+  z-index: 120;
+  width: 300px;
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+}
+
+.memory-context-title {
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+
+.memory-context-menu button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+  padding: 2px 6px;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.memory-context-menu button:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
+.memory-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.memory-context-grid h3 {
+  margin: 6px 0 4px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.memory-context-writes {
+  margin-top: 8px;
+}
+
+.memory-context-writes h3 {
+  margin: 6px 0 4px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.so-filter-actions {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.so-filter-actions button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.so-filter-actions button:hover {
+  border-color: var(--accent);
+}
+
+.so-list {
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+}
+
+.so-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+
+.so-row:hover {
+  background: var(--bg3);
+}
+
+.so-row.hidden {
+  opacity: 0.5;
+}
+
+.mod-badge {
+  display: inline-block;
+  min-width: 60px;
+  font-size: 10px;
+}
+
+.so-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  row-gap: 4px;
+  column-gap: 12px;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--dim);
+}
+
+.kv dd {
+  margin: 0;
+  font-family: var(--font-mono);
+}
+
+code {
+  font-family: var(--font-mono);
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.records-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.records-pagination button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.records-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.records-table th,
+.records-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.records-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.records-table td code {
+  background: transparent;
+  padding: 0;
+}
+
+.records-table tbody tr {
+  cursor: pointer;
+}
+
+.records-table tbody tr:hover,
+.records-table tbody tr:focus {
+  background: rgba(98, 160, 234, 0.08);
+  outline: none;
+}
+
+.records-table tbody tr.selected {
+  background: rgba(98, 160, 234, 0.16);
+}
+
+.selected-record {
+  margin-bottom: 8px;
+}
+
+.reg-table,
+.memory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.reg-table th,
+.reg-table td,
+.memory-table th,
+.memory-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.reg-table th,
+.memory-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.reg-table td code,
+.memory-table td code {
+  background: transparent;
+  padding: 0;
+}
+
+.reg-table.reg-diff-table th,
+.reg-table.reg-diff-table td {
+  border-bottom: 0;
+}
+
+.memory-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.memory-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-controls input,
+.memory-controls select,
+.memory-controls button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.memory-controls input[type="text"] { width: 12em; }
+.memory-controls input[type="number"] { width: 5em; }
+.memory-controls select { max-width: 24em; }
+
+.memory-controls button {
+  cursor: pointer;
+}
+
+.memory-diff {
+  margin-top: 12px;
+}
+
+.memory-diff h3 {
+  margin: 0 0 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.memory-table tr.changed {
+  background: rgba(224, 161, 85, 0.12);
+}
+
+.tracepc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tracepc-grid h3 {
+  margin: 0 0 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.tracepc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 26px;
+}
+
+.tracepc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.tracepc-table td {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tracepc-table tr {
+  cursor: pointer;
+}
+
+.tracepc-table tr:hover {
+  background: var(--bg3);
+}
+
+.xref-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.xref-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.xref-controls input,
+.xref-buttons button,
+.xref-table button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.xref-controls input {
+  width: 18em;
+  max-width: 100%;
+}
+
+.xref-grid {
+  display: grid;
+  grid-template-columns: minmax(min(220px, 100%), 0.45fr) minmax(min(420px, 100%), 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.lp-tab .xref-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.lp-tab .xref-grid > * {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.lp-tab .xref-controls label {
+  flex-wrap: wrap;
+}
+
+.lp-tab .xref-controls input {
+  width: 100%;
+}
+
+.xref-grid h3,
+.settings-grid h3 {
+  margin: 0 0 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.xref-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.xref-buttons button,
+.xref-table button {
+  cursor: pointer;
+}
+
+.xref-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.xref-table th,
+.xref-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.xref-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.xref-table tbody tr {
+  cursor: pointer;
+}
+
+.xref-table tbody tr:hover {
+  background: rgba(98, 160, 234, 0.08);
+}
+
+.xref-table tbody tr.selected {
+  background: var(--hl);
+}
+
+.xref-exec-table td:nth-child(2),
+.xref-exec-table td:nth-child(3) {
+  color: var(--dim);
+}
+
+.xref-table code {
+  background: transparent;
+  padding: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.slice-panel .slice-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slice-panel .slice-direction {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.slice-panel .slice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.slice-panel .slice-row label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.slice-panel .slice-row input[type="number"] {
+  width: 96px;
+}
+
+.slice-panel .slice-seed-notes {
+  list-style: none;
+  padding-left: 0;
+  margin: 4px 0 0 0;
+}
+
+.slice-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.slice-table th,
+.slice-table td {
+  text-align: left;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slice-table th {
+  color: var(--dim);
+  font-weight: normal;
+}
+
+.slice-table tbody tr {
+  cursor: pointer;
+}
+
+.slice-table tbody tr:hover {
+  background: rgba(98, 160, 234, 0.08);
+}
+
+.slice-table code {
+  background: transparent;
+  padding: 0;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.settings-section {
+  min-width: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-toggles {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
+  gap: 6px 10px;
+}
+
+.settings-toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--dim);
+  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-kv {
+  grid-template-columns: minmax(68px, max-content) minmax(0, 1fr);
+}
+
+.settings-kv dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings-models li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.settings-models li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-models li.ready span:last-child { color: var(--good); }
+.settings-models li.missing span:last-child { color: var(--warn); }
+
+html[data-density="dense"] .panel { margin-bottom: 8px; padding: 6px 10px; }
+html[data-density="dense"] .records-table th,
+html[data-density="dense"] .records-table td,
+html[data-density="dense"] .memory-table th,
+html[data-density="dense"] .memory-table td,
+html[data-density="dense"] .memory-hex-table th,
+html[data-density="dense"] .memory-hex-table td,
+html[data-density="dense"] .dec-table th,
+html[data-density="dense"] .dec-table td,
+html[data-density="dense"] .xref-table th,
+html[data-density="dense"] .xref-table td {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}

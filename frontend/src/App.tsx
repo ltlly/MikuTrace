@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack } from "solid-js";
-import type { JSX } from "solid-js";
 
 import {
   fetchFunctions,
@@ -32,130 +31,29 @@ import TaintPanel, { type TaintOverlayResult } from "./panels/taint/TaintPanel";
 import TraceForPcPanel from "./panels/tracepc/TraceForPcPanel";
 import XrefPanel from "./panels/xref/XrefPanel";
 import CryptoPanel from "./panels/crypto/CryptoPanel";
-import type { FunctionEntry, RecordRow, TaintRow } from "./api/types";
+import type { FunctionEntry, RecordRow } from "./api/types";
 import type { UiTaskEntry, UiTaskReporter, UiTaskUpdate } from "./utils/taskCenter";
-
-type LeftTab =
-  | "funcs"
-  | "back"
-  | "calltree"
-  | "forks"
-  | "strings"
-  | "taint"
-  | "slice"
-  | "xref"
-  | "sofilter"
-  | "settings"
-  | "crypto";
-type RightTab = "cfg" | "regs" | "hlil" | "dec" | "pseudoc";
-type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance" | "query";
-type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
-type HelpState = { topic: HelpTopic; x: number; y: number };
-type CmdMode = "" | "/" | ":";
-type TaintRunDirection = "forward" | "backward";
-type MemoryRequest = { token: number; addr: string; count?: number };
-type TaintRunRequest = { token: number; idx: number; reg: string; direction: TaintRunDirection };
-
-const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
-const FUNCTION_RENAMES_PREFIX = "tracemiku-function-renames:";
-const LEGACY_LAYOUT_KEY = "tracemiku-layout-v2";
-const LAYOUT_KEY = "tracemiku-layout-v4";
-
-interface LayoutState {
-  leftW: number;
-  rightW: number;
-  bottomH: number;
-  colDot: number;
-  colIdx: number;
-  colPc: number;
-  colFunc: number;
-  colAsm: number;
-  syncCfg: boolean;
-}
-
-const DEFAULT_LAYOUT: LayoutState = {
-  leftW: 340,
-  rightW: 520,
-  bottomH: 240,
-  colDot: 18,
-  colIdx: 60,
-  colPc: 112,
-  colFunc: 96,
-  colAsm: 200,
-  syncCfg: true,
-};
-
-function clampNumber(n: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, n));
-}
-
-function initialLayout(): LayoutState {
-  try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    const isCurrentLayout = raw !== null;
-    const legacyRaw = raw ?? localStorage.getItem(LEGACY_LAYOUT_KEY);
-    const parsed = legacyRaw ? JSON.parse(legacyRaw) : {};
-    return {
-      leftW: clampNumber(Number(parsed.leftW) || DEFAULT_LAYOUT.leftW, 180, 680),
-      rightW: clampNumber(Number(parsed.rightW) || DEFAULT_LAYOUT.rightW, 320, 960),
-      bottomH: clampNumber(Number(parsed.bottomH) || DEFAULT_LAYOUT.bottomH, 120, 560),
-      colDot: clampNumber(Number(parsed.colDot) || DEFAULT_LAYOUT.colDot, 12, 48),
-      colIdx: clampNumber(Number(parsed.colIdx) || DEFAULT_LAYOUT.colIdx, 44, 140),
-      colPc: clampNumber(Number(parsed.colPc) || DEFAULT_LAYOUT.colPc, 80, 260),
-      colFunc: clampNumber(Number(parsed.colFunc) || DEFAULT_LAYOUT.colFunc, 80, 420),
-      colAsm: clampNumber(Number(parsed.colAsm) || DEFAULT_LAYOUT.colAsm, 180, 900),
-      syncCfg: isCurrentLayout && typeof parsed.syncCfg === "boolean" ? parsed.syncCfg : DEFAULT_LAYOUT.syncCfg,
-    };
-  } catch {
-    return { ...DEFAULT_LAYOUT };
-  }
-}
-
-function initialHiddenSos(): Set<string> {
-  try {
-    const raw = localStorage.getItem(HIDDEN_SOS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === "string")) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function loadFunctionRenames(key: string): Map<string, string> {
-  try {
-    const raw = localStorage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : {};
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return new Map();
-    return new Map(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, string] =>
-          typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].trim().length > 0,
-      ),
-    );
-  } catch {
-    return new Map();
-  }
-}
-
-function saveFunctionRenames(key: string, renames: Map<string, string>) {
-  const serialized: Record<string, string> = {};
-  for (const [id, name] of renames) {
-    const trimmed = name.trim();
-    if (trimmed) serialized[id] = trimmed;
-  }
-  try {
-    if (Object.keys(serialized).length) localStorage.setItem(key, JSON.stringify(serialized));
-    else localStorage.removeItem(key);
-  } catch {
-    /* ignore */
-  }
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
-}
+import TaskCenter from "./app/TaskCenter";
+import {
+  clampNumber,
+  functionRenameStorageKey,
+  initialHiddenSos,
+  initialLayout,
+  isEditableTarget,
+  loadFunctionRenames,
+  persistHiddenSos,
+  saveFunctionRenames,
+} from "./app/persistence";
+import type {
+  BottomTab, CmdMode, HelpState,
+  LeftTab, MemoryRequest, RightTab, TaintRunDirection, TaintRunRequest,
+} from "./app/types";
+import { leftTabTitle, rightTabTitle } from "./app/tabTitles";
+import { recordRowFromTaintRow } from "./app/taintRows";
+import { createLayoutController } from "./app/layoutController";
+import DebugOverlay from "./app/DebugOverlay";
+import { getHelpBody, getHelpTitle, HelpButton, HelpPopover } from "./app/HelpSystem";
+import { TabButton } from "./app/AppChrome";
 
 export default function App() {
   const initial = initialLayout();
@@ -258,6 +156,11 @@ export default function App() {
   const [colFunc, setColFunc] = createSignal(initial.colFunc);
   const [colAsm, setColAsm] = createSignal(initial.colAsm);
   const [syncCfg, setSyncCfgSignal] = createSignal(initial.syncCfg);
+  const { asmStyle, layoutStyle, setSyncCfg, startAsmColResize, startPanelResize } = createLayoutController({
+    leftW, setLeftW, rightW, setRightW, bottomH, setBottomH,
+    colDot, setColDot, colIdx, setColIdx, colPc, setColPc,
+    colFunc, setColFunc, colAsm, setColAsm, syncCfg, setSyncCfgSignal,
+  });
   const [cfgDisplayFn, setCfgDisplayFn] = createSignal("");
   const [debugVisible, setDebugVisibleSignal] = createSignal(false);
   const [apiDebug, setApiDebugSignal] = createSignal(false);
@@ -310,7 +213,7 @@ export default function App() {
   const [functions] = createResource(fetchFunctions);
   const functionRenameKey = createMemo(() => {
     const path = meta()?.path;
-    return path ? `${FUNCTION_RENAMES_PREFIX}${path}` : null;
+    return path ? functionRenameStorageKey(path) : null;
   });
 
   // Auto-select function from assembly cursor
@@ -722,108 +625,8 @@ export default function App() {
 
   function setHiddenSos(next: Set<string>) {
     setHiddenSosSignal(new Set(next));
-    localStorage.setItem(HIDDEN_SOS_KEY, JSON.stringify([...next]));
+    persistHiddenSos(next);
   }
-
-  function layoutSnapshot(overrides: Partial<LayoutState> = {}): LayoutState {
-    return {
-      leftW: leftW(),
-      rightW: rightW(),
-      bottomH: bottomH(),
-      colDot: colDot(),
-      colIdx: colIdx(),
-      colPc: colPc(),
-      colFunc: colFunc(),
-      colAsm: colAsm(),
-      syncCfg: syncCfg(),
-      ...overrides,
-    };
-  }
-
-  function persistLayout(overrides: Partial<LayoutState> = {}) {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layoutSnapshot(overrides)));
-  }
-
-  function setSyncCfg(next: boolean) {
-    setSyncCfgSignal(next);
-    persistLayout({ syncCfg: next });
-  }
-
-  function startPanelResize(kind: "left" | "right" | "bottom", e: PointerEvent) {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startLeft = leftW();
-    const startRight = rightW();
-    const startBottom = bottomH();
-    document.body.classList.add("is-resizing");
-    document.body.style.cursor = kind === "bottom" ? "row-resize" : "col-resize";
-
-    const onMove = (ev: PointerEvent) => {
-      if (kind === "left") {
-        setLeftW(clampNumber(startLeft + ev.clientX - startX, 180, 680));
-      } else if (kind === "right") {
-        setRightW(clampNumber(startRight - (ev.clientX - startX), 320, 960));
-      } else {
-        setBottomH(clampNumber(startBottom - (ev.clientY - startY), 120, 560));
-      }
-    };
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("is-resizing");
-      document.body.style.cursor = "";
-      persistLayout();
-    };
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  }
-
-  function startAsmColResize(kind: "dot" | "idx" | "pc" | "func" | "asm", e: PointerEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const starts = {
-      dot: colDot(),
-      idx: colIdx(),
-      pc: colPc(),
-      func: colFunc(),
-      asm: colAsm(),
-    };
-    document.body.classList.add("is-resizing");
-    document.body.style.cursor = "col-resize";
-    const onMove = (ev: PointerEvent) => {
-      const delta = ev.clientX - startX;
-      if (kind === "dot") setColDot(clampNumber(starts.dot + delta, 12, 48));
-      else if (kind === "idx") setColIdx(clampNumber(starts.idx + delta, 44, 140));
-      else if (kind === "pc") setColPc(clampNumber(starts.pc + delta, 80, 260));
-      else if (kind === "func") setColFunc(clampNumber(starts.func + delta, 80, 420));
-      else setColAsm(clampNumber(starts.asm + delta, 180, 900));
-    };
-    const onUp = () => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("is-resizing");
-      document.body.style.cursor = "";
-      persistLayout();
-    };
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  }
-
-  const layoutStyle = createMemo<JSX.CSSProperties>(() => ({
-    "--left-w": `${leftW()}px`,
-    "--right-w": `${rightW()}px`,
-    "--bottom-h": `${bottomH()}px`,
-  }));
-
-  const asmStyle = createMemo<JSX.CSSProperties>(() => ({
-    "--col-dot": `${colDot()}px`,
-    "--col-idx": `${colIdx()}px`,
-    "--col-pc": `${colPc()}px`,
-    "--col-func": `${colFunc()}px`,
-    "--col-asm": `${colAsm()}px`,
-  }));
 
   function openMemoryAt(addr: string, count?: number) {
     setBottomTab("memory");
@@ -857,24 +660,6 @@ export default function App() {
 
   function setTaintOverlayMode(mode: RecordsTaintOverlayMode) {
     setTaintOverlay((current) => (current ? { ...current, mode } : current));
-  }
-
-  function recordRowFromTaintRow(row: TaintRow): RecordRow {
-    const mnemonic = row.asm.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
-    return {
-      idx: row.idx,
-      pc: row.pc,
-      rel: row.rel,
-      module: null,
-      func: row.func,
-      off: null,
-      asm: row.asm,
-      annotation: row.why ?? row.via ?? null,
-      exec_count: null,
-      is_branch: mnemonic.startsWith("b") || mnemonic === "cbz" || mnemonic === "cbnz" || mnemonic === "tbz" || mnemonic === "tbnz",
-      is_call: mnemonic === "bl" || mnemonic === "blr",
-      is_ret: mnemonic === "ret",
-    };
   }
 
   function showStringProvenance(req: Omit<StringProvenanceRequest, "token">) {
@@ -1036,138 +821,20 @@ export default function App() {
     });
   });
 
-  const leftTitle = createMemo(() => {
-    const titles: Record<LeftTab, string> = {
-      funcs: "Functions",
-      back: "Backtrace",
-      calltree: "Call Tree",
-      forks: "Forks",
-      strings: "Strings",
-      taint: "Taint",
-      slice: "Slice",
-      xref: "Refs",
-      sofilter: "SO Filter",
-      settings: "Settings",
-      crypto: "Crypto",
-    };
-    return titles[leftTab()];
-  });
-  const rightTitle = createMemo(() => {
-    const titles: Record<RightTab, string> = {
-      cfg: "Graph",
-      regs: "Registers",
-      hlil: "BN HLIL",
-      dec: "Decompile",
-      pseudoc: "Pseudo C",
-    };
-    return titles[rightTab()];
-  });
+  const leftTitle = createMemo(() => leftTabTitle(leftTab()));
+  const rightTitle = createMemo(() => rightTabTitle(rightTab()));
 
   const vtab = (tab: LeftTab, label: string, title: string) => (
-    <button
-      class="vtab"
-      data-vtab={tab}
-      classList={{ active: leftTab() === tab }}
-      title={title}
-      onClick={() => setLeftTab(tab)}
-    >
-      {label}
-    </button>
+    <TabButton side="left" tab={tab} label={label} title={title} active={leftTab() === tab} onSelect={() => setLeftTab(tab)} />
   );
   const rtab = (tab: RightTab, label: string, title: string) => (
-    <button
-      class="vtab"
-      data-rtab={tab}
-      classList={{ active: rightTab() === tab }}
-      title={title}
-      onClick={() => setRightTab(tab)}
-    >
-      {label}
-    </button>
+    <TabButton side="right" tab={tab} label={label} title={title} active={rightTab() === tab} onSelect={() => setRightTab(tab)} />
   );
   const btab = (tab: BottomTab, label: string) => (
-    <button
-      class="btab"
-      data-btab={tab}
-      classList={{ active: bottomTab() === tab }}
-      onClick={() => setBottomTab(tab)}
-    >
-      {label}
-    </button>
+    <TabButton side="bottom" tab={tab} label={label} active={bottomTab() === tab} onSelect={() => setBottomTab(tab)} />
   );
-  const helpButton = (topic: HelpTopic) => (
-    <button
-      class="help-btn"
-      type="button"
-      title="帮助"
-      onClick={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const cardW = Math.min(560, window.innerWidth - 24);
-        // Reserve enough height for the longest help body (~320 px). Flip
-        // the card to the side that has more room, then clamp to keep both
-        // edges inside the viewport with an 8px margin.
-        const cardH = Math.min(360, window.innerHeight - 24);
-        const spaceBelow = window.innerHeight - rect.bottom - 8;
-        const spaceAbove = rect.top - 8;
-        const placeAbove = spaceBelow < cardH && spaceAbove > spaceBelow;
-        const yRaw = placeAbove ? rect.top - cardH - 8 : rect.bottom + 8;
-        const x = Math.max(8, Math.min(rect.left, window.innerWidth - cardW - 8));
-        const y = Math.max(8, Math.min(yRaw, window.innerHeight - cardH - 8));
-        setHelpState({ topic, x, y });
-      }}
-    >
-      ?
-    </button>
-  );
-  const helpTitle = createMemo(() => {
-    const topic = helpTopic();
-    if (topic === "overview") return "traceMiku Web";
-    if (topic === "disasm") return "Disassembly";
-    if (topic === "right") return rightTitle();
-    if (topic === "bottom") {
-      if (bottomTab() === "memory") return "Memory";
-      if (bottomTab() === "trace-for-pc") return "Trace for PC";
-      if (bottomTab() === "string-provenance") return "String Provenance";
-      if (bottomTab() === "query") return "Trace Query";
-      return "Navigation";
-    }
-    return leftTitle();
-  });
-  const helpBody = createMemo(() => {
-    const topic = helpTopic();
-    if (topic === "overview") {
-      return "主界面按调试器布局组织：左侧是函数、回溯、调用树、字符串、污点、Slice 和交叉引用；中间是动态执行过的汇编 trace；下方是内存和当前 PC 的执行历史；右侧是 CFG、寄存器和 HLIL。全局 cursor 就是当前选中的 trace idx，所有窗口都围绕它联动。点击行会设置 cursor；点击寄存器只设置 reg 不跳转；只有双击寄存器或 CFG 单击指令才会移动 cursor。";
-    }
-    if (topic === "disasm") {
-      return "每一行是一条实际执行过的 ARM64 指令快照，不是静态反汇编列表。列含义依次是执行序号、PC、函数+偏移和汇编文本。滚动条对应整个 trace；点击行设置 cursor。寄存器交互：单击 = 选中该寄存器（Taint/Registers 同步）+ 在 dot 列上画一条长箭头连到最近的 def（红 ▲）和 use（绿 ▼），点箭头跳过去；双击寄存器 = 直接跳到 last write；右键寄存器 = 上下文菜单（取值、CFG view、taint）。地址 token 双击跳到最近 PC。Esc 清掉 def/use 箭头。";
-    }
-    if (topic === "right") {
-      if (rightTab() === "cfg") return "CFG 显示当前函数的动态基本块图，默认跟随当前 trace 所在函数，避免直接渲染全 trace 导致 dot 超时。空白处拖动平移（拖动期间不会触发 click），按住 Ctrl 滚轮缩放；单击图中的指令或块头会跳到 trace 中离当前 cursor 最近的一次执行——同时联动 Records、Registers、Memory、HLIL、Trace for PC。";
-      if (rightTab() === "regs") return "寄存器窗口显示当前 cursor 的寄存器状态，并像 pwndbg 一样自动高亮相对上一条 trace 发生变化的寄存器；note 会标出 zero、pc、sp/stack 和疑似指针。点击寄存器会把它设为 Taint/Slice 的当前寄存器（不会跳转 cursor）。";
-      if (rightTab() === "hlil") return "BN HLIL 通过 Binary Ninja sidecar 提供静态反编译参考。需要配置 TRACEMIKU_BN_SO 环境变量。 时显示 Pseudo C 和 HLIL 两种结构化文本，并高亮当前 PC 对应的行。缩进来自 BN 返回的结构化 indent。点击 HLIL 行会跳到该 PC 在 trace 中离当前 cursor 最近的一次执行。";
-      if (rightTab() === "pseudoc") return "Decompile 对选中的函数运行三层 decompiler pipeline（LLIL→MLIL→HLIL），展示 HLIL/MLIL/LLIL C 风格伪代码。可以在子标签切换层级。调用参数从 trace 记录中提取实际 x0-x7 寄存器值。records 控制反编译的最大指令数。点 Show decompiled code 加载文本，避免大数据量卡顿。函数边界通过 ret/blr 自动切分。 decompiler pipeline（LLIL→MLIL→HLIL），展示最终 HLIL 的 C 风格伪代码、各层统计信息和覆盖率。选择 Functions 中的函数后自动运行，可调整参与编译的记录数。大输出（500+ 行）默认折叠。";
-      if (rightTab() === "dec") return "Decompile 显示 traceMiku 本地 Trace IR markdown 和 LLIL render。LLIL records 限制参与渲染的 trace 记录数；DCE 是 Dead Code Elimination，会移除计算结果没有被后续使用的临时语句，适合看更短的伪代码，但排查 lift 细节时可以关闭。这里不调用任何 LLM；模型选择和 LLM 输出暂时不在 UI 中开放。";
-      return "";
-    }
-    if (topic === "bottom") {
-      if (bottomTab() === "memory") return "Memory 是按调试器习惯排列的 hex+ASCII dump。addr 可以填十六进制地址，也可以填 x0、x1、sp 这类寄存器名；字节颜色表示读、写、外部来源或未知，当前 cursor 发生变化的字节会直接在 dump 中高亮。双击字节跳来源 idx，右键字节显示该地址前后的读写触碰分析。";
-      if (bottomTab() === "trace-for-pc") return "Trace for PC 显示当前 PC 在 trace 中其它执行位置，分为 cursor 之前和之后。它用来分析循环、调度器、热点指令和同一静态指令在不同时间的状态差异。点击任意行跳转到对应 idx。CFG 单击指令会更新 cursor，本面板自动同步刷新。";
-      if (bottomTab() === "string-provenance") return "String Provenance 显示 Strings 双击后选中字符串的逐字节来源。上方 String Byte Flow 的含义是 writer trace 写出某个字符字节 → 该字节当前值 → reader trace 读取该字节；为了避免图过密，只展示前 32 个字节和每字节最多 2 个写/读事件。下方表格保留完整 writer/reader 列表，点击 writer#/reader# 会跳到对应 trace。";
-      if (bottomTab() === "query") return "Trace Query 是统一的结构化查询入口，可查询 records、regs、mem/reads/writes、functions、strings、JNI 和 provenance。命令栏里输入 query writes 0x... len 32、query mem addr 0x... len 32 或 query regs x9 会直接打开这里。";
-      return "Navigation 记录本次页面会话里的 cursor 跳转历史，所有来自 Disassembly、CFG、CallTree、Strings、Refs 和 Trace for PC 的跳转都会进入这里。back/forward 只改变 cursor，不重新请求历史。";
-    }
-    if (leftTab() === "funcs") return "Functions 汇总 trace、符号和 BN sidecar 里的函数条目。选择函数会驱动 CFG 和 HLIL；记录数、block 数和入口地址用来判断热函数和分析范围。";
-    if (leftTab() === "back") return "Backtrace 在当前 cursor 处重建动态调用栈。点击 frame 会跳到对应 call site，用于从深层 JNI/Native 调用回到上游上下文。";
-    if (leftTab() === "calltree") return "Call Tree 显示整个 trace 的动态嵌套调用关系。定位当前函数按钮会展开并选中包含当前汇编 trace 的函数节点，适合从执行流角度找上下文。";
-    if (leftTab() === "strings") return "Strings 来自 MemShadow 对内存写入的可打印字符串扫描。单击跳到第一次写入/触碰该字符串地址的 trace；双击会在底部 Provenance 展示每个字符是谁写入、谁读取。";
-    if (leftTab() === "taint") return "Taint 模拟逐指令的污点传播：从当前 cursor + 寄存器开始，按 trace 顺序一步步推进，可选 through_mem（穿越内存）、cross_fn_call（穿越函数调用）、data_only（只看值流不看地址流）。返回每一行的 parent_idxs / taint_depth，可以画传播树。比 Slice 慢但语义更细——需要看「这个值经过了哪些指令、被哪条指令读/写」时用 Taint。";
-    if (leftTab() === "slice") return "Slice 在持久化依赖 CSR 上做一次 BFS，比 Taint 快得多。Backward 把当前 cursor 当 sink，列出所有它直接/间接依赖的 trace 行；填第二个 idx + 切到 intersection，会得到两个 cursor 的「共同祖先」（dataflow 交点）。Forward 是反方向 def→use，列出当前行的下游使用者。data only 丢弃控制流依赖。结果按 BFS 发现顺序（单种子）或 idx 升序（多种子求交/并）排列——不是按时间或函数。Slice 不模拟传播过程也没有 through_mem/cross_fn 这些开关；要看传播细节用 Taint。";
-    if (leftTab() === "xref") return "Refs 上半部分是当前 PC 在 trace 中的其它执行位置；下半部分是按解码后的汇编文本做正则搜索。它不是静态代码引用分析，ret 这类通用指令只有在提交文本搜索后才会列出匹配。";
-    if (leftTab() === "settings") return "Settings 显示后端 API、MemShadow 状态、密度和调试开关。API debug log 可在需要定位前端/后端交互时打开。";
-    if (leftTab() === "crypto") return "Crypto 面板整合了三层密码学检测：Memory（MemShadow 字节级常数匹配）、Instructions（trace 指令级立即数/寄存器常数命中，带 Real/ALU/Weak 判定）、Hardware（ARM Crypto Extensions 硬件指令统计）。Summary bar 给出综合判定（Software/Hardware/Mixed/None）。";
-    return "SO Filter 用于多 so trace 的折叠、过滤和当前模块聚焦；核心原则是只改变显示范围，不改变 trace 数据本身。";
-  });
-
+  const helpTitle = createMemo(() => getHelpTitle(helpTopic(), leftTab(), rightTab(), bottomTab()));
+  const helpBody = createMemo(() => getHelpBody(helpTopic(), leftTab(), rightTab(), bottomTab()));
   return (
     <>
       <header id="topbar">
@@ -1201,7 +868,7 @@ export default function App() {
         >
           tasks {activeTaskCount()}
         </button>
-        {helpButton("overview")}
+        <HelpButton topic="overview" onOpen={setHelpState} />
       </header>
 
       <main id="layout" style={layoutStyle()}>
@@ -1234,7 +901,7 @@ export default function App() {
             <span>{leftTitle()}</span>
             <span class="grow" />
             <span class="dim">idx {selectedIdx()}</span>
-            {helpButton("left")}
+            <HelpButton topic="left" onOpen={setHelpState} />
           </div>
           <div id="left-panel-body">
             <div class="lp-tab" classList={{ active: leftTab() === "funcs" }}>
@@ -1318,7 +985,7 @@ export default function App() {
             <span class="dim">
               cursor {selectedIdx()} · reg {selectedReg()}
             </span>
-            {helpButton("disasm")}
+            <HelpButton topic="disasm" onOpen={setHelpState} />
           </div>
           <div id="stream-header">
             <span class="hd ec-spacer">
@@ -1372,7 +1039,7 @@ export default function App() {
             {btab("string-provenance", "Provenance")}
             {btab("query", "Query")}
             <span class="grow" />
-            {helpButton("bottom")}
+            <HelpButton topic="bottom" onOpen={setHelpState} />
           </div>
           <div id="bottom-content">
             <div class="bbody" classList={{ active: bottomTab() === "memory" }}>
@@ -1461,7 +1128,7 @@ export default function App() {
                     ? selectedFn() || "no fn selected"
                     : selectedFn() || "no fn selected"}
             </span>
-            {helpButton("right")}
+            <HelpButton topic="right" onOpen={setHelpState} />
           </div>
           <div id="right-body">
             <div class="rbody" classList={{ active: rightTab() === "cfg" }}>
@@ -1544,121 +1211,34 @@ export default function App() {
           <span class="cmd-status dim">{cmdStatus()}</span>
         </footer>
       </main>
-      <Show when={helpState()}>
-        {(state) => (
-        <div class="help-popover" role="dialog" aria-modal="true" onClick={() => setHelpState(null)}>
-          <div
-            class="help-card"
-            style={{ left: `${state().x}px`, top: `${state().y}px` }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button class="help-close" type="button" onClick={() => setHelpState(null)}>
-              ×
-            </button>
-            <h3>{helpTitle()}</h3>
-            <p>{helpBody()}</p>
-          </div>
-        </div>
-        )}
-      </Show>
+      <HelpPopover
+        state={helpState()}
+        title={helpTitle()}
+        body={helpBody()}
+        onClose={() => setHelpState(null)}
+      />
       <Show when={taskCenterOpen() || activeTaskCount() > 0}>
-        <div class="task-center">
-          <div class="task-center-head">
-            <b>Task Center</b>
-            <span class="dim small">{activeTaskCount()} running · {taskEntries().length} recent</span>
-            <button type="button" onClick={() => setTaskCenterOpen(false)}>close</button>
-          </div>
-          <For each={taskEntries().slice(0, 12)}>
-            {(task) => {
-              const elapsed = Math.max(0, Math.round(((task.endedAt ?? performance.now()) - task.startedAt)));
-              return (
-                <div class="task-row" classList={{ running: task.status === "running", error: task.status === "error", partial: task.status === "partial" }}>
-                  <span class="task-status">{task.status}</span>
-                  <span class="task-main">
-                    <b>{task.surface}</b>
-                    <span>{task.label}</span>
-                    <Show when={task.detail}>
-                      <small>{task.detail}</small>
-                    </Show>
-                  </span>
-                  <code>{elapsed}ms</code>
-                </div>
-              );
-            }}
-          </For>
-        </div>
+        <TaskCenter
+          activeCount={activeTaskCount()}
+          tasks={taskEntries()}
+          onClose={() => setTaskCenterOpen(false)}
+        />
       </Show>
       <Show when={debugVisible()}>
-        <div class="debug-overlay">
-          <div class="debug-row">
-            <span>selectedIdx</span>
-            <code>{selectedIdx()}</code>
-          </div>
-          <div class="debug-row">
-            <span>cursorHint.idx</span>
-            <code>{cursorHint()?.idx ?? "—"}</code>
-          </div>
-          <div class="debug-row">
-            <span>cursorHint.pc</span>
-            <code>{cursorHint()?.pc ?? "—"}</code>
-          </div>
-          <div class="debug-row">
-            <span>cursorHint.func</span>
-            <code>{cursorHint()?.func ?? "—"}</code>
-          </div>
-          <div class="debug-row">
-            <span>selectedFn</span>
-            <code>{selectedFn() || "—"}</code>
-          </div>
-          <div class="debug-row">
-            <span>selectedReg</span>
-            <code>{selectedReg()}</code>
-          </div>
-          <div class="debug-row">
-            <span>tabs</span>
-            <code>L:{leftTab()} R:{rightTab()} B:{bottomTab()}</code>
-          </div>
-          <div class="debug-row">
-            <span>syncCfg</span>
-            <code>{syncCfg() ? "on" : "off"}</code>
-          </div>
-          <div class="debug-row">
-            <span>cfg.fnName</span>
-            <code>{cfgDebugState()?.fnName || cfgDisplayFn() || "—"}</code>
-          </div>
-          <div class="debug-row">
-            <span>cfg.lastGraphFn</span>
-            <code>{cfgDebugState()?.lastGraphFn || "—"}</code>
-          </div>
-          <div class="debug-row">
-            <span>cfg.loading</span>
-            <code>{cfgDebugState()?.loading ? "yes" : "no"}</code>
-          </div>
-          <div class="debug-row">
-            <span>cfg.graphSeq</span>
-            <code>{cfgDebugState()?.graphSeq ?? 0}</code>
-          </div>
-          <div class="debug-row">
-            <span>rowHintCache</span>
-            <code>{rowHintCacheSize()} entries</code>
-          </div>
-          <label class="debug-row debug-toggle">
-            <input
-              type="checkbox"
-              checked={apiDebug()}
-              onChange={(e) => setApiDebug(e.currentTarget.checked)}
-            />
-            <span>log API calls (console)</span>
-          </label>
-          <button
-            type="button"
-            class="debug-close"
-            onClick={() => setDebugVisible(false)}
-            title="hide overlay (state persists; toggle with topbar dbg button)"
-          >
-            close
-          </button>
-        </div>
+        <DebugOverlay
+          selectedIdx={selectedIdx()}
+          cursorHint={cursorHint()}
+          selectedFn={selectedFn()}
+          selectedReg={selectedReg()}
+          tabs={`L:${leftTab()} R:${rightTab()} B:${bottomTab()}`}
+          syncCfg={syncCfg()}
+          cfgDebugState={cfgDebugState()}
+          cfgDisplayFn={cfgDisplayFn()}
+          rowHintCacheSize={rowHintCacheSize()}
+          apiDebug={apiDebug()}
+          onApiDebugChange={setApiDebug}
+          onClose={() => setDebugVisible(false)}
+        />
       </Show>
     </>
   );

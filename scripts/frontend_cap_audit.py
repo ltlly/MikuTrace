@@ -31,6 +31,11 @@ def has_all(rel: str, *tokens: str) -> bool:
     return all(token in text for token in tokens)
 
 
+def has_all_in(rels: tuple[str, ...], *tokens: str) -> bool:
+    text = "\n".join(read(rel) for rel in rels)
+    return all(token in text for token in tokens)
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -106,7 +111,17 @@ def main() -> int:
     )
     require(
         "cap notice styling exists",
-        has_all("styles/base.css", ".cap-notice", ".cap-notice button"),
+        has_all_in(
+            (
+                "styles/foundation.css",
+                "styles/records.css",
+                "styles/inspectors.css",
+                "styles/analysis.css",
+                "styles/pseudoc.css",
+            ),
+            ".cap-notice",
+            ".cap-notice button",
+        ),
         failures,
     )
 
