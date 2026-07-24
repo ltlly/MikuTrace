@@ -1,137 +1,37 @@
-# vendor/frida-patched
+# traceMiku 定制 Frida Runtime
 
-自构建的 frida-server (Android arm64) — 集成多项 bug 修复 + 反检测 patches, 从源码编译.
+本目录保存当前真机采集依赖的 Frida 17.9.11 arm64 runtime、补丁、校验和及构建脚本。
+`miku-trace-server-17.9.11` 是当前安装流程的运行资产，不是可随意删除的缓存。
 
-## 当前版本
+## 补丁范围
 
-| 文件 | 体积 | 基线 | 说明 |
-|---|---:|---|---|
-| `miku-trace-server-17.9.11` | 51MB | frida 17.9.11 | 全量 patches (见下), 已验证 attach + Stalker |
+- Frida Gum Stalker literal-pool overflow 修复。
+- Android 14 code slab 分配失败的回退路径。
+- 常见 Frida 字符串、服务名和路径特征调整。
+- 保留 `frida_agent_main` ABI 符号，避免 Vala 生成代码和 export file 不一致。
 
-## 集成 Patches
+补丁只解决已验证的采集故障，不保证绕过所有检测。完整边界见
+`docs/anti-detection-catalog.md`。
 
-基于 frida 17.9.11 tag, 集成了以下修复和反检测 patches:
-
-### 1. Stalker Literal Pool Overflow Fix (PR #1113)
-
-来源: [frida-gum PR #1113](https://github.com/frida/frida-gum/pull/1113)
-
-ARM64 + ARM32 Stalker `is_out_of_space()` 未计算 pending literal pool 大小, 导致 code slab 写越界 → mapper crash. 本修复让 `is_out_of_space()` 在检查剩余空间时纳入 `cw->literal_refs.length * sizeof(guint64) + 4` 的 pending pool 大小.
-
-同时增加了 PR 评审建议的 `literal_refs.data != NULL && literal_refs.length > 0` 安全 check.
-
-### 2. Code Slab Fallback Patch (codeslab)
-
-来源: 自研 (`gummemory-posix.patch`)
-
-解决 Android 14+/ARM64 高位 ASLR 下所有 near-allocation free range 被占满时 `gum_memory_allocate_near()` 返回 NULL → `g_assert()` → SIGTRAP. 添加 unconstrained fallback allocation.
-
-相关 issues: [frida-gum#707](https://github.com/frida/frida-gum/issues/707), [frida-gum#793](https://github.com/frida/frida-gum/issues/793), [frida#2819](https://github.com/frida/frida/issues/2819)
-
-### 3. Anti-Detect 重命名 (frida → miku)
-
-来源: `anti-detect-rename.sh` (12 项 sed 替换)
-
-重命名 target 进程内可见的 frida 特征字符串:
-
-| 原 | 新 | 文件 |
-|---|---|---|
-| `g_set_prgname("frida")` | `("miku")` | gum/gum.c |
-| `"frida-main-loop"` 线程名 | `"miku-main-loop"` | frida-glue.c |
-| `"frida-agent-container"` | `"miku-agent-cont"` | agent-container.vala |
-| `"gum-js-loop"` 线程名 | `"miku-js-loop"` | gumscriptscheduler.c |
-| `"frida-gadget"` 线程名 | `"miku-gadget"` | gadget-glue.c |
-| `"re.frida.server"` unix dir | `"re.miku.server"` | server.vala |
-| `"frida:"` socket prefix | `"miku:"` | droidy/injector.vala |
-| `/data/local/tmp/frida-*` paths | `/data/local/tmp/miku-*` | 多文件 |
-| `re.frida.helper` nice-name | `re.miku.helper` | droidy-host-session.vala |
-
-### 4. Florida Anti-Detection Patches (frida-core)
-
-来源: [Ylarod/Florida](https://github.com/Ylarod/Florida) (5 patches applied)
-
-| Patch | 功能 |
-|---|---|
-| 0001: string_frida_rpc | `"frida:rpc"` → Base64 编码运行时解码, 防止字符串扫描 |
-| 0002: frida_agent_so   | agent SO 文件名随机化 (UUID) |
-| 0006: protocol_unexpected_command | 协议未知命令响应指纹消除 |
-| 0008: pool-frida       | 线程池名前缀去特征 |
-| 0009: memfd-name-jit-cache | memfd 名称从 `frida-*` → `jit-cache` 伪装 |
-
-### 5. frida_agent_main 符号保留 (Florida 0003 回退)
-
-来源: Florida 0003 patch 原本将 `frida_agent_main` → `main`, 但 Vala 编译器生成的
-符号名是 `frida_agent_main` (由 `namespace Frida.Agent` + `main()` 自动生成),
-且 linker export files (.def/.version/.symbols) 必须与之匹配. 重命名 caller 侧而
-不修改 Vala 源码会导致 `undefined symbol: main` → agent 注入失败.
-
-**当前状态**: 已回退, 保持 `frida_agent_main` 原始符号. 检测规避依赖其他 patches
-(agent SO UUID 随机化 + memfd jit-cache 重命名) 来隐藏 agent 存在.
-
-### 参考但未直接应用
-
-- [taisuii/rusda](https://github.com/taisuii/rusda): XOR 字符串混淆方案 (需要添加 Obfuscate.vala helper class, 对 17.9.11 代码差异大, 未集成. Florida 的 Base64 方案已覆盖核心 frida:rpc 字符串)
-- [AeonLucid/strongR-frida](https://github.com/AeonLucid/strongR-frida): Florida 是其增强分支, 我们直接用 Florida patches
-
-## 安装到设备
+## 安装现有产物
 
 ```bash
-./install-stealth.sh         # → /data/local/tmp/.miku-srv  + adb forward tcp:6699 → 27042
-./install-stealth.sh 6688    # 自定义本地端口
+cd vendor/frida-patched
+sha256sum -c SHA256SUMS
+./install-stealth.sh
 ```
+
+脚本将 server 推送到设备私有路径并配置非默认端口。主机端 `frida-python` 和
+`frida-tools` 使用官方版本，通信协议未修改。
 
 ## 从源码构建
 
-```bash
-# macOS ARM64 (推荐, 需要 meson/ninja/go/node/git/patch + NDK r29)
-./build-from-source-mac.sh           # 完整: clone → patch → configure → make
-./build-from-source-mac.sh patch     # 仅 patch
-./build-from-source-mac.sh make      # 仅 (重) make
-./build-from-source-mac.sh clean     # 删 build artifact 保留源码
-./build-from-source-mac.sh distclean # 全删
+Linux 使用 `build-from-source.sh`，macOS 使用 `build-from-source-mac.sh`。构建需要与
+17.9.11 对应的 Frida 源码和 Android NDK。生成新二进制后必须：
 
-# Linux (旧脚本, 需要 NDK zip 下载)
-./build-from-source.sh
-```
+1. 更新 `SHA256SUMS` 和本文件版本说明。
+2. 在普通目标验证 attach、spawn、短 trace 和完整收尾。
+3. 运行 `make test-device`。
+4. 在已知高强度目标验证 Stalker 和反检测，但不能只用单一目标作为回归标准。
 
-源码目录: `~/Code/frida/` (持久化, 可重复修改和重编译), 包含:
-- frida 17.9.11 完整源码 + 已 apply 的 patches
-- `patches-ref/florida/` 和 `patches-ref/rusda/` — 参考 patch repos
-- frida 会自动下载 toolchain + SDK 到 `deps/`
-- 需要 `ANDROID_NDK_ROOT` 指向 NDK r29
-
-代理设置: `export https_proxy=http://127.0.0.1:7897` 或脚本自动检测.
-
-## 兼容性
-
-- 构建环境: macOS 14+ ARM64 (Apple Silicon)
-- 目标设备: Pixel 7 (Tensor G2), Android SDK 36
-- 兼容: Android 12+ arm64 (patch 在 backend-posix, 不依赖特定内核)
-- Host 端: stock frida-python / frida-tools 即可 (D-Bus wire protocol 未改)
-
-## 不改的 (host 兼容)
-
-- D-Bus interface 名: `re.frida.HostSession17`, `re.frida.AgentSession17` — wire protocol
-- host 端 Python 交互 — 不改 frida-python
-
-## 文件清单
-
-| 文件 | 说明 |
-|---|---|
-| `miku-trace-server-17.9.11`  | binary — 全量 patches, 51MB ELF arm64 |
-| `gummemory-posix.patch`      | codeslab fallback patch (可供参考) |
-| `anti-detect-rename.sh`      | 反检测重命名脚本 (sed-based, idempotent) |
-| `build-from-source-mac.sh`   | macOS 一键构建脚本 |
-| `build-from-source.sh`       | Linux 一键构建脚本 |
-| `install-stealth.sh`         | 推送 + 启动 stealth server 到设备 |
-| `SHA256SUMS`                 | 完整性校验 |
-
-## 上游引用
-
-- [frida-gum PR #1113](https://github.com/frida/frida-gum/pull/1113) — Stalker literal pool overflow fix (本项目提交)
-- [frida #3751](https://github.com/frida/frida/issues/3751) — Stalker ARM64 literal pool overflow crash (本项目报告)
-- [frida-gum #707](https://github.com/frida/frida-gum/issues/707) — code slab allocation 失败报告
-- [frida-gum #793](https://github.com/frida/frida-gum/issues/793) — 同上, OLLVM 大库 trace
-- [frida #2819](https://github.com/frida/frida/issues/2819) — Android 14 + Stalker 多线程 SIGTRAP
-- [Ylarod/Florida](https://github.com/Ylarod/Florida) — anti-detection patches
-- [taisuii/rusda](https://github.com/taisuii/rusda) — XOR obfuscation 参考
+二进制与主机包版本不一致时可能出现协议或能力错误，升级必须作为独立变更处理。

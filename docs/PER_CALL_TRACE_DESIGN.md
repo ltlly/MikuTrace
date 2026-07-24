@@ -1,92 +1,57 @@
-# Per-Call Trace Layout
+# Trace 数据契约
 
-traceMiku 现在以 per-call 目录作为分析单元。每次目标函数进入后独立保存一个
-`trace.bin` 和 `meta.json`，用户后续从 run 目录中选择要看的那一次调用。
+本文件定义设备采集、主机拉取和 Rust 解析共同依赖的稳定格式。修改这里的任何字段都
+必须同步修改 agent、host、core、server、测试和迁移逻辑。
 
-## Layout
-
-```text
-traces/<run_name>/
-├── meta.json
-├── log.txt
-└── calls/
-    ├── call_001_tid12345_4675r_98ms/
-    │   ├── trace.bin
-    │   └── meta.json
-    └── call_002_tid12345_2066291r_50342ms/
-        ├── trace.bin
-        └── meta.json
-```
-
-目录名包含 call index、tid、record 数和耗时，方便直接按最长 call 找 cold path。
-run 级 `meta.json` 保存 calls 概要；call 级 `meta.json` 保存完整性字段。
-
-## Call Metadata
-
-```json
-{
-  "callIdx": 2,
-  "tid": 12345,
-  "ts_in": 1714153200.123,
-  "ts_out": 1714153250.465,
-  "ms": 50342,
-  "retval": "0x0",
-  "records": 2066291,
-  "dropped": 0,
-  "truncated": false,
-  "stalker_followed": true,
-  "first_pc": "0x75f6306000",
-  "last_pc": "0x75f6306800",
-  "last_insn_is_ret": true
-}
-```
-
-完整性判断优先看：
-
-1. `truncated == false`
-2. `dropped == 0`
-3. 最后一条指令是 `ret` 或 `br lr`
-4. records 与 `ms` 的比例没有明显异常
-
-## Trace Record Contract
-
-`trace.bin` 是稳定格式，每条记录 272 字节，little-endian：
+## 目录结构
 
 ```text
-0x000  u64  pc
-0x008  u64  x[0..28]
-0x0F0  u64  fp   (= x29)
-0x0F8  u64  lr   (= x30)
-0x100  u64  sp
-0x108  u32  nzcv
-0x10C  u32  inst
+<run>/
+  meta.json
+  log.txt
+  calls/
+    call_<序号>_tid<线程>_<记录数>r_<耗时>ms/
+      trace.bin
+      meta.json
+      external_writes.bin      # 可选
+      memory_snapshot.bin      # 可选
 ```
 
-格式变化需要 meta version bump 和迁移逻辑。`js`、`cmodule-v3`、`cmodule` v5 都必须
-写出相同物理 record。
+分析命令通常接收单次调用目录，而不是 run 根目录。旧平铺格式只用于读取兼容，不应再
+产生新数据。
 
-## Current Commands
+## `trace.bin`
 
-```bash
-./tracemiku trace --pkg com.taobao.taobao --so libsgmainso \
-  --fn-offset 0x57770 --cmd 70102 --duration 600 \
-  --cold-launch --remote 127.0.0.1:6699 --out traces/run1
+每条记录固定为 272 字节，小端序：
 
-./tracemiku list traces/run1
-./tracemiku info traces/run1
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `pc` | `u64` | 当前指令地址 |
+| `x0..x28` | 29 个 `u64` | 指令执行前的通用寄存器 |
+| `fp`、`lr`、`sp` | 3 个 `u64` | 帧指针、返回地址、栈指针 |
+| `nzcv` | `u64` | 条件标志 |
+| `inst` | `u32` | ARM64 指令字 |
+| 保留 | `u32` | 对齐与未来版本使用 |
 
-COLD=$(ls -d traces/run1/calls/call_* | sort -t_ -k4 -n -r | head -1)
-./tracemiku info "$COLD"
-./tracemiku web "$COLD" --port 18900 --no-browser
-```
+当前记录不包含 SIMD/FP 寄存器和内存字节。消费者必须通过 MemShadow 的来源信息判断
+内存完整性。
 
-`tracemiku web` 会启动 Rust server 并加载 Solid frontend。旧 Python viewer/terminal UI 不再是
-维护目标。
+## 调用级 `meta.json`
 
-## Constraints
+核心字段包括 trace 路径、记录数、线程、目标方法、模块映射、寄存器顺序、是否截断、
+sidecar 文件和格式版本。地址在 JSON 中优先使用 `0x` 字符串，计数和长度使用整数。
+新增必填字段必须提升版本；新增可选字段必须为旧 trace 提供明确默认行为。
 
-- 同一 tid 不并发 follow 两次；agent 用 followed set 或单缓冲锁保证边界。
-- MemShadow、taint、CFG 和 BN sidecar 都以单 call trace 为默认分析范围。
-- 目标相关配置放在 `tools/hooks/` 或 `examples/<so>/known_offsets.json`，不要硬编码到
-  core。
-- 大 trace 需要有响应上限、后台 worker 和 UI 截断提示，避免一次请求阻塞交互。
+## Sidecar
+
+- `external_writes.bin`：每条 17 字节，依次为 `idx:u64`、`addr:u64`、`byte:u8`，
+  在 MemShadow 中标记为 `x`。
+- `memory_snapshot.bin`：初始内存快照，格式见 `memory-completeness-design.md`。
+- 分析索引 sidecar 必须通过 trace 长度和内容指纹失效，不能复用到另一份 trace。
+
+## 不变量
+
+- 记录数必须与 `trace.bin` 长度严格一致。
+- 达到上限时必须设置 `truncated=true`，不能静默丢记录。
+- 大小、时间、丢弃数和 sidecar 写入失败必须进入元数据或诊断输出。
+- 解析器遇到未知新版本应明确拒绝或走迁移路径，不能猜测字段布局。

@@ -90,11 +90,6 @@ fn mask_width_at_pos(mask: i64, size: u8) -> Option<(i64, i64)> {
     None
 }
 
-/// Test whether an operand is a constant zero.
-fn is_zero(op: &PassIlOperand) -> bool {
-    matches!(op, PassIlOperand::Imm(0) | PassIlOperand::U64(0))
-}
-
 /// Test whether an operand is a constant -1 (all-ones for the size).
 fn is_neg_one(op: &PassIlOperand) -> bool {
     matches!(op, PassIlOperand::Imm(-1))

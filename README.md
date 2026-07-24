@@ -1,419 +1,106 @@
 # traceMiku
 
-> **[English](#english)** | **[中文](#中文)**
+traceMiku 是面向 Android 真机 ARM64 的指令级动态追踪和运行时分析工具。它记录真实
+执行路径，并提供 CFG、调用树、寄存器与内存查询、污点追踪、数据来源、密码特征扫描、
+本地三层 IL 和 Web 交互分析。
 
----
+项目不试图替代 IDA、Ghidra 或 Binary Ninja。静态工具负责完整代码结构，traceMiku
+通过统一的 `(SO, 静态偏移)` 坐标补充真实跳转目标、运行时值、解密后内存和跨函数
+数据来源。
 
-## English
-
-traceMiku is an Android real-device ARM64 instruction-level trace toolchain.
-
-The analysis v2 cutover is complete: Python `viewer/`, the old FastAPI `webui/`,
-and the old pytest parity suite have been removed. Runtime analysis now lives in
-Rust crates plus the Solid frontend.
-
-### Layout
+## 目录
 
 ```text
-tracer/                         Frida device agents
-frontend/                       Solid + Vite SPA
-rust/crates/tracemiku-core/     trace parser, disasm, CFG, taint, MemShadow, LLIL
-rust/crates/tracemiku-server/   axum API server, static frontend, BN sidecar bridge
-rust/crates/tracemiku-cli/      Rust JSON CLI wrappers and filesystem commands
-tools/hooks/                    JSON hook/type specs
-examples/                       sample target metadata/specs
-docs/                           design notes and parity history
+tracer/                         Frida 设备端采集器
+rust/crates/tracemiku-core/     分析语义和数据模型
+rust/crates/tracemiku-cli/      JSON CLI
+rust/crates/tracemiku-server/   Axum API 与静态站点
+frontend/                       Solid Web UI
+tools/hooks/                    目标相关 JSON 配置
+examples/                       示例配置与算法验证
+docs/                           当前契约和专题指南
 ```
 
-### Quick Start
+## 环境
 
-`./tracemiku` is the top-level convenience wrapper:
+- Python 3.11+ 与 `uv`
+- Rust 工具链由 `rust/rust-toolchain.toml` 固定
+- Node.js 与 npm
+- 真机采集需要 adb、root 和 Frida 17.x
+
+安装前端和采集器依赖：
 
 ```bash
-# Capture a trace
-./tracemiku trace --pkg com.example.app --so libtarget.so --method nativeFn --out traces/run1
+npm --prefix frontend install
+npm --prefix tracer install
+npm --prefix tracer run build
+```
 
-# Lightweight export profiling (no Stalker, no trace.bin)
+`_agent.js` 是默认采集器，由 `tracer/src/` 编译生成；仓库内的
+`agent_cmodule_v5.js` 只用于 `--mode legacy` 回退。
+
+## 快速开始
+
+```bash
+# 环境诊断
+./tracemiku doctor --pkg com.example.app
+
+# 采集指定导出函数
+./tracemiku trace --pkg com.example.app --so libtarget.so \
+  --method nativeFn --out traces/run1
+
+# 不启用 Stalker 的轻量调用探测
 ./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
 
-# Inspect traces
+# 查看采集结果
 ./tracemiku list traces/run1 --json
-./tracemiku info traces/run1/calls/call_001_tid1_100r_1ms --json
-
-# Launch web UI
-./tracemiku web traces/run1/calls/call_001_tid1_100r_1ms --port 18900
-./tracemiku view traces/run1/calls/call_001_tid1_100r_1ms
-```
-
-`web` and `view` both start the Rust v2 server and serve `frontend/dist`.
-For BN-backed HLIL, pass the target SO:
-
-```bash
-./tracemiku web <call_dir> --so /path/to/libtarget.so
-```
-
-The wrapper maps `--so` to `TRACEMIKU_BN_SO`. The BN sidecar command defaults to
-`tracemiku-bn-sidecar` and can be overridden with `TRACEMIKU_BN_SIDECAR`.
-
-#### Frida runtime
-
-Tracing on hardened targets uses a self-built, patched frida-server vendored at
-`vendor/frida-patched/miku-trace-server-17.9.11` (frida 17.9.11, arm64, ~53 MB).
-It bundles the Stalker literal-pool overflow fix (frida-gum PR #1113), an
-Android-14 codeslab allocation fallback, and `frida`→`miku` anti-detect renames.
-Push and launch it with:
-
-```bash
-cd vendor/frida-patched
-./install-stealth.sh        # → /data/local/tmp/.miku-srv + adb forward tcp:6699
-```
-
-Host-side `frida-python`/`frida-tools` are unmodified (the D-Bus wire protocol is
-unchanged). See `vendor/frida-patched/README.md` for the full patch list and the
-from-source build scripts, and `docs/anti-detection-catalog.md` for the
-detection-vector coverage matrix.
-
-### Current Web UI
-
-The Solid UI is the primary workflow surface:
-
-- Records are virtualized, keyboard-navigable, and keep stable row identity
-  during range refetches.
-- Records can show Taint results as a live overlay, either highlighting hits or
-  dimming non-hit rows while preserving virtual-scroll layout.
-- Records support trace-local row marks from the context menu: color, note,
-  strike-through, and dim states persist in browser local storage per trace
-  path without changing trace files.
-- `g` opens the jump command: `#240` or `240` jumps to a trace index, and
-  `0x...` jumps to the first executed record at that PC.
-- The CFG panel follows cursor changes when sync is enabled. Manual function
-  selection from the Functions tab switches to CFG and pauses sync so the
-  selected function is not immediately overwritten by the current cursor.
-- Large trace CFGs use a representative overview when Graphviz dot rendering
-  would be too expensive. The API reports drawn and hidden edge counts so the
-  overview cannot be mistaken for a full graph.
-- CFG pan/zoom is interactive; `Ctrl+wheel` zooms around the mouse cursor.
-- BN-backed HLIL/Pseudo C follows the current trace PC. If BN has no function
-  containing a trace PC, the sidecar can create a user function at the trace
-  symbol entry or current PC, then retry HLIL/CFG.
-- The Crypto panel (`frontend/src/panels/crypto/CryptoPanel.tsx`) has Memory,
-  Instructions, and Hardware sub-tabs over `/api/crypto-analysis`: MemShadow
-  byte-pattern matches, instruction-level cryptographic-constant hits with a
-  verdict, and ARM Crypto Extensions hardware-instruction counts.
-
-### Rust CLI
-
-The Rust CLI can be run directly during development:
-
-```bash
-cd rust
-cargo run -p tracemiku-cli -- info <call_dir> --json
-cargo run -p tracemiku-cli -- records <call_dir> --start 0 --count 50
-cargo run -p tracemiku-cli -- functions <call_dir>
-cargo run -p tracemiku-cli -- dec-summary <call_dir>
-cargo run -p tracemiku-cli -- dec-fn <call_dir> trace:F0 --tier hot
-```
-
-The CLI is also the main LLM-friendly surface for trace analysis. It exposes
-typed JSON commands for web API routes plus higher-level provenance tools:
-
-```bash
-./tracemiku api <call_dir> /api/backtrace -p idx=443 -p limit=64
-rust/target/debug/tracemiku-cli output-map <call_dir> --key x-sign --summary --semantic-writer-map
-rust/target/debug/tracemiku-cli output-backtrace <call_dir> --key x-sign
-rust/target/debug/tracemiku-cli jni-output-strings <call_dir> --key x-umt
-rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr 0x1234 --before-idx 1000 --compact
-rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr 0x1234 --before-idx 1000 --count 32 --compact
-rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --summary
-rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --replay-plan
-```
-
-Recent AI-analysis additions include:
-
-- persistent `trace.bin.analysis-index.v2.bin` index sidecars for repeated
-  server opens, with trace-size and content-fingerprint invalidation;
-- persistent `trace.bin.analysis-full.v1.bin` whole-trace analysis sidecars
-  with CSR dependency rows, memory last-def bytes, register checkpoints, call
-  tree reuse, and `/api/analysis-index` compact performance/coverage summaries;
-- dependency DAG queries through `/api/dep-graph` and `tracemiku-cli dep-graph`,
-  seeded from a trace index, register last-def, or memory-address last writer;
-- backward BFS slicing over the persistent dependency CSR via `/api/bfs-slice`
-  with multi-seed `idxs/regs/addrs` and `mode=union|intersection` for
-  "common ancestors" queries, plus a forward def→use DAG via
-  `/api/forward-dep-tree` (peer-trace-tools §1.8/§1.9 algorithms; see
-  `docs/peer-trace-tools-implementation.md`). Both routes have CLI
-  wrappers `tracemiku-cli bfs-slice` and `tracemiku-cli forward-dep-tree`
-  with the same flag surface (`--idx`, `--idxs 1,2`, `--reg`, `--regs`,
-  `--addr`, `--addrs`, `--before`, `--data-only`, `--limit`, `--mode`,
-  `--depth`);
-- GumTrace-style `SCAN_LIMIT_REACHED` watchdog on `/api/forward-taint` and
-  `/api/backward-taint` (`scan_limit=` query, `stop_reason` in the
-  response). CLI: `tracemiku-cli taint-fwd ... --scan-limit N` and
-  `taint-bwd ... --scan-limit N`. Pass 0 to disable the watchdog;
-- taint provenance graph expressions, Records taint-only filtering, JSON/TXT
-  taint export, a Records minimap, call-frame folding, and local function
-  renames for large-trace navigation;
-- output-driven workflows from JNI strings or known bytes back to memory
-  writers, Base64 groups, semantic byte formulas, and VM backchains;
-- batched `byte-lineage --count` with compact `frontier_groups`, step stats,
-  repeated-value summaries, stable pointer loop hints, call-return boundaries,
-  syscall-return boundaries, and bytecode-read frontiers;
-- generic VM dynamic-trace helpers (`vm-slice`, `vm-ops`, `vm-backstep`,
-  `vm-backchain`, `vm-backtree`) with configurable role registers instead of
-  target-specific assumptions;
-- replay-plan export and verification through
-  `tools/vm_replay_plan_eval.py --emit-python` and
-  `--verify-emitted-python`, so an AI agent can turn observed VM effects into
-  editable Python scaffolding before replacing trace fallbacks with proven
-  parameters;
-- memory/JNI helpers such as `find-mem-pattern`, `byte-writer-map`,
-  `mem-dump`, `mem-writes-in-range`, `jni-output-strings`, and
-  `scan-jni-output-strings`.
-- `crypto-scan` covers common crypto/hash magic constants beyond IVs, including
-  MD5/SHA round constants, AES/SM3/SM4 tables, CRC32C, FNV, Murmur3, xxHash,
-  Poly1305, ChaCha20, and RC4 identity-table markers.
-- `./tracemiku crypto <call_dir>` (Rust CLI `crypto` subcommand) runs the
-  combined `/api/crypto-analysis`: MemShadow byte-pattern matches, instruction
-  constant hits with verdict classification, and ARM Crypto Extensions hardware
-  instruction counts in one JSON payload (`/api/crypto-scan` for constants
-  only).
-
-The current `libsgmainso`/`x-sign` reconstruction is tracked as an example, not
-as hardcoded tool behavior. The partial simulator in
-`examples/libsgmainso/xsign_partial_sim.py` now reproduces the current
-call_001 trace model and emits `completion_audit.goal_complete == false` until
-the remaining VM bytecode/table frontiers are lifted into portable inputs. The
-latest trace evidence also classifies `x-umt` as a companion output over the
-same scratch payload stream, rather than as a separate magic secret.
-See `docs/ai-cli-xsign-workflow.md` and `docs/xsign-reconstruction-progress.md`
-for the detailed workflow and proof log.
-
-### Development
-
-```bash
-make fmt
-make test-v2
-make test-device   # NDK cross-compile + adb push + trace + verify
-make smoke-web RUN=traces/debug_minimal/calls/call_001_tid22371_15426904r_11325ms SMOKE_ARGS='--all-surfaces'
-make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --executable /path/to/chrome'
-```
-
-`make test-v2` runs the Python wrapper syntax check, Rust fmt check, Rust
-core/server/CLI tests, and the Solid frontend production build.
-`make smoke-web` runs the live Rust server API/perf gate. `make smoke-ui` runs
-the Playwright browser event smoke against an already running web server.
-`make test-device` cross-compiles an ARM64 test binary, pushes to device, traces
-it, and verifies the trace output is valid (requires NDK + adb device).
-
-The Rust server serves API routes under `/api/*`, `/openapi.json`, `/ws/jobs`,
-and falls back to the built SPA in `frontend/dist`.
-
-### Documentation
-
-Current source-of-truth docs are:
-
-- `README.md`: user-facing quick start and current UI behavior.
-- `AGENTS.md` / `CLAUDE.md`: repository-local agent rules and workflow.
-- `TODO.md`: the only active backlog. Completed implementation plans are not
-  kept as live TODOs.
-- `REFERENCES.md`: external algorithm/tool references and current test gates.
-- `docs/PER_CALL_TRACE_DESIGN.md`: current per-call trace layout and record
-  contract.
-- `docs/trace-decompiler-design.md`: current decompiler/BN/HLIL route design.
-- `docs/ai-cli-xsign-workflow.md`: target-agnostic AI workflow for using CLI
-  provenance, VM, memory, JNI, and output-mapping commands.
-- `docs/xsign-reconstruction-progress.md`: target-specific example progress
-  report for the current `libsgmainso` trace corpus.
-- `docs/xsign-algorithm-spec.md`: human-readable spec of the recovered
-  call_001 x-sign algorithm — 76-byte layout, head formulas for words
-  0/1, the `(boundary << 24) | (xor_state >> 8)` shift register for
-  words 2..11, the input parameter list, and what still requires
-  extracting from libsgmainso.so.
-- `docs/android-analysis-frontier-report.md`: Android analysis pain points,
-  product/UI direction, and current bug triage.
-- `docs/anti-detection-catalog.md`: L1–L10 anti-debug / anti-trace / anti-Frida
-  detection-vector taxonomy and traceMiku's current coverage status.
-- `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`:
-  historical Rust/Solid cutover design and parity map.
-- `docs/peer-trace-tools-survey.md` / `docs/peer-trace-tools-algorithms.md` /
-  `docs/peer-trace-tools-implementation.md`: peer-tool review and the
-  current implementation log for the BFS-slice / forward-dep-tree /
-  scan-limit / multi-seed work.
-
-### Trace Format
-
-`trace.bin` records are 272 bytes. Per-call directories use:
-
-```text
-calls/call_<idx>_tid<T>_<records>r_<ms>ms/
-```
-
-Format changes require an explicit meta version bump and migration path.
-
----
-
-## 中文
-
-traceMiku 是一个安卓真机 ARM64 指令级 trace 全栈工具链。
-
-分析层 v2 迁移已完成：旧版 Python `viewer/`、FastAPI `webui/`、pytest 对等测试套件均已删除。
-运行时分析现在完全基于 Rust crates + Solid 前端。
-
-### 目录结构
-
-```text
-tracer/                         Frida 设备 agent
-frontend/                       Solid + Vite 单页应用
-rust/crates/tracemiku-core/     trace 解析、反汇编、CFG、污点、MemShadow、LLIL
-rust/crates/tracemiku-server/   axum API 服务器、静态前端、BN sidecar 桥
-rust/crates/tracemiku-cli/      Rust JSON CLI 包装和文件系统命令
-tools/hooks/                    JSON hook/类型 spec
-examples/                       示例目标元数据/spec
-docs/                           设计文档和迁移历史
-```
-
-### 快速上手
-
-`./tracemiku` 是顶层便捷入口：
-
-```bash
-# 采集 trace
-./tracemiku trace --pkg com.example.app --so libtarget.so --method nativeFn --out traces/run1
-
-# 轻量级导出函数计数 (不启动 Stalker, 无 trace.bin)
-./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
-
-# 查看 trace
-./tracemiku list traces/run1 --json
-./tracemiku info traces/run1/calls/call_001_tid1_100r_1ms --json
+./tracemiku info traces/run1/calls/<call_dir> --json
 
 # 启动 Web UI
-./tracemiku web traces/run1/calls/call_001_tid1_100r_1ms --port 18900
-./tracemiku view traces/run1/calls/call_001_tid1_100r_1ms
+./tracemiku web traces/run1/calls/<call_dir> --port 18900
 ```
 
-`web` 和 `view` 都会启动 Rust v2 服务器并提供 `frontend/dist` 静态文件。
-如需 Binary Ninja HLIL 支持，传入目标 SO：
+需要 Binary Ninja HLIL/CFG 时传入目标 SO：
 
 ```bash
-./tracemiku web <call_dir> --so /path/to/libtarget.so
+./tracemiku web <call_dir> --so /path/to/libtarget.so --port 18900
 ```
 
-包装器将 `--so` 映射到 `TRACEMIKU_BN_SO`。BN sidecar 命令默认为
-`tracemiku-bn-sidecar`，可通过 `TRACEMIKU_BN_SIDECAR` 环境变量覆盖。
+## 面向 AI 的查询
 
-#### Frida 运行时
-
-对加固目标采集 trace 使用自构建的 patched frida-server，路径
-`vendor/frida-patched/miku-trace-server-17.9.11`（frida 17.9.11，arm64，约 53 MB）。
-集成 Stalker literal-pool 越界修复（frida-gum PR #1113）、Android 14 codeslab
-分配兜底、`frida`→`miku` 反检测重命名。推送并启动：
+CLI 是首选自动化入口，输出为结构化 JSON：
 
 ```bash
-cd vendor/frida-patched
-./install-stealth.sh        # → /data/local/tmp/.miku-srv + adb forward tcp:6699
+./tracemiku query <call_dir> resolve --so libtarget.so --off 0x1234
+./tracemiku query <call_dir> indirect-targets --so libtarget.so --off 0x1234
+./tracemiku query <call_dir> reg-at --reg x0 --so libtarget.so --off 0x1234
+./tracemiku query <call_dir> mem-export --so libtarget.so --off 0x2000 --len 0x100
+./tracemiku query <call_dir> coverage --fn trace:F0
+./tracemiku query <call_dir> backward-taint --from 1000 --reg x0
+./tracemiku dec <call_dir> --summary
 ```
 
-Host 端 `frida-python`/`frida-tools` 不改（D-Bus wire protocol 未变）。完整 patch
-列表和源码构建脚本见 `vendor/frida-patched/README.md`，检测手段覆盖矩阵见
-`docs/anti-detection-catalog.md`。
+完整命令以 `./tracemiku --help` 和子命令 `--help` 为准。已有专用命令时不要使用通用
+`api`，也不要仅为查询而启动 Web server。
 
-### 当前 Web UI
+## 分析边界
 
-Solid UI 是主要工作面：
+`MemShadow` 只对观测到的字节负责。来源 `w`、`r`、`x`、`i` 分别表示 trace store、
+trace load、外部写和初始快照；`??` 表示未知，绝不能当作零。详情见
+[内存完整性设计](docs/memory-completeness-design.md)。
 
-- Records 虚拟滚动、键盘导航，在范围重取时保持稳定行标识。
-- Records 可叠加污点分析结果实时高亮命中行或淡化非命中行，不影响虚拟滚动布局。
-- Records 支持右键菜单的 trace-local 行标记：颜色、笔记、删除线、淡化状态。
-  标记持久化在浏览器 localStorage 中（按 trace 路径隔离，不修改 trace 文件）。
-- `g` 打开跳转命令：`#240` 或 `240` 跳到 trace 索引，`0x...` 跳到该 PC 首次执行的记录。
-- CFG 面板在同步开启时跟随光标。从函数列表手动选择函数会切换到 CFG 并暂停同步，
-  避免当前光标立即覆盖手动选择。
-- 大 trace CFG 使用代表性概览 SVG；API 报告已绘制和隐藏边数，不会与完整图混淆。
-- CFG 平移/缩放交互式操作；`Ctrl+滚轮` 以鼠标为中心缩放。
-- BN HLIL/Pseudo C 跟随当前 trace PC。如果 BN 中没有包含该 PC 的函数，
-  sidecar 会在 trace 符号入口或当前 PC 创建用户函数后重试。
-- Crypto 面板（`frontend/src/panels/crypto/CryptoPanel.tsx`）含 Memory /
-  Instructions / Hardware 子标签，基于 `/api/crypto-analysis`：MemShadow 字节
-  模式命中、指令级加密常量命中（带 verdict 判定）、ARM Crypto Extensions 硬件
-  指令计数。
+TraceIR、本地 LLIL -> MLIL -> HLIL 和 trace 增强反编译管线均为当前能力，区别见
+[反编译架构](docs/trace-decompiler-design.md)。Trace 目录及二进制格式见
+[Trace 数据契约](docs/PER_CALL_TRACE_DESIGN.md)。
 
-### Rust CLI
-
-开发期间可直接运行 Rust CLI：
+## 开发与测试
 
 ```bash
-cd rust
-cargo run -p tracemiku-cli -- info <call_dir> --json
-cargo run -p tracemiku-cli -- records <call_dir> --start 0 --count 50
-cargo run -p tracemiku-cli -- functions <call_dir>
-cargo run -p tracemiku-cli -- dec-summary <call_dir>
-cargo run -p tracemiku-cli -- dec-fn <call_dir> trace:F0 --tier hot
+make test-fast       # Python 检查 + Rust core/CLI
+make test-v2         # Rust 全工作区 + 前端构建 + CLI/API 一致性
+npm --prefix tracer run typecheck
+make test-device     # 需要 Android 设备
 ```
 
-CLI 也是 LLM 友好的 trace 分析主界面，提供带类型的 JSON 命令用于 web API
-路由和更高层次的溯源工具：
-
-```bash
-./tracemiku api <call_dir> /api/backtrace -p idx=443 -p limit=64
-rust/target/debug/tracemiku-cli output-map <call_dir> --key x-sign --summary --semantic-writer-map
-rust/target/debug/tracemiku-cli byte-lineage <call_dir> --addr 0x1234 --before-idx 1000 --compact
-rust/target/debug/tracemiku-cli vm-ops <call_dir> --start 1000 --end 1400 --summary
-```
-
-最近的 AI 分析功能包括：
-
-- 持久化 `analysis-index.v2.bin` / `analysis-full.v1.bin` sidecar 索引，支持指纹失效
-- 依赖 DAG 查询 (`/api/dep-graph`, `dep-graph` CLI)，从 trace 索引/寄存器/内存地址出发
-- 反向 BFS 切片 (`/api/bfs-slice`)，多种子 union/intersection 模式，用于"共同祖先"查询
-- 正向 def→use DAG (`/api/forward-dep-tree`)
-- 污点扫描限制看门狗 (`scan_limit`/`stop_reason`)
-- 输出驱动工作流：从 JNI 字符串或已知字节追踪到内存写入者
-- 通用 VM 动态 trace 辅助工具 (`vm-slice`, `vm-ops`, `vm-backstep`, `vm-backchain`)
-- `crypto-scan`：检测常见加密/散列魔数常量（MD5、SHA、AES、SM3/4、CRC32C 等）
-- `./tracemiku crypto <call_dir>`（Rust CLI `crypto` 子命令）：运行组合
-  `/api/crypto-analysis`，一次返回 MemShadow 字节模式命中、指令常量命中（带
-  verdict）和 ARM Crypto Extensions 硬件指令计数（仅常量用 `/api/crypto-scan`）
-
-### 开发
-
-```bash
-make fmt
-make test-v2
-make test-device   # NDK 交叉编译 + adb push + trace + 验证
-make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces'
-make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium'
-```
-
-`make test-v2` 运行 Python 语法检查、Rust fmt 检查、Rust 各 crate 测试、Solid 前端生产构建。
-`make smoke-web` 运行实时 Rust 服务器 API/性能关卡。
-`make smoke-ui` 运行 Playwright 浏览器事件冒烟测试。
-`make test-device` 交叉编译 ARM64 测试二进制，推送到设备，trace 并验证输出
-（需要 NDK + adb 设备连接）。
-
-Rust 服务器在 `/api/*`、`/openapi.json`、`/ws/jobs` 下提供 API，
-其余路径回退到 `frontend/dist` 中的构建产物。
-
-### 文档
-
-当前权威文档：
-
-- `README.md`：面向用户的快速上手和当前 UI 行为。
-- `AGENTS.md` / `CLAUDE.md`：仓库内 agent 规则和工作流。
-- `TODO.md`：唯一的 backlog。完成的实施计划不保留为活跃 TODO。
-- `REFERENCES.md`：外部算法/工具引用和当前测试关卡。
-- `docs/PER_CALL_TRACE_DESIGN.md`：per-call trace 布局和记录合同。
-- `docs/trace-decompiler-design.md`：反编译器/BN/HLIL 路由设计。
-- `docs/ai-cli-xsign-workflow.md`：使用 CLI 溯源/VM/内存/JNI 命令的 AI 工作流。
-- `docs/anti-detection-catalog.md`：L1–L10 反调试/反 trace/反 Frida 检测手段
-  分类目录与 traceMiku 当前覆盖状态。
-
-### Trace 格式
-
-`trace.bin` 每条记录 272 字节。Per-call 目录命名：
-
-```text
-calls/call_<idx>_tid<T>_<records>r_<ms>ms/
-```
-
-格式变更需要显式 meta 版本号升级和迁移路径。
+工程规则见 [AGENTS.md](AGENTS.md)，当前路线图见 [TODO.md](TODO.md)，性能基线见
+[BENCHMARKS.md](BENCHMARKS.md)。

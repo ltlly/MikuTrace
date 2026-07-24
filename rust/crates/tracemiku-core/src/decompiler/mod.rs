@@ -4,7 +4,7 @@
 //! and a build_trace_ir that emits a single root FuncIR. M3-ε fills
 //! BlockIR, callee splits, type anchors, VM candidates, /api/dec/fn/{id}.
 //!
-//! See `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`
+//! 设计说明见 `docs/trace-decompiler-design.md`。
 //! §13.3 for the migration table.
 
 pub mod backend;

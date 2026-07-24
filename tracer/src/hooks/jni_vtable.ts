@@ -163,7 +163,3 @@ export function flushJniHookEvents(callIdx: number): number {
     send({ type: "jni-hooks", callIdx, count: events.length, events });
     return events.length;
 }
-
-// Legacy aliases
-export const flushJniStringEvents = flushJniHookEvents;
-export const installJniStringHooksOnce = installJniHooksOnce;

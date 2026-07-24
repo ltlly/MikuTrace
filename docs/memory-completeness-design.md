@@ -1,177 +1,59 @@
-# Memory Completeness Design — layered ground-truth oracle
+# 内存完整性设计
 
-Status: Phase 1 (initial snapshot) implemented 2026-06-27. Phase 2 (syscall
-readback) designed here, partially implemented. Phase 3 (live mem-operand
-capture) designed, deferred.
+trace 记录每条指令的通用寄存器，但不直接记录所有内存字节。MemShadow 通过 trace
+store、trace load、外部写和初始快照建立分层字节事实，并对未知保持诚实。
 
-## Problem
+## 来源模型
 
-traceMiku records a full register snapshot per instruction (272-byte records:
-pc + x0..x28 + fp/lr/sp + pstate + insn) but **records no memory data**.
-`MemShadow` reconstructs memory by *inference*:
+`MemShadow::byte_at(addr, t)` 返回值、来源种类和来源 idx：
 
-- store insn → bytes come from the source register's pre-state
-- load insn  → bytes come from the destination register's post-state (next record)
+| 种类 | 来源 | 可信含义 |
+|---|---|---|
+| `w` | 被追踪 store | 精确的用户态写 |
+| `r` | 被追踪 load 的下一条寄存器状态 | 精确的已读值 |
+| `x` | syscall、JNI 或边界差分外部写 | 在捕获边界观测到的值 |
+| `i` | trace 开始时的内存快照 | `t=0` 基线 |
+| `??` | 未观测 | 未知，不能按零处理 |
 
-This inference is fast (the hot callout only copies registers) but has hard
-blind spots — memory modified where we cannot observe the modifying store:
+查询顺序是：取 `idx <= t` 的最新事件；没有事件时查初始快照；仍没有则返回 `??`。
+后续 trace 写自然覆盖初始快照。
 
-1. **Pre-trace state** — anything initialized before the trace window opened.
-   The libsgmainso x-sign VM bytecode table (~10KB at `x21`) is decrypted at
-   `JNI_OnLoad`, long before the sign call we hook. `.rodata` constants too.
-   MemShadow only sees the *read* of these, never a matching write →
-   `observed_read_without_matching_traced_write` frontier.
-2. **Kernel writes** — a syscall (`read`, `stat`, `recvfrom`, ...) writes the
-   user output buffer in kernel mode. There is no user-mode store instruction,
-   so inference cannot see it. (The x-sign `stat().st_mtim` gap.)
-3. **Excluded-region writes** — code we Stalker-exclude (linker, ART apex, any
-   self-modifying module) can write memory we never trace.
-4. **Other threads / DMA / shared memory** — writes by threads we don't follow.
+## 初始快照
 
-This is **not a traceMiku bug**. It is the universal limit of user-mode DBI.
-Tenet's own FAQ states it directly: *"usermode DBI generally do not get a
-memory callback for external writes to process memory ... it is the kernel that
-writes memory into your designated usermode buffer ... tricky to solve without
-modeling syscalls."* Microsoft TTD has the same limitation. The industry answer
-is: **a known initial state + syscall modeling.**
+`--snapshot-mem` 在目标函数进入时采集目标模块和受限的可读匿名区域，受
+`--snapshot-max-mb` 控制。文件 `memory_snapshot.bin` 使用小端格式：
 
-## The unified model: a layered byte oracle with provenance
-
-Every memory byte query — `MemShadow::byte_at(addr, t)` — returns
-`(value, kind, source_idx)` or `(None, "??", None)`. `kind` is the **provenance**
-of the value, and the layers have a strict priority by trace-time `idx`:
-
-| kind | source | fidelity | idx |
-|------|--------|----------|-----|
-| `w`  | traced store | exact | the storing record |
-| `r`  | traced load (observed in next record's reg) | exact | the loading record |
-| `x`  | external write — syscall output-buffer readback OR boundary-diff | exact-ish | the call's record |
-| `i`  | **initial snapshot** — real device memory captured at trace start | t=0 baseline | 0 |
-| `??` | never observed | unknown — honest "we don't know" | — |
-
-The invariant: **a query never lies.** It returns a real observed/captured
-value with its provenance, or it says `??`. A consumer (mem-dump completeness,
-byte-lineage, vm-backchain) can trust `w`/`x`/`i` as ground truth and treat `??`
-as a genuine frontier rather than guessing.
-
-Resolution order in `byte_at(addr, t)`:
-1. Latest event in the per-byte event list with `idx <= t` (covers `w`/`r`/`x`).
-2. If none: fall back to the **initial snapshot** (`i`, idx 0) — correct for any
-   `t` before the first traced write, which is exactly when the map has no event.
-3. If still none: `??`.
-
-This is elegant because the snapshot is just *another layer behind the same
-oracle* — no consumer changes, and idx-ordering makes a later traced store
-naturally override the snapshot baseline.
-
-### Why the snapshot is a separate compact store, not splatted into the map
-
-A snapshot can be hundreds of MB. Splatting every byte into
-`BTreeMap<u64, Vec<ByteEvent>>` would create one map entry per byte → memory
-blow-up. Instead the snapshot is kept as **sorted region blobs**
-(`Vec<SnapRegion { base, data }>`) and binary-searched only on a map miss. It
-stays sparse and cheap, and it is loaded independently of the v5 sidecar so the
-sidecar format is unchanged.
-
-### Honest staleness note
-
-The snapshot is the t=0 state. For **read-only / init-once** data (the decrypted
-bytecode table, `.rodata` constants, embedded keys) it is exactly correct — that
-is the whole win. For **mutable** memory it is only the *initial* value; once a
-traced store happens, the `w` layer (higher idx) correctly takes over. The only
-unsound case is memory mutated by an *untraced* writer *between* t=0 and the
-query — inherently unobservable; we mark such bytes by their best available
-layer and never fabricate.
-
-## Phase 1 — initial snapshot (IMPLEMENTED)
-
-**Agent** (`tracer/src/sidecar/mem_snapshot.ts`): on target-function entry,
-after excludes/ranges are set, enumerate the regions of interest and dump them
-to a device file `snapshot_call<idx>.bin`. Default capture set:
-
-- the target SO's mapped segments (all perms) — gets `.rodata` constants
-- readable anonymous / heap `rw-`/`r--` regions — gets decrypted runtime tables
-  (e.g. the VM bytecode blob at `0x7400…`)
-
-Capped by `snapshotMaxBytes` (default 512 MB) to protect the device. Skips
-unreadable pages gracefully.
-
-**Format** `snapshot_call<idx>.bin`:
-```
-magic   "TMSNAP\0\0"   (8 bytes)
-version u32            (= 1)
-count   u32            (region count)
-[per region]
-  base    u64
-  size    u64          (= data length, bytes)
-  perms   u32          (bit0=r bit1=w bit2=x)
-  flags   u32          (reserved, 0)
-  data    [size bytes]
+```text
+magic[8] = "TMSNAP\0\0"
+version:u32
+region_count:u32
+重复 region_count 次：
+  base:u64
+  size:u64
+  perms:u32
+  flags:u32
+  data[size]
 ```
 
-**Host** (`tracemiku`): pull `snapshot_call<idx>.bin` at teardown beside
-`trace.bin`, save as `memory_snapshot.bin` in the per-call dir.
+快照以排序 region blob 保存，不能把数百 MB 逐字节展开到树结构。只读和初始化一次
+的数据可视为可靠基线；未追踪线程在 `t=0` 后修改的内存仍是不可观测边界。
 
-**Rust** (`tracemiku-core::memshadow`): `MemSnapshot` loads
-`memory_snapshot.bin`, `MemShadow.snapshot: Option<MemSnapshot>` is attached in
-`load_or_build`, and `byte_at` falls back to it with kind `i`.
+## 外部写
 
-**CLI flag**: `--snapshot-mem` (+ `--snapshot-max-mb N`).
+主机和 core 已支持 `external_writes.bin`，每条记录为 17 字节：
+`idx:u64 + addr:u64 + byte:u8`。它在 MemShadow 中成为 `x` 层。
 
-## Phase 2 — syscall output-buffer readback (DESIGNED)
+尚未完成的是设备端 syscall/JNI 输出缓冲区捕获。实现必须满足：
 
-> **2026-06-27 status**: the HOST side is complete and tested — `external_writes.bin`
-> (17B records: `idx:u64, addr:u64, byte:u8`) already merges into MemShadow as
-> the `x` layer (`memshadow.rs::merge_external_writes`, test
-> `memshadow_loads_external_writes_as_x_events`). So Phase 2's only remaining
-> work is the DEVICE-side `onLeave` capture below — it appends to that existing
-> format and host/core/`mem-export`/`reg-at` benefit with zero changes. Turnkey
-> wiring + safety/validation plan: `docs/competitive/runtime-truth-big-features-2026-06-27.md` 大件 C.
+- ABI 表由 `tools/hooks/` 配置，不把目标偏移写进 agent。
+- `read`、`recv`、`stat`、`getrandom` 等按返回值或固定结构长度采集。
+- 单次 buffer 和整次调用都有硬上限，默认关闭。
+- 捕获失败不影响 trace 主通路，并在元数据中可诊断。
+- 使用真实设备对拍输出字节和 MemShadow provenance。
 
-The precise, universal answer to blind spot #2. The existing semantic-event
-hooks (`tracer/src/sidecar/semantic.ts`) already Interceptor-attach libc/syscall
-wrappers and snapshot string args. Extend them with an **output-buffer table**:
-for each syscall/libc fn, which arg is the out buffer and where its written
-length comes from (a fixed arg, or the return value). On `onLeave`, read that
-buffer and emit `ext-write` events (kind `x`) — exactly the existing
-`external_writes.bin` channel, just driven by a syscall ABI table instead of
-only the 6 stat functions.
+## 消费者规则
 
-Output-buffer table (initial):
-
-| fn | out buf arg | length source |
-|----|-------------|---------------|
-| `read`/`pread64` | arg1 | return value (bytes read) |
-| `recvfrom`/`recv` | arg1 | return value |
-| `stat`/`fstat`/`lstat`/`*at` | the `struct stat*` arg | `sizeof(struct stat)` = 128 |
-| `gettimeofday` | arg0 | 16 |
-| `clock_gettime` | arg1 | 16 |
-| `__system_property_get` | arg1 | return value |
-| `getrandom` | arg0 | return value |
-
-This is exact because the kernel ABI is a contract. Excluded-region writes
-(blind spot #3) have no contract and stay on the heuristic boundary-diff path.
-
-## Phase 3 — live memory-operand capture (DESIGNED, DEFERRED)
-
-GumTrace-style: in the hot callout, Capstone-decode the operands and
-`readByteArray` the real memory at the access site, recording true bytes rather
-than inferring.消除 inference 依赖, partially immune to all blind spots for any
-byte the traced code actually touches. Cost: the callout does memory reads →
-slower than the current pure-register snapshot. Make it opt-in
-(`--capture-mem-operands`) so the default fast path is preserved.
-
-## Tenet export (FUTURE)
-
-The layered oracle maps cleanly onto the Tenet trace format
-(`reg=val,...,mr=addr:bytes,mw=addr:bytes` per line; see
-github.com/gaasedelen/tenet tracers/README.md). Exporting Tenet logs would let
-traceMiku traces load in IDA's Tenet plugin for time-travel debugging. Tracked
-separately.
-
-## Validation
-
-`--snapshot-mem` on the libsgmainso x-sign trace must turn the VM
-bytecode-table reads from `observed_read_without_matching_traced_write` (kind
-`??`) into kind `i` with real bytes, and `mem-dump --completeness` over that
-region must rise toward 1.0.
+- `mem-dump`、`mem-export`、lineage、VM 和反编译必须传播来源与完整度。
+- 导出未知区间时可以为文件布局填零，但必须同时返回缺口和 `completeness < 1`。
+- 缓存必须包含 trace 指纹及快照/外部写输入，输入变化后失效。
+- 完整性阈值只能提示风险，不能把推断升级为事实。

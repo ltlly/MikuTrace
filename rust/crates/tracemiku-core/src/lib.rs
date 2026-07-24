@@ -1,6 +1,6 @@
 //! traceMiku v2 — analysis core.
 //!
-//! See `docs/superpowers/specs/2026-05-03-analysis-v2-rust-ts-design.md`
+//! 架构说明见仓库根目录 `AGENTS.md` 与 `docs/trace-decompiler-design.md`。
 //! for the architecture. This crate contains all trace-side analysis;
 //! the HTTP server lives in `tracemiku-server`, the CLI in `tracemiku-cli`.
 //!

@@ -37,18 +37,10 @@ dist/
 # 外部 fork / clone — 各自有自己的 .git, 不进主仓
 /tools/
 # 但项目自己的 Frida 分析/patch 小工具进
-!/tools/detect_suicide.js
-!/tools/patch_sgmainso_tgkill.js
-!/tools/hide_rwx_maps.js
-!/tools/probe_deep_safe.js
 !/tools/hooks/
 !/tools/hooks/*
-!/tools/spawn_sign_scan.py
-!/tools/spawn_trace_jni_onload.py
 !/tools/spawn_hook.py
-!/tools/native_sign_hooks.js
 !/tools/native_sign_hooks_v4.js
-!/tools/quick_test_all.js
 
 # v2 Rust + frontend (added 2026-05-03)
 rust/target/

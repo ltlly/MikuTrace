@@ -403,7 +403,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_find_jump_tables_basic() {
         let load_addr = PassIlOperand::Expr(Box::new(make_expr(
             "LLIL_Add",

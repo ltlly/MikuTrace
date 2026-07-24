@@ -1,235 +1,107 @@
-# AGENTS.md
+# traceMiku AI 工程规范
 
-Repository instructions for Codex and other coding agents working in traceMiku.
+本文件是仓库内所有编码智能体的唯一工程约束。其他智能体入口只能引用本文件，
+不得复制一份独立规则。项目文档、提交说明和面向用户的文字默认使用中文；代码标识、
+协议字段和行业通用缩写保留英文。
 
-## Project
+## 项目定位
 
-traceMiku is an Android real-device ARM64 instruction-level trace toolchain.
-The current runtime architecture is the Rust/Solid analysis v2 stack.
+traceMiku 是 Android 真机 ARM64 指令级动态追踪与分析工具。核心价值是静态工具无法
+提供的运行时事实：真实执行路径、间接跳转目标、寄存器值、运行时内存、跨函数来源和
+调用边界。项目通过 `(SO, 静态偏移)` 与 IDA、Ghidra、Binary Ninja 等静态工具协作，
+不绑定其中任何一家。
 
-- `tracer/`: Frida device agents. Default is `agent_cmodule_v5.js` with
-  CModule, SPSC ring, on-device file output, and gzip pull.
-- `rust/crates/tracemiku-core/`: source of truth for mmap trace parsing,
-  Capstone decode, FunctionIndex, CFG, taint, MemShadow, symbols, and LLIL /
-  decompiler analysis.
-- `rust/crates/tracemiku-server/`: axum API server, static Solid frontend
-  serving, OpenAPI route list, WebSocket jobs, and BN sidecar bridge.
-- `rust/crates/tracemiku-cli/`: Rust JSON CLI wrappers and filesystem-facing
-  commands used by the top-level `./tracemiku` convenience wrapper.
-- `frontend/`: Solid + Vite SPA. This is the only active UI.
+当前运行架构：
 
-Old Python `viewer/`, old FastAPI `webui/`, the legacy terminal interface, and
-old Python-vs-Rust parity scripts have been removed from the tracked v2 code
-path. The old compatibility launcher has also been deleted.
+- `tracer/`：Frida 设备端采集器。默认入口是由 TypeScript 编译生成的 `_agent.js`；
+  `agent_cmodule_v5.js` 仅为旧版回退。
+- `rust/crates/tracemiku-core/`：Trace 解析、反汇编、索引、CFG、污点、MemShadow 和
+  IL 分析的唯一实现源。
+- `rust/crates/tracemiku-cli/`：面向 AI 和脚本的结构化 JSON 命令。
+- `rust/crates/tracemiku-server/`：Axum API、任务调度、静态前端和 BN sidecar 桥接。
+- `frontend/`：Solid + Vite Web UI，也是唯一交互界面。
+- `tracemiku`：统一入口；不要要求用户直接调用内部 Rust 二进制。
 
-## Hard Rules
+## 不可破坏的边界
 
-- Web is the only active UI. Do not reintroduce or extend deleted Python
-  terminal/FastAPI paths.
-- Do not add a traceMiku MCP server or project MCP wrappers. LLM-friendly
-  surfaces are Rust CLI JSON output, REST `/openapi.json`, and documented API
-  routes.
-- End-to-end pipeline changes must be verified across the full link:
-  agent, host, `meta.json`, Rust core, Rust server, and display.
-- The project goal is the tool, not a single SO target. Do not hardcode Taobao,
-  xsign, `libsgmainso`, offsets, or anti-debug specifics into core code. Put
-  target-specific data in JSON specs under `tools/hooks/` or
-  `examples/<so>/known_offsets.json`.
-- Trace formats are stable contracts. `trace.bin` records are 272 bytes;
-  per-call directories use `calls/call_<idx>_tid<T>_<records>r_<ms>ms/`. Format
-  changes need a meta version bump and migration path.
-- `TODO.md` is the only backlog. Do not create parallel TODO lists in
-  subdirectory READMEs.
-- Frida agent changes must be memory-bounded. Read `docs/` and
-  `tracer/README.md` before editing `tracer/agent_*.js`.
+- 不恢复已删除的 Python viewer、FastAPI WebUI 或终端 UI。
+- 不增加项目专用 MCP server。AI 入口是 Rust CLI JSON 和 REST/OpenAPI。
+- 不把淘宝、xsign、`libsgmainso`、固定偏移等目标知识写进 core；目标配置只能放在
+  `tools/hooks/` 或 `examples/<target>/`。
+- `trace.bin` 单条记录固定为 272 字节。格式变化必须增加版本、迁移路径和兼容测试。
+- 每次调用目录固定为 `calls/call_<序号>_tid<线程>_<记录数>r_<耗时>ms/`。
+- Web 异步结果必须防止旧请求覆盖新选择；大响应必须有上限和截断元数据。
+- CPU 密集型路由必须进入有界阻塞线程池，不能阻塞 Tokio reactor。
+- 设备端采集必须有明确内存上限、记录上限和失败降级路径。
 
-## Workflow Preferences
+## 架构规则
 
-- Communicate in Chinese by default unless code, APIs, or commit style are
-  clearer in English.
-- User is a single-person prototype-phase owner; breaking changes are
-  acceptable when they serve the current goal.
-- Do not pause between completed milestones just to ask whether to continue.
-  Stop only for real blockers, destructive actions that need confirmation,
-  context pressure, or user interruption.
-- `doneMeansMerged` semantics apply: done means PR-ready or a self-contained
-  handoff, not merely a first stopping point.
-- Long-running milestone work should commit to the current branch unless the
-  user asks for a PR. Do not add "Generated with Claude Code",
-  "Co-Authored-By: Claude", or similar footers.
+功能依赖只能沿以下方向推进：
 
-## Git Safety
+```text
+设备事件/trace 格式 -> tracemiku-core -> CLI -> server API -> frontend
+```
 
-- Do not use `git reset --hard`, force push, branch deletion, or
-  `git clean -fd*` unless the user explicitly asks and confirms.
-- Do not use `--no-verify` or `--no-gpg-sign` unless the user explicitly asks.
-- Prefer `git add` with explicit file paths. Avoid `git add -A` and
-  `git add .`.
-- If the worktree is dirty, preserve user changes and work around them.
+分析语义必须先进入 core。CLI 和 API 只做参数解析、编排和序列化，不能各自修补结果。
+前端只负责交互和显示，不能重新实现分析算法。跨层改动必须验证 agent、host、
+`meta.json`、core、server 和显示链路。
 
-## Common Commands
+TraceIR、本地 LLIL -> MLIL -> HLIL、trace 增强 IL 是三个不同用途的现有路径。未经
+明确产品决策不得互相合并或删除。LLM 调用必须可选，本地分析不能依赖 LLM。
+
+## AI 开发纪律
+
+- 开始工作先读本文件和 `TODO.md`。`TODO.md` 只保存未完成路线图，不记录完成流水账。
+- 修改前先用代码、测试和调用关系确认事实，不能根据文件名猜测。
+- 优先修改已有抽象；只有能消除真实重复或隔离稳定边界时才新增抽象。
+- 不为假想兼容性保留双实现、别名或废弃路径。确有外部兼容承诺时必须写测试。
+- 新功能必须同时包含失败语义、资源上限、结构化输出和相邻层测试。
+- 修复应位于产生错误的最底层，不允许在路由或 UI 用字符串替换掩盖语义错误。
+- 不新增第二份路线图、完成报告、阶段计划或智能体专属规则。
+- 单个源文件超过 1500 行后原则上禁止继续增加职责；超过 2500 行必须先拆分。
+- 文档只描述当前事实、稳定契约和未完成决策。完成过程由 Git 历史保存。
+- 不写“由某 AI 生成”、模型署名或共同作者尾注。
+
+## 验证要求
+
+按风险选择最小但充分的验证集合：
 
 ```bash
 make fmt
-make test-v2
 make test-fast
-make smoke-web RUN=traces/debug_minimal/calls/call_001_tid22371_15426904r_11325ms
-make smoke-web RUN=<trace_dir> SMOKE_ARGS='--all-surfaces --timeout 300'
-make smoke-ui BASE=http://127.0.0.1:18900 UI_SMOKE_ARGS='--browser chromium --executable /path/to/chrome'
-make webui RUN=<trace_dir> PORT=18900
-
-./tracemiku web <call_dir> --port 18900 --no-browser
-./tracemiku web <call_dir> --so /path/to/libtarget.so --port 18900
-./tracemiku list traces/run1 --json
-./tracemiku info <call_dir> --json
-./tracemiku query <call_dir> records --range 0..50 --regs x0,x1,sp
-./tracemiku query <call_dir> forward-taint --from 0 --reg x0 --max 500
-./tracemiku dec <call_dir> --summary
-./tracemiku dec <call_dir> --fn trace:F0 --tier hot
-
-# Lightweight export profiling (no Stalker)
-./tracemiku probe --pkg com.example.app --so libtarget.so --duration 10
-
-# Device integration test (requires NDK + adb device)
+make test-v2
+npm --prefix tracer run typecheck
+make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces --timeout 300'
+make smoke-ui BASE=http://127.0.0.1:18900
 make test-device
 ```
 
-The local Python environment is managed with `uv`; use `uv run python ...` for
-Python helper scripts. Slow tests may require real traces, Binary Ninja,
-browser automation, or a real adb device.
+- core 语义变化：相关单测 + `cargo test -p tracemiku-core`。
+- API 变化：core 测试 + 对应 route 测试 + OpenAPI 覆盖测试。
+- 前端变化：类型检查、构建；交互变化还需浏览器 smoke。
+- agent/格式变化：TypeScript 检查、设备测试和完整链路验证。
+- 无法运行真机、BN 或浏览器测试时，交付说明必须明确剩余风险。
 
-## AI Agent CLI Usage
+## CLI 使用准则
 
-**Always prefer dedicated CLI subcommands over `tracemiku api`.** The Rust CLI
-has 70+ subcommands that cover nearly all analysis routes. Many are multi-step
-orchestration commands (e.g. `output-backtrace`, `vm-ops`, `byte-lineage`) that
-would require dozens of sequential `api` calls to replicate.
-
-Use `tracemiku api` **only** when no dedicated CLI subcommand exists for the
-route (currently: `/api/analysis-index`, `/api/dec/llm-call`, `/api/llil/llm`).
+优先使用专用命令，不要为了查询启动 Web server，也不要在已有专用命令时调用通用
+`api`：
 
 ```bash
-# GOOD — dedicated subcommands:
-./tracemiku query <call_dir> records --range 0..50
-./tracemiku query <call_dir> forward-taint --from 0 --reg x0
-./tracemiku query <call_dir> backtrace --idx 100
-./tracemiku query <call_dir> functions
 ./tracemiku list traces/run1 --json
-
-# BAD — do NOT use api when a CLI subcommand exists:
-./tracemiku api <call_dir> /api/backtrace -p idx=100
-./tracemiku api <call_dir> /api/functions
+./tracemiku info <call_dir> --json
+./tracemiku query <call_dir> records --range 0..50 --regs x0,x1,sp
+./tracemiku query <call_dir> backward-taint --from 100 --reg x0
+./tracemiku query <call_dir> resolve --so libfoo.so --off 0x1234
+./tracemiku dec <call_dir> --summary
 ```
 
-Do not start `tracemiku web` just to query it. Use CLI subcommands directly.
-`./tracemiku` is the canonical entry point — do not invoke `tracemiku-cli` Rust
-binary directly.
+只有不存在专用 CLI 的 API 才使用 `./tracemiku api`。地址和偏移默认按十六进制解析，
+需要十进制时使用命令帮助所示的显式格式。
 
-## Current Web Interaction Contracts
+## Git 安全
 
-- `g` opens the jump command. `#N` / `N` jumps to trace index `N`; `0x...`
-  jumps to the first executed record at that PC.
-- ArrowUp/ArrowDown, PageUp/PageDown, Home, and End navigate records.
-- Clicking a Functions row selects it, switches the right panel to CFG, and
-  pauses CFG sync; double-clicking also jumps to the function entry's first
-  trace execution when available.
-- CFG sync follows the current cursor only when enabled. Manual function
-  selection should remain visible while sync is paused.
-- CFG `Ctrl+wheel` zoom must be anchored at the mouse cursor. Keep the
-  Playwright smoke coverage for this behavior.
-- Large trace CFGs may use representative overview SVGs. The UI/API must expose
-  total, drawn, and hidden edge counts.
-- BN HLIL/CFG may create a BN user function on demand when no static BN function
-  contains the trace PC. Prefer trace function start as the creation address,
-  with current PC as fallback.
-
-## Code Map
-
-- `tracemiku`: top-level Python convenience wrapper for trace/list/info/query/web/dec.
-- `tracer/`: device-side Frida agents.
-- `frontend/src/App.tsx`: Solid app shell and shared selected trace/function state.
-- `frontend/src/api/client.ts`: typed API client and optional debug logging.
-- `frontend/src/panels/`: Records, CFG, Registers, Memory, Taint, Xref, HLIL,
-  Settings, and related panels.
-- `frontend/src/utils/resourceGuards.ts`: guarded Solid resource helper for
-  stale-frame protection.
-- `rust/crates/tracemiku-core/src/trace/`: mmap trace parser and record model.
-- `rust/crates/tracemiku-core/src/disasm/`: Capstone wrapper, def/use, mem op decode.
-- `rust/crates/tracemiku-core/src/index.rs`: register and memory access indexes.
-- `rust/crates/tracemiku-core/src/function_index.rs`: stable trace:/sym:/bn: function model.
-- `rust/crates/tracemiku-core/src/cfg.rs`: trace CFG rebuild and graph metadata.
-- `rust/crates/tracemiku-core/src/taint.rs`: forward/backward taint with dependency metadata.
-- `rust/crates/tracemiku-core/src/memshadow.rs`: sparse byte-level memory shadow sidecar.
-- `rust/crates/tracemiku-core/src/decompiler/`: TraceIR (LLM-friendly skeleton
-  IR) plus `il_pipeline` (trace-enhanced ARM64 lift through all three layers).
-- `rust/crates/tracemiku-core/src/llil/`, `mlil/`, `hlil/`: in-house three-layer
-  IL (Low/Medium/High-Level IL) with LLIL→MLIL→HLIL lowering and C-like
-  rendering. No LLM or BN dependency.
-- `rust/crates/tracemiku-core/src/crypto_scan.rs`: constant-fingerprint + ARM
-  Crypto Extensions scan (backs `/api/crypto-scan` and `/api/crypto-analysis`).
-- `rust/crates/tracemiku-server/src/routes/`: JSON API route handlers.
-- `rust/crates/tracemiku-cli/src/`: Rust CLI command implementations.
-- `scripts/rust_web_smoke.py`: real server smoke/perf gate.
-- `scripts/frontend_event_smoke.py`: Playwright browser event smoke for row
-  clicks, keyboard navigation, context menus, resizing, memory selection, and
-  CFG sync.
-- `scripts/rust_cli_web_parity.py`: Rust CLI vs live Rust web API parity gate.
-- `scripts/web_api_perf_probe.py`: large-trace API latency and runtime-blocking probe.
-- `tools/hooks/`: JSON-driven specs.
-- `examples/`: sample known offsets and current Rust CLI cookbook.
-- `docs/`: design notes and migration history.
-
-## API/Feature Propagation
-
-New analysis should land in `tracemiku-core` first, then a Rust CLI command when
-the analysis is useful outside the browser, then a server route with strict JSON
-shape, then the Solid UI. Update `/openapi.json` route coverage tests when
-adding or renaming endpoints.
-
-For user-visible web behavior, run focused Rust tests plus `frontend` build and,
-when possible, `scripts/rust_web_smoke.py` on a real large trace.
-
-## Performance Rules
-
-- API handlers that do CPU-heavy parsing, CFG, taint, MemShadow, BN, graphviz,
-  decompile, search, or large memory work must run off Tokio reactor threads
-  with `tokio::task::spawn_blocking` or an equivalent bounded worker path.
-- Every server route file must be explicitly classified as heavy or light in
-  `rust/crates/tracemiku-server/tests/api_infra_tests.rs`.
-- Large API responses must have explicit caps and expose truncation metadata
-  when users may confuse partial output with complete analysis.
-- Frontend async updates that depend on selected trace/function state must guard
-  stale frames by comparing current selection before applying returned data.
-- Solid resources/memos returning object or array sources should preserve stable
-  references when semantic values are unchanged. Virtual lists should key by
-  trace identity or avoid fetch oscillation through structural snapping.
-- Background warmers must be bounded and should not silently build unbounded
-  indexes.
-
-## Decompile Routes
-
-All decompile routes below are active, but the web decompile/LLM UI can be
-hidden while latency work is in progress. This mirrors the CLAUDE.md "Decompile
-Routes" section — keep the two files in sync.
-
-- TraceIR (LLM-friendly): Rust `tracemiku-core::decompiler` plus server
-  `/api/dec/*` routes. Skeleton IR designed to be fed to a model; the LLM call
-  path is opt-in.
-- In-house three-layer IL pipeline: Rust `tracemiku-core::llil`,
-  `tracemiku-core::mlil`, `tracemiku-core::hlil` plus `/api/llil/*` routes.
-  LLIL→MLIL→HLIL lowering with C-like rendering. Does not depend on an LLM or BN.
-- Trace-enhanced decompiler: `tracemiku-core::decompiler::il_pipeline` lifts
-  ARM64 through all three layers enriched with runtime trace values.
-
-Do not merge or delete any of these routes (TraceIR LLM route, the in-house
-three-layer LLIL→MLIL→HLIL pipeline, or `il_pipeline`) without an explicit
-project decision. The MLIL/HLIL layers are separate from the LLM-dependent
-TraceIR route; together they provide a fully local three-layer decompiler path.
-
-## Device Notes
-
-The usual development device may already be connected with adb, root, and
-Frida. For long interactive sessions, keep the device usable and battery-safe:
-prevent auto-lock when app interaction is needed, and turn the screen off again
-when done. Avoid repeated heavy UI operations that keep the app/device hot
-unless actively tracing or debugging.
+- 保留用户已有改动，不得重置或覆盖不属于当前任务的文件。
+- 禁止未经确认使用 `git reset --hard`、`git clean -fd*`、强推或删除分支。
+- 使用明确文件列表暂存，避免无差别 `git add .`。
+- “完成”表示实现、验证和可审查交付均已完成，不是仅写出第一版代码。

@@ -5119,7 +5119,7 @@ def completion_audit() -> dict:
                     "traces/diff/run1/calls/call_004_tid31706_7494655r_5171ms",
                     "traces/diff/run1/calls/call_005_tid32225_7528678r_7006ms",
                     "traces/diff/run1/calls/_truncated_call_006_tid32005_7600833r_7453ms",
-                    "docs/xsign-reconstruction-progress.md",
+                    "docs/ai-cli-xsign-workflow.md",
                 ],
                 "evidence": [
                     "multi_sample_formula_coverage covers five diff samples and two extra call_001 samples for the stat-mtime prefix",

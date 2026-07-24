@@ -27,7 +27,6 @@ ALLOWED_RAW_RESOURCES = {
     ("panels/crypto/CryptoPanel.tsx", "resp"),
     ("panels/functions/FunctionsPanel.tsx", "resp"),
     ("panels/memory/MemoryPanel.tsx", "record"),
-    ("panels/meta/MetaPanel.tsx", "meta"),
     ("panels/records/RecordsPanel.tsx", "meta"),
     ("panels/registers/RegistersPanel.tsx", "record"),
     ("panels/settings/SettingsPanel.tsx", "bg"),

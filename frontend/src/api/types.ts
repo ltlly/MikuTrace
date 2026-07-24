@@ -1,4 +1,4 @@
-/** Wire contract: docs/superpowers/specs/2026-05-03-meta-endpoint-contract.md
+/** 数据契约：docs/PER_CALL_TRACE_DESIGN.md
  *  M1 hand-writes this; M3 will replace with openapi-typescript codegen. */
 export interface ModuleInfo {
   name: string;

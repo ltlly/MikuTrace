@@ -1,6 +1,6 @@
 //! `meta.json` parser — both run-level and per-call.
 //!
-//! Wire contract: see `docs/superpowers/specs/2026-05-03-meta-endpoint-contract.md`.
+//! 数据契约见 `docs/PER_CALL_TRACE_DESIGN.md`。
 
 use std::fs;
 use std::path::Path;
