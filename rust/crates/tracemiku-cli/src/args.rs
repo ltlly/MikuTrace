@@ -13,6 +13,13 @@ pub(super) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(super) enum Cmd {
+    /// Describe every CLI command and argument as machine-readable JSON.
+    Capabilities,
+    /// Generate shell completion scripts for bash, zsh, fish, or powershell.
+    Completions {
+        /// Shell type: bash, zsh, fish, powershell.
+        shell: clap_complete::Shell,
+    },
     /// Invoke any JSON web API route in-process.
     Api {
         /// Per-call trace directory.
