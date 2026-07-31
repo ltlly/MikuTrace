@@ -6,6 +6,48 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Provenance: where a value originated in the trace.
+///
+/// This enables trace-anchored analysis: distinguish between register reads,
+/// memory loads, constants, external syscall/JNI writes, and unknown sources
+/// (missing trace data or uninitialized).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Provenance {
+    /// Value came from a register at a specific trace index.
+    Register {
+        /// Register name (e.g., "x0", "sp").
+        reg: String,
+        /// Trace record index where this register was read.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        idx: Option<usize>,
+    },
+    /// Value came from a memory load.
+    Memory {
+        /// Address loaded from.
+        addr: u64,
+        /// Trace record index of the load instruction.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        idx: Option<usize>,
+    },
+    /// Value came from an external write (syscall, JNI, boundary diff).
+    /// Corresponds to MemShadow kind "x".
+    ExternalWrite {
+        /// Address written by external source.
+        addr: u64,
+        /// Trace record index when the external write was observed.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        idx: Option<usize>,
+    },
+    /// Value is a compile-time constant (immediate, literal address).
+    Constant {
+        /// The constant value.
+        value: i64,
+    },
+    /// Value source is unknown (missing trace data, uninitialized memory).
+    Unknown,
+}
+
 /// Semantic kind of a C-like decompiler token.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +97,10 @@ pub struct CToken {
     /// when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<i64>,
+    /// Provenance: where this value originated in the trace.
+    /// Present for `Var` and `Literal` tokens when trace context is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
 }
 
 impl CToken {
@@ -65,6 +111,7 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 
@@ -75,16 +122,30 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 
     pub fn var(text: &str) -> Self {
         Self {
-            text: text.clone().into(),
+            text: text.into(),
             kind: CTokenKind::Var,
             var_id: Some(text.into()),
             addr: None,
             value: None,
+            provenance: None,
+        }
+    }
+
+    /// Create a variable token with provenance information.
+    pub fn var_with_provenance(text: &str, provenance: Provenance) -> Self {
+        Self {
+            text: text.into(),
+            kind: CTokenKind::Var,
+            var_id: Some(text.into()),
+            addr: None,
+            value: None,
+            provenance: Some(provenance),
         }
     }
 
@@ -95,6 +156,19 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
+        }
+    }
+
+    /// Create a literal token with provenance information.
+    pub fn literal_with_provenance(text: &str, provenance: Provenance) -> Self {
+        Self {
+            text: text.into(),
+            kind: CTokenKind::Literal,
+            var_id: None,
+            addr: None,
+            value: None,
+            provenance: Some(provenance),
         }
     }
 
@@ -105,6 +179,7 @@ impl CToken {
             var_id: None,
             addr: Some(addr),
             value: None,
+            provenance: None,
         }
     }
 
@@ -115,6 +190,7 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 
@@ -125,6 +201,7 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 
@@ -135,6 +212,7 @@ impl CToken {
             var_id: None,
             addr,
             value: None,
+            provenance: None,
         }
     }
 
@@ -145,6 +223,7 @@ impl CToken {
             var_id: None,
             addr,
             value: None,
+            provenance: None,
         }
     }
 
@@ -155,6 +234,7 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 
@@ -165,6 +245,7 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 
@@ -175,6 +256,7 @@ impl CToken {
             var_id: None,
             addr: None,
             value: None,
+            provenance: None,
         }
     }
 }
@@ -196,6 +278,9 @@ pub struct CTokenWire {
     /// Runtime value (hex string, for hover)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rv: Option<std::string::String>,
+    /// Provenance information (optional, for trace-aware analysis)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prov: Option<Provenance>,
 }
 
 impl From<&CToken> for CTokenWire {
@@ -206,6 +291,7 @@ impl From<&CToken> for CTokenWire {
             v: t.var_id.clone(),
             a: t.addr.map(|a| format!("0x{a:x}")),
             rv: t.value.map(|v| format!("0x{:x}", v as u64)),
+            prov: t.provenance.clone(),
         }
     }
 }
@@ -273,6 +359,46 @@ mod tests {
         let wire = CTokenWire::from(&tok);
         assert_eq!(wire.k, "lit");
         assert_eq!(wire.a, Some("0x6cc6500fe8".into()));
+    }
+
+    #[test]
+    fn provenance_roundtrips_all_variants_through_wire() {
+        let variants = [
+            CToken::literal_with_provenance(
+                "0x10",
+                Provenance::Register {
+                    reg: "x0".into(),
+                    idx: Some(12),
+                },
+            ),
+            CToken::literal_with_provenance(
+                "0x20",
+                Provenance::Memory {
+                    addr: 0x7000,
+                    idx: None,
+                },
+            ),
+            CToken::literal_with_provenance(
+                "0x30",
+                Provenance::ExternalWrite {
+                    addr: 0x8000,
+                    idx: Some(3),
+                },
+            ),
+            CToken::literal_with_provenance("0x40", Provenance::Constant { value: 64 }),
+            CToken::literal_with_provenance("0x50", Provenance::Unknown),
+        ];
+        for tok in &variants {
+            let wire = CTokenWire::from(tok);
+            assert_eq!(
+                wire.prov, tok.provenance,
+                "provenance lost for {:?}",
+                tok.provenance
+            );
+        }
+        // Compact wire omits absent provenance entirely.
+        let plain = CTokenWire::from(&CToken::literal("0x10"));
+        assert_eq!(plain.prov, None);
     }
 
     #[test]
