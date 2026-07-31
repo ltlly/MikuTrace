@@ -1,5 +1,10 @@
 # traceMiku Server 路由审计报告
 
+> **状态**: 2026-07-31 的历史审计快照。以下建议已落地：field_at 哨兵路由已移除、
+> 地址解析统一到 `routes/parse.rs`（`parse_hex_u64`/`parse_dec_u64` 显式双语义）、
+> clippy `--lib -D warnings` 零警告基线。未落地：MemShadow 类型化错误、BN sidecar
+> 类型化、全局错误枚举（见下文的阶段 2）。本文档保留为审计记录，不代表当前代码状态。
+
 **日期**: 2026-07-31  
 **范围**: `rust/crates/tracemiku-server/src/routes/` 全部 63 个路由  
 **目标**: 识别文本后处理、哨兵值、扁平响应修补、重复分析逻辑

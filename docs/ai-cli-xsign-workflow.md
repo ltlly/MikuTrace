@@ -15,26 +15,26 @@
 ```bash
 # 1. 确认 trace 与模块
 ./tracemiku info <call_dir> --json
-./tracemiku query <call_dir> resolve --so libtarget.so --off 0x1234
+./tracemiku resolve --so libtarget.so --off 0x1234
 
 # 2. 观察路径和调用
-./tracemiku query <call_dir> coverage --fn trace:F0
-./tracemiku query <call_dir> indirect-targets --so libtarget.so --off 0x1234
-./tracemiku query <call_dir> call-tree
+./tracemiku coverage --fn trace:F0
+./tracemiku indirect-targets --so libtarget.so --off 0x1234
+./tracemiku call-tree
 
 # 3. 查询值与内存
-./tracemiku query <call_dir> reg-at --reg x0 --so libtarget.so --off 0x1234
-./tracemiku query <call_dir> mem-dump --addr 0x70000000 --size 256
-./tracemiku query <call_dir> mem-export --addr 0x70000000 --len 0x100
+./tracemiku reg-at --reg x0 --so libtarget.so --off 0x1234
+./tracemiku mem-dump --addr 0x70000000 --size 256
+./tracemiku mem-export --addr 0x70000000 --len 0x100
 
 # 4. 回溯来源
-./tracemiku query <call_dir> backward-taint --from 1000 --reg x0
-./tracemiku query <call_dir> bfs-slice --idx 1000
-./tracemiku query <call_dir> forward-dep-tree --idx 1000
+./tracemiku taint-bwd --start 1000 --reg x0
+./tracemiku bfs-slice --idx 1000
+./tracemiku forward-dep-tree --idx 1000
 
 # 5. 识别算法与 VM 行为
 ./tracemiku crypto <call_dir>
-./tracemiku query <call_dir> vm-ops --start 1000 --end 2000
+./tracemiku vm-ops --start 1000 --end 2000
 ./tracemiku dec <call_dir> --summary
 ```
 
