@@ -64,27 +64,27 @@ pub(super) async fn cmd_byte_lineage(
                     } else {
                         value
                     };
-                    serde_json::json!({
-                        "offset": offset,
-                        "addr": format!("{byte_addr:#x}"),
-                        "lineage": lineage,
-                    })
+                    LineageRow {
+                        offset,
+                        addr: format!("{byte_addr:#x}"),
+                        lineage,
+                    }
                 }
-                Err(err) => serde_json::json!({
-                    "offset": offset,
-                    "addr": format!("{byte_addr:#x}"),
-                    "lineage": {
+                Err(err) => LineageRow {
+                    offset,
+                    addr: format!("{byte_addr:#x}"),
+                    lineage: serde_json::json!({
                         "status": "error",
                         "error": format!("{err:#}"),
-                    },
-                }),
+                    }),
+                },
             };
             results.push(entry);
         }
         let error_count = results
             .iter()
             .filter(|entry| {
-                entry.pointer("/lineage/status").and_then(|v| v.as_str()) == Some("error")
+                entry.lineage.pointer("/status").and_then(|v| v.as_str()) == Some("error")
             })
             .count();
         let status = if error_count > 0 {
@@ -95,7 +95,11 @@ pub(super) async fn cmd_byte_lineage(
         let mut decision_counts: BTreeMap<String, usize> = BTreeMap::new();
         let mut upstream_counts: BTreeMap<String, usize> = BTreeMap::new();
         let mut step_values = Vec::new();
-        for entry in &results {
+        // batch_lineage_decision/upstream read `/lineage/...` paths, so feed
+        // them the serialized rows (same shape as the previous json! rows).
+        let rows_value = serde_json::to_value(&results)?;
+        let rows = rows_value.as_array().cloned().unwrap_or_default();
+        for entry in &rows {
             let decision = batch_lineage_decision(entry);
             *decision_counts.entry(decision.clone()).or_default() += 1;
             let upstream = batch_lineage_upstream(entry, &decision);
@@ -110,12 +114,7 @@ pub(super) async fn cmd_byte_lineage(
         let count_rows = |counts: BTreeMap<String, usize>, key: &str| {
             counts
                 .into_iter()
-                .map(|(name, count)| {
-                    serde_json::json!({
-                        key: name,
-                        "count": count,
-                    })
-                })
+                .map(|(name, count)| serde_json::json!({ key: name, "count": count }))
                 .collect::<Vec<_>>()
         };
         let step_stats = if step_values.is_empty() {
@@ -130,19 +129,27 @@ pub(super) async fn cmd_byte_lineage(
                 "avg": avg,
             })
         };
-        return print_pretty(&serde_json::json!({
-            "status": status,
-            "start_addr": format!("{addr:#x}"),
-            "before_idx": before_idx,
-            "count": count,
-            "mode": if compact { "compact" } else if summary { "summary" } else { "full" },
-            "error_count": error_count,
-            "decision_counts": count_rows(decision_counts, "decision"),
-            "upstream_counts": count_rows(upstream_counts, "upstream"),
-            "step_stats": step_stats,
-            "frontier_groups": byte_lineage_batch_frontier_groups(&results),
-            "results": results,
-        }));
+        let mode = if compact {
+            "compact".to_string()
+        } else if summary {
+            "summary".to_string()
+        } else {
+            "full".to_string()
+        };
+        let frontier_groups = byte_lineage_batch_frontier_groups(&rows);
+        return print_pretty(&serde_json::to_value(LineageBatchReport {
+            status: status.to_string(),
+            start_addr: format!("{addr:#x}"),
+            before_idx,
+            count,
+            mode,
+            error_count,
+            decision_counts: count_rows(decision_counts, "decision"),
+            upstream_counts: count_rows(upstream_counts, "upstream"),
+            step_stats,
+            frontier_groups,
+            results,
+        })?);
     }
     let value = byte_lineage_value_on(
         &app, addr, before_idx, depth, context, lookback, max_writes, regs,

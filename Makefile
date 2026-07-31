@@ -2,14 +2,15 @@ PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 PORT   ?= 18900
-PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py scripts/device_trace_integration.py tools/vm_replay_plan_eval.py examples/llm_cookbook.py
+PY_CHECKS := tracemiku scripts/frontend_resource_audit.py scripts/frontend_ui_audit.py scripts/frontend_cap_audit.py scripts/frontend_stability_audit.py scripts/frontend_api_client_audit.py scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py scripts/frontend_event_smoke.py scripts/build_smoke_trace.py scripts/device_trace_integration.py tools/vm_replay_plan_eval.py examples/llm_cookbook.py scripts/contract_audit.py
 
-.PHONY: help fmt test test-v2 test-fast test-slow test-device smoke-web smoke-ui webui clean
+.PHONY: help fmt test test-v2 test-fast test-slow test-device smoke-web smoke-ui webui clean test-contract
 
 help:
 	@echo "make fmt       - rust cargo fmt"
 	@echo "make test      - full v2 validation"
 	@echo "make test-v2   - fmt check + Python wrapper compile + Rust tests + frontend build + CLI/web parity"
+	@echo "make test-contract - contract coverage audit + black-box contract tests (fast, no frontend)"
 	@echo "make test-fast - Python wrapper compile + Rust core/cli tests"
 	@echo "make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"
 	@echo "make smoke-ui BASE=<url> [UI_SMOKE_ARGS='--browser chromium']"
@@ -44,6 +45,15 @@ test-fast:
 	$(PYTHON) scripts/frontend_api_client_audit.py
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd rust && $(CARGO) test -p tracemiku-cli
+
+test-contract:
+	@echo "=== contract coverage audit ==="
+	$(PYTHON) scripts/contract_audit.py
+	cd rust && $(CARGO) test -p tracemiku-cli
+	cd rust && $(CARGO) test -p tracemiku-server
+	cd rust && $(CARGO) test -p tracemiku-core
+	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
+	$(PYTHON) scripts/rust_cli_web_parity.py --debug-bin
 
 test-slow:
 	@echo "No separate v2 slow suite is defined. Use 'make test-v2'."

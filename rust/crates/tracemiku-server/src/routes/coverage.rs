@@ -232,7 +232,14 @@ fn coverage_response(inner: &crate::state::AppStateInner, q: CoverageQuery) -> V
         });
     }
 
-    branch_points.sort_by(|a, b| b.total.cmp(&a.total));
+    // Deterministic order: primary = execution count desc, tie-break = block
+    // offset asc. Without the tie-break, equal-total branches reorder between
+    // runs and break CLI/web parity (both surfaces must agree byte-for-byte).
+    branch_points.sort_by(|a, b| {
+        b.total
+            .cmp(&a.total)
+            .then_with(|| a.block_offset.cmp(&b.block_offset))
+    });
     let total_branches = branch_points.len();
     let capped = total_branches > MAX_BRANCHES_RETURNED;
     branch_points.truncate(MAX_BRANCHES_RETURNED);

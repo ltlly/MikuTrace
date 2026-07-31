@@ -14,17 +14,17 @@ pub(super) async fn cmd_vm_slice(
     let (rows, source_returned, inferred_base) =
         load_vm_rows(trace_dir, start, end, regs, only_vm, base_ip, &profile).await?;
 
-    print_pretty(&serde_json::json!({
-        "status": "ready",
-        "start": start,
-        "end": end,
-        "vm_profile": profile.to_json(),
-        "returned": rows.len(),
-        "source_returned": source_returned,
-        "only_vm": only_vm,
-        "vm_base_ip": inferred_base.map(|v| format!("{v:#x}")),
-        "records": rows,
-    }))
+    print_pretty(&serde_json::to_value(VmSliceReport {
+        status: "ready",
+        start,
+        end,
+        vm_profile: profile.to_json(),
+        returned: rows.len(),
+        source_returned,
+        only_vm,
+        vm_base_ip: inferred_base.map(|v| format!("{v:#x}")),
+        records: rows,
+    })?)
 }
 
 pub(super) async fn cmd_vm_ops(
@@ -52,23 +52,23 @@ pub(super) async fn cmd_vm_ops(
     let truncated = all_ops.len() > max_ops;
     let ops = all_ops.into_iter().take(max_ops).collect::<Vec<_>>();
     let vm_state_base = vm_state_base_from_rows(&loaded.rows, &profile);
-    let output = serde_json::json!({
-        "status": "ready",
-        "start": start,
-        "end": end,
-        "vm_profile": profile.to_json(),
-        "source_requested": source_requested,
-        "source_returned": loaded.source_returned,
-        "source_maybe_truncated": loaded.source_maybe_truncated,
-        "source_chunks": loaded.chunks,
-        "chunk_size": chunk_size,
-        "vm_rows": loaded.rows.len(),
-        "vm_base_ip": loaded.inferred_base.map(|v| format!("{v:#x}")),
-        "vm_state_base": vm_state_base.map(|v| format!("{v:#x}")),
-        "ops_returned": ops.len(),
-        "truncated": truncated,
-        "ops": ops,
-    });
+    let output = serde_json::to_value(VmOpsReport {
+        status: "ready",
+        start,
+        end,
+        vm_profile: profile.to_json(),
+        source_requested,
+        source_returned: loaded.source_returned,
+        source_maybe_truncated: loaded.source_maybe_truncated,
+        source_chunks: loaded.chunks,
+        chunk_size,
+        vm_rows: loaded.rows.len(),
+        vm_base_ip: loaded.inferred_base.map(|v| format!("{v:#x}")),
+        vm_state_base: vm_state_base.map(|v| format!("{v:#x}")),
+        ops_returned: ops.len(),
+        truncated,
+        ops,
+    })?;
     if replay_plan {
         print_pretty(&vm_ops_replay_plan_summary(&output))
     } else if compact {

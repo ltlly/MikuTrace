@@ -97,10 +97,18 @@ TraceIR、本地 LLIL -> MLIL -> HLIL 和 trace 增强反编译管线均为当�
 
 ```bash
 make test-fast       # Python 检查 + Rust core/CLI
+make test-contract   # 契约审计 + CLI/server/core 契约测试 + tracer 格式契约 + CLI/API 一致性
 make test-v2         # Rust 全工作区 + 前端构建 + CLI/API 一致性
 npm --prefix tracer run typecheck
 make test-device     # 需要 Android 设备
 ```
+
+契约测试（`make test-contract`）是黑盒/公共接口级：CLI 的每个命令输出和 server
+的每个 route 都必须在 `scripts/contract_audit.py` 声明的契约测试文件中有 schema
+校验与语义断言覆盖；tracer 的 272 字节记录格式有独立的 TS 契约测试；CLI 与 server
+同分析结果逐字段一致（`scripts/rust_cli_web_parity.py`）。CLI 输出由
+`rust/crates/tracemiku-cli/src/output_types*.rs` 的类型化模型序列化，字段名与结构
+是 AI 消费方的稳定契约，改动必须同步更新契约测试。
 
 工程规则见 [AGENTS.md](AGENTS.md)，当前路线图见 [TODO.md](TODO.md)，性能基线见
 [BENCHMARKS.md](BENCHMARKS.md)。

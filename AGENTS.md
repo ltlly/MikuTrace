@@ -69,6 +69,7 @@ TraceIR、本地 LLIL -> MLIL -> HLIL、trace 增强 IL 是三个不同用途的
 ```bash
 make fmt
 make test-fast
+make test-contract
 make test-v2
 npm --prefix tracer run typecheck
 make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces --timeout 300'
@@ -77,6 +78,9 @@ make test-device
 ```
 
 - core 语义变化：相关单测 + `cargo test -p tracemiku-core`。
+- CLI 输出变化：输出字段名/类型/结构是 AI 消费契约，必须先更新
+  `contract_*` 契约测试与 `scripts/contract_audit.py` 声明，再跑
+  `make test-contract` 全链路（含 CLI/server parity）。
 - API 变化：core 测试 + 对应 route 测试 + OpenAPI 覆盖测试。
 - 前端变化：类型检查、构建；交互变化还需浏览器 smoke。
 - agent/格式变化：TypeScript 检查、设备测试和完整链路验证。
@@ -98,6 +102,11 @@ make test-device
 
 只有不存在专用 CLI 的 API 才使用 `./tracemiku api`。地址和偏移默认按十六进制解析，
 需要十进制时使用命令帮助所示的显式格式。
+
+CLI 输出是 AI 消费方的稳定契约：字段名、类型与嵌套结构由
+`rust/crates/tracemiku-cli/src/output_types*.rs` 的类型化模型定义，并由
+`rust/crates/tracemiku-cli/tests/contract_*.rs` 的 schema 校验与语义断言锁定。
+修改任何命令输出必须同步更新契约测试并跑通 `make test-contract`。
 
 ## Git 安全
 

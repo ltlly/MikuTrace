@@ -19,6 +19,8 @@
 
 ## P2：分析质量
 
+- [ ] 为 CLI 输出自动生成并交付 JSON Schema（`output_types*.rs` 已带 schemars
+  派生，但 schema 导出与 `docs/schema/` 交付物未落地）。
 - [ ] 完成 Varnode -> HighVariable -> VariableGroup 合并，并贯通 MLIL/HLIL。
 - [ ] 增加 Tenet 导出，保留每字节来源与未知状态，不伪造缺失内存。
 - [ ] 为 CLI 生成 shell completion。

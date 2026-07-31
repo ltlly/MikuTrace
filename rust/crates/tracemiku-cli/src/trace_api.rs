@@ -42,17 +42,17 @@ pub(super) fn cmd_stats(
         kept
     };
 
-    print_pretty(&serde_json::json!({
-        "path": trace_dir.display().to_string(),
-        "records": trace.len(),
-        "method": meta.method,
-        "cmd": meta.cmd,
-        "fn_addr": meta.fn_addr,
-        "module": meta.module,
-        "modules": modules_out,
-        "modules_total": modules_total,
-        "modules_truncated": modules_out.len() < modules_total,
-    }))
+    print_pretty(&serde_json::to_value(StatsReport {
+        path: trace_dir.display().to_string(),
+        records: trace.len(),
+        method: meta.method,
+        cmd: meta.cmd,
+        fn_addr: meta.fn_addr,
+        module: meta.module,
+        modules: modules_out.iter().map(|m| (**m).clone()).collect(),
+        modules_total,
+        modules_truncated: modules_out.len() < modules_total,
+    })?)
 }
 
 pub(super) async fn route_get_json(trace_dir: PathBuf, path: String) -> anyhow::Result<()> {

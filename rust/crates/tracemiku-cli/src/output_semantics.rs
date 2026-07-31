@@ -255,18 +255,14 @@ pub(super) async fn cmd_output_backtrace(
         .await?
     };
 
-    print_pretty(&serde_json::json!({
-        "status": "ready",
-        "strategy": "output_to_input_backward_trace",
-        "source": source.json,
-        "patterns": pattern_reports,
-        "taint": taint_reports,
-        "notes": [
-            "This report intentionally starts at the observed output and walks upward through memory writers and register taint.",
-            "For JNI NewStringUTF outputs, the hooked bytes are treated as ground truth; memory dumps can show object/runtime layout noise.",
-            "Continue with patterns[].hit_reports[].writer_seeds or taint.runs[].summary.function_counts to choose the next function to decompile."
-        ],
-    }))
+    print_pretty(&serde_json::to_value(BacktraceReport {
+        status: "ready",
+        strategy: "output_to_input_backward_trace",
+        source: source.json,
+        patterns: pattern_reports,
+        taint: taint_reports,
+        notes: BACKTRACE_NOTES.to_vec(),
+    })?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -526,28 +522,28 @@ pub(super) async fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> a
         serde_json::Value::Null
     };
 
-    let output = serde_json::json!({
-        "status": "ready",
-        "strategy": "output_base64_group_map",
-        "source": source.json,
-        "text_len": mapped_text.len(),
-        "base64_context": base64_context,
-        "group_total": group_total,
-        "selected_group_start": selected_group_start,
-        "selected_group_end": selected_group_end,
-        "selected_semantic_range": selected_semantic_range,
-        "selected_hit_order": opts.hit_order.as_str(),
-        "selected_hit_rank": opts.hit_rank,
-        "tree_frontier_with_next": opts.tree_frontier_with_next,
-        "index_tree_depth": opts.index_tree_depth,
-        "index_tree_max_nodes": opts.index_tree_max_nodes,
-        "hit_candidates": hit_candidates,
-        "selected_hit": selected_hit,
-        "selected_range": selected_range,
-        "find_mem_pattern": find,
-        "semantic_writer_map": semantic_writer_map,
-        "groups": group_rows,
-    });
+    let output = serde_json::to_value(OutputMapReport {
+        status: "ready",
+        strategy: "output_base64_group_map",
+        source: source.json,
+        text_len: mapped_text.len(),
+        base64_context,
+        group_total,
+        selected_group_start,
+        selected_group_end,
+        selected_semantic_range,
+        selected_hit_order: opts.hit_order.as_str().to_string(),
+        selected_hit_rank: opts.hit_rank,
+        tree_frontier_with_next: opts.tree_frontier_with_next,
+        index_tree_depth: opts.index_tree_depth,
+        index_tree_max_nodes: opts.index_tree_max_nodes,
+        hit_candidates,
+        selected_hit,
+        selected_range,
+        find_mem_pattern: find,
+        semantic_writer_map,
+        groups: group_rows,
+    })?;
     if opts.summary {
         print_pretty(&output_map_summary(&output))
     } else {

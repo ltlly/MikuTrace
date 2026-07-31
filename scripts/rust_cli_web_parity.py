@@ -101,12 +101,22 @@ def sort_dicts(items: Any) -> Any:
 
 
 def normalize_case(case: Case, value: Any) -> Any:
-    if case.name != "cfg" or not isinstance(value, dict):
+    if not isinstance(value, dict):
         return value
-    out = dict(value)
-    out["blocks"] = sort_dicts(out.get("blocks"))
-    out["edges"] = sort_dicts(out.get("edges"))
-    return out
+    if case.name == "cfg":
+        out = dict(value)
+        out["blocks"] = sort_dicts(out.get("blocks"))
+        out["edges"] = sort_dicts(out.get("edges"))
+        return out
+    if case.name == "meta":
+        # CLI meta adds record_size:272 / format_version:1 (its own contract
+        # extensions); the web /api/meta surface does not have them. Compare
+        # only the shared contract.
+        out = dict(value)
+        out.pop("record_size", None)
+        out.pop("format_version", None)
+        return out
+    return value
 
 
 def cases() -> list[Case]:
@@ -192,6 +202,34 @@ def cases() -> list[Case]:
             ("jni-events", "--limit", "10"),
         ),
         Case("dec-summary", "/api/dec/summary", ("dec-summary",)),
+        Case("resolve", "/api/resolve?so=libt.so&off=0x100", ("resolve", "--so", "libt.so", "--off", "0x100")),
+        Case(
+            "coverage",
+            "/api/coverage?so=libt.so&off=0x0",
+            ("coverage", "--so", "libt.so", "--off", "0x0"),
+        ),
+        Case("loops", "/api/loops", ("loops",)),
+        Case("block", "/api/block?pc=0x100000", ("block", "--pc", "0x100000")),
+        Case(
+            "reg-timeline",
+            "/api/reg-timeline?reg=x0&start=0&end=9",
+            ("reg-timeline", "--reg", "x0", "--start", "0", "--end", "9"),
+        ),
+        Case(
+            "mem-flow",
+            "/api/mem-flow?addr=0x7000&count=4",
+            ("mem-flow", "--addr", "0x7000", "--count", "4"),
+        ),
+        Case(
+            "fn-summary",
+            "/api/fn-summary?fn=f_root",
+            ("fn-summary", "--fn", "f_root"),
+        ),
+        Case(
+            "idxs-touching-addr",
+            "/api/idxs-touching-addr?addr=0x7000",
+            ("idxs-touching-addr", "--addr", "0x7000"),
+        ),
     ]
 
 
