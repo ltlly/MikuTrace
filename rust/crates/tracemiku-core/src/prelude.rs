@@ -3,6 +3,7 @@
 //! Use `use tracemiku_core::prelude::*;` rather than reaching into
 //! submodules directly.
 
+pub use crate::address_parse::{parse_address, parse_address_opt, ParseAddressError};
 pub use crate::analysis_index::{
     AnalysisIndex, AnalysisSummary, DepEdge, DepKind, DependencyIndex, FunctionSummary,
     MemLastDefEntry, PcSummary, RegCheckpoint,

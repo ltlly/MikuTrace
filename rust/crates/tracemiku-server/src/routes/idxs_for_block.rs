@@ -8,6 +8,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use tracemiku_core::prelude::parse_address;
 
 use crate::state::AppState;
 
@@ -60,7 +61,10 @@ fn idxs_for_block_response(
     inner: &crate::state::AppStateInner,
     q: IdxsForBlockQuery,
 ) -> Result<IdxsForBlockResponse, StatusCode> {
-    let target = u64::from_str_radix(q.pc.trim_start_matches("0x"), 16).unwrap_or(0);
+    // Parse via the shared core parser: an invalid `pc` surfaces as a distinct
+    // 400 Bad Request instead of silently resolving to 0 and 404-ing on a
+    // block that never existed (audit P0-1).
+    let target = parse_address(&q.pc).map_err(|_| StatusCode::BAD_REQUEST)?;
     let cfg = &inner.cfg;
 
     let block = cfg.block(target).ok_or(StatusCode::NOT_FOUND)?;

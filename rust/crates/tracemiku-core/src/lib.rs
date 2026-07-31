@@ -9,6 +9,7 @@
 #![deny(unused_must_use)]
 #![warn(clippy::all)]
 
+pub mod address_parse;
 pub mod analysis_index;
 pub mod bfs_slice;
 pub mod call_analysis;

@@ -104,6 +104,23 @@ async fn idxs_for_pc_no_match_empty() {
 }
 
 #[tokio::test]
+async fn idxs_for_pc_rejects_invalid_pc_with_400() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let app = tracemiku_server::build_router(call_dir).expect("build router");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/idxs-for-pc?pc=not-an-address&cursor=0&limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Invalid addresses surface as 400 Bad Request, never a silent 0 sentinel.
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn idxs_for_pc_limit_caps_results() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = tracemiku_server::build_router(call_dir).expect("build router");

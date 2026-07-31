@@ -67,11 +67,14 @@ fn so_stats_response(inner: &crate::state::AppStateInner, q: SoStatsQuery) -> So
         .meta
         .modules
         .iter()
-        .map(|m| {
-            let base = u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0);
-            let end = u64::from_str_radix(m.end.trim_start_matches("0x"), 16)
-                .unwrap_or_else(|_| base.saturating_add(m.size));
-            (base, end)
+        .filter_map(|m| {
+            // Parse via the shared core parser; a malformed module base/end
+            // must not silently collapse to 0 and corrupt per-module stats
+            // (audit P0-1).
+            let base = tracemiku_core::prelude::parse_address_opt(&m.base)?;
+            let end = tracemiku_core::prelude::parse_address_opt(&m.end)
+                .unwrap_or_else(|| base.saturating_add(m.size));
+            Some((base, end))
         })
         .collect();
 

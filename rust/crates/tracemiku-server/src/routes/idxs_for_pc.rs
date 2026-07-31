@@ -7,8 +7,10 @@
 //! `*_capped` booleans.
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use tracemiku_core::prelude::parse_address;
 
 use crate::state::AppState;
 
@@ -50,8 +52,15 @@ pub struct IdxsForPcResponse {
 pub async fn idxs_for_pc_handler(
     State(state): State<AppState>,
     Query(q): Query<IdxsForPcQuery>,
-) -> Json<IdxsForPcResponse> {
-    let target = u64::from_str_radix(q.pc.trim_start_matches("0x"), 16).unwrap_or(0);
+) -> Result<Json<IdxsForPcResponse>, (StatusCode, String)> {
+    // Parse via the shared core parser so an invalid `pc` surfaces as a
+    // 400 Bad Request instead of silently resolving to 0 (audit P0-1).
+    let target = parse_address(&q.pc).map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid pc `{}`: {err}", q.pc),
+        )
+    })?;
 
     let n = state.inner.trace.len();
     let cursor = q.cursor.min(n);
@@ -73,7 +82,7 @@ pub async fn idxs_for_pc_handler(
     let before = all[..cut].iter().rev().take(limit).copied().collect();
     let after = all[cut..].iter().take(limit).copied().collect();
 
-    Json(IdxsForPcResponse {
+    Ok(Json(IdxsForPcResponse {
         status: "ready",
         pc: q.pc,
         cursor: q.cursor,
@@ -83,7 +92,7 @@ pub async fn idxs_for_pc_handler(
         total_after,
         before_capped,
         after_capped,
-    })
+    }))
 }
 
 #[cfg(test)]
