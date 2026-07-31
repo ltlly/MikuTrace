@@ -1,0 +1,75 @@
+name: ci
+
+# 默认关闭：仅支持手动触发（workflow_dispatch）。
+# 需要 CI 自动生效时，把下面两个事件移回：
+#   push:
+#     branches: [main]
+#   pull_request:
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# NOTE: clippy runs without `-D warnings` until the historical warning baseline
+# is cleaned (TODO P0: architecture governance). Once the workspace is clean,
+# add `RUSTFLAGS: -D warnings` here and `-D warnings` to the clippy call to
+# block new warnings in CI.
+
+jobs:
+  rust:
+    name: rust (fmt + clippy + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust -> target
+      - name: fmt check
+        run: cargo fmt --check
+      - name: clippy (all crates, -D warnings)
+        run: cargo clippy --workspace --all-targets
+      - name: test core
+        run: cargo test -p tracemiku-core
+      - name: test server
+        run: cargo test -p tracemiku-server
+      - name: test cli
+        run: cargo test -p tracemiku-cli
+
+  frontend:
+    name: frontend (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  tracer:
+    name: tracer (typecheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tracer/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
