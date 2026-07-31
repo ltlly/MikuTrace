@@ -23,6 +23,7 @@ import {
 } from "~/api/client";
 import type { AsmToken, CallTreeResponse, RecordRow, RecordsResponse } from "~/api/types";
 import { normalizeReg } from "~/utils/bnTokens";
+import { clamp } from "~/utils/math";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import {
   FOLDED_FETCH_BATCH_RANGES,
@@ -31,7 +32,6 @@ import {
   ROW_MARKS_PREFIX,
   SAFE_SCROLL_HEIGHT,
   actualIdxToFoldedPos as actualIdxToFoldedPosition,
-  clamp,
   collectFoldRanges,
   compactRowMark,
   firstAsmReg,

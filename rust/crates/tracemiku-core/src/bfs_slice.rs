@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn bitset_from_idxs_skips_out_of_range() {
-        let bs = Bitset::from_idxs([0usize, 5, 99].into_iter(), 8);
+        let bs = Bitset::from_idxs([0usize, 5, 99], 8);
         assert!(bs.get(0));
         assert!(bs.get(5));
         assert!(!bs.get(99));

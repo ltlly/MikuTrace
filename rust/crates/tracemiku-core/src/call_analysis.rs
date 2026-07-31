@@ -1,6 +1,6 @@
 //! Call-site parameter analysis from trace data.
 // Called from tracemiku-server routes.
-#![allow(dead_code, unused_variables)]
+
 //!
 //! For every call (bl/blr) in the trace, extracts x0-x7 register values
 //! (AAPCS64 calling convention) and resolves the call target. Produces
@@ -34,16 +34,17 @@ pub struct CallSite {
     pub is_indirect: bool,
 }
 
-/// One call argument (register or stack value).
+/// One call argument (register value at the call site).
 #[derive(Debug, Clone, Serialize)]
 pub struct CallArg {
-    /// Register name (x0-x7) or "stack".
+    /// Register name (x0-x7 per AAPCS64).
     pub reg: String,
     /// Raw value from the register.
     pub value: i64,
-    /// Size of the argument (inferred from usage).
+    /// Byte width of the register: always 8 on aarch64 (64-bit GPR).
     pub size: u8,
-    /// Inferred type hint (from trace usage patterns).
+    /// Inferred type hint. Currently always None — type inference is future
+    /// work; the field exists so consumers can rely on a stable shape.
     pub type_hint: Option<String>,
 }
 
@@ -73,6 +74,12 @@ pub struct CallStats {
 
 /// AAPCS64 argument registers in calling order.
 pub const ARG_REGS: [&str; 8] = ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"];
+
+/// Max records scanned forward from a call to find its return site. A bl
+/// returns to caller_pc + 4; tail-call chains and deep frames may put the
+/// return further away, so we bound the scan instead of walking the whole
+/// trace.
+pub const RETURN_SCAN_WINDOW: usize = 200;
 
 /// Analyze all call sites in a trace.
 pub fn analyze_calls(trace: &Trace, symbols: &SymbolMap) -> CallAnalysis {
@@ -131,9 +138,9 @@ pub fn analyze_calls(trace: &Trace, symbols: &SymbolMap) -> CallAnalysis {
             })
             .collect();
 
-        // Find return index (next record at caller_pc + 4)
-        let ret_idx =
-            (idx + 1..total.min(idx + 200)).find(|&i| trace.record(i).pc == rec.pc.wrapping_add(4));
+        // Find return index (next record at caller_pc + 4, bounded scan).
+        let ret_idx = (idx + 1..total.min(idx + RETURN_SCAN_WINDOW))
+            .find(|&i| trace.record(i).pc == rec.pc.wrapping_add(4));
 
         let ret_val_x0 = ret_idx.map(|ri| trace.record(ri).reg("x0").unwrap_or(0) as i64);
 
@@ -246,7 +253,6 @@ fn is_call_inst(inst: u32) -> (bool, bool) {
     // bl:  100101xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     // blr: 1101011000111111000000xxxxx00000
     let is_bl = (inst >> 26) == 0b100101;
-    let is_blr = (inst >> 10) == 0b1101011000111111000000 >> 10;
     let is_blr_exact = (inst & 0xFFFFFC1F) == 0xD63F0000;
     (is_bl, is_blr_exact)
 }

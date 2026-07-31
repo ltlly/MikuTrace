@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn cmd_vm_backstep(
     trace_dir: PathBuf,
     idx: usize,
@@ -454,6 +455,7 @@ pub(super) fn batch_lineage_next_action(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn cmd_vm_backchain(
     trace_dir: PathBuf,
     idx: usize,
@@ -527,6 +529,7 @@ pub(super) async fn cmd_vm_backtree(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn vm_backchain_value_on(
     app: &axum::Router,
     idx: usize,
@@ -564,7 +567,7 @@ pub(super) async fn vm_backchain_value_on(
             break;
         }
         let step = vm_backstep_value_on(
-            &app,
+            app,
             current_idx,
             current_reg.clone(),
             context,
@@ -822,13 +825,13 @@ pub(super) fn choose_frontier_next_for_lane(
     if candidates.is_empty() {
         candidates = frontiers
             .iter()
-            .filter_map(|frontier| {
+            .map(|frontier| {
                 let value = frontier
                     .get("value")
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
                 let score = frontier_value_score(&value);
-                Some((score, frontier))
+                (score, frontier)
             })
             .collect::<Vec<_>>();
     }
@@ -1350,7 +1353,7 @@ pub(super) fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value
                 && node
                     .get("frontier_nexts")
                     .and_then(|v| v.as_array())
-                    .map_or(true, |items| items.is_empty())
+                    .is_none_or(|items| items.is_empty())
         })
         .take(64)
         .map(compact_tree_node_summary)
@@ -1380,7 +1383,7 @@ pub(super) fn vm_backtree_summary(tree: &serde_json::Value) -> serde_json::Value
                     && node
                         .get("frontier_nexts")
                         .and_then(|v| v.as_array())
-                        .map_or(true, |items| items.is_empty()))
+                        .is_none_or(|items| items.is_empty()))
         })
         .take(64)
         .map(compact_tree_node_summary)

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "vm-ops top level.",
+  "properties": {
+    "chunk_size": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "end": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ops": {
+      "items": true,
+      "type": "array"
+    },
+    "ops_returned": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_chunks": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_maybe_truncated": {
+      "type": "boolean"
+    },
+    "source_requested": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_returned": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "start": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "type": "string"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "vm_base_ip": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "vm_profile": true,
+    "vm_rows": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "vm_state_base": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "start",
+    "end",
+    "vm_profile",
+    "source_requested",
+    "source_returned",
+    "source_maybe_truncated",
+    "source_chunks",
+    "chunk_size",
+    "vm_rows",
+    "ops_returned",
+    "truncated",
+    "ops"
+  ],
+  "title": "VmOpsReport",
+  "type": "object"
+}

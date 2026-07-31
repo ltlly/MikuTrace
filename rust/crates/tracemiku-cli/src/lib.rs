@@ -19,11 +19,11 @@ mod args;
 use args::*;
 mod output_provenance;
 use output_provenance::*;
-mod output_types;
+pub mod output_types;
 use output_types::*;
-mod output_vm;
+pub mod output_vm;
 use output_vm::*;
-mod output_lineage;
+pub mod output_lineage;
 use output_lineage::*;
 mod output_semantics;
 use output_semantics::*;
@@ -541,6 +541,11 @@ pub async fn run() -> anyhow::Result<()> {
                 route_get_json(trace_dir, path).await
             }
         }
+        Some(Cmd::MemTenet {
+            trace_dir,
+            addr,
+            length,
+        }) => cmd_mem_tenet(trace_dir, addr, length),
         Some(Cmd::MemExport {
             trace_dir,
             addr,
@@ -978,7 +983,7 @@ pub async fn run() -> anyhow::Result<()> {
             if let Some(obj) = value.as_object_mut() {
                 let has_findings = obj.iter().any(|(k, v)| {
                     (k.contains("findings") || k.contains("hits") || k.contains("instructions"))
-                        && v.as_array().map_or(false, |a| !a.is_empty())
+                        && v.as_array().is_some_and(|a| !a.is_empty())
                 });
                 if !has_findings {
                     obj.insert(
@@ -1057,23 +1062,6 @@ pub async fn run() -> anyhow::Result<()> {
                 "show_per_byte": show_per_byte,
             });
             route_post_json(trace_dir, "/api/diff-traces".to_string(), body).await
-        }
-        Some(Cmd::FieldAt {
-            trace_dir,
-            pc,
-            reg,
-            offset,
-            so,
-            backend,
-        }) => {
-            let mut params = vec![("pc", pc), ("reg", reg), ("offset", offset)];
-            if let Some(so) = so {
-                params.push(("so", so.display().to_string()));
-            }
-            if let Some(backend) = backend {
-                params.push(("backend", backend));
-            }
-            route_get_json(trace_dir, route_path("/api/field-at", &params)).await
         }
         Some(Cmd::AsmTokensForPcs { trace_dir, pcs }) => {
             route_get_json(

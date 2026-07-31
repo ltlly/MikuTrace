@@ -24,8 +24,8 @@ tokio.workspace = true
 tower.workspace = true
 tracemiku-core.workspace = true
 tracemiku-server.workspace = true
+schemars.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
-schemars.workspace = true
 jsonschema.workspace = true

@@ -2196,6 +2196,7 @@ dependencies = [
  "capstone",
  "memmap2",
  "petgraph",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",

@@ -402,6 +402,15 @@ pub(super) enum Cmd {
         #[arg(long)]
         cstr: bool,
     },
+    /// Tenet-style export: per-byte provenance (writer idx / initial /
+    /// unknown) for a memory range, without fabricating missing memory.
+    MemTenet {
+        trace_dir: PathBuf,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 64)]
+        length: usize,
+    },
     /// GET /api/mem-export — export runtime-decrypted bytes by (SO,offset,len).
     ///
     /// Reconstructs the real bytes the program saw (MemShadow w/x/i layers) for
@@ -847,20 +856,6 @@ pub(super) enum Cmd {
         show_offsets: bool,
         #[arg(long, default_value_t = false)]
         show_per_byte: bool,
-    },
-    /// GET /api/field-at.
-    FieldAt {
-        trace_dir: PathBuf,
-        #[arg(long)]
-        pc: String,
-        #[arg(long)]
-        reg: String,
-        #[arg(long, default_value = "0")]
-        offset: String,
-        #[arg(long)]
-        so: Option<PathBuf>,
-        #[arg(long)]
-        backend: Option<String>,
     },
     /// GET /api/asm-tokens-for-pcs.
     AsmTokensForPcs {

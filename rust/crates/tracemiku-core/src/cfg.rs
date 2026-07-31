@@ -628,7 +628,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cd = dir.path().join("run").join("calls").join("c");
         std::fs::create_dir_all(&cd).unwrap();
-        std::fs::write(cd.join("trace.bin"), &[]).unwrap();
+        std::fs::write(cd.join("trace.bin"), []).unwrap();
         std::fs::write(cd.join("meta.json"), r#"{"records":0}"#).unwrap();
         std::fs::write(
             dir.path().join("run").join("meta.json"),

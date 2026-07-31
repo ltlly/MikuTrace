@@ -23,7 +23,9 @@ use std::path::PathBuf;
 use std::thread;
 
 use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
+use crate::sidecar_io::{invalid_data, read_len, read_u64, write_u64};
 use crate::trace::Trace;
+use serde::Serialize;
 
 /// One byte-level memory event: which trace-record idx touched this byte,
 /// the byte value, and the kind ("r" = load, "w" = store, "x" = external/
@@ -308,7 +310,7 @@ impl MemShadow {
             let event_len = read_len(&mut f)?;
             let mut evs = Vec::with_capacity(event_len);
             for _ in 0..event_len {
-                let idx = read_usize_u64(&mut f)?;
+                let idx = read_len(&mut f)?;
                 let mut bb = [0u8; 2];
                 f.read_exact(&mut bb)?;
                 let kind = code_to_kind(bb[1])?;
@@ -641,7 +643,7 @@ fn write_memrec(w: &mut impl Write, rec: &MemRec) -> std::io::Result<()> {
 
 fn read_memrec(r: &mut impl Read) -> std::io::Result<MemRec> {
     Ok(MemRec {
-        idx: read_usize_u64(r)?,
+        idx: read_len(r)?,
         addr: read_u64(r)?,
         size: read_u32(r)?,
         value: read_u64(r)?,
@@ -651,32 +653,11 @@ fn read_memrec(r: &mut impl Read) -> std::io::Result<MemRec> {
 fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
-
-fn write_u64(w: &mut impl Write, v: u64) -> std::io::Result<()> {
-    w.write_all(&v.to_le_bytes())
-}
-
 fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
     let mut b = [0u8; 4];
     r.read_exact(&mut b)?;
     Ok(u32::from_le_bytes(b))
 }
-
-fn read_u64(r: &mut impl Read) -> std::io::Result<u64> {
-    let mut b = [0u8; 8];
-    r.read_exact(&mut b)?;
-    Ok(u64::from_le_bytes(b))
-}
-
-fn read_len(r: &mut impl Read) -> std::io::Result<usize> {
-    read_usize_u64(r)
-}
-
-fn read_usize_u64(r: &mut impl Read) -> std::io::Result<usize> {
-    let v = read_u64(r)?;
-    usize::try_from(v).map_err(|_| invalid_data("memshadow sidecar usize overflow"))
-}
-
 fn kind_to_code(kind: &str) -> std::io::Result<u8> {
     match kind {
         "r" => Ok(0),
@@ -694,9 +675,75 @@ fn code_to_kind(code: u8) -> std::io::Result<&'static str> {
         _ => Err(invalid_data("bad memshadow event kind code")),
     }
 }
+/// One byte's provenance in a Tenet-style export.
+#[derive(Debug, Clone, Serialize)]
+pub struct TenetByte {
+    pub offset: u64,
+    pub value: u8,
+    pub source: TenetSource,
+}
 
-fn invalid_data(msg: &'static str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
+/// Where a dumped byte came from: a concrete writer, the initial snapshot,
+/// or explicitly unknown. Never fabricated.
+#[derive(Debug, Clone, Serialize)]
+pub struct TenetSource {
+    /// "store", "external", "initial", or "unknown".
+    pub kind: String,
+    /// Trace record idx of the writer (None for initial/unknown).
+    pub idx: Option<usize>,
+}
+
+/// Tenet-style export of a contiguous byte range.
+#[derive(Debug, Clone, Serialize)]
+pub struct TenetDump {
+    pub addr: u64,
+    pub len: usize,
+    pub bytes: Vec<TenetByte>,
+}
+
+impl MemShadow {
+    /// Export `len` bytes starting at `addr` with per-byte provenance. Each
+    /// byte is tagged with its latest writer (store/external), the initial
+    /// snapshot value, or `unknown` when no evidence exists — missing memory
+    /// is never fabricated. `t` is the trace index at which to evaluate the
+    /// memory state (default: all events). Capped at 1 MiB to bound output.
+    pub fn tenet_export(&self, addr: u64, len: usize) -> Result<TenetDump, String> {
+        const MAX_TENET_LEN: usize = 1 << 20;
+        if len == 0 || len > MAX_TENET_LEN {
+            return Err(format!(
+                "tenet export len {len} out of range (1..{MAX_TENET_LEN})"
+            ));
+        }
+        let t = u64::MAX;
+        let mut bytes = Vec::with_capacity(len);
+        for off in 0..len as u64 {
+            let (value, kind, idx) = self.byte_at(addr.wrapping_add(off), t);
+            let source = match (kind, idx) {
+                ("w", Some(i)) => TenetSource {
+                    kind: "store".into(),
+                    idx: Some(i),
+                },
+                ("x", Some(i)) => TenetSource {
+                    kind: "external".into(),
+                    idx: Some(i),
+                },
+                ("i", _) => TenetSource {
+                    kind: "initial".into(),
+                    idx: None,
+                },
+                _ => TenetSource {
+                    kind: "unknown".into(),
+                    idx: None,
+                },
+            };
+            bytes.push(TenetByte {
+                offset: off,
+                value: value.unwrap_or(0),
+                source,
+            });
+        }
+        Ok(TenetDump { addr, len, bytes })
+    }
 }
 
 #[cfg(test)]

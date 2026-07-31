@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "output-map top level: `output_base64_group_map` report (full mode).",
+  "properties": {
+    "base64_context": true,
+    "find_mem_pattern": true,
+    "group_total": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "groups": {
+      "items": true,
+      "type": "array"
+    },
+    "hit_candidates": {
+      "items": true,
+      "type": "array"
+    },
+    "index_tree_depth": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "index_tree_max_nodes": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "selected_group_end": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "selected_group_start": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "selected_hit": true,
+    "selected_hit_order": {
+      "type": "string"
+    },
+    "selected_hit_rank": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "selected_range": true,
+    "selected_semantic_range": true,
+    "semantic_writer_map": true,
+    "source": true,
+    "status": {
+      "type": "string"
+    },
+    "strategy": {
+      "type": "string"
+    },
+    "text_len": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tree_frontier_with_next": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "status",
+    "strategy",
+    "source",
+    "text_len",
+    "base64_context",
+    "group_total",
+    "selected_group_start",
+    "selected_group_end",
+    "selected_hit_order",
+    "selected_hit_rank",
+    "tree_frontier_with_next",
+    "index_tree_depth",
+    "index_tree_max_nodes",
+    "hit_candidates",
+    "selected_range",
+    "find_mem_pattern",
+    "semantic_writer_map",
+    "groups"
+  ],
+  "title": "OutputMapReport",
+  "type": "object"
+}

@@ -5,6 +5,7 @@
 use std::fs;
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -46,7 +47,7 @@ pub enum MetaError {
     UnsupportedRecordSize { found: usize, expected: usize },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ModuleInfo {
     pub name: String,
     pub base: String, // hex with 0x prefix

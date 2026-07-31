@@ -55,6 +55,17 @@ pub(super) fn cmd_stats(
     })?)
 }
 
+/// Core-direct Tenet export: per-byte provenance for a memory range.
+/// Analysis lives in `MemShadow::tenet_export`; this only parses args and
+/// prints the structured result.
+pub(super) fn cmd_mem_tenet(trace_dir: PathBuf, addr: String, length: usize) -> anyhow::Result<()> {
+    let trace = tracemiku_core::prelude::Trace::load(&trace_dir)?;
+    let mem = tracemiku_core::prelude::MemShadow::load_or_build(&trace);
+    let addr = parse_u64_str(&addr).ok_or_else(|| anyhow::anyhow!("invalid addr: {addr}"))?;
+    let dump = mem.tenet_export(addr, length).map_err(anyhow::Error::msg)?;
+    print_pretty(&serde_json::to_value(&dump)?)
+}
+
 pub(super) async fn route_get_json(trace_dir: PathBuf, path: String) -> anyhow::Result<()> {
     let value = route_get_json_value(trace_dir, path).await?;
     print_pretty(&value)
@@ -157,6 +168,7 @@ pub(super) async fn resolve_offset_to_idx(
     Ok((idx as usize, pc))
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn cmd_byte_writer_map(
     trace_dir: PathBuf,
     addr: String,
@@ -434,6 +446,7 @@ pub(super) async fn jni_output_string_pairs_on(
     }))
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) fn cmd_scan_jni_output_strings(
     path: PathBuf,
     key: Option<String>,

@@ -1,0 +1,92 @@
+{
+  "$defs": {
+    "ModuleInfo": {
+      "properties": {
+        "base": {
+          "type": "string"
+        },
+        "end": {
+          "default": "",
+          "description": "Computed: hex(int(base, 16) + size).",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "base",
+        "size"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "stats command top level.",
+  "properties": {
+    "cmd": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "fn_addr": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "method": {
+      "type": "string"
+    },
+    "module": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModuleInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "modules": {
+      "items": {
+        "$ref": "#/$defs/ModuleInfo"
+      },
+      "type": "array"
+    },
+    "modules_total": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "modules_truncated": {
+      "type": "boolean"
+    },
+    "path": {
+      "type": "string"
+    },
+    "records": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "path",
+    "records",
+    "method",
+    "modules",
+    "modules_total",
+    "modules_truncated"
+  ],
+  "title": "StatsReport",
+  "type": "object"
+}

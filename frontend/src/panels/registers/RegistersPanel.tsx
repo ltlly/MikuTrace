@@ -1,6 +1,8 @@
 import { createMemo, createSignal, createResource, For, Show } from "solid-js";
 
 import { fetchLastWriteOfReg, fetchRecord } from "~/api/client";
+import { clamp } from "~/utils/math";
+import { normalizeReg } from "~/utils/bnTokens";
 
 interface RegistersPanelProps {
   idx: number;
@@ -63,10 +65,6 @@ const DEFAULT_REG_COLS: RegCols = {
   note: 220,
 };
 
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, n));
-}
-
 function initialRegCols(): RegCols {
   try {
     const raw = localStorage.getItem(REG_COLS_KEY);
@@ -94,25 +92,18 @@ function sortedRegs(regs: Record<string, string>): [string, string][] {
 
 function prevValue(reg: string, prevRegs: Record<string, string> | undefined): string | undefined {
   if (!prevRegs) return undefined;
-  return prevRegs[reg] ?? prevRegs[aliasReg(reg)];
-}
-
-function aliasReg(reg: string): string {
-  if (reg === "fp") return "x29";
-  if (reg === "lr") return "x30";
-  if (reg === "x29") return "fp";
-  if (reg === "x30") return "lr";
-  return reg;
+  const canonical = normalizeReg(reg);
+  return prevRegs[canonical] ?? prevRegs[reg];
 }
 
 function regListHas(regs: string[] | undefined, reg: string): boolean {
   if (!regs) return false;
-  const alias = aliasReg(reg);
-  return regs.includes(reg) || regs.includes(alias);
+  const canonical = normalizeReg(reg);
+  return regs.includes(reg) || regs.includes(canonical);
 }
 
 function sameSelected(a: string, b: string): boolean {
-  return a === b || aliasReg(a) === b || aliasReg(b) === a;
+  return normalizeReg(a) === normalizeReg(b);
 }
 
 function parseHex(value: string | undefined): bigint | null {

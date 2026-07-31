@@ -524,6 +524,9 @@ export interface TaintRow {
   parent_idxs?: number[];
   taint_depth?: number;
   frame_depth?: number;   // present iff cross_fn_call=true was passed
+  is_branch?: boolean;    // from server decode (forward-taint rows)
+  is_call?: boolean;
+  is_ret?: boolean;
 }
 
 export interface TaintGraphNode {

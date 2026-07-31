@@ -8,6 +8,7 @@ import {
   fetchRecord,
 } from "~/api/client";
 import type { MemDumpByte, MemWritesInRangeResponse, TouchingRangeResponse } from "~/api/types";
+import { clamp } from "~/utils/math";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
@@ -63,10 +64,6 @@ interface MemCols {
   addr: number;
   hex: number;
   ascii: number;
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n));
 }
 
 function initialMemCols(): MemCols {

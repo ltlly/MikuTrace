@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn cmd_vm_slice(
     trace_dir: PathBuf,
     start: usize,
@@ -27,6 +28,7 @@ pub(super) async fn cmd_vm_slice(
     })?)
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn cmd_vm_ops(
     trace_dir: PathBuf,
     start: usize,
@@ -1569,6 +1571,7 @@ pub(super) struct LoadedVmRows {
     inferred_base: Option<u64>,
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn load_vm_rows_chunked(
     trace_dir: PathBuf,
     start: usize,

@@ -526,13 +526,13 @@ pub fn build_fingerprints() -> Vec<Fingerprint> {
         "XXH64.PRIME1_lo",
         Category::Hash,
         "XXH64",
-        0x9e3779b1,
+        0x85ebca87,
     ));
     fps.push(exact(
         "XXH64.PRIME2_lo",
         Category::Hash,
         "XXH64",
-        0x85ebca77,
+        0x27d4eb4f,
     ));
 
     // === MurmurHash3 ===
@@ -546,7 +546,7 @@ pub fn build_fingerprints() -> Vec<Fingerprint> {
         "FNV64.offset_lo",
         Category::Hash,
         "FNV-1a",
-        0xcbf29ce4,
+        0x84222325,
     ));
     fps.push(exact(
         "FNV64.prime_lo",
@@ -837,7 +837,12 @@ pub fn scan_combined(trace: &Trace) -> (ConstScanResult, CryptoInstrResult) {
             }
         })
         .collect();
-    summaries.sort_by(|a, b| b.total_hits.cmp(&a.total_hits));
+    // Desc by total_hits; name tie-break keeps output deterministic.
+    summaries.sort_by(|a, b| {
+        b.total_hits
+            .cmp(&a.total_hits)
+            .then_with(|| a.name.cmp(&b.name))
+    });
 
     let const_result = ConstScanResult {
         hits: const_hits,

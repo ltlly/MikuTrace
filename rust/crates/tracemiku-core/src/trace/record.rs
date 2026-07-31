@@ -27,26 +27,12 @@ pub struct Record {
 }
 
 impl Record {
-    /// Read register by canonical name. Returns `None` if name is not one of
-    /// `x0..x28`, `fp`, `lr`, `sp`, `pc`, `nzcv`. Mirrors Python `Record.reg`.
+    /// Read register by canonical name. Accepts `x0..x30`, `fp`/`x29`, `lr`/`x30`,
+    /// `w0..w30` (32-bit masked), `xzr`/`wzr`, `sp`, `pc`, `nzcv`. Returns `None`
+    /// for unknown names. Alias of `reg_by_name` — the two APIs must never
+    /// diverge; contract test `record_reg_contract_tests` enforces equality.
     pub fn reg(&self, name: &str) -> Option<u64> {
-        match name {
-            "pc" => Some(self.pc),
-            "sp" => Some(self.sp),
-            "nzcv" => Some(self.nzcv as u64),
-            "fp" => Some(self.regs[29]),
-            "lr" => Some(self.regs[30]),
-            _ => {
-                if let Some(rest) = name.strip_prefix('x') {
-                    if let Ok(i) = rest.parse::<usize>() {
-                        if i <= 28 {
-                            return Some(self.regs[i]);
-                        }
-                    }
-                }
-                None
-            }
-        }
+        self.reg_by_name(name)
     }
 
     /// Symbolic register lookup tolerant of `xzr`/`wzr`/`w*` aliases. Used by
@@ -170,7 +156,7 @@ mod tests {
         assert_eq!(r.reg("lr"), Some(0xbabe));
         assert_eq!(r.reg("sp"), Some(0xfffe));
         assert_eq!(r.reg("nzcv"), Some(0b1010));
-        assert_eq!(r.reg("x29"), None, "x29 (fp alias) not supported by name");
+        assert_eq!(r.reg("x29"), Some(0xcafe), "x29 is fp alias");
         assert_eq!(r.reg("xx"), None);
         assert_eq!(r.reg(""), None);
 

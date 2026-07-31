@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::calltree::{build_call_tree_indexed, CallNode};
 use crate::disasm::classify::is_conditional_branch_mnem;
 use crate::disasm::{addr_of, decode, DecodedInsn};
+use crate::index::trace_fingerprint;
 use crate::index::Index;
+use crate::sidecar_io::{invalid_data, read_len, read_string, read_u64, write_string, write_u64};
 use crate::symbols::SymbolMap;
 use crate::trace::Trace;
 
@@ -604,7 +606,7 @@ fn read_dependency_index(r: &mut impl Read) -> std::io::Result<DependencyIndex> 
     let len = read_len(r)?;
     let mut edges = Vec::with_capacity(len);
     for _ in 0..len {
-        let idx = read_usize_u64(r)?;
+        let idx = read_len(r)?;
         let mut kind = [0u8; 1];
         r.read_exact(&mut kind)?;
         edges.push(DepEdge {
@@ -631,7 +633,7 @@ fn read_mem_last_def_vec(r: &mut impl Read) -> std::io::Result<Vec<MemLastDefEnt
     for _ in 0..len {
         values.push(MemLastDefEntry {
             addr: read_u64(r)?,
-            idx: read_usize_u64(r)?,
+            idx: read_len(r)?,
             value: {
                 let mut b = [0u8; 1];
                 r.read_exact(&mut b)?;
@@ -660,7 +662,7 @@ fn read_reg_checkpoint_vec(r: &mut impl Read) -> std::io::Result<Vec<RegCheckpoi
     let len = read_len(r)?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
-        let idx = read_usize_u64(r)?;
+        let idx = read_len(r)?;
         let pc = read_u64(r)?;
         let mut regs = [0u64; 31];
         for reg in &mut regs {
@@ -698,21 +700,21 @@ fn write_summary(w: &mut impl Write, value: &AnalysisSummary) -> std::io::Result
 
 fn read_summary(r: &mut impl Read) -> std::io::Result<AnalysisSummary> {
     Ok(AnalysisSummary {
-        record_count: read_usize_u64(r)?,
-        unique_pc_count: read_usize_u64(r)?,
-        dependency_edge_count: read_usize_u64(r)?,
-        reg_dependency_edges: read_usize_u64(r)?,
-        address_dependency_edges: read_usize_u64(r)?,
-        mem_dependency_edges: read_usize_u64(r)?,
-        control_dependency_edges: read_usize_u64(r)?,
-        mem_read_count: read_usize_u64(r)?,
-        mem_write_count: read_usize_u64(r)?,
-        init_mem_loads: read_usize_u64(r)?,
-        call_count: read_usize_u64(r)?,
-        ret_count: read_usize_u64(r)?,
-        conditional_branch_count: read_usize_u64(r)?,
-        function_count: read_usize_u64(r)?,
-        call_tree_max_depth: read_usize_u64(r)?,
+        record_count: read_len(r)?,
+        unique_pc_count: read_len(r)?,
+        dependency_edge_count: read_len(r)?,
+        reg_dependency_edges: read_len(r)?,
+        address_dependency_edges: read_len(r)?,
+        mem_dependency_edges: read_len(r)?,
+        control_dependency_edges: read_len(r)?,
+        mem_read_count: read_len(r)?,
+        mem_write_count: read_len(r)?,
+        init_mem_loads: read_len(r)?,
+        call_count: read_len(r)?,
+        ret_count: read_len(r)?,
+        conditional_branch_count: read_len(r)?,
+        function_count: read_len(r)?,
+        call_tree_max_depth: read_len(r)?,
         sidecar_version: read_u32(r)?,
     })
 }
@@ -741,14 +743,14 @@ fn read_pc_summary_vec(r: &mut impl Read) -> std::io::Result<Vec<PcSummary>> {
         values.push(PcSummary {
             pc: read_u64(r)?,
             asm: read_string(r)?,
-            record_count: read_usize_u64(r)?,
-            first_idx: read_usize_u64(r)?,
-            last_idx: read_usize_u64(r)?,
-            mem_reads: read_usize_u64(r)?,
-            mem_writes: read_usize_u64(r)?,
-            calls: read_usize_u64(r)?,
-            rets: read_usize_u64(r)?,
-            conditional_branches: read_usize_u64(r)?,
+            record_count: read_len(r)?,
+            first_idx: read_len(r)?,
+            last_idx: read_len(r)?,
+            mem_reads: read_len(r)?,
+            mem_writes: read_len(r)?,
+            calls: read_len(r)?,
+            rets: read_len(r)?,
+            conditional_branches: read_len(r)?,
         });
     }
     Ok(values)
@@ -778,50 +780,14 @@ fn read_function_summary_vec(r: &mut impl Read) -> std::io::Result<Vec<FunctionS
         values.push(FunctionSummary {
             fn_pc: read_u64(r)?,
             fn_name: read_optional_string(r)?,
-            call_count: read_usize_u64(r)?,
-            total_records: read_usize_u64(r)?,
-            first_enter_idx: read_usize_u64(r)?,
-            last_exit_idx: read_usize_u64(r)?,
-            max_depth: read_usize_u64(r)?,
+            call_count: read_len(r)?,
+            total_records: read_len(r)?,
+            first_enter_idx: read_len(r)?,
+            last_exit_idx: read_len(r)?,
+            max_depth: read_len(r)?,
         });
     }
     Ok(values)
-}
-
-fn trace_fingerprint(trace: &Trace) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    const SAMPLE: usize = 4096;
-
-    fn mix(mut h: u64, bytes: &[u8]) -> u64 {
-        for byte in bytes {
-            h ^= u64::from(*byte);
-            h = h.wrapping_mul(FNV_PRIME);
-        }
-        h
-    }
-
-    fn mix_u64(h: u64, value: u64) -> u64 {
-        mix(h, &value.to_le_bytes())
-    }
-
-    let raw = trace.raw();
-    let len = raw.len();
-    let mut h = mix_u64(FNV_OFFSET, len as u64);
-    if len == 0 {
-        return h;
-    }
-    let mid = len.saturating_sub(SAMPLE) / 2;
-    let ranges = [
-        (0usize, len.min(SAMPLE)),
-        (mid, (mid + SAMPLE).min(len)),
-        (len.saturating_sub(SAMPLE), len),
-    ];
-    for (start, end) in ranges {
-        h = mix_u64(h, start as u64);
-        h = mix(h, &raw[start..end]);
-    }
-    h
 }
 
 fn symbols_fingerprint(symbols: &SymbolMap) -> u64 {
@@ -917,52 +883,11 @@ fn read_optional_string(r: &mut impl Read) -> std::io::Result<Option<String>> {
         _ => Err(invalid_data("bad analysis sidecar option tag")),
     }
 }
-
-fn write_string(w: &mut impl Write, s: &str) -> std::io::Result<()> {
-    write_u64(w, s.len() as u64)?;
-    w.write_all(s.as_bytes())
-}
-
-fn read_string(r: &mut impl Read) -> std::io::Result<String> {
-    const MAX_STRING_BYTES: usize = 16 * 1024;
-    let len = read_len(r)?;
-    if len > MAX_STRING_BYTES {
-        return Err(invalid_data("analysis sidecar string too large"));
-    }
-    let mut bytes = vec![0u8; len];
-    r.read_exact(&mut bytes)?;
-    String::from_utf8(bytes).map_err(|_| invalid_data("analysis sidecar string is not utf-8"))
-}
-
 fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
-
-fn write_u64(w: &mut impl Write, v: u64) -> std::io::Result<()> {
-    w.write_all(&v.to_le_bytes())
-}
-
 fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
     let mut b = [0u8; 4];
     r.read_exact(&mut b)?;
     Ok(u32::from_le_bytes(b))
-}
-
-fn read_u64(r: &mut impl Read) -> std::io::Result<u64> {
-    let mut b = [0u8; 8];
-    r.read_exact(&mut b)?;
-    Ok(u64::from_le_bytes(b))
-}
-
-fn read_len(r: &mut impl Read) -> std::io::Result<usize> {
-    read_usize_u64(r)
-}
-
-fn read_usize_u64(r: &mut impl Read) -> std::io::Result<usize> {
-    let v = read_u64(r)?;
-    usize::try_from(v).map_err(|_| invalid_data("analysis sidecar usize overflow"))
-}
-
-fn invalid_data(msg: &'static str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
 }

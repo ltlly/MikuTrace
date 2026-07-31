@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "vm-slice top level.",
+  "properties": {
+    "end": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "only_vm": {
+      "type": "boolean"
+    },
+    "records": {
+      "items": true,
+      "type": "array"
+    },
+    "returned": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_returned": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "start": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "type": "string"
+    },
+    "vm_base_ip": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "vm_profile": true
+  },
+  "required": [
+    "status",
+    "start",
+    "end",
+    "vm_profile",
+    "returned",
+    "source_returned",
+    "only_vm",
+    "records"
+  ],
+  "title": "VmSliceReport",
+  "type": "object"
+}

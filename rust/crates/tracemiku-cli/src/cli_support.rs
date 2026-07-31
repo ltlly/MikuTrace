@@ -59,7 +59,7 @@ pub(super) fn cmd_mem_export_write(value: &serde_json::Value, out: &Path) -> any
         .get("hex")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("mem-export response missing hex field"))?;
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         bail!("mem-export hex length is odd ({} chars)", hex.len());
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
@@ -579,7 +579,7 @@ pub(super) fn parse_hex_bytes_cli(raw: &str) -> anyhow::Result<Vec<u8>> {
     if s.is_empty() {
         bail!("empty hex byte string");
     }
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         bail!("hex byte string must contain an even number of nybbles");
     }
     let mut out = Vec::with_capacity(s.len() / 2);
@@ -597,7 +597,7 @@ pub(super) fn find_hex_byte_offsets(haystack_hex: &str, needle_hex: &str) -> Vec
     let mut needle = needle_hex.trim().to_ascii_lowercase();
     haystack.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
     needle.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
-    if needle.is_empty() || needle.len() % 2 != 0 || haystack.len() < needle.len() {
+    if needle.is_empty() || !needle.len().is_multiple_of(2) || haystack.len() < needle.len() {
         return Vec::new();
     }
     (0..=haystack.len() - needle.len())

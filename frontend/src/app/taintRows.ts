@@ -1,7 +1,6 @@
 import type { RecordRow, TaintRow } from "../api/types";
 
 export function recordRowFromTaintRow(row: TaintRow): RecordRow {
-  const mnemonic = row.asm.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
   return {
     idx: row.idx,
     pc: row.pc,
@@ -12,8 +11,15 @@ export function recordRowFromTaintRow(row: TaintRow): RecordRow {
     asm: row.asm,
     annotation: row.why ?? row.via ?? null,
     exec_count: null,
-    is_branch: mnemonic.startsWith("b") || mnemonic === "cbz" || mnemonic === "cbnz" || mnemonic === "tbz" || mnemonic === "tbnz",
-    is_call: mnemonic === "bl" || mnemonic === "blr",
-    is_ret: mnemonic === "ret",
+    // Classification comes from the server decode; fall back to a minimal
+    // mnemonic check only for older responses without the fields.
+    is_branch: row.is_branch ?? mnemonicStartsWithB(row.asm),
+    is_call: row.is_call ?? (row.asm.trim().startsWith("bl") || row.asm.trim().startsWith("blr")),
+    is_ret: row.is_ret ?? row.asm.trim().startsWith("ret"),
   };
+}
+
+function mnemonicStartsWithB(asm: string): boolean {
+  const m = asm.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  return m.startsWith("b") || m === "cbz" || m === "cbnz" || m === "tbz" || m === "tbnz";
 }

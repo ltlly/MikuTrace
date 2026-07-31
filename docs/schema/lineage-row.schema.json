@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "byte-lineage batch result entry: one byte's lineage row.",
+  "properties": {
+    "addr": {
+      "type": "string"
+    },
+    "lineage": true,
+    "offset": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "offset",
+    "addr",
+    "lineage"
+  ],
+  "title": "LineageRow",
+  "type": "object"
+}

@@ -49,6 +49,8 @@ test-fast:
 test-contract:
 	@echo "=== contract coverage audit ==="
 	$(PYTHON) scripts/contract_audit.py
+	cd rust && $(CARGO) clippy --workspace --lib -- -D warnings
+	cd rust && $(CARGO) run -p tracemiku-cli --bin gen_schemas
 	cd rust && $(CARGO) test -p tracemiku-cli
 	cd rust && $(CARGO) test -p tracemiku-server
 	cd rust && $(CARGO) test -p tracemiku-core

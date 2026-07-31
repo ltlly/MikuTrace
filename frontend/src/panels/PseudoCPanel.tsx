@@ -3,6 +3,7 @@ import type { Accessor } from "solid-js";
 
 import { fetchIdxsForPc, fetchLlilPipeline, fetchRecords, fetchRegValueAt } from "~/api/client";
 import type { PipelineResponse } from "~/api/types";
+import { extractPc } from "~/utils/asm";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import { parseCType } from "~/utils/cTypeParser";
@@ -267,12 +268,6 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   createEffect(() => { if (isLarge()) setCollapsed(true); });
 
   // Extract PC from a line (first hex address)
-  function extractPc(line: string): number | null {
-    const m = line.match(/0x([0-9a-f]{8,})/i);
-    if (m) return parseInt(m[1], 16);
-    return null;
-  }
-
   // Handle line click → jump assembly to that PC
   async function handleLineClick(raw: string) {
     const pc = extractPc(raw);

@@ -533,6 +533,7 @@ pub(super) fn same_tree_next(a: &serde_json::Value, b: &serde_json::Value) -> bo
         && a.get("reg").and_then(|v| v.as_str()) == b.get("reg").and_then(|v| v.as_str())
 }
 
+#[allow(clippy::too_many_arguments)] // tree compaction carries context; refactor is separate work
 pub(super) fn compact_backtree_node(
     id: usize,
     parent: Option<usize>,
@@ -591,6 +592,7 @@ pub(super) fn compact_vm_row(row: Option<&serde_json::Value>) -> serde_json::Val
     })
 }
 
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
 pub(super) async fn vm_backstep_value_on(
     app: &axum::Router,
     idx: usize,
@@ -1192,6 +1194,7 @@ pub(super) fn bytecode_read_summary(row: &serde_json::Value) -> Option<serde_jso
     }))
 }
 
+#[allow(clippy::needless_return)] // branch style: every arm returns; tail-expression refactor is separate work
 pub(super) fn vm_slot_access_summaries(row: &serde_json::Value) -> Vec<serde_json::Value> {
     let Some(slot) = row.get("vm_slot") else {
         return Vec::new();
@@ -1850,7 +1853,7 @@ pub(super) fn call_target_from_asm_record(
     asm: &str,
     record: &serde_json::Value,
 ) -> Option<(String, u64)> {
-    let mut parts = asm.trim().split_whitespace();
+    let mut parts = asm.split_whitespace();
     let op = parts.next()?;
     match op {
         "bl" => {
@@ -2080,8 +2083,8 @@ pub(super) fn byte_writers_from_range_writes(
         let byte_addr = addr.saturating_add(offset);
         let last_write = writes
             .iter()
-            .filter(|write| mem_write_touches_addr(write, byte_addr))
-            .last()
+            .rev()
+            .find(|write| mem_write_touches_addr(write, byte_addr))
             .cloned();
         out.push(byte_writer_entry(offset, byte_addr, last_write));
     }

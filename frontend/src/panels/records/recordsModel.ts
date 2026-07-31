@@ -1,4 +1,5 @@
 import type { CallNode, RecordRow } from "~/api/types";
+import { clamp } from "~/utils/math";
 import { normalizeReg } from "~/utils/bnTokens";
 
 export const ROW_HEIGHT = 18;
@@ -138,10 +139,6 @@ export function collectFoldRanges(node: CallNode, out: FoldRange[] = []): FoldRa
   }
   for (const child of node.children ?? []) collectFoldRanges(child, out);
   return out;
-}
-
-export function clamp(value: number, lower: number, upper: number): number {
-  return Math.min(upper, Math.max(lower, value));
 }
 
 function isRowMarkColor(value: unknown): value is RowMarkColor {

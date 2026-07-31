@@ -254,6 +254,7 @@ fn last_cond_before(index: &Index, before_idx: usize) -> Option<usize> {
     Some(ctrl_idx)
 }
 
+#[allow(clippy::too_many_arguments)] // BFS pipeline passes data dependencies; refactor is separate work.
 fn push_control_dependency(
     trace: &Trace,
     index: &Index,
@@ -306,7 +307,8 @@ enum BwdItem {
         edge_kind: &'static str,
     },
     /// Chase the writer of memory `[addr, addr+size)` strictly before
-    /// `before_idx` (exact-addr fast path; M3-γ Task 2 adds byte-overlap).
+    /// `before_idx`. Exact-addr fast path when `through_mem` is off;
+    /// byte-overlap resolution when on (see `mem_writers_overlapping`).
     Mem {
         before_idx: usize,
         addr: u64,
@@ -771,7 +773,9 @@ fn mem_writers_overlapping(
     through_mem: bool,
 ) -> Vec<usize> {
     if !through_mem || mem.is_none() {
-        // Exact-addr mode: ONLY the latest writer < before_idx.
+        // Exact-addr mode: ONLY the latest writer < before_idx. The current
+        // value at `addr` is defined by the most recent write; older writes
+        // are shadowed and must not appear as provenance sources.
         let Some(writers) = index.mem_addr_to_writes.get(&addr) else {
             return Vec::new();
         };
@@ -781,7 +785,10 @@ fn mem_writers_overlapping(
         }
         return vec![writers[pos - 1]];
     }
-    // Byte-overlap mode: scan bytes, collect unique writers, descending.
+    // Byte-overlap mode: for each byte, take the latest writer < before_idx,
+    // then dedupe. Granularity is per-byte; semantics are the same as exact
+    // mode — shadowed historical writers are NOT included (see
+    // taint_through_mem_contract_tests).
     let mem = mem.unwrap();
     let mut seen: HashSet<usize> = HashSet::new();
     for o in 0..size as u64 {
@@ -1001,14 +1008,9 @@ pub fn backward_taint_ext(
                 }
                 visited.insert((cur_idx, want_reg.clone()));
 
-                let Some(defs) = index.reg_defs.get(&want_reg) else {
+                let Some(j) = index.last_def_before(&want_reg, cur_idx) else {
                     continue;
                 };
-                let pos = defs.partition_point(|&d| d < cur_idx);
-                if pos == 0 {
-                    continue;
-                }
-                let j = defs[pos - 1];
                 let parent_idxs = parent_idx.into_iter().collect::<Vec<_>>();
                 raw_out.push(RawBwdHit {
                     idx: j,

@@ -1,4 +1,5 @@
 import type { LayoutState } from "./types";
+import { clamp } from "~/utils/math";
 
 const HIDDEN_SOS_KEY = "tracemiku-hidden-sos";
 const FUNCTION_RENAMES_PREFIX = "tracemiku-function-renames:";
@@ -18,7 +19,7 @@ const DEFAULT_LAYOUT: LayoutState = {
 };
 
 export function clampNumber(n: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, n));
+  return clamp(n, lo, hi);
 }
 
 export function initialLayout(): LayoutState {

@@ -68,7 +68,7 @@ fn fold_unary(e: &LlilExpr) -> Option<i64> {
                 Some(v)
             } else {
                 let shift = 64 - bits;
-                Some(((v << shift) >> shift))
+                Some((v << shift) >> shift)
             }
         }
         LlilOp::Zx => {

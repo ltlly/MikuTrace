@@ -7,10 +7,11 @@
 //! see no change. `schemars` derives let us generate JSON Schema for the
 //! surfaces later without touching output code.
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 /// output-backtrace top level: `output_to_input_backward_trace` report.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct BacktraceReport {
     pub status: &'static str,
     pub strategy: &'static str,
@@ -28,7 +29,7 @@ pub const BACKTRACE_NOTES: [&str; 3] = [
 ];
 
 /// output-map top level: `output_base64_group_map` report (full mode).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OutputMapReport {
     pub status: &'static str,
     pub strategy: &'static str,
@@ -53,7 +54,7 @@ pub struct OutputMapReport {
 }
 
 /// stats command top level.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct StatsReport {
     pub path: String,
     pub records: usize,

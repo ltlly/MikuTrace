@@ -36,7 +36,7 @@ import { installPthreadFollowOnce, flushWorkerEvents } from "./hooks/pthread_fol
 import { refreshWritableRanges, flushExtWriteEvents } from "./hooks/boundary_diff";
 import { BUILTIN_PLUGINS } from "./anti_detect/plugin_interface";
 
-// ─────────── RegisterNatives fallback (merged from agent_generic.js) ────────
+// ─────────── RegisterNatives fallback ────────
 
 function hookRegisterNatives(onResolved: (fp: NativePointer) => void): boolean {
     const sym = Module.findExportByName(null, "JNI_GetCreatedJavaVMs");

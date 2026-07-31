@@ -7,6 +7,7 @@ import {
   fetchIdxsForPc,
   renderLlil,
 } from "~/api/client";
+import { extractPc } from "~/utils/asm";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { Accessor, Setter } from "solid-js";
 
@@ -141,12 +142,6 @@ function highlightLlilLine(
 }
 
 /** Extract the first hex PC (0x...) from a line of text. */
-function extractPc(line: string): number | null {
-  const m = line.match(/0x([0-9a-f]{8,})/i);
-  if (m) return parseInt(m[1], 16);
-  return null;
-}
-
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function DecompilerPanel(props: DecompilerPanelProps) {

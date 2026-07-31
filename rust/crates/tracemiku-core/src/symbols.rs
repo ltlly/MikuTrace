@@ -1,7 +1,9 @@
 //! Symbol resolution: PC → function name + offset, PC → module.
 //!
 //! Direct port of `viewer/symbols.py::{SymbolMap, ModuleResolver}`.
-//! Both use sorted-Vec + binary-search; sort happens via `freeze()` after
+//! Both keep entries in a Vec (sorted by `freeze()` after inserts); lookup is
+//! a linear scan. Entries are kept sorted so a future binary-search upgrade is
+//! safe, but the current implementation does not binary-search.
 //! all `add()` calls. Lookup is `&self` (no interior mutability).
 
 use std::collections::HashMap;

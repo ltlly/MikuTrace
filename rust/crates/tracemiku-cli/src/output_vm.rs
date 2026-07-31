@@ -1,9 +1,10 @@
 //! Typed output models for the vm command family (vm-slice / vm-ops).
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 /// vm-slice top level.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct VmSliceReport {
     pub status: &'static str,
     pub start: usize,
@@ -17,7 +18,7 @@ pub struct VmSliceReport {
 }
 
 /// vm-ops top level.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct VmOpsReport {
     pub status: &'static str,
     pub start: usize,

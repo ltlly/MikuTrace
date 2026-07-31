@@ -1,9 +1,10 @@
 //! Typed output models for the byte-lineage batch report.
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 /// byte-lineage batch result entry: one byte's lineage row.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct LineageRow {
     pub offset: usize,
     pub addr: String,
@@ -11,7 +12,7 @@ pub struct LineageRow {
 }
 
 /// byte-lineage batch top level (count > 1).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct LineageBatchReport {
     pub status: String,
     pub start_addr: String,

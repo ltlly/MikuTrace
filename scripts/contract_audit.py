@@ -20,6 +20,7 @@ SVR = REPO / "rust" / "crates" / "tracemiku-server" / "tests"
 # Keys are command names from args.rs; values are test files (no suffix).
 CLI_COVERAGE: dict[str, list[str]] = {
     "capabilities": ["contract_basic"],
+    "completions": ["contract_completions"],
     "stats": ["contract_basic"],
     "meta": ["contract_basic"],
     "list": ["contract_basic"],
@@ -44,9 +45,10 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "string-provenance": ["contract_query"],
     "mem-dump": ["contract_query"],
     "mem-export": ["contract_query"],
+    "mem-tenet": ["contract_tenet"],
     "find-mem-pattern": ["contract_query"],
-    "backward-taint": ["contract_query"],
-    "forward-taint": ["contract_query"],
+    "taint-bwd": ["contract_query"],
+    "taint-fwd": ["contract_query"],
     "data-chase": ["contract_query"],
     "dep-graph": ["contract_query"],
     "bfs-slice": ["contract_query"],
@@ -63,7 +65,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "hash-finalize-detect": ["contract_query"],
     "hash-input-search": ["contract_query"],
     "diff-traces": ["contract_query"],
-    "field-at": ["contract_query"],
     "asm-tokens-for-pcs": ["contract_query"],
     "bn-sidecar-status": ["contract_query"],
     "hlil-for-pc": ["contract_query"],
@@ -99,6 +100,18 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "vm-backstep": ["contract_vm"],
     "vm-backchain": ["contract_vm"],
     "vm-backtree": ["contract_vm"],
+    "api": ["contract_basic"],
+    "fork-events": ["contract_query"],
+    "functions": ["contract_query"],
+    "idxs-for-pc": ["contract_query"],
+    "idxs-touching-addr": ["contract_query"],
+    "idxs-touching-range": ["contract_query"],
+    "last-write-of-addr": ["contract_query"],
+    "llil-pipeline": ["contract_basic"],
+    "llil-render": ["contract_basic"],
+    "resolve-elf-symbol": ["contract_basic"],
+    "resolve-map-addr": ["contract_basic"],
+    "resolve-trace-addr": ["contract_basic"],
 }
 
 # Server routes -> contract test files that cover them. Values are existing or
@@ -125,7 +138,6 @@ ROUTE_COVERAGE: dict[str, list[str]] = {
     "dec_summary": ["test_dec_summary_route"],
     "dep_graph": ["dep_graph_tests"],
     "diff_traces": ["diff_traces_tests"],
-    "field_at": ["field_at_tests"],
     "fn_summary": ["fn_summary_tests"],
     "fork_events": ["fork_events_tests"],
     "forward_dep_tree": ["forward_dep_tree_tests"],
@@ -181,9 +193,38 @@ def check_coverage(mapping: dict[str, list[str]], root: Path) -> list[str]:
     return [s for s, files in mapping.items() if not any(file_has_tests(root, f) for f in files)]
 
 
+def live_cli_commands() -> list[str]:
+    """Actual command names from the built binary's capabilities output."""
+    import subprocess
+
+    bin_path = REPO / "rust" / "target" / "debug" / "tracemiku-cli"
+    if not bin_path.exists():
+        # Fall back to the declared mapping when the binary is not built.
+        return sorted(CLI_COVERAGE)
+    proc = subprocess.run(
+        [str(bin_path), "capabilities"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return sorted(CLI_COVERAGE)
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return sorted(CLI_COVERAGE)
+    return [c["name"] for c in data.get("commands", [])]
+
+
 def main() -> int:
     cli_gaps = check_coverage(CLI_COVERAGE, CLI)
     route_gaps = check_coverage(ROUTE_COVERAGE, SVR)
+    # Cross-check the declared command mapping against the real binary so a
+    # renamed/removed command cannot silently leave a stale audit entry.
+    live = set(live_cli_commands())
+    declared = set(CLI_COVERAGE)
+    stale = sorted(declared - live)
+    missing = sorted(live - declared)
     report = {
         "cli_commands_covered": len(CLI_COVERAGE) - len(cli_gaps),
         "cli_commands_total": len(CLI_COVERAGE),
@@ -191,9 +232,12 @@ def main() -> int:
         "server_routes_total": len(ROUTE_COVERAGE),
         "cli_gaps": cli_gaps,
         "route_gaps": route_gaps,
+        "cli_mapping_stale": stale,
+        "cli_mapping_missing": missing,
     }
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if not cli_gaps and not route_gaps else 1
+    stale_ok = not stale and not missing
+    return 0 if not cli_gaps and not route_gaps and stale_ok else 1
 
 
 if __name__ == "__main__":

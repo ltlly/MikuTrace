@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "LineageRow": {
+      "description": "byte-lineage batch result entry: one byte's lineage row.",
+      "properties": {
+        "addr": {
+          "type": "string"
+        },
+        "lineage": true,
+        "offset": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "offset",
+        "addr",
+        "lineage"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "byte-lineage batch top level (count > 1).",
+  "properties": {
+    "before_idx": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "count": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "decision_counts": {
+      "items": true,
+      "type": "array"
+    },
+    "error_count": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "frontier_groups": {
+      "items": true,
+      "type": "array"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/LineageRow"
+      },
+      "type": "array"
+    },
+    "start_addr": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "step_stats": true,
+    "upstream_counts": {
+      "items": true,
+      "type": "array"
+    }
+  },
+  "required": [
+    "status",
+    "start_addr",
+    "before_idx",
+    "count",
+    "mode",
+    "error_count",
+    "decision_counts",
+    "upstream_counts",
+    "step_stats",
+    "frontier_groups",
+    "results"
+  ],
+  "title": "LineageBatchReport",
+  "type": "object"
+}

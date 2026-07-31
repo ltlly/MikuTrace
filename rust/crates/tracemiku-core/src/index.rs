@@ -13,6 +13,7 @@ use std::thread;
 use crate::disasm::classify::is_conditional_branch_mnem;
 use crate::disasm::{addr_of, decode};
 use crate::parallel;
+use crate::sidecar_io::{invalid_data, read_len, read_string, read_u64, write_string, write_u64};
 use crate::trace::Trace;
 
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -330,7 +331,7 @@ fn push_mem_addr_idx(map: &mut HashMap<u64, Vec<usize>>, addr: u64, size: u32, i
     }
 }
 
-fn trace_fingerprint(trace: &Trace) -> u64 {
+pub(crate) fn trace_fingerprint(trace: &Trace) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     const SAMPLE: usize = 4096;
@@ -431,7 +432,7 @@ fn read_memrec_vec(r: &mut impl Read) -> std::io::Result<Vec<MemRec>> {
     let len = read_len(r)?;
     let mut recs = Vec::with_capacity(len);
     for _ in 0..len {
-        let idx = read_usize_u64(r)?;
+        let idx = read_len(r)?;
         let addr = read_u64(r)?;
         let size = read_u32(r)?;
         let mut tag = [0u8; 1];
@@ -463,56 +464,15 @@ fn read_usize_vec(r: &mut impl Read) -> std::io::Result<Vec<usize>> {
     let len = read_len(r)?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
-        values.push(read_usize_u64(r)?);
+        values.push(read_len(r)?);
     }
     Ok(values)
 }
-
-fn write_string(w: &mut impl Write, s: &str) -> std::io::Result<()> {
-    write_u64(w, s.len() as u64)?;
-    w.write_all(s.as_bytes())
-}
-
-fn read_string(r: &mut impl Read) -> std::io::Result<String> {
-    const MAX_STRING_BYTES: usize = 4096;
-    let len = read_len(r)?;
-    if len > MAX_STRING_BYTES {
-        return Err(invalid_data("index sidecar string too large"));
-    }
-    let mut bytes = vec![0u8; len];
-    r.read_exact(&mut bytes)?;
-    String::from_utf8(bytes).map_err(|_| invalid_data("index sidecar string is not utf-8"))
-}
-
 fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
-
-fn write_u64(w: &mut impl Write, v: u64) -> std::io::Result<()> {
-    w.write_all(&v.to_le_bytes())
-}
-
 fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
     let mut b = [0u8; 4];
     r.read_exact(&mut b)?;
     Ok(u32::from_le_bytes(b))
-}
-
-fn read_u64(r: &mut impl Read) -> std::io::Result<u64> {
-    let mut b = [0u8; 8];
-    r.read_exact(&mut b)?;
-    Ok(u64::from_le_bytes(b))
-}
-
-fn read_len(r: &mut impl Read) -> std::io::Result<usize> {
-    read_usize_u64(r)
-}
-
-fn read_usize_u64(r: &mut impl Read) -> std::io::Result<usize> {
-    let v = read_u64(r)?;
-    usize::try_from(v).map_err(|_| invalid_data("index sidecar usize overflow"))
-}
-
-fn invalid_data(msg: &'static str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
 }

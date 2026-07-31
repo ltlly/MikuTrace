@@ -11,10 +11,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# NOTE: clippy runs without `-D warnings` until the historical warning baseline
-# is cleaned (TODO P0: architecture governance). Once the workspace is clean,
-# add `RUSTFLAGS: -D warnings` here and `-D warnings` to the clippy call to
-# block new warnings in CI.
+# NOTE: clippy runs with `-D warnings` on library code only (--lib). The
+# decompiler pipeline (decompiler/llil/mlil/hlil) is a separate product area
+# and is excluded from the strict baseline via module-level allows in
+# tracemiku-core/src/lib.rs; its tests/examples still emit style warnings.
+# Keep this in sync with the `clippy` step in `make test-contract`.
 
 jobs:
   rust:
@@ -33,8 +34,8 @@ jobs:
           workspaces: rust -> target
       - name: fmt check
         run: cargo fmt --check
-      - name: clippy (all crates, -D warnings)
-        run: cargo clippy --workspace --all-targets
+      - name: clippy (lib, -D warnings)
+        run: cargo clippy --workspace --lib -- -D warnings
       - name: test core
         run: cargo test -p tracemiku-core
       - name: test server
