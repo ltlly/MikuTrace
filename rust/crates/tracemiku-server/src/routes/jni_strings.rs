@@ -85,6 +85,7 @@ fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsRespo
     let mem = match state.inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             return JniStringsResponse {
                 status,
                 count: 0,
@@ -161,25 +162,6 @@ fn effective_max(raw: usize) -> usize {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{effective_max, effective_max_len, MAX_HITS, MAX_STRING_LEN};
-
-    #[test]
-    fn effective_max_caps_extreme_requests() {
-        assert_eq!(effective_max(0), MAX_HITS);
-        assert_eq!(effective_max(200), 200);
-        assert_eq!(effective_max(usize::MAX), MAX_HITS);
-    }
-
-    #[test]
-    fn effective_max_len_caps_extreme_requests() {
-        assert_eq!(effective_max_len(0), 1);
-        assert_eq!(effective_max_len(128), 128);
-        assert_eq!(effective_max_len(usize::MAX), MAX_STRING_LEN);
-    }
-}
-
 fn jni_string_op(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
         "NewString" => Some(("x1", "out_x0")),
@@ -227,4 +209,23 @@ fn read_string(
         return (None, seen);
     }
     (Some(String::from_utf8_lossy(&bytes).into_owned()), seen)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max, effective_max_len, MAX_HITS, MAX_STRING_LEN};
+
+    #[test]
+    fn effective_max_caps_extreme_requests() {
+        assert_eq!(effective_max(0), MAX_HITS);
+        assert_eq!(effective_max(200), 200);
+        assert_eq!(effective_max(usize::MAX), MAX_HITS);
+    }
+
+    #[test]
+    fn effective_max_len_caps_extreme_requests() {
+        assert_eq!(effective_max_len(0), 1);
+        assert_eq!(effective_max_len(128), 128);
+        assert_eq!(effective_max_len(usize::MAX), MAX_STRING_LEN);
+    }
 }

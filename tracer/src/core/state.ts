@@ -235,6 +235,10 @@ export interface AgentState {
     diffSymAddrs: Record<string, boolean>;
     boundaryHooksInstalled: boolean;
     extWriteEvents: any[];
+    /** Total cap for external-write events (0 = unlimited legacy). */
+    extWriteCap: number;
+    /** Count of events already emitted toward the cap. */
+    extWriteEmitted: number;
     writableRanges: any[] | null;
 
     rwxMapsHidden: boolean;
@@ -280,7 +284,7 @@ export function createInitialState(): AgentState {
         workerEvents: [], workerTraces: {}, pthreadHooksInstalled: false,
 
         diffSyms: [], diffSymAddrs: {}, boundaryHooksInstalled: false,
-        extWriteEvents: [], writableRanges: null,
+        extWriteEvents: [], writableRanges: null, extWriteCap: 0, extWriteEmitted: 0,
 
         rwxMapsHidden: false, suicidePatched: false,
         suicidePatchSpec: null, patchSuicide: false, hideRwxMaps: false,

@@ -119,6 +119,7 @@ fn mem_export_response(inner: &crate::state::AppStateInner, q: MemExportQuery) -
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             return json!({ "status": status, "reason": "memshadow not ready" });
         }
     };

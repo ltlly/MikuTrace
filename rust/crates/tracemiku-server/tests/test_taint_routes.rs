@@ -73,6 +73,12 @@ async fn forward_taint_basic() {
         assert!(!h["pc"].as_str().unwrap().is_empty());
         assert!(!h["asm"].as_str().unwrap().is_empty());
         assert!(
+            h["is_branch"].is_boolean(),
+            "every taint row carries server-side classification: {h}"
+        );
+        assert!(h["is_call"].is_boolean());
+        assert!(h["is_ret"].is_boolean());
+        assert!(
             h["why"].as_str().unwrap().contains("x0"),
             "why must reference x0: {h}"
         );
@@ -91,7 +97,7 @@ async fn forward_taint_basic() {
         "graph should expose taint nodes, including a synthetic seed when needed: {graph}"
     );
     assert!(
-        graph["edges"].as_array().unwrap().len() >= 1,
+        !graph["edges"].as_array().unwrap().is_empty(),
         "graph should expose dependency edges: {graph}"
     );
     assert_eq!(graph["truncated"], false);
@@ -143,7 +149,7 @@ async fn taint_routes_normalize_register_aliases() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["reg"], "x0");
     assert!(
-        v["hits"].as_array().unwrap().len() >= 1,
+        !v["hits"].as_array().unwrap().is_empty(),
         "w0 should resolve through the x0 index: {v}"
     );
 
@@ -163,7 +169,7 @@ async fn taint_routes_normalize_register_aliases() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["reg"], "x0");
     assert!(
-        v["chain"].as_array().unwrap().len() >= 1,
+        !v["chain"].as_array().unwrap().is_empty(),
         "w0 should resolve through the x0 index: {v}"
     );
 }
@@ -213,7 +219,7 @@ async fn backward_taint_basic() {
         "backward graph should expose all visible chain nodes: {graph}"
     );
     assert!(
-        graph["edges"].as_array().unwrap().len() >= 1,
+        !graph["edges"].as_array().unwrap().is_empty(),
         "backward graph should expose parent dependency edges: {graph}"
     );
     assert_eq!(graph["truncated"], false);

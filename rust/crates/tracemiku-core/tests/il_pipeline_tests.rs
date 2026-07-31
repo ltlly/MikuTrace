@@ -113,7 +113,7 @@ fn flag_elim_folds_cmp_into_if_eq() {
         result.exprs[0]
             .extra
             .get("flag_elim")
-            .map_or(false, |v| v.contains("nzcv")),
+            .is_some_and(|v| v.contains("nzcv")),
         "expected flag_elim nzcv annotation"
     );
 }

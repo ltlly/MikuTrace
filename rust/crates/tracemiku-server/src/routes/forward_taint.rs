@@ -50,6 +50,9 @@ pub struct TaintRow {
     pub taint_depth: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_depth: Option<u32>,
+    pub is_branch: bool,
+    pub is_call: bool,
+    pub is_ret: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +141,7 @@ fn forward_taint_response(
         match inner.memshadow_ready_or_block_if_idle() {
             Ok(mem) => Some(mem),
             Err(status) => {
+            let status = status.status_str();
                 return ForwardTaintResponse {
                     status,
                     count: 0,
@@ -201,6 +205,9 @@ fn forward_taint_response(
                 } else {
                     None
                 },
+                is_branch: d.is_branch,
+                is_call: d.is_call,
+                is_ret: d.is_ret,
             }
         })
         .collect();

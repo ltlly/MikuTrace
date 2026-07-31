@@ -1,5 +1,6 @@
 //! GET /api/asm-tokens-for-pcs.
 
+use crate::routes::seed_resolver::parse_u64;
 use std::collections::BTreeMap;
 
 use axum::extract::{Query, State};
@@ -87,17 +88,5 @@ fn request_sidecar_tokens(state: AppState, pcs: &[u64]) -> Value {
     match state.inner.bn_sidecar.lock() {
         Ok(mut sidecar) => sidecar.request("asm_tokens", json!({"pcs": pcs})),
         Err(e) => json!({"ok": false, "ready": false, "error": e.to_string()}),
-    }
-}
-
-fn parse_u64(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return None;
-    }
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse().ok()
     }
 }

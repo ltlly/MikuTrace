@@ -202,7 +202,7 @@ fn reg_at_response(inner: &crate::state::AppStateInner, q: RegAtQuery) -> Value 
             }
         })
         .collect();
-    distinct_vec.sort_by(|a, b| b.count.cmp(&a.count));
+    distinct_vec.sort_by_key(|v| std::cmp::Reverse(v.count));
 
     json!({
         "status": "hit",

@@ -1,5 +1,6 @@
 //! Binary Ninja sidecar-backed HLIL and static CFG endpoints.
 
+use crate::routes::seed_resolver::parse_u64;
 use std::collections::HashMap;
 
 use axum::extract::{Query, State};
@@ -295,18 +296,6 @@ fn resolve_fn_pc(state: &AppState, fn_id: &str) -> Result<u64, (StatusCode, Stri
             StatusCode::BAD_REQUEST,
             format!("unsupported fn_id source {src}"),
         )),
-    }
-}
-
-fn parse_u64(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if t.is_empty() {
-        return None;
-    }
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }
 

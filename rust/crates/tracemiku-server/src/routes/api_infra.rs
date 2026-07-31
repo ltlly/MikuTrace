@@ -220,7 +220,6 @@ fn openapi_paths() -> Value {
         ("/api/jni-calls", "get"),
         ("/api/jobj-history", "get"),
         ("/api/jni-strings", "get"),
-        ("/api/field-at", "get"),
         ("/api/asm-tokens-for-pcs", "get"),
         ("/api/fork-events", "get"),
         ("/api/crypto-analysis", "get"),

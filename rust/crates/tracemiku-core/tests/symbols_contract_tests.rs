@@ -91,7 +91,7 @@ fn add_resolved_uses_module_resolver() {
     symbols.add_resolved(0x100200, "f_res".into(), &resolver);
     symbols.freeze();
     assert_eq!(symbols.lookup(0x100200), ("f_res".into(), 0));
-    assert!(symbols.len() >= 1);
+    assert!(!symbols.is_empty());
 }
 
 #[test]

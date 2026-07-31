@@ -19,7 +19,6 @@ pub mod dec_options;
 pub mod dec_summary;
 pub mod dep_graph;
 pub mod diff_traces;
-pub mod field_at;
 pub mod fn_summary;
 pub mod fork_events;
 pub mod forward_dep_tree;
@@ -46,6 +45,7 @@ pub mod meta;
 pub mod navigation;
 pub mod next_use_of_reg;
 pub mod ollvm_detect_vm;
+pub mod parse;
 pub mod query;
 pub mod record;
 pub mod records;
@@ -119,7 +119,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jni-calls", get(jni_calls::jni_calls_handler))
         .route("/api/jobj-history", get(jobj_history::jobj_history_handler))
         .route("/api/jni-strings", get(jni_strings::jni_strings_handler))
-        .route("/api/field-at", get(field_at::field_at_handler))
         .route(
             "/api/asm-tokens-for-pcs",
             get(asm_tokens::asm_tokens_handler),

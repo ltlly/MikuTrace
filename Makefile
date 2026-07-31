@@ -38,6 +38,7 @@ test-v2:
 
 test-fast:
 	$(PYTHON) -m py_compile $(PY_CHECKS)
+	$(PYTHON) -m pytest tests/host_trace_helpers_test.py -q
 	$(PYTHON) scripts/frontend_resource_audit.py
 	$(PYTHON) scripts/frontend_ui_audit.py
 	$(PYTHON) scripts/frontend_cap_audit.py
@@ -55,6 +56,7 @@ test-contract:
 	cd rust && $(CARGO) test -p tracemiku-server
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
+	cd tracer && node --experimental-strip-types tests/external_writes_contract_test.ts
 	$(PYTHON) scripts/rust_cli_web_parity.py --debug-bin
 
 test-slow:

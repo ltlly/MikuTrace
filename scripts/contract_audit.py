@@ -147,7 +147,7 @@ ROUTE_COVERAGE: dict[str, list[str]] = {
     "hash_input_search": ["hash_input_search_tests"],
     "idxs_for_block": ["cfg_endpoint_tests"],
     "idxs_for_pc": ["idxs_for_pc_tests"],
-    "indirect_targets": ["contract_routes_1"],
+    "indirect_targets": ["contract_routes_1", "indirect_targets_boundary_tests"],
     "jni_calls": ["jni_calls_tests"],
     "jni_events": ["jni_events_tests"],
     "jni_strings": ["jni_strings_tests"],

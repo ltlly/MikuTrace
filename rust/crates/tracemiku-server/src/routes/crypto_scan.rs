@@ -27,6 +27,7 @@ fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanRespon
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             return CryptoScanResponse {
                 status,
                 scanned: 0,

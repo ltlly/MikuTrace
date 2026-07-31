@@ -1,5 +1,6 @@
 //! POST /api/dec/llm-call — LLM-assisted decompile for one FuncIR.
 
+use crate::routes::seed_resolver::parse_u64;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -162,6 +163,7 @@ fn prepare_dec_llm_call(
     Ok(DecLlmPrepared::Ready { cache_key, bundle })
 }
 
+#[allow(clippy::type_complexity)] // single-use helper; alias would be noise
 fn resolve_fn(
     state: &AppState,
     fn_id: &str,
@@ -223,15 +225,6 @@ fn resolve_fn(
             StatusCode::BAD_REQUEST,
             format!("unsupported fn_id source {src}"),
         )),
-    }
-}
-
-fn parse_u64(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse::<u64>().ok()
     }
 }
 

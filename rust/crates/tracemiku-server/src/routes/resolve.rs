@@ -75,14 +75,7 @@ pub async fn resolve_handler(
 /// would silently use different bases. A leading `0x`/`0X` is also accepted.
 /// Use `d`/`D` prefix to force decimal when genuinely needed (`d16` -> 16).
 pub(crate) fn parse_u64(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else if let Some(dec) = s.strip_prefix('d').or_else(|| s.strip_prefix('D')) {
-        dec.parse::<u64>().ok()
-    } else {
-        u64::from_str_radix(s, 16).ok()
-    }
+    crate::routes::parse::parse_hex_u64(raw)
 }
 
 pub(crate) fn coord_for_pc(inner: &crate::state::AppStateInner, pc: u64) -> Coord {

@@ -18,7 +18,7 @@ fn synth_trace() -> Trace {
         0xaa0103e0,
         0xaa0103e0,
     ];
-    for i in 0..5 {
+    for (i, _inst) in insts.iter().enumerate() {
         let off = i * 272;
         buf[off..off + 8].copy_from_slice(&(0x100000u64 + (i as u64 * 4)).to_le_bytes());
         buf[off + 8..off + 16].copy_from_slice(&((i as u64 + 1) * 10).to_le_bytes()); // x0

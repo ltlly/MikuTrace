@@ -322,6 +322,9 @@ rpc.exports = {
         STATE.stalkerExcludePatterns = Array.isArray(opts.stalkerExcludePatterns) && opts.stalkerExcludePatterns.length
             ? opts.stalkerExcludePatterns : null;
         STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns) ? opts.boundaryDiffPatterns : null;
+        if (typeof (opts as any).extWriteCap === "number" && (opts as any).extWriteCap > 0) {
+            STATE.extWriteCap = (opts as any).extWriteCap;
+        }
 
         // JNI hooks
         STATE.jniHookSpecs = Array.isArray(opts.jniHooks) ? opts.jniHooks : null;

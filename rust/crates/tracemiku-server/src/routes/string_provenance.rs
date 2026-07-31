@@ -65,6 +65,7 @@ fn string_provenance_response(
     let memshadow = match inner.memshadow_ready_or_block_if_idle() {
         Ok(memshadow) => memshadow,
         Err(status) => {
+            let status = status.status_str();
             return Ok(StringProvenanceResponse {
                 status,
                 addr: q.addr,

@@ -266,12 +266,9 @@ def main() -> int:
     )
     require(
         "Registers understand fp/lr aliases",
-        'if (reg === "fp") return "x29"' in registers
-        and 'if (reg === "lr") return "x30"' in registers
-        and 'if (reg === "x29") return "fp"' in registers
-        and 'if (reg === "x30") return "lr"' in registers
-        and "regs.includes(reg) || regs.includes(alias)" in registers
-        and "aliasReg(a) === b || aliasReg(b) === a" in registers,
+        "prevRegs[canonical] ?? prevRegs[reg]" in registers
+        and "regs.includes(reg) || regs.includes(canonical)" in registers
+        and "normalizeReg(" in registers,
         failures,
     )
     require(

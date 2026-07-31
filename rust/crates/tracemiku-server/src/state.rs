@@ -34,6 +34,9 @@ const TRACE_IR_CACHE_MAX_ENTRIES: usize = 2;
 const BN_RESPONSE_CACHE_VERSION: u64 = 1;
 const BN_RESPONSE_CACHE_FILE: &str = "trace.bin.bn-sidecar-cache.v1.json";
 
+/// Cached register timelines: reg name → ordered (record_idx, value) pairs.
+pub(crate) type RegTimelineCache = HashMap<String, Arc<Vec<(usize, u64)>>>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraceIrBuildOptions {
     pub hook_paths: Vec<PathBuf>,
@@ -93,7 +96,7 @@ pub struct AppStateInner {
     ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
     auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
     trace_ir_cache: Mutex<Vec<(TraceIrBuildOptions, Arc<TopIR>)>>,
-    pub(crate) reg_timeline_cache: Mutex<HashMap<String, Arc<Vec<(usize, u64)>>>>,
+    pub(crate) reg_timeline_cache: Mutex<RegTimelineCache>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
     pub(crate) bn_response_cache: Mutex<HashMap<String, serde_json::Value>>,
 }
@@ -453,7 +456,9 @@ impl AppStateInner {
         self.memshadow.get()
     }
 
-    pub fn memshadow_ready_or_block_if_idle(&self) -> Result<&MemShadow, &'static str> {
+    pub fn memshadow_ready_or_block_if_idle(
+        &self,
+    ) -> Result<&MemShadow, tracemiku_core::memshadow::MemShadowError> {
         match self.memshadow_if_ready() {
             Some(mem) => Ok(mem),
             None => {
@@ -461,7 +466,7 @@ impl AppStateInner {
                 if status == "idle" || status == "ready" {
                     Ok(self.memshadow())
                 } else {
-                    Err(status)
+                    Err(tracemiku_core::memshadow::MemShadowError::Building)
                 }
             }
         }

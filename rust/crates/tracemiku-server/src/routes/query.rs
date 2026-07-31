@@ -492,7 +492,7 @@ fn flush_query_string(
     };
     if run.len() >= 4 {
         let text = String::from_utf8_lossy(run).into_owned();
-        if needle.map_or(true, |needle| text.to_ascii_lowercase().contains(needle)) {
+        if needle.is_none_or(|needle| text.to_ascii_lowercase().contains(needle)) {
             *count += 1;
             if rows.len() < limit {
                 rows.push(json!({

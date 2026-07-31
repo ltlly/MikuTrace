@@ -1,5 +1,6 @@
 //! GET /api/dec/fn/{fn_id} — per-fn TraceIR markdown.
 
+use crate::routes::seed_resolver::parse_u64;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -181,16 +182,4 @@ fn render_bn_hlil_fn(
         tier,
         markdown,
     })
-}
-
-fn parse_u64(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if t.is_empty() {
-        return None;
-    }
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
 }

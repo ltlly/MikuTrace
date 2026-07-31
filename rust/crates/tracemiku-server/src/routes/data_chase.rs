@@ -119,18 +119,6 @@ fn data_chase_response(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{effective_max_steps, MAX_DATA_CHASE_STEPS};
-
-    #[test]
-    fn effective_max_steps_caps_extreme_requests() {
-        assert_eq!(effective_max_steps(0), 0);
-        assert_eq!(effective_max_steps(50), 50);
-        assert_eq!(effective_max_steps(usize::MAX), MAX_DATA_CHASE_STEPS);
-    }
-}
-
 struct RawStep {
     idx: usize,
     asm: String,
@@ -318,4 +306,16 @@ fn parse_exclude_regs(s: &str) -> std::collections::HashSet<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_steps, MAX_DATA_CHASE_STEPS};
+
+    #[test]
+    fn effective_max_steps_caps_extreme_requests() {
+        assert_eq!(effective_max_steps(0), 0);
+        assert_eq!(effective_max_steps(50), 50);
+        assert_eq!(effective_max_steps(usize::MAX), MAX_DATA_CHASE_STEPS);
+    }
 }

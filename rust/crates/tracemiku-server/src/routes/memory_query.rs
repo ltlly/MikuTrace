@@ -29,6 +29,7 @@ fn default_before_idx() -> isize {
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)] // Found carries full write details; NotFound is the miss shape.
 pub enum LastWriteOfAddrResponse {
     Found {
         status: &'static str,
@@ -790,6 +791,7 @@ fn find_mem_pattern_response(
         let mem = match inner.memshadow_ready_or_block_if_idle() {
             Ok(mem) => mem,
             Err(status) => {
+            let status = status.status_str();
                 return FindMemPatternResponse {
                     status,
                     pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),
@@ -962,21 +964,6 @@ fn split_around_cursor(idxs: &[usize], cursor: usize, limit: usize) -> (Vec<usiz
     (before, after)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{effective_touch_limit, MAX_TOUCHING_IDXS_RETURNED};
-
-    #[test]
-    fn effective_touch_limit_caps_extreme_requests() {
-        assert_eq!(effective_touch_limit(0), 0);
-        assert_eq!(effective_touch_limit(60), 60);
-        assert_eq!(
-            effective_touch_limit(usize::MAX),
-            MAX_TOUCHING_IDXS_RETURNED
-        );
-    }
-}
-
 fn source_reg_for_write_at(
     decoded: &DecodedInsn,
     record: &Record,
@@ -995,4 +982,19 @@ fn source_reg_for_write_at(
         .iter()
         .find(|reg| reg.as_str() != op.base.as_str() && reg.as_str() != op.idx.as_str())
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_touch_limit, MAX_TOUCHING_IDXS_RETURNED};
+
+    #[test]
+    fn effective_touch_limit_caps_extreme_requests() {
+        assert_eq!(effective_touch_limit(0), 0);
+        assert_eq!(effective_touch_limit(60), 60);
+        assert_eq!(
+            effective_touch_limit(usize::MAX),
+            MAX_TOUCHING_IDXS_RETURNED
+        );
+    }
 }

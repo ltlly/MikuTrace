@@ -163,7 +163,7 @@ fn scan_jni_call_entries(
             let prev_decoded = decode(prev_record.pc, prev_record.inst);
             if prev_decoded.mnemonic != "ldr"
                 || !prev_decoded.regs_def.iter().any(|r| r == &target_reg)
-                || !prev_decoded.mem_op.first().is_some_and(|op| !op.is_write)
+                || prev_decoded.mem_op.first().is_none_or(|op| op.is_write)
             {
                 continue;
             }

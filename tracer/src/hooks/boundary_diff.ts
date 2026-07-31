@@ -7,6 +7,7 @@
  */
 
 import { STATE } from "../core/state";
+import { extWriteAllowance } from "../core/ext_write_cap";
 import { log } from "../core/utils";
 
 const PTR_WIN = 256;  // bytes to snapshot around each pointer arg
@@ -63,6 +64,18 @@ export function collectBoundaryDiffSymbols(m: Module, diffPatterns: string[]): n
     return n;
 }
 
+/**
+ * Emit an external-write event honoring the total cap. Once the cap is
+ * reached the event is dropped (analysis degrades gracefully instead of
+ * unbounded growth).
+ */
+function emitExtWrite(ev: { attrIdx: number; addr: string; byte: number }): void {
+  const cap = STATE.extWriteCap || 0;
+  if (cap > 0 && STATE.extWriteEmitted >= cap) return;
+  STATE.extWriteEvents.push(ev);
+  if (cap > 0) STATE.extWriteEmitted += 1;
+}
+
 function makeBoundaryDiffHook(symName: string) {
     return {
         onEnter(this: InvocationContext, args: InvocationArguments) {
@@ -92,7 +105,7 @@ function makeBoundaryDiffHook(symName: string) {
                     if (after) {
                         const u8 = new Uint8Array(after);
                         for (let i = 0; i < u8.length; i++) {
-                            STATE.extWriteEvents.push({
+                            emitExtWrite({
                                 attrIdx: (this as any)._enterIdx,
                                 addr: (rv as unknown as NativePointer).add(i).toString(),
                                 byte: u8[i],
@@ -109,7 +122,7 @@ function makeBoundaryDiffHook(symName: string) {
                 const a = new Uint8Array(after!);
                 for (let i = 0; i < a.length; i++) {
                     if (a[i] !== s.before[i]) {
-                        STATE.extWriteEvents.push({
+                        emitExtWrite({
                             attrIdx: (this as any)._enterIdx,
                             addr: s.addr.add(i).toString(),
                             byte: a[i],

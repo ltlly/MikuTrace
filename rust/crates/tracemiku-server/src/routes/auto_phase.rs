@@ -69,6 +69,7 @@ fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse
     let mem = match state.inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             let mut phases = jni_phases(&state.inner.trace_dir);
             phases.sort_by_key(|p| p.idx);
             let total = phases.len();

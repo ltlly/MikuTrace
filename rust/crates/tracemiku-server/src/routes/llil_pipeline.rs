@@ -2,6 +2,7 @@
 //!
 //! Returns all three layers plus pipeline stats.
 
+use crate::routes::seed_resolver::parse_u64;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -10,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tracemiku_core::decompiler::il_pipeline::{decompile_trace, TraceContext};
 use tracemiku_core::function_index::parse_id;
-use tracemiku_core::hlil::{render_hlil_tokens, CTokenWire};
+use tracemiku_core::hlil::CTokenWire;
 use tracemiku_core::prelude::FuncIR;
 use tracemiku_core::trace::Record;
 
@@ -458,15 +459,6 @@ fn is_call(inst: u32) -> bool {
     let is_bl = (inst >> 26) == 0b100101;
     let is_blr = (inst & 0xFFFFFC1F) == 0xD63F0000;
     is_bl || is_blr
-}
-
-fn parse_u64(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse::<u64>().ok()
-    }
 }
 
 /// Annotate call targets with symbol names and call-site register values.

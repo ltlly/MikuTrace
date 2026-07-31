@@ -22,6 +22,13 @@ import os, sys
   tracemiku query traces/run1 strings --json
 """
 import sys, os, pathlib, argparse, json, subprocess, time
+from tracemiku_fork import (_spawn_child_poller, _parse_proc_stat,
+                           _poll_child_lifecycle, _print_fork_summary)
+from tracemiku_device import (_check_device,
+                              cold_launch_start as _cold_launch_start,
+                              launch_start as _launch_start,
+                              drive_consent as _drive_consent,
+                              CONSENT_BUTTON_PATTERNS)
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -51,10 +58,17 @@ def _rust_cli_json(args):
 
 
 def _is_ret_inst(inst):
+    # Host-side ret detection for trace-begin/finalize meta (meta.json not yet
+    # written, so the CLI `info` route cannot serve it). Mirrors the core
+    # disasm ret classification; behavior is locked by
+    # tests/host_trace_helpers_test.py (2000-encoding cross-check vs core blr
+    # mask, zero conflicts). Keep in sync when core changes the mask.
     return (inst & 0xfffffc1f) == 0xd65f0000
 
 
 def _decode_last_inst(pc, inst):
+    # Same rationale as _is_ret_inst: used before meta.json exists. Prefers
+    # capstone for full mnemonic/operands, falls back to the mask check.
     try:
         import capstone
         cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
@@ -71,6 +85,11 @@ def _decode_last_inst(pc, inst):
 REC_SIZE = 272  # trace.bin record size (stable contract)
 
 def _read_trace_tail(bin_path):
+    # Reads first/last record bytes directly from trace.bin before meta.json
+    # exists (trace-begin/finalize path). This is a deliberate host-side I/O
+    # helper, NOT a re-implementation of core parsing: it only extracts the
+    # two boundary records and defers instruction decoding to _decode_last_inst.
+    # Contract-locked by tests/host_trace_helpers_test.py.
     size = bin_path.stat().st_size if bin_path.exists() else 0
     n = size // REC_SIZE
     first_pc = last_pc = last_inst = None
@@ -88,107 +107,8 @@ def _read_trace_tail(bin_path):
     return n, first_pc, last_pc, last_inst
 
 
-CONSENT_BUTTON_PATTERNS = [
-    r'text="同意"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-    r'text="允许"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-    r'text="同意并继续"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-    r'text="Agree"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-    r'text="I Agree"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-]
 
 
-def _cold_launch_start(pkg, max_pid_wait=15):
-    """force-stop + pm clear + monkey 拉起, 等 pid 出现就返回. 不点同意.
-    用于 anti-debug 强的 app: attach 必须在隐私弹窗前完成, 否则 Frida 被卡死.
-    """
-    import time
-    print(f"[cold-launch] force-stop + pm clear {pkg}", flush=True)
-    subprocess.run(["adb","shell","am","force-stop",pkg], capture_output=True)
-    subprocess.run(["adb","shell","pm","clear",pkg], capture_output=True)
-    time.sleep(2)
-    print(f"[cold-launch] monkey 拉起", flush=True)
-    subprocess.run(["adb","shell","monkey","-p",pkg,"-c","android.intent.category.LAUNCHER","1"],
-                   capture_output=True)
-    t0 = time.time()
-    while time.time() - t0 < max_pid_wait:
-        r = subprocess.run(["adb","shell","pidof",pkg], capture_output=True, text=True)
-        s = r.stdout.strip()
-        if s:
-            pid = int(s.split()[0])
-            print(f"[cold-launch] pid={pid} ({int(time.time()-t0)}s)", flush=True)
-            return pid
-        time.sleep(0.5)
-    raise RuntimeError(f"cold-launch {pkg} 拿不到 pid 超时 {max_pid_wait}s")
-
-
-def _launch_start(pkg, max_pid_wait=15):
-    """force-stop + monkey 拉起, 不清应用数据, 等 pid 出现就返回.
-    用于需要尽早 attach 但不能 `pm clear` 破坏登录/本地状态的场景.
-    """
-    import time
-    print(f"[launch] force-stop {pkg} (no pm clear)", flush=True)
-    subprocess.run(["adb", "shell", "am", "force-stop", pkg], capture_output=True)
-    time.sleep(0.5)
-    print("[launch] monkey 拉起", flush=True)
-    subprocess.run(
-        ["adb", "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"],
-        capture_output=True,
-    )
-    t0 = time.time()
-    while time.time() - t0 < max_pid_wait:
-        r = subprocess.run(["adb", "shell", "pidof", pkg], capture_output=True, text=True)
-        s = r.stdout.strip()
-        if s:
-            pid = int(s.split()[0])
-            print(f"[launch] pid={pid} ({int(time.time()-t0)}s)", flush=True)
-            return pid
-        time.sleep(0.25)
-    raise RuntimeError(f"launch {pkg} 拿不到 pid 超时 {max_pid_wait}s")
-
-
-def _drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
-    """在已拉起的 app 上自动点'同意' + 等首页. 用于 _cold_launch_start 之后. """
-    import re, time
-    def adb(*a):
-        return subprocess.run(["adb","shell",*a], capture_output=True, text=True).stdout
-    t0 = time.time(); agreed = False; settled = 0
-    while time.time() - t0 < max_wait:
-        elapsed = int(time.time() - t0)
-        pid = adb("pidof", pkg).strip()
-        if not pid:
-            print(f"[cold-launch] {elapsed}s: 进程死, 重拉", flush=True)
-            subprocess.run(["adb","shell","monkey","-p",pkg,"-c","android.intent.category.LAUNCHER","1"],
-                           capture_output=True)
-            time.sleep(3); continue
-        subprocess.run(["adb","shell","uiautomator","dump","/sdcard/_tm_ui.xml"],
-                       capture_output=True)
-        xml = adb("cat","/sdcard/_tm_ui.xml")
-        subprocess.run(["adb","shell","rm","-f","/sdcard/_tm_ui.xml"],
-                       capture_output=True)
-        # 找隐私协议同意按钮 (多 app 多语言)
-        consent_hit = None
-        for pat in CONSENT_BUTTON_PATTERNS:
-            m = re.search(pat, xml)
-            if m: consent_hit = m; break
-        if consent_hit:
-            x = (int(consent_hit.group(1)) + int(consent_hit.group(3))) // 2
-            y = (int(consent_hit.group(2)) + int(consent_hit.group(4))) // 2
-            print(f"[cold-launch] {elapsed}s: 找到同意按钮 @ ({x},{y}) 点击", flush=True)
-            subprocess.run(["adb","shell","input","tap",str(x),str(y)], capture_output=True)
-            agreed = True; settled = 0; time.sleep(4); continue
-        # home_markers 命中 → done
-        if home_markers and re.search(home_markers, xml):
-            print(f"[cold-launch] {elapsed}s: 首页加载完成 (agreed={agreed}, marker hit)", flush=True)
-            return int(pid.split()[0])
-        # 否则: 没有同意按钮 + UI 已 settle (连续 2 轮) → 视为完成
-        if agreed:
-            settled += 1
-            if settled >= 2:
-                print(f"[cold-launch] {elapsed}s: 同意按钮已消失 + UI settle, 视为首页加载完成", flush=True)
-                return int(pid.split()[0])
-        print(f"[cold-launch] {elapsed}s: 等待 (agreed={agreed}, settled={settled})", flush=True)
-        time.sleep(2)
-    raise RuntimeError(f"cold-launch {pkg} 超时 {max_wait}s")
 
 
 def cmd_trace(args):
@@ -767,6 +687,7 @@ def cmd_trace(args):
         "traceAll": trace_all,
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
+        "extWriteCap": int(getattr(args, "ext_write_cap", 0) or 0),
         "patchSuicide": bool(getattr(args, "patch_suicide", False)),
         "suicidePatchSpec": suicide_spec,
         "hideRwxMaps": bool(getattr(args, "hide_rwx_maps", False)),
@@ -1014,142 +935,6 @@ def _post_trace_diagnose(args, wlog):
     if hints:
         print("\n=== Trace 死前诊断 (P0-6) ===")
         for h in hints: print(h)
-
-
-def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
-                          max_wait_sec=30.0):
-    """P1-C M3: kick off background thread that polls /proc/<child_pid>/stat
-    until child exits, mutates fork_event in-place with Tier 3 lifecycle data.
-
-    fork_event is the dict already in parent_meta["fork_events"] — Python list
-    references mean any update to that dict propagates to the meta we'll later
-    serialize. No locking needed: only this thread mutates this fork_event.
-    """
-    import threading
-    cpid = fork_event["child_pid"]
-
-    def _poll():
-        try:
-            r = _poll_child_lifecycle(cpid, max_wait_sec=max_wait_sec)
-            fork_event["lifecycle"] = {
-                "runtime_ms": r["runtime_ms"],
-                "alive_at_max_wait": r["alive_at_max_wait"],
-                "last_state": r["last_state"],
-                "comm": r["comm"],
-                "polls_alive": r["polls_alive"],
-            }
-            # Promote attach_status from "not_attempted" to a more informative
-            # post-mortem state (M2 will overwrite if it actually attached).
-            if fork_event.get("attach_status") == "not_attempted":
-                if r["alive_at_max_wait"]:
-                    fork_event["attach_status"] = "not_attempted_long_lived"
-                elif r["first_observed_at"] is None:
-                    fork_event["attach_status"] = "not_attempted_short_lived"
-                else:
-                    fork_event["attach_status"] = "not_attempted_observed"
-            wlog(f"[{tag}] [FORK]   poll done child={cpid} "
-                 f"runtime={r['runtime_ms']}ms "
-                 f"alive_at_timeout={r['alive_at_max_wait']} "
-                 f"last_state={r['last_state']}")
-        except Exception as e:
-            wlog(f"[{tag}] [FORK]   poll error child={cpid}: {e}")
-
-    th = threading.Thread(target=_poll, daemon=True,
-                           name=f"fork-poll-{cpid}")
-    th.start()
-
-
-def _parse_proc_stat(text):
-    s = text.strip()
-    if not s: return None
-    lp = s.find("("); rp = s.rfind(")")
-    if lp == -1 or rp == -1 or rp < lp: return None
-    try:
-        pid = int(s[:lp].strip())
-        comm = s[lp + 1:rp]
-        rest = s[rp + 1:].split()
-        if len(rest) < 21: return None
-        return {"pid": pid, "comm": comm, "state": rest[0]}
-    except Exception:
-        return None
-
-
-def _poll_child_lifecycle(pid, max_wait_sec=30.0, poll_interval_sec=0.1):
-    start = time.time()
-    out = {
-        "child_pid": pid, "first_observed_at": None, "last_observed_at": None,
-        "exit_observed_at": None, "alive_at_max_wait": False, "runtime_ms": None,
-        "last_state": None, "comm": None, "polls_total": 0, "polls_alive": 0,
-    }
-    while True:
-        if time.time() - start >= max_wait_sec:
-            out["alive_at_max_wait"] = True
-            break
-        out["polls_total"] += 1
-        try:
-            r = subprocess.run(["adb", "shell", "cat", f"/proc/{pid}/stat"],
-                               capture_output=True, text=True, timeout=2)
-        except Exception:
-            r = None
-        now = time.time()
-        if r and r.returncode == 0 and r.stdout:
-            parsed = _parse_proc_stat(r.stdout)
-            if parsed:
-                if out["first_observed_at"] is None:
-                    out["first_observed_at"] = now
-                    out["comm"] = parsed["comm"]
-                out["last_observed_at"] = now
-                out["last_state"] = parsed["state"]
-                out["polls_alive"] += 1
-                if parsed["state"] == "Z":
-                    out["exit_observed_at"] = now
-                    break
-            else:
-                out["exit_observed_at"] = now
-                break
-        else:
-            if out["first_observed_at"] is not None:
-                out["exit_observed_at"] = now
-            break
-        time.sleep(poll_interval_sec)
-    if out["first_observed_at"] and out["last_observed_at"]:
-        out["runtime_ms"] = int((out["last_observed_at"] - out["first_observed_at"]) * 1000)
-    return out
-
-
-def _print_fork_summary(all_fork_events):
-    """P1-C M5: print Fork Summary table at trace end.
-
-    all_fork_events: list of (call_dir_name, fork_event_dict).
-    """
-    fork_like = [e for _, e in all_fork_events if e.get("is_fork_like")]
-    thread_like = [e for _, e in all_fork_events if not e.get("is_fork_like")]
-    by_status = {}
-    for e in fork_like:
-        st = e.get("attach_status", "not_attempted")
-        by_status[st] = by_status.get(st, 0) + 1
-
-    n_fork = len(fork_like)
-    n_thread = len(thread_like)
-    n_success = by_status.get("success", 0)
-    n_partial = by_status.get("success_partial", 0)
-    n_failed = sum(v for k, v in by_status.items() if k.startswith("failed_"))
-    n_not_attempted = by_status.get("not_attempted", 0)
-
-    print("\n=== Fork Summary ===")
-    print(f"Total fork-like:   {n_fork}   "
-          f"(thread-like clones via pthread_create: {n_thread}, 不计)")
-    if n_success:    print(f"  ✓ Fully traced:  {n_success}")
-    if n_partial:    print(f"  ⚠ Partial:       {n_partial}")
-    if n_failed:     print(f"  ✗ Attach failed: {n_failed}   "
-                            f"({by_status})")
-    if n_not_attempted:
-        print(f"  · Not attempted: {n_not_attempted}   "
-              f"(--no-fork-trace 或 M2 child attach 未启用)")
-    print(f"详见 traces/<run>/calls/<dir>/meta.json `fork_events` 字段")
-    if n_failed and n_failed >= 2:
-        print("提示: 多个 child 抓不全, 可能这个 SO 用 fork-based anti-debug.")
-        print("      推 miku-shield (eBPF kernel): github.com/ltlly/miku-shield")
 
 
 def cmd_finalize(args):
@@ -1624,89 +1409,6 @@ def cmd_api(args):
         cmd += ["--json-body", args.json_body]
     return _run_rust_cli(cmd)
 
-def _check_device(pkg=None, out_dir=None, verbose=True):
-    """Shared device pre-flight checks. Returns (ok_count, fail_count, results_list).
-    Each result is (check_name, passed: bool, detail: str)."""
-    results = []
-
-    def _run(label, cmd):
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            return r.returncode, r.stdout.strip(), r.stderr.strip()
-        except FileNotFoundError:
-            return -1, "", f"{cmd[0]} not found"
-        except subprocess.TimeoutExpired:
-            return -2, "", "timeout"
-
-    # 1. ADB connectivity
-    rc, out, err = _run("adb", ["adb", "devices"])
-    devices = [l for l in out.splitlines()[1:] if l.strip() and "device" in l]
-    if rc == 0 and devices:
-        results.append(("adb connectivity", True, f"{len(devices)} device(s) connected"))
-    else:
-        results.append(("adb connectivity", False, "no device found — check USB/WiFi connection"))
-
-    # 2. Root / su access
-    rc, out, _ = _run("root", ["adb", "shell", "id"])
-    if "uid=0" in out:
-        results.append(("root access", True, "running as root"))
-    else:
-        rc2, out2, _ = _run("su", ["adb", "shell", "su", "-c", "id"])
-        if "uid=0" in out2:
-            results.append(("root access", True, "su available"))
-        else:
-            results.append(("root access", False, "no root — run `adb root` or ensure su binary exists"))
-
-    # 3. frida-server running
-    rc, out, _ = _run("frida", ["adb", "shell", "ps -A"])
-    if "miku" in out.lower() or "frida" in out.lower():
-        results.append(("frida-server", True, "process found"))
-    else:
-        results.append(("frida-server", False,
-            "not running — start with: adb shell /data/local/tmp/.miku-srv &"))
-
-    # 4. SELinux state
-    rc, out, _ = _run("selinux", ["adb", "shell", "getenforce"])
-    if "permissive" in out.lower() or "disabled" in out.lower():
-        results.append(("SELinux", True, out))
-    else:
-        results.append(("SELinux", False,
-            f"state={out} — set permissive: adb shell setenforce 0"))
-
-    # 5. Target package exists (optional)
-    if pkg:
-        rc, out, _ = _run("pkg", ["adb", "shell", "pm", "list", "packages"])
-        if f"package:{pkg}" in out:
-            results.append(("target package", True, f"{pkg} installed"))
-        else:
-            # Try partial match
-            partial = [l for l in out.splitlines() if pkg.lower() in l.lower()]
-            if partial:
-                results.append(("target package", False,
-                    f"exact '{pkg}' not found; similar: {partial[0].replace('package:','')}"))
-            else:
-                results.append(("target package", False, f"'{pkg}' not installed on device"))
-
-    # 6. Output directory writable (optional)
-    if out_dir:
-        rc, out, err = _run("write-test",
-            ["adb", "shell", f"touch {out_dir}/.miku_test && rm {out_dir}/.miku_test"])
-        if rc == 0:
-            results.append(("output dir writable", True, out_dir))
-        else:
-            results.append(("output dir writable", False,
-                f"{out_dir} not writable — check SELinux context or use /data/local/tmp"))
-
-    if verbose:
-        for name, passed, detail in results:
-            mark = "\033[32m✓\033[0m" if passed else "\033[31m✗\033[0m"
-            print(f"  {mark} {name}: {detail}")
-
-    ok = sum(1 for _, p, _ in results if p)
-    fail = sum(1 for _, p, _ in results if not p)
-    return ok, fail, results
-
-
 def cmd_doctor(args):
     """Pre-flight device check for trace readiness."""
     print("[doctor] 检查设备 trace 前置条件...\n")
@@ -1903,6 +1605,8 @@ def main():
                       help="逗号分隔, 在这些函数装 Interceptor 抓内存写 (boundary ptr-diff). "
                            "**严禁包含 pthread/malloc/atomic** — Frida 自己用这些, attach 会崩进程. "
                            "默认空. 不需要 --trace-deep; 可用于 stat@@/stat64@@ 这类外部输出结构.")
+    p_tr.add_argument("--ext-write-cap", type=int, default=0, dest="ext_write_cap",
+                      help="external_writes.bin 事件总量上限 (0 = 不设限). 默认 0.")
     p_tr.add_argument("--patch-suicide", action="store_true", dest="patch_suicide",
                       help="启用 anti-anti-frida tgkill svc → nop patching. 必须通过 "
                            "--suicide-patch-spec PATH 显式传 JSON spec. 仅 --trace-deep 下生效.")

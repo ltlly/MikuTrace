@@ -77,6 +77,7 @@ fn strings_response(inner: &crate::state::AppStateInner, q: StringsQuery) -> Str
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             return StringsResponse {
                 status,
                 count: 0,
@@ -195,7 +196,7 @@ fn flush_run(
         return;
     };
     if run_chars.len() >= min_len
-        && cursor.map_or(true, |cursor| {
+        && cursor.is_none_or(|cursor| {
             (0..run_chars.len() as u64).all(|offset| {
                 let (byte, _kind, src) = mem.byte_at(addr + offset, cursor);
                 matches!((byte, src), (Some(_), Some(idx)) if (idx as u64) <= cursor)
@@ -203,7 +204,7 @@ fn flush_run(
         })
     {
         let text = String::from_utf8_lossy(run_chars).into_owned();
-        if needle.map_or(true, |needle| text.to_ascii_lowercase().contains(needle)) {
+        if needle.is_none_or(|needle| text.to_ascii_lowercase().contains(needle)) {
             *count += 1;
             if out.len() < limit {
                 out.push(StringEntry {

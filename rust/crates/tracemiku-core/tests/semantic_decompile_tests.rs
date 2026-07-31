@@ -1417,7 +1417,7 @@ fn semantic_metric_keyword_score_missing_operation() {
     // call: both no → 1.0
     // return: both yes → 1.0
     let score = keyword_presence_score(actual, expected);
-    assert!(score >= 0.0 && score <= 1.0);
+    assert!((0.0..=1.0).contains(&score));
     assert!(score < 1.0, "score should be < 1.0 due to missing load");
 }
 

@@ -667,3 +667,52 @@ pub(super) fn utf8_preview(bytes: &[u8], max: usize) -> String {
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_api_path_adds_slash_and_prefix() {
+        assert_eq!(normalize_api_path("api/records").unwrap(), "/api/records");
+        assert_eq!(normalize_api_path("/api/records").unwrap(), "/api/records");
+        assert_eq!(normalize_api_path(" /openapi.json ").unwrap(), "/openapi.json");
+        assert!(normalize_api_path("records").is_err(), "missing /api/ prefix");
+        assert!(normalize_api_path("/other/path").is_err());
+    }
+
+    #[test]
+    fn parse_key_values_requires_equals() {
+        let ok = parse_key_values(vec!["a=1".into(), "b=2".into()]).unwrap();
+        assert_eq!(ok.len(), 2);
+        assert_eq!(ok[0].1, "1");
+        assert!(parse_key_values(vec!["noequals".into()]).is_err());
+        assert!(parse_key_values(vec!["=x".into()]).is_err(), "empty key");
+    }
+
+    #[test]
+    fn split_csv_trims_and_drops_empty() {
+        assert_eq!(split_csv("a, b ,c"), vec!["a", "b", "c"]);
+        assert_eq!(split_csv(""), Vec::<String>::new());
+        assert_eq!(split_csv(" , , "), Vec::<String>::new());
+        assert_eq!(split_csv_allow_empty(""), vec![String::new()]);
+    }
+
+    #[test]
+    fn resolve_addr_in_maps_text_hit_and_miss() {
+        let text = "1000-2000 r-xp 00000000 08:01 1234 /system/lib64/libc.so\n";
+        let hit = resolve_addr_in_maps_text(text, 0x1500).unwrap();
+        assert_eq!(hit["path"], "/system/lib64/libc.so");
+        assert_eq!(hit["map_offset"], "0x500");
+        assert_eq!(hit["file_offset"], "0x500");
+        assert!(resolve_addr_in_maps_text(text, 0x9999).is_none(), "outside range");
+        assert!(resolve_addr_in_maps_text("zz-1000 r-xp 0 0 0 x\n", 0x500).is_none(), "bad hex lo");
+    }
+
+    #[test]
+    fn resolve_addr_in_maps_text_handles_anon_maps() {
+        let text = "1000-2000 ---p 00000000 00:00 0 \n";
+        let hit = resolve_addr_in_maps_text(text, 0x1000).unwrap();
+        assert_eq!(hit["path"], serde_json::Value::Null);
+    }
+}

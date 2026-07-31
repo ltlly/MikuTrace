@@ -72,12 +72,7 @@ impl ResolvedSeed {
 
 /// Parse a hex (`0x…`) or decimal literal into `u64`. Trims whitespace.
 pub fn parse_u64(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse::<u64>().ok()
-    }
+    crate::routes::parse::parse_dec_u64(raw)
 }
 
 /// Split a comma-separated string into trimmed, non-empty tokens.

@@ -405,6 +405,7 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             return MemDiffResponse {
                 status,
                 idx: q.idx,
@@ -440,6 +441,15 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
     }
 }
 
+fn parse_int(s: &str) -> Option<u64> {
+    let t = s.trim();
+    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        t.parse::<u64>().ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -458,14 +468,5 @@ mod tests {
         assert_eq!(effective_mem_diff_size(0), 1);
         assert_eq!(effective_mem_diff_size(16), 16);
         assert_eq!(effective_mem_diff_size(usize::MAX), MAX_MEM_DIFF_SIZE);
-    }
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }

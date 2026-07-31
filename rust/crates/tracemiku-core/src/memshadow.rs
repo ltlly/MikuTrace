@@ -27,6 +27,37 @@ use crate::sidecar_io::{invalid_data, read_len, read_u64, write_u64};
 use crate::trace::Trace;
 use serde::Serialize;
 
+/// Errors surfaced when MemShadow is not ready to serve a query.
+///
+/// Replaces the previous `Result<&MemShadow, &'static str>` so callers get
+/// exhaustiveness checking while the wire `status` string stays stable
+/// (contract test `memshadow_error_contract_tests`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemShadowError {
+    /// Shadow is still being built (previous wire value "loading").
+    Building,
+    /// Shadow build failed or is otherwise unavailable (wire value "error").
+    Failed,
+}
+
+impl MemShadowError {
+    /// Stable wire string used in route response `status` fields.
+    pub fn status_str(&self) -> &'static str {
+        match self {
+            MemShadowError::Building => "loading",
+            MemShadowError::Failed => "error",
+        }
+    }
+}
+
+impl std::fmt::Display for MemShadowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.status_str())
+    }
+}
+
+impl std::error::Error for MemShadowError {}
+
 /// One byte-level memory event: which trace-record idx touched this byte,
 /// the byte value, and the kind ("r" = load, "w" = store, "x" = external/
 /// boundary-diff write from external_writes.bin).

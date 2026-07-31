@@ -1,5 +1,6 @@
 //! POST /api/llil/render — Rust LLIL pipeline preview.
 
+use crate::routes::seed_resolver::parse_u64;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -171,18 +172,6 @@ pub fn render_llil_response(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{effective_max_records, MAX_LLIL_RENDER_RECORDS};
-
-    #[test]
-    fn effective_max_records_caps_extreme_requests() {
-        assert_eq!(effective_max_records(0), 1);
-        assert_eq!(effective_max_records(300), 300);
-        assert_eq!(effective_max_records(usize::MAX), MAX_LLIL_RENDER_RECORDS);
-    }
-}
-
 fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, String)> {
     let inner = &state.inner;
     let (src, payload) =
@@ -229,11 +218,14 @@ fn resolve_fn(state: &AppState, fn_id: &str) -> Result<FuncIR, (StatusCode, Stri
     }
 }
 
-fn parse_u64(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse::<u64>().ok()
+#[cfg(test)]
+mod tests {
+    use super::{effective_max_records, MAX_LLIL_RENDER_RECORDS};
+
+    #[test]
+    fn effective_max_records_caps_extreme_requests() {
+        assert_eq!(effective_max_records(0), 1);
+        assert_eq!(effective_max_records(300), 300);
+        assert_eq!(effective_max_records(usize::MAX), MAX_LLIL_RENDER_RECORDS);
     }
 }

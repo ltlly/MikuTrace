@@ -206,8 +206,8 @@ mod tests {
 
     fn write_trace(path: &std::path::Path, records: &[Record]) {
         let mut bytes = Vec::new();
-        for rec in records.iter().copied() {
-            bytes.extend_from_slice(bytemuck::bytes_of(&rec));
+        for rec in records {
+            bytes.extend_from_slice(bytemuck::bytes_of(rec));
         }
         std::fs::write(path.join("trace.bin"), bytes).unwrap();
     }

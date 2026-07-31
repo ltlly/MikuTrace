@@ -367,18 +367,6 @@ fn call_chain_response(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{effective_call_chain_depth, MAX_CALL_CHAIN_DEPTH};
-
-    #[test]
-    fn effective_call_chain_depth_caps_extreme_requests() {
-        assert_eq!(effective_call_chain_depth(0), 0);
-        assert_eq!(effective_call_chain_depth(5), 5);
-        assert_eq!(effective_call_chain_depth(usize::MAX), MAX_CALL_CHAIN_DEPTH);
-    }
-}
-
 pub async fn backtrace_handler(
     State(state): State<AppState>,
     Query(q): Query<BacktraceQuery>,
@@ -487,5 +475,17 @@ fn parse_int(s: &str) -> Option<u64> {
         u64::from_str_radix(hex, 16).ok()
     } else {
         t.parse::<u64>().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_call_chain_depth, MAX_CALL_CHAIN_DEPTH};
+
+    #[test]
+    fn effective_call_chain_depth_caps_extreme_requests() {
+        assert_eq!(effective_call_chain_depth(0), 0);
+        assert_eq!(effective_call_chain_depth(5), 5);
+        assert_eq!(effective_call_chain_depth(usize::MAX), MAX_CALL_CHAIN_DEPTH);
     }
 }

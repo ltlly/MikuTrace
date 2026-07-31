@@ -23,6 +23,7 @@ const STATE = {
     ringBuf: null,
     headBuf: null, tailBuf: null, droppedBuf: null,
     ringRecsBuf: null,
+    maxRecords: 0,
     simdSidecar: false,
     simdSampleStride: 1,
     simdRingBuf: null,
@@ -421,6 +422,24 @@ function ensureFlushTimer() {
             const total = h;
             send({type:"hb", head: h, tail: t, queued: ringQueue,
                   total, dropped, fnEntered: STATE.fnEntered, callIdx: STATE.callIdx});
+            if (STATE.fnEntered && STATE.maxRecords > 0 && total >= STATE.maxRecords && ringQueue === 0) {
+                log(`[!] maxRecords cap reached (${total} >= ${STATE.maxRecords}), finalizing call #${STATE.callIdx}`);
+                try { Stalker.unfollow(STATE.primaryTid); } catch(_){}
+                try { Stalker.flush(); } catch(_){}
+                flushRingToDisk("max-records");
+                flushSimdRingToDisk("max-records");
+                closeTraceFile();
+                closeSimdTraceFile();
+                const ms = Date.now() - STATE.started;
+                try { flushJniStringEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
+                try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
+                send({type:"trace-end", callIdx: STATE.callIdx, tid: STATE.primaryTid, retval:"?",
+                      ms, total, dropped, truncated: true, devicePath: STATE.traceFilePath,
+                      simdDevicePath: STATE.simdTraceFilePath});
+                STATE.fnEntered = false;
+                STATE.lastTotal = total;
+                return;
+            }
             if (STATE.fnEntered && total === STATE.lastTotal && ringQueue === 0) {
                 STATE.stuckSecs++;
                 if (STATE.stuckSecs >= STATE.stuckThreshold) {
@@ -1397,6 +1416,7 @@ rpc.exports = {
                                         ? opts.stalkerExcludePatterns : null;
         STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns)
                                       ? opts.boundaryDiffPatterns : null;
+        STATE.maxRecords = (opts.maxRecords != null && opts.maxRecords > 0) ? opts.maxRecords : 0;
         STATE.patchSuicide = !!opts.patchSuicide;
         STATE.hideRwxMaps = !!opts.hideRwxMaps;
         // jniHooks: array of hook specs (parsed from JSON config). null/empty = disabled.

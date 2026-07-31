@@ -68,6 +68,7 @@ fn mem_dump_response(
     let mem = match inner.memshadow_ready_or_block_if_idle() {
         Ok(mem) => mem,
         Err(status) => {
+            let status = status.status_str();
             return Ok(MemDumpResponse {
                 status,
                 addr: q.addr,

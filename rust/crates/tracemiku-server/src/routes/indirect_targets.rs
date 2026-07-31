@@ -192,7 +192,7 @@ fn indirect_targets_response(
         .iter()
         .map(|(&src, targets)| build_source_entry(inner, src, targets, q.min_count))
         .collect();
-    sources.sort_by(|a, b| b.total_observations.cmp(&a.total_observations));
+    sources.sort_by_key(|s| std::cmp::Reverse(s.total_observations));
     let total_sources = sources.len();
     let capped = total_sources > MAX_SOURCES_LISTED;
     sources.truncate(MAX_SOURCES_LISTED);
