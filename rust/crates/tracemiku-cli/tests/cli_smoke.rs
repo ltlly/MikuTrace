@@ -1052,6 +1052,59 @@ fn byte_lineage_starts_from_last_memory_writer() {
 }
 
 #[test]
+fn byte_lineage_origin_classifies_sources() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
+
+    // ExternalWrite 种子先注入：确保任何 router 构建（含 sidecar 缓存）都包含它
+    append_external_write(&cd, 5, 0x7001, b'X');
+
+    // Register: 0x7000 的链 = last_write(strb w0, kind=w, src_reg=w0) -> reg_source(w0)
+    let v = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7000".into(),
+        "--before-idx".into(),
+        "4".into(),
+        "--depth".into(),
+        "3".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["origin"]["register"]["reg"], "x0");
+    assert_eq!(v["origin"]["register"]["idx"], 0);
+
+    // ExternalWrite: 0x7001 的最后写入是 external（idx=5）
+    let v2 = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7001".into(),
+        "--before-idx".into(),
+        "6".into(),
+        "--depth".into(),
+        "2".into(),
+    ]);
+    assert_eq!(v2["status"], "ready");
+    assert_eq!(v2["origin"]["external_write"]["idx"], 5);
+    assert_eq!(v2["origin"]["external_write"]["addr"], 0x7001);
+
+    // Unknown: 从未被写的地址
+    let v3 = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x9000".into(),
+        "--before-idx".into(),
+        "4".into(),
+        "--depth".into(),
+        "2".into(),
+    ]);
+    assert_eq!(v3["status"], "ready");
+    assert_eq!(v3["origin"], "unknown");
+}
+
+#[test]
 fn byte_lineage_count_traces_consecutive_bytes() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
@@ -1328,3 +1381,4 @@ fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     assert!(v["count"].as_u64().unwrap() <= 1);
     assert!(v["candidates"].is_array());
 }
+

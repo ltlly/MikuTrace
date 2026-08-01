@@ -1,4 +1,136 @@
 {
+  "$defs": {
+    "ByteOrigin": {
+      "description": "Structured source classification for one byte's value.\nDerived from the byte-lineage steps chain without changing the analysis.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Value ultimately came from a register at a trace index.",
+          "properties": {
+            "register": {
+              "properties": {
+                "idx": {
+                  "description": "Trace record index where the register value originated.",
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "reg": {
+                  "description": "Register name (e.g., \"w0\", \"x2\").",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reg"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "register"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Value came from an ordinary memory write.",
+          "properties": {
+            "memory": {
+              "properties": {
+                "addr": {
+                  "description": "Address written.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "idx": {
+                  "description": "Trace record index of the write instruction.",
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "addr"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "memory"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Value came from an external write (MemShadow kind \"x\").",
+          "properties": {
+            "external_write": {
+              "properties": {
+                "addr": {
+                  "description": "Address written by the external source.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "idx": {
+                  "description": "Trace record index when the external write was observed.",
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "addr"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "external_write"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Value is a compile-time constant (immediate write, e.g. xzr).",
+          "properties": {
+            "constant": {
+              "properties": {
+                "value": {
+                  "description": "The constant value.",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "constant"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "unknown",
+          "description": "Value source is unknown (no writer, missing trace data).",
+          "type": "string"
+        }
+      ]
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "byte-lineage batch result entry: one byte's lineage row.",
   "properties": {
@@ -10,12 +142,17 @@
       "format": "uint",
       "minimum": 0,
       "type": "integer"
+    },
+    "origin": {
+      "$ref": "#/$defs/ByteOrigin",
+      "description": "Structured source classification for this byte."
     }
   },
   "required": [
     "offset",
     "addr",
-    "lineage"
+    "lineage",
+    "origin"
   ],
   "title": "LineageRow",
   "type": "object"

@@ -58,6 +58,7 @@ pub(super) async fn cmd_byte_lineage(
             .await
             {
                 Ok(value) => {
+                    let origin = derive_byte_origin_from_value(&value);
                     let lineage = if compact {
                         byte_lineage_compact_summary(&value)
                     } else if summary {
@@ -69,6 +70,7 @@ pub(super) async fn cmd_byte_lineage(
                         offset,
                         addr: format!("{byte_addr:#x}"),
                         lineage,
+                        origin,
                     }
                 }
                 Err(err) => LineageRow {
@@ -78,6 +80,7 @@ pub(super) async fn cmd_byte_lineage(
                         "status": "error",
                         "error": format!("{err:#}"),
                     }),
+                    origin: ByteOrigin::Unknown,
                 },
             };
             results.push(entry);
@@ -1508,6 +1511,96 @@ impl LineageSeed {
     }
 }
 
+/// Derive the structured byte origin from a byte-lineage steps chain.
+/// Reads only the existing step JSON (write_kind / src_reg / dst_addr /
+/// writer_idx); never changes the analysis logic.
+///
+/// - external write (kind "x") wins over everything else;
+/// - ordinary write (kind "w") with a source register is a register-origin
+///   byte, without one it is a constant write (e.g. str xzr);
+/// - a chain that only reaches a register backstep is a register-origin byte;
+/// - anything else (no writer, depth limit, error) is Unknown.
+pub(super) fn derive_byte_origin(
+    steps: &[serde_json::Value],
+    stop_reason: &serde_json::Value,
+) -> ByteOrigin {
+    for step in steps {
+        if step.get("kind").and_then(|v| v.as_str()) != Some("last_write") {
+            continue;
+        }
+        let write = step.get("write");
+        let addr = write
+            .and_then(|w| w.get("dst_addr"))
+            .and_then(|v| v.as_str())
+            .and_then(parse_u64_str)
+            .or_else(|| write.and_then(|w| w.get("addr")).and_then(|v| v.as_u64()));
+        let idx = write
+            .and_then(|w| w.get("writer_idx"))
+            .and_then(|v| v.as_u64())
+            .map(|i| i as usize);
+        match write.and_then(|w| w.get("write_kind")).and_then(|v| v.as_str()) {
+            Some("x") => return ByteOrigin::ExternalWrite {
+                addr: addr.unwrap_or(0),
+                idx,
+            },
+            Some("w") => {
+                return match write
+                    .and_then(|w| w.get("src_reg"))
+                    .and_then(|v| v.as_str())
+                {
+                    Some(reg) => ByteOrigin::Register {
+                        reg: reg.to_string(),
+                        idx,
+                    },
+                    None => ByteOrigin::Constant {
+                        value: write
+                            .and_then(|w| w.get("src_value"))
+                            .and_then(|v| v.as_str())
+                            .and_then(parse_u64_str)
+                            .map(|v| v as i64)
+                            .unwrap_or(0),
+                    },
+                };
+            }
+            _ => {}
+        }
+    }
+    // No last_write step: a chain that terminates at a register backstep is
+    // still a register-origin byte.
+    for step in steps.iter().rev() {
+        if step.get("kind").and_then(|v| v.as_str()) == Some("reg_source") {
+            if let Some(reg) = step
+                .get("backstep")
+                .and_then(|b| b.get("source_reg"))
+                .and_then(|v| v.as_str())
+            {
+                return ByteOrigin::Register {
+                    reg: reg.to_string(),
+                    idx: None,
+                };
+            }
+        }
+    }
+    let _ = stop_reason;
+    ByteOrigin::Unknown
+}
+
+/// Extract steps + stop_reason from a single-byte lineage value and derive
+/// its origin (used by the count>1 batch path where the full value is
+/// available before compact/summary conversion).
+pub(super) fn derive_byte_origin_from_value(value: &serde_json::Value) -> ByteOrigin {
+    let steps = value
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let stop_reason = value
+        .get("stop_reason")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    derive_byte_origin(&steps, &stop_reason)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn byte_lineage_value_on(
     app: &axum::Router,
@@ -1613,6 +1706,7 @@ pub(super) async fn byte_lineage_value_on(
         "depth_requested": depth,
         "steps_returned": steps.len(),
         "stop_reason": stop_reason,
+        "origin": derive_byte_origin(&steps, &stop_reason),
         "steps": steps,
     }))
 }

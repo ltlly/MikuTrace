@@ -95,7 +95,7 @@ fn lineage_batch_schema_validates_batch_shape() {
         "upstream_counts": [],
         "step_stats": {},
         "frontier_groups": [],
-        "results": [{"offset": 0, "addr": "0x1000", "lineage": {}}],
+        "results": [{"offset": 0, "addr": "0x1000", "lineage": {}, "origin": {"register": {"reg": "x0", "idx": 0}}}],
     });
     let errors: Vec<_> = validator.iter_errors(&sample).collect();
     assert!(errors.is_empty(), "sample must validate: {errors:?}");

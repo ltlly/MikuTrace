@@ -144,12 +144,11 @@ export default function CfgPanel(props: CfgPanelProps) {
   let suppressNextClick = false;
   let lastCenteredIdx = -1;
   let lastPanFn = "";
-  let graphSeq = 0;
   let graphTimer: number | undefined;
-  let graphAbort: AbortController | undefined;
   let graphTask:
     | { id: string; surface: string; label: string; startedAt: number }
     | undefined;
+  const graphGuard = useGuarded();
   const jump = useGuarded();
 
   const [functions] = createResource(
@@ -208,7 +207,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   });
 
   function cancelGraphTask(detail = "superseded") {
-    if (graphTask && (graphLoading() || graphTimer !== undefined || graphAbort)) {
+    if (graphTask && (graphLoading() || graphTimer !== undefined)) {
       props.onTaskUpdate?.({
         ...graphTask,
         status: "cancelled",
@@ -232,14 +231,12 @@ export default function CfgPanel(props: CfgPanelProps) {
     const sourceKind = cfgSource();
     const bn = bnTarget();
     if (!props.active || (sourceKind === "trace" && !fnName()) || (sourceKind === "bn-asm" && !bn?.pc)) {
-      graphSeq += 1;
+      graphGuard.cancel();
       if (graphTimer !== undefined) {
         window.clearTimeout(graphTimer);
         graphTimer = undefined;
       }
       cancelGraphTask("inactive");
-      graphAbort?.abort();
-      graphAbort = undefined;
       frame = undefined;
       canvas = undefined;
       setGraph(null);
@@ -261,7 +258,8 @@ export default function CfgPanel(props: CfgPanelProps) {
     const requestForce = forceGraph();
     reload();
 
-    const seq = ++graphSeq;
+    const h = graphGuard.begin();
+    const seq = h.seq;
     const taskId = sourceKind === "trace" ? "cfg-trace" : "cfg-bn-asm";
     const taskLabel = sourceKind === "trace" ? requestFn : requestFn || requestPc;
     const taskStartedAt = performance.now();
@@ -282,7 +280,6 @@ export default function CfgPanel(props: CfgPanelProps) {
       window.clearTimeout(graphTimer);
       graphTimer = undefined;
     }
-    graphAbort?.abort();
     frame = undefined;
     canvas = undefined;
     setGraph(null);
@@ -290,9 +287,7 @@ export default function CfgPanel(props: CfgPanelProps) {
     setGraphError(null);
     graphTimer = window.setTimeout(() => {
       graphTimer = undefined;
-      if (seq !== graphSeq) return;
-      const abort = new AbortController();
-      graphAbort = abort;
+      if (!graphGuard.isCurrent(h)) return;
       const promise =
         sourceKind === "trace"
           ? fetchCfgSvg({
@@ -301,12 +296,12 @@ export default function CfgPanel(props: CfgPanelProps) {
               localDepth: 2,
               timeout: requestTimeout,
               force: requestForce,
-              signal: abort.signal,
+              signal: h.abort.signal,
             })
-          : fetchBnCfgSvgForPc(requestPc, "asm", requestTimeout, abort.signal);
+          : fetchBnCfgSvgForPc(requestPc, "asm", requestTimeout, h.abort.signal);
       void promise
         .then((resp) => {
-          if (seq !== graphSeq || abort.signal.aborted) return;
+          if (!graphGuard.isCurrent(h)) return;
             if (sourceKind === "trace") {
               const traceResp = resp as CfgSvgResponse;
               setGraph({ ...traceResp, source: "trace", requestFn, auto: requestAuto });
@@ -359,7 +354,7 @@ export default function CfgPanel(props: CfgPanelProps) {
           }
         })
         .catch((err) => {
-          if (seq !== graphSeq || abort.signal.aborted) return;
+          if (!graphGuard.isCurrent(h)) return;
           setGraphError(err);
           graphTask = undefined;
           props.onTaskUpdate?.({
@@ -372,8 +367,8 @@ export default function CfgPanel(props: CfgPanelProps) {
           });
         })
         .finally(() => {
-          if (seq === graphSeq && !abort.signal.aborted) {
-            if (graphAbort === abort) graphAbort = undefined;
+          if (graphGuard.isCurrent(h)) {
+            graphGuard.release(h);
             setGraphLoading(false);
           }
         });
@@ -394,13 +389,12 @@ export default function CfgPanel(props: CfgPanelProps) {
   }
 
   onCleanup(() => {
-    graphSeq += 1;
+    graphGuard.cancel();
     if (graphTimer !== undefined) {
       window.clearTimeout(graphTimer);
       graphTimer = undefined;
     }
     cancelGraphTask("unmounted");
-    graphAbort?.abort();
     cancelJump();
   });
 
