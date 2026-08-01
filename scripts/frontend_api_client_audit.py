@@ -26,10 +26,17 @@ def main() -> int:
         for line_no, line in enumerate(text.splitlines(), 1)
         if re.search(r"\bfetch\(", line)
     ]
-    if len(fetch_lines) != 1 or fetch_lines[0][1] != "const r = await fetch(input, init);":
-        failures.append(f"expected only fx raw fetch(input, init), found {fetch_lines!r}")
+    if (
+        len(fetch_lines) != 1
+        or fetch_lines[0][1] != "const r = await fetch(input, init);"
+    ):
+        failures.append(
+            f"expected only fx raw fetch(input, init), found {fetch_lines!r}"
+        )
 
-    fx_start = text.find("async function fx(input: string, init?: RequestInit): Promise<Response>")
+    fx_start = text.find(
+        "async function fx(input: string, init?: RequestInit): Promise<Response>"
+    )
     fx_end = text.find("export async function fetchMeta")
     if fx_start < 0 or fx_end < 0 or fx_end <= fx_start:
         failures.append("missing fx wrapper")
@@ -39,7 +46,15 @@ def main() -> int:
             failures.append("fx wrapper must not call fx recursively")
         if "await fetch(input, init)" not in fx_body:
             failures.append("fx wrapper must call raw fetch(input, init)")
-        for token in ("apiDebugEnabled()", "console.log", "console.warn", "console.error", "method", "status", "ms"):
+        for token in (
+            "apiDebugEnabled()",
+            "console.log",
+            "console.warn",
+            "console.error",
+            "method",
+            "status",
+            "ms",
+        ):
             if token not in fx_body:
                 failures.append(f"fx wrapper missing debug field {token!r}")
         if "tracemiku-api-debug" not in text:
@@ -47,7 +62,9 @@ def main() -> int:
 
     api_calls = re.findall(r"\bawait\s+fx\(", text)
     if len(api_calls) < 30:
-        failures.append(f"too few await fx calls; expected active API client wrappers, got {len(api_calls)}")
+        failures.append(
+            f"too few await fx calls; expected active API client wrappers, got {len(api_calls)}"
+        )
 
     if failures:
         print("Frontend API client static audit failed:", file=sys.stderr)

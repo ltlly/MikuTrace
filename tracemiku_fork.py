@@ -8,8 +8,7 @@ import subprocess
 import time
 
 
-def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
-                          max_wait_sec=30.0):
+def _spawn_child_poller(fork_event, parent_meta, wlog, tag, max_wait_sec=30.0):
     """P1-C M3: kick off background thread that polls /proc/<child_pid>/stat
     until child exits, mutates fork_event in-place with Tier 3 lifecycle data.
 
@@ -18,6 +17,7 @@ def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
     serialize. No locking needed: only this thread mutates this fork_event.
     """
     import threading
+
     cpid = fork_event["child_pid"]
 
     def _poll():
@@ -39,28 +39,33 @@ def _spawn_child_poller(fork_event, parent_meta, wlog, tag,
                     fork_event["attach_status"] = "not_attempted_short_lived"
                 else:
                     fork_event["attach_status"] = "not_attempted_observed"
-            wlog(f"[{tag}] [FORK]   poll done child={cpid} "
-                 f"runtime={r['runtime_ms']}ms "
-                 f"alive_at_timeout={r['alive_at_max_wait']} "
-                 f"last_state={r['last_state']}")
+            wlog(
+                f"[{tag}] [FORK]   poll done child={cpid} "
+                f"runtime={r['runtime_ms']}ms "
+                f"alive_at_timeout={r['alive_at_max_wait']} "
+                f"last_state={r['last_state']}"
+            )
         except Exception as e:
             wlog(f"[{tag}] [FORK]   poll error child={cpid}: {e}")
 
-    th = threading.Thread(target=_poll, daemon=True,
-                           name=f"fork-poll-{cpid}")
+    th = threading.Thread(target=_poll, daemon=True, name=f"fork-poll-{cpid}")
     th.start()
 
 
 def _parse_proc_stat(text):
     s = text.strip()
-    if not s: return None
-    lp = s.find("("); rp = s.rfind(")")
-    if lp == -1 or rp == -1 or rp < lp: return None
+    if not s:
+        return None
+    lp = s.find("(")
+    rp = s.rfind(")")
+    if lp == -1 or rp == -1 or rp < lp:
+        return None
     try:
         pid = int(s[:lp].strip())
-        comm = s[lp + 1:rp]
-        rest = s[rp + 1:].split()
-        if len(rest) < 21: return None
+        comm = s[lp + 1 : rp]
+        rest = s[rp + 1 :].split()
+        if len(rest) < 21:
+            return None
         return {"pid": pid, "comm": comm, "state": rest[0]}
     except Exception:
         return None
@@ -69,9 +74,16 @@ def _parse_proc_stat(text):
 def _poll_child_lifecycle(pid, max_wait_sec=30.0, poll_interval_sec=0.1):
     start = time.time()
     out = {
-        "child_pid": pid, "first_observed_at": None, "last_observed_at": None,
-        "exit_observed_at": None, "alive_at_max_wait": False, "runtime_ms": None,
-        "last_state": None, "comm": None, "polls_total": 0, "polls_alive": 0,
+        "child_pid": pid,
+        "first_observed_at": None,
+        "last_observed_at": None,
+        "exit_observed_at": None,
+        "alive_at_max_wait": False,
+        "runtime_ms": None,
+        "last_state": None,
+        "comm": None,
+        "polls_total": 0,
+        "polls_alive": 0,
     }
     while True:
         if time.time() - start >= max_wait_sec:
@@ -79,8 +91,12 @@ def _poll_child_lifecycle(pid, max_wait_sec=30.0, poll_interval_sec=0.1):
             break
         out["polls_total"] += 1
         try:
-            r = subprocess.run(["adb", "shell", "cat", f"/proc/{pid}/stat"],
-                               capture_output=True, text=True, timeout=2)
+            r = subprocess.run(
+                ["adb", "shell", "cat", f"/proc/{pid}/stat"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
         except Exception:
             r = None
         now = time.time()
@@ -105,7 +121,9 @@ def _poll_child_lifecycle(pid, max_wait_sec=30.0, poll_interval_sec=0.1):
             break
         time.sleep(poll_interval_sec)
     if out["first_observed_at"] and out["last_observed_at"]:
-        out["runtime_ms"] = int((out["last_observed_at"] - out["first_observed_at"]) * 1000)
+        out["runtime_ms"] = int(
+            (out["last_observed_at"] - out["first_observed_at"]) * 1000
+        )
     return out
 
 
@@ -129,18 +147,22 @@ def _print_fork_summary(all_fork_events):
     n_not_attempted = by_status.get("not_attempted", 0)
 
     print("\n=== Fork Summary ===")
-    print(f"Total fork-like:   {n_fork}   "
-          f"(thread-like clones via pthread_create: {n_thread}, 不计)")
-    if n_success:    print(f"  ✓ Fully traced:  {n_success}")
-    if n_partial:    print(f"  ⚠ Partial:       {n_partial}")
-    if n_failed:     print(f"  ✗ Attach failed: {n_failed}   "
-                            f"({by_status})")
+    print(
+        f"Total fork-like:   {n_fork}   "
+        f"(thread-like clones via pthread_create: {n_thread}, 不计)"
+    )
+    if n_success:
+        print(f"  ✓ Fully traced:  {n_success}")
+    if n_partial:
+        print(f"  ⚠ Partial:       {n_partial}")
+    if n_failed:
+        print(f"  ✗ Attach failed: {n_failed}   ({by_status})")
     if n_not_attempted:
-        print(f"  · Not attempted: {n_not_attempted}   "
-              f"(--no-fork-trace 或 M2 child attach 未启用)")
-    print(f"详见 traces/<run>/calls/<dir>/meta.json `fork_events` 字段")
+        print(
+            f"  · Not attempted: {n_not_attempted}   "
+            f"(--no-fork-trace 或 M2 child attach 未启用)"
+        )
+    print("详见 traces/<run>/calls/<dir>/meta.json `fork_events` 字段")
     if n_failed and n_failed >= 2:
         print("提示: 多个 child 抓不全, 可能这个 SO 用 fork-based anti-debug.")
         print("      推 miku-shield (eBPF kernel): github.com/ltlly/miku-shield")
-
-

@@ -57,6 +57,9 @@ fn output_map_unknown_source_kind_is_null_safe() {
         "1",
     ]);
     assert_eq!(value["status"], "ready");
-    assert!(value["source"].is_object(), "source object present: {value}");
+    assert!(
+        value["source"].is_object(),
+        "source object present: {value}"
+    );
     assert!(value["groups"].is_array());
 }

@@ -140,7 +140,7 @@ fn backward_taint_response(
         match inner.memshadow_ready_or_block_if_idle() {
             Ok(mem) => Some(mem),
             Err(status) => {
-            let status = status.status_str();
+                let status = status.status_str();
                 return BackwardTaintResponse {
                     status,
                     count: 0,

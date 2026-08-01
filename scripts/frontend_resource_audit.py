@@ -93,7 +93,10 @@ def main() -> int:
 
     if missing or stale or marker_failures:
         if missing:
-            print("Raw createResource instances need explicit classification:", file=sys.stderr)
+            print(
+                "Raw createResource instances need explicit classification:",
+                file=sys.stderr,
+            )
             for rel, name in missing:
                 print(f"  + {rel}: {name}", file=sys.stderr)
         if stale:

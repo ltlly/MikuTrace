@@ -66,7 +66,9 @@ def pick_cross_function_points(base_url: str) -> tuple[TracePoint, TracePoint] |
             idx = int(row.get("idx") or 0)
             func = row.get("func")
             if first is None:
-                first = TracePoint(idx=idx, func=func if isinstance(func, str) else None)
+                first = TracePoint(
+                    idx=idx, func=func if isinstance(func, str) else None
+                )
             if isinstance(func, str) and func:
                 by_func.setdefault(func, TracePoint(idx=idx, func=func))
             if len(by_func) >= 2:
@@ -95,7 +97,9 @@ def debug_value(page: Any, key: str) -> str:
     return str(debug_values(page).get(key, ""))
 
 
-def wait_debug_value(page: Any, key: str, expected: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
+def wait_debug_value(
+    page: Any, key: str, expected: str, timeout_ms: int = DEFAULT_TIMEOUT_MS
+) -> None:
     page.wait_for_function(
         """({ key, expected }) => {
             for (const row of document.querySelectorAll('.debug-overlay .debug-row')) {
@@ -111,11 +115,15 @@ def wait_debug_value(page: Any, key: str, expected: str, timeout_ms: int = DEFAU
 
 
 def selected_idx(page: Any) -> int:
-    text = page.locator(".records-row.selected .idx").first.text_content(timeout=DEFAULT_TIMEOUT_MS)
+    text = page.locator(".records-row.selected .idx").first.text_content(
+        timeout=DEFAULT_TIMEOUT_MS
+    )
     return int(str(text).strip())
 
 
-def wait_selected_idx(page: Any, idx: int, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
+def wait_selected_idx(
+    page: Any, idx: int, timeout_ms: int = DEFAULT_TIMEOUT_MS
+) -> None:
     wait_debug_value(page, "selectedIdx", str(idx), timeout_ms=timeout_ms)
 
 
@@ -128,7 +136,9 @@ def jump_to_idx(page: Any, idx: int) -> None:
 
 
 def css_number(page: Any, selector: str, prop: str) -> float:
-    raw = page.eval_on_selector(selector, "(el, prop) => getComputedStyle(el).getPropertyValue(prop)", prop)
+    raw = page.eval_on_selector(
+        selector, "(el, prop) => getComputedStyle(el).getPropertyValue(prop)", prop
+    )
     return float(str(raw).strip().removesuffix("px"))
 
 
@@ -192,7 +202,9 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
         }"""
     )
     if any(bool(v) for v in loading_samples):
-        raise RuntimeError(f"records loading marker flickered during cached scroll: {loading_samples}")
+        raise RuntimeError(
+            f"records loading marker flickered during cached scroll: {loading_samples}"
+        )
     page.wait_for_selector(".records-row", timeout=timeout_ms)
     checks.append("records scroll keeps cached rows visible during range refetch")
 
@@ -200,13 +212,17 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     drag_by(page, ".layout-splitter-left", 36)
     left_after = css_number(page, "#layout", "--left-w")
     if left_after <= left_before:
-        raise RuntimeError(f"left splitter did not grow: before={left_before} after={left_after}")
+        raise RuntimeError(
+            f"left splitter did not grow: before={left_before} after={left_after}"
+        )
 
     asm_before = css_number(page, "#asm-col", "--col-asm")
     drag_by(page, "#stream-header .hd-asm .col-resize", 36)
     asm_after = css_number(page, "#asm-col", "--col-asm")
     if asm_after <= asm_before:
-        raise RuntimeError(f"asm column did not grow: before={asm_before} after={asm_after}")
+        raise RuntimeError(
+            f"asm column did not grow: before={asm_before} after={asm_after}"
+        )
     checks.append("panel and asm column drag resize updates CSS variables")
 
     reg = page.locator(".records-row.selected .op-reg").first
@@ -229,11 +245,18 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     page.mouse.down()
     page.mouse.move(b3["x"] + b3["width"] / 2, b3["y"] + b3["height"] / 2, steps=4)
     page.mouse.up()
-    page.wait_for_function("() => document.querySelectorAll('.mem-byte.selected').length >= 2", timeout=timeout_ms)
+    page.wait_for_function(
+        "() => document.querySelectorAll('.mem-byte.selected').length >= 2",
+        timeout=timeout_ms,
+    )
     cell3.click(button="right", timeout=timeout_ms)
     page.wait_for_selector(".memory-context-menu", timeout=timeout_ms)
-    page.locator(".memory-context-menu h3", has_text="writers").wait_for(timeout=timeout_ms)
-    page.locator(".memory-context-menu h3", has_text="readers").wait_for(timeout=timeout_ms)
+    page.locator(".memory-context-menu h3", has_text="writers").wait_for(
+        timeout=timeout_ms
+    )
+    page.locator(".memory-context-menu h3", has_text="readers").wait_for(
+        timeout=timeout_ms
+    )
     page.keyboard.press("Escape")
     page.wait_for_selector(".memory-context-menu", state="hidden", timeout=timeout_ms)
     checks.append("memory range selection opens provenance menu and Escape cancels it")
@@ -241,7 +264,9 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     page.locator('.vtab[data-rtab="hlil"]').click(timeout=timeout_ms)
     page.wait_for_selector(".hlil-panel", timeout=timeout_ms)
     if page.locator(".hlil-panel select").count() != 0:
-        raise RuntimeError("HLIL panel should follow cursor without a function selector")
+        raise RuntimeError(
+            "HLIL panel should follow cursor without a function selector"
+        )
     page.locator(".hlil-controls", has_text="cursor #").wait_for(timeout=timeout_ms)
     checks.append("HLIL tab follows current cursor without reselecting a function")
 
@@ -250,7 +275,9 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     dec_text = page.locator(".decompiler-panel").inner_text(timeout=timeout_ms)
     if "call LLM" in dec_text or "LLIL → LLM" in dec_text:
         raise RuntimeError("Decompile panel exposed LLM controls")
-    page.locator(".decompiler-panel button", has_text="render LLIL").wait_for(timeout=timeout_ms)
+    page.locator(".decompiler-panel button", has_text="render LLIL").wait_for(
+        timeout=timeout_ms
+    )
     checks.append("Decompile tab is visible without LLM controls")
 
     page.keyboard.press("g")
@@ -284,7 +311,11 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     checks.append("CFG source selector switches to BN ASM CFG and back")
 
     page.wait_for_selector(".cfg-svg-frame", timeout=timeout_ms)
-    page.wait_for_selector('.cfg-svg-canvas > svg g[data-tracemiku-panzoom]', state="attached", timeout=timeout_ms)
+    page.wait_for_selector(
+        ".cfg-svg-canvas > svg g[data-tracemiku-panzoom]",
+        state="attached",
+        timeout=timeout_ms,
+    )
     zoom_anchor = page.evaluate(
         """async () => {
             const frame = document.querySelector('.cfg-svg-frame');
@@ -338,28 +369,49 @@ def run_smoke(page: Any, base_url: str, timeout_ms: int) -> list[str]:
     )
     if zoom_anchor["cssTransform"] != "none":
         raise RuntimeError(f"CFG canvas still uses CSS transform: {zoom_anchor}")
-    if not zoom_anchor["scaled"] or abs(zoom_anchor["dx"]) > 0.05 or abs(zoom_anchor["dy"]) > 0.05:
-        raise RuntimeError(f"CFG ctrl-wheel zoom did not keep cursor anchor stable: {zoom_anchor}")
+    if (
+        not zoom_anchor["scaled"]
+        or abs(zoom_anchor["dx"]) > 0.05
+        or abs(zoom_anchor["dy"]) > 0.05
+    ):
+        raise RuntimeError(
+            f"CFG ctrl-wheel zoom did not keep cursor anchor stable: {zoom_anchor}"
+        )
     checks.append("CFG ctrl-wheel zoom is vector-rendered and anchored at the cursor")
 
-    if points and points[0].func and points[1].func and points[0].func != points[1].func:
+    if (
+        points
+        and points[0].func
+        and points[1].func
+        and points[0].func != points[1].func
+    ):
         jump_to_idx(page, points[0].idx)
         wait_debug_value(page, "cursorHint.func", points[0].func, timeout_ms)
         wait_debug_value(page, "cfg.fnName", points[0].func, timeout_ms)
         jump_to_idx(page, points[1].idx)
         wait_debug_value(page, "cursorHint.func", points[1].func, timeout_ms)
         wait_debug_value(page, "cfg.fnName", points[1].func, timeout_ms)
-        checks.append(f"CFG sync follows cross-function cursor jump {points[0].func}->{points[1].func}")
+        checks.append(
+            f"CFG sync follows cross-function cursor jump {points[0].func}->{points[1].func}"
+        )
     else:
-        checks.append("CFG sync cross-function check skipped: no two named funcs in sampled records")
+        checks.append(
+            "CFG sync cross-function check skipped: no two named funcs in sampled records"
+        )
 
     return checks
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run browser event smoke against a running traceMiku web URL.")
-    parser.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
-    parser.add_argument("--browser", choices=["chromium", "firefox", "webkit"], default="chromium")
+    parser = argparse.ArgumentParser(
+        description="Run browser event smoke against a running traceMiku web URL."
+    )
+    parser.add_argument(
+        "base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900"
+    )
+    parser.add_argument(
+        "--browser", choices=["chromium", "firefox", "webkit"], default="chromium"
+    )
     parser.add_argument("--executable", help="optional browser executable path")
     parser.add_argument("--headful", action="store_true", help="show browser window")
     parser.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS)
@@ -395,7 +447,10 @@ def main() -> int:
                 page = browser.new_page(viewport={"width": 1440, "height": 900})
                 checks = run_smoke(page, args.base_url.rstrip("/"), args.timeout_ms)
             except PlaywrightError as exc:
-                print(f"FAIL frontend event smoke Playwright error: {exc}", file=sys.stderr)
+                print(
+                    f"FAIL frontend event smoke Playwright error: {exc}",
+                    file=sys.stderr,
+                )
                 return 1
             finally:
                 browser.close()
@@ -403,7 +458,9 @@ def main() -> int:
         print(f"FAIL frontend event smoke: {exc}", file=sys.stderr)
         return 1
 
-    print(f"OK frontend event smoke base={args.base_url.rstrip('/')} checks={len(checks)}")
+    print(
+        f"OK frontend event smoke base={args.base_url.rstrip('/')} checks={len(checks)}"
+    )
     for check in checks:
         print(f"  - {check}")
     return 0

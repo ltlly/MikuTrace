@@ -37,7 +37,9 @@ LARGE_TRACE_PARALLEL_MIN_RECORDS = 1_000_000
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Rust web end-to-end smoke gate.")
     parser.add_argument("trace", help="per-call trace directory containing trace.bin")
-    parser.add_argument("--port", type=int, default=0, help="listen port; default picks a free port")
+    parser.add_argument(
+        "--port", type=int, default=0, help="listen port; default picks a free port"
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument(
         "--build-release",
@@ -74,7 +76,9 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def fetch_bytes(base: str, path: str, timeout: float) -> tuple[bytes, int, dict[str, str]]:
+def fetch_bytes(
+    base: str, path: str, timeout: float
+) -> tuple[bytes, int, dict[str, str]]:
     with urllib.request.urlopen(base.rstrip("/") + path, timeout=timeout) as resp:
         body = resp.read()
         headers = {k.lower(): v for k, v in resp.headers.items()}
@@ -87,7 +91,9 @@ def fetch_json(base: str, path: str, timeout: float) -> Any:
     if status < 200 or status >= 300:
         raise RuntimeError(f"{path} returned HTTP {status}: {body[:160]!r}")
     if "json" not in content_type.lower():
-        raise RuntimeError(f"{path} did not return JSON content-type={content_type!r}: {body[:160]!r}")
+        raise RuntimeError(
+            f"{path} did not return JSON content-type={content_type!r}: {body[:160]!r}"
+        )
     return json.loads(body.decode("utf-8"))
 
 
@@ -97,7 +103,9 @@ def wait_ready(base: str, proc: subprocess.Popen[str], timeout: float) -> None:
     while time.time() < deadline:
         if proc.poll() is not None:
             logs = read_available_logs(proc)
-            raise RuntimeError(f"server exited before ready code={proc.returncode}\n{logs}")
+            raise RuntimeError(
+                f"server exited before ready code={proc.returncode}\n{logs}"
+            )
         try:
             fetch_json(base, "/api/meta", 5.0)
             return
@@ -135,7 +143,15 @@ def stop_proc(proc: subprocess.Popen[str]) -> None:
 
 def build_release() -> None:
     subprocess.run(
-        ["cargo", "build", "--manifest-path", "rust/Cargo.toml", "-p", "tracemiku-server", "--release"],
+        [
+            "cargo",
+            "build",
+            "--manifest-path",
+            "rust/Cargo.toml",
+            "-p",
+            "tracemiku-server",
+            "--release",
+        ],
         cwd=REPO_ROOT,
         check=True,
     )
@@ -242,14 +258,14 @@ def fetch_bg_status(base: str, timeout: float) -> dict[str, Any]:
         raise RuntimeError(f"/api/bg-status missing parallelism object: {status!r}")
     workers = parallelism.get("workers")
     if not isinstance(workers, dict) or not workers:
-        raise RuntimeError(f"/api/bg-status parallelism missing workers: {parallelism!r}")
+        raise RuntimeError(
+            f"/api/bg-status parallelism missing workers: {parallelism!r}"
+        )
     available = int(parallelism.get("available") or 1)
     records = int(parallelism.get("records") or 0)
     if available > 1 and records >= LARGE_TRACE_PARALLEL_MIN_RECORDS:
         single_worker = {
-            str(name): count
-            for name, count in workers.items()
-            if int(count or 0) < 2
+            str(name): count for name, count in workers.items() if int(count or 0) < 2
         }
         if single_worker:
             raise RuntimeError(
@@ -259,7 +275,9 @@ def fetch_bg_status(base: str, timeout: float) -> dict[str, Any]:
     return status
 
 
-def wait_mem_ready(base: str, timeout: float, server_started: float) -> tuple[dict[str, Any], float]:
+def wait_mem_ready(
+    base: str, timeout: float, server_started: float
+) -> tuple[dict[str, Any], float]:
     deadline = time.time() + timeout
     last_status = "?"
     while time.time() < deadline:
@@ -268,10 +286,14 @@ def wait_mem_ready(base: str, timeout: float, server_started: float) -> tuple[di
         if last_status == "ready":
             return status, (time.perf_counter() - server_started) * 1000.0
         time.sleep(0.25)
-    raise TimeoutError(f"MemShadow did not become ready before timeout; last status={last_status}")
+    raise TimeoutError(
+        f"MemShadow did not become ready before timeout; last status={last_status}"
+    )
 
 
-def format_parallelism(bg_status: dict[str, Any], mem_ready_ms: float | None = None) -> str:
+def format_parallelism(
+    bg_status: dict[str, Any], mem_ready_ms: float | None = None
+) -> str:
     parallelism = bg_status.get("parallelism") or {}
     workers = parallelism.get("workers") or {}
     worker_text = " ".join(f"{k}={v}" for k, v in sorted(workers.items()))
@@ -290,7 +312,10 @@ def main() -> int:
         return 2
     static_dir = REPO_ROOT / "frontend" / "dist"
     if not (static_dir / "index.html").exists():
-        print("FAIL frontend/dist/index.html missing; run npm run build in frontend/", file=sys.stderr)
+        print(
+            "FAIL frontend/dist/index.html missing; run npm run build in frontend/",
+            file=sys.stderr,
+        )
         return 2
     if args.build_release:
         build_release()
@@ -314,7 +339,9 @@ def main() -> int:
         if args.wait_mem_ready:
             bg_status, mem_ready_ms = wait_mem_ready(
                 base,
-                args.mem_ready_timeout if args.mem_ready_timeout is not None else args.timeout,
+                args.mem_ready_timeout
+                if args.mem_ready_timeout is not None
+                else args.timeout,
                 server_started,
             )
         verify_frontend(base, args.timeout)
@@ -322,14 +349,19 @@ def main() -> int:
         probe = run_probe(base, args.timeout, visible_only=not args.all_surfaces)
         failures = [m for m in probe["measurements"] if not m["ok"]]
         if failures:
-            print(json.dumps({"base_url": base, "failures": failures}, indent=2), file=sys.stderr)
+            print(
+                json.dumps({"base_url": base, "failures": failures}, indent=2),
+                file=sys.stderr,
+            )
             return 1
         print(
             f"OK rust web smoke base={base} records={probe['records']:,} "
             f"measurements={len(probe['measurements'])}"
         )
         print(f"  parallelism {format_parallelism(bg_status, mem_ready_ms)}")
-        slow = sorted(probe["measurements"], key=lambda m: float(m["ms"]), reverse=True)[:5]
+        slow = sorted(
+            probe["measurements"], key=lambda m: float(m["ms"]), reverse=True
+        )[:5]
         for m in slow:
             print(f"  {m['ms']:8.1f} ms {m['label']}")
         watched = {"cfg svg largest fn", "string provenance first", "reg timeline x0"}

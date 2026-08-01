@@ -77,9 +77,9 @@ def test_read_trace_tail_multi_record(tmp_path):
     buf = bytearray(272 * 3)
     for i in range(3):
         off = i * 272
-        buf[off:off + 8] = struct.pack("<Q", 0x100000 + i * 4)
-        buf[off + 268:off + 272] = struct.pack("<I", NOP)
-    buf[272 * 2 + 268:272 * 3] = struct.pack("<I", RET)
+        buf[off : off + 8] = struct.pack("<Q", 0x100000 + i * 4)
+        buf[off + 268 : off + 272] = struct.pack("<I", NOP)
+    buf[272 * 2 + 268 : 272 * 3] = struct.pack("<I", RET)
     p.write_bytes(bytes(buf))
     n, first_pc, last_pc, last_inst = mod._read_trace_tail(p)
     assert n == 3

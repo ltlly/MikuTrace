@@ -190,7 +190,11 @@ def file_has_tests(root: Path, name: str) -> bool:
 
 
 def check_coverage(mapping: dict[str, list[str]], root: Path) -> list[str]:
-    return [s for s, files in mapping.items() if not any(file_has_tests(root, f) for f in files)]
+    return [
+        s
+        for s, files in mapping.items()
+        if not any(file_has_tests(root, f) for f in files)
+    ]
 
 
 def live_cli_commands() -> list[str]:

@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from rust_web_smoke import REPO_ROOT, fetch_json, free_port, server_cmd, stop_proc, wait_ready
+from rust_web_smoke import (
+    REPO_ROOT,
+    fetch_json,
+    free_port,
+    server_cmd,
+    stop_proc,
+    wait_ready,
+)
 
 
 @dataclass(frozen=True)
@@ -30,14 +37,18 @@ class Case:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Rust CLI vs Rust web API parity gate.")
+    parser = argparse.ArgumentParser(
+        description="Rust CLI vs Rust web API parity gate."
+    )
     parser.add_argument(
         "trace",
         nargs="?",
         help="per-call trace directory; default builds /tmp/tracemiku_smoke fixture",
     )
     parser.add_argument("--timeout", type=float, default=120.0)
-    parser.add_argument("--debug-bin", action="store_true", help="use debug tracemiku-server")
+    parser.add_argument(
+        "--debug-bin", action="store_true", help="use debug tracemiku-server"
+    )
     return parser.parse_args()
 
 
@@ -70,12 +81,16 @@ def cli_cmd(trace: Path, args: tuple[str, ...]) -> list[str]:
 
 
 def run_cli(trace: Path, args: tuple[str, ...], timeout: float) -> Any:
-    out = subprocess.check_output(cli_cmd(trace, args), cwd=REPO_ROOT, text=True, timeout=timeout)
+    out = subprocess.check_output(
+        cli_cmd(trace, args), cwd=REPO_ROOT, text=True, timeout=timeout
+    )
     return json.loads(out)
 
 
 def format_json(value: Any) -> list[str]:
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True).splitlines(keepends=True)
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True).splitlines(
+        keepends=True
+    )
 
 
 def assert_equal(case: Case, web: Any, cli: Any) -> None:
@@ -122,7 +137,11 @@ def normalize_case(case: Case, value: Any) -> Any:
 def cases() -> list[Case]:
     return [
         Case("meta", "/api/meta", ("meta",)),
-        Case("records", "/api/records?start=0&count=9", ("records", "--start", "0", "--count", "9")),
+        Case(
+            "records",
+            "/api/records?start=0&count=9",
+            ("records", "--start", "0", "--count", "9"),
+        ),
         Case(
             "api-records",
             "/api/records?start=0&count=2",
@@ -194,7 +213,16 @@ def cases() -> list[Case]:
         Case(
             "forward-taint",
             "/api/forward-taint?trace_idx=0&reg=x0&max_count=10&cross_fn_call=true",
-            ("taint-fwd", "--start", "0", "--reg", "x0", "--max-count", "10", "--cross-fn-call"),
+            (
+                "taint-fwd",
+                "--start",
+                "0",
+                "--reg",
+                "x0",
+                "--max-count",
+                "10",
+                "--cross-fn-call",
+            ),
         ),
         Case(
             "jni-events",
@@ -202,7 +230,11 @@ def cases() -> list[Case]:
             ("jni-events", "--limit", "10"),
         ),
         Case("dec-summary", "/api/dec/summary", ("dec-summary",)),
-        Case("resolve", "/api/resolve?so=libt.so&off=0x100", ("resolve", "--so", "libt.so", "--off", "0x100")),
+        Case(
+            "resolve",
+            "/api/resolve?so=libt.so&off=0x100",
+            ("resolve", "--so", "libt.so", "--off", "0x100"),
+        ),
         Case(
             "coverage",
             "/api/coverage?so=libt.so&off=0x0",
@@ -241,7 +273,10 @@ def main() -> int:
         return 2
     static_dir = REPO_ROOT / "frontend" / "dist"
     if not (static_dir / "index.html").exists():
-        print("FAIL frontend/dist/index.html missing; run npm run build in frontend/", file=sys.stderr)
+        print(
+            "FAIL frontend/dist/index.html missing; run npm run build in frontend/",
+            file=sys.stderr,
+        )
         return 2
 
     port = free_port()

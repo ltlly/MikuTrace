@@ -12,6 +12,7 @@ Usage:
 
 Exit 0 on success, 1 on failure.
 """
+
 import argparse
 import json
 import os
@@ -28,6 +29,7 @@ PROJECT = HERE.parent
 REC_SIZE = 272
 
 # ─────────────────────────── NDK detection ───────────────────────────
+
 
 def find_ndk_clang() -> str:
     """Find aarch64-linux-android<api>-clang in NDK."""
@@ -124,6 +126,7 @@ int main(void) {
 
 # ─────────────────────────── Helpers ───────────────────────────
 
+
 def adb(*cmd, check=True, capture=True):
     """Run adb command."""
     full = ["adb"] + list(cmd)
@@ -157,7 +160,9 @@ def verify_trace(call_dir: Path) -> dict:
         raise AssertionError("meta.json missing 'records' field")
     declared = meta["records"]
     if declared != num_records:
-        raise AssertionError(f"meta declares {declared} records but trace.bin has {num_records}")
+        raise AssertionError(
+            f"meta declares {declared} records but trace.bin has {num_records}"
+        )
 
     # Check first few records have valid PCs (non-zero, reasonable ARM64 range)
     with open(trace_bin, "rb") as f:
@@ -168,7 +173,9 @@ def verify_trace(call_dir: Path) -> dict:
                 raise AssertionError(f"record {i} has pc=0")
             inst = struct.unpack_from("<I", rec, 268)[0]
             if inst == 0:
-                raise AssertionError(f"record {i} has inst=0 (unlikely for valid ARM64)")
+                raise AssertionError(
+                    f"record {i} has inst=0 (unlikely for valid ARM64)"
+                )
 
     return {
         "records": num_records,
@@ -179,9 +186,11 @@ def verify_trace(call_dir: Path) -> dict:
 
 # ─────────────────────────── Main ───────────────────────────
 
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--remote", default=None, help="frida-server address")
     ap.add_argument("--duration", type=int, default=12, help="trace duration seconds")
     ap.add_argument("--max-records", type=int, default=500000, help="max trace records")
@@ -206,7 +215,7 @@ def main():
     print("\n[2/6] Checking adb device...")
     try:
         r = adb("devices")
-        lines = [l for l in r.stdout.strip().splitlines()[1:] if "device" in l]
+        lines = [line for line in r.stdout.strip().splitlines()[1:] if "device" in line]
         if not lines:
             print("  SKIP: no adb device connected")
             return 0
@@ -223,9 +232,19 @@ def main():
     src_file.write_text(TEST_C_SOURCE)
 
     r = subprocess.run(
-        [cc, "-O1", "-fPIE", "-pie", "-o", str(bin_file), str(src_file),
-         "-static-libstdc++"],
-        capture_output=True, text=True, timeout=30,
+        [
+            cc,
+            "-O1",
+            "-fPIE",
+            "-pie",
+            "-o",
+            str(bin_file),
+            str(src_file),
+            "-static-libstdc++",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if r.returncode != 0:
         print(f"  FAIL: compilation failed:\n{r.stderr}", file=sys.stderr)
@@ -243,7 +262,9 @@ def main():
     # Use shell nohup to keep it alive
     proc = subprocess.Popen(
         ["adb", "shell", device_path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     # Wait for READY signal
     pid = None
@@ -271,19 +292,29 @@ def main():
     print("\n[5/6] Running tracemiku trace...")
     out_dir = tmp / "trace_out"
     trace_cmd = [
-        sys.executable, str(PROJECT / "tracemiku"), "trace",
-        "--attach-pid", str(pid),
-        "--so", "tracemiku_devtest",
-        "--export", "tracemiku_test_entry",
-        "--max-records", str(args.max_records),
-        "--duration", str(args.duration),
-        "--out", str(out_dir),
+        sys.executable,
+        str(PROJECT / "tracemiku"),
+        "trace",
+        "--attach-pid",
+        str(pid),
+        "--so",
+        "tracemiku_devtest",
+        "--export",
+        "tracemiku_test_entry",
+        "--max-records",
+        str(args.max_records),
+        "--duration",
+        str(args.duration),
+        "--out",
+        str(out_dir),
     ]
     if args.remote:
         trace_cmd += ["--remote", args.remote]
     print(f"  cmd: {' '.join(trace_cmd[-8:])}")
 
-    tr = subprocess.run(trace_cmd, capture_output=True, text=True, timeout=args.duration + 30)
+    tr = subprocess.run(
+        trace_cmd, capture_output=True, text=True, timeout=args.duration + 30
+    )
     # Wait for target to finish
     try:
         proc.wait(timeout=10)
@@ -314,11 +345,14 @@ def main():
     for cd in call_dirs:
         try:
             stats = verify_trace(cd)
-            print(f"  ✓ {cd.name}: {stats['records']} records, "
-                  f"{stats['size_mb']:.2f} MB")
+            print(
+                f"  ✓ {cd.name}: {stats['records']} records, {stats['size_mb']:.2f} MB"
+            )
             if stats["records"] < 10:
-                print(f"    WARN: very few records ({stats['records']}), "
-                      "target may not have executed enough")
+                print(
+                    f"    WARN: very few records ({stats['records']}), "
+                    "target may not have executed enough"
+                )
         except AssertionError as e:
             print(f"  ✗ {cd.name}: {e}", file=sys.stderr)
             if not args.keep:
@@ -329,8 +363,7 @@ def main():
     adb("shell", f"rm -f {device_path}", check=False)
 
     total_recs = sum(
-        json.loads((cd / "meta.json").read_text()).get("records", 0)
-        for cd in call_dirs
+        json.loads((cd / "meta.json").read_text()).get("records", 0) for cd in call_dirs
     )
     print(f"\n{'=' * 60}")
     print(f"PASS — {len(call_dirs)} call(s), {total_recs} total records")

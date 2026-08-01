@@ -791,7 +791,7 @@ fn find_mem_pattern_response(
         let mem = match inner.memshadow_ready_or_block_if_idle() {
             Ok(mem) => mem,
             Err(status) => {
-            let status = status.status_str();
+                let status = status.status_str();
                 return FindMemPatternResponse {
                     status,
                     pattern: pattern.iter().map(|b| format!("{b:02x}")).collect(),

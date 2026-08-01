@@ -75,7 +75,9 @@ class Session:
         fn = self._function_for_pc(bn_pc)
         created = False
         if fn is None:
-            fn = self._create_function_for_pc(bn_pc, self._to_bn_addr(fn_start) if fn_start else None)
+            fn = self._create_function_for_pc(
+                bn_pc, self._to_bn_addr(fn_start) if fn_start else None
+            )
             created = fn is not None
         if fn is None:
             return {
@@ -117,7 +119,9 @@ class Session:
         fn = self._function_for_pc(bn_pc)
         created = False
         if fn is None:
-            fn = self._create_function_for_pc(bn_pc, self._to_bn_addr(fn_start) if fn_start else None)
+            fn = self._create_function_for_pc(
+                bn_pc, self._to_bn_addr(fn_start) if fn_start else None
+            )
             created = fn is not None
         if fn is None:
             return {
@@ -127,7 +131,11 @@ class Session:
                 "created_function": False,
             }
         blocks = [
-            {"id": i, "start": self._to_trace_addr(int(bb.start)), "end": self._to_trace_addr(int(bb.end))}
+            {
+                "id": i,
+                "start": self._to_trace_addr(int(bb.start)),
+                "end": self._to_trace_addr(int(bb.end)),
+            }
             for i, bb in enumerate(fn.basic_blocks)
         ]
         return {
@@ -148,7 +156,9 @@ class Session:
         containing = list(self.bv.get_functions_containing(pc))
         return containing[0] if containing else None
 
-    def _create_function_for_pc(self, bn_pc: int, bn_fn_start: int | None = None) -> Any | None:
+    def _create_function_for_pc(
+        self, bn_pc: int, bn_fn_start: int | None = None
+    ) -> Any | None:
         candidates: list[int] = []
         if bn_fn_start is not None and self._addr_in_image(bn_fn_start):
             candidates.append(bn_fn_start)
@@ -195,7 +205,9 @@ class Session:
         if raw_tokens is None:
             raw_tokens = self._call_instruction_text(self.bv, bn_pc)
         if raw_tokens:
-            return [self._token_to_wire(t) for t in raw_tokens if getattr(t, "text", "")]
+            return [
+                self._token_to_wire(t) for t in raw_tokens if getattr(t, "text", "")
+            ]
         try:
             text = str(self.bv.get_disassembly(bn_pc))
         except Exception:
@@ -250,11 +262,14 @@ class Session:
             out.append({"t": m.group(1), "c": "txt"})
         out.append({"t": m.group(2), "c": "mnem"})
         rest = m.group(3)
-        reg_re = re.compile(r"\b(?:x(?:[0-9]|1[0-9]|2[0-9]|3[01])|w(?:[0-9]|1[0-9]|2[0-9]|3[01])|sp|fp|lr|xzr|wzr|pc)\b", re.I)
+        reg_re = re.compile(
+            r"\b(?:x(?:[0-9]|1[0-9]|2[0-9]|3[01])|w(?:[0-9]|1[0-9]|2[0-9]|3[01])|sp|fp|lr|xzr|wzr|pc)\b",
+            re.I,
+        )
         last = 0
         for rm in reg_re.finditer(rest):
             if rm.start() > last:
-                out.append({"t": rest[last:rm.start()], "c": "txt"})
+                out.append({"t": rest[last : rm.start()], "c": "txt"})
             out.append({"t": rm.group(0), "c": "reg"})
             last = rm.end()
         if last < len(rest):
@@ -290,7 +305,9 @@ class Session:
                 )
         return out
 
-    def _lines_from_hlil(self, instr: Any, fallback_addr: int | None) -> list[dict[str, Any]]:
+    def _lines_from_hlil(
+        self, instr: Any, fallback_addr: int | None
+    ) -> list[dict[str, Any]]:
         try:
             raw_lines = list(instr.lines)
         except Exception:
@@ -547,7 +564,7 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NUMBER_RE = re.compile(r"^(?:0x[0-9a-fA-F]+|\d+)(?:[uUlL]*)$")
 _CODE_TOKEN_RE = re.compile(
     r'(\s+|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|0x[0-9a-fA-F]+|\d+|'
-    r'[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|<<|>>|&&|\|\||->|\+\+|--|[{}()\[\],;:.*&=<>+\-/|!~^%])'
+    r"[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|<<|>>|&&|\|\||->|\+\+|--|[{}()\[\],;:.*&=<>+\-/|!~^%])"
 )
 
 
@@ -556,7 +573,7 @@ def _fallback_code_tokens(text: str) -> list[dict[str, Any]]:
     pos = 0
     for match in _CODE_TOKEN_RE.finditer(text):
         if match.start() > pos:
-            out.append({"t": text[pos:match.start()], "c": "txt"})
+            out.append({"t": text[pos : match.start()], "c": "txt"})
         token = match.group(0)
         out.append({"t": token, "c": _classify_token("", token)})
         pos = match.end()

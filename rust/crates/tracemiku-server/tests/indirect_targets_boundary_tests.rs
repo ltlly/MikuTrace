@@ -24,7 +24,8 @@ fn synth_call_dir(module_json: &str) -> (tempfile::TempDir, PathBuf) {
     for i in 0..3 {
         let off = i * 272;
         buf[off..off + 8].copy_from_slice(&(0x100000u64 + i as u64 * 4).to_le_bytes());
-        buf[off + 268..off + 272].copy_from_slice(&0xd503201fu32.to_le_bytes()); // nop
+        buf[off + 268..off + 272].copy_from_slice(&0xd503201fu32.to_le_bytes());
+        // nop
     }
     fs::write(cd.join("trace.bin"), &buf).unwrap();
     fs::write(cd.join("meta.json"), r#"{"records":3}"#).unwrap();
@@ -64,8 +65,10 @@ async fn ambiguous_prefix_returns_ambiguous() {
     );
     let (status, v) = get_json(cd, "/api/indirect-targets?so=libt&off=0x0").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(v["status"] == "ambiguous" || v["status"] == "hit",
-        "prefix may resolve or be ambiguous: {v}");
+    assert!(
+        v["status"] == "ambiguous" || v["status"] == "hit",
+        "prefix may resolve or be ambiguous: {v}"
+    );
     if v["status"] == "ambiguous" {
         assert!(v["candidates"].as_array().is_some());
         assert!(v["hint"].as_str().is_some());
@@ -86,7 +89,10 @@ async fn nop_pc_returns_no_dispatch() {
     let (_tmp, cd) = synth_call_dir(MODULE);
     let (status, v) = get_json(cd, "/api/indirect-targets?addr=0x100000").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(v["status"], "no_dispatch", "nop is not an indirect branch: {v}");
+    assert_eq!(
+        v["status"], "no_dispatch",
+        "nop is not an indirect branch: {v}"
+    );
 }
 
 #[tokio::test]
@@ -96,6 +102,8 @@ async fn missing_both_coordinates_returns_error() {
     assert_eq!(status, StatusCode::OK);
     // No addr and no so/off → source_pc None → full dispatch listing (ok).
     // This is the aggregate view, not an error.
-    assert!(v["status"] == "ok" || v["status"] == "error",
-        "no-coordinate query returns aggregate or error: {v}");
+    assert!(
+        v["status"] == "ok" || v["status"] == "error",
+        "no-coordinate query returns aggregate or error: {v}"
+    );
 }

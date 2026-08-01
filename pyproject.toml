@@ -24,6 +24,16 @@ test = []
 decomp = []
 dev = ["tracemiku[test]"]
 
+[tool.ruff]
+# 目标知识/历史遗留排除：examples 是目标配置边界（AGENTS），arm64_test_bins 是
+# 历史测试脚本，tracemiku 主文件为存量单行风格（E701/E702 100+ 处，拆分重构时清理，
+# 不混入功能提交）。新增代码仍强制 lint；存量清理走独立重构。
+extend-exclude = [
+    "examples",
+    "tests/arm64_test_bins",
+    "tracemiku",
+]
+
 [project.urls]
 Homepage = "https://github.com/ltlly/traceMiku"
 

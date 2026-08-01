@@ -63,7 +63,11 @@ def main() -> int:
 
     failures: list[str] = []
 
-    require("App exposes DecompilerPanel", "DecompilerPanel" in app and '"dec"' in app, failures)
+    require(
+        "App exposes DecompilerPanel",
+        "DecompilerPanel" in app and '"dec"' in app,
+        failures,
+    )
     require(
         "Decompile UI has no visible LLM controls",
         "call LLM" not in decompiler
@@ -72,13 +76,35 @@ def main() -> int:
         and "callLlilLlm" not in decompiler,
         failures,
     )
-    require("right tabs include cfg/regs/hlil/dec", re.search(r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"\s*\|\s*"dec"', app_types) is not None, failures)
+    require(
+        "right tabs include cfg/regs/hlil/dec",
+        re.search(
+            r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"\s*\|\s*"dec"',
+            app_types,
+        )
+        is not None,
+        failures,
+    )
 
-    require("left panel splitter exists", "layout-splitter-left" in app and 'startPanelResize("left"' in app, failures)
-    require("right panel splitter exists", "layout-splitter-right" in app and 'startPanelResize("right"' in app, failures)
-    require("bottom panel splitter exists", 'id="bottom-resize"' in app and 'startPanelResize("bottom"' in app, failures)
+    require(
+        "left panel splitter exists",
+        "layout-splitter-left" in app and 'startPanelResize("left"' in app,
+        failures,
+    )
+    require(
+        "right panel splitter exists",
+        "layout-splitter-right" in app and 'startPanelResize("right"' in app,
+        failures,
+    )
+    require(
+        "bottom panel splitter exists",
+        'id="bottom-resize"' in app and 'startPanelResize("bottom"' in app,
+        failures,
+    )
     for col in ("dot", "idx", "pc", "func", "asm"):
-        require(f"asm column resize {col}", f'startAsmColResize("{col}"' in app, failures)
+        require(
+            f"asm column resize {col}", f'startAsmColResize("{col}"' in app, failures
+        )
     require(
         "ASM default columns keep resize handle inside default center pane",
         'const LAYOUT_KEY = "tracemiku-layout-v4"' in app_persistence
@@ -88,7 +114,8 @@ def main() -> int:
     )
     require(
         "ASM resize handles stay fully clickable inside clipped header cells",
-        re.search(r"#stream-header \.col-resize\s*\{[^}]*right:\s*0;", css, re.S) is not None,
+        re.search(r"#stream-header \.col-resize\s*\{[^}]*right:\s*0;", css, re.S)
+        is not None,
         failures,
     )
     require(
@@ -102,7 +129,7 @@ def main() -> int:
     require(
         "ASM keyboard navigation keys are wired",
         'window.addEventListener("keydown", onKey)' in app
-        and 'if (isEditableTarget(e.target)) return' in app
+        and "if (isEditableTarget(e.target)) return" in app
         and 'e.key === "j" || e.key === "ArrowDown"' in app
         and "jumpVisible(1)" in app
         and 'e.key === "k" || e.key === "ArrowUp"' in app
@@ -141,9 +168,9 @@ def main() -> int:
     require(
         "Records register context menu closes and aborts stale fetches",
         "function cancelRegContext" in records
-        and "regContextAbort?.abort()" in records
+        and "useGuarded" in records
         and "function closeRegContext" in records
-        and "closest(\".reg-context-menu\")" in records
+        and 'closest(".reg-context-menu")' in records
         and 'e.key === "Escape"' in records
         and 'document.addEventListener("pointerdown", closeOnPointer)' in records
         and 'document.addEventListener("keydown", closeOnKey)' in records
@@ -170,13 +197,42 @@ def main() -> int:
         failures,
     )
 
-    require("CFG header avoids stale no-fn label", 'cfgDisplayFn() || "select function"' in app, failures)
-    require("CFG fetch has debounce", "CFG_FETCH_DEBOUNCE_MS" in cfg and "window.setTimeout" in cfg, failures)
-    require("CFG fetch has sequence guard", "let graphSeq = 0" in cfg and "seq !== graphSeq" in cfg, failures)
-    require("CFG fetch aborts stale request", "let graphAbort: AbortController | undefined" in cfg and "abort.signal.aborted" in cfg, failures)
-    require("CFG fetch passes abort signal", "fetchCfgSvg({" in cfg and "signal: abort.signal" in cfg, failures)
-    require("CFG loading clears stale graph", "setGraph(null)" in cfg and "setGraphLoading(true)" in cfg, failures)
-    require("CFG cleanup aborts in-flight graph", "onCleanup(() =>" in cfg and "graphAbort?.abort()" in cfg, failures)
+    require(
+        "CFG header avoids stale no-fn label",
+        'cfgDisplayFn() || "select function"' in app,
+        failures,
+    )
+    require(
+        "CFG fetch has debounce",
+        "CFG_FETCH_DEBOUNCE_MS" in cfg and "window.setTimeout" in cfg,
+        failures,
+    )
+    require(
+        "CFG fetch has sequence guard",
+        "let graphSeq = 0" in cfg and "seq !== graphSeq" in cfg,
+        failures,
+    )
+    require(
+        "CFG fetch aborts stale request",
+        "let graphAbort: AbortController | undefined" in cfg
+        and "abort.signal.aborted" in cfg,
+        failures,
+    )
+    require(
+        "CFG fetch passes abort signal",
+        "fetchCfgSvg({" in cfg and "signal: abort.signal" in cfg,
+        failures,
+    )
+    require(
+        "CFG loading clears stale graph",
+        "setGraph(null)" in cfg and "setGraphLoading(true)" in cfg,
+        failures,
+    )
+    require(
+        "CFG cleanup aborts in-flight graph",
+        "onCleanup(() =>" in cfg and "graphAbort?.abort()" in cfg,
+        failures,
+    )
     require(
         "CFG large functions request local focus by default",
         "fnBlockCount() > AUTO_RENDER_MAX_BLOCKS" in cfg
@@ -192,8 +248,16 @@ def main() -> int:
         and "setGraph({ ...traceResp" in cfg,
         failures,
     )
-    require("CFG highlight rejects stale graph", "g.requestFn !== fnName()" in cfg and "graph() !== g" in cfg, failures)
-    require("CFG loading spinner is rendered", 'class="cfg-loading"' in cfg and 'class="cfg-spinner"' in cfg, failures)
+    require(
+        "CFG highlight rejects stale graph",
+        "g.requestFn !== fnName()" in cfg and "graph() !== g" in cfg,
+        failures,
+    )
+    require(
+        "CFG loading spinner is rendered",
+        'class="cfg-loading"' in cfg and 'class="cfg-spinner"' in cfg,
+        failures,
+    )
     require(
         "CFG reports task states including cancelled cached partial",
         "cancelGraphTask" in cfg
@@ -205,16 +269,33 @@ def main() -> int:
     )
 
     require("Memory defaults to 128 bytes", "createSignal(128)" in memory, failures)
-    require("Memory register picker is data-driven", "<select" in memory and "sortedRegNames(r().regs)" in memory, failures)
-    require("Memory accepts x30/lr/sp register addresses", "x30" in memory and "lr" in memory and "sp" in memory and "REG_ADDR_RE" in memory, failures)
-    require("Memory context closes on outside click", "closeOnPointer" in memory and "closest(\".memory-context-menu\")" in memory, failures)
+    require(
+        "Memory register picker is data-driven",
+        "<select" in memory and "sortedRegNames(r().regs)" in memory,
+        failures,
+    )
+    require(
+        "Memory accepts x30/lr/sp register addresses",
+        "x30" in memory
+        and "lr" in memory
+        and "sp" in memory
+        and "REG_ADDR_RE" in memory,
+        failures,
+    )
+    require(
+        "Memory context closes on outside click",
+        "closeOnPointer" in memory and 'closest(".memory-context-menu")' in memory,
+        failures,
+    )
     require("Memory context closes on Escape", 'e.key === "Escape"' in memory, failures)
     for col in ("addr", "hex", "ascii"):
-        require(f"Memory column resize {col}", f'startResize("{col}"' in memory, failures)
+        require(
+            f"Memory column resize {col}", f'startResize("{col}"' in memory, failures
+        )
     require(
         "Memory supports byte range selection",
-        'createSignal<{ anchor: string; head: string } | null>(null)' in memory
-        and 'createSignal<string | null>(null)' in memory
+        "createSignal<{ anchor: string; head: string } | null>(null)" in memory
+        and "createSignal<string | null>(null)" in memory
         and "function selectedBounds" in memory
         and "function startSelect" in memory
         and "function extendSelect" in memory
@@ -255,7 +336,11 @@ def main() -> int:
     )
 
     for col in ("name", "value", "delta", "note"):
-        require(f"Registers column resize {col}", f'startResize("{col}"' in registers, failures)
+        require(
+            f"Registers column resize {col}",
+            f'startResize("{col}"' in registers,
+            failures,
+        )
     require(
         "Registers expose selected/changed/def/use row states",
         "selected: sameSelected(reg, props.selectedReg)" in registers
@@ -280,7 +365,8 @@ def main() -> int:
         and 'return changed ? "stack ptr changed" : "stack ptr"' in registers
         and 'return changed ? "ptr changed" : "ptr?"' in registers
         and 'return changed ? "changed" : ""' in registers
-        and "r().regs_annotated?.[reg] || regNote(reg, value, r().regs, changed())" in registers,
+        and "r().regs_annotated?.[reg] || regNote(reg, value, r().regs, changed())"
+        in registers,
         failures,
     )
     require(
@@ -293,10 +379,8 @@ def main() -> int:
     require(
         "Registers double-click jumps to last write with stale guard",
         "fetchLastWriteOfReg(idxAtStart, reg)" in registers
-        and "let lastWriteSeq = 0" in registers
-        and "const seq = ++lastWriteSeq" in registers
+        and "useGuarded" in registers
         and "const idxAtStart = props.idx" in registers
-        and "seq !== lastWriteSeq || !props.active || props.idx !== idxAtStart" in registers
         and "props.onSelect(r.idx)" in registers
         and "onDblClick={() => void jumpLastWrite(reg)}" in registers
         and 'title="double-click to jump to last write"' in registers,
@@ -361,7 +445,11 @@ def main() -> int:
         failures,
     )
 
-    require("Taint default view is tree", 'createSignal<ViewMode>("tree")' in taint, failures)
+    require(
+        "Taint default view is tree",
+        'createSignal<ViewMode>("tree")' in taint,
+        failures,
+    )
     require(
         "Taint tree exposes typed dependency parents",
         "parentLabel(row)" in taint
@@ -381,12 +469,22 @@ def main() -> int:
     )
     require(
         "Taint uses traceIdx wording instead of ambiguous start label",
-        "traceIdx" in taint and "from traceIdx" in taint and "narrow traceIdx/reg/options" in taint,
+        "traceIdx" in taint
+        and "from traceIdx" in taint
+        and "narrow traceIdx/reg/options" in taint,
         failures,
     )
 
-    require("global themed scrollbar Firefox", "scrollbar-width: thin" in css and "scrollbar-color:" in css, failures)
-    require("global themed scrollbar WebKit", "*::-webkit-scrollbar-thumb" in css and "*::-webkit-scrollbar-track" in css, failures)
+    require(
+        "global themed scrollbar Firefox",
+        "scrollbar-width: thin" in css and "scrollbar-color:" in css,
+        failures,
+    )
+    require(
+        "global themed scrollbar WebKit",
+        "*::-webkit-scrollbar-thumb" in css and "*::-webkit-scrollbar-track" in css,
+        failures,
+    )
     require(
         "controls inherit mono font",
         "button,\ninput,\nselect,\ntextarea,\noption,\noptgroup" in css
@@ -394,9 +492,23 @@ def main() -> int:
         and "font-family: var(--font-mono)" in css,
         failures,
     )
-    require("CFG loading uses themed spinner", ".cfg-loading" in css and ".cfg-spinner" in css and "@keyframes cfg-spin" in css, failures)
-    require("String provenance long text wraps", ".string-prov-summary code" in css and "word-break: break-all" in css, failures)
-    require("String provenance table scrolls horizontally", ".string-prov-scroll" in css and "overflow-x: auto" in css, failures)
+    require(
+        "CFG loading uses themed spinner",
+        ".cfg-loading" in css
+        and ".cfg-spinner" in css
+        and "@keyframes cfg-spin" in css,
+        failures,
+    )
+    require(
+        "String provenance long text wraps",
+        ".string-prov-summary code" in css and "word-break: break-all" in css,
+        failures,
+    )
+    require(
+        "String provenance table scrolls horizontally",
+        ".string-prov-scroll" in css and "overflow-x: auto" in css,
+        failures,
+    )
     require(
         "String provenance separates writer and reader columns",
         "<th>writers</th>" in string_prov
@@ -426,11 +538,16 @@ def main() -> int:
         and ".taint-tree-asm" in css,
         failures,
     )
-    require("Taint tree wraps long asm", ".taint-tree-asm" in css and "overflow-wrap: anywhere" in css, failures)
+    require(
+        "Taint tree wraps long asm",
+        ".taint-tree-asm" in css and "overflow-wrap: anywhere" in css,
+        failures,
+    )
 
     require(
         "Task Center tracks running cached cancelled partial elapsed states",
-        '"running" | "ready" | "partial" | "cached" | "cancelled" | "error"' in task_center
+        '"running" | "ready" | "partial" | "cached" | "cancelled" | "error"'
+        in task_center
         and "taskCenterOpen" in app
         and "activeTaskCount" in app
         and "reportTask" in app

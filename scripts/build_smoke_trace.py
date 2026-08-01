@@ -8,6 +8,7 @@ analysis commands (output-backtrace / vm-* / backward-taint): real store
 instructions, non-zero registers, JNI NewStringUTF events, and external
 writes.
 """
+
 import argparse
 import json
 import shutil
@@ -20,11 +21,17 @@ if ROOT.exists():
 ROOT.mkdir()
 
 base = 0x100000
-rec_pcs = [base + 0x000, base + 0x004,
-           base + 0x100, base + 0x104,
-           base + 0x008,
-           base + 0x200, base + 0x204, base + 0x208,
-           base + 0x00c]
+rec_pcs = [
+    base + 0x000,
+    base + 0x004,
+    base + 0x100,
+    base + 0x104,
+    base + 0x008,
+    base + 0x200,
+    base + 0x204,
+    base + 0x208,
+    base + 0x00C,
+]
 
 
 def encode_bl(pc: int, target: int) -> int:
@@ -34,19 +41,19 @@ def encode_bl(pc: int, target: int) -> int:
     imm26 = delta // 4
     if not -(1 << 25) <= imm26 < (1 << 25):
         raise ValueError(f"BL target out of range: pc=0x{pc:x} target=0x{target:x}")
-    return 0x94000000 | (imm26 & 0x03ff_ffff)
+    return 0x94000000 | (imm26 & 0x03FF_FFFF)
 
 
 rec_inst = [
-    0xd503201f,                         # nop
+    0xD503201F,  # nop
     encode_bl(base + 0x004, base + 0x100),
-    0xd503201f,                         # nop
-    0xd65f03c0,                         # ret
+    0xD503201F,  # nop
+    0xD65F03C0,  # ret
     encode_bl(base + 0x008, base + 0x200),
-    0xd503201f,                         # nop
-    0xd503201f,                         # nop
-    0xd65f03c0,                         # ret
-    0xd65f03c0,                         # ret
+    0xD503201F,  # nop
+    0xD503201F,  # nop
+    0xD65F03C0,  # ret
+    0xD65F03C0,  # ret
 ]
 
 run = ROOT / "run"
@@ -64,18 +71,30 @@ with open(cd / "trace.bin", "wb") as bf:
         bf.write(struct.pack("<I", 0))
         bf.write(struct.pack("<I", inst))
 
-json.dump({"callIdx": 1, "tid": 100, "records": 9, "ms": 2,
-           "retval": "0x0", "truncated": False,
-           "last_insn_is_ret": True,
-           "known_offsets": {"0x0": "f_root",
-                             "0x100": "f_alpha",
-                             "0x200": "f_beta"}},
-          open(cd / "meta.json", "w"))
-json.dump({"pkg": "tst", "so": "libt", "method": "f", "cmd": 1,
-           "module": {"name": "libt.so", "base": hex(base),
-                      "size": 0x10000},
-           "fn_addr": hex(base)},
-          open(run / "meta.json", "w"))
+json.dump(
+    {
+        "callIdx": 1,
+        "tid": 100,
+        "records": 9,
+        "ms": 2,
+        "retval": "0x0",
+        "truncated": False,
+        "last_insn_is_ret": True,
+        "known_offsets": {"0x0": "f_root", "0x100": "f_alpha", "0x200": "f_beta"},
+    },
+    open(cd / "meta.json", "w"),
+)
+json.dump(
+    {
+        "pkg": "tst",
+        "so": "libt",
+        "method": "f",
+        "cmd": 1,
+        "module": {"name": "libt.so", "base": hex(base), "size": 0x10000},
+        "fn_addr": hex(base),
+    },
+    open(run / "meta.json", "w"),
+)
 
 print("smoke trace at:", cd)
 
@@ -95,32 +114,34 @@ def build_extended(run_dir: Path, base_addr: int) -> Path:
     # str w0,[x1,#8] (write 4B), bl f_builder2, nop,
     # strb w0,[x1,#12], nop, ret, nop, ret
     insts = [
-        0xd503201f,       # 0: nop
-        0xf9000020,       # 1: str x0, [x1]
+        0xD503201F,  # 0: nop
+        0xF9000020,  # 1: str x0, [x1]
         encode_bl(base_addr + 0x008, base_addr + 0x020),
-        0xd503201f,       # 3: nop
-        0xb9000820,       # 4: str w0, [x1, #8]
+        0xD503201F,  # 3: nop
+        0xB9000820,  # 4: str w0, [x1, #8]
         encode_bl(base_addr + 0x010, base_addr + 0x030),
-        0xd503201f,       # 6: nop
-        0x39000020,       # 7: strb w0, [x1]
-        0xd503201f,       # 8: nop
-        0xd65f03c0,       # 9: ret
-        0xd503201f,       # 10: nop
-        0xd65f03c0,       # 11: ret
+        0xD503201F,  # 6: nop
+        0x39000020,  # 7: strb w0, [x1]
+        0xD503201F,  # 8: nop
+        0xD65F03C0,  # 9: ret
+        0xD503201F,  # 10: nop
+        0xD65F03C0,  # 11: ret
     ]
-    pcs = [base_addr + off for off in (0x0, 0x4, 0x8, 0xc, 0x10, 0x14,
-                                       0x18, 0x1c, 0x20, 0x24, 0x28, 0x2c)]
+    pcs = [
+        base_addr + off
+        for off in (0x0, 0x4, 0x8, 0xC, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C)
+    ]
     with open(ed / "trace.bin", "wb") as bf:
         for idx, (pc, inst) in enumerate(zip(pcs, insts)):
             regs = [0] * 31
-            if idx == 1:      # str x0,[x1]: value in x0, base in x1
-                regs[0] = 0x68676f2e6f727061   # "apro.ogh" 8 bytes LE
+            if idx == 1:  # str x0,[x1]: value in x0, base in x1
+                regs[0] = 0x68676F2E6F727061  # "apro.ogh" 8 bytes LE
                 regs[1] = out_addr
-            elif idx == 4:    # str w0,[x1,#8]
-                regs[0] = 0x65756c6176         # "value" 4B
+            elif idx == 4:  # str w0,[x1,#8]
+                regs[0] = 0x65756C6176  # "value" 4B
                 regs[1] = out_addr
-            elif idx == 7:    # strb w0,[x1]
-                regs[0] = 0x21                  # '!'
+            elif idx == 7:  # strb w0,[x1]
+                regs[0] = 0x21  # '!'
                 regs[1] = out_addr
             bf.write(struct.pack("<Q", pc))
             for r in regs:
@@ -148,19 +169,31 @@ def build_extended(run_dir: Path, base_addr: int) -> Path:
     with open(ed / "external_writes.bin", "wb") as xf:
         xf.write(b"".join(ext))
 
-    json.dump({"callIdx": 2, "tid": 200, "records": 12, "ms": 4,
-               "retval": "0x0", "truncated": False,
-               "last_insn_is_ret": True,
-               "known_offsets": {"0x0": "f_root", "0x20": "f_builder",
-                                 "0x30": "f_builder2"}},
-              open(ed / "meta.json", "w"))
+    json.dump(
+        {
+            "callIdx": 2,
+            "tid": 200,
+            "records": 12,
+            "ms": 4,
+            "retval": "0x0",
+            "truncated": False,
+            "last_insn_is_ret": True,
+            "known_offsets": {
+                "0x0": "f_root",
+                "0x20": "f_builder",
+                "0x30": "f_builder2",
+            },
+        },
+        open(ed / "meta.json", "w"),
+    )
     return ed
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--extended", action="store_true",
-                    help="also build the deep-analysis call dir")
+    ap.add_argument(
+        "--extended", action="store_true", help="also build the deep-analysis call dir"
+    )
     args = ap.parse_args()
     if args.extended:
         ext = build_extended(run, base)

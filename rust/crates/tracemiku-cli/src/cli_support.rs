@@ -676,8 +676,14 @@ mod tests {
     fn normalize_api_path_adds_slash_and_prefix() {
         assert_eq!(normalize_api_path("api/records").unwrap(), "/api/records");
         assert_eq!(normalize_api_path("/api/records").unwrap(), "/api/records");
-        assert_eq!(normalize_api_path(" /openapi.json ").unwrap(), "/openapi.json");
-        assert!(normalize_api_path("records").is_err(), "missing /api/ prefix");
+        assert_eq!(
+            normalize_api_path(" /openapi.json ").unwrap(),
+            "/openapi.json"
+        );
+        assert!(
+            normalize_api_path("records").is_err(),
+            "missing /api/ prefix"
+        );
         assert!(normalize_api_path("/other/path").is_err());
     }
 
@@ -705,8 +711,14 @@ mod tests {
         assert_eq!(hit["path"], "/system/lib64/libc.so");
         assert_eq!(hit["map_offset"], "0x500");
         assert_eq!(hit["file_offset"], "0x500");
-        assert!(resolve_addr_in_maps_text(text, 0x9999).is_none(), "outside range");
-        assert!(resolve_addr_in_maps_text("zz-1000 r-xp 0 0 0 x\n", 0x500).is_none(), "bad hex lo");
+        assert!(
+            resolve_addr_in_maps_text(text, 0x9999).is_none(),
+            "outside range"
+        );
+        assert!(
+            resolve_addr_in_maps_text("zz-1000 r-xp 0 0 0 x\n", 0x500).is_none(),
+            "bad hex lo"
+        );
     }
 
     #[test]

@@ -54,7 +54,9 @@ class Probe:
     json_body: Any | None = None
 
 
-def get_json(base_url: str, path: str, timeout: float = DEFAULT_TIMEOUT) -> tuple[Any, int, int, float]:
+def get_json(
+    base_url: str, path: str, timeout: float = DEFAULT_TIMEOUT
+) -> tuple[Any, int, int, float]:
     url = base_url.rstrip("/") + path
     t0 = time.perf_counter()
     with urllib.request.urlopen(url, timeout=timeout) as resp:
@@ -86,14 +88,29 @@ def timed_request(
             elapsed = (time.perf_counter() - t0) * 1000.0
             value = json.loads(body.decode("utf-8")) if body else None
             return (
-                Measurement(label, path, resp.status, elapsed, len(body), 200 <= resp.status < 300),
+                Measurement(
+                    label,
+                    path,
+                    resp.status,
+                    elapsed,
+                    len(body),
+                    200 <= resp.status < 300,
+                ),
                 value,
             )
     except urllib.error.HTTPError as err:
         body = err.read()
         elapsed = (time.perf_counter() - t0) * 1000.0
         return (
-            Measurement(label, path, err.code, elapsed, len(body), False, body[:160].decode("utf-8", "replace")),
+            Measurement(
+                label,
+                path,
+                err.code,
+                elapsed,
+                len(body),
+                False,
+                body[:160].decode("utf-8", "replace"),
+            ),
             None,
         )
     except Exception as err:  # network timeout, refused connection, bad JSON, ...
@@ -129,7 +146,9 @@ def timed_get_with_runtime_probe(
     json_body: Any | None = None,
 ) -> tuple[Measurement, Any | None]:
     if not enabled:
-        return timed_request(base_url, label, path, timeout, method=method, json_body=json_body)
+        return timed_request(
+            base_url, label, path, timeout, method=method, json_body=json_body
+        )
 
     future = executor.submit(
         timed_request,
@@ -166,7 +185,9 @@ def timed_get_with_runtime_probe(
         suffix = f"runtime health blocked: {failures[0]}"
         if len(failures) > 1:
             suffix += f" (+{len(failures) - 1} more)"
-        measurement.note = f"{measurement.note}; {suffix}" if measurement.note else suffix
+        measurement.note = (
+            f"{measurement.note}; {suffix}" if measurement.note else suffix
+        )
     return measurement, value
 
 
@@ -242,8 +263,12 @@ def pick_string_provenance_target(strings_resp: Any) -> tuple[str, int] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900")
-    ap.add_argument("--json", action="store_true", help="emit machine-readable JSON only")
+    ap.add_argument(
+        "base_url", help="running traceMiku web URL, e.g. http://127.0.0.1:18900"
+    )
+    ap.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON only"
+    )
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     ap.add_argument(
         "--visible-ui-only",
@@ -278,7 +303,9 @@ def main() -> int:
     fn_id = pick_function_id(funcs)
     largest_cfg_fn = pick_largest_cfg_function(funcs, fn)
     largest_cfg_pc = function_entry_pc(funcs, largest_cfg_fn)
-    strings_seed = get_json(base, q("/api/strings", min_len=4, limit=1, cursor=-1), args.timeout)[0]
+    strings_seed = get_json(
+        base, q("/api/strings", min_len=4, limit=1, cursor=-1), args.timeout
+    )[0]
     string_provenance_target = pick_string_provenance_target(strings_seed)
 
     probes: list[Probe] = [
@@ -287,18 +314,55 @@ def main() -> int:
         Probe("records first 1k", q("/api/records", start=0, count=1000)),
         Probe("records mid 1k", q("/api/records", start=max(0, mid - 500), count=1000)),
         Probe("record mid", f"/api/record/{mid}"),
-        Probe("search ret cursor", q("/api/search", pattern="^ret\\b", max_results=5000, cursor=mid)),
-        Probe("query records ret", q("/api/query", kind="records", q="ret", idx=mid, limit=500)),
-        Probe("query regs x0", q("/api/query", kind="regs", reg="x0", idx=mid, limit=500)),
-        Probe("query jni events", q("/api/query", kind="jni", q="", idx=mid, limit=500)),
-        Probe("idxs current pc", q("/api/idxs-for-pc", pc=rec_mid.get("pc"), cursor=mid, limit=80)),
+        Probe(
+            "search ret cursor",
+            q("/api/search", pattern="^ret\\b", max_results=5000, cursor=mid),
+        ),
+        Probe(
+            "query records ret",
+            q("/api/query", kind="records", q="ret", idx=mid, limit=500),
+        ),
+        Probe(
+            "query regs x0", q("/api/query", kind="regs", reg="x0", idx=mid, limit=500)
+        ),
+        Probe(
+            "query jni events", q("/api/query", kind="jni", q="", idx=mid, limit=500)
+        ),
+        Probe(
+            "idxs current pc",
+            q("/api/idxs-for-pc", pc=rec_mid.get("pc"), cursor=mid, limit=80),
+        ),
         Probe("backtrace mid", q("/api/backtrace", idx=mid, limit=256)),
         Probe("calltree depth50", q("/api/call-tree", max_depth=50)),
-        Probe("forward taint x0", q("/api/forward-taint", traceIdx=mid, reg="x0", max_count=5000, cross_fn_call="true")),
-        Probe("backward taint x0", q("/api/backward-taint", traceIdx=mid, reg="x0", max_count=5000, cross_fn_call="true")),
+        Probe(
+            "forward taint x0",
+            q(
+                "/api/forward-taint",
+                traceIdx=mid,
+                reg="x0",
+                max_count=5000,
+                cross_fn_call="true",
+            ),
+        ),
+        Probe(
+            "backward taint x0",
+            q(
+                "/api/backward-taint",
+                traceIdx=mid,
+                reg="x0",
+                max_count=5000,
+                cross_fn_call="true",
+            ),
+        ),
         Probe("strings 5k", q("/api/strings", min_len=4, limit=5000, cursor=-1)),
-        Probe("hash finalize", q("/api/hash-finalize-detect", window=500, min_size=16, limit=500)),
-        Probe("auto phase", q("/api/auto-phase-detect", max_phases=5000, detect_byte_streams="true")),
+        Probe(
+            "hash finalize",
+            q("/api/hash-finalize-detect", window=500, min_size=16, limit=500),
+        ),
+        Probe(
+            "auto phase",
+            q("/api/auto-phase-detect", max_phases=5000, detect_byte_streams="true"),
+        ),
     ]
     if string_provenance_target:
         string_addr, string_len = string_provenance_target
@@ -316,19 +380,35 @@ def main() -> int:
             ]
         )
     if largest_cfg_fn:
-        probes.append(Probe("cfg svg largest fn", q("/api/cfg-svg", fn=largest_cfg_fn, mode="auto")))
+        probes.append(
+            Probe(
+                "cfg svg largest fn", q("/api/cfg-svg", fn=largest_cfg_fn, mode="auto")
+            )
+        )
         if largest_cfg_pc:
             probes.append(
                 Probe(
                     "cfg svg largest local",
-                    q("/api/cfg-svg", fn=largest_cfg_fn, pc=largest_cfg_pc, local_depth=2, mode="auto"),
+                    q(
+                        "/api/cfg-svg",
+                        fn=largest_cfg_fn,
+                        pc=largest_cfg_pc,
+                        local_depth=2,
+                        mode="auto",
+                    ),
                 )
             )
     if not args.visible_ui_only:
         probes.extend(
             [
-                Probe("reg timeline x0", q("/api/reg-timeline", reg="x0", start=0, end=-1, max_points=5000)),
-                Probe("dec summary", q("/api/dec/summary", split_top_k=40, split_min_records=10)),
+                Probe(
+                    "reg timeline x0",
+                    q("/api/reg-timeline", reg="x0", start=0, end=-1, max_points=5000),
+                ),
+                Probe(
+                    "dec summary",
+                    q("/api/dec/summary", split_top_k=40, split_min_records=10),
+                ),
             ]
         )
         if fn_id:
@@ -362,11 +442,38 @@ def main() -> int:
         probes.extend(
             [
                 Probe("mem dump sp 128", q("/api/mem-dump", addr=sp, count=128)),
-                Probe("mem diff sp 128", q("/api/mem-diff", idx=mid, addr=sp, size=128)),
-                Probe("touch range sp", q("/api/idxs-touching-range", addr=sp, size=128, cursor=mid, limit=80)),
-                Probe("mem writes sp", q("/api/mem-writes-in-range", addr_lo=sp, addr_hi=sp, idx_lo=0, idx_hi=records, max=200)),
-                Probe("query mem sp", q("/api/query", kind="mem", addr=sp, len=128, idx=mid, limit=500)),
-                Probe("query writes sp", q("/api/query", kind="writes", q=sp, len=128, idx=mid, limit=500)),
+                Probe(
+                    "mem diff sp 128", q("/api/mem-diff", idx=mid, addr=sp, size=128)
+                ),
+                Probe(
+                    "touch range sp",
+                    q(
+                        "/api/idxs-touching-range",
+                        addr=sp,
+                        size=128,
+                        cursor=mid,
+                        limit=80,
+                    ),
+                ),
+                Probe(
+                    "mem writes sp",
+                    q(
+                        "/api/mem-writes-in-range",
+                        addr_lo=sp,
+                        addr_hi=sp,
+                        idx_lo=0,
+                        idx_hi=records,
+                        max=200,
+                    ),
+                ),
+                Probe(
+                    "query mem sp",
+                    q("/api/query", kind="mem", addr=sp, len=128, idx=mid, limit=500),
+                ),
+                Probe(
+                    "query writes sp",
+                    q("/api/query", kind="writes", q=sp, len=128, idx=mid, limit=500),
+                ),
             ]
         )
 
@@ -410,7 +517,9 @@ def main() -> int:
     if args.json:
         print(json.dumps(out, indent=2, sort_keys=True))
     else:
-        print(f"# {base} records={records:,} mid={mid:,} pc={rec_mid.get('pc')} fn={fn_hint}")
+        print(
+            f"# {base} records={records:,} mid={mid:,} pc={rec_mid.get('pc')} fn={fn_hint}"
+        )
         for m in measurements:
             status = m.status if m.status is not None else "ERR"
             ok = "OK" if m.ok else "FAIL"
@@ -420,7 +529,9 @@ def main() -> int:
                 if m.health_polls
                 else ""
             )
-            print(f"{ok:4s} {m.ms:8.1f} ms {m.bytes:9d} B {status!s:>4s} {m.label}{health}{note}")
+            print(
+                f"{ok:4s} {m.ms:8.1f} ms {m.bytes:9d} B {status!s:>4s} {m.label}{health}{note}"
+            )
     return 0 if all(m.ok for m in measurements) else 1
 
 

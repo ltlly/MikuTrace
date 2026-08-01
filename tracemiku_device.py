@@ -19,12 +19,23 @@ def cold_launch_start(pkg, max_pid_wait=15):
     time.sleep(2)
     print("[cold-launch] monkey 拉起", flush=True)
     subprocess.run(
-        ["adb", "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"],
+        [
+            "adb",
+            "shell",
+            "monkey",
+            "-p",
+            pkg,
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "1",
+        ],
         capture_output=True,
     )
     t0 = time.time()
     while time.time() - t0 < max_pid_wait:
-        r = subprocess.run(["adb", "shell", "pidof", pkg], capture_output=True, text=True)
+        r = subprocess.run(
+            ["adb", "shell", "pidof", pkg], capture_output=True, text=True
+        )
         s = r.stdout.strip()
         if s:
             pid = int(s.split()[0])
@@ -43,12 +54,23 @@ def launch_start(pkg, max_pid_wait=15):
     time.sleep(0.5)
     print("[launch] monkey 拉起", flush=True)
     subprocess.run(
-        ["adb", "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"],
+        [
+            "adb",
+            "shell",
+            "monkey",
+            "-p",
+            pkg,
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "1",
+        ],
         capture_output=True,
     )
     t0 = time.time()
     while time.time() - t0 < max_pid_wait:
-        r = subprocess.run(["adb", "shell", "pidof", pkg], capture_output=True, text=True)
+        r = subprocess.run(
+            ["adb", "shell", "pidof", pkg], capture_output=True, text=True
+        )
         s = r.stdout.strip()
         if s:
             pid = int(s.split()[0])
@@ -72,7 +94,9 @@ def drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
     import re
 
     def adb(*a):
-        return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
+        return subprocess.run(
+            ["adb", "shell", *a], capture_output=True, text=True
+        ).stdout
 
     t0 = time.time()
     agreed = False
@@ -83,14 +107,28 @@ def drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
         if not pid:
             print(f"[cold-launch] {elapsed}s: 进程死, 重拉", flush=True)
             subprocess.run(
-                ["adb", "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"],
+                [
+                    "adb",
+                    "shell",
+                    "monkey",
+                    "-p",
+                    pkg,
+                    "-c",
+                    "android.intent.category.LAUNCHER",
+                    "1",
+                ],
                 capture_output=True,
             )
             time.sleep(3)
             continue
-        subprocess.run(["adb", "shell", "uiautomator", "dump", "/sdcard/_tm_ui.xml"], capture_output=True)
+        subprocess.run(
+            ["adb", "shell", "uiautomator", "dump", "/sdcard/_tm_ui.xml"],
+            capture_output=True,
+        )
         xml = adb("cat", "/sdcard/_tm_ui.xml")
-        subprocess.run(["adb", "shell", "rm", "-f", "/sdcard/_tm_ui.xml"], capture_output=True)
+        subprocess.run(
+            ["adb", "shell", "rm", "-f", "/sdcard/_tm_ui.xml"], capture_output=True
+        )
         consent_hit = None
         for pat in CONSENT_BUTTON_PATTERNS:
             m = re.search(pat, xml)
@@ -100,25 +138,38 @@ def drive_consent(pkg, max_wait=60, home_markers=None, on_done=None):
         if consent_hit:
             x = (int(consent_hit.group(1)) + int(consent_hit.group(3))) // 2
             y = (int(consent_hit.group(2)) + int(consent_hit.group(4))) // 2
-            print(f"[cold-launch] {elapsed}s: 找到同意按钮 @ ({x},{y}) 点击", flush=True)
-            subprocess.run(["adb", "shell", "input", "tap", str(x), str(y)], capture_output=True)
+            print(
+                f"[cold-launch] {elapsed}s: 找到同意按钮 @ ({x},{y}) 点击", flush=True
+            )
+            subprocess.run(
+                ["adb", "shell", "input", "tap", str(x), str(y)], capture_output=True
+            )
             agreed = True
             settled = 0
             time.sleep(4)
             continue
         if home_markers and re.search(home_markers, xml):
-            print(f"[cold-launch] {elapsed}s: 首页加载完成 (agreed={agreed}, marker hit)", flush=True)
+            print(
+                f"[cold-launch] {elapsed}s: 首页加载完成 (agreed={agreed}, marker hit)",
+                flush=True,
+            )
             if on_done:
                 on_done()
             return int(pid.split()[0])
         if agreed:
             settled += 1
             if settled >= 2:
-                print(f"[cold-launch] {elapsed}s: 同意按钮已消失 + UI settle, 视为首页加载完成", flush=True)
+                print(
+                    f"[cold-launch] {elapsed}s: 同意按钮已消失 + UI settle, 视为首页加载完成",
+                    flush=True,
+                )
                 if on_done:
                     on_done()
                 return int(pid.split()[0])
-        print(f"[cold-launch] {elapsed}s: 等待 (agreed={agreed}, settled={settled})", flush=True)
+        print(
+            f"[cold-launch] {elapsed}s: 等待 (agreed={agreed}, settled={settled})",
+            flush=True,
+        )
         time.sleep(2)
     raise RuntimeError(f"cold-launch {pkg} 超时 {max_wait}s")
 
@@ -139,11 +190,17 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
 
     # 1. ADB connectivity
     rc, out, err = _run("adb", ["adb", "devices"])
-    devices = [l for l in out.splitlines()[1:] if l.strip() and "device" in l]
+    devices = [
+        line for line in out.splitlines()[1:] if line.strip() and "device" in line
+    ]
     if rc == 0 and devices:
-        results.append(("adb connectivity", True, f"{len(devices)} device(s) connected"))
+        results.append(
+            ("adb connectivity", True, f"{len(devices)} device(s) connected")
+        )
     else:
-        results.append(("adb connectivity", False, "no device found — check USB/WiFi connection"))
+        results.append(
+            ("adb connectivity", False, "no device found — check USB/WiFi connection")
+        )
 
     # 2. Root / su access
     rc, out, _ = _run("root", ["adb", "shell", "id"])
@@ -154,23 +211,35 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
         if "uid=0" in out2:
             results.append(("root access", True, "su available"))
         else:
-            results.append(("root access", False, "no root — run `adb root` or ensure su binary exists"))
+            results.append(
+                (
+                    "root access",
+                    False,
+                    "no root — run `adb root` or ensure su binary exists",
+                )
+            )
 
     # 3. frida-server running
     rc, out, _ = _run("frida", ["adb", "shell", "ps -A"])
     if "miku" in out.lower() or "frida" in out.lower():
         results.append(("frida-server", True, "process found"))
     else:
-        results.append(("frida-server", False,
-            "not running — start with: adb shell /data/local/tmp/.miku-srv &"))
+        results.append(
+            (
+                "frida-server",
+                False,
+                "not running — start with: adb shell /data/local/tmp/.miku-srv &",
+            )
+        )
 
     # 4. SELinux state
     rc, out, _ = _run("selinux", ["adb", "shell", "getenforce"])
     if "permissive" in out.lower() or "disabled" in out.lower():
         results.append(("SELinux", True, out))
     else:
-        results.append(("SELinux", False,
-            f"state={out} — set permissive: adb shell setenforce 0"))
+        results.append(
+            ("SELinux", False, f"state={out} — set permissive: adb shell setenforce 0")
+        )
 
     # 5. Target package exists (optional)
     if pkg:
@@ -179,22 +248,36 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
             results.append(("target package", True, f"{pkg} installed"))
         else:
             # Try partial match
-            partial = [l for l in out.splitlines() if pkg.lower() in l.lower()]
+            partial = [line for line in out.splitlines() if pkg.lower() in line.lower()]
             if partial:
-                results.append(("target package", False,
-                    f"exact '{pkg}' not found; similar: {partial[0].replace('package:','')}"))
+                results.append(
+                    (
+                        "target package",
+                        False,
+                        f"exact '{pkg}' not found; similar: {partial[0].replace('package:', '')}",
+                    )
+                )
             else:
-                results.append(("target package", False, f"'{pkg}' not installed on device"))
+                results.append(
+                    ("target package", False, f"'{pkg}' not installed on device")
+                )
 
     # 6. Output directory writable (optional)
     if out_dir:
-        rc, out, err = _run("write-test",
-            ["adb", "shell", f"touch {out_dir}/.miku_test && rm {out_dir}/.miku_test"])
+        rc, out, err = _run(
+            "write-test",
+            ["adb", "shell", f"touch {out_dir}/.miku_test && rm {out_dir}/.miku_test"],
+        )
         if rc == 0:
             results.append(("output dir writable", True, out_dir))
         else:
-            results.append(("output dir writable", False,
-                f"{out_dir} not writable — check SELinux context or use /data/local/tmp"))
+            results.append(
+                (
+                    "output dir writable",
+                    False,
+                    f"{out_dir} not writable — check SELinux context or use /data/local/tmp",
+                )
+            )
 
     if verbose:
         for name, passed, detail in results:
@@ -204,5 +287,3 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
     ok = sum(1 for _, p, _ in results if p)
     fail = sum(1 for _, p, _ in results if not p)
     return ok, fail, results
-
-
