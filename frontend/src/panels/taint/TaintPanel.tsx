@@ -3,6 +3,8 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { fetchBackwardTaint, fetchForwardTaint } from "~/api/client";
 import type { TaintGraph, TaintRow } from "~/api/types";
 import type { UiTaskReporter } from "~/utils/taskCenter";
+import type { GuardHandle } from "~/utils/guarded";
+import { useGuarded } from "~/utils/guarded";
 import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
 
 export type TaintOverlayDirection = "forward" | "backward";
@@ -64,8 +66,7 @@ export default function TaintPanel(props: TaintPanelProps) {
   const [running, setRunning] = createSignal(false);
   const [result, setResult] = createSignal<RunResult | null>(null);
   const [error, setError] = createSignal<string | null>(null);
-  let runSeq = 0;
-  let runAbort: AbortController | undefined;
+  const runGuard = useGuarded();
   let retryTimer: number | undefined;
   let currentTask:
     | { id: string; surface: string; label: string; startedAt: number }
@@ -79,13 +80,11 @@ export default function TaintPanel(props: TaintPanelProps) {
         detail: "superseded",
       });
     }
-    runSeq += 1;
+    runGuard.cancel();
     if (retryTimer !== undefined) {
       window.clearTimeout(retryTimer);
       retryTimer = undefined;
     }
-    runAbort?.abort();
-    runAbort = undefined;
     currentTask = undefined;
     setRunning(false);
   }
@@ -109,11 +108,11 @@ export default function TaintPanel(props: TaintPanelProps) {
     queueMicrotask(() => void run(req.direction, req.idx, req.reg));
   });
 
-  function scheduleMemoryRetry(seq: number, dir: Direction, startArg: number, regArg: string) {
+  function scheduleMemoryRetry(h: GuardHandle, dir: Direction, startArg: number, regArg: string) {
     setError("memory index loading…");
     retryTimer = window.setTimeout(() => {
       retryTimer = undefined;
-      if (seq !== runSeq) return;
+      if (!runGuard.isCurrent(h)) return;
       void run(dir, startArg, regArg);
     }, TAINT_RETRY_MS);
   }
@@ -136,9 +135,8 @@ export default function TaintPanel(props: TaintPanelProps) {
 
   async function run(dirArg = direction(), startArg = start(), regArg = reg()) {
     cancelRun();
-    const seq = ++runSeq;
-    const abort = new AbortController();
-    runAbort = abort;
+    const h = runGuard.begin();
+    const abort = h.abort;
     const limit = maxCount();
     const taskStartedAt = performance.now();
     currentTask = {
@@ -165,9 +163,9 @@ export default function TaintPanel(props: TaintPanelProps) {
       };
       if (dir === "forward") {
         const resp = await fetchForwardTaint(startArg, regArg, limit, flags, abort.signal);
-        if (seq !== runSeq || abort.signal.aborted) return;
+        if (!runGuard.isCurrent(h)) return;
         if (resp.status === "loading") {
-          scheduleMemoryRetry(seq, dir, startArg, regArg);
+          scheduleMemoryRetry(h, dir, startArg, regArg);
           return;
         }
         const nextResult: RunResult = {
@@ -194,9 +192,9 @@ export default function TaintPanel(props: TaintPanelProps) {
         });
       } else {
         const resp = await fetchBackwardTaint(startArg, regArg, limit, flags, abort.signal);
-        if (seq !== runSeq || abort.signal.aborted) return;
+        if (!runGuard.isCurrent(h)) return;
         if (resp.status === "loading") {
-          scheduleMemoryRetry(seq, dir, startArg, regArg);
+          scheduleMemoryRetry(h, dir, startArg, regArg);
           return;
         }
         const nextResult: RunResult = {
@@ -223,8 +221,7 @@ export default function TaintPanel(props: TaintPanelProps) {
         });
       }
     } catch (e: unknown) {
-      if (abort.signal.aborted) return;
-      if (seq !== runSeq) return;
+      if (!runGuard.isCurrent(h)) return;
       setError(String(e instanceof Error ? e.message : e));
       currentTask = undefined;
       props.onTaskUpdate?.({
@@ -236,8 +233,8 @@ export default function TaintPanel(props: TaintPanelProps) {
         detail: String(e instanceof Error ? e.message : e),
       });
     } finally {
-      if (seq === runSeq && !abort.signal.aborted) {
-        if (runAbort === abort) runAbort = undefined;
+      if (runGuard.isCurrent(h)) {
+        runGuard.release(h);
         currentTask = undefined;
         setRunning(false);
       }

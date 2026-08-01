@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { fetchHlilForPc, fetchIdxsForPc } from "~/api/client";
 import type { AsmToken, HlilForPcResponse, HlilLine, HlilVar } from "~/api/types";
 import { tokenAddr, tokenClass, tokenReg, tokenText } from "~/utils/bnTokens";
+import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 
@@ -103,14 +104,11 @@ function trimLeadingTokens(tokens: AsmToken[]): AsmToken[] {
 
 export default function HlilPanel(props: HlilPanelProps) {
   let body: HTMLDivElement | undefined;
-  let jumpSeq = 0;
-  let jumpAbort: AbortController | undefined;
+  const jump = useGuarded();
   const [mode, setMode] = createSignal<HlilViewMode>("pseudo");
 
   function cancelJump() {
-    jumpSeq += 1;
-    jumpAbort?.abort();
-    jumpAbort = undefined;
+    jump.cancel();
   }
 
   onCleanup(() => cancelJump());
@@ -180,21 +178,20 @@ export default function HlilPanel(props: HlilPanelProps) {
   async function jumpPc(pc: string | null | undefined) {
     if (!pc) return;
     cancelJump();
-    const seq = ++jumpSeq;
-    const abort = new AbortController();
-    jumpAbort = abort;
+    const h = jump.begin();
+    const abort = h.abort;
     try {
       const r = await fetchIdxsForPc(pc, props.currentIdx, 40, abort.signal);
-      if (seq !== jumpSeq || abort.signal.aborted) return;
+      if (!jump.isCurrent(h)) return;
       const candidates = [...r.before, ...r.after];
       if (!candidates.length) return;
       candidates.sort((a, b) => Math.abs(a - props.currentIdx) - Math.abs(b - props.currentIdx));
       props.onSelect(candidates[0]);
     } catch (err) {
-      if (abort.signal.aborted || seq !== jumpSeq) return;
+      if (!jump.isCurrent(h)) return;
       console.warn("HLIL jump failed", err);
     } finally {
-      if (jumpAbort === abort) jumpAbort = undefined;
+      jump.release(h);
     }
   }
 

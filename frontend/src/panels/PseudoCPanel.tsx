@@ -4,6 +4,7 @@ import type { Accessor } from "solid-js";
 import { fetchIdxsForPc, fetchLlilPipeline, fetchRecords, fetchRegValueAt } from "~/api/client";
 import type { PipelineResponse } from "~/api/types";
 import { extractPc } from "~/utils/asm";
+import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import { parseCType } from "~/utils/cTypeParser";
@@ -132,8 +133,8 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
   let renameInputEl: HTMLInputElement | undefined;
   let highlightEl: HTMLDivElement | undefined;
   let lastHighlightFetch = 0;
-  let highlightSeq = 0;
-  let tooltipFetchSeq = 0;
+  const highlight = useGuarded();
+  const tooltipFetch = useGuarded();
 
   onCleanup(() => {
     if (copyTimer) clearTimeout(copyTimer);
@@ -312,20 +313,20 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
       setHighlightedPc(null);
       return;
     }
-    const seq = ++highlightSeq;
+    const h = highlight.begin();
     const now = Date.now();
     if (now - lastHighlightFetch < 150) return;
     lastHighlightFetch = now;
     fetchRecords({ start: idx, count: 1 })
       .then((resp) => {
-        if (seq !== highlightSeq) return;
+        if (!highlight.isCurrent(h)) return;
         const rec = resp?.records?.[0];
         if (rec?.pc) {
           const pc = parseInt(rec.pc, 16);
           if (!isNaN(pc)) setHighlightedPc(pc);
         }
       })
-      .catch(() => {});
+      .catch((err) => console.warn("highlight fetch failed", err));
   });
 
   // Fold/unfold helpers
@@ -356,12 +357,12 @@ export default function PseudoCPanel(props: PseudoCPanelProps) {
     const name = varSpan.dataset.var!;
     setTooltipVar({ name, x: e.clientX, y: e.clientY });
     if (/^(x|X)([0-9]|1[0-9]|2[0-9]|30)$/.test(name) || name === "fp" || name === "lr" || name === "sp") {
-      const seq = ++tooltipFetchSeq;
+      const h = tooltipFetch.begin();
       const idx = props.selectedIdx();
       if (idx >= 0) {
         fetchRegValueAt(idx, name)
           .then((resp) => {
-            if (seq !== tooltipFetchSeq) return;
+            if (!tooltipFetch.isCurrent(h)) return;
             if (resp?.value) setTooltipValue(resp.value);
             else if (resp?.annotation) setTooltipValue(resp.annotation);
             else setTooltipValue(null);

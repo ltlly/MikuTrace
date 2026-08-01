@@ -8,6 +8,7 @@ import {
   renderLlil,
 } from "~/api/client";
 import { extractPc } from "~/utils/asm";
+import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { Accessor, Setter } from "solid-js";
 
@@ -154,7 +155,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   const [llilLoading, setLlilLoading] = createSignal(false);
   const [llilError, setLlilError] = createSignal("");
   const [llilOutput, setLlilOutput] = createSignal("");
-  let llilSeq = 0;
+  const llil = useGuarded();
 
   // ── New: keyboard-navigable line cursor ─────────────────────────────────
   const [cursorLine, setCursorLine] = createSignal(-1);
@@ -429,7 +430,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   createEffect((prev?: string) => {
     const sig = `${props.selectedFn()}\0${llilMaxRecords()}\0${llilDce()}`;
     if (prev !== undefined && prev !== sig) {
-      llilSeq += 1;
+      llil.cancel();
       setLlilLoading(false);
       setLlilError("");
       setLlilOutput("");
@@ -442,9 +443,9 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
   async function runLlil() {
     const fnId = props.selectedFn();
     if (!fnId) return;
-    const seq = ++llilSeq;
     const maxRecords = Math.max(1, Math.min(10000, llilMaxRecords()));
     const dce = llilDce();
+    const h = llil.begin(() => props.selectedFn() === fnId && Math.max(1, Math.min(10000, llilMaxRecords())) === maxRecords && llilDce() === dce);
     setLlilLoading(true);
     setLlilError("");
     setLlilOutput("");
@@ -457,12 +458,7 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         flag_elim: true,
         dce,
       });
-      if (
-        seq !== llilSeq ||
-        props.selectedFn() !== fnId ||
-        Math.max(1, Math.min(10000, llilMaxRecords())) !== maxRecords ||
-        llilDce() !== dce
-      ) return;
+      if (!llil.isCurrent(h)) return;
 
       // Seed rename/type maps from the API response on first load
       if (r.var_names && Object.keys(r.var_names).length > 0) {
@@ -482,10 +478,10 @@ export default function DecompilerPanel(props: DecompilerPanelProps) {
         r.pseudocode,
       ].filter(Boolean).join("\n"));
     } catch (err) {
-      if (seq !== llilSeq) return;
+      if (!llil.isCurrent(h)) return;
       setLlilError(String(err));
     } finally {
-      if (seq === llilSeq) setLlilLoading(false);
+      if (llil.isCurrent(h)) setLlilLoading(false);
     }
   }
 

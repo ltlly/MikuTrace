@@ -11,6 +11,7 @@ import {
   fetchWatchpoints,
 } from "./api/client";
 import BacktracePanel from "./panels/backtrace/BacktracePanel";
+import { useGuarded } from "./utils/guarded";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
 import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
@@ -228,59 +229,23 @@ export default function App() {
   const [functionRenames, setFunctionRenames] = createSignal<Map<string, string>>(new Map());
   const helpTopic = createMemo(() => helpState()?.topic ?? null);
   let cmdInput: HTMLInputElement | undefined;
-  let hashJumpSeq = 0;
-  let hashJumpAbort: AbortController | undefined;
-  let searchSeq = 0;
-  let searchAbort: AbortController | undefined;
-  let gotoSeq = 0;
-  let timeTravelSeq = 0;
-  let timeTravelAbort: AbortController | undefined;
-  let watchSeq = 0;
-  let watchAbort: AbortController | undefined;
+  const hashJump = useGuarded();
+  const search = useGuarded();
+  const goto = useGuarded();
+  const timeTravel = useGuarded();
+  const watch = useGuarded();
+  let applyingNavHistory = false;
 
   createEffect(() => {
     const key = functionRenameKey();
     setFunctionRenames(key ? loadFunctionRenames(key) : new Map());
   });
-  let gotoAbort: AbortController | undefined;
-  let applyingNavHistory = false;
-
-  function cancelHashJump() {
-    hashJumpSeq += 1;
-    hashJumpAbort?.abort();
-    hashJumpAbort = undefined;
-  }
-
-  function cancelSearch() {
-    searchSeq += 1;
-    searchAbort?.abort();
-    searchAbort = undefined;
-  }
-
-  function cancelGoto() {
-    gotoSeq += 1;
-    gotoAbort?.abort();
-    gotoAbort = undefined;
-  }
-
-  function cancelTimeTravel() {
-    timeTravelSeq += 1;
-    timeTravelAbort?.abort();
-    timeTravelAbort = undefined;
-  }
-
-  function cancelWatch() {
-    watchSeq += 1;
-    watchAbort?.abort();
-    watchAbort = undefined;
-  }
-
   onCleanup(() => {
-    cancelHashJump();
-    cancelSearch();
-    cancelGoto();
-    cancelTimeTravel();
-    cancelWatch();
+    hashJump.cancel();
+    search.cancel();
+    goto.cancel();
+    timeTravel.cancel();
+    watch.cancel();
   });
 
   function totalRecords(): number {
@@ -351,14 +316,13 @@ export default function App() {
   async function jumpToHashPc(hash = window.location.hash) {
     const pc = pcFromHash(hash);
     if (!pc) return;
-    cancelHashJump();
-    const seq = ++hashJumpSeq;
-    const abort = new AbortController();
-    hashJumpAbort = abort;
+    hashJump.cancel();
+    const h = hashJump.begin();
+    const abort = h.abort;
     setCmdStatus(`resolving ${pc}...`);
     try {
       const r = await fetchIdxsForPc(pc, selectedIdx(), 80, abort.signal);
-      if (seq !== hashJumpSeq || abort.signal.aborted) return;
+      if (!hashJump.isCurrent(h)) return;
       const candidates = [...r.before, ...r.after];
       if (!candidates.length) {
         setCmdStatus(`${pc}: not executed in trace`);
@@ -370,10 +334,10 @@ export default function App() {
       setCmdStatus(`${pc}: jumped to #${nearest}`);
     } catch (err) {
       if (abort.signal.aborted) return;
-      if (seq !== hashJumpSeq) return;
+      if (!hashJump.isCurrent(h)) return;
       setCmdStatus(`hash jump ${pc} failed: ${String(err)}`);
     } finally {
-      if (hashJumpAbort === abort) hashJumpAbort = undefined;
+      hashJump.release(h);
     }
   }
 
@@ -384,14 +348,13 @@ export default function App() {
   }
 
   async function jumpToFirstPc(pc: string, label = pc) {
-    cancelGoto();
-    const seq = ++gotoSeq;
-    const abort = new AbortController();
-    gotoAbort = abort;
+    goto.cancel();
+    const h = goto.begin();
+    const abort = h.abort;
     setCmdStatus(`resolving ${label}...`);
     try {
       const r = await fetchIdxsForPc(pc, 0, 1, abort.signal);
-      if (seq !== gotoSeq || abort.signal.aborted) return;
+      if (!goto.isCurrent(h)) return;
       const first = r.after[0];
       if (first === undefined) {
         setCmdStatus(`${label}: not executed in trace`);
@@ -400,10 +363,10 @@ export default function App() {
       jumpToIdx(first);
       setCmdStatus(`${label}: jumped to #${first}`);
     } catch (err) {
-      if (abort.signal.aborted || seq !== gotoSeq) return;
+      if (!goto.isCurrent(h)) return;
       setCmdStatus(`${label}: jump failed: ${String(err)}`);
     } finally {
-      if (gotoAbort === abort) gotoAbort = undefined;
+      goto.release(h);
     }
   }
 
@@ -414,15 +377,14 @@ export default function App() {
       setCmdStatus("same-pc: current PC is not ready");
       return;
     }
-    cancelTimeTravel();
-    const seq = ++timeTravelSeq;
-    const abort = new AbortController();
-    timeTravelAbort = abort;
+    timeTravel.cancel();
+    const h = timeTravel.begin();
+    const abort = h.abort;
     const cursor = selectedIdx();
     setCmdStatus(`${direction < 0 ? "prev" : "next"} execution ${pc}...`);
     try {
       const r = await fetchIdxsForPc(pc, direction < 0 ? cursor : cursor + 1, 1, abort.signal);
-      if (seq !== timeTravelSeq || abort.signal.aborted) return;
+      if (!timeTravel.isCurrent(h)) return;
       const target = direction < 0 ? r.before[0] : r.after[0];
       if (target === undefined) {
         setCmdStatus(`${pc}: no ${direction < 0 ? "previous" : "next"} execution`);
@@ -431,10 +393,10 @@ export default function App() {
       jumpToIdx(target);
       setCmdStatus(`${pc}: jumped to #${target}`);
     } catch (err) {
-      if (abort.signal.aborted || seq !== timeTravelSeq) return;
+      if (!timeTravel.isCurrent(h)) return;
       setCmdStatus(`same-pc failed: ${String(err)}`);
     } finally {
-      if (timeTravelAbort === abort) timeTravelAbort = undefined;
+      timeTravel.release(h);
     }
   }
 
@@ -444,10 +406,9 @@ export default function App() {
       setCmdStatus("reg flow: no selected register");
       return;
     }
-    cancelTimeTravel();
-    const seq = ++timeTravelSeq;
-    const abort = new AbortController();
-    timeTravelAbort = abort;
+    timeTravel.cancel();
+    const h = timeTravel.begin();
+    const abort = h.abort;
     const cursor = selectedIdx();
     const label = direction < 0 ? "prev def" : "next use";
     setCmdStatus(`${label} ${reg}...`);
@@ -455,7 +416,7 @@ export default function App() {
       const r = direction < 0
         ? await fetchLastWriteOfReg(cursor, reg, abort.signal)
         : await fetchNextUseOfReg(cursor, reg, abort.signal);
-      if (seq !== timeTravelSeq || abort.signal.aborted) return;
+      if (!timeTravel.isCurrent(h)) return;
       if (r.idx === null || r.idx === undefined) {
         setCmdStatus(`${label} ${reg}: not found`);
         return;
@@ -463,10 +424,10 @@ export default function App() {
       jumpToIdx(r.idx);
       setCmdStatus(`${label} ${reg}: #${r.idx}${r.value ? ` value ${r.value}` : ""}`);
     } catch (err) {
-      if (abort.signal.aborted || seq !== timeTravelSeq) return;
+      if (!timeTravel.isCurrent(h)) return;
       setCmdStatus(`${label} ${reg} failed: ${String(err)}`);
     } finally {
-      if (timeTravelAbort === abort) timeTravelAbort = undefined;
+      timeTravel.release(h);
     }
   }
 
@@ -526,14 +487,15 @@ export default function App() {
         ? { kind: "mem-touch" as const, addr: first, size: Number.isFinite(size) ? size : 1, cursor, limit: 200 }
         : { kind: "reg-change" as const, reg: first, cursor, limit: 200 };
 
-    cancelWatch();
-    const seq = ++watchSeq;
-    const abort = new AbortController();
-    watchAbort = abort;
+    watch.cancel();
+
+    const h = watch.begin();
+
+    const abort = h.abort;
     setCmdStatus(`watch ${text}: scanning...`);
     try {
       const r = await fetchWatchpoints({ ...opts, signal: abort.signal });
-      if (seq !== watchSeq || abort.signal.aborted) return;
+      if (!watch.isCurrent(h)) return;
       const firstHit = r.hits[0];
       if (!firstHit) {
         setCmdStatus(`watch ${text}: 0 hits`);
@@ -544,10 +506,10 @@ export default function App() {
       const partial = r.truncated ? ` · partial ${r.returned}/${r.total_matches}` : "";
       setCmdStatus(`watch ${text}: #${firstHit.idx} (${r.total_matches} hits${partial})`);
     } catch (err) {
-      if (abort.signal.aborted || seq !== watchSeq) return;
+      if (!watch.isCurrent(h)) return;
       setCmdStatus(`watch ${text} failed: ${String(err)}`);
     } finally {
-      if (watchAbort === abort) watchAbort = undefined;
+      watch.release(h);
     }
   }
 
@@ -688,15 +650,14 @@ export default function App() {
   async function runSearch(pattern: string) {
     const q = pattern.trim();
     if (!q) return;
-    cancelSearch();
-    const seq = ++searchSeq;
-    const abort = new AbortController();
-    searchAbort = abort;
+    search.cancel();
+    const h = search.begin();
+    const abort = h.abort;
     setCmdStatus(`searching ${q}...`);
     try {
       const cursor = selectedIdx();
       const r = await fetchSearch(q, 2000, abort.signal, cursor);
-      if (seq !== searchSeq || abort.signal.aborted) return;
+      if (!search.isCurrent(h)) return;
       const hits = r.hits.map((hit) => hit.idx).sort((a, b) => a - b);
       setSearchPattern(q);
       setSearchHits(hits);
@@ -715,10 +676,10 @@ export default function App() {
       setCmdStatus(`${q}: ${pos + 1}/${hits.length} hits${partial}`);
     } catch (err) {
       if (abort.signal.aborted) return;
-      if (seq !== searchSeq) return;
+      if (!search.isCurrent(h)) return;
       setCmdStatus(`search failed: ${String(err)}`);
     } finally {
-      if (searchAbort === abort) searchAbort = undefined;
+      search.release(h);
     }
   }
 

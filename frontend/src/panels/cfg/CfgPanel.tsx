@@ -3,6 +3,7 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { fetchBnCfgSvgForPc, fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
 import type { BnCfgSvgForPcResponse, CfgSvgResponse } from "~/api/types";
 import type { UiTaskReporter } from "~/utils/taskCenter";
+import { useGuarded } from "~/utils/guarded";
 
 const AUTO_RENDER_MAX_BLOCKS = 120;
 const AUTO_RENDER_MAX_SVG_BYTES = 900_000;
@@ -149,8 +150,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   let graphTask:
     | { id: string; surface: string; label: string; startedAt: number }
     | undefined;
-  let jumpSeq = 0;
-  let jumpAbort: AbortController | undefined;
+  const jump = useGuarded();
 
   const [functions] = createResource(
     () => (props.active ? "active" : undefined),
@@ -390,9 +390,7 @@ export default function CfgPanel(props: CfgPanelProps) {
   });
 
   function cancelJump() {
-    jumpSeq += 1;
-    jumpAbort?.abort();
-    jumpAbort = undefined;
+    jump.cancel();
   }
 
   onCleanup(() => {
@@ -510,14 +508,13 @@ export default function CfgPanel(props: CfgPanelProps) {
 
   async function jumpToPc(hex: string) {
     cancelJump();
-    const seq = ++jumpSeq;
-    const abort = new AbortController();
-    jumpAbort = abort;
+    const h = jump.begin();
+    const abort = h.abort;
     setJumpErr("");
     const pc = `0x${hex.toLowerCase()}`;
     try {
       const resp = await fetchIdxsForPc(pc, props.currentIdx, 40, abort.signal);
-      if (seq !== jumpSeq || abort.signal.aborted) return;
+      if (!jump.isCurrent(h)) return;
       const candidates = [...resp.before, ...resp.after];
       if (candidates.length === 0) {
         setJumpErr(`trace 中没有执行 ${pc}`);
@@ -526,11 +523,10 @@ export default function CfgPanel(props: CfgPanelProps) {
       candidates.sort((a, b) => Math.abs(a - props.currentIdx) - Math.abs(b - props.currentIdx));
       props.onSelect(candidates[0]);
     } catch (err) {
-      if (abort.signal.aborted) return;
-      if (seq !== jumpSeq) return;
+      if (!jump.isCurrent(h)) return;
       setJumpErr(String(err));
     } finally {
-      if (jumpAbort === abort) jumpAbort = undefined;
+      jump.release(h);
     }
   }
 

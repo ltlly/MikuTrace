@@ -2,6 +2,7 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import { fetchCallTree } from "~/api/client";
 import type { CallNode } from "~/api/types";
+import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
 
 const DEFAULT_DEPTH = 10;
@@ -123,11 +124,11 @@ export default function CallTreePanel(props: CallTreePanelProps) {
   });
   const [openKeys, setOpenKeys] = createSignal<Set<string>>(new Set());
   const [locatedKey, setLocatedKey] = createSignal("");
-  let locateSeq = 0;
+  const locate = useGuarded();
   let locateRaf: number | undefined;
 
   function cancelLocateFrame() {
-    locateSeq += 1;
+    locate.cancel();
     if (locateRaf !== undefined) {
       window.cancelAnimationFrame(locateRaf);
       locateRaf = undefined;
@@ -142,7 +143,7 @@ export default function CallTreePanel(props: CallTreePanelProps) {
     if (!tree || props.currentIdx === undefined) return;
     const path = findPath(tree, props.currentIdx);
     if (!path?.length) return;
-    const seq = ++locateSeq;
+    const h = locate.begin(() => locatedKey() === key);
     const next = new Set(openKeys());
     for (const node of path) next.add(keyOf(node));
     const key = keyOf(path[path.length - 1]);
@@ -150,7 +151,7 @@ export default function CallTreePanel(props: CallTreePanelProps) {
     setLocatedKey(key);
     locateRaf = window.requestAnimationFrame(() => {
       locateRaf = undefined;
-      if (seq !== locateSeq || locatedKey() !== key) return;
+      if (!locate.isCurrent(h)) return;
       document.querySelector(`[data-ct-key="${CSS.escape(key)}"]`)?.scrollIntoView({
         block: "center",
         inline: "nearest",

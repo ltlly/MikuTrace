@@ -2,6 +2,7 @@ import { createMemo, createSignal, createResource, For, Show } from "solid-js";
 
 import { fetchLastWriteOfReg, fetchRecord } from "~/api/client";
 import { clamp } from "~/utils/math";
+import { useGuarded } from "~/utils/guarded";
 import { normalizeReg } from "~/utils/bnTokens";
 
 interface RegistersPanelProps {
@@ -145,7 +146,7 @@ export default function RegistersPanel(props: RegistersPanelProps) {
   const [valueW, setValueW] = createSignal(initialCols.value);
   const [deltaW, setDeltaW] = createSignal(initialCols.delta);
   const [noteW, setNoteW] = createSignal(initialCols.note);
-  let lastWriteSeq = 0;
+  const lastWrite = useGuarded();
   let recordAbort: AbortController | undefined;
   const [record] = createResource(
     () => (props.active ? props.idx : undefined),
@@ -198,10 +199,10 @@ export default function RegistersPanel(props: RegistersPanelProps) {
   }
 
   async function jumpLastWrite(reg: string) {
-    const seq = ++lastWriteSeq;
+    const h = lastWrite.begin(() => props.active && props.idx === idxAtStart);
     const idxAtStart = props.idx;
     const r = await fetchLastWriteOfReg(idxAtStart, reg);
-    if (seq !== lastWriteSeq || !props.active || props.idx !== idxAtStart) return;
+    if (!lastWrite.isCurrent(h)) return;
     if (r.idx !== null && r.idx !== undefined) props.onSelect(r.idx);
   }
 

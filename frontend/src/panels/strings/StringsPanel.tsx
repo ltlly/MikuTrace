@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 
 import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
+import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { StringProvenanceRequest } from "./StringProvenancePanel";
 
@@ -31,8 +32,7 @@ export default function StringsPanel(props: StringsPanelProps) {
   const [jumpErr, setJumpErr] = createSignal("");
   const [retry, setRetry] = createSignal(0);
   let singleClickTimer: number | undefined;
-  let jumpSeq = 0;
-  let jumpAbort: AbortController | undefined;
+  const jump = useGuarded();
   const source = createMemo<StringsSource | undefined>((prev) => {
     if (!props.active) return undefined;
     const next = {
@@ -79,9 +79,7 @@ export default function StringsPanel(props: StringsPanelProps) {
   }
 
   function cancelJump() {
-    jumpSeq += 1;
-    jumpAbort?.abort();
-    jumpAbort = undefined;
+    jump.cancel();
   }
 
   onCleanup(() => {
@@ -91,13 +89,12 @@ export default function StringsPanel(props: StringsPanelProps) {
 
   async function jumpString(s: StringEntry) {
     cancelJump();
-    const seq = ++jumpSeq;
-    const abort = new AbortController();
-    jumpAbort = abort;
+    const h = jump.begin();
+    const abort = h.abort;
     setJumpErr("");
     try {
       const hits = await fetchIdxsTouchingRange(s.addr, Math.max(1, s.len), 0, 80, abort.signal);
-      if (seq !== jumpSeq || abort.signal.aborted) return;
+      if (!jump.isCurrent(h)) return;
       const target =
         hits.writers_after[0] ??
         hits.readers_after[0] ??
@@ -109,11 +106,10 @@ export default function StringsPanel(props: StringsPanelProps) {
       }
       props.onSelect(target);
     } catch (err) {
-      if (abort.signal.aborted) return;
-      if (seq !== jumpSeq) return;
+      if (!jump.isCurrent(h)) return;
       setJumpErr(String(err));
     } finally {
-      if (jumpAbort === abort) jumpAbort = undefined;
+      jump.release(h);
     }
   }
 

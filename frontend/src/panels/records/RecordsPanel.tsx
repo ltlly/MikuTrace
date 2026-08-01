@@ -21,10 +21,11 @@ import {
   fetchRecords,
   fetchRegValueAt,
 } from "~/api/client";
-import type { AsmToken, CallTreeResponse, RecordRow, RecordsResponse } from "~/api/types";
+import type { AsmToken, CallTreeResponse, RecordRow, RecordsResponse, RegValueAtResponse } from "~/api/types";
 import { normalizeReg } from "~/utils/bnTokens";
 import { clamp } from "~/utils/math";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import { useGuarded } from "~/utils/guarded";
 import {
   FOLDED_FETCH_BATCH_RANGES,
   OVERSCAN,
@@ -123,27 +124,21 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [bnTokenStatus, setBnTokenStatus] = createSignal("");
   const [bnTokensDisabled, setBnTokensDisabled] = createSignal(false);
   let viewport: HTMLDivElement | undefined;
-  let regContextSeq = 0;
-  let regNavSeq = 0;
-  let regFlowSeq = 0;
-  let regContextAbort: AbortController | undefined;
-  let regFlowAbort: AbortController | undefined;
+  const regContextGuard = useGuarded();
+  const regNavGuard = useGuarded();
+  const regFlowGuard = useGuarded();
   let bnTokenTimer: number | undefined;
   let bnTokenAbort: AbortController | undefined;
   let recordsLoadingTimer: number | undefined;
   const foldedFetchInflight = new Set<number>();
 
   function cancelRegContext() {
-    regContextSeq += 1;
-    regNavSeq += 1;
-    regContextAbort?.abort();
-    regContextAbort = undefined;
+    regContextGuard.cancel();
+    regNavGuard.cancel();
   }
 
   function cancelRegFlow() {
-    regFlowSeq += 1;
-    regFlowAbort?.abort();
-    regFlowAbort = undefined;
+    regFlowGuard.cancel();
   }
 
   function clearRegFlow() {
@@ -833,7 +828,6 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     // and target rows can both be inside or outside the visible window.
     const toViewportY = (innerY: number) => innerY - sTop;
     const srcInner = pixelCenterForIdx(f.sourceIdx);
-    const srcInWindow = srcInner >= sTop && srcInner <= sTop + vH;
 
     const arrows: Array<{
       kind: "def" | "use";
@@ -874,7 +868,6 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       });
     }
     if (!arrows.length) return null;
-    void srcInWindow;
     return { arrows, x, sTop, vH };
   });
 
@@ -882,9 +875,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     const reg = normalizeReg(regRaw);
     closeRegContext();
     closeRowContext();
-    const token = ++regFlowSeq;
-    const abort = new AbortController();
-    regFlowAbort = abort;
+    const h = regFlowGuard.begin();
+    const token = h.seq;
+    const abort = h.abort;
     // Selecting a register on a row should NOT move the global cursor.
     // Cursor moves only on row click, double-click on the register, or
     // explicit jump from the def/use SVG arrow / right-click menu.
@@ -903,7 +896,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         fetchLastWriteOfReg(row.idx, reg, abort.signal),
         fetchNextUseOfReg(row.idx, reg, abort.signal),
       ]);
-      if (abort.signal.aborted || regFlow()?.token !== token) return;
+      if (!regFlowGuard.isCurrent(h) || regFlow()?.token !== token) return;
 
       const defErr = def.status === "rejected" ? String(def.reason) : undefined;
       const useErr = use.status === "rejected" ? String(use.reason) : undefined;
@@ -922,7 +915,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         err: err || undefined,
       });
     } finally {
-      if (regFlowAbort === abort) regFlowAbort = undefined;
+      regFlowGuard.release(h);
     }
   }
 
@@ -962,19 +955,19 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   }
 
   async function jumpLastWrite(idx: number, reg: string) {
-    const navSeq = ++regNavSeq;
+    const h = regNavGuard.begin(() => regContext()?.token === contextToken);
     const contextToken = regContext()?.token;
     const r = await fetchLastWriteOfReg(idx, reg);
-    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
+    if (!regNavGuard.isCurrent(h)) return;
     if (r.idx !== null && r.idx !== undefined) props.onSelect(r.idx);
   }
 
   async function jumpPcValue(value: string | null | undefined, idx: number) {
     if (!value) return;
-    const navSeq = ++regNavSeq;
+    const h = regNavGuard.begin(() => regContext()?.token === contextToken);
     const contextToken = regContext()?.token;
     const r = await fetchIdxsForPc(value, idx, 40);
-    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
+    if (!regNavGuard.isCurrent(h)) return;
     const candidates = [...r.before, ...r.after];
     if (!candidates.length) return;
     candidates.sort((a, b) => Math.abs(a - idx) - Math.abs(b - idx));
@@ -983,49 +976,67 @@ export default function RecordsPanel(props: RecordsPanelProps) {
 
   async function jumpCfgAtValue(value: string | null | undefined, idx: number) {
     if (!value) return;
-    const navSeq = ++regNavSeq;
+    const h = regNavGuard.begin(() => regContext()?.token === contextToken);
     const contextToken = regContext()?.token;
     const block = await fetchBlockForPc(value);
-    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
+    if (!regNavGuard.isCurrent(h)) return;
     if (!block.block) {
       setRegContext((current) => (current ? { ...current, err: "PC not in any tracked block" } : current));
       return;
     }
     const idxs = await fetchIdxsForBlock(block.block, 1, idx);
-    if (navSeq !== regNavSeq || regContext()?.token !== contextToken) return;
+    if (!regNavGuard.isCurrent(h)) return;
     if (idxs.idxs.length > 0) props.onSelect(idxs.idxs[0]);
     else setRegContext((current) => (current ? { ...current, err: "block not executed in trace" } : current));
   }
 
-  async function loadAddrTitle(el: HTMLElement, idx: number, addrStr: string) {
-    const key = `${idx}:addr:${addrStr}`;
-    const cached = regValueTitleCache.get(key);
-    if (cached) { el.title = cached; return; }
-    try {
-      const r = await fetchRegValueAt(idx, addrStr);
-      const annotation = r.annotation ? ` ${r.annotation}` : "";
-      const title = r.status === "ready" ? `${addrStr}${annotation}` : addrStr;
-      regValueTitleCache.set(key, title);
-      el.title = title;
-    } catch { el.title = addrStr; }
-  }
-
-  async function loadRegTitle(el: HTMLElement, idx: number, reg: string) {
-    const key = `${idx}:${reg}`;
+  async function loadTitle(
+    el: HTMLElement,
+    key: string,
+    fetchValue: () => Promise<RegValueAtResponse>,
+    format: (r: RegValueAtResponse) => string,
+    fallback: string,
+  ) {
     const cached = regValueTitleCache.get(key);
     if (cached) {
       el.title = cached;
       return;
     }
     try {
-      const r = await fetchRegValueAt(idx, reg);
-      const annotation = r.annotation ? ` ${r.annotation}` : "";
-      const title = r.status === "ready" && r.value ? `${reg} = ${r.value}${annotation}` : `${reg}`;
+      const r = await fetchValue();
+      const title = format(r);
       regValueTitleCache.set(key, title);
       el.title = title;
     } catch {
-      el.title = reg;
+      console.warn(`reg-value title fetch failed for ${key}`);
+      el.title = fallback;
     }
+  }
+
+  function loadAddrTitle(el: HTMLElement, idx: number, addrStr: string) {
+    void loadTitle(
+      el,
+      `${idx}:addr:${addrStr}`,
+      () => fetchRegValueAt(idx, addrStr),
+      (r) => {
+        const annotation = r.annotation ? ` ${r.annotation}` : "";
+        return r.status === "ready" ? `${addrStr}${annotation}` : addrStr;
+      },
+      addrStr,
+    );
+  }
+
+  function loadRegTitle(el: HTMLElement, idx: number, reg: string) {
+    void loadTitle(
+      el,
+      `${idx}:${reg}`,
+      () => fetchRegValueAt(idx, reg),
+      (r) => {
+        const annotation = r.annotation ? ` ${r.annotation}` : "";
+        return r.status === "ready" && r.value ? `${reg} = ${r.value}${annotation}` : `${reg}`;
+      },
+      reg,
+    );
   }
 
   function openRowContext(e: MouseEvent, row: RecordRow) {
@@ -1049,9 +1060,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     e.stopPropagation();
     closeRowContext();
     cancelRegContext();
-    const token = ++regContextSeq;
-    const abort = new AbortController();
-    regContextAbort = abort;
+    const h = regContextGuard.begin();
+    const token = h.seq;
+    const abort = h.abort;
     // Right-click on a register opens the menu only — the cursor stays put.
     // Choose a menu action (jump-to-last-write, taint, etc.) to actually move.
     props.onSelectReg(reg);
@@ -1076,7 +1087,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         current?.token === token ? { ...current, err: String(err) } : current,
       );
     } finally {
-      if (regContextAbort === abort) regContextAbort = undefined;
+      regContextGuard.release(h);
     }
   }
 
@@ -1167,7 +1178,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
               const taintDimmed = () =>
                 !!props.taintOverlay && props.taintOverlay.mode === "dim" && !taintHit();
               const foldedRange = () => foldedRangeForRow(row);
-              const foldableRange = () => foldableRangeForRow(row);
+              const fr = foldableRangeForRow(row);
+              const foldableRange = () => fr;
               const flowKind = () => regFlowKind(row.idx);
               return (
                 <RecordsRow
@@ -1186,7 +1198,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
                   flowUse={regFlow()?.useIdx === row.idx}
                   foldedRange={foldedRange()}
                   foldableRange={foldableRange()}
-                  foldCollapsed={!!foldableRange() && collapsedCalls().has(foldableRange()!.key)}
+                  foldCollapsed={fr?.key ? collapsedCalls().has(fr.key) : false}
                   selectedReg={normalizeReg(props.selectedReg)}
                   tokens={tokensForPc(row.pc)}
                   onPointerSelect={setOptimisticIdx}

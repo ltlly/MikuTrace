@@ -9,6 +9,7 @@ import {
 } from "~/api/client";
 import type { MemDumpByte, MemWritesInRangeResponse, TouchingRangeResponse } from "~/api/types";
 import { clamp } from "~/utils/math";
+import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
@@ -176,13 +177,10 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   });
   let autoAddr = "";
   let lastAddrRequest = -1;
-  let memContextSeq = 0;
-  let memContextAbort: AbortController | undefined;
+  const memContextGuard = useGuarded();
 
   function cancelMemContext() {
-    memContextSeq += 1;
-    memContextAbort?.abort();
-    memContextAbort = undefined;
+    memContextGuard.cancel();
   }
 
   function closeMemContext(clearSelection = false) {
@@ -420,9 +418,9 @@ export default function MemoryPanel(props: MemoryPanelProps) {
     e.stopPropagation();
     cancelMemContext();
     const bounds = selectedBounds(b.addr);
-    const token = ++memContextSeq;
-    const abort = new AbortController();
-    memContextAbort = abort;
+    const h = memContextGuard.begin();
+    const token = h.seq;
+    const abort = h.abort;
     const taskStartedAt = performance.now();
     const base: MemContext = {
       token,
@@ -492,7 +490,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
         detail: String(err),
       });
     } finally {
-      if (memContextAbort === abort) memContextAbort = undefined;
+      memContextGuard.release(h);
     }
   }
 
