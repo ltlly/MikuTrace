@@ -67,6 +67,74 @@ npm --prefix tracer run build
 ./tracemiku web <call_dir> --so /path/to/libtarget.so --port 18900
 ```
 
+## trace 捕获是怎么工作的
+
+traceMiku 的注入模型是 **attach**，不使用 Frida spawn gating。进程定位按优先级：
+
+1. `--attach-pid <pid>`：直接 attach。
+2. `--launch`：`am force-stop`（不清数据）+ monkey 拉起，拿到 pid 后立即 attach；
+   适合必须保留登录/本地状态的场景。
+3. `--cold-launch`：`force-stop + pm clear + monkey`，拿到 pid 后**先 attach**，
+   再在后台线程自动点“同意”并等首页；用于反调试在隐私弹窗阶段就启动的 app。
+   `--home-markers` 可自定义首页判定文本。
+4. 只给 `--pkg`：在设备上找已运行的进程后 attach；找不到会列出可能匹配的进程并
+   提示先启动 app。fork 出来的子进程由 `--enable-fork-hook` + `--child-trace-mode`
+   做 race-attach，不走 spawn-gating。
+
+一次 `trace` 的执行顺序：
+
+```text
+参数校验与互斥检查
+→ (可选) launch/cold-launch 启动或定位进程
+→ 选择 agent（默认 tracer/_agent.js，legacy 回退 agent_cmodule_v5.js）
+→ 建输出目录 <out>/calls/，写顶层 meta 骨架
+→ 加载 --jni-hooks / --suicide-patch-spec 等 JSON spec
+→ 组装 AGENT_OPTS，device.attach(pid) → load → init(AGENT_OPTS)
+→ agent 编译 CModule，定位目标 SO（未加载则 hook dlopen 等待），
+  按 --fn-offset / --export / --method 解析入口并安装 hook
+→ 入口命中后 Stalker 开始记录，设备端先落盘，host 边采边拉
+→ 到 --duration 或 Ctrl-C：stats → force_flush → unload → detach；
+  未收尾的调用标 truncated
+→ trace-end 消息驱动 host 拉回 trace.bin/sidecar 并写 per-call meta.json
+```
+
+中途被杀可用 `./tracemiku finalize <run>` 扫 `_pending_call_*` 重建 meta。
+
+### 增加反调试怎么改
+
+反调试能力是默认关闭的插件，位于 `tracer/src/anti_detect/`。新增一个：
+
+1. 新建 `tracer/src/anti_detect/<id>.ts`，实现 `AntiDetectPlugin` 接口
+   （`id`/`name`/`description`/`install(config)`），hook 和队列必须有上限，
+   不能写死包名、SO 版本或固定偏移。
+2. 在 `tracer/src/anti_detect/plugin_interface.ts` 的 `BUILTIN_PLUGINS` 注册。
+3. 接线：现有三个插件通过专用布尔参数（`--hide-rwx-maps` / `--block-self-kill` /
+   `--patch-suicide`）经 `tracemiku` 的 `AGENT_OPTS` 传入；agent 端已有通用的
+   `opts.antiDetect` 插件数组加载逻辑，新插件可沿用布尔模式，或给 host 补
+   `--anti-detect` 参数后走数组模式。目标相关补丁 spec 放 `tools/hooks/*.json`。
+4. `npm --prefix tracer run build` 重新生成 `_agent.js`，再跑 typecheck 与
+   `make test-device` 验证。
+
+### 只复用分析部分：对接文件结构
+
+不用 Frida 采集器、只把 `tracemiku` 当作分析后端时，最小对接只需一个 per-call
+目录：
+
+```text
+<run>/calls/call_<序号>_tid<线程>_<记录数>r_<耗时>ms/
+  trace.bin                 # 必填：N × 272 字节记录
+  meta.json                 # 必填：至少 {"records": N}
+  external_writes.bin       # 可选：每条 17 字节 (idx u64 + addr u64 + byte u8)
+  jni_hooks.jsonl           # 可选：JNI 事件 JSONL
+  memory_snapshot.bin       # 可选：初始内存快照
+<run>/meta.json             # 可选：method/cmd/module/fn_addr 等；缺失也可加载
+```
+
+`trace.bin` 每条记录固定 272 字节小端：`pc u64` + `x0..x28/fp/lr` 共 31 个 `u64`
++ `sp u64` + `nzcv u32` + `inst u32`。完整契约见
+[Trace 数据契约](docs/PER_CALL_TRACE_DESIGN.md)；最小可运行样例直接看
+`scripts/build_smoke_trace.py`（生成的目录能被所有分析命令读取）。
+
 ## 面向 AI 的查询
 
 CLI 是首选自动化入口，输出为结构化 JSON。所有分析命令都由统一入口透传，
