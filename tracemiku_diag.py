@@ -55,8 +55,8 @@ def diagnose_trace_failure(
             # SI_USER + DEEP backtrace = anti-debug detected something Frida-related
             # (Stalker block-cache rewrites in libart, /proc/self/maps, etc.) and called
             # self-kill via a non-trivial code path. Most common cause: --trace-deep
-            # follows libart → Stalker rewrites libart code → libsgmainso integrity check
-            # detects the rewrite → tgkill self-kill. 实测 2026-05 (libsgmainso 6.8.260403).
+            # follows libart → Stalker rewrites libart code → a hardened SO's integrity
+            # check detects the rewrite → tgkill self-kill.
             hints.append(
                 "诊断: SI_USER + 深栈 — anti-debug 检测到 Frida 痕迹后 self-kill "
                 "(常见: Stalker 重写 libart 代码段被 CRC 校验抓到)."
@@ -64,9 +64,9 @@ def diagnose_trace_failure(
             if cli_args.get("trace_deep"):
                 hints.append(
                     "强烈建议: 关 --trace-deep 重跑. trace-deep 让 Stalker 跟进 libart, "
-                    "block-cache rewrites 容易被 anti-debug 校验抓. 实测 libsgmainso "
-                    "6.8.260403 在 cmd=70102 跑到 ~60k records 必崩 (无 --trace-deep "
-                    "可跑完 15M+ records)."
+                    "block-cache rewrites 容易被 anti-debug 校验抓. 实测重防护 SO "
+                    "在深度模式下跑几万条记录就会触发自杀 (关 --trace-deep 可跑完 "
+                    "千万级记录)."
                 )
             else:
                 hints.append(
@@ -83,7 +83,7 @@ def diagnose_trace_failure(
             )
             hints.append(
                 "建议: 检查 --boundary-diff-syms / --hostile-syms 不要含 "
-                "pthread_*/malloc/free/atomic_load*. 见 ANALYSIS_XSIGN.md."
+                "pthread_*/malloc/free/atomic_load*."
             )
 
     if exception is not None:

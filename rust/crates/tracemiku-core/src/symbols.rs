@@ -316,12 +316,12 @@ impl ModuleResolver {
     /// Resolve a `(module-query, offset)` coordinate to an absolute PC.
     ///
     /// `query` is matched tool-neutrally against loaded module names so that a
-    /// human reading `libfoo.so + 0x57a30` in IDA/BN/Ghidra, or an AI that only
+    /// human reading `libfoo.so + 0x1234` in IDA/BN/Ghidra, or an AI that only
     /// knows the SO basename, can hand the same coordinate straight to
     /// traceMiku. Matching precedence (first non-empty set wins):
-    ///   1. exact `name`            (e.g. "libsgmainso-6.8.260403.so")
+    ///   1. exact `name`            (e.g. "libfoo-1.2.3.so")
     ///   2. exact basename          (path stripped to after last '/')
-    ///   3. basename starts-with    (e.g. "libsgmainso" → versioned ".so")
+    ///   3. basename starts-with    (e.g. "libfoo" → versioned ".so")
     ///   4. name contains substring (last-resort fuzzy)
     ///
     /// Returns every candidate so the caller can report ambiguity rather than
@@ -554,11 +554,7 @@ mod resolve_offset_tests {
 
     fn sample() -> ModuleResolver {
         ModuleResolver::from_modules(&[
-            module(
-                "/data/app/libsgmainso-6.8.260403.so",
-                0x7000_0000,
-                0x10_0000,
-            ),
+            module("/data/app/libfoo-1.2.3.so", 0x7000_0000, 0x10_0000),
             module("/system/lib64/libc.so", 0x7100_0000, 0x8_0000),
             module("libart.so", 0x7200_0000, 0x20_0000),
         ])
@@ -567,19 +563,19 @@ mod resolve_offset_tests {
     #[test]
     fn exact_full_name_resolves_to_pc() {
         let r = sample();
-        let c = r.resolve_offset_candidates("/data/app/libsgmainso-6.8.260403.so", 0x57a30);
+        let c = r.resolve_offset_candidates("/data/app/libfoo-1.2.3.so", 0x1234);
         assert_eq!(c.len(), 1);
-        assert_eq!(c[0].3, 0x7000_0000 + 0x57a30);
+        assert_eq!(c[0].3, 0x7000_0000 + 0x1234);
     }
 
     #[test]
     fn basename_prefix_resolves_versioned_so() {
         // human/AI types just the stable basename prefix
         let r = sample();
-        let c = r.resolve_offset_candidates("libsgmainso", 0x6b20);
+        let c = r.resolve_offset_candidates("libfoo", 0x7890);
         assert_eq!(c.len(), 1);
-        assert_eq!(c[0].0, "/data/app/libsgmainso-6.8.260403.so");
-        assert_eq!(c[0].3, 0x7000_0000 + 0x6b20);
+        assert_eq!(c[0].0, "/data/app/libfoo-1.2.3.so");
+        assert_eq!(c[0].3, 0x7000_0000 + 0x7890);
     }
 
     #[test]

@@ -114,7 +114,12 @@ fn merge_missing_meta_field_keeps_call_specific_values() {
 
 #[test]
 fn classifies_vm_records_and_scaled_slots() {
-    let profile = VmProfile::default_profile();
+    let profile = VmProfile::new(
+        "x9".to_string(),
+        "x25".to_string(),
+        "x22".to_string(),
+        "x26".to_string(),
+    );
     let record = serde_json::json!({
         "regs": {
             "x25": "0x1000",
@@ -692,7 +697,7 @@ fn formula_next_for_self_def_starts_before_current_write() {
 fn frontier_auto_prefers_small_non_infrastructure_registers() {
     let step = serde_json::json!({
         "frontier": [
-            {"idx": 10, "reg": "x25", "value": "0x70000000"},
+            {"idx": 10, "reg": "x12", "value": "0x70000000"},
             {"idx": 10, "reg": "x4", "value": "0x74fbf29990"},
             {"idx": 10, "reg": "x20", "value": "0x18"}
         ]
@@ -704,12 +709,12 @@ fn frontier_auto_prefers_small_non_infrastructure_registers() {
 
     let infra_only = serde_json::json!({
         "frontier": [
-            {"idx": 20, "reg": "x23", "value": "0x69f5b3cb"}
+            {"idx": 20, "reg": "x11", "value": "0x69f5b3cb"}
         ]
     });
     let next = choose_frontier_next(&infra_only).unwrap();
     assert_eq!(next["idx"], serde_json::json!(20));
-    assert_eq!(next["reg"], serde_json::json!("x23"));
+    assert_eq!(next["reg"], serde_json::json!("x11"));
     assert_eq!(next["src_value"], serde_json::json!("0x69f5b3cb"));
 
     let call_return = serde_json::json!({
@@ -975,7 +980,12 @@ fn frontier_auto_prefers_semantic_alu_inputs() {
 
 #[test]
 fn frontier_auto_uses_byte_lane_for_or_merge_and_shifts() {
-    let profile = VmProfile::default_profile();
+    let profile = VmProfile::new(
+        "x9".to_string(),
+        "x10".to_string(),
+        "x11".to_string(),
+        "x12".to_string(),
+    );
     let or_merge = serde_json::json!({
         "local_def": {
             "asm": "orr x4, x14, x17",
@@ -2054,7 +2064,7 @@ fn summarizes_vm_op_slot_write_effects() {
             }
         ]
     });
-    let effects = vm_op_effect_summaries(&op);
+    let effects = vm_op_effect_summaries(&op, &std::collections::HashSet::new(), None);
     assert_eq!(effects.len(), 1);
     assert_eq!(effects[0]["kind"], serde_json::json!("slot_write"));
     assert_eq!(
@@ -2096,7 +2106,7 @@ fn summarizes_vm_op_formula_effect_python_values() {
             }
         ]
     });
-    let effects = vm_op_effect_summaries(&op);
+    let effects = vm_op_effect_summaries(&op, &std::collections::HashSet::new(), None);
     assert_eq!(
         effects[0]["python_with_values"],
         serde_json::json!("slot[20] = ubfx(slot[19], 0x0, 0x20)")
@@ -2119,7 +2129,7 @@ fn summarizes_vm_op_byte_load_effects() {
         "memory_stores": [],
         "alu_formulas": []
     });
-    let effects = vm_op_effect_summaries(&op);
+    let effects = vm_op_effect_summaries(&op, &std::collections::HashSet::new(), None);
     assert_eq!(
         effects[0]["pseudocode"],
         serde_json::json!("slot[18] = byte[0x753ddd7fdc] (0x7a)")
@@ -2145,6 +2155,12 @@ fn vm_ops_effects_only_summary_lifts_effects_to_top_level() {
         "source_maybe_truncated": false,
         "vm_rows": 15,
         "vm_state_base": "0x77445994a0",
+        "vm_profile": {
+            "ip_reg": "x9",
+            "state_reg": "x10",
+            "dispatch_reg": "x11",
+            "infra_regs": ["x9", "x10", "x11", "x12", "sp", "fp", "lr"]
+        },
         "ops_returned": 1,
         "truncated": false,
         "ops": [
@@ -2206,7 +2222,7 @@ fn vm_ops_effects_only_summary_lifts_effects_to_top_level() {
                 "alu_formulas": [
                     {
                         "idx": 10616043,
-                        "asm": "add x21, x21, x6, lsl #4",
+                        "asm": "add x9, x9, x6, lsl #4",
                         "expression": "0x200 = 0x100 + 0x9",
                         "op": "add"
                     }
@@ -2821,7 +2837,16 @@ fn lineage_prefers_matching_byte_lane_from_upstream_writers() {
             "byte_nexts": dedupe_byte_nexts(&byte_writers)
         }
     });
-    let (seed, decision) = lineage_next_from_backstep(&backstep, Some(2));
+    let (seed, decision) = lineage_next_from_backstep(
+        &backstep,
+        Some(2),
+        &VmProfile::new(
+            "x9".to_string(),
+            "x10".to_string(),
+            "x11".to_string(),
+            "x12".to_string(),
+        ),
+    );
     let seed = seed.unwrap().to_json();
     assert_eq!(decision["kind"], serde_json::json!("upstream_byte_lane"));
     assert_eq!(seed["idx"], serde_json::json!(120));
@@ -2884,7 +2909,16 @@ fn lineage_stops_at_observed_memory_boundary_before_frontier() {
             }
         ]
     });
-    let (seed, decision) = lineage_next_from_backstep(&backstep, Some(0));
+    let (seed, decision) = lineage_next_from_backstep(
+        &backstep,
+        Some(0),
+        &VmProfile::new(
+            "x9".to_string(),
+            "x10".to_string(),
+            "x11".to_string(),
+            "x12".to_string(),
+        ),
+    );
     assert!(seed.is_none());
     assert_eq!(
         decision["kind"],
@@ -2932,7 +2966,16 @@ fn lineage_stops_at_missing_memory_writer_before_frontier() {
             }
         ]
     });
-    let (seed, decision) = lineage_next_from_backstep(&backstep, Some(0));
+    let (seed, decision) = lineage_next_from_backstep(
+        &backstep,
+        Some(0),
+        &VmProfile::new(
+            "x9".to_string(),
+            "x10".to_string(),
+            "x11".to_string(),
+            "x12".to_string(),
+        ),
+    );
     assert!(seed.is_none());
     assert_eq!(
         decision["kind"],
@@ -3502,7 +3545,16 @@ fn lineage_uses_byte_lane_when_following_shift_frontier() {
             }
         ]
     });
-    let (seed, decision) = lineage_next_from_backstep(&backstep, Some(0));
+    let (seed, decision) = lineage_next_from_backstep(
+        &backstep,
+        Some(0),
+        &VmProfile::new(
+            "x9".to_string(),
+            "x10".to_string(),
+            "x11".to_string(),
+            "x12".to_string(),
+        ),
+    );
     let seed = seed.unwrap().to_json();
     assert_eq!(decision["kind"], serde_json::json!("frontier_auto"));
     assert_eq!(seed["reg"], serde_json::json!("x17"));

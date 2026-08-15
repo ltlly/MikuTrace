@@ -84,13 +84,36 @@ pub(super) async fn cmd_vm_ops(
     }
 }
 
+fn vm_profile_infra_regs(value: &serde_json::Value) -> HashSet<String> {
+    value
+        .get("vm_profile")
+        .and_then(|v| v.get("infra_regs"))
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .map(register_value_key)
+        .collect()
+}
+
+fn vm_profile_ip_reg(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("vm_profile")
+        .and_then(|v| v.get("ip_reg"))
+        .and_then(|v| v.as_str())
+        .map(register_value_key)
+        .filter(|reg| !reg.is_empty())
+}
+
 pub(super) fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Value {
+    let infra_regs = vm_profile_infra_regs(value);
+    let ip_reg = vm_profile_ip_reg(value);
     let ops = value
         .get("ops")
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
-        .map(vm_op_summary)
+        .map(|op| vm_op_summary(op, &infra_regs, ip_reg.as_deref()))
         .collect::<Vec<_>>();
     serde_json::json!({
         "status": value.get("status").cloned().unwrap_or(serde_json::Value::Null),
@@ -114,12 +137,14 @@ pub(super) fn vm_ops_output_summary(value: &serde_json::Value) -> serde_json::Va
 }
 
 pub(super) fn vm_ops_effects_only_summary(value: &serde_json::Value) -> serde_json::Value {
+    let infra_regs = vm_profile_infra_regs(value);
+    let ip_reg = vm_profile_ip_reg(value);
     let ops = value
         .get("ops")
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
-        .map(vm_op_summary)
+        .map(|op| vm_op_summary(op, &infra_regs, ip_reg.as_deref()))
         .collect::<Vec<_>>();
     let mut effects = Vec::new();
     let mut byte_load_effects = Vec::new();
@@ -1178,7 +1203,11 @@ pub(super) fn vm_ops_semantic_counts(ops: &[serde_json::Value]) -> Vec<serde_jso
         .collect::<Vec<_>>()
 }
 
-pub(super) fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
+pub(super) fn vm_op_summary(
+    op: &serde_json::Value,
+    infra_regs: &HashSet<String>,
+    ip_reg: Option<&str>,
+) -> serde_json::Value {
     let bytecode_reads = op
         .get("bytecode_reads")
         .and_then(|v| v.as_array())
@@ -1222,12 +1251,16 @@ pub(super) fn vm_op_summary(op: &serde_json::Value) -> serde_json::Value {
         "small_byte_loads": op.get("small_byte_loads").cloned().unwrap_or_else(|| serde_json::json!([])),
         "memory_stores": op.get("memory_stores").cloned().unwrap_or_else(|| serde_json::json!([])),
         "alu_formulas": alu_formulas,
-        "effects": vm_op_effect_summaries(op),
+        "effects": vm_op_effect_summaries(op, infra_regs, ip_reg),
         "dispatches": op.get("dispatches").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
 }
 
-pub(super) fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::Value> {
+pub(super) fn vm_op_effect_summaries(
+    op: &serde_json::Value,
+    infra_regs: &HashSet<String>,
+    ip_reg: Option<&str>,
+) -> Vec<serde_json::Value> {
     let mut effects = Vec::new();
     let formulas = op
         .get("alu_formulas")
@@ -1314,7 +1347,7 @@ pub(super) fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::
                 .flatten(),
             &src_value,
         );
-        if is_probable_vm_infra_store(store, src_slot.as_ref(), &src) {
+        if is_probable_vm_infra_store(store, src_slot.as_ref(), &src, infra_regs) {
             continue;
         }
         let pseudocode = if store.get("class").and_then(|v| v.as_str()) == Some("byte-store") {
@@ -1354,7 +1387,7 @@ pub(super) fn vm_op_effect_summaries(op: &serde_json::Value) -> Vec<serde_json::
             formula
                 .get("asm")
                 .and_then(|v| v.as_str())
-                .map(|asm| asm.contains("x21"))
+                .map(|asm| ip_reg.is_some_and(|ip| asm.contains(ip)))
                 .unwrap_or(false)
         }) {
             effects.push(serde_json::json!({
@@ -1445,6 +1478,7 @@ pub(super) fn is_probable_vm_infra_store(
     store: &serde_json::Value,
     src_slot: Option<&serde_json::Value>,
     src: &serde_json::Value,
+    infra_regs: &HashSet<String>,
 ) -> bool {
     if store.get("class").and_then(|v| v.as_str()) != Some("mem-store") {
         return false;
@@ -1452,10 +1486,10 @@ pub(super) fn is_probable_vm_infra_store(
     if src_slot.is_some() {
         return false;
     }
-    matches!(
-        src.get("reg").and_then(|v| v.as_str()),
-        Some("x21" | "x23" | "x25" | "x27" | "sp" | "fp" | "lr")
-    )
+    let Some(reg) = src.get("reg").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    matches!(reg, "sp" | "fp" | "lr") || infra_regs.contains(&register_value_key(reg))
 }
 
 pub(super) fn matching_formula_for_value(

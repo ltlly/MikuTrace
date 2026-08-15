@@ -194,7 +194,7 @@ pub(super) enum Cmd {
     },
     /// GET /api/reg-at — runtime register value(s) at a (SO,offset) or PC.
     ///
-    /// "At libfoo+0x57a30, what was x0?" Reads the register at EVERY execution
+    /// "At libfoo+0x1234, what was x0?" Reads the register at EVERY execution
     /// of that PC and returns both the per-hit values and a distinct-value
     /// distribution with counts — one static offset usually holds many values
     /// across the run (loops/repeated calls), which static tools can't show.
@@ -771,17 +771,19 @@ pub(super) enum Cmd {
         #[arg(long)]
         summary: bool,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
     },
     /// GET /api/ollvm-detect-vm.
     OllvmDetectVm {
@@ -1015,17 +1017,19 @@ pub(super) enum Cmd {
         #[arg(long)]
         vm_chain_follow_frontier: bool,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
         /// Skip backward-taint expansion and only report output/memory writers.
         #[arg(long)]
         skip_taint: bool,
@@ -1127,17 +1131,19 @@ pub(super) enum Cmd {
         #[arg(long)]
         semantic_writer_map_vm_chain_follow_frontier: bool,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
         /// Emit a compact AI-readable summary.
         #[arg(long)]
         summary: bool,
@@ -1164,17 +1170,19 @@ pub(super) enum Cmd {
         #[arg(long)]
         only_vm: bool,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
         /// Base VM IP for vm_off. Defaults to the first row's --vm-ip-reg.
         #[arg(long)]
         base_ip: Option<String>,
@@ -1198,17 +1206,19 @@ pub(super) enum Cmd {
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
         /// Base VM IP for vm_off. Defaults to the first row's --vm-ip-reg.
         #[arg(long)]
         base_ip: Option<String>,
@@ -1293,17 +1303,19 @@ pub(super) enum Cmd {
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
     },
     /// Iterate vm-backstep and emit a compact backward chain.
     VmBackchain {
@@ -1342,17 +1354,19 @@ pub(super) enum Cmd {
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
     },
     /// Branching backward tree through dynamic VM upstream/frontier links.
     VmBacktree {
@@ -1391,17 +1405,19 @@ pub(super) enum Cmd {
         )]
         regs: String,
         /// Register holding the VM instruction pointer in this trace/profile.
-        #[arg(long, default_value = "x21")]
-        vm_ip_reg: String,
-        /// Register holding the VM state/virtual-register base.
-        #[arg(long, default_value = "x25")]
-        vm_state_reg: String,
-        /// Register holding the dispatch table base or dispatch lookup base.
-        #[arg(long, default_value = "x23")]
-        vm_dispatch_reg: String,
+        /// Required — traceMiku no longer assumes a target-specific default.
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// Register holding the VM state/virtual-register base. Required.
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// Register holding the dispatch table base or dispatch lookup base. Required.
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
         /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        #[arg(long, default_value = "x27")]
-        vm_infra_regs: String,
+        /// Optional; sp/fp/lr and the three core VM regs are always included.
+        #[arg(long)]
+        vm_infra_regs: Option<String>,
     },
     /// GET /api/jobj-history.
     JobjHistory {

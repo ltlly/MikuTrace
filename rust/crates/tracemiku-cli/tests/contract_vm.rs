@@ -14,6 +14,12 @@ fn vm_slice_matches_schema() {
         "0",
         "--count",
         "12",
+        "--vm-ip-reg",
+        "x9",
+        "--vm-state-reg",
+        "x10",
+        "--vm-dispatch-reg",
+        "x11",
         cd.to_str().unwrap(),
     ]);
     assert_valid(
@@ -38,6 +44,12 @@ fn vm_ops_matches_schema() {
         "0",
         "--end",
         "12",
+        "--vm-ip-reg",
+        "x9",
+        "--vm-state-reg",
+        "x10",
+        "--vm-dispatch-reg",
+        "x11",
         cd.to_str().unwrap(),
     ]);
     assert_valid(
@@ -62,7 +74,18 @@ fn vm_ops_matches_schema() {
 #[test]
 fn vm_backstep_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
-    let value = run_json(&["vm-backstep", "--idx", "4", cd.to_str().unwrap()]);
+    let value = run_json(&[
+        "vm-backstep",
+        "--idx",
+        "4",
+        "--vm-ip-reg",
+        "x9",
+        "--vm-state-reg",
+        "x10",
+        "--vm-dispatch-reg",
+        "x11",
+        cd.to_str().unwrap(),
+    ]);
     assert_valid(
         serde_json::json!({
             "type": "object",
@@ -79,7 +102,18 @@ fn vm_backstep_matches_schema() {
 #[test]
 fn vm_backchain_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
-    let value = run_json(&["vm-backchain", "--idx", "4", cd.to_str().unwrap()]);
+    let value = run_json(&[
+        "vm-backchain",
+        "--idx",
+        "4",
+        "--vm-ip-reg",
+        "x9",
+        "--vm-state-reg",
+        "x10",
+        "--vm-dispatch-reg",
+        "x11",
+        cd.to_str().unwrap(),
+    ]);
     assert_valid(
         serde_json::json!({
             "type": "object",
@@ -96,7 +130,18 @@ fn vm_backchain_matches_schema() {
 #[test]
 fn vm_backtree_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
-    let value = run_json(&["vm-backtree", "--idx", "4", cd.to_str().unwrap()]);
+    let value = run_json(&[
+        "vm-backtree",
+        "--idx",
+        "4",
+        "--vm-ip-reg",
+        "x9",
+        "--vm-state-reg",
+        "x10",
+        "--vm-dispatch-reg",
+        "x11",
+        cd.to_str().unwrap(),
+    ]);
     assert_valid(
         serde_json::json!({
             "type": "object",

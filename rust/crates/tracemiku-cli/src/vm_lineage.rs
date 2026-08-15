@@ -54,6 +54,7 @@ pub(super) async fn cmd_byte_lineage(
                 lookback,
                 max_writes,
                 regs.clone(),
+                &VmProfile::disabled(),
             )
             .await
             {
@@ -156,7 +157,15 @@ pub(super) async fn cmd_byte_lineage(
         })?);
     }
     let value = byte_lineage_value_on(
-        &app, addr, before_idx, depth, context, lookback, max_writes, regs,
+        &app,
+        addr,
+        before_idx,
+        depth,
+        context,
+        lookback,
+        max_writes,
+        regs,
+        &VmProfile::disabled(),
     )
     .await?;
     if compact {
@@ -792,7 +801,13 @@ pub(super) fn upstream_next_byte_value(next: &serde_json::Value) -> Option<u8> {
 
 #[cfg(test)]
 pub(super) fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_json::Value> {
-    choose_frontier_next_for_lane(step, None, &VmProfile::default_profile())
+    let profile = VmProfile::new(
+        "x9".to_string(),
+        "x10".to_string(),
+        "x11".to_string(),
+        "x12".to_string(),
+    );
+    choose_frontier_next_for_lane(step, None, &profile)
 }
 
 pub(super) fn choose_frontier_next_for_lane(
@@ -1538,11 +1553,16 @@ pub(super) fn derive_byte_origin(
             .and_then(|w| w.get("writer_idx"))
             .and_then(|v| v.as_u64())
             .map(|i| i as usize);
-        match write.and_then(|w| w.get("write_kind")).and_then(|v| v.as_str()) {
-            Some("x") => return ByteOrigin::ExternalWrite {
-                addr: addr.unwrap_or(0),
-                idx,
-            },
+        match write
+            .and_then(|w| w.get("write_kind"))
+            .and_then(|v| v.as_str())
+        {
+            Some("x") => {
+                return ByteOrigin::ExternalWrite {
+                    addr: addr.unwrap_or(0),
+                    idx,
+                }
+            }
             Some("w") => {
                 return match write
                     .and_then(|w| w.get("src_reg"))
@@ -1611,6 +1631,7 @@ pub(super) async fn byte_lineage_value_on(
     lookback: usize,
     max_writes: usize,
     regs: String,
+    profile: &VmProfile,
 ) -> anyhow::Result<serde_json::Value> {
     let mut seed = LineageSeed::AddrBefore { addr, before_idx };
     let mut steps = Vec::new();
@@ -1662,7 +1683,6 @@ pub(super) async fn byte_lineage_value_on(
                 ref reg,
                 byte_lane,
             } => {
-                let profile = VmProfile::default_profile();
                 let backstep = vm_backstep_value_on(
                     app,
                     idx,
@@ -1671,10 +1691,11 @@ pub(super) async fn byte_lineage_value_on(
                     lookback,
                     max_writes,
                     regs.clone(),
-                    &profile,
+                    profile,
                 )
                 .await?;
-                let (next_seed, decision) = lineage_next_from_backstep(&backstep, byte_lane);
+                let (next_seed, decision) =
+                    lineage_next_from_backstep(&backstep, byte_lane, profile);
                 let next_json = next_seed.as_ref().map(LineageSeed::to_json);
                 steps.push(serde_json::json!({
                     "step": step_idx,
@@ -1727,6 +1748,7 @@ pub(super) async fn last_write_of_addr_on(
 pub(super) fn lineage_next_from_backstep(
     backstep: &serde_json::Value,
     current_byte_lane: Option<usize>,
+    profile: &VmProfile,
 ) -> (Option<LineageSeed>, serde_json::Value) {
     if let Some(lane) = current_byte_lane {
         if let Some(next) = choose_laned_upstream_next(backstep, lane) {
@@ -1819,8 +1841,7 @@ pub(super) fn lineage_next_from_backstep(
             }),
         );
     }
-    if let Some(frontier_next) =
-        choose_frontier_next_for_lane(backstep, current_byte_lane, &VmProfile::default_profile())
+    if let Some(frontier_next) = choose_frontier_next_for_lane(backstep, current_byte_lane, profile)
     {
         return (
             lineage_seed_from_next(&frontier_next, current_byte_lane),

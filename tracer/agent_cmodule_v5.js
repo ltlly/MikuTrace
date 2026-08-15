@@ -851,8 +851,7 @@ function applySuicidePatchSpec(spec) {
     return patched;
 }
 
-// 兼容老调用名 (旧 RPC dispatch 还可能引用)
-function patchSgmainsoSuicide(modName) {
+function patchSuicideFromSpec() {
     return applySuicidePatchSpec(STATE.suicidePatchSpec);
 }
 
@@ -860,7 +859,7 @@ function patchSgmainsoSuicide(modName) {
 // Default: just the target SO. With --include-so PATTERNS: target + matches.
 //
 // Called every time we hook a new function entry (per-call) — late-dlopen'd
-// SOs (libsgsecuritybody, libsgavmp loaded after agent init) are picked up
+// SOs (extra patterns loaded after agent init) are picked up
 // the next time the target fn is entered.
 function buildIncludeRanges() {
     STATE.includeRanges = [];
@@ -1392,7 +1391,7 @@ rpc.exports = {
         STATE.exportName = opts.exportName || null;
         STATE.methodName = opts.methodName || null;
         // null/undefined fnOffset = "resolve from exportName/methodName".
-        // 不再有"历史 fallback 到 0x57770" — 调用方必须传至少一个 (offset/export/method).
+        // No offset default — caller must provide at least one of (offset/export/method).
         STATE.fnOffset = (opts.fnOffset != null) ? opts.fnOffset : null;
         if (STATE.fnOffset == null && !STATE.exportName && !STATE.methodName) {
             throw new Error("init: must provide fnOffset OR exportName OR methodName");
@@ -1404,7 +1403,7 @@ rpc.exports = {
         if (opts.cmdArg !== undefined) STATE.cmdArg = opts.cmdArg;
         STATE.pkg = opts.pkg || null;
         // Multi-SO trace: array of patterns to ALSO trace (in addition to target).
-        // e.g. ['libsgsecuritybody','libsgavmp','libcrypto']. HARD_EXCL still applies.
+        // e.g. ['libfoo','libbar','libcrypto']. HARD_EXCL still applies.
         STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns)
                                    ? opts.includeSoPatterns : [];
         // Deep trace: skip module-level HARD_EXCL for libart etc; per-symbol
@@ -1584,7 +1583,7 @@ function installFnHook(fp, onInsn) {
                 // creates RWX block-cache pages that anti-debug would notice.
                 // Only does anything when STATE.patchSuicide is set (CLI: --patch-suicide).
                 if (STATE.patchSuicide) {
-                    try { patchSgmainsoSuicide(); } catch (e) { log(`[patch-suicide][!] ${e}`); }
+                    try { patchSuicideFromSpec(); } catch (e) { log(`[patch-suicide][!] ${e}`); }
                 }
                 applyExcludesOnce();
                 // Cache writable rw- ranges for boundary-diff ptr classification.
@@ -1603,7 +1602,7 @@ function installFnHook(fp, onInsn) {
                     try { installForkHooksOnce(); } catch(e) { log("[fork][!] " + e); }
                 }
                 // (Re)build include ranges per call — picks up late-dlopen'd
-                // SOs (libsgsecuritybody, libsgavmp etc dlopen'd after agent init).
+                // SOs (extra patterns etc dlopen'd after agent init).
                 buildIncludeRanges();
                 const ranges = STATE.includeRanges.map(r => ({base: r.base, end: r.end}));
                 // Build a fast lookup for ranges (target SO only by default for stability)

@@ -1,6 +1,6 @@
 //! GET /api/reg-at?reg=  &(addr= | so=&off=)  [&max=]
 //!
-//! "At `libfoo+0x57a30`, what was x0?" — the runtime value point-query keyed on
+//! "At `libfoo+0x1234`, what was x0?" — the runtime value point-query keyed on
 //! the tool-neutral `(SO, offset)` coordinate a reverse engineer reads straight
 //! out of IDA/BN/Ghidra. A static tool shows a register's TYPE or initial value;
 //! it cannot show what the register actually held. The trace can, at every one

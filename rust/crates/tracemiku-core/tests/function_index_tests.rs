@@ -12,9 +12,9 @@ fn parse_id_trace_prefix() {
 
 #[test]
 fn parse_id_sym_prefix() {
-    let (src, payload) = parse_id("sym:doCommandNative").expect("parse sym:");
+    let (src, payload) = parse_id("sym:signCompute").expect("parse sym:");
     assert_eq!(src, "sym");
-    assert_eq!(payload, "doCommandNative");
+    assert_eq!(payload, "signCompute");
 }
 
 #[test]
@@ -52,9 +52,9 @@ fn parse_id_legacy_F_prefix() {
 
 #[test]
 fn parse_id_legacy_cfg_prefix() {
-    let (src, payload) = parse_id("cfg:doCommandNative").expect("parse cfg:");
+    let (src, payload) = parse_id("cfg:signCompute").expect("parse cfg:");
     assert_eq!(src, "sym");
-    assert_eq!(payload, "doCommandNative");
+    assert_eq!(payload, "signCompute");
 }
 
 #[test]

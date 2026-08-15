@@ -1919,10 +1919,9 @@ pub(super) fn call_arg_span_matches(
 }
 
 pub(super) fn call_near_regs(record: &serde_json::Value, addr: u64) -> Vec<serde_json::Value> {
-    const REGS: &[&str] = &[
-        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x19", "x20", "x21", "x22", "x23", "x25",
-    ];
-    REGS.iter()
+    super::GAP_SCAN_REGS
+        .split(',')
+        .map(str::trim)
         .filter_map(|reg| {
             let value = record_reg_u64(record, reg)?;
             let delta = value.abs_diff(addr);

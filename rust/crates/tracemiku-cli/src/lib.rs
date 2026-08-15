@@ -82,13 +82,35 @@ impl VmProfile {
         }
     }
 
-    fn default_profile() -> Self {
-        Self::new(
-            "x21".to_string(),
-            "x25".to_string(),
-            "x23".to_string(),
-            "x27".to_string(),
-        )
+    fn from_args(
+        ip_reg: Option<String>,
+        state_reg: Option<String>,
+        dispatch_reg: Option<String>,
+        infra_regs: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let ip_reg = ip_reg.context(
+            "--vm-ip-reg is required (no target-specific default; pass the register \
+             holding the VM instruction pointer)",
+        )?;
+        let state_reg = state_reg.context(
+            "--vm-state-reg is required (no target-specific default; pass the register \
+             holding the VM state/virtual-register base)",
+        )?;
+        let dispatch_reg = dispatch_reg.context(
+            "--vm-dispatch-reg is required (no target-specific default; pass the register \
+             holding the dispatch table or lookup base)",
+        )?;
+        Ok(Self::new(
+            ip_reg,
+            state_reg,
+            dispatch_reg,
+            infra_regs.unwrap_or_default(),
+        ))
+    }
+
+    /// Placeholder used when a command runs with every VM-analysis switch off.
+    fn disabled() -> Self {
+        Self::new(String::new(), String::new(), String::new(), String::new())
     }
 
     fn to_json(&self) -> serde_json::Value {
@@ -938,7 +960,11 @@ pub async fn run() -> anyhow::Result<()> {
             vm_dispatch_reg,
             vm_infra_regs,
         }) => {
-            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let profile = if vm_chain_steps > 0 && vm_chain_runs > 0 {
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?
+            } else {
+                VmProfile::disabled()
+            };
             cmd_byte_writer_map(
                 trace_dir,
                 addr,
@@ -1199,8 +1225,11 @@ pub async fn run() -> anyhow::Result<()> {
             no_url_decode,
             no_base64_decode,
         }) => {
-            let vm_profile =
-                VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let vm_profile = if vm_chain_steps > 0 && vm_chain_runs > 0 {
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?
+            } else {
+                VmProfile::disabled()
+            };
             let opts = OutputBacktraceOpts {
                 key,
                 value,
@@ -1257,8 +1286,15 @@ pub async fn run() -> anyhow::Result<()> {
             vm_infra_regs,
             summary,
         }) => {
-            let vm_profile =
-                VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let needs_vm_profile = tree_depth > 0
+                || index_tree_depth > 0
+                || (semantic_writer_map_vm_chain_steps > 0
+                    && semantic_writer_map_vm_chain_runs > 0);
+            let vm_profile = if needs_vm_profile {
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?
+            } else {
+                VmProfile::disabled()
+            };
             let opts = OutputMapOpts {
                 key,
                 value,
@@ -1306,7 +1342,8 @@ pub async fn run() -> anyhow::Result<()> {
             vm_infra_regs,
             base_ip,
         }) => {
-            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let profile =
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
             cmd_vm_slice(
                 trace_dir, start, end, count, regs, only_vm, base_ip, profile,
             )
@@ -1330,7 +1367,8 @@ pub async fn run() -> anyhow::Result<()> {
             compact,
             replay_plan,
         }) => {
-            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let profile =
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
             cmd_vm_ops(
                 trace_dir,
                 start,
@@ -1380,7 +1418,8 @@ pub async fn run() -> anyhow::Result<()> {
             vm_dispatch_reg,
             vm_infra_regs,
         }) => {
-            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let profile =
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
             cmd_vm_backstep(
                 trace_dir, idx, reg, context, lookback, max_writes, regs, profile,
             )
@@ -1403,7 +1442,8 @@ pub async fn run() -> anyhow::Result<()> {
             vm_dispatch_reg,
             vm_infra_regs,
         }) => {
-            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let profile =
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
             cmd_vm_backchain(
                 trace_dir,
                 idx,
@@ -1437,7 +1477,8 @@ pub async fn run() -> anyhow::Result<()> {
             vm_dispatch_reg,
             vm_infra_regs,
         }) => {
-            let profile = VmProfile::new(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs);
+            let profile =
+                VmProfile::from_args(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
             cmd_vm_backtree(
                 trace_dir,
                 idx,

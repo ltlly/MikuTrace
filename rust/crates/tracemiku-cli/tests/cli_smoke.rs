@@ -113,7 +113,7 @@ fn make_diff_trace_value(root: &std::path::Path, name: &str, value: &str) -> Pat
     std::fs::write(dir.join("trace.bin"), &buf).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"records":1}"#).unwrap();
     let events = [
-        serde_json::json!({"id":"NewStringUTF","trace_idx":1,"args":{"bytes":"x-sign"}}),
+        serde_json::json!({"id":"NewStringUTF","trace_idx":1,"args":{"bytes":"x-request-id"}}),
         serde_json::json!({"id":"NewStringUTF","trace_idx":2,"args":{"bytes":value}}),
     ];
     std::fs::write(
@@ -147,7 +147,7 @@ fn make_output_map_hit_order_trace(root: &std::path::Path, name: &str) -> PathBu
     std::fs::write(dir.join("trace.bin"), &buf).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"records":2}"#).unwrap();
     let events = [
-        serde_json::json!({"id":"NewStringUTF","trace_idx":9,"args":{"bytes":"x-sign"}}),
+        serde_json::json!({"id":"NewStringUTF","trace_idx":9,"args":{"bytes":"x-request-id"}}),
         serde_json::json!({"id":"NewStringUTF","trace_idx":10,"args":{"bytes":output}}),
     ];
     std::fs::write(
@@ -766,8 +766,8 @@ fn diff_traces_wrapper_uses_server_wire_shape() {
         "--show-offsets".into(),
     ]);
     assert_eq!(v["n_traces"], 2);
-    assert_eq!(v["headers"]["x-sign"]["stable_count"], 3);
-    assert_eq!(v["headers"]["x-sign"]["variable_count"], 1);
+    assert_eq!(v["headers"]["x-request-id"]["stable_count"], 3);
+    assert_eq!(v["headers"]["x-request-id"]["variable_count"], 1);
 }
 
 #[test]
@@ -829,7 +829,7 @@ fn output_backtrace_starts_from_jni_output_pair() {
         "output-backtrace".into(),
         cd.display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--max-mem-hits".into(),
         "1".into(),
         "--writes-per-hit".into(),
@@ -839,7 +839,7 @@ fn output_backtrace_starts_from_jni_output_pair() {
     assert_eq!(v["status"], "ready");
     assert_eq!(v["strategy"], "output_to_input_backward_trace");
     assert_eq!(v["source"]["kind"], "jni_output_string_pair");
-    assert_eq!(v["source"]["pair"]["key"], "x-sign");
+    assert_eq!(v["source"]["pair"]["key"], "x-request-id");
     assert_eq!(
         v["source"]["pair"]["value"],
         STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
@@ -860,7 +860,7 @@ fn output_map_defaults_to_earliest_generation_hit() {
         "output-map".into(),
         cd.display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--max-mem-hits".into(),
         "2".into(),
         "--groups".into(),
@@ -903,7 +903,7 @@ fn output_map_can_group_aligned_base64_tail() {
         "output-map".into(),
         cd.display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--max-mem-hits".into(),
         "0".into(),
         "--base64-tail-start".into(),
@@ -938,7 +938,7 @@ fn output_map_can_group_aligned_base64_tail() {
         "output-map".into(),
         cd.display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--max-mem-hits".into(),
         "0".into(),
         "--base64-tail-start".into(),
@@ -977,6 +977,12 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
         "1".into(),
         "--max-nodes".into(),
         "8".into(),
+        "--vm-ip-reg".into(),
+        "x9".into(),
+        "--vm-state-reg".into(),
+        "x10".into(),
+        "--vm-dispatch-reg".into(),
+        "x11".into(),
     ]);
     let byte_nexts = v["nodes"][0]["upstream"]["byte_nexts"].as_array().unwrap();
     assert_eq!(byte_nexts.len(), 4);
@@ -1000,6 +1006,12 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
         "1".into(),
         "--max-nodes".into(),
         "8".into(),
+        "--vm-ip-reg".into(),
+        "x9".into(),
+        "--vm-state-reg".into(),
+        "x10".into(),
+        "--vm-dispatch-reg".into(),
+        "x11".into(),
         "--summary".into(),
     ]);
     assert_eq!(summary["status"], "ready");
@@ -1019,6 +1031,12 @@ fn vm_backstep_uses_target_row_when_it_defines_requested_reg() {
         "4".into(),
         "--reg".into(),
         "x2".into(),
+        "--vm-ip-reg".into(),
+        "x9".into(),
+        "--vm-state-reg".into(),
+        "x10".into(),
+        "--vm-dispatch-reg".into(),
+        "x11".into(),
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["source_value"], "0x44434241");
@@ -1176,6 +1194,12 @@ fn vm_ops_groups_rows_by_vm_ip() {
         "0".into(),
         "--end".into(),
         "5".into(),
+        "--vm-ip-reg".into(),
+        "x21".into(),
+        "--vm-state-reg".into(),
+        "x25".into(),
+        "--vm-dispatch-reg".into(),
+        "x23".into(),
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["ops_returned"], 1);
@@ -1200,6 +1224,12 @@ fn vm_ops_groups_rows_by_vm_ip() {
         "0".into(),
         "--end".into(),
         "5".into(),
+        "--vm-ip-reg".into(),
+        "x21".into(),
+        "--vm-state-reg".into(),
+        "x25".into(),
+        "--vm-dispatch-reg".into(),
+        "x23".into(),
         "--chunk-size".into(),
         "2".into(),
         "--summary".into(),
@@ -1220,13 +1250,13 @@ fn scan_jni_output_strings_reads_hooks_without_trace_load() {
         "scan-jni-output-strings".into(),
         tmp.path().display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--decode-base64".into(),
         "--decode-base64-full".into(),
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["count"], 1);
-    assert_eq!(v["pairs"][0]["key"], "x-sign");
+    assert_eq!(v["pairs"][0]["key"], "x-request-id");
     assert_eq!(
         v["pairs"][0]["value"],
         STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
@@ -1244,7 +1274,7 @@ fn scan_jni_output_strings_diffs_decoded_base64_outputs() {
         "scan-jni-output-strings".into(),
         tmp.path().display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--diff-base64".into(),
     ]);
     assert_eq!(v["status"], "ready");
@@ -1310,7 +1340,7 @@ fn scan_jni_output_strings_aligns_base64_tail_for_diffing() {
         "scan-jni-output-strings".into(),
         tmp.path().display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--diff-base64".into(),
         "--base64-tail-start".into(),
         fixed.len().to_string(),
@@ -1344,7 +1374,7 @@ fn scan_jni_output_strings_reports_tail_repeat_candidates() {
         "scan-jni-output-strings".into(),
         tmp.path().display().to_string(),
         "--key".into(),
-        "x-sign".into(),
+        "x-request-id".into(),
         "--diff-base64".into(),
         "--base64-tail-start".into(),
         fixed.len().to_string(),
@@ -1381,4 +1411,3 @@ fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
     assert!(v["count"].as_u64().unwrap() <= 1);
     assert!(v["candidates"].is_array());
 }
-
