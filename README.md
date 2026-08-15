@@ -69,15 +69,19 @@ npm --prefix tracer run build
 
 ## trace 捕获是怎么工作的
 
-traceMiku 的注入模型是 **attach**，不使用 Frida spawn gating。进程定位按优先级：
+默认注入模型是 **attach**；`--spawn` 提供 Frida 原生 spawn-gating 路径。进程定位
+优先级：
 
 1. `--attach-pid <pid>`：直接 attach。
-2. `--launch`：`am force-stop`（不清数据）+ monkey 拉起，拿到 pid 后立即 attach；
+2. `--spawn`：行为与 `frida` 直接 spawn 一致——`enable_spawn_gating` →
+   `device.spawn(<pkg>)`（进程挂起）→ attach → agent init → `resume`。不
+   force-stop、不 `pm clear`、不自动点同意；在进程最早执行点完成注入，适合
+   必须在隐私弹窗/反调试初始化前就位的目标。
+3. `--launch`：`am force-stop`（不清数据）+ monkey 拉起，拿到 pid 后立即 attach；
    适合必须保留登录/本地状态的场景。
-3. `--cold-launch`：`force-stop + pm clear + monkey`，拿到 pid 后**先 attach**，
-   再在后台线程自动点“同意”并等首页；用于反调试在隐私弹窗阶段就启动的 app。
-   `--home-markers` 可自定义首页判定文本。
-4. 只给 `--pkg`：在设备上找已运行的进程后 attach；找不到会列出可能匹配的进程并
+4. `--cold-launch`：`force-stop + pm clear + monkey`，拿到 pid 后**先 attach**，
+   再在后台线程自动点“同意”并等首页；`--home-markers` 可自定义首页判定文本。
+5. 只给 `--pkg`：在设备上找已运行的进程后 attach；找不到会列出可能匹配的进程并
    提示先启动 app。fork 出来的子进程由 `--enable-fork-hook` + `--child-trace-mode`
    做 race-attach，不走 spawn-gating。
 
@@ -85,16 +89,17 @@ traceMiku 的注入模型是 **attach**，不使用 Frida spawn gating。进程�
 
 ```text
 参数校验与互斥检查
-→ (可选) launch/cold-launch 启动或定位进程
+→ (可选) launch/cold-launch 启动或定位进程；--spawn 走 gating 挂起
 → 选择 agent（默认 tracer/_agent.js，legacy 回退 agent_cmodule_v5.js）
 → 建输出目录 <out>/calls/，写顶层 meta 骨架
 → 加载 --jni-hooks / --suicide-patch-spec 等 JSON spec
 → 组装 AGENT_OPTS，device.attach(pid) → load → init(AGENT_OPTS)
 → agent 编译 CModule，定位目标 SO（未加载则 hook dlopen 等待），
   按 --fn-offset / --export / --method 解析入口并安装 hook
+→ --spawn 时 init 完成后 device.resume(pid) 放行进程
 → 入口命中后 Stalker 开始记录，设备端先落盘，host 边采边拉
 → 到 --duration 或 Ctrl-C：stats → force_flush → unload → detach；
-  未收尾的调用标 truncated
+  未收尾的调用标 truncated，--spawn 时最后 disable_spawn_gating
 → trace-end 消息驱动 host 拉回 trace.bin/sidecar 并写 per-call meta.json
 ```
 

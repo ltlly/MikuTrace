@@ -272,6 +272,7 @@ Python 层另有 `./tracemiku dec <call_dir>`：把反编译结果按 tier 落�
 | 命令 | 用途 |
 |---|---|
 | `trace` | Frida 采集；`--so` 必填，入口三选一 `--fn-offset/--export/--method` |
+| `trace --spawn` | Frida 原生 spawn-gating：`device.spawn(pkg)` 挂起 → attach + init → resume；行为与 `frida` 直接 spawn 一致，不 force-stop/不清数据/不点同意 |
 | `probe` | 轻量 Interceptor 导出函数计数，不启动 Stalker、无 trace.bin |
 | `doctor` | 采集前置检查（adb/root/frida/SELinux/包名/输出目录） |
 | `finalize` | 恢复中断的 trace：扫 `_pending_call_*` 补 meta 并重命名 |

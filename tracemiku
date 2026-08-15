@@ -122,9 +122,18 @@ def cmd_trace(args):
     cold_pid = None
     consent_thread = None
     launch_pid = None
+    spawn_pid = None
+    spawn_gating_active = False
     if getattr(args, "launch", False) and getattr(args, "cold_launch", False):
         print("[!] --launch and --cold-launch are mutually exclusive", file=sys.stderr)
         return 2
+    if getattr(args, "spawn", False):
+        if getattr(args, "launch", False) or getattr(args, "cold_launch", False) or args.attach_pid:
+            print("[!] --spawn 与 --launch/--cold-launch/--attach-pid 互斥", file=sys.stderr)
+            return 2
+        if not args.pkg:
+            print("[!] --spawn 需要 --pkg <包名>", file=sys.stderr)
+            return 2
     if args.cmd is not None and args.cmd_arg is None:
         print("[!] --cmd 需要配合 --cmd-arg 指定参数下标 (0-based), "
               "不再假设任何目标默认值", file=sys.stderr)
@@ -165,6 +174,7 @@ def cmd_trace(args):
         "pkg": args.pkg, "so": args.so,
         "method": args.method, "export": args.export,
         "fn_offset": args.fn_offset, "cmd": args.cmd,
+        "spawned": bool(getattr(args, "spawn", False)),
         "started_at": time.time(), "calls": [],
         "tracemiku_cli": True, "per_call": True,
     }
@@ -607,6 +617,22 @@ def cmd_trace(args):
         device = frida.get_usb_device(timeout=10)
     wlog(f"device={device}")
 
+    # --spawn: 与 frida 直接 spawn 行为一致。enable_spawn_gating →
+    # device.spawn(pkg)（进程挂起）→ attach + agent init → resume。
+    # 不 force-stop、不 pm clear、不点同意；需要干净状态由调用方先处理。
+    if getattr(args, "spawn", False):
+        try:
+            device.enable_spawn_gating()
+            spawn_gating_active = True
+            spawn_pid = device.spawn([args.pkg])
+            wlog(f"[spawn] gating enabled, pid={spawn_pid} (挂起中, init 完成后 resume)")
+        except Exception as e:
+            wlog(f"[!] spawn 失败: {type(e).__name__}: {e}")
+            if spawn_gating_active:
+                try: device.disable_spawn_gating()
+                except Exception: pass
+            log_fp.close(); return 2
+
     incl_pats = []
     if args.include_so:
         incl_pats = [p.strip() for p in args.include_so.split(",") if p.strip()]
@@ -709,6 +735,8 @@ def cmd_trace(args):
         pid = launch_pid
     elif cold_pid is not None:
         pid = cold_pid     # cold-launch 已拿到 pid, 直接用 (尽快 attach 避免 anti-debug 起来)
+    elif spawn_pid is not None:
+        pid = spawn_pid    # spawn-gating: 进程挂起, attach 后 init, 再 resume
     elif args.pkg:
         for p in device.enumerate_processes():
             if p.name == args.pkg: pid = p.pid; break
@@ -731,6 +759,9 @@ def cmd_trace(args):
         except Exception:
             pass
         wlog(f"    提示: 先启动 app 或用 --attach-pid <pid>")
+        if spawn_gating_active:
+            try: device.disable_spawn_gating()
+            except Exception: pass
         log_fp.close(); return 1
     wlog(f"attach pid={pid}")
     # P1-C M2: child-attach — race-attach to fork()'d children by PID.
@@ -785,8 +816,18 @@ def cmd_trace(args):
         scr.on("message", make_cb(pid, args.pkg or f"pid{pid}"))
         scr.load()
         r = scr.exports_sync.init(AGENT_OPTS)
+        if spawn_pid is not None:
+            # spawn-gating 关键时序: attach + init 全部完成才放行进程
+            device.resume(spawn_pid)
+            wlog(f"[spawn] resume pid={spawn_pid}")
+            if r == "no-dlopen":
+                wlog("[spawn][!] init 返回 no-dlopen (找不到 dlopen 符号), "
+                     "目标 SO 加载时可能无法自动 hook")
         wlog(f"init -> {r}")
     except Exception as _e:
+        if spawn_pid is not None:
+            try: device.kill(spawn_pid)
+            except Exception: pass
         # P0-6: pull last logcat + tombstone, run diagnostic, output hints
         from tracemiku_diag import diagnose_trace_failure
         wlog(f"[!] attach/init 失败: {type(_e).__name__}: {_e}")
@@ -817,6 +858,9 @@ def cmd_trace(args):
         for h in diagnose_trace_failure(logcat=lc, tombstone=tb,
                                           exception=_e, cli_args=cli_flags):
             wlog(h)
+        if spawn_gating_active:
+            try: device.disable_spawn_gating()
+            except Exception: pass
         log_fp.close(); return 2
 
     stop = [False]
@@ -902,6 +946,9 @@ def cmd_trace(args):
                        for c in calls_summary)
     if not has_success and len(calls_summary) > 0:
         _post_trace_diagnose(args, wlog)
+    if spawn_gating_active:
+        try: device.disable_spawn_gating()
+        except Exception as e: wlog(f"[!] disable_spawn_gating 失败: {e}")
     return 0
 
 
@@ -1693,6 +1740,10 @@ def main():
                            "cmodule-v3=回归对比 baseline (CModule + send blob, 仅基准用)")
     p_tr.add_argument("--launch", action="store_true",
                       help="非破坏式启动 app: force-stop+monkey 后立刻 attach, 不执行 pm clear/隐私同意自动化")
+    p_tr.add_argument("--spawn", action="store_true",
+                      help="Frida spawn-gating 模式, 行为与 frida 直接 spawn 一致: "
+                           "enable_spawn_gating → device.spawn(pkg) 挂起 → attach + agent init → resume. "
+                           "不 force-stop/不 pm clear/不点同意; 需 --pkg, 与 --launch/--cold-launch/--attach-pid 互斥")
     p_tr.add_argument("--cold-launch", action="store_true",
                       help="冷启动 app 前自动 force-stop+pm clear+monkey+点'同意' (隐私协议自动化, 多 app 通用)")
     p_tr.add_argument("--home-markers", default=None,

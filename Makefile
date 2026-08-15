@@ -38,7 +38,7 @@ test-v2:
 
 test-fast:
 	$(PYTHON) -m py_compile $(PY_CHECKS)
-	$(PYTHON) -m pytest tests/host_trace_helpers_test.py -q
+	$(PYTHON) -m pytest tests/host_trace_helpers_test.py tests/host_spawn_flow_test.py -q
 	$(PYTHON) scripts/frontend_resource_audit.py
 	$(PYTHON) scripts/frontend_ui_audit.py
 	$(PYTHON) scripts/frontend_cap_audit.py
