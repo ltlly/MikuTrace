@@ -25,10 +25,7 @@ import sys, os, pathlib, argparse, json, subprocess, time
 from tracemiku_fork import (_spawn_child_poller, _parse_proc_stat,
                            _poll_child_lifecycle, _print_fork_summary)
 from tracemiku_device import (_check_device,
-                              cold_launch_start as _cold_launch_start,
-                              launch_start as _launch_start,
-                              drive_consent as _drive_consent,
-                              CONSENT_BUTTON_PATTERNS)
+                              launch_start as _launch_start)
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -118,18 +115,13 @@ def cmd_trace(args):
     except ImportError:
         print("error: trace 子命令需要 frida; install with: pip install frida", file=sys.stderr)
         return 1
-    import signal, threading
-    cold_pid = None
-    consent_thread = None
+    import signal
     launch_pid = None
     spawn_pid = None
     spawn_gating_active = False
-    if getattr(args, "launch", False) and getattr(args, "cold_launch", False):
-        print("[!] --launch and --cold-launch are mutually exclusive", file=sys.stderr)
-        return 2
     if getattr(args, "spawn", False):
-        if getattr(args, "launch", False) or getattr(args, "cold_launch", False) or args.attach_pid:
-            print("[!] --spawn 与 --launch/--cold-launch/--attach-pid 互斥", file=sys.stderr)
+        if getattr(args, "launch", False) or args.attach_pid:
+            print("[!] --spawn 与 --launch/--attach-pid 互斥", file=sys.stderr)
             return 2
         if not args.pkg:
             print("[!] --spawn 需要 --pkg <包名>", file=sys.stderr)
@@ -144,18 +136,6 @@ def cmd_trace(args):
         except Exception as e:
             print(f"[!] launch 失败: {e}")
             return 2
-    if getattr(args, "cold_launch", False) and args.pkg:
-        try:
-            cold_pid = _cold_launch_start(args.pkg)
-            # 在后台线程跑同意/UI settle, 不阻塞 attach
-            # (Qunar 类: 必须在隐私弹窗前 attach 否则 anti-debug 卡死 frida)
-            home_markers = getattr(args, "home_markers", None)
-            def _bg_consent():
-                try: _drive_consent(args.pkg, home_markers=home_markers)
-                except Exception as e: print(f"[!] consent driver 失败 (非致命): {e}", flush=True)
-            consent_thread = threading.Thread(target=_bg_consent, daemon=True)
-            consent_thread.start()
-        except Exception as e: print(f"[!] cold-launch 失败: {e}"); return 2
     # 选择 agent 文件 (按 --mode)
     agent_map = {
         "cmodule": "_agent.js",              # 默认: 模块化 TS agent (frida-compile), CModule + SPSC + 设备落盘, ~1.5M rec/s
@@ -733,8 +713,6 @@ def cmd_trace(args):
         pid = args.attach_pid
     elif launch_pid is not None:
         pid = launch_pid
-    elif cold_pid is not None:
-        pid = cold_pid     # cold-launch 已拿到 pid, 直接用 (尽快 attach 避免 anti-debug 起来)
     elif spawn_pid is not None:
         pid = spawn_pid    # spawn-gating: 进程挂起, attach 后 init, 再 resume
     elif args.pkg:
@@ -1739,15 +1717,11 @@ def main():
                       help="trace 实现: js=JS callout (~30K rec/s); cmodule=CModule native (10x+, 默认); "
                            "cmodule-v3=回归对比 baseline (CModule + send blob, 仅基准用)")
     p_tr.add_argument("--launch", action="store_true",
-                      help="非破坏式启动 app: force-stop+monkey 后立刻 attach, 不执行 pm clear/隐私同意自动化")
+                      help="非破坏式启动 app: force-stop+monkey 后立刻 attach, 不执行 pm clear")
     p_tr.add_argument("--spawn", action="store_true",
                       help="Frida spawn-gating 模式, 行为与 frida 直接 spawn 一致: "
                            "enable_spawn_gating → device.spawn(pkg) 挂起 → attach + agent init → resume. "
-                           "不 force-stop/不 pm clear/不点同意; 需 --pkg, 与 --launch/--cold-launch/--attach-pid 互斥")
-    p_tr.add_argument("--cold-launch", action="store_true",
-                      help="冷启动 app 前自动 force-stop+pm clear+monkey+点'同意' (隐私协议自动化, 多 app 通用)")
-    p_tr.add_argument("--home-markers", default=None,
-                      help="自定义首页文本 regex (默认: 同意按钮消失 + UI settle 即认为首页就绪)")
+                           "不 force-stop/不 pm clear; 需 --pkg, 与 --launch/--attach-pid 互斥")
 
     # view
     p_vw = sp.add_parser("view", help="启动 Rust v2 Web 查看器 (deprecated; 请用 web, 支持 --so/--port)")

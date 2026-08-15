@@ -103,7 +103,6 @@ class FakeDevice:
 def _args(tmp_path, spawn=True, **over):
     base = Namespace(
         launch=False,
-        cold_launch=False,
         spawn=spawn,
         attach_pid=None,
         pkg="com.example.app",
@@ -137,7 +136,6 @@ def _args(tmp_path, spawn=True, **over):
         out=str(tmp_path / "run"),
         remote=None,
         duration=0,
-        home_markers=None,
         child_trace_mode="off",
         fork_poll_child=True,
     )
@@ -190,3 +188,12 @@ def test_spawn_init_failure_kills_and_disables(frida_mock, tmp_path, monkeypatch
     assert ("kill", 4242) in device.calls
     assert "disable_spawn_gating" in device.calls
     assert device.gating is False
+
+
+def test_spawn_rejects_launch_combination(frida_mock, tmp_path, monkeypatch):
+    mod = _load_tracemiku()
+    monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
+
+    rc = mod.cmd_trace(_args(tmp_path, launch=True))
+
+    assert rc == 2

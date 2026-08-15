@@ -37,8 +37,8 @@
 ```
 
 对必须在最早执行点注入的目标可用 `--spawn`（Frida spawn-gating，attach+init
-完成后再 resume），行为与 `frida` 直接 spawn 一致；`--launch`/`--cold-launch`
-是 attach 路径，进程先启动再注入。参数语义与默认值以 `./tracemiku trace --help`
+完成后再 resume），行为与 `frida` 直接 spawn 一致；`--launch` 是 attach 路径，
+进程先启动再注入。参数语义与默认值以 `./tracemiku trace --help`
 为准。先在低风险目标验证 attach、心跳和短 trace，再增加深度与范围。设备改动
 必须执行 `make test-device`，并检查 trace 是否截断、是否丢记录、目标返回值是否
 改变。
