@@ -60,6 +60,10 @@ TraceIR、本地 LLIL -> MLIL -> HLIL、trace 增强 IL 是三个不同用途的
 - 不新增第二份路线图、完成报告、阶段计划或智能体专属规则。
 - 单个源文件超过 1500 行后原则上禁止继续增加职责；超过 2500 行必须先拆分。
 - 文档只描述当前事实、稳定契约和未完成决策。完成过程由 Git 历史保存。
+- 功能使用说明的唯一汇总在 `docs/FEATURES.md`：新增/删除/改名命令必须同步更新
+  对应分组与示例；参数细节不复制，以 `./tracemiku <cmd> --help` 为准，机器可读
+  清单由 `./tracemiku capabilities` 自动生成。README 只做定位与快速开始，
+  `docs/` 专题文档只写设计契约，禁止在多处重复维护同一命令的用法。
 - 不写“由某 AI 生成”、模型署名或共同作者尾注。
 
 ## 验证要求
@@ -89,15 +93,16 @@ make test-device
 ## CLI 使用准则
 
 优先使用专用命令，不要为了查询启动 Web server，也不要在已有专用命令时调用通用
-`api`：
+`api`。全部分析命令经统一入口透传（Python 层只实现设备采集与少量编排命令），
+功能目录见 `docs/FEATURES.md`，机器可读清单用 `./tracemiku capabilities`：
 
 ```bash
 ./tracemiku list traces/run1 --json
 ./tracemiku info <call_dir> --json
-./tracemiku query <call_dir> records --range 0..50 --regs x0,x1,sp
-./tracemiku query <call_dir> backward-taint --from 100 --reg x0
-./tracemiku query <call_dir> resolve --so libfoo.so --off 0x1234
-./tracemiku dec <call_dir> --summary
+./tracemiku records <call_dir> --start 0 --count 50 --regs x0,x1,sp
+./tracemiku taint-bwd <call_dir> --start 100 --reg x0
+./tracemiku resolve <call_dir> --so libfoo.so --off 0x1234
+./tracemiku dec-summary <call_dir>
 ```
 
 只有不存在专用 CLI 的 API 才使用 `./tracemiku api`。地址和偏移默认按十六进制解析，

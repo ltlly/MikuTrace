@@ -1566,8 +1566,27 @@ setTimeout(() => {{
 
 
 def main():
+    # Python 层只实现设备采集与少量编排命令；其余子命令全部透传给 Rust
+    # 分析 CLI（tracemiku-cli）。这保证统一入口覆盖全部分析命令，AI 和脚本
+    # 不需要直接调用内部 Rust 二进制。透传命令的准确语法见其 `--help` 和
+    # `./tracemiku capabilities`（机器可读功能清单）。
+    _PY_SUBCOMMANDS = {
+        "trace", "view", "api", "query", "list", "info", "finalize",
+        "dec", "crypto", "watch", "web", "doctor", "probe",
+    }
+    if len(sys.argv) > 1:
+        first = sys.argv[1]
+        if first in ("-V", "--version") or (not first.startswith("-") and first not in _PY_SUBCOMMANDS):
+            return _run_rust_cli(sys.argv[1:])
     ap = argparse.ArgumentParser(prog="tracemiku", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.epilog = (
+        "除以上子命令外，其余子命令透传给 Rust 分析 CLI。常用如:\n"
+        "  resolve / indirect-targets / reg-at / mem-export / coverage /\n"
+        "  call-tree / strings / mem-dump / taint-bwd / bfs-slice / dec-summary\n"
+        "完整清单与机器可读 JSON: ./tracemiku capabilities\n"
+        "任意透传命令的帮助: ./tracemiku <cmd> --help"
+    )
     sp = ap.add_subparsers(dest="subcommand", required=True)
 
     # trace
@@ -1680,7 +1699,7 @@ def main():
                       help="自定义首页文本 regex (默认: 同意按钮消失 + UI settle 即认为首页就绪)")
 
     # view
-    p_vw = sp.add_parser("view", help="启动 Rust v2 Web 查看器")
+    p_vw = sp.add_parser("view", help="启动 Rust v2 Web 查看器 (deprecated; 请用 web, 支持 --so/--port)")
     p_vw.add_argument("path", help="trace 目录或 .bin 文件")
 
     # api (兜底, 仅当无专用子命令时使用)
@@ -1694,7 +1713,7 @@ def main():
                        help="POST JSON body, 如 '{\"fn_id\":\"trace:F0\"}'")
 
     # query (AI 友好)
-    p_qy = sp.add_parser("query", help="JSON 查询接口")
+    p_qy = sp.add_parser("query", help="JSON 查询接口 (旧语法兼容层; 新用法直接调用对应透传命令)")
     p_qy.add_argument("path", help="trace 目录或 .bin 文件")
     qsp = p_qy.add_subparsers(dest="sub", required=True)
     # add --json to every subparser uniformly

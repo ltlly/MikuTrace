@@ -29,4 +29,7 @@ cargo run -p tracemiku-cli -- --help
 - API 响应必须有类型化状态、资源上限和截断信息。
 - sidecar 缓存必须使用 trace 内容指纹失效。
 - 新分析先进入 core 并有单测，再接 CLI 和 server。
-- 不在 `tracemiku-cli/src/main.rs` 继续堆积新领域；新增命令应放入按领域拆分的模块。
+- `tracemiku-cli/src/main.rs` 只保留入口；命令定义在 `args.rs`，编排与命令实现
+  按领域拆分到 `lib.rs` 与 `vm_*`、`output_*` 等模块。
+- 新增/删除/改名命令必须同步更新 `docs/FEATURES.md`；参数与默认值随 clap 定义
+  自动进入 `./tracemiku capabilities`。

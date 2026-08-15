@@ -31,11 +31,14 @@
 ```bash
 ./tracemiku doctor --pkg <package>
 ./tracemiku trace --pkg <package> --so <module> --method <export> \
-  --anti-detect <plugin-or-spec> --out traces/run1
+  --hide-rwx-maps --block-self-kill \
+  --patch-suicide --suicide-patch-spec tools/hooks/<spec>.json \
+  --out traces/run1
 ```
 
-先在低风险目标验证 attach、心跳和短 trace，再增加深度与范围。设备改动必须执行
-`make test-device`，并检查 trace 是否截断、是否丢记录、目标返回值是否改变。
+参数语义与默认值以 `./tracemiku trace --help` 为准。先在低风险目标验证 attach、
+心跳和短 trace，再增加深度与范围。设备改动必须执行 `make test-device`，并检查
+trace 是否截断、是否丢记录、目标返回值是否改变。
 
 ## 故障分类
 

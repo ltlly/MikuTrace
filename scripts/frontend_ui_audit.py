@@ -209,18 +209,19 @@ def main() -> int:
     )
     require(
         "CFG fetch has sequence guard",
-        "let graphSeq = 0" in cfg and "seq !== graphSeq" in cfg,
+        "graphGuard.begin()" in cfg and "graphGuard.isCurrent(h)" in cfg,
         failures,
     )
     require(
         "CFG fetch aborts stale request",
-        "let graphAbort: AbortController | undefined" in cfg
-        and "abort.signal.aborted" in cfg,
+        "graphGuard" in cfg
+        and "h.abort" in cfg
+        and "graphGuard.cancel()" in cfg,
         failures,
     )
     require(
         "CFG fetch passes abort signal",
-        "fetchCfgSvg({" in cfg and "signal: abort.signal" in cfg,
+        "fetchCfgSvg({" in cfg and "signal: h.abort.signal" in cfg,
         failures,
     )
     require(
@@ -230,7 +231,7 @@ def main() -> int:
     )
     require(
         "CFG cleanup aborts in-flight graph",
-        "onCleanup(() =>" in cfg and "graphAbort?.abort()" in cfg,
+        "onCleanup(() =>" in cfg and "graphGuard.cancel()" in cfg,
         failures,
     )
     require(
