@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::Json;
 use serde::Serialize;
 use serde_json::json;
@@ -24,15 +25,14 @@ pub struct FunctionsResponse {
     pub truncated: bool,
 }
 
-pub async fn functions_handler(State(state): State<AppState>) -> Json<FunctionsResponse> {
+pub async fn functions_handler(
+    State(state): State<AppState>,
+) -> Result<Json<FunctionsResponse>, (StatusCode, Json<serde_json::Value>)> {
     let inner = state.inner.clone();
     let response = tokio::task::spawn_blocking(move || functions_response(inner))
         .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(target: "tracemiku-server", "functions worker failed: {err}");
-            functions_response_no_bn(&state.inner)
-        });
-    Json(response)
+        .map_err(|err| crate::routes::worker_panic_response("functions", &err))?;
+    Ok(Json(response))
 }
 
 fn functions_response(inner: Arc<AppStateInner>) -> FunctionsResponse {
@@ -60,9 +60,7 @@ fn functions_response(inner: Arc<AppStateInner>) -> FunctionsResponse {
                         records: 0,
                         module: None,
                         entry_rel: None,
-                        trace_ir_id: None,
                         bn_start: Some(start),
-                        can_llil: false,
                         can_bn_hlil: true,
                     });
                 }
@@ -72,13 +70,8 @@ fn functions_response(inner: Arc<AppStateInner>) -> FunctionsResponse {
     functions_response_from_entries(fns)
 }
 
-fn functions_response_no_bn(inner: &AppStateInner) -> FunctionsResponse {
-    functions_response_from_entries(inner.function_index.entries.clone())
-}
-
 fn functions_response_from_entries(fns: Vec<FunctionEntry>) -> FunctionsResponse {
     let mut counts: HashMap<String, u64> = HashMap::new();
-    counts.insert("trace-ir".to_string(), 0);
     counts.insert("symbol".to_string(), 0);
     counts.insert("bn".to_string(), 0);
     for f in &fns {

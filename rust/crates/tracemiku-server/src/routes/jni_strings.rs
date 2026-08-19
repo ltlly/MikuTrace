@@ -61,24 +61,11 @@ pub struct JniStringsResponse {
 pub async fn jni_strings_handler(
     State(state): State<AppState>,
     Query(q): Query<JniStringsQuery>,
-) -> Json<JniStringsResponse> {
-    Json(
-        tokio::task::spawn_blocking(move || jni_strings_response(&state, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "jni strings worker failed: {err}");
-                JniStringsResponse {
-                    status: "error",
-                    count: 0,
-                    returned: 0,
-                    truncated: false,
-                    with_observed_string: 0,
-                    without_observed_string: 0,
-                    note: "worker failed",
-                    hits: Vec::new(),
-                }
-            }),
-    )
+) -> Result<Json<JniStringsResponse>, crate::routes::WorkerFailure> {
+    let response = tokio::task::spawn_blocking(move || jni_strings_response(&state, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("jni strings", &err))?;
+    Ok(Json(response))
 }
 
 fn jni_strings_response(state: &AppState, q: JniStringsQuery) -> JniStringsResponse {

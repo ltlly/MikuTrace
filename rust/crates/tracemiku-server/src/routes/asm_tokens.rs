@@ -1,6 +1,6 @@
 //! GET /api/asm-tokens-for-pcs.
 
-use crate::routes::seed_resolver::parse_u64;
+use crate::routes::parse::parse_dec_u64;
 use std::collections::BTreeMap;
 
 use axum::extract::{Query, State};
@@ -33,19 +33,24 @@ pub struct AsmTokensResponse {
 pub async fn asm_tokens_handler(
     State(state): State<AppState>,
     Query(q): Query<AsmTokensQuery>,
-) -> Json<AsmTokensResponse> {
-    let pcs: Vec<u64> = q.pcs.split(',').filter_map(parse_u64).take(512).collect();
+) -> Result<Json<AsmTokensResponse>, crate::routes::WorkerFailure> {
+    let pcs: Vec<u64> = q
+        .pcs
+        .split(',')
+        .filter_map(parse_dec_u64)
+        .take(512)
+        .collect();
     if pcs.is_empty() {
-        return Json(AsmTokensResponse {
+        return Ok(Json(AsmTokensResponse {
             ready: true,
             status: "ok".to_string(),
             tokens: BTreeMap::new(),
             error: None,
-        });
+        }));
     }
     let value = tokio::task::spawn_blocking(move || request_sidecar_tokens(state, &pcs))
         .await
-        .unwrap_or_else(|err| json!({"ok": false, "ready": false, "error": err.to_string()}));
+        .map_err(|err| crate::routes::worker_panic_response("asm tokens", &err))?;
 
     let ready = value
         .get("ready")
@@ -53,7 +58,7 @@ pub async fn asm_tokens_handler(
         .unwrap_or(false);
     let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(ready);
     if !ready || !ok {
-        return Json(AsmTokensResponse {
+        return Ok(Json(AsmTokensResponse {
             ready: false,
             status: value
                 .get("status")
@@ -65,7 +70,7 @@ pub async fn asm_tokens_handler(
                 .get("error")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-        });
+        }));
     }
 
     let mut tokens = BTreeMap::new();
@@ -76,12 +81,12 @@ pub async fn asm_tokens_handler(
             }
         }
     }
-    Json(AsmTokensResponse {
+    Ok(Json(AsmTokensResponse {
         ready: true,
         status: "ok".to_string(),
         tokens,
         error: None,
-    })
+    }))
 }
 
 fn request_sidecar_tokens(state: AppState, pcs: &[u64]) -> Value {

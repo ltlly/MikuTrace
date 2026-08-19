@@ -116,23 +116,26 @@ export function captureMemorySnapshot(callIdx: number): void {
         return;
     }
 
-    // Header. count is patched conceptually by writing the actual captured
-    // count; we count successfully-read regions first by reading into memory.
-    const blobs: Array<{ base: NativePointer; perms: number; data: ArrayBuffer }> = [];
+    // 第一遍: 只探测每个 region 的可读性与字节数, 数据立即丢弃.
+    // 不能把所有 region 的 ArrayBuffer 同时驻留 — 那会把 snapshotMaxBytes 预算
+    // (默认 512MB) 变成设备端内存峰值. Frida File 无 seek, 计数字段在 16 字节
+    // 文件头里, 只能先确定 count 再流式写 region.
+    const readable: Array<{ base: NativePointer; perms: number; size: number }> = [];
     let totalBytes = 0;
     for (const r of ranges) {
-        let buf: ArrayBuffer | null = null;
+        let byteLen = 0;
         try {
-            buf = r.base.readByteArray(r.size);
+            const buf = r.base.readByteArray(r.size);
+            byteLen = buf ? buf.byteLength : 0;
         } catch (_) {
-            buf = null; // unreadable; skip
+            byteLen = 0; // unreadable; skip
         }
-        if (!buf || buf.byteLength === 0) continue;
-        blobs.push({ base: r.base, perms: permsBits(r.prot), data: buf });
-        totalBytes += buf.byteLength;
+        if (byteLen <= 0) continue;
+        readable.push({ base: r.base, perms: permsBits(r.prot), size: byteLen });
+        totalBytes += byteLen;
     }
 
-    if (blobs.length === 0) {
+    if (readable.length === 0) {
         log("[mem-snapshot] all selected regions unreadable; skipping");
         try { file.close(); } catch (_) {}
         return;
@@ -143,35 +146,47 @@ export function captureMemorySnapshot(callIdx: number): void {
     header.set(SNAPSHOT_MAGIC, 0);
     const dv = new DataView(header.buffer);
     dv.setUint32(8, SNAPSHOT_VERSION, true);
-    dv.setUint32(12, blobs.length, true);
+    dv.setUint32(12, readable.length, true);
     file.write(header.buffer);
 
-    // Write each region: base u64, size u64, perms u32, flags u32, data.
-    for (const b of blobs) {
+    // 第二遍: 逐 region 读→写→释放, 内存峰值 = 单个 region (≤ MAX_REGION_BYTES).
+    for (const reg of readable) {
         const rh = new Uint8Array(24);
         const rdv = new DataView(rh.buffer);
         // u64 base (split into lo/hi to avoid BigInt dependency)
-        const baseStr = b.base.toString();
+        const baseStr = reg.base.toString();
         const baseBig = BigInt(baseStr);
         rdv.setUint32(0, Number(baseBig & 0xffffffffn), true);
         rdv.setUint32(4, Number((baseBig >> 32n) & 0xffffffffn), true);
-        rdv.setUint32(8, b.data.byteLength & 0xffffffff, true);
-        rdv.setUint32(12, Math.floor(b.data.byteLength / 0x100000000), true);
-        rdv.setUint32(16, b.perms, true);
+        rdv.setUint32(8, reg.size & 0xffffffff, true);
+        rdv.setUint32(12, Math.floor(reg.size / 0x100000000), true);
+        rdv.setUint32(16, reg.perms, true);
         rdv.setUint32(20, 0, true); // flags
+        let data: ArrayBuffer | null = null;
+        try {
+            data = reg.base.readByteArray(reg.size);
+        } catch (_) {
+            data = null;
+        }
+        if (!data || data.byteLength !== reg.size) {
+            // 极小概率: 两遍之间 region 被解映射/改变. 用 0 填充保持文件
+            // 布局合法 (count 与每个 region 的 size 头都已写入).
+            data = new Uint8Array(reg.size).buffer;
+        }
         file.write(rh.buffer);
-        file.write(b.data);
+        file.write(data);
+        data = null;
     }
     try { file.flush(); } catch (_) {}
     try { file.close(); } catch (_) {}
 
-    log(`[mem-snapshot] call#${callIdx}: ${blobs.length} regions, ` +
+    log(`[mem-snapshot] call#${callIdx}: ${readable.length} regions, ` +
         `${(totalBytes / 1024 / 1024).toFixed(1)}MB → ${path}`);
     send({
         type: "mem-snapshot",
         callIdx,
         devicePath: path,
-        regions: blobs.length,
+        regions: readable.length,
         bytes: totalBytes,
     });
 }

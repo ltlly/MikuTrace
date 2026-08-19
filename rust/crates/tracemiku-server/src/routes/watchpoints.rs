@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use tracemiku_core::prelude::{watchpoint_scan, WatchpointScan, WatchpointSpec};
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const MAX_WATCHPOINT_HITS: usize = 50_000;
@@ -72,7 +73,7 @@ fn parse_spec(q: &WatchpointsQuery) -> Result<WatchpointSpec, (StatusCode, Strin
             let value = q
                 .value
                 .as_deref()
-                .and_then(parse_int)
+                .and_then(parse::parse_dec_u64)
                 .ok_or_else(|| bad_request("value is required"))?;
             Ok(WatchpointSpec::RegEquals { reg, value })
         }
@@ -80,7 +81,7 @@ fn parse_spec(q: &WatchpointsQuery) -> Result<WatchpointSpec, (StatusCode, Strin
             let addr = q
                 .addr
                 .as_deref()
-                .and_then(parse_int)
+                .and_then(parse::parse_dec_u64)
                 .ok_or_else(|| bad_request("addr is required"))?;
             Ok(WatchpointSpec::MemTouch {
                 addr,
@@ -88,15 +89,6 @@ fn parse_spec(q: &WatchpointsQuery) -> Result<WatchpointSpec, (StatusCode, Strin
             })
         }
         _ => Err(bad_request("unknown watchpoint kind")),
-    }
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }
 

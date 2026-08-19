@@ -7,7 +7,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::jni_scan::{parse_int, JniCallRecord};
+use crate::jni_scan::JniCallRecord;
+use crate::routes::parse;
 use crate::state::{AppState, AppStateInner};
 
 const MAX_HITS: usize = 5_000;
@@ -58,7 +59,7 @@ pub async fn jobj_history_handler(
     State(state): State<AppState>,
     Query(q): Query<JobjHistoryQuery>,
 ) -> Result<Json<JobjHistoryResponse>, StatusCode> {
-    let target = parse_int(&q.jobject).ok_or(StatusCode::BAD_REQUEST)?;
+    let target = parse::parse_dec_u64(&q.jobject).ok_or(StatusCode::BAD_REQUEST)?;
     let end = if q.end >= 0 {
         (q.end as usize).min(state.inner.trace.len())
     } else {

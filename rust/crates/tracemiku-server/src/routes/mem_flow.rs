@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::prelude::*;
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const MAX_MEM_FLOW_BYTES: usize = 4_096;
@@ -91,7 +92,7 @@ fn mem_flow_response(
     inner: &crate::state::AppStateInner,
     q: MemFlowQuery,
 ) -> Result<MemFlowResponse, StatusCode> {
-    let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
+    let start = parse::parse_dec_u64(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
     let count = effective_count(q.count);
     let cap = effective_events_per_byte(q.events_per_byte);
     let kind_filter = if q.writers_only {
@@ -193,15 +194,6 @@ fn event_matches(
         return false;
     }
     true
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
 }
 
 #[cfg(test)]

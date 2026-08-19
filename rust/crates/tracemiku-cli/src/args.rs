@@ -24,7 +24,7 @@ pub(super) enum Cmd {
     Api {
         /// Per-call trace directory.
         trace_dir: PathBuf,
-        /// Route path such as /api/backtrace or /api/llil/render.
+        /// Route path such as /api/backtrace or /api/diff-traces.
         path: String,
         /// HTTP method. Supports GET and POST. Default GET.
         #[arg(long, default_value = "GET")]
@@ -503,7 +503,8 @@ pub(super) enum Cmd {
         /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
-        /// Maximum hits returned. Server cap = 5000.
+        /// Maximum hits returned; results are capped by the server (see
+        /// capabilities).
         #[arg(long)]
         max_count: Option<usize>,
         /// Follow stores/loads through MemShadow (memory taint propagation).
@@ -546,7 +547,8 @@ pub(super) enum Cmd {
         /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
-        /// Maximum hits returned. Server cap = 5000.
+        /// Maximum hits returned; results are capped by the server (see
+        /// capabilities).
         #[arg(long)]
         max_count: Option<usize>,
         /// Follow stores/loads through MemShadow (memory taint propagation).
@@ -629,7 +631,8 @@ pub(super) enum Cmd {
         /// Drop control-flow edges. Default: include them.
         #[arg(long)]
         data_only: bool,
-        /// Maximum slice rows. Server cap = 200_000.
+        /// Maximum slice rows; results are capped by the server (see
+        /// capabilities).
         #[arg(long, default_value_t = 5_000)]
         limit: usize,
         /// `union` (default) or `intersection`. Multi-seed only —
@@ -667,7 +670,8 @@ pub(super) enum Cmd {
         /// Maximum BFS depth. depth=0 means seed only.
         #[arg(long, default_value_t = 8)]
         depth: usize,
-        /// Maximum nodes in returned graph. Server cap = 2000.
+        /// Maximum nodes in returned graph; results are capped by the server
+        /// (see capabilities).
         #[arg(long, default_value_t = 160)]
         limit: usize,
         /// Drop control-flow edges. Default: include them.
@@ -1438,46 +1442,5 @@ pub(super) enum Cmd {
         max: usize,
         #[arg(long, default_value_t = 128)]
         max_len: usize,
-    },
-    /// GET /api/dec/summary.
-    DecSummary { trace_dir: PathBuf },
-    /// GET /api/dec/fn/{id}.
-    DecFn {
-        trace_dir: PathBuf,
-        fn_id: String,
-        #[arg(long, default_value = "hot")]
-        tier: String,
-    },
-    /// GET /api/dec/models.
-    DecModels { trace_dir: PathBuf },
-    /// POST /api/llil/pipeline — full LLIL→MLIL→HLIL decompiler pipeline.
-    LlilPipeline {
-        trace_dir: PathBuf,
-        #[arg(long = "fn-id", default_value = "trace:F0")]
-        fn_id: String,
-        #[arg(long, default_value_t = 500)]
-        max_records: usize,
-        #[arg(long)]
-        include_text: bool,
-        #[arg(long)]
-        include_call_analysis: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    /// POST /api/llil/render.
-    LlilRender {
-        trace_dir: PathBuf,
-        #[arg(long = "fn-id", default_value = "trace:F0")]
-        fn_id: String,
-        #[arg(long, default_value_t = 300)]
-        max_records: usize,
-        #[arg(long)]
-        no_ssa: bool,
-        #[arg(long)]
-        no_constfold: bool,
-        #[arg(long)]
-        no_flag_elim: bool,
-        #[arg(long)]
-        dce: bool,
     },
 }

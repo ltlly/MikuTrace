@@ -31,19 +31,8 @@ import type {
   ForkEventsResponse,
   ForwardTaintResponse,
   BackwardTaintResponse,
-  DecFnResponse,
-  DecLlmCallPayload,
-  DecLlmCallResponse,
-  DecModelsResponse,
-  DecSummaryResponse,
-  LlilRenderPayload,
-  LlilRenderResponse,
-  LlilLlmPayload,
-  LlilLlmResponse,
   HlilForFnResponse,
   HlilForPcResponse,
-  LlilPipelinePayload,
-  PipelineResponse,
   AsmTokensResponse,
   CfgSvgResponse,
   BnCfgSvgForPcResponse,
@@ -99,19 +88,43 @@ async function fx(input: string, init?: RequestInit): Promise<Response> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 通用请求层：所有 fetcher 收敛到 apiGet/apiPost，统一
+// 「拼 query → fx → !ok throw → r.json() → 回显 request_*」五段式。
+// echo 显式声明要盖在响应上的请求回显字段（request_pc 等），
+// 供面板做 isCurrent 一致性校验。
+// ---------------------------------------------------------------------------
+
+async function apiGet<T extends object>(
+  path: string,
+  params?: URLSearchParams,
+  echo?: Partial<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const qs = params?.toString();
+  const r = await fx(`${path}${qs ? "?" + qs : ""}`, { signal });
+  if (!r.ok) throw new Error(`${path} returned ${r.status}: ${await r.text()}`);
+  const out = (await r.json()) as T;
+  return echo ? Object.assign(out, echo) : out;
+}
+
+async function apiPost<T extends object>(path: string, body: unknown): Promise<T> {
+  const r = await fx(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${path} returned ${r.status}: ${await r.text()}`);
+  return (await r.json()) as T;
+}
+
 export async function fetchMeta(): Promise<MetaResponse> {
-  const r = await fx("/api/meta");
-  if (!r.ok) {
-    throw new Error(`/api/meta returned ${r.status}: ${await r.text()}`);
-  }
-  return (await r.json()) as MetaResponse;
+  return apiGet<MetaResponse>("/api/meta");
 }
 
 export async function fetchSoStats(top = 200, all = false): Promise<SoStatsResponse> {
   const params = new URLSearchParams({ top: String(top), all: String(all) });
-  const r = await fx(`/api/so-stats?${params}`);
-  if (!r.ok) throw new Error(`/api/so-stats returned ${r.status}: ${await r.text()}`);
-  return (await r.json()) as SoStatsResponse;
+  return apiGet<SoStatsResponse>("/api/so-stats", params);
 }
 
 export interface FetchRecordsOpts {
@@ -126,25 +139,23 @@ export async function fetchRecords(opts: FetchRecordsOpts = {}): Promise<Records
   if (opts.start !== undefined) params.set("start", String(opts.start));
   if (opts.count !== undefined) params.set("count", String(opts.count));
   if (opts.regs) params.set("regs", opts.regs);
-  const qs = params.toString();
-  const r = await fx(`/api/records${qs ? "?" + qs : ""}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/records returned ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as RecordsResponse;
-  out.request_start = opts.start ?? 0;
-  out.request_count = opts.count ?? 100;
-  return out;
+  return apiGet<RecordsResponse>(
+    "/api/records",
+    params,
+    {
+      request_start: opts.start ?? 0,
+      request_count: opts.count ?? 100,
+    },
+    opts.signal,
+  );
 }
 
 export async function fetchRecord(idx: number, signal?: AbortSignal): Promise<RecordDetail> {
-  const r = await fx(`/api/record/${idx}`, { signal });
-  if (!r.ok) throw new Error(`/api/record/${idx} returned ${r.status}: ${await r.text()}`);
-  return (await r.json()) as RecordDetail;
+  return apiGet<RecordDetail>(`/api/record/${idx}`, undefined, undefined, signal);
 }
 
 export async function fetchFunctions(): Promise<FunctionsResponse> {
-  const r = await fx("/api/functions");
-  if (!r.ok) throw new Error(`/api/functions returned ${r.status}: ${await r.text()}`);
-  return (await r.json()) as FunctionsResponse;
+  return apiGet<FunctionsResponse>("/api/functions");
 }
 
 export interface FetchCfgSvgOpts {
@@ -163,10 +174,7 @@ export async function fetchCfgSvg(opts: FetchCfgSvgOpts = {}): Promise<CfgSvgRes
   if (opts.localDepth !== undefined) params.set("local_depth", String(opts.localDepth));
   if (opts.timeout !== undefined) params.set("timeout", String(opts.timeout));
   if (opts.force) params.set("force", "true");
-  const qs = params.toString();
-  const r = await fx(`/api/cfg-svg${qs ? "?" + qs : ""}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/cfg-svg returned ${r.status}: ${await r.text()}`);
-  return (await r.json()) as CfgSvgResponse;
+  return apiGet<CfgSvgResponse>("/api/cfg-svg", params, undefined, opts.signal);
 }
 
 export async function fetchBnCfgSvgForPc(
@@ -176,12 +184,12 @@ export async function fetchBnCfgSvgForPc(
   signal?: AbortSignal,
 ): Promise<BnCfgSvgForPcResponse> {
   const params = new URLSearchParams({ pc, mode, timeout: String(timeout) });
-  const r = await fx(`/api/bn-cfg-svg-for-pc?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/bn-cfg-svg-for-pc ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as BnCfgSvgForPcResponse;
-  out.request_pc = pc;
-  out.request_mode = mode;
-  return out;
+  return apiGet<BnCfgSvgForPcResponse>(
+    "/api/bn-cfg-svg-for-pc",
+    params,
+    { request_pc: pc, request_mode: mode },
+    signal,
+  );
 }
 
 export async function fetchAsmTokensForPcs(
@@ -190,11 +198,12 @@ export async function fetchAsmTokensForPcs(
 ): Promise<AsmTokensResponse> {
   const unique = [...new Set(pcs.filter(Boolean))];
   const params = new URLSearchParams({ pcs: unique.join(",") });
-  const r = await fx(`/api/asm-tokens-for-pcs?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/asm-tokens-for-pcs ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as AsmTokensResponse;
-  out.request_pcs = unique;
-  return out;
+  return apiGet<AsmTokensResponse>(
+    "/api/asm-tokens-for-pcs",
+    params,
+    { request_pcs: unique },
+    signal,
+  );
 }
 
 export async function fetchStrings(
@@ -208,14 +217,17 @@ export async function fetchStrings(
   if (q) params.set("q", q);
   if (limit > 0) params.set("limit", String(limit));
   if (cursor >= 0) params.set("cursor", String(cursor));
-  const r = await fx(`/api/strings?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/strings ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as StringsResponse;
-  out.request_min_len = minLen;
-  out.request_q = q;
-  out.request_limit = limit;
-  out.request_cursor = cursor;
-  return out;
+  return apiGet<StringsResponse>(
+    "/api/strings",
+    params,
+    {
+      request_min_len: minLen,
+      request_q: q,
+      request_limit: limit,
+      request_cursor: cursor,
+    },
+    signal,
+  );
 }
 
 export async function fetchStringProvenance(
@@ -224,9 +236,7 @@ export async function fetchStringProvenance(
   signal?: AbortSignal,
 ): Promise<StringProvenanceResponse> {
   const params = new URLSearchParams({ addr, length: String(length) });
-  const r = await fx(`/api/string-provenance?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/string-provenance ${r.status}: ${await r.text()}`);
-  return (await r.json()) as StringProvenanceResponse;
+  return apiGet<StringProvenanceResponse>("/api/string-provenance", params, undefined, signal);
 }
 
 export async function fetchIdxsTouchingAddr(
@@ -239,9 +249,7 @@ export async function fetchIdxsTouchingAddr(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fx(`/api/idxs-touching-addr?${params}`);
-  if (!r.ok) throw new Error(`/api/idxs-touching-addr ${r.status}: ${await r.text()}`);
-  return (await r.json()) as TouchingAddrResponse;
+  return apiGet<TouchingAddrResponse>("/api/idxs-touching-addr", params);
 }
 
 export async function fetchIdxsTouchingRange(
@@ -257,14 +265,17 @@ export async function fetchIdxsTouchingRange(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fx(`/api/idxs-touching-range?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/idxs-touching-range ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as TouchingRangeResponse;
-  out.request_addr = addr;
-  out.request_size = size;
-  out.request_cursor = cursor;
-  out.request_limit = limit;
-  return out;
+  return apiGet<TouchingRangeResponse>(
+    "/api/idxs-touching-range",
+    params,
+    {
+      request_addr: addr,
+      request_size: size,
+      request_cursor: cursor,
+      request_limit: limit,
+    },
+    signal,
+  );
 }
 
 export async function fetchMemDump(
@@ -273,12 +284,12 @@ export async function fetchMemDump(
   signal?: AbortSignal,
 ): Promise<MemDumpResponse> {
   const params = new URLSearchParams({ addr, count: String(count) });
-  const r = await fx(`/api/mem-dump?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/mem-dump ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as MemDumpResponse;
-  out.request_addr = addr;
-  out.request_count = count;
-  return out;
+  return apiGet<MemDumpResponse>(
+    "/api/mem-dump",
+    params,
+    { request_addr: addr, request_count: count },
+    signal,
+  );
 }
 
 export async function fetchMemDiff(
@@ -292,13 +303,12 @@ export async function fetchMemDiff(
     addr,
     size: String(size),
   });
-  const r = await fx(`/api/mem-diff?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/mem-diff ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as MemDiffResponse;
-  out.request_idx = idx;
-  out.request_addr = addr;
-  out.request_size = size;
-  return out;
+  return apiGet<MemDiffResponse>(
+    "/api/mem-diff",
+    params,
+    { request_idx: idx, request_addr: addr, request_size: size },
+    signal,
+  );
 }
 
 export async function fetchIdxsForPc(
@@ -312,13 +322,12 @@ export async function fetchIdxsForPc(
     cursor: String(cursor),
     limit: String(limit),
   });
-  const r = await fx(`/api/idxs-for-pc?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/idxs-for-pc ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as IdxsForPcResponse;
-  out.request_pc = pc;
-  out.request_cursor = cursor;
-  out.request_limit = limit;
-  return out;
+  return apiGet<IdxsForPcResponse>(
+    "/api/idxs-for-pc",
+    params,
+    { request_pc: pc, request_cursor: cursor, request_limit: limit },
+    signal,
+  );
 }
 
 export async function fetchSearch(
@@ -332,13 +341,16 @@ export async function fetchSearch(
     max_results: String(maxResults),
   });
   if (cursor !== undefined) params.set("cursor", String(cursor));
-  const r = await fx(`/api/search?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/search ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as SearchResponse;
-  out.request_pattern = pattern;
-  out.request_max_results = maxResults;
-  out.request_cursor = cursor;
-  return out;
+  return apiGet<SearchResponse>(
+    "/api/search",
+    params,
+    {
+      request_pattern: pattern,
+      request_max_results: maxResults,
+      request_cursor: cursor,
+    },
+    signal,
+  );
 }
 
 export async function fetchSearchPc(
@@ -350,12 +362,12 @@ export async function fetchSearchPc(
     pc,
     limit: String(limit),
   });
-  const r = await fx(`/api/search-pc?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/search-pc ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as SearchPcResponse;
-  out.request_pc = pc;
-  out.request_limit = limit;
-  return out;
+  return apiGet<SearchPcResponse>(
+    "/api/search-pc",
+    params,
+    { request_pc: pc, request_limit: limit },
+    signal,
+  );
 }
 
 export interface FetchTraceQueryOpts {
@@ -377,17 +389,20 @@ export async function fetchTraceQuery(opts: FetchTraceQueryOpts): Promise<TraceQ
   if (opts.addr) params.set("addr", opts.addr);
   if (opts.len !== undefined) params.set("len", String(opts.len));
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
-  const r = await fx(`/api/query?${params}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/query ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as TraceQueryResponse;
-  out.request_kind = opts.kind;
-  out.request_q = opts.q ?? "";
-  out.request_idx = opts.idx;
-  out.request_reg = opts.reg;
-  out.request_addr = opts.addr;
-  out.request_len = opts.len;
-  out.request_limit = opts.limit;
-  return out;
+  return apiGet<TraceQueryResponse>(
+    "/api/query",
+    params,
+    {
+      request_kind: opts.kind,
+      request_q: opts.q ?? "",
+      request_idx: opts.idx,
+      request_reg: opts.reg,
+      request_addr: opts.addr,
+      request_len: opts.len,
+      request_limit: opts.limit,
+    },
+    opts.signal,
+  );
 }
 
 export async function fetchRegValueAt(
@@ -396,9 +411,7 @@ export async function fetchRegValueAt(
   signal?: AbortSignal,
 ): Promise<RegValueAtResponse> {
   const params = new URLSearchParams({ idx: String(idx), reg });
-  const r = await fx(`/api/reg-value-at?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/reg-value-at ${r.status}: ${await r.text()}`);
-  return (await r.json()) as RegValueAtResponse;
+  return apiGet<RegValueAtResponse>("/api/reg-value-at", params, undefined, signal);
 }
 
 export async function fetchLastWriteOfReg(
@@ -407,9 +420,7 @@ export async function fetchLastWriteOfReg(
   signal?: AbortSignal,
 ): Promise<LastWriteOfRegResponse> {
   const params = new URLSearchParams({ before: String(before), reg });
-  const r = await fx(`/api/last-write-of-reg?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/last-write-of-reg ${r.status}: ${await r.text()}`);
-  return (await r.json()) as LastWriteOfRegResponse;
+  return apiGet<LastWriteOfRegResponse>("/api/last-write-of-reg", params, undefined, signal);
 }
 
 export async function fetchNextUseOfReg(
@@ -418,9 +429,7 @@ export async function fetchNextUseOfReg(
   signal?: AbortSignal,
 ): Promise<NextUseOfRegResponse> {
   const params = new URLSearchParams({ after: String(after), reg });
-  const r = await fx(`/api/next-use-of-reg?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/next-use-of-reg ${r.status}: ${await r.text()}`);
-  return (await r.json()) as NextUseOfRegResponse;
+  return apiGet<NextUseOfRegResponse>("/api/next-use-of-reg", params, undefined, signal);
 }
 
 export interface FetchWatchpointsOpts {
@@ -442,46 +451,60 @@ export async function fetchWatchpoints(opts: FetchWatchpointsOpts): Promise<Watc
   if (opts.size !== undefined) params.set("size", String(opts.size));
   if (opts.cursor !== undefined) params.set("cursor", String(opts.cursor));
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
-  const r = await fx(`/api/watchpoints?${params}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/watchpoints ${r.status}: ${await r.text()}`);
-  return (await r.json()) as WatchpointsResponse;
+  return apiGet<WatchpointsResponse>("/api/watchpoints", params, undefined, opts.signal);
 }
 
 export async function fetchCallTree(maxDepth = 10, signal?: AbortSignal): Promise<CallTreeResponse> {
   const params = new URLSearchParams({ max_depth: String(maxDepth) });
-  const r = await fx(`/api/call-tree?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/call-tree ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as CallTreeResponse;
-  out.request_max_depth = maxDepth;
-  return out;
+  return apiGet<CallTreeResponse>(
+    "/api/call-tree",
+    params,
+    { request_max_depth: maxDepth },
+    signal,
+  );
 }
 
 export async function fetchBacktrace(idx: number, limit = 256): Promise<BacktraceResponse> {
   const params = new URLSearchParams({ idx: String(idx), limit: String(limit) });
-  const r = await fx(`/api/backtrace?${params}`);
-  if (!r.ok) throw new Error(`/api/backtrace ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as BacktraceResponse;
-  out.request_limit = limit;
-  return out;
+  return apiGet<BacktraceResponse>(
+    "/api/backtrace",
+    params,
+    { request_limit: limit },
+  );
 }
 
 export async function fetchForkEvents(status = "", limit = 1000): Promise<ForkEventsResponse> {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   params.set("limit", String(limit));
-  const qs = params.toString();
-  const r = await fx(`/api/fork-events${qs ? "?" + qs : ""}`);
-  if (!r.ok) throw new Error(`/api/fork-events ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as ForkEventsResponse;
-  out.request_status = status;
-  out.request_limit = limit;
-  return out;
+  return apiGet<ForkEventsResponse>(
+    "/api/fork-events",
+    params,
+    { request_status: status, request_limit: limit },
+  );
 }
 
 export interface TaintFlags {
   through_mem?: boolean;
   data_only?: boolean;
   cross_fn_call?: boolean;
+}
+
+function taintParams(
+  traceIdx: number,
+  reg: string,
+  maxCount: number,
+  flags: TaintFlags,
+): URLSearchParams {
+  const params = new URLSearchParams({
+    trace_idx: String(traceIdx),
+    reg,
+    max_count: String(maxCount),
+  });
+  if (flags.through_mem) params.set("through_mem", "true");
+  if (flags.data_only) params.set("data_only", "true");
+  if (flags.cross_fn_call) params.set("cross_fn_call", "true");
+  return params;
 }
 
 export async function fetchForwardTaint(
@@ -491,17 +514,12 @@ export async function fetchForwardTaint(
   flags: TaintFlags = {},
   signal?: AbortSignal,
 ): Promise<ForwardTaintResponse> {
-  const params = new URLSearchParams({
-    trace_idx: String(traceIdx),
-    reg,
-    max_count: String(maxCount),
-  });
-  if (flags.through_mem) params.set("through_mem", "true");
-  if (flags.data_only) params.set("data_only", "true");
-  if (flags.cross_fn_call) params.set("cross_fn_call", "true");
-  const r = await fx(`/api/forward-taint?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/forward-taint ${r.status}: ${await r.text()}`);
-  return (await r.json()) as ForwardTaintResponse;
+  return apiGet<ForwardTaintResponse>(
+    "/api/forward-taint",
+    taintParams(traceIdx, reg, maxCount, flags),
+    undefined,
+    signal,
+  );
 }
 
 export async function fetchBackwardTaint(
@@ -511,88 +529,24 @@ export async function fetchBackwardTaint(
   flags: TaintFlags = {},
   signal?: AbortSignal,
 ): Promise<BackwardTaintResponse> {
-  const params = new URLSearchParams({
-    trace_idx: String(traceIdx),
-    reg,
-    max_count: String(maxCount),
-  });
-  if (flags.through_mem) params.set("through_mem", "true");
-  if (flags.data_only) params.set("data_only", "true");
-  if (flags.cross_fn_call) params.set("cross_fn_call", "true");
-  const r = await fx(`/api/backward-taint?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/backward-taint ${r.status}: ${await r.text()}`);
-  return (await r.json()) as BackwardTaintResponse;
-}
-
-export interface DecIrOptions {
-  withMemshadow?: boolean;
-  splitTopK?: number;
-  splitMinRecords?: number;
-}
-
-function appendDecIrOptions(params: URLSearchParams, opts: DecIrOptions = {}) {
-  if (opts.withMemshadow) params.set("with_memshadow", "true");
-  if (opts.splitTopK !== undefined) params.set("split_top_k", String(opts.splitTopK));
-  if (opts.splitMinRecords !== undefined) params.set("split_min_records", String(opts.splitMinRecords));
-}
-
-export async function fetchDecSummary(
-  opts: DecIrOptions = {},
-  signal?: AbortSignal,
-): Promise<DecSummaryResponse> {
-  const params = new URLSearchParams();
-  appendDecIrOptions(params, opts);
-  const qs = params.toString();
-  const r = await fx(`/api/dec/summary${qs ? "?" + qs : ""}`, { signal });
-  if (!r.ok) throw new Error(`/api/dec/summary ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as DecSummaryResponse;
-  out.request_split_top_k = opts.splitTopK;
-  out.request_split_min_records = opts.splitMinRecords;
-  out.request_with_memshadow = opts.withMemshadow ?? false;
-  return out;
-}
-
-export async function fetchDecFn(
-  fnId: string,
-  tier = "hot",
-  opts: DecIrOptions = {},
-  signal?: AbortSignal,
-): Promise<DecFnResponse> {
-  const params = new URLSearchParams({ tier });
-  appendDecIrOptions(params, opts);
-  const r = await fx(`/api/dec/fn/${encodeURIComponent(fnId)}?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/dec/fn/${fnId} ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as DecFnResponse;
-  out.request_fn_id = fnId;
-  out.request_tier = tier;
-  out.request_split_top_k = opts.splitTopK;
-  out.request_split_min_records = opts.splitMinRecords;
-  out.request_with_memshadow = opts.withMemshadow ?? false;
-  return out;
-}
-
-export async function fetchDecModels(): Promise<DecModelsResponse> {
-  const r = await fx("/api/dec/models");
-  if (!r.ok) throw new Error(`/api/dec/models ${r.status}: ${await r.text()}`);
-  return (await r.json()) as DecModelsResponse;
+  return apiGet<BackwardTaintResponse>(
+    "/api/backward-taint",
+    taintParams(traceIdx, reg, maxCount, flags),
+    undefined,
+    signal,
+  );
 }
 
 export async function fetchOpenApi(): Promise<OpenApiResponse> {
-  const r = await fx("/openapi.json");
-  if (!r.ok) throw new Error(`/openapi.json ${r.status}: ${await r.text()}`);
-  return (await r.json()) as OpenApiResponse;
+  return apiGet<OpenApiResponse>("/openapi.json");
 }
 
 export async function fetchBgStatus(): Promise<BgStatusResponse> {
-  const r = await fx("/api/bg-status");
-  if (!r.ok) throw new Error(`/api/bg-status ${r.status}: ${await r.text()}`);
-  return (await r.json()) as BgStatusResponse;
+  return apiGet<BgStatusResponse>("/api/bg-status");
 }
 
 export async function fetchDecompStatus(): Promise<DecompStatusResponse> {
-  const r = await fx("/api/decomp-status");
-  if (!r.ok) throw new Error(`/api/decomp-status ${r.status}: ${await r.text()}`);
-  return (await r.json()) as DecompStatusResponse;
+  return apiGet<DecompStatusResponse>("/api/decomp-status");
 }
 
 export interface FetchMemWritesInRangeOpts {
@@ -614,16 +568,12 @@ export async function fetchMemWritesInRange(
   if (opts.addrLo) params.set("addr_lo", opts.addrLo);
   if (opts.addrHi) params.set("addr_hi", opts.addrHi);
   if (opts.max !== undefined) params.set("max", String(opts.max));
-  const r = await fx(`/api/mem-writes-in-range?${params}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/mem-writes-in-range ${r.status}: ${await r.text()}`);
-  return (await r.json()) as MemWritesInRangeResponse;
+  return apiGet<MemWritesInRangeResponse>("/api/mem-writes-in-range", params, undefined, opts.signal);
 }
 
 export async function fetchBlockForPc(pc: string): Promise<BlockForPcResponse> {
   const params = new URLSearchParams({ pc });
-  const r = await fx(`/api/block-for-pc?${params}`);
-  if (!r.ok) throw new Error(`/api/block-for-pc ${r.status}: ${await r.text()}`);
-  return (await r.json()) as BlockForPcResponse;
+  return apiGet<BlockForPcResponse>("/api/block-for-pc", params);
 }
 
 export async function fetchIdxsForBlock(
@@ -633,62 +583,16 @@ export async function fetchIdxsForBlock(
 ): Promise<IdxsForBlockResponse> {
   const params = new URLSearchParams({ pc, max_count: String(maxCount) });
   if (near !== undefined) params.set("near", String(near));
-  const r = await fx(`/api/idxs-for-block?${params}`);
-  if (!r.ok) throw new Error(`/api/idxs-for-block ${r.status}: ${await r.text()}`);
-  return (await r.json()) as IdxsForBlockResponse;
-}
-
-export async function callDecLlm(payload: DecLlmCallPayload): Promise<DecLlmCallResponse> {
-  const r = await fx("/api/dec/llm-call", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) throw new Error(`/api/dec/llm-call ${r.status}: ${await r.text()}`);
-  return (await r.json()) as DecLlmCallResponse;
-}
-
-export async function renderLlil(payload: LlilRenderPayload): Promise<LlilRenderResponse> {
-  const r = await fx("/api/llil/render", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) throw new Error(`/api/llil/render ${r.status}: ${await r.text()}`);
-  return (await r.json()) as LlilRenderResponse;
-}
-
-export async function fetchLlilPipeline(
-  payload: LlilPipelinePayload,
-  signal?: AbortSignal,
-): Promise<PipelineResponse> {
-  const r = await fx("/api/llil/pipeline", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  });
-  if (!r.ok) throw new Error(`/api/llil/pipeline ${r.status}: ${await r.text()}`);
-  return (await r.json()) as PipelineResponse;
-}
-
-export async function callLlilLlm(payload: LlilLlmPayload): Promise<LlilLlmResponse> {
-  const r = await fx("/api/llil/llm", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) throw new Error(`/api/llil/llm ${r.status}: ${await r.text()}`);
-  return (await r.json()) as LlilLlmResponse;
+  return apiGet<IdxsForBlockResponse>("/api/idxs-for-block", params);
 }
 
 export async function fetchHlilForFn(fnId: string): Promise<HlilForFnResponse> {
   const params = new URLSearchParams({ fn_id: fnId });
-  const r = await fx(`/api/hlil-for-fn?${params}`);
-  if (!r.ok) throw new Error(`/api/hlil-for-fn ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as HlilForFnResponse;
-  out.request_fn_id = fnId;
-  return out;
+  return apiGet<HlilForFnResponse>(
+    "/api/hlil-for-fn",
+    params,
+    { request_fn_id: fnId },
+  );
 }
 
 export async function fetchHlilForPc(
@@ -696,11 +600,12 @@ export async function fetchHlilForPc(
   signal?: AbortSignal,
 ): Promise<HlilForPcResponse> {
   const params = new URLSearchParams({ pc });
-  const r = await fx(`/api/hlil-for-pc?${params}`, { signal });
-  if (!r.ok) throw new Error(`/api/hlil-for-pc ${r.status}: ${await r.text()}`);
-  const out = (await r.json()) as HlilForPcResponse;
-  out.request_pc = pc;
-  return out;
+  return apiGet<HlilForPcResponse>(
+    "/api/hlil-for-pc",
+    params,
+    { request_pc: pc },
+    signal,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -784,10 +689,7 @@ export interface FetchBfsSliceOpts extends SeedQueryOpts {
 export async function fetchBfsSlice(opts: FetchBfsSliceOpts = {}): Promise<BfsSliceResponse> {
   const params = appendSeedQueryParams(new URLSearchParams(), opts);
   if (opts.mode) params.set("mode", opts.mode);
-  const qs = params.toString();
-  const r = await fx(`/api/bfs-slice${qs ? "?" + qs : ""}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/bfs-slice ${r.status}: ${await r.text()}`);
-  return (await r.json()) as BfsSliceResponse;
+  return apiGet<BfsSliceResponse>("/api/bfs-slice", params, undefined, opts.signal);
 }
 
 export type ForwardDepTreeNode = DepNode;
@@ -825,14 +727,13 @@ export async function fetchForwardDepTree(
 ): Promise<ForwardDepTreeResponse> {
   const params = appendSeedQueryParams(new URLSearchParams(), opts);
   if (opts.depth !== undefined) params.set("depth", String(opts.depth));
-  const qs = params.toString();
-  const r = await fx(`/api/forward-dep-tree${qs ? "?" + qs : ""}`, { signal: opts.signal });
-  if (!r.ok) throw new Error(`/api/forward-dep-tree ${r.status}: ${await r.text()}`);
-  return (await r.json()) as ForwardDepTreeResponse;
+  return apiGet<ForwardDepTreeResponse>("/api/forward-dep-tree", params, undefined, opts.signal);
 }
 
 export async function fetchCryptoAnalysis(): Promise<CryptoAnalysisResponse> {
-  const r = await fx("/api/crypto-analysis");
-  if (!r.ok) throw new Error(`/api/crypto-analysis ${r.status}: ${await r.text()}`);
-  return (await r.json()) as CryptoAnalysisResponse;
+  return apiGet<CryptoAnalysisResponse>("/api/crypto-analysis");
 }
+
+// 保留 JSON POST 统一入口（服务端 /api/hash-input-search、/api/diff-traces
+// 为 POST 路由）；前端 fetcher 尚未接入这两个端点。
+export { apiPost };

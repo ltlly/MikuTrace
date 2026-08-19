@@ -20,7 +20,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::routes::resolve::parse_u64;
+use crate::routes::parse::parse_hex_u64;
 use crate::state::AppState;
 use tracemiku_core::cfg::EdgeKind;
 
@@ -81,10 +81,10 @@ fn resolve_fn_name(
         return Ok(q.fn_name.clone());
     }
     let pc = if let Some(addr) = q.addr.as_ref() {
-        parse_u64(addr)
+        parse_hex_u64(addr)
             .ok_or_else(|| json!({ "status": "error", "error": format!("invalid addr: {addr}") }))?
     } else if let (Some(so), Some(off_raw)) = (q.so.as_ref(), q.off.as_ref()) {
-        let off = parse_u64(off_raw).ok_or_else(
+        let off = parse_hex_u64(off_raw).ok_or_else(
             || json!({ "status": "error", "error": format!("invalid off: {off_raw}") }),
         )?;
         let candidates = inner.modules.resolve_offset_candidates(so, off);
@@ -130,16 +130,12 @@ fn resolve_fn_name(
 pub async fn coverage_handler(
     State(state): State<AppState>,
     Query(q): Query<CoverageQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || coverage_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "coverage worker failed: {err}");
-                json!({ "status": "error", "error": "coverage worker panicked" })
-            }),
-    )
+    let value = tokio::task::spawn_blocking(move || coverage_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("coverage", &err))?;
+    Ok(Json(value))
 }
 
 fn coverage_response(inner: &crate::state::AppStateInner, q: CoverageQuery) -> Value {

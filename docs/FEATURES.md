@@ -8,7 +8,7 @@
 ## 阅读规则
 
 - 统一入口：所有子命令都通过 `./tracemiku` 调用。设备采集与少量编排命令由 Python
-  层实现，其余 93 个分析命令透传给 Rust CLI（`tracemiku-cli`）。不要直接调用
+  层实现，其余 88 个分析命令透传给 Rust CLI（`tracemiku-cli`）。不要直接调用
   `rust/target/*/tracemiku-cli`。
 - 机器可读清单：`./tracemiku capabilities` 输出全部命令、参数和默认值的 JSON，
   供 AI/脚本编程式发现能力。新增命令后该清单自动更新（由 clap 生成）。
@@ -29,8 +29,8 @@
 | `meta` | 原始 `/api/meta` 响应 | 与 `stats` 的差别见各自 `--help` |
 | `list` | 列 run 或 run 下的 calls | Python 层实现，默认人类可读表，`--json` 输出 JSON |
 | `info` | run/per-call 元信息 | Python 层实现；`--json` 转发 Rust JSON 输出 |
-| `bg-status` | 后台反编译任务状态 | 配合 `decomp-status` 使用 |
-| `decomp-status` | 反编译任务状态 | |
+| `bg-status` | 后台索引构建状态 | 配合 `decomp-status` 使用 |
+| `decomp-status` | BN sidecar 状态 | |
 
 ```bash
 ./tracemiku capabilities | python3 -m json.tool | head
@@ -91,7 +91,7 @@
 | `backtrace` | 指定位置的调用回溯 | |
 
 ```bash
-./tracemiku cfg <call_dir> --fn trace:F0
+./tracemiku cfg <call_dir> --fn sym:f_root
 ./tracemiku coverage <call_dir> --fn sub_7f10
 ./tracemiku indirect-targets <call_dir> --so libfoo.so --off 0x1234
 ```
@@ -231,31 +231,18 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 `byte-writer-map` / `output-map` / `output-backtrace` 只有在开启 VM 链分析时
 （如 `--vm-chain-steps`、`--tree-depth`）才要求这些参数。
 
-## 13. 反编译与 IL
+## 13. Binary Ninja 集成
+
+反编译统一走 Binary Ninja sidecar（外部反编译器）；本地自研反编译管线已移除。
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
-| `dec-summary` | 反编译 summary | `GET /api/dec/summary` |
-| `dec-fn` | 单函数反编译 markdown | `GET /api/dec/fn/{id}` |
-| `dec-models` | 反编译模型列表 | |
-| `llil-pipeline` | 完整 LLIL→MLIL→HLIL 流水线 | POST |
-| `llil-render` | IL 渲染 | POST |
 | `hlil-for-pc` | Binary Ninja HLIL（按 PC） | 需要 BN sidecar 与目标 SO |
 | `hlil-for-fn` | Binary Ninja HLIL（按函数） | 需要 BN sidecar 与目标 SO |
 | `bn-cfg-for-pc` | Binary Ninja CFG（按 PC） | 需要 BN sidecar 与目标 SO |
 | `bn-cfg-svg-for-pc` | Binary Ninja CFG 的 SVG | 需要 BN sidecar 与目标 SO |
 | `bn-sidecar-status` | BN sidecar 状态 | |
-| `decomp-status` / `bg-status` | 反编译任务状态 | 见第 1 节 |
-
-Python 层另有 `./tracemiku dec <call_dir>`：把反编译结果按 tier 落盘成 markdown
-目录（`--summary`/`--fn` 可直接打印），是 LLM 消费的 facade；查询单函数 JSON 时
-优先 `dec-summary`/`dec-fn`。
-
-```bash
-./tracemiku dec-summary <call_dir>
-./tracemiku dec-fn <call_dir> --fn trace:F0
-./tracemiku dec <call_dir> --summary
-```
+| `decomp-status` / `bg-status` | BN sidecar 与后台索引状态 | 见第 1 节 |
 
 ## 14. 观察点、函数与 fork
 
@@ -300,16 +287,14 @@ Python 层另有 `./tracemiku dec <call_dir>`：把反编译结果按 tier 落�
 
 ```bash
 ./tracemiku api <call_dir> /api/backtrace --method GET -p idx=1000
-./tracemiku api <call_dir> /api/llil/render --method POST --json-body '{...}'
+./tracemiku api <call_dir> /api/diff-traces --method POST --json-body '{...}'
 ```
 
 server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）；需要完整路由表时以
 `./tracemiku capabilities` 与 server OpenAPI 为准。仅由 server 暴露、无专用 CLI
 命令的接口：
 
-- `/api/llil/llm`：可选 LLM 调用路由（本地分析不依赖 LLM）
 - `/v1/chat/completions`：OpenAI 兼容聊天接口
-- `/ws/jobs`：任务状态 WebSocket（前端使用）
 
 这些接口通过 `./tracemiku api <call_dir> <route>` 访问。
 
@@ -324,8 +309,8 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 - “静态分析说这里有跳转，实际跳哪” → `indirect-targets`；函数级路径 → `coverage`。
 - “发现动态 VM 解释器” → 先用 `ollvm-detect-vm` 初筛，再按 profile 用 `vm-ops`
   聚合、`vm-back*` 回溯。
-- “给 LLM 准备函数上下文” → `dec <call_dir> --tier hot` 落盘 markdown，或
-  `dec-summary`/`dec-fn` 拿 JSON/markdown。
+- “给 LLM 准备函数上下文” → 用 `records`/`fn-summary`/`cfg` 拼 JSON，或经
+  BN sidecar 的 `hlil-for-fn` 拿反编译文本。
 
 ## 17. Web UI 面板
 
@@ -342,7 +327,7 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 | Memory / Strings | 内存与字符串及来源 |
 | Taint / Slice | 污点与依赖切片 |
 | Crypto | 密码学扫描结果 |
-| Decompiler / PseudoC / HLIL | 反编译与伪代码 |
+| HLIL | Binary Ninja 反编译参考 |
 | Functions / SO Filter / Meta | 函数、模块与元信息 |
 | Forks / Settings | fork 事件与界面设置 |
 
@@ -350,13 +335,10 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 
 | 文件 | 用途 | 备注 |
 |---|---|---|
-| `tools/capture_sign_headers.js` | Frida 脚本：抓 OkHttp/HttpURLConnection 签名头 | 通用头名模式，与采集器独立 |
 | `tools/native_sign_hooks_v4.js` | Frida 脚本：native 签名 SO hook 事件 | |
-| `tools/native_sign_scan.py` | Python 封装：hook native crypto/签名 SO | |
 | `tools/spawn_hook.py` | spawn 注入通用运行器 | `python tools/spawn_hook.py <pkg> <hook.js>` |
-| `tools/test_hooks_interact.py` | hook 交互测试辅助 | |
 | `tools/vm_replay_plan_eval.py` | 消费 `vm-ops --replay-plan` 输出的独立评估器 | 自带 `--verify-emitted-python` |
-| `tools/hooks/*.json` | 目标相关 hook/type spec | 目标配置的唯一允许位置之一 |
+| `tools/hooks/*.json` | 目标相关 hook/type spec（如 `libart_jni.json`） | 目标配置的唯一允许位置之一 |
 | `examples/llm_cookbook.py` | LLM 可选能力示例 | |
 | `examples/<target>/` | 目标示例配置与算法验证 | 目标知识只能放这里或 `tools/hooks/` |
 
@@ -370,7 +352,6 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 | `TODO.md` | 未完成路线图（唯一 backlog） |
 | `docs/PER_CALL_TRACE_DESIGN.md` | trace.bin/meta.json 数据契约 |
 | `docs/memory-completeness-design.md` | MemShadow 来源模型与消费者规则 |
-| `docs/trace-decompiler-design.md` | TraceIR / 本地三层 IL / trace 增强 IL 三条路径 |
 | `docs/anti-detection-catalog.md` | 设备采集反检测层次与故障分类 |
 | `tracer/README.md` | 设备端 agent 入口与数据通路 |
 | `rust/README.md` | Rust 工作区 crate 与开发约束 |

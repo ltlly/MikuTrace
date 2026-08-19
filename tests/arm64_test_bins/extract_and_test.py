@@ -3,8 +3,9 @@
 import subprocess, struct, os, sys, json, tempfile
 from pathlib import Path
 
-ELF = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins/decomp_test_suite")
-WORK = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins")
+WORK = Path(__file__).resolve().parent
+ELF = WORK / "decomp_test_suite"
+REPO_ROOT = WORK.parent.parent
 
 # 1. Get function addresses using nm
 nm_out = subprocess.check_output(["aarch64-linux-gnu-nm", str(ELF)], text=True)
@@ -84,7 +85,7 @@ for name, insns in sorted(func_insns.items()):
 test_path = WORK / "decomp_verify_tests.rs"
 test_path.write_text(rust_test)
 print(f"\nWrote {len(func_insns)} tests to {test_path}")
-print(f"Run: cargo test --manifest-path /home/ltlly/Code/traceMiku/rust/Cargo.toml -p tracemiku-core --test decomp_verify_tests -- --nocapture")
+print(f"Run: cargo test --manifest-path {REPO_ROOT / 'rust' / 'Cargo.toml'} -p tracemiku-core --test decomp_verify_tests -- --nocapture")
 
 # 6. Also write summary JSON
 summary = {}

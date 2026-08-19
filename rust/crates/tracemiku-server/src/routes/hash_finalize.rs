@@ -46,25 +46,12 @@ pub struct HashFinalizeResponse {
 pub async fn hash_finalize_detect_handler(
     State(state): State<AppState>,
     Query(q): Query<HashFinalizeQuery>,
-) -> Json<HashFinalizeResponse> {
+) -> Result<Json<HashFinalizeResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || hash_finalize_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "hash finalize worker failed: {err}");
-                HashFinalizeResponse {
-                    status: "error",
-                    window: 0,
-                    min_size: 0,
-                    limit: 0,
-                    count: 0,
-                    returned: 0,
-                    truncated: false,
-                    candidates: Vec::new(),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || hash_finalize_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("hash finalize", &err))?;
+    Ok(Json(response))
 }
 
 fn hash_finalize_response(

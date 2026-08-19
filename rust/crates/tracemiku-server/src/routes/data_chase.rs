@@ -59,24 +59,12 @@ pub struct DataChaseResponse {
 pub async fn data_chase_handler(
     State(state): State<AppState>,
     Query(q): Query<DataChaseQuery>,
-) -> Json<DataChaseResponse> {
+) -> Result<Json<DataChaseResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || data_chase_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "data chase worker failed: {err}");
-                DataChaseResponse {
-                    from_idx: 0,
-                    reg: String::new(),
-                    count: 0,
-                    steps: Vec::new(),
-                    requested_max_steps: 0,
-                    max_steps_used: 0,
-                    stopped_at_max: false,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || data_chase_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("data chase", &err))?;
+    Ok(Json(response))
 }
 
 fn data_chase_response(

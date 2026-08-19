@@ -5,6 +5,7 @@ import type { TaintGraph, TaintRow } from "~/api/types";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import type { GuardHandle } from "~/utils/guarded";
 import { useGuarded } from "~/utils/guarded";
+import { createVirtualList } from "~/utils/virtualList";
 import ProvenanceGraph, { type ProvEdge, type ProvNode } from "~/utils/provenanceGraph";
 
 export type TaintOverlayDirection = "forward" | "backward";
@@ -12,6 +13,12 @@ type Direction = TaintOverlayDirection;
 type ViewMode = "tree" | "timeline" | "table";
 const TAINT_RETRY_MS = 500;
 const MAX_TAINT_ROWS = 5000;
+/// 表格/树视图固定行高（虚拟渲染；行高变化需同步 analysis.css）。
+const TAINT_TABLE_ROW_HEIGHT = 20;
+const TAINT_TREE_ROW_HEIGHT = 40;
+/// taint-table 网格列模板；showDepth 时追加 call depth 列。
+const TAINT_TABLE_COLS =
+  "64px 104px minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1.2fr) 72px minmax(0, 1.4fr) 64px";
 
 interface RunRequest {
   token: number;
@@ -336,6 +343,24 @@ export default function TaintPanel(props: TaintPanelProps) {
     return `showing first ${graph.nodes.length}/${graph.node_count} nodes and ${graph.edges.length}/${graph.edge_count} edges`;
   });
 
+  // 5000 行上限同样只做窗口渲染：表格视图与树视图各一个滚动容器。
+  const tableList = createVirtualList(
+    () => result()?.rows.length ?? 0,
+    TAINT_TABLE_ROW_HEIGHT,
+  );
+  const tableWindowItems = createMemo(() => {
+    const w = tableList.window();
+    return (result()?.rows ?? []).slice(w.start, w.end);
+  });
+  const treeList = createVirtualList(
+    () => result()?.rows.length ?? 0,
+    TAINT_TREE_ROW_HEIGHT,
+  );
+  const treeWindowItems = createMemo(() => {
+    const w = treeList.window();
+    return (result()?.rows ?? []).slice(w.start, w.end);
+  });
+
   const parentLabel = (row: TaintRow): string => {
     const parents = row.parent_idxs ?? [];
     if (!parents.length) return "seed";
@@ -514,38 +539,47 @@ export default function TaintPanel(props: TaintPanelProps) {
               </div>
             </Show>
             <Show when={viewMode() !== "table"} fallback={
-              <table class="taint-table">
-                <thead>
-                  <tr>
-                    <th>idx</th>
-                    <th>pc</th>
-                    <th>func</th>
-                    <th>asm</th>
-                    <th>{r().direction === "forward" ? "why" : "via"}</th>
-                    <th>edge</th>
-                    <th>parents</th>
-                    <th>taint depth</th>
-                    {r().showDepth ? <th>call depth</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={r().rows}>
-                    {(row) => (
-                      <tr onClick={() => props.onSelect(row.idx)}>
-                        <td>{row.idx}</td>
-                        <td class="dim small">{row.pc}</td>
-                        <td>{row.func ?? "?"}</td>
-                        <td>{row.asm}</td>
-                        <td>{labelFor(row)}</td>
-                        <td>{edgeLabel(row)}</td>
-                        <td>{parentLabel(row)}</td>
-                        <td>{row.taint_depth ?? ""}</td>
-                        {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
+              <div class="vscroll taint-vscroll" ref={tableList.ref} onScroll={tableList.onScroll}>
+                <table
+                  class="taint-table"
+                  style={{ "--taint-cols": r().showDepth ? `${TAINT_TABLE_COLS} 64px` : TAINT_TABLE_COLS }}
+                >
+                  <thead>
+                    <tr>
+                      <th>idx</th>
+                      <th>pc</th>
+                      <th>func</th>
+                      <th>asm</th>
+                      <th>{r().direction === "forward" ? "why" : "via"}</th>
+                      <th>edge</th>
+                      <th>parents</th>
+                      <th>taint depth</th>
+                      {r().showDepth ? <th>call depth</th> : null}
+                    </tr>
+                  </thead>
+                  <tbody class="vbody" style={{ height: `${tableList.window().height}px` }}>
+                    <For each={tableWindowItems()}>
+                      {(row, i) => (
+                        <tr
+                          class="vrow"
+                          style={{ top: `${(tableList.window().start + i()) * TAINT_TABLE_ROW_HEIGHT}px` }}
+                          onClick={() => props.onSelect(row.idx)}
+                        >
+                          <td>{row.idx}</td>
+                          <td class="dim small">{row.pc}</td>
+                          <td>{row.func ?? "?"}</td>
+                          <td>{row.asm}</td>
+                          <td>{labelFor(row)}</td>
+                          <td>{edgeLabel(row)}</td>
+                          <td>{parentLabel(row)}</td>
+                          <td>{row.taint_depth ?? ""}</td>
+                          {r().showDepth ? <td>{row.frame_depth ?? ""}</td> : null}
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
             }>
               <>
                 <Show when={viewMode() === "tree"}>
@@ -558,32 +592,35 @@ export default function TaintPanel(props: TaintPanelProps) {
                     empty="no taint dependency edges"
                   />
                 </Show>
-                <div class="taint-tree">
-                  <For each={r().rows}>
-                    {(row) => (
-                      <button
-                        type="button"
-                        class="taint-tree-row"
-                        classList={{ dependency: viewMode() === "tree" }}
-                        style={{
-                          "padding-left": viewMode() === "tree"
-                            ? taintDepthIndent(row)
-                            : callDepthIndent(row),
-                        }}
-                        onClick={() => props.onSelect(row.idx)}
-                      >
-                        <span class="taint-tree-idx">#{row.idx}</span>
-                        <span class="taint-tree-fn dim small">{row.func ?? "?"}</span>
-                        <code class="taint-tree-asm">{row.asm}</code>
-                        <span class="taint-tree-why dim small">
-                          {labelFor(row)}
-                          <Show when={viewMode() === "tree"}>
-                            {" · "}{parentLabel(row)}
-                          </Show>
-                        </span>
-                      </button>
-                    )}
-                  </For>
+                <div class="vscroll taint-vscroll" ref={treeList.ref} onScroll={treeList.onScroll}>
+                  <div class="taint-tree vbody" style={{ height: `${treeList.window().height}px` }}>
+                    <For each={treeWindowItems()}>
+                      {(row, i) => (
+                        <button
+                          type="button"
+                          class="taint-tree-row vrow"
+                          classList={{ dependency: viewMode() === "tree" }}
+                          style={{
+                            top: `${(treeList.window().start + i()) * TAINT_TREE_ROW_HEIGHT}px`,
+                            "padding-left": viewMode() === "tree"
+                              ? taintDepthIndent(row)
+                              : callDepthIndent(row),
+                          }}
+                          onClick={() => props.onSelect(row.idx)}
+                        >
+                          <span class="taint-tree-idx">#{row.idx}</span>
+                          <span class="taint-tree-fn dim small">{row.func ?? "?"}</span>
+                          <code class="taint-tree-asm">{row.asm}</code>
+                          <span class="taint-tree-why dim small">
+                            {labelFor(row)}
+                            <Show when={viewMode() === "tree"}>
+                              {" · "}{parentLabel(row)}
+                            </Show>
+                          </span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
                 </div>
               </>
             </Show>

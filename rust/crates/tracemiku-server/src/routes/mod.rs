@@ -12,11 +12,6 @@ pub mod coverage;
 pub mod crypto_analysis;
 pub mod crypto_scan;
 pub mod data_chase;
-pub mod dec_fn;
-pub mod dec_llm_call;
-pub mod dec_models;
-pub mod dec_options;
-pub mod dec_summary;
 pub mod dep_graph;
 pub mod diff_traces;
 pub mod fn_summary;
@@ -34,9 +29,6 @@ pub mod jni_events;
 pub mod jni_strings;
 pub mod jobj_history;
 pub mod last_write_of_reg;
-pub mod llil_llm;
-pub mod llil_pipeline;
-pub mod llil_render;
 pub mod mem_dump;
 pub mod mem_export;
 pub mod mem_flow;
@@ -66,10 +58,28 @@ use axum::Router;
 
 use crate::state::AppState;
 
+/// spawn_blocking worker panic/cancel 的统一错误类型（500 + 结构化 JSON）。
+pub(crate) type WorkerFailure = (axum::http::StatusCode, axum::Json<serde_json::Value>);
+
+/// worker panic 的统一响应：500 + 结构化错误 JSON。
+///
+/// panic 不允许被吞成 200 的"正常"响应（空数据/伪错误字段），fallback
+/// 也不允许把重活拉回 async reactor；两种情况都直接失败并保留现场。
+pub(crate) fn worker_panic_response(task: &str, err: &tokio::task::JoinError) -> WorkerFailure {
+    tracing::warn!(target: "tracemiku-server", "{task} worker failed: {err}");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(serde_json::json!({
+            "status": "error",
+            "error": format!("{task} worker failed"),
+            "panic": err.is_panic(),
+        })),
+    )
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/openapi.json", get(api_infra::openapi_handler))
-        .route("/ws/jobs", get(api_infra::jobs_ws_handler))
         .route("/api/meta", get(meta::meta_handler))
         .route(
             "/api/analysis-index",
@@ -154,19 +164,6 @@ pub fn router(state: AppState) -> Router {
             "/api/ollvm-detect-vm",
             get(ollvm_detect_vm::ollvm_detect_vm_handler),
         )
-        .route("/api/dec/summary", get(dec_summary::dec_summary_handler))
-        .route("/api/dec/fn/:fn_id", get(dec_fn::dec_fn_handler))
-        .route(
-            "/api/dec/llm-call",
-            post(dec_llm_call::dec_llm_call_handler),
-        )
-        .route("/api/dec/models", get(dec_models::dec_models_handler))
-        .route("/api/llil/llm", post(llil_llm::llil_llm_handler))
-        .route("/api/llil/render", post(llil_render::llil_render_handler))
-        .route(
-            "/api/llil/pipeline",
-            post(llil_pipeline::llil_pipeline_handler),
-        )
         .route(
             "/api/last-write-of-reg",
             get(last_write_of_reg::last_write_of_reg_handler),
@@ -221,4 +218,65 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/*path", any(api_infra::api_not_found_handler))
         .with_state(state)
+}
+
+/// Single source of truth for "does this request require a warm MemShadow".
+///
+/// Mirrors the routes that call `memshadow_ready_or_block_if_idle()`: warming
+/// the sidecar before dispatching avoids the cold-load penalty (or the
+/// Building error) on the first CLI call. Parameter-dependent routes inspect
+/// query/body flags the same way their handlers do.
+pub fn route_requires_memshadow(path: &str, body: Option<&serde_json::Value>) -> bool {
+    let endpoint = path.split('?').next().unwrap_or(path);
+    if matches!(endpoint, "/api/backward-taint" | "/api/forward-taint") {
+        return path.contains("through_mem=true");
+    }
+    if endpoint == "/api/mem-writes-in-range" {
+        return path.contains("src_byte=");
+    }
+    if endpoint == "/api/hash-input-search" {
+        return body
+            .and_then(|v| v.get("search_in_mem"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    }
+    if matches!(
+        endpoint,
+        "/api/auto-phase-detect"
+            | "/api/crypto-analysis"
+            | "/api/crypto-scan"
+            | "/api/hash-finalize-detect"
+            | "/api/jni-strings"
+            | "/api/mem-diff"
+            | "/api/mem-dump"
+            | "/api/mem-export"
+            | "/api/mem-flow"
+            | "/api/find-mem-pattern"
+            | "/api/string-provenance"
+            | "/api/strings"
+            | "/api/reg-timeline"
+            | "/api/idxs-touching-addr"
+            | "/api/idxs-touching-range"
+    ) {
+        return true;
+    }
+    endpoint == "/api/query"
+        && [
+            "kind=mem",
+            "kind=memory",
+            "kind=read",
+            "kind=reads",
+            "kind=reader",
+            "kind=readers",
+            "kind=write",
+            "kind=writes",
+            "kind=writer",
+            "kind=writers",
+            "kind=string",
+            "kind=strings",
+            "kind=provenance",
+            "kind=prov",
+        ]
+        .iter()
+        .any(|needle| path.contains(needle))
 }

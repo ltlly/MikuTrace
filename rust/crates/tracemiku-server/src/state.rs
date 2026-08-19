@@ -1,28 +1,26 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use tracemiku_core::call_analysis::CallAnalysis;
+use serde_json::json;
 use tracemiku_core::cfg::build_cfg;
 use tracemiku_core::disasm::decode;
 use tracemiku_core::forward_dep_tree::DependencyUsers;
 use tracemiku_core::hashfin::{HashFinalizeCandidate, HashFinalizeIndex};
 use tracemiku_core::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use tracemiku_core::prelude::{
-    build_call_tree_indexed, build_frame_depth_map, build_function_index, build_trace_ir,
-    AnalysisIndex, CallNode, FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, TopIR,
-    Trace, TraceMeta, CFG,
+    build_call_tree_indexed, build_frame_depth_map, build_function_index, AnalysisIndex, CallNode,
+    FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
 };
 use tracemiku_core::symbols::auto_known_symbols_with_modules;
 
-use crate::bn_sidecar::BnSidecarManager;
-use crate::jni_scan::{parse_int, scan_jni_calls, JniCallScan};
+use crate::bn_sidecar::{BnSidecarManager, BnStatusHandle};
+use crate::jni_scan::{scan_jni_calls, JniCallScan};
 use crate::phase_scan::{build_auto_phases, PhaseEntry};
+use crate::routes::parse::parse_dec_u64;
 
 const EAGER_MEMSHADOW_MAX_RECORDS: usize = 1_000_000;
 const MEMSHADOW_NOT_STARTED: u8 = 0;
@@ -30,37 +28,15 @@ const MEMSHADOW_LOADING: u8 = 1;
 const MEMSHADOW_READY: u8 = 2;
 const INTERACTIVE_WARM_DELAY_MS: u64 = 250;
 const INTERACTIVE_WARM_MAX_RECORDS: usize = 1_500_000;
-const TRACE_IR_CACHE_MAX_ENTRIES: usize = 2;
 const BN_RESPONSE_CACHE_VERSION: u64 = 1;
 const BN_RESPONSE_CACHE_FILE: &str = "trace.bin.bn-sidecar-cache.v1.json";
+/// cfg_svg_cache 写入侧上限：条目数与单条 SVG 字节数。
+const CFG_SVG_CACHE_MAX_ENTRIES: usize = 64;
+/// ollvm_cache 写入侧上限：不同 (min_entries, threshold) 组合的缓存条数。
+const OLLVM_CACHE_MAX_ENTRIES: usize = 16;
 
 /// Cached register timelines: reg name → ordered (record_idx, value) pairs.
 pub(crate) type RegTimelineCache = HashMap<String, Arc<Vec<(usize, u64)>>>;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TraceIrBuildOptions {
-    pub hook_paths: Vec<PathBuf>,
-    pub with_memshadow: bool,
-    pub split_top_k: usize,
-    pub split_min_records: usize,
-}
-
-impl Default for TraceIrBuildOptions {
-    fn default() -> Self {
-        Self {
-            hook_paths: Vec::new(),
-            with_memshadow: false,
-            split_top_k: 10,
-            split_min_records: 50,
-        }
-    }
-}
-
-impl TraceIrBuildOptions {
-    pub fn uses_cached_default(&self) -> bool {
-        self == &Self::default()
-    }
-}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -87,18 +63,16 @@ pub struct AppStateInner {
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
     pub(crate) crypto_analysis: OnceLock<crate::routes::crypto_analysis::CryptoAnalysisResponse>,
-    call_analysis: OnceLock<CallAnalysis>,
     hash_finalize_index: OnceLock<HashFinalizeIndex>,
-    top_ir: OnceLock<TopIR>,
-    type_spec_paths: Vec<PathBuf>,
-    pub llm_cache: Mutex<HashMap<String, serde_json::Value>>,
-    pub cfg_svg_cache: Mutex<HashMap<String, CfgSvgCached>>,
-    ollvm_cache: Mutex<HashMap<OllvmCacheKey, Vec<OllvmFinding>>>,
+    pub cfg_svg_cache: Mutex<CfgSvgCache>,
+    ollvm_cache: Mutex<OllvmCache>,
     auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
-    trace_ir_cache: Mutex<Vec<(TraceIrBuildOptions, Arc<TopIR>)>>,
     pub(crate) reg_timeline_cache: Mutex<RegTimelineCache>,
     pub bn_sidecar: Mutex<BnSidecarManager>,
-    pub(crate) bn_response_cache: Mutex<HashMap<String, serde_json::Value>>,
+    /// BN sidecar 的无锁 status 快照：async handler 直接读它，
+    /// 不与 `bn_sidecar` Mutex（request 持锁可达请求超时）竞争。
+    pub bn_sidecar_status: BnStatusHandle,
+    pub(crate) bn_response_cache: Mutex<BnResponseCache>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +80,65 @@ pub struct CfgSvgCached {
     pub svg: String,
     pub block_count: usize,
     pub total_block_count: usize,
+}
+
+/// cfg_svg 缓存：写入侧同时执行条目数 FIFO 淘汰与单条 SVG 尺寸上限，
+/// 避免无上限缓存随请求组合（fn 过滤 + force）无限增长。
+#[derive(Debug, Default)]
+pub struct CfgSvgCache {
+    entries: HashMap<String, CfgSvgCached>,
+    order: VecDeque<String>,
+}
+
+impl CfgSvgCache {
+    pub fn get(&self, key: &str) -> Option<&CfgSvgCached> {
+        self.entries.get(key)
+    }
+
+    /// 超过尺寸上限的 SVG 不入缓存（读侧仍可正常返回本次渲染结果）。
+    pub fn insert(&mut self, key: String, cached: CfgSvgCached) {
+        if cached.svg.len() > crate::routes::cfg_svg::AUTO_CACHED_MAX_SVG_BYTES {
+            return;
+        }
+        if self.entries.insert(key.clone(), cached).is_none() {
+            self.order.push_back(key);
+        }
+        while self.order.len() > CFG_SVG_CACHE_MAX_ENTRIES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+/// ollvm 检测结果缓存：threshold 量化入 key + FIFO 条目上限。
+#[derive(Debug, Default)]
+struct OllvmCache {
+    entries: HashMap<OllvmCacheKey, Vec<OllvmFinding>>,
+    order: VecDeque<OllvmCacheKey>,
+}
+
+impl OllvmCache {
+    fn get(&self, key: &OllvmCacheKey) -> Option<&Vec<OllvmFinding>> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: OllvmCacheKey, findings: Vec<OllvmFinding>) {
+        if !self.entries.contains_key(&key) {
+            self.order.push_back(key);
+        }
+        self.entries.insert(key, findings);
+        while self.order.len() > OLLVM_CACHE_MAX_ENTRIES {
+            match self.order.pop_front() {
+                Some(oldest) => {
+                    self.entries.remove(&oldest);
+                }
+                None => break,
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +159,77 @@ pub struct AsmSearchGroup {
     pub asm: String,
 }
 
+/// BN sidecar 响应缓存：容量上限 + 插入序 FIFO 淘汰 + 落盘防抖。
+///
+/// 成功响应全量序列化写盘较重，因此只在距上次落盘超过
+/// `BN_CACHE_PERSIST_DEBOUNCE` 时写一次；退出时（`AppStateInner::drop`）
+/// 若仍有未落盘改动则补写一次。
+#[derive(Debug)]
+pub(crate) struct BnResponseCache {
+    entries: HashMap<String, serde_json::Value>,
+    order: VecDeque<String>,
+    dirty: bool,
+    last_persist: Option<Instant>,
+}
+
+const BN_CACHE_PERSIST_DEBOUNCE: Duration = Duration::from_secs(30);
+const BN_RESPONSE_CACHE_MAX_ENTRIES: usize = 256;
+
+impl BnResponseCache {
+    fn from_loaded(entries: HashMap<String, serde_json::Value>) -> Self {
+        // 磁盘载入的条目按 map 迭代序作为初始 FIFO 序，保证淘汰有序。
+        let order = entries.keys().cloned().collect();
+        Self {
+            entries,
+            order,
+            dirty: false,
+            last_persist: None,
+        }
+    }
+
+    pub(crate) fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        self.entries.get(key)
+    }
+
+    /// 供落盘序列化使用：按 FIFO 序返回条目（serde_json Map 保序即可）。
+    fn entries_snapshot(&self) -> &HashMap<String, serde_json::Value> {
+        &self.entries
+    }
+
+    fn insert(&mut self, key: String, value: serde_json::Value) {
+        if !self.entries.contains_key(&key) {
+            self.order.push_back(key.clone());
+        }
+        self.entries.insert(key, value);
+        self.dirty = true;
+        while self.order.len() > BN_RESPONSE_CACHE_MAX_ENTRIES {
+            match self.order.pop_front() {
+                Some(oldest) => {
+                    self.entries.remove(&oldest);
+                }
+                None => break,
+            }
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// 是否到达防抖落盘时机（脏且距上次落盘超过防抖间隔）。
+    fn persist_due(&self) -> bool {
+        self.dirty
+            && self
+                .last_persist
+                .is_none_or(|at| at.elapsed() >= BN_CACHE_PERSIST_DEBOUNCE)
+    }
+
+    fn mark_persisted(&mut self) {
+        self.dirty = false;
+        self.last_persist = Some(Instant::now());
+    }
+}
+
 impl AppState {
     pub fn load(trace_dir: PathBuf) -> anyhow::Result<Self> {
         let meta = TraceMeta::load(&trace_dir)?;
@@ -144,8 +248,7 @@ impl AppState {
             .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
             .unwrap_or(0);
         let mut known_offsets = parse_known_offsets(&trace_dir).unwrap_or_default();
-        // Resolve repo root once; reused below for examples overlay AND for
-        // tools/hooks/ type-spec auto-discovery (M3-ι2a Task 3).
+        // Resolve repo root once for the examples known-offsets overlay.
         let repo_root = find_repo_root(&trace_dir);
         // Merge examples/<so>/known_offsets.json overlay if present. Static
         // (per-call meta.json) WIN; examples WIN over auto.
@@ -201,18 +304,7 @@ impl AppState {
 
         let cfg = build_cfg(&trace);
         let function_index = build_function_index(&symbols, Some(&cfg));
-        // Auto-discover type-spec JSONs (M3-ι2a Task 3): tools/hooks/*.json
-        // with `kind == "type_specs"` plus examples/<so>/type_specs.json.
-        let spec_paths: Vec<std::path::PathBuf> = if let Some(root) = repo_root.as_ref() {
-            let so_name = meta
-                .module
-                .as_ref()
-                .and_then(|m| m.name.strip_suffix(".so").map(|s| s.to_string()));
-            discover_type_spec_paths(root, so_name.as_deref())
-        } else {
-            Vec::new()
-        };
-        let bn_response_cache = load_bn_response_cache(&trace);
+        let bn_response_cache = BnResponseCache::from_loaded(load_bn_response_cache(&trace));
         let memshadow = OnceLock::new();
         let memshadow_status = AtomicU8::new(MEMSHADOW_NOT_STARTED);
         if trace.len() <= EAGER_MEMSHADOW_MAX_RECORDS {
@@ -226,6 +318,11 @@ impl AppState {
                 "loaded eager MemShadow"
             );
         }
+
+        let bn_sidecar = BnSidecarManager::from_env_with_default_base(
+            (primary_base != 0).then_some(primary_base),
+        );
+        let bn_sidecar_status = bn_sidecar.status_handle();
 
         let inner = Arc::new(AppStateInner {
             trace_dir,
@@ -247,19 +344,13 @@ impl AppState {
             asm_groups: OnceLock::new(),
             jni_calls: OnceLock::new(),
             crypto_analysis: OnceLock::new(),
-            call_analysis: OnceLock::new(),
             hash_finalize_index: OnceLock::new(),
-            top_ir: OnceLock::new(),
-            type_spec_paths: spec_paths,
-            llm_cache: Mutex::new(HashMap::new()),
-            cfg_svg_cache: Mutex::new(HashMap::new()),
-            ollvm_cache: Mutex::new(HashMap::new()),
+            cfg_svg_cache: Mutex::new(CfgSvgCache::default()),
+            ollvm_cache: Mutex::new(OllvmCache::default()),
             auto_phase_cache: Mutex::new(HashMap::new()),
-            trace_ir_cache: Mutex::new(Vec::new()),
             reg_timeline_cache: Mutex::new(HashMap::new()),
-            bn_sidecar: Mutex::new(BnSidecarManager::from_env_with_default_base(
-                (primary_base != 0).then_some(primary_base),
-            )),
+            bn_sidecar: Mutex::new(bn_sidecar),
+            bn_sidecar_status,
             bn_response_cache: Mutex::new(bn_response_cache),
         });
 
@@ -340,85 +431,64 @@ fn load_bn_response_cache(trace: &Trace) -> HashMap<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
+/// 把当前 BN 响应缓存原子落盘（tmp + rename），并重置防抖状态。
+fn persist_bn_response_cache(inner: &AppStateInner) {
+    let path = bn_response_cache_path(&inner.trace);
+    let tmp_path = path.with_file_name(format!(
+        "{}.tmp.{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(BN_RESPONSE_CACHE_FILE),
+        std::process::id()
+    ));
+    let doc = {
+        let mut cache = lock_or_recover(&inner.bn_response_cache);
+        let doc = json!({
+            "version": BN_RESPONSE_CACHE_VERSION,
+            "trace_bytes": inner.trace.raw().len() as u64,
+            "entries": cache.entries_snapshot(),
+        });
+        cache.mark_persisted();
+        doc
+    };
+    let write_result = (|| -> std::io::Result<()> {
+        let raw = serde_json::to_vec(&doc).map_err(std::io::Error::other)?;
+        std::fs::write(&tmp_path, raw)?;
+        std::fs::rename(&tmp_path, &path)?;
+        Ok(())
+    })();
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        tracing::warn!(
+            target: "tracemiku-server",
+            path = %path.display(),
+            "failed to persist BN sidecar cache: {err}"
+        );
+    }
+}
+
+/// 缓存锁统一走中毒恢复：锁中毒不允许让 handler panic。
+pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+impl Drop for AppStateInner {
+    fn drop(&mut self) {
+        // 退出兜底：防抖窗口内未落盘的缓存改动在这里补写。
+        if self
+            .bn_response_cache
+            .lock()
+            .map(|cache| cache.is_dirty())
+            .unwrap_or(false)
+        {
+            persist_bn_response_cache(self);
+        }
+    }
+}
+
 impl AppStateInner {
-    /// Lazily build TraceIR only for decompile endpoints.
-    ///
-    /// Large traces need Records/Memory/CFG to become interactive before the
-    /// heavyweight decompile summary exists. Defaults match Python webui
-    /// (webui/server.py:2734-2735).
-    pub fn top_ir(&self) -> &TopIR {
-        self.top_ir.get_or_init(|| {
-            build_trace_ir(
-                &self.trace,
-                &self.meta,
-                &self.symbols,
-                &self.cfg,
-                Some(&self.index),
-                10,
-                50,
-                &self.type_spec_paths,
-                // Keep the decompiler first paint independent from cold
-                // MemShadow sidecar loading on multi-GB traces. VM candidates
-                // still include hex dumps when another panel has already
-                // loaded MemShadow.
-                self.memshadow_if_ready(),
-            )
-        })
-    }
-
-    pub fn build_top_ir_with_options(&self, opts: &TraceIrBuildOptions) -> Arc<TopIR> {
-        {
-            let mut cache = self.trace_ir_cache.lock().expect("trace-ir cache poisoned");
-            if let Some(pos) = cache
-                .iter()
-                .position(|(cached_opts, _)| cached_opts == opts)
-            {
-                let (cached_opts, top) = cache.remove(pos);
-                cache.push((cached_opts, top.clone()));
-                return top;
-            }
-        }
-        let top = Arc::new(self.build_top_ir_uncached(opts));
-        let mut cache = self.trace_ir_cache.lock().expect("trace-ir cache poisoned");
-        if let Some(pos) = cache
-            .iter()
-            .position(|(cached_opts, _)| cached_opts == opts)
-        {
-            let (_, existing) = cache.remove(pos);
-            cache.push((opts.clone(), existing.clone()));
-            return existing;
-        }
-        cache.push((opts.clone(), top.clone()));
-        while cache.len() > TRACE_IR_CACHE_MAX_ENTRIES {
-            cache.remove(0);
-        }
-        top
-    }
-
-    fn build_top_ir_uncached(&self, opts: &TraceIrBuildOptions) -> TopIR {
-        let spec_paths = if opts.hook_paths.is_empty() {
-            self.type_spec_paths.as_slice()
-        } else {
-            opts.hook_paths.as_slice()
-        };
-        let memshadow = if opts.with_memshadow {
-            Some(self.memshadow())
-        } else {
-            None
-        };
-        build_trace_ir(
-            &self.trace,
-            &self.meta,
-            &self.symbols,
-            &self.cfg,
-            Some(&self.index),
-            opts.split_top_k,
-            opts.split_min_records,
-            spec_paths,
-            memshadow,
-        )
-    }
-
     pub fn memshadow(&self) -> &MemShadow {
         if let Some(mem) = self.memshadow.get() {
             self.memshadow_status
@@ -587,28 +657,30 @@ impl AppStateInner {
         })
     }
 
-    pub fn call_analysis(&self) -> &CallAnalysis {
-        self.call_analysis.get_or_init(|| {
-            tracemiku_core::call_analysis::analyze_calls(&self.trace, &self.symbols)
-        })
-    }
-
     pub fn ollvm_findings(&self, min_entries: usize, threshold: f64) -> Vec<OllvmFinding> {
         let key = OllvmCacheKey {
             min_entries,
-            threshold_bits: threshold.to_bits(),
+            threshold_bits: quantize_ollvm_threshold(threshold).to_bits(),
         };
-        if let Ok(cache) = self.ollvm_cache.lock() {
-            if let Some(findings) = cache.get(&key) {
-                return findings.clone();
-            }
+        if let Some(findings) = lock_or_recover(&self.ollvm_cache).get(&key).cloned() {
+            return findings;
         }
 
         let findings = ollvm_detect_vm_indexed(&self.trace, &self.index, min_entries, threshold);
-        if let Ok(mut cache) = self.ollvm_cache.lock() {
-            cache.entry(key).or_insert_with(|| findings.clone());
-        }
+        lock_or_recover(&self.ollvm_cache).insert(key, findings.clone());
         findings
+    }
+
+    /// 写入 BN 响应缓存；距上次落盘超过防抖间隔时同步落盘一次。
+    pub(crate) fn cache_bn_response(&self, key: String, value: serde_json::Value) {
+        let due = {
+            let mut cache = lock_or_recover(&self.bn_response_cache);
+            cache.insert(key, value);
+            cache.persist_due()
+        };
+        if due {
+            persist_bn_response_cache(self);
+        }
     }
 
     pub fn hash_finalize_candidates(
@@ -650,7 +722,17 @@ impl AppStateInner {
 }
 
 fn primary_base(inner: &AppStateInner) -> Option<u64> {
-    inner.meta.module.as_ref().and_then(|m| parse_int(&m.base))
+    inner
+        .meta
+        .module
+        .as_ref()
+        .and_then(|m| parse_dec_u64(&m.base))
+}
+
+/// 连续 threshold 参数直接入 key 会产生无限多个缓存条目；按 1e-9 量化后，
+/// 语义上等价的参数共享同一条缓存。
+fn quantize_ollvm_threshold(threshold: f64) -> f64 {
+    (threshold * 1e9).round() / 1e9
 }
 
 fn background_memshadow_enabled() -> bool {
@@ -768,45 +850,6 @@ fn parse_examples_known_offsets(
     Some(out)
 }
 
-/// Walk `<repo_root>/tools/hooks/` collecting `*.json` files where the parsed
-/// top-level `kind == "type_specs"`. Sorted alphabetically for stable order.
-/// If `so_name_no_ext` is Some, additionally appends
-/// `<repo_root>/examples/<so>/type_specs.json` when it exists. Returns
-/// absolute paths. (M3-ι2a Task 3 — auto-discovery for build_trace_ir.)
-fn discover_type_spec_paths(
-    repo_root: &std::path::Path,
-    so_name_no_ext: Option<&str>,
-) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-    let hooks_dir = repo_root.join("tools").join("hooks");
-    if let Ok(entries) = std::fs::read_dir(&hooks_dir) {
-        let mut candidates: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
-            .collect();
-        candidates.sort();
-        for path in candidates {
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-                continue;
-            };
-            if v.get("kind").and_then(|k| k.as_str()) == Some("type_specs") {
-                out.push(path);
-            }
-        }
-    }
-    if let Some(so) = so_name_no_ext {
-        let p = repo_root.join("examples").join(so).join("type_specs.json");
-        if p.is_file() {
-            out.push(p);
-        }
-    }
-    out
-}
-
 /// Find the repo root by walking up from `call_dir` looking for an `examples/`
 /// directory next to a `tracemiku` script.
 fn find_repo_root(call_dir: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -818,4 +861,66 @@ fn find_repo_root(call_dir: &std::path::Path) -> Option<std::path::PathBuf> {
         cur = parent.to_path_buf();
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        quantize_ollvm_threshold, CfgSvgCache, CfgSvgCached, CFG_SVG_CACHE_MAX_ENTRIES,
+        OLLVM_CACHE_MAX_ENTRIES,
+    };
+    use crate::routes::cfg_svg::AUTO_CACHED_MAX_SVG_BYTES;
+
+    #[test]
+    fn ollvm_threshold_quantization_collapses_nearby_values() {
+        let a = quantize_ollvm_threshold(0.5);
+        let b = quantize_ollvm_threshold(0.5 + 1e-12);
+        assert_eq!(a.to_bits(), b.to_bits());
+        assert_eq!(
+            quantize_ollvm_threshold(0.1234567891).to_bits(),
+            quantize_ollvm_threshold(0.1234567894).to_bits()
+        );
+    }
+
+    #[test]
+    fn cfg_svg_cache_evicts_oldest_beyond_entry_cap() {
+        let mut cache = CfgSvgCache::default();
+        for i in 0..=(CFG_SVG_CACHE_MAX_ENTRIES) {
+            cache.insert(
+                format!("fn_{i}"),
+                CfgSvgCached {
+                    svg: "<svg/>".to_string(),
+                    block_count: 1,
+                    total_block_count: 1,
+                },
+            );
+        }
+        assert!(cache.get("fn_0").is_none(), "oldest entry must be evicted");
+        assert!(cache
+            .get(&format!("fn_{CFG_SVG_CACHE_MAX_ENTRIES}"))
+            .is_some());
+    }
+
+    #[test]
+    fn cfg_svg_cache_rejects_oversized_svg() {
+        let mut cache = CfgSvgCache::default();
+        cache.insert(
+            "huge".to_string(),
+            CfgSvgCached {
+                svg: "x".repeat(AUTO_CACHED_MAX_SVG_BYTES + 1),
+                block_count: 1,
+                total_block_count: 1,
+            },
+        );
+        assert!(
+            cache.get("huge").is_none(),
+            "oversized SVG must not be cached"
+        );
+    }
+
+    #[test]
+    fn cache_caps_are_bounded() {
+        assert_eq!(CFG_SVG_CACHE_MAX_ENTRIES, 64);
+        assert_eq!(OLLVM_CACHE_MAX_ENTRIES, 16);
+    }
 }

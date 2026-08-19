@@ -105,6 +105,48 @@ pub(super) async fn route_get_json_value_on(
     Ok(value)
 }
 
+/// route_get_json 的 POST 对应物；router 语义与 GET 版一致。
+pub(super) async fn route_post_json(
+    trace_dir: PathBuf,
+    path: String,
+    body: serde_json::Value,
+) -> anyhow::Result<()> {
+    let app = build_cli_router(trace_dir, &path, Some(&body))?;
+    let value = route_post_json_value_on(&app, path, body).await?;
+    print_pretty(&value)
+}
+
+/// route_get_json_value_on 的 POST 对应物：调用方持有 router，可在一次
+/// AppState 加载上连续发多个 POST，与 GET 的 *_on 复用模式对称。
+pub(super) async fn route_post_json_value_on(
+    app: &axum::Router,
+    path: String,
+    body: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let resp = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri(&path)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body)?))?,
+        )
+        .await?;
+    let status = resp.status();
+    let body = resp.into_body().collect().await?.to_bytes();
+    if !status.is_success() {
+        bail!(
+            "{} returned {}: {}",
+            path,
+            status,
+            String::from_utf8_lossy(&body)
+        );
+    }
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    Ok(value)
+}
+
 /// Resolve a tool-neutral `(SO, offset)` coordinate to a concrete trace record
 /// index, so lineage/taint commands (which seed on an idx) accept the same
 /// coordinate a reverse engineer reads from IDA/BN/Ghidra. `occurrence` picks
@@ -370,6 +412,39 @@ pub(super) async fn jni_output_string_pairs(
     jni_output_string_pairs_on(&app, key, contains, limit).await
 }
 
+/// 把连续的 NewStringUTF 事件按 (key, value) 两两配对（设备端 hook 对
+/// key、value 各发一次相邻的 NewStringUTF），并套用 --key/--contains
+/// 过滤，产出两处命令共用的基础配对行（key_idx/key_ret/key/value_idx/
+/// value_ret/value/value_len）。返回惰性迭代器，调用方的 --limit 可以
+/// 提前停而不用配完整份事件表；call_dir/hook_file 等上下文字段由各
+/// 调用方自行补充，输出 JSON 结构不变。
+pub(super) fn jni_string_pair_rows<'a>(
+    events: &'a [serde_json::Value],
+    key: Option<&'a str>,
+    contains: Option<&'a str>,
+) -> impl Iterator<Item = serde_json::Value> + 'a {
+    events.chunks_exact(2).filter_map(move |pair| {
+        let key_text = pair[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let value_text = pair[1].get("text").and_then(|v| v.as_str()).unwrap_or("");
+        if key.is_some_and(|needle| key_text != needle) {
+            return None;
+        }
+        if contains.is_some_and(|needle| !key_text.contains(needle) && !value_text.contains(needle))
+        {
+            return None;
+        }
+        Some(serde_json::json!({
+            "key_idx": pair[0].get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "key_ret": pair[0].get("ret").cloned().unwrap_or(serde_json::Value::Null),
+            "key": key_text,
+            "value_idx": pair[1].get("idx").cloned().unwrap_or(serde_json::Value::Null),
+            "value_ret": pair[1].get("ret").cloned().unwrap_or(serde_json::Value::Null),
+            "value": value_text,
+            "value_len": value_text.len(),
+        }))
+    })
+}
+
 pub(super) async fn jni_output_string_pairs_on(
     app: &axum::Router,
     key: Option<String>,
@@ -406,36 +481,12 @@ pub(super) async fn jni_output_string_pairs_on(
         }));
     }
 
-    let key_filter = key.as_deref();
-    let contains_filter = contains.as_deref();
-    let mut pairs = Vec::new();
-    let mut iter = strings.chunks_exact(2);
-    for pair in &mut iter {
-        let key_text = pair[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
-        let value_text = pair[1].get("text").and_then(|v| v.as_str()).unwrap_or("");
-        if key_filter.is_some_and(|needle| key_text != needle) {
-            continue;
-        }
-        if contains_filter
-            .is_some_and(|needle| !key_text.contains(needle) && !value_text.contains(needle))
-        {
-            continue;
-        }
-        pairs.push(serde_json::json!({
-            "key_idx": pair[0].get("idx").cloned().unwrap_or(serde_json::Value::Null),
-            "key_ret": pair[0].get("ret").cloned().unwrap_or(serde_json::Value::Null),
-            "key": key_text,
-            "value_idx": pair[1].get("idx").cloned().unwrap_or(serde_json::Value::Null),
-            "value_ret": pair[1].get("ret").cloned().unwrap_or(serde_json::Value::Null),
-            "value": value_text,
-            "value_len": value_text.len(),
-        }));
-    }
-
-    let unpaired = iter
-        .remainder()
-        .first()
-        .cloned()
+    let pairs =
+        jni_string_pair_rows(&strings, key.as_deref(), contains.as_deref()).collect::<Vec<_>>();
+    // chunks_exact(2) 的尾巴只可能是奇数长度时的最后一条。
+    let unpaired = (strings.len() % 2 == 1)
+        .then(|| strings.last().cloned())
+        .flatten()
         .unwrap_or(serde_json::Value::Null);
     Ok(serde_json::json!({
         "count": pairs.len(),
@@ -472,30 +523,26 @@ pub(super) fn cmd_scan_jni_output_strings(
             .filter(|event| event.get("id").and_then(|v| v.as_str()) == Some("NewStringUTF"))
             .cloned()
             .collect::<Vec<_>>();
-        let mut iter = events.chunks_exact(2);
-        for pair in &mut iter {
-            let key_text = pair[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
-            let value_text = pair[1].get("text").and_then(|v| v.as_str()).unwrap_or("");
-            if key.as_deref().is_some_and(|needle| key_text != needle) {
-                continue;
+        for mut row in jni_string_pair_rows(&events, key.as_deref(), contains.as_deref()) {
+            let value_text = row
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if let Some(obj) = row.as_object_mut() {
+                obj.insert(
+                    "call_dir".to_string(),
+                    serde_json::Value::String(
+                        file.parent()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
+                    ),
+                );
+                obj.insert(
+                    "hook_file".to_string(),
+                    serde_json::Value::String(file.display().to_string()),
+                );
             }
-            if contains
-                .as_deref()
-                .is_some_and(|needle| !key_text.contains(needle) && !value_text.contains(needle))
-            {
-                continue;
-            }
-            let mut row = serde_json::json!({
-                "call_dir": file.parent().map(|p| p.display().to_string()).unwrap_or_default(),
-                "hook_file": file.display().to_string(),
-                "key_idx": pair[0].get("idx").cloned().unwrap_or(serde_json::Value::Null),
-                "key_ret": pair[0].get("ret").cloned().unwrap_or(serde_json::Value::Null),
-                "key": key_text,
-                "value_idx": pair[1].get("idx").cloned().unwrap_or(serde_json::Value::Null),
-                "value_ret": pair[1].get("ret").cloned().unwrap_or(serde_json::Value::Null),
-                "value": value_text,
-                "value_len": value_text.len(),
-            });
             if decode_url {
                 let decoded = percent_decode_bytes(value_text.as_bytes());
                 if decoded != value_text.as_bytes() {
@@ -508,14 +555,14 @@ pub(super) fn cmd_scan_jni_output_strings(
                 let base64_text = row
                     .get("url_decoded")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(value_text);
+                    .unwrap_or(&value_text);
                 row["base64"] = base64_summary(base64_text, decode_base64_full || diff_base64);
             }
             if let Some(tail_start) = base64_tail_start {
                 let base64_text = row
                     .get("url_decoded")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(value_text);
+                    .unwrap_or(&value_text);
                 row["base64_tail"] = base64_tail_summary(
                     base64_text,
                     tail_start,
@@ -525,7 +572,7 @@ pub(super) fn cmd_scan_jni_output_strings(
                 );
             }
             if prior_inputs > 0 {
-                let value_idx = pair[1].get("idx").and_then(|v| v.as_u64());
+                let value_idx = row.get("value_idx").and_then(|v| v.as_u64());
                 row["prior_inputs"] = serde_json::Value::Array(prior_get_string_inputs(
                     &all_events,
                     value_idx,

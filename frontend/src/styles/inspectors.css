@@ -518,6 +518,106 @@ ul {
   background: var(--bg3);
 }
 
+/* ---------------------------------------------------------------------------
+ * 虚拟列表骨架：vscroll=滚动容器，vbody=占位高度层，vrow=绝对定位行。
+ * 固定行高 + 窗口渲染，用于 200k/5000 行级别的大表（slice/xref/tracepc/
+ * taint/strings）。行高常量在各面板 TSX 中声明，需与此处 CSS 同步。
+ * ------------------------------------------------------------------------- */
+.vscroll {
+  overflow: auto;
+}
+
+.vbody {
+  position: relative;
+  display: block;
+}
+
+.vrow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* 表格行 20px = 1px border + 2px×2 padding + 15px line-height；
+   * 树视图两行 40px 同理（间隙 2px）。 */
+  line-height: 15px;
+}
+
+.vrow > td {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* .xref-table code 等规则声明了 white-space: normal，会撑破固定行高的
+ * 虚拟行；code 继承 td 的 nowrap 才能保持单行省略。 */
+.vrow > td code {
+  white-space: inherit;
+  overflow-wrap: normal;
+}
+
+.slice-vscroll {
+  max-height: 420px;
+}
+
+.slice-vtable thead {
+  display: block;
+}
+
+.slice-vtable thead tr,
+.slice-vtable .vrow {
+  display: grid;
+  align-items: stretch;
+  grid-template-columns: 64px 112px minmax(0, 1fr) minmax(0, 1.6fr);
+}
+
+.slice-vtable .vrow {
+  height: 20px;
+}
+
+/* colSpan 在 grid 行内无效，用跨列让 raw idx 尾行的提示占满 fn/asm 两列 */
+.slice-vtable .slice-tail-note {
+  grid-column: 2 / -1;
+}
+
+.xref-vscroll {
+  max-height: 320px;
+}
+
+.xref-vtable thead {
+  display: block;
+}
+
+.xref-vtable thead tr,
+.xref-vtable .vrow {
+  display: grid;
+  align-items: stretch;
+}
+
+.xref-exec-table thead tr,
+.xref-exec-table .vrow {
+  grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.xref-hits-table thead tr,
+.xref-hits-table .vrow {
+  grid-template-columns: 72px 120px minmax(0, 1fr) minmax(0, 1.5fr);
+}
+
+.xref-vtable .vrow {
+  height: 20px;
+}
+
+.tracepc-vscroll {
+  max-height: 220px;
+}
+
+.tracepc-table .vrow {
+  display: grid;
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  height: 20px;
+}
+
 .xref-controls {
   display: flex;
   align-items: center;
@@ -744,30 +844,6 @@ ul {
   overflow-wrap: anywhere;
 }
 
-.settings-models {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.settings-models li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 12px;
-  padding: 2px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.settings-models li span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.settings-models li.ready span:last-child { color: var(--good); }
-.settings-models li.missing span:last-child { color: var(--warn); }
-
 html[data-density="dense"] .panel { margin-bottom: 8px; padding: 6px 10px; }
 html[data-density="dense"] .records-table th,
 html[data-density="dense"] .records-table td,
@@ -775,8 +851,6 @@ html[data-density="dense"] .memory-table th,
 html[data-density="dense"] .memory-table td,
 html[data-density="dense"] .memory-hex-table th,
 html[data-density="dense"] .memory-hex-table td,
-html[data-density="dense"] .dec-table th,
-html[data-density="dense"] .dec-table td,
 html[data-density="dense"] .xref-table th,
 html[data-density="dense"] .xref-table td {
   padding-top: 1px;

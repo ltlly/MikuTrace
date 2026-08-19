@@ -1,7 +1,6 @@
-import { createEffect, createResource, createSignal, onCleanup, Show, For } from "solid-js";
-import { fetchFunctions } from "~/api/client";
-import type { Accessor } from "solid-js";
-import type { FunctionEntry } from "~/api/types";
+import { createEffect, createMemo, createSignal, onCleanup, Show, For } from "solid-js";
+import type { Accessor, Resource } from "solid-js";
+import type { FunctionEntry, FunctionsResponse } from "~/api/types";
 
 const SOURCE_LABELS: Record<string, string> = {
   "trace-ir": "trace",
@@ -15,6 +14,9 @@ const SOURCE_TITLES: Record<string, string> = {
   "bn": "Binary Ninja function",
 };
 
+/// 无过滤时最多渲染的函数行数；server 端最多返回 10_000 个。
+const MAX_VISIBLE_FUNCTIONS = 500;
+
 export interface FunctionsPanelProps {
   selectedFn: Accessor<string>;
   renames?: Accessor<Map<string, string>>;
@@ -22,14 +24,26 @@ export interface FunctionsPanelProps {
   onJumpFn?: (fn: FunctionEntry) => void;
   onRenameFn?: (fn: FunctionEntry) => void;
   active: boolean;
+  /// App 层单例 /api/functions resource（避免与 App/CfgPanel 重复请求）。
+  functions: Resource<FunctionsResponse | undefined>;
 }
 
 export default function FunctionsPanel(props: FunctionsPanelProps) {
   const [fnContext, setFnContext] = createSignal<{ x: number; y: number; fn: FunctionEntry } | null>(null);
-  const [resp] = createResource(
-    () => (props.active ? "active" : undefined),
-    () => fetchFunctions(),
-  );
+  const [filterRaw, setFilterRaw] = createSignal("");
+
+  const filteredFunctions = createMemo(() => {
+    const q = filterRaw().trim().toLowerCase();
+    const fns = props.functions()?.functions ?? [];
+    if (!q) return fns;
+    return fns.filter((fn) =>
+      fn.name.toLowerCase().includes(q) ||
+      fn.id.toLowerCase().includes(q) ||
+      (fn.module ?? "").toLowerCase().includes(q),
+    );
+  });
+  const visibleFunctions = createMemo(() => filteredFunctions().slice(0, MAX_VISIBLE_FUNCTIONS));
+
   createEffect(() => {
     if (!fnContext()) return;
     const closeOnPointer = (e: PointerEvent) => {
@@ -50,18 +64,20 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
   return (
     <section class="panel">
       <h2>Functions</h2>
-      <Show when={resp.error}>
-        <p class="err">load failed: {String(resp.error)}</p>
+      <Show when={props.functions.error}>
+        <p class="err">load failed: {String(props.functions.error)}</p>
       </Show>
-      <Show when={resp.loading}>
+      <Show when={props.functions.loading}>
         <p class="dim">loading…</p>
       </Show>
-      <Show when={resp()}>
+      <Show when={props.functions()}>
         {(r) => (
           <>
             <p class="dim small">
-              {r().functions.length} function{r().functions.length === 1 ? "" : "s"}:
-              {" "}
+              {filteredFunctions().length === r().functions.length
+                ? `${r().functions.length} function${r().functions.length === 1 ? "" : "s"}`
+                : `${filteredFunctions().length}/${r().functions.length} function${r().functions.length === 1 ? "" : "s"}`}
+              :{" "}
               <For each={Object.entries(r().counts).filter(([, n]) => n > 0)}>
                 {([src, n], i) => (
                   <span>
@@ -76,8 +92,23 @@ export default function FunctionsPanel(props: FunctionsPanelProps) {
                 {" "}· partial {r().returned_functions ?? r().functions.length}/{r().total_functions} shown
               </Show>
             </p>
+            <input
+              type="text"
+              class="functions-filter"
+              placeholder="filter by name/id/module…"
+              value={filterRaw()}
+              onInput={(e) => setFilterRaw(e.currentTarget.value)}
+            />
+            <Show when={filteredFunctions().length > visibleFunctions().length}>
+              <div class="cap-notice" role="status">
+                <span>
+                  Showing first {visibleFunctions().length.toLocaleString()} of{" "}
+                  {filteredFunctions().length.toLocaleString()} functions; narrow the filter to see more.
+                </span>
+              </div>
+            </Show>
             <ul class="functions-list">
-              <For each={r().functions}>
+              <For each={visibleFunctions()}>
                 {(fn) => {
                   const displayName = () => props.renames?.().get(fn.id) ?? fn.name;
                   const renamed = () => displayName() !== fn.name;

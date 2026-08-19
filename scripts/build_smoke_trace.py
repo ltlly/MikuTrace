@@ -65,36 +65,37 @@ cd.mkdir()
 with open(cd / "trace.bin", "wb") as bf:
     for pc, inst in zip(rec_pcs, rec_inst):
         bf.write(struct.pack("<Q", pc))
-        for r_idx in range(31):
-            bf.write(struct.pack("<Q", 0))
+        bf.write(struct.pack("<Q", 0) * 31)
         bf.write(struct.pack("<Q", 0x7000))
         bf.write(struct.pack("<I", 0))
         bf.write(struct.pack("<I", inst))
 
-json.dump(
-    {
-        "callIdx": 1,
-        "tid": 100,
-        "records": 9,
-        "ms": 2,
-        "retval": "0x0",
-        "truncated": False,
-        "last_insn_is_ret": True,
-        "known_offsets": {"0x0": "f_root", "0x100": "f_alpha", "0x200": "f_beta"},
-    },
-    open(cd / "meta.json", "w"),
-)
-json.dump(
-    {
-        "pkg": "tst",
-        "so": "libt",
-        "method": "f",
-        "cmd": 1,
-        "module": {"name": "libt.so", "base": hex(base), "size": 0x10000},
-        "fn_addr": hex(base),
-    },
-    open(run / "meta.json", "w"),
-)
+with open(cd / "meta.json", "w") as mf:
+    json.dump(
+        {
+            "callIdx": 1,
+            "tid": 100,
+            "records": 9,
+            "ms": 2,
+            "retval": "0x0",
+            "truncated": False,
+            "last_insn_is_ret": True,
+            "known_offsets": {"0x0": "f_root", "0x100": "f_alpha", "0x200": "f_beta"},
+        },
+        mf,
+    )
+with open(run / "meta.json", "w") as mf:
+    json.dump(
+        {
+            "pkg": "tst",
+            "so": "libt",
+            "method": "f",
+            "cmd": 1,
+            "module": {"name": "libt.so", "base": hex(base), "size": 0x10000},
+            "fn_addr": hex(base),
+        },
+        mf,
+    )
 
 print("smoke trace at:", cd)
 
@@ -144,8 +145,7 @@ def build_extended(run_dir: Path, base_addr: int) -> Path:
                 regs[0] = 0x21  # '!'
                 regs[1] = out_addr
             bf.write(struct.pack("<Q", pc))
-            for r in regs:
-                bf.write(struct.pack("<Q", r))
+            bf.write(b"".join(struct.pack("<Q", r) for r in regs))
             bf.write(struct.pack("<Q", 0x8000))
             bf.write(struct.pack("<I", 0))
             bf.write(struct.pack("<I", inst))
@@ -159,8 +159,7 @@ def build_extended(run_dir: Path, base_addr: int) -> Path:
         {"trace_idx": 10, "id": "NewStringUTF", "args": {"bytes": "apro.oghvalue!"}},
     ]
     with open(ed / "jni_hooks.jsonl", "w") as jf:
-        for ev in jni:
-            jf.write(json.dumps(ev) + "\n")
+        jf.write("".join(json.dumps(ev) + "\n" for ev in jni))
 
     # external writes: byte-level x-layer writes at idx 5 and 8.
     ext = []
@@ -169,23 +168,24 @@ def build_extended(run_dir: Path, base_addr: int) -> Path:
     with open(ed / "external_writes.bin", "wb") as xf:
         xf.write(b"".join(ext))
 
-    json.dump(
-        {
-            "callIdx": 2,
-            "tid": 200,
-            "records": 12,
-            "ms": 4,
-            "retval": "0x0",
-            "truncated": False,
-            "last_insn_is_ret": True,
-            "known_offsets": {
-                "0x0": "f_root",
-                "0x20": "f_builder",
-                "0x30": "f_builder2",
+    with open(ed / "meta.json", "w") as mf:
+        json.dump(
+            {
+                "callIdx": 2,
+                "tid": 200,
+                "records": 12,
+                "ms": 4,
+                "retval": "0x0",
+                "truncated": False,
+                "last_insn_is_ret": True,
+                "known_offsets": {
+                    "0x0": "f_root",
+                    "0x20": "f_builder",
+                    "0x30": "f_builder2",
+                },
             },
-        },
-        open(ed / "meta.json", "w"),
-    )
+            mf,
+        )
     return ed
 
 

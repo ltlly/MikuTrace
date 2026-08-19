@@ -46,48 +46,37 @@ pub struct JniCallsResponse {
 pub async fn jni_calls_handler(
     State(state): State<AppState>,
     Query(q): Query<JniCallsQuery>,
-) -> Json<JniCallsResponse> {
-    Json(
-        tokio::task::spawn_blocking(move || {
-            let scan = state.inner.jni_calls();
-            let max_hits = effective_max(q.max);
-            let mut count = 0usize;
-            let mut hits = Vec::with_capacity(max_hits.min(256));
-            for call in &scan.calls {
-                if q.in_fn
-                    .as_deref()
-                    .is_some_and(|want| call.func_name.as_str() != want)
-                {
-                    continue;
-                }
-                count += 1;
-                if hits.len() < max_hits {
-                    hits.push(jni_call_hit(call));
-                }
+) -> Result<Json<JniCallsResponse>, crate::routes::WorkerFailure> {
+    let response = tokio::task::spawn_blocking(move || {
+        let scan = state.inner.jni_calls();
+        let max_hits = effective_max(q.max);
+        let mut count = 0usize;
+        let mut hits = Vec::with_capacity(max_hits.min(256));
+        for call in &scan.calls {
+            if q.in_fn
+                .as_deref()
+                .is_some_and(|want| call.func_name.as_str() != want)
+            {
+                continue;
             }
-            let returned = hits.len();
-            JniCallsResponse {
-                in_fn: q.in_fn,
-                count,
-                returned,
-                truncated: returned < count,
-                hits,
-                vtable_size: scan.vtable_size,
+            count += 1;
+            if hits.len() < max_hits {
+                hits.push(jni_call_hit(call));
             }
-        })
-        .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(target: "tracemiku-server", "jni calls worker failed: {err}");
-            JniCallsResponse {
-                in_fn: None,
-                count: 0,
-                returned: 0,
-                truncated: false,
-                hits: Vec::new(),
-                vtable_size: 0,
-            }
-        }),
-    )
+        }
+        let returned = hits.len();
+        JniCallsResponse {
+            in_fn: q.in_fn,
+            count,
+            returned,
+            truncated: returned < count,
+            hits,
+            vtable_size: scan.vtable_size,
+        }
+    })
+    .await
+    .map_err(|err| crate::routes::worker_panic_response("jni calls", &err))?;
+    Ok(Json(response))
 }
 
 fn effective_max(raw: usize) -> usize {

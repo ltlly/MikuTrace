@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
-"""Run traceMiku decompiler on all 56 functions, save full comparison artifacts."""
-import subprocess, struct, json, os, re
+"""Run traceMiku decompiler on all 56 functions, save full comparison artifacts.
+
+历史脚本：本地反编译管线已从 core 移除（反编译统一由 BN sidecar 提供），
+本脚本仅作历史参考保留。生成的 Rust 对比测试骨架打印到 stdout，不再写入
+rust/crates（该路径下没有对应测试文件，写入只会制造孤儿文件）。
+
+用法：
+    python3 tests/arm64_test_bins/run_comparison.py > /tmp/all_binaries_comparison.rs
+    # 骨架中的 INSTRUCTIONS_WILL_BE_INSERTED_HERE 占位需要先用
+    # extract_and_test.py 提取指令数据后才可用。
+"""
+import json
+import sys
 from pathlib import Path
 from datetime import datetime
 
+WORK = Path(__file__).resolve().parent
+
 BINS = {
-    "decomp_test_suite": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/decomp_test_suite",
-    "test_strings": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_strings",
-    "test_linkedlist": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_linkedlist",
-    "test_arrays": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_arrays",
-    "test_hash": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_hash",
-    "test_fsm": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_fsm",
-    "test_fp": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_fp",
+    "decomp_test_suite": str(WORK / "decomp_test_suite"),
+    "test_strings": str(WORK / "test_strings"),
+    "test_linkedlist": str(WORK / "test_linkedlist"),
+    "test_arrays": str(WORK / "test_arrays"),
+    "test_hash": str(WORK / "test_hash"),
+    "test_fsm": str(WORK / "test_fsm"),
+    "test_fp": str(WORK / "test_fp"),
 }
 
-OUT = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins/comparison_results")
+OUT = WORK / "comparison_results"
 OUT.mkdir(exist_ok=True)
 
 # Already have the function list from comparison_report.py
@@ -63,13 +76,11 @@ rust += '''
 }
 '''
 
-# Write to file
-test_path = Path("/home/ltlly/Code/traceMiku/rust/crates/tracemiku-core/tests/all_binaries_comparison.rs")
-test_path.write_text(rust)
+# 骨架输出到 stdout（见模块 docstring 的用法说明）
+print(rust)
 
-print(f"Generated: {test_path}")
-print(f"Note: This is a skeleton — instructions need to be filled in.")
-print(f"Use extract_and_test.py for each binary to get full instruction data.")
+print(f"Note: This is a skeleton — instructions need to be filled in.", file=sys.stderr)
+print(f"Use extract_and_test.py for each binary to get full instruction data.", file=sys.stderr)
 
 # For now, run the existing 44 decomp_verify tests and 15 bn_comparison tests
 total_tests = 44 + 15

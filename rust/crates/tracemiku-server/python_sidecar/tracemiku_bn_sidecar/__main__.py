@@ -113,41 +113,12 @@ class Session:
         timeout: int | None = None,
         fn_start: int | None = None,
     ) -> dict[str, Any]:
+        # 未实现：BN 的 basic_blocks 边信息需要额外分析管线，此处返回明确错误，
+        # 由 Rust 侧透传，避免展示假空图。参数保留以维持请求/响应协议兼容。
+        del pc, mode, timeout, fn_start
         if not self.ready or self.bv is None:
             return {"ok": False, "ready": False, "error": self.error or "BN not ready"}
-        bn_pc = self._to_bn_addr(pc)
-        fn = self._function_for_pc(bn_pc)
-        created = False
-        if fn is None:
-            fn = self._create_function_for_pc(
-                bn_pc, self._to_bn_addr(fn_start) if fn_start else None
-            )
-            created = fn is not None
-        if fn is None:
-            return {
-                "ok": False,
-                "ready": True,
-                "error": f"no function contains trace 0x{pc:x} (bn 0x{bn_pc:x})",
-                "created_function": False,
-            }
-        blocks = [
-            {
-                "id": i,
-                "start": self._to_trace_addr(int(bb.start)),
-                "end": self._to_trace_addr(int(bb.end)),
-            }
-            for i, bb in enumerate(fn.basic_blocks)
-        ]
-        return {
-            "ok": True,
-            "ready": True,
-            "mode": mode,
-            "timeout": timeout,
-            "created_function": created,
-            "blocks": blocks,
-            "edges": [],
-            "svg": "",
-        }
+        return {"ok": False, "ready": True, "error": "not implemented"}
 
     def _function_for_pc(self, pc: int) -> Any | None:
         fn = self.bv.get_function_at(pc)

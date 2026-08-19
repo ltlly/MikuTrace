@@ -101,9 +101,7 @@ export interface FunctionEntry {
   records: number;
   module: string | null;
   entry_rel: number | null;
-  trace_ir_id: string | null;
   bn_start: number | null;
-  can_llil: boolean;
   can_bn_hlil: boolean;
 }
 
@@ -583,54 +581,6 @@ export interface BackwardTaintResponse {
   max_count_used: number;
 }
 
-// ── /api/dec/summary ──────────────────────────────────────────────────────
-
-export interface DecFnEntry {
-  id: string;
-  name: string;
-  module: string | null;
-  entry_rel: number | null;
-  blocks: number;
-  loops: number;
-  calls: number;
-  type_anchors: number;
-  entry_idx: number | null;
-  exit_idx: number | null;
-  source: string;          // "trace-ir" | "symbol" (M3-ε) | "bn" (M5+)
-  trace_ir_id: string | null;
-}
-
-export interface DecSummaryResponse {
-  records: number;
-  module_name: string;
-  module_base: number;
-  module_size: number;
-  truncated: boolean;
-  fns: DecFnEntry[];
-  vm_candidates: unknown[];
-  summary_md: string;
-  request_split_top_k?: number;
-  request_split_min_records?: number;
-  request_with_memshadow?: boolean;
-}
-
-export interface DecFnResponse {
-  fn_id: string;
-  name: string;
-  tier: string;
-  markdown: string;
-  request_fn_id?: string;
-  request_tier?: string;
-  request_split_top_k?: number;
-  request_split_min_records?: number;
-  request_with_memshadow?: boolean;
-}
-
-export interface DecModelsResponse {
-  models: string[];
-  api_keys_configured: Record<string, boolean>;
-}
-
 export interface OpenApiResponse {
   openapi: string;
   info: {
@@ -677,9 +627,6 @@ export interface ParallelismStatus {
 
 export interface BgStatusResponse {
   cfg: BgTaskStatus;
-  pc_inst: BgTaskStatus;
-  pc_to_block: BgTaskStatus;
-  block_idxs: BgTaskStatus;
   index: BgTaskStatus;
   mem: BgTaskStatus;
   decomp: DecompStatusResponse;
@@ -722,77 +669,6 @@ export interface BlockForPcResponse {
 export interface IdxsForBlockResponse {
   status: string;
   idxs: number[];
-}
-
-export interface DecLlmCallPayload {
-  fn_id: string;
-  model: string;
-  max_tokens: number;
-  lang: string;
-  tier: string;
-  with_memshadow?: boolean;
-  split_top_k?: number;
-  split_min_records?: number;
-}
-
-export interface DecLlmCallResponse {
-  ok: boolean;
-  model: string;
-  error: string | null;
-  c_code: string | null;
-  in_tokens: number | null;
-  out_tokens: number | null;
-  latency_ms: number | null;
-  estimated_prompt_tokens: number;
-  cache_hit: boolean;
-}
-
-export interface LlilRenderPayload {
-  fn_id: string;
-  max_records: number;
-  ssa: boolean;
-  constfold: boolean;
-  flag_elim: boolean;
-  dce: boolean;
-}
-
-export interface LlilRenderResponse {
-  fn_id: string;
-  name: string;
-  records: number;
-  truncated: boolean;
-  lift_total: number;
-  lift_intrinsic: number;
-  lift_coverage: number;
-  flag_elim_pairs: [string, string][];
-  types: Record<string, string>;
-  struct_shapes: unknown;
-  var_names: Record<string, string>;
-  uidf: unknown;
-  structured: unknown;
-  removed_pcs: string[];
-  pseudocode: string;
-}
-
-export interface LlilLlmPayload {
-  fn_id: string;
-  model: string;
-  max_tokens: number;
-  lang: string;
-  max_records: number;
-}
-
-export interface LlilLlmResponse {
-  ok: boolean;
-  fn_id: string;
-  model: string;
-  error: string | null;
-  c_code: string;
-  in_tokens: number;
-  out_tokens: number;
-  latency_ms: number;
-  llil_records: number;
-  estimated_prompt_tokens: number;
 }
 
 // ── /api/hlil-for-fn ─────────────────────────────────────────────────────
@@ -850,53 +726,6 @@ export interface HlilForPcResponse extends HlilForFnResponse {
 // ---------------------------------------------------------------------------
 // LLIL Pipeline (LLIL → MLIL → HLIL)
 // ---------------------------------------------------------------------------
-
-export interface LlilPipelinePayload {
-  fn_id: string;
-  max_records?: number;
-  include_text?: boolean;
-  include_call_analysis?: boolean;
-}
-
-// ── Decompiler structured tokens ────────────────────────────────────────
-// Wire format: compact keys to minimize JSON payload.
-
-export interface CToken {
-  /** Display text */
-  t: string;
-  /** Kind: kw=keyword, ty=type, var=variable, lit=literal, op=operator,
-   *  p=punct, fn=func, lbl=label, fld=field, cmt=comment, ws=whitespace */
-  k: string;
-  /** Variable identity (for highlight-all / rename) */
-  v?: string;
-  /** Address (hex string, for jump/xref) */
-  a?: string;
-  /** Runtime value (hex string, for hover tooltip) */
-  rv?: string;
-}
-
-export interface PipelineResponse {
-  fn_id: string;
-  name: string;
-  records: number;
-  truncated: boolean;
-  unique_pcs: number;
-  llil_count: number;
-  llil_coverage: number;
-  mlil_count: number;
-  struct_loads: number;
-  struct_stores: number;
-  hlil_count: number;
-  // Structured tokens (preferred rendering path)
-  hlil_tokens?: CToken[][];
-  mlil_tokens?: CToken[][];
-  llil_tokens?: CToken[][];
-  // Plain text fallback (for CLI / backwards compat)
-  llil_text?: string;
-  mlil_text?: string;
-  hlil_text?: string;
-  call_analysis?: unknown;
-}
 
 // ── /api/crypto-analysis ─────────────────────────────────────────────────
 

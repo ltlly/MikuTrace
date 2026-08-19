@@ -4,7 +4,6 @@
 //! Originally inlined three times across `dep_graph`, `bfs_slice`, and
 //! `forward_dep_tree`. This module centralises:
 //!
-//! * `parse_u64` — accept hex (`0x…`) or decimal literals.
 //! * `split_csv` — `"1, 2,3"` → ["1", "2", "3"], dropping empties.
 //! * `ResolvedSeed` — common JSON shape for the seed envelope.
 //! * `resolve_*` — fall back to the trace's index for register/address
@@ -12,11 +11,14 @@
 //! * `edge_kind` / `edge_label` / `node_id` — string formatting helpers.
 //! * `render_dep_node` — common node payload (PC, asm, func, expression, via)
 //!   used by both `dep_graph` and `forward_dep_tree`.
+//!
+//! 数字字面量解析统一走 `crate::routes::parse`（十进制优先，`0x` 前缀十六进制）。
 
 use serde::Serialize;
 use tracemiku_core::analysis_index::DepKind;
 use tracemiku_core::disasm::decode;
 
+use crate::routes::parse;
 use crate::state::AppState;
 use crate::taint_graph::expression_from_asm;
 
@@ -70,11 +72,6 @@ impl ResolvedSeed {
     }
 }
 
-/// Parse a hex (`0x…`) or decimal literal into `u64`. Trims whitespace.
-pub fn parse_u64(raw: &str) -> Option<u64> {
-    crate::routes::parse::parse_dec_u64(raw)
-}
-
 /// Split a comma-separated string into trimmed, non-empty tokens.
 pub fn split_csv(raw: &str) -> impl Iterator<Item = &str> {
     raw.split(',').map(|s| s.trim()).filter(|s| !s.is_empty())
@@ -95,7 +92,7 @@ pub fn resolve_reg(state: &AppState, reg: &str, before: usize) -> ResolvedSeed {
 }
 
 pub fn resolve_addr(state: &AppState, addr_raw: &str, before: usize) -> ResolvedSeed {
-    let Some(addr) = parse_u64(addr_raw) else {
+    let Some(addr) = parse::parse_dec_u64(addr_raw) else {
         return ResolvedSeed {
             kind: "addr",
             idx: None,
@@ -265,17 +262,18 @@ pub fn render_dep_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::parse::parse_dec_u64;
 
     #[test]
-    fn parse_u64_accepts_hex_and_decimal() {
-        assert_eq!(parse_u64("0x42"), Some(0x42));
-        assert_eq!(parse_u64("66"), Some(66));
-        assert_eq!(parse_u64("not-a-number"), None);
+    fn parse_dec_u64_accepts_hex_and_decimal() {
+        assert_eq!(parse_dec_u64("0x42"), Some(0x42));
+        assert_eq!(parse_dec_u64("66"), Some(66));
+        assert_eq!(parse_dec_u64("not-a-number"), None);
     }
 
     #[test]
-    fn parse_u64_handles_uppercase_prefix() {
-        assert_eq!(parse_u64("0XAB"), Some(0xab));
+    fn parse_dec_u64_handles_uppercase_prefix() {
+        assert_eq!(parse_dec_u64("0XAB"), Some(0xab));
     }
 
     #[test]

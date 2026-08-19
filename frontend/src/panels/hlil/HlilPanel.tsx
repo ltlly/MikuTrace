@@ -273,7 +273,7 @@ export default function HlilPanel(props: HlilPanelProps) {
         <p class="dim small">loading HLIL for current PC…</p>
       </Show>
       <Show when={!hlil.loading && hlil.error}>
-        <p class="err">hlil failed: {String(hlil.error)}</p>
+        <p class="err">load failed: {String(hlil.error)}</p>
       </Show>
       <Show when={currentHlil()}>
         {(r) => (

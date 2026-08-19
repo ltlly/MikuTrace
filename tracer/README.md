@@ -4,11 +4,10 @@
 
 ## 入口
 
-| 文件 | 模式 | 用途 |
-|---|---|---|
-| `_agent.js` | 默认 `--mode cmodule` | 由 TypeScript 编译的模块化 agent |
-| `src/` | 源码 | CModule、ring、hook、sidecar 和插件 |
-| `agent_cmodule_v5.js` | `--mode legacy` | 旧单文件回退，不再增加功能 |
+| 文件 | 用途 |
+|---|---|
+| `_agent.js` | 唯一 agent（默认入口），由 TypeScript 编译的模块化实现 |
+| `src/` | 源码：CModule、ring、hook、sidecar 和插件 |
 
 ```bash
 cd tracer
@@ -17,8 +16,7 @@ npm run typecheck
 npm run build
 ```
 
-`_agent.js` 是生成物，不提交 Git。修改采集逻辑必须改 `src/`，只有兼容性修复才允许改
-legacy 文件。
+`_agent.js` 是生成物，不提交 Git。修改采集逻辑必须改 `src/`。
 
 ## 数据通路
 

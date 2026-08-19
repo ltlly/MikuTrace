@@ -14,7 +14,7 @@ pub(super) fn normalize_api_path(path: &str) -> anyhow::Result<String> {
     }
 }
 
-pub(super) fn parse_key_values(raw: Vec<String>) -> anyhow::Result<Vec<(&'static str, String)>> {
+pub(super) fn parse_key_values(raw: Vec<String>) -> anyhow::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     for item in raw {
         let Some((k, v)) = item.split_once('=') else {
@@ -24,8 +24,7 @@ pub(super) fn parse_key_values(raw: Vec<String>) -> anyhow::Result<Vec<(&'static
         if key.is_empty() {
             bail!("--param key must not be empty");
         }
-        let key: &'static str = Box::leak(key.to_string().into_boxed_str());
-        out.push((key, v.to_string()));
+        out.push((key.to_string(), v.to_string()));
     }
     Ok(out)
 }
@@ -542,13 +541,15 @@ pub(super) fn taint_params(
     params
 }
 
-pub(super) fn route_path(base: &str, params: &[(&str, String)]) -> String {
+/// route_path 的键类型放宽为 AsRef<str>：字面量键（&'static str）与
+/// parse_key_values 产出的 String 键都能直接拼接，无需为绕生命周期泄漏。
+pub(super) fn route_path(base: &str, params: &[(impl AsRef<str>, String)]) -> String {
     if params.is_empty() {
         return base.to_string();
     }
     let qs = params
         .iter()
-        .map(|(k, v)| format!("{}={}", pct_encode(k), pct_encode(v)))
+        .map(|(k, v)| format!("{}={}", pct_encode(k.as_ref()), pct_encode(v)))
         .collect::<Vec<_>>()
         .join("&");
     format!("{base}?{qs}")
@@ -614,6 +615,15 @@ pub(super) fn parse_u64_str(raw: &str) -> Option<u64> {
     } else {
         s.parse::<u64>().ok()
     }
+}
+
+/// JSON 值转 u64 的唯一实现：数字直接取值，字符串经 parse_u64_str
+/// 解析（0x 前缀十六进制 / 十进制）。vm_* 模块里的 value_as_u64、
+/// node_value_u64 等都是本函数之上的薄包装，不要再新增平行实现。
+pub(super) fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(parse_u64_str))
 }
 
 /// Parse an ADDRESS/OFFSET/PC the way a reverse engineer writes one: HEX by
@@ -691,7 +701,7 @@ mod tests {
     fn parse_key_values_requires_equals() {
         let ok = parse_key_values(vec!["a=1".into(), "b=2".into()]).unwrap();
         assert_eq!(ok.len(), 2);
-        assert_eq!(ok[0].1, "1");
+        assert_eq!((ok[0].0.as_str(), ok[0].1.as_str()), ("a", "1"));
         assert!(parse_key_values(vec!["noequals".into()]).is_err());
         assert!(parse_key_values(vec!["=x".into()]).is_err(), "empty key");
     }

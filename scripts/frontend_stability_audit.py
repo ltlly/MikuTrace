@@ -9,24 +9,16 @@ range-jitter fix that prevents virtual-row refetch oscillation.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-REPO = Path(__file__).resolve().parent.parent
-SRC = REPO / "frontend" / "src"
+from _static_audit import SRC, read, report
 
 EXPECTED_GUARDED_SOURCES = {
     ("panels/backtrace/BacktracePanel.tsx", "source"),
     ("panels/calltree/CallTreePanel.tsx", "source"),
-    ("panels/decompiler/DecompilerPanel.tsx", "fnSource"),
-    ("panels/decompiler/DecompilerPanel.tsx", "summarySource"),
     ("panels/hlil/HlilPanel.tsx", "source"),
     ("panels/memory/MemoryPanel.tsx", "diffSource"),
     ("panels/memory/MemoryPanel.tsx", "dumpSource"),
     ("panels/records/RecordsPanel.tsx", "range"),
     ("panels/forks/ForksPanel.tsx", "source"),
-    ("panels/PseudoCPanel.tsx", "source"),
     ("panels/slice/SlicePanel.tsx", "query"),
     ("panels/strings/StringProvenancePanel.tsx", "source"),
     ("panels/strings/StringsPanel.tsx", "source"),
@@ -46,18 +38,6 @@ STABILITY_TOKENS = {
         "createMemo((prev?: { depth: number })",
         "prev.depth === next.depth",
         "? prev : next",
-    ],
-    ("panels/decompiler/DecompilerPanel.tsx", "summarySource"): [
-        "createMemo<SummarySource | undefined>((prev)",
-        "sameDecIrSource(prev, next) ? prev : next",
-    ],
-    ("panels/decompiler/DecompilerPanel.tsx", "fnSource"): [
-        "createMemo<FnSource | undefined>((prev)",
-        "prev.fnId === next.fnId",
-        "prev.tier === next.tier",
-        "sameDecIrSource(prev, next)",
-        "? prev",
-        ": next",
     ],
     ("panels/hlil/HlilPanel.tsx", "source"): [
         "createMemo<HlilSource | undefined>((prev)",
@@ -84,7 +64,8 @@ STABILITY_TOKENS = {
     ],
     ("panels/records/RecordsPanel.tsx", "range"): [
         "createMemo<{ start: number; count: number; end: number }>",
-        "Math.round((viewHeight() || 480) / ROW_HEIGHT)",
+        "visibleRowCount(viewHeight(), ROW_HEIGHT)",
+        "virtualRange(sTopRow, vRows, total, OVERSCAN)",
         "prev.start === next.start",
         "prev.count === next.count",
         "prev.end === next.end",
@@ -95,11 +76,6 @@ STABILITY_TOKENS = {
         "prev.status === next.status",
         "prev.limit === next.limit",
         "? prev : next",
-    ],
-    ("panels/PseudoCPanel.tsx", "source"): [
-        "createMemo<PipelineSource | undefined>((prev)",
-        "sourceKey(prev) === sourceKey(next)",
-        "return prev",
     ],
     ("panels/strings/StringProvenancePanel.tsx", "source"): [
         "createMemo<Source | undefined>((prev)",
@@ -152,10 +128,6 @@ STABILITY_TOKENS = {
         ": next",
     ],
 }
-
-
-def read(rel: str) -> str:
-    return (SRC / rel).read_text()
 
 
 def skip_generic(text: str, pos: int) -> int:
@@ -222,14 +194,11 @@ def main() -> int:
         if absent:
             failures.append(f"{rel}:{source} missing stability tokens {absent!r}")
 
-    if failures:
-        print("Frontend stability static audit failed:", file=sys.stderr)
-        for failure in failures:
-            print(f"  - {failure}", file=sys.stderr)
-        return 1
-
-    print(f"OK frontend stability audit guarded_sources={len(found)}")
-    return 0
+    return report(
+        "stability",
+        failures,
+        f"OK frontend stability audit guarded_sources={len(found)}",
+    )
 
 
 if __name__ == "__main__":

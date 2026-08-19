@@ -77,24 +77,6 @@ fn meta_reports_record_size_272() {
 }
 
 #[test]
-fn dec_summary_lists_all_known_functions() {
-    let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&["dec-summary", cd.to_str().unwrap()]);
-    let names: Vec<&str> = value["fns"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["name"].as_str().unwrap())
-        .collect();
-    for expected in ["f", "f_alpha", "f_beta"] {
-        assert!(
-            names.contains(&expected),
-            "missing {expected}, got {names:?}"
-        );
-    }
-}
-
-#[test]
 fn info_reports_call_identity() {
     let (_tmp, cd) = synth_call_dir();
     let value = run_json(&["info", cd.to_str().unwrap()]);

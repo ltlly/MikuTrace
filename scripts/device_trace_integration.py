@@ -130,7 +130,10 @@ int main(void) {
 def adb(*cmd, check=True, capture=True):
     """Run adb command."""
     full = ["adb"] + list(cmd)
-    r = subprocess.run(full, capture_output=capture, text=True, timeout=30)
+    # check=False：返回码由下方按 `check` 形参统一判定并带上下文报错。
+    r = subprocess.run(
+        full, capture_output=capture, text=True, timeout=30, check=False
+    )
     if check and r.returncode != 0:
         raise RuntimeError(f"adb failed: {' '.join(full)}\n{r.stderr}")
     return r
@@ -231,6 +234,7 @@ def main():
     bin_file = tmp / "tracemiku_devtest"
     src_file.write_text(TEST_C_SOURCE)
 
+    # check=False：编译失败时下方带 stderr 上下文报告并清理临时目录。
     r = subprocess.run(
         [
             cc,
@@ -245,6 +249,7 @@ def main():
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     if r.returncode != 0:
         print(f"  FAIL: compilation failed:\n{r.stderr}", file=sys.stderr)
@@ -312,8 +317,13 @@ def main():
         trace_cmd += ["--remote", args.remote]
     print(f"  cmd: {' '.join(trace_cmd[-8:])}")
 
+    # check=False：trace 子进程的返回码在等待目标进程结束后由下方统一判定。
     tr = subprocess.run(
-        trace_cmd, capture_output=True, text=True, timeout=args.duration + 30
+        trace_cmd,
+        capture_output=True,
+        text=True,
+        timeout=args.duration + 30,
+        check=False,
     )
     # Wait for target to finish
     try:

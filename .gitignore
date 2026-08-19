@@ -35,12 +35,15 @@ dist/
 *.frida-script-cache
 
 # 外部 fork / clone — 各自有自己的 .git, 不进主仓
-/tools/
+# 用 /tools/* 而不是 /tools/：目录级排除会让 git 不再遍历该目录，
+# 下面的 ! 反包含全部失效（tools/hooks/ 新文件曾被静默吞掉）。
+/tools/*
 # 但项目自己的 Frida 分析/patch 小工具进
 !/tools/hooks/
 !/tools/hooks/*
 !/tools/spawn_hook.py
 !/tools/native_sign_hooks_v4.js
+!/tools/vm_replay_plan_eval.py
 
 # v2 Rust + frontend (added 2026-05-03)
 rust/target/

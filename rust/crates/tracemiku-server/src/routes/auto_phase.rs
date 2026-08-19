@@ -46,22 +46,11 @@ pub struct AutoPhaseResponse {
 pub async fn auto_phase_detect_handler(
     State(state): State<AppState>,
     Query(q): Query<AutoPhaseQuery>,
-) -> Json<AutoPhaseResponse> {
-    Json(
-        tokio::task::spawn_blocking(move || auto_phase_response(&state, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "auto phase worker failed: {err}");
-                AutoPhaseResponse {
-                    status: "error",
-                    trace_records: 0,
-                    total: 0,
-                    returned: 0,
-                    truncated: false,
-                    phases: Vec::new(),
-                }
-            }),
-    )
+) -> Result<Json<AutoPhaseResponse>, crate::routes::WorkerFailure> {
+    let response = tokio::task::spawn_blocking(move || auto_phase_response(&state, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("auto phase", &err))?;
+    Ok(Json(response))
 }
 
 fn auto_phase_response(state: &AppState, q: AutoPhaseQuery) -> AutoPhaseResponse {

@@ -68,12 +68,9 @@ impl Record {
             return Some(self.regs[30]);
         }
         // Handle x0..x30 and w0..w30 (with 32-bit mask for w-prefix).
-        let (rest, is_w) = if let Some(r) = name.strip_prefix('x') {
-            (r, false)
-        } else if let Some(r) = name.strip_prefix('w') {
-            (r, true)
-        } else {
-            return None;
+        let (rest, is_w) = match name.strip_prefix('x') {
+            Some(r) => (r, false),
+            None => (name.strip_prefix('w')?, true),
         };
         let idx: usize = rest.parse().ok()?;
         if idx > 30 {

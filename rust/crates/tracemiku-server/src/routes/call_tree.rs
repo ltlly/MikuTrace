@@ -1,11 +1,13 @@
 //! GET /api/call-tree — nested call tree (bl/ret pair-walked).
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use tracemiku_core::prelude::{build_call_tree_indexed, CallNode};
+use tracemiku_core::prelude::CallNode;
 
+use crate::routes::worker_panic_response;
 use crate::state::AppState;
 
 const DEFAULT_MAX_DEPTH: usize = 50;
@@ -28,21 +30,13 @@ fn effective_max_depth(raw: Option<usize>) -> usize {
 pub async fn call_tree_handler(
     State(state): State<AppState>,
     Query(q): Query<CallTreeQuery>,
-) -> Json<CallTreeResponse> {
+) -> Result<Json<CallTreeResponse>, (StatusCode, Json<serde_json::Value>)> {
     let inner = state.inner.clone();
     let depth = effective_max_depth(q.max_depth);
     let tree = tokio::task::spawn_blocking(move || inner.call_tree_for_depth(depth))
         .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(target: "tracemiku-server", "call tree worker failed: {err}");
-            build_call_tree_indexed(
-                &state.inner.trace,
-                &state.inner.symbols,
-                &state.inner.index,
-                0,
-            )
-        });
-    Json(CallTreeResponse { tree })
+        .map_err(|err| worker_panic_response("call tree", &err))?;
+    Ok(Json(CallTreeResponse { tree }))
 }
 
 #[cfg(test)]

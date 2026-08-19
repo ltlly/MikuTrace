@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::thread;
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const REG_TIMELINE_PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -235,10 +236,7 @@ fn cached_reg_timeline(
         return Ok(timeline);
     }
 
-    Ok(inner
-        .reg_timeline_cache
-        .lock()
-        .expect("reg timeline cache poisoned")
+    Ok(crate::state::lock_or_recover(&inner.reg_timeline_cache)
         .entry(reg.to_string())
         .or_insert_with(|| timeline.clone())
         .clone())
@@ -248,10 +246,7 @@ fn lookup_cached_reg_timeline(
     inner: &crate::state::AppStateInner,
     reg: &str,
 ) -> Option<Arc<Vec<(usize, u64)>>> {
-    inner
-        .reg_timeline_cache
-        .lock()
-        .expect("reg timeline cache poisoned")
+    crate::state::lock_or_recover(&inner.reg_timeline_cache)
         .get(reg)
         .cloned()
 }
@@ -376,27 +371,16 @@ pub struct MemDiffResponse {
 pub async fn mem_diff_handler(
     State(state): State<AppState>,
     Query(q): Query<MemDiffQuery>,
-) -> Json<MemDiffResponse> {
+) -> Result<Json<MemDiffResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || mem_diff_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "mem diff worker failed: {err}");
-                MemDiffResponse {
-                    status: "error",
-                    idx: 0,
-                    addr: String::new(),
-                    size: 0,
-                    bytes: Vec::new(),
-                    changed_count: 0,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || mem_diff_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("mem diff", &err))?;
+    Ok(Json(response))
 }
 
 fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> MemDiffResponse {
-    let start = parse_int(&q.addr).unwrap_or(0);
+    let start = parse::parse_dec_u64(&q.addr).unwrap_or(0);
     let size = effective_mem_diff_size(q.size);
     let before_t = q.idx.saturating_sub(1) as u64;
     let after_t = q.idx as u64;
@@ -438,15 +422,6 @@ fn mem_diff_response(inner: &crate::state::AppStateInner, q: MemDiffQuery) -> Me
         size,
         bytes,
         changed_count,
-    }
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }
 

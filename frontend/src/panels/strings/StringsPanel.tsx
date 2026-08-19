@@ -4,6 +4,7 @@ import { fetchIdxsTouchingRange, fetchStrings } from "~/api/client";
 import type { StringEntry } from "~/api/types";
 import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import { createVirtualList } from "~/utils/virtualList";
 import type { StringProvenanceRequest } from "./StringProvenancePanel";
 
 interface StringsPanelProps {
@@ -23,6 +24,8 @@ interface StringsSource {
 
 const STRINGS_RETRY_MS = 500;
 const MAX_STRING_LIMIT = 5000;
+/// 字符串列表固定行高（虚拟渲染；行高变化需同步 analysis.css）。
+const STRING_ROW_HEIGHT = 20;
 
 export default function StringsPanel(props: StringsPanelProps) {
   const [minLen, setMinLen] = createSignal(4);
@@ -63,6 +66,16 @@ export default function StringsPanel(props: StringsPanelProps) {
   const readyResp = createMemo(() => {
     const r = currentResp();
     return r?.status === "ready" ? r : undefined;
+  });
+
+  // 最多 5000 条字符串，固定行高窗口渲染，避免整列表挂载。
+  const stringsList = createVirtualList(
+    () => readyResp()?.strings.length ?? 0,
+    STRING_ROW_HEIGHT,
+  );
+  const stringsWindowItems = createMemo(() => {
+    const w = stringsList.window();
+    return (readyResp()?.strings ?? []).slice(w.start, w.end);
   });
 
   createEffect(() => {
@@ -208,26 +221,30 @@ export default function StringsPanel(props: StringsPanelProps) {
                 </Show>
               </div>
             </Show>
-            <ul class="strings-list">
-              <For each={r().strings}>
-                {(s) => (
-                  <li
-                    title="单击跳到第一次写入/触碰；双击查看逐字符 provenance"
-                    onClick={(e) => {
-                      if (e.detail === 1) scheduleJumpString(s);
-                    }}
-                    onDblClick={(e) => {
-                      e.preventDefault();
-                      showProvenance(s);
-                    }}
-                  >
-                    <span class="dim small">{s.addr}</span>
-                    <span class="dim small">{s.len}</span>
-                    <span class="str">{s.str}</span>
-                  </li>
-                )}
-              </For>
-            </ul>
+            <div class="vscroll strings-vscroll" ref={stringsList.ref} onScroll={stringsList.onScroll}>
+              <ul class="strings-list vbody" style={{ height: `${stringsList.window().height}px` }}>
+                <For each={stringsWindowItems()}>
+                  {(s, i) => (
+                    <li
+                      class="vrow"
+                      title="单击跳到第一次写入/触碰；双击查看逐字符 provenance"
+                      style={{ top: `${(stringsList.window().start + i()) * STRING_ROW_HEIGHT}px` }}
+                      onClick={(e) => {
+                        if (e.detail === 1) scheduleJumpString(s);
+                      }}
+                      onDblClick={(e) => {
+                        e.preventDefault();
+                        showProvenance(s);
+                      }}
+                    >
+                      <span class="dim small">{s.addr}</span>
+                      <span class="dim small">{s.len}</span>
+                      <span class="str">{s.str}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </div>
           </>
         )}
       </Show>

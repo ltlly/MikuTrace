@@ -1,6 +1,7 @@
-import { createMemo, createSignal, createResource, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 
-import { fetchLastWriteOfReg, fetchRecord } from "~/api/client";
+import { fetchLastWriteOfReg } from "~/api/client";
+import type { RecordDetail } from "~/api/types";
 import { clamp } from "~/utils/math";
 import { useGuarded } from "~/utils/guarded";
 import { normalizeReg } from "~/utils/bnTokens";
@@ -11,6 +12,10 @@ interface RegistersPanelProps {
   onSelectReg: (reg: string) => void;
   onSelect: (idx: number) => void;
   active: boolean;
+  /// App 层统一的当前 idx /api/record 响应与加载态。
+  record?: RecordDetail;
+  recordLoading?: boolean;
+  recordError?: unknown;
 }
 
 const REG_ORDER = [
@@ -147,17 +152,8 @@ export default function RegistersPanel(props: RegistersPanelProps) {
   const [deltaW, setDeltaW] = createSignal(initialCols.delta);
   const [noteW, setNoteW] = createSignal(initialCols.note);
   const lastWrite = useGuarded();
-  let recordAbort: AbortController | undefined;
-  const [record] = createResource(
-    () => (props.active ? props.idx : undefined),
-    (idx) => {
-      recordAbort?.abort();
-      recordAbort = new AbortController();
-      return fetchRecord(idx, recordAbort.signal);
-    },
-  );
   const currentRecord = createMemo(() => {
-    const r = record();
+    const r = props.record;
     return r && r.idx === props.idx ? r : undefined;
   });
 
@@ -209,10 +205,10 @@ export default function RegistersPanel(props: RegistersPanelProps) {
   return (
     <section class="panel">
       <h2>Registers</h2>
-      <Show when={!record.loading && record.error}>
-        <p class="err">load failed: {String(record.error)}</p>
+      <Show when={!props.recordLoading && props.recordError}>
+        <p class="err">load failed: {String(props.recordError)}</p>
       </Show>
-      <Show when={record.loading}>
+      <Show when={props.recordLoading}>
         <p class="dim">loading…</p>
       </Show>
       <Show when={currentRecord()}>

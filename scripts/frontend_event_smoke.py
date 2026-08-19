@@ -21,7 +21,6 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-
 DEFAULT_TIMEOUT_MS = 30_000
 
 

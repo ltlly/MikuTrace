@@ -25,9 +25,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
-
 
 DEFAULT_TIMEOUT = 60.0
 
@@ -113,7 +112,9 @@ def timed_request(
             ),
             None,
         )
-    except Exception as err:  # network timeout, refused connection, bad JSON, ...
+    # 探针必须把任何失败（超时/拒连/坏 JSON）记为一次失败 Measurement 而不是
+    # 中断整个测量，逐类窄化会漏掉新故障形态。
+    except Exception as err:  # noqa: BLE001 -- 网络超时/拒连/坏 JSON 统一降级为失败测量
         elapsed = (time.perf_counter() - t0) * 1000.0
         return (
             Measurement(label, path, None, elapsed, 0, False, str(err)),
@@ -211,19 +212,6 @@ def pick_function(functions: Any, fallback: str | None) -> str | None:
     return None
 
 
-def pick_function_id(functions: Any) -> str | None:
-    fns = (functions or {}).get("functions", [])
-    for source in ("trace-ir", "symbol"):
-        for fn in fns:
-            if fn.get("source") == source and isinstance(fn.get("id"), str):
-                return fn["id"]
-    for fn in fns:
-        fn_id = fn.get("id")
-        if isinstance(fn_id, str) and fn_id:
-            return fn_id
-    return None
-
-
 def pick_largest_cfg_function(functions: Any, exclude: str | None) -> str | None:
     best: tuple[int, int, str] | None = None
     for fn in (functions or {}).get("functions", []):
@@ -300,7 +288,6 @@ def main() -> int:
     funcs_measure, funcs = timed_get(base, "functions", "/api/functions", args.timeout)
     measurements.append(funcs_measure)
     fn = pick_function(funcs, fn_hint)
-    fn_id = pick_function_id(funcs)
     largest_cfg_fn = pick_largest_cfg_function(funcs, fn)
     largest_cfg_pc = function_entry_pc(funcs, largest_cfg_fn)
     strings_seed = get_json(
@@ -405,39 +392,8 @@ def main() -> int:
                     "reg timeline x0",
                     q("/api/reg-timeline", reg="x0", start=0, end=-1, max_points=5000),
                 ),
-                Probe(
-                    "dec summary",
-                    q("/api/dec/summary", split_top_k=40, split_min_records=10),
-                ),
             ]
         )
-        if fn_id:
-            probes.append(
-                Probe(
-                    "dec fn hot",
-                    q(
-                        f"/api/dec/fn/{urllib.parse.quote(fn_id, safe='')}",
-                        tier="hot",
-                        split_top_k=40,
-                        split_min_records=10,
-                    ),
-                )
-            )
-            probes.append(
-                Probe(
-                    "llil render",
-                    "/api/llil/render",
-                    method="POST",
-                    json_body={
-                        "fn_id": fn_id,
-                        "max_records": 300,
-                        "ssa": True,
-                        "constfold": True,
-                        "flag_elim": True,
-                        "dce": False,
-                    },
-                )
-            )
     if sp:
         probes.extend(
             [
@@ -501,7 +457,7 @@ def main() -> int:
         "mid_idx": mid,
         "mid_pc": rec_mid.get("pc"),
         "mid_func": fn_hint,
-        "function_id": fn_id,
+        "function_id": fn,
         "largest_cfg_fn": largest_cfg_fn,
         "largest_cfg_pc": largest_cfg_pc,
         "string_provenance_target": string_provenance_target,

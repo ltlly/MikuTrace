@@ -104,6 +104,25 @@ async fn hash_input_search_rejects_bad_target_hex() {
 }
 
 #[tokio::test]
+async fn hash_input_search_rejects_combo_over_limit() {
+    // 100 inputs × 1 key × 4 默认 combos × 3000 algos = 1_200_000 > 200_000：
+    // 必须在计算前拒绝。
+    let (_tmp, cd) = synth_call_dir();
+    let algos: Vec<String> = (0..3000).map(|i| format!("algo_{i}")).collect();
+    let inputs: Vec<String> = (0..100).map(|i| format!("input_{i}")).collect();
+    let body = json!({
+        "target_bytes": "aaf4c61d",
+        "inputs": inputs,
+        "algos": algos,
+    });
+    let (status, v) = post(cd, body).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["limit"], 200_000);
+    assert_eq!(v["requested"], 1_200_000);
+}
+
+#[tokio::test]
 async fn hash_input_search_batches_memory_prefix_lookup() {
     // sha1("hello") starts with aa f4 c6 1d; store that prefix at 0x7000.
     let (_tmp, cd) = synth_store_call_dir(0x1dc6f4aa);

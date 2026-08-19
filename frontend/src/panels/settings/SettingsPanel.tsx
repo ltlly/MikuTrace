@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, onCleanup, Show } from "solid-js";
 
 import {
   fetchBgStatus,
@@ -8,6 +8,8 @@ import {
 } from "~/api/client";
 
 const DENSE_KEY = "tracemiku.dense";
+const FAST_POLL_MS = 1500;
+const SLOW_POLL_MS = 15000;
 
 function initialDense(): boolean {
   return localStorage.getItem(DENSE_KEY) === "1";
@@ -45,15 +47,46 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     () => (props.active ? statusTick() : undefined),
     () => fetchDecompStatus(),
   );
+  const [slowPoll, setSlowPoll] = createSignal(false);
+
+  /// bg-status 内所有带 status 字段的任务都 ready（parallelism 等无 status 的项忽略）。
+  const bgAllReady = createMemo(() => {
+    const r = bg();
+    if (!r) return false;
+    return Object.values(r).every((task) => {
+      if (!task || typeof task !== "object") return true;
+      const status = (task as { status?: unknown }).status;
+      return status === undefined || status === "ready";
+    });
+  });
+  const decompReady = createMemo(() => decomp()?.status === "ready");
 
   createEffect(() => {
     localStorage.setItem(DENSE_KEY, dense() ? "1" : "0");
     document.documentElement.dataset.density = dense() ? "dense" : "normal";
   });
 
+  // 轮询退避：数据刷新中（含重新激活后的强制 refetch）或出现非 ready /
+  // 错误状态时用 1.5s 快轮询；bg 与 decomp 全部 ready 后退避到 15s。
   createEffect(() => {
     if (!props.active) return;
-    const timer = window.setInterval(() => setStatusTick((n) => n + 1), 1500);
+    if (bg.loading || decomp.loading) {
+      setSlowPoll(false);
+      return;
+    }
+    if (bg.error || decomp.error) {
+      setSlowPoll(false);
+      return;
+    }
+    setSlowPoll(bgAllReady() && decompReady());
+  });
+
+  createEffect(() => {
+    if (!props.active) return;
+    const timer = window.setInterval(
+      () => setStatusTick((n) => n + 1),
+      slowPoll() ? SLOW_POLL_MS : FAST_POLL_MS,
+    );
     onCleanup(() => window.clearInterval(timer));
   });
 
@@ -147,7 +180,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
       </div>
       <Show when={meta.error || openapi.error || bg.error || decomp.error}>
         <p class="err">
-          settings load warning:{" "}
+          load failed:{" "}
           {String(meta.error || openapi.error || bg.error || decomp.error)}
         </p>
       </Show>

@@ -16,7 +16,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::routes::resolve::parse_u64;
+use crate::routes::parse::parse_hex_u64;
 use crate::state::AppState;
 use tracemiku_core::disasm::normalize_disasm_reg;
 
@@ -57,25 +57,21 @@ pub struct DistinctValue {
 pub async fn reg_at_handler(
     State(state): State<AppState>,
     Query(q): Query<RegAtQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || reg_at_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "reg-at worker failed: {err}");
-                json!({ "status": "error", "error": "reg-at worker panicked" })
-            }),
-    )
+    let value = tokio::task::spawn_blocking(move || reg_at_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("reg-at", &err))?;
+    Ok(Json(value))
 }
 
 fn resolve_pc(inner: &crate::state::AppStateInner, q: &RegAtQuery) -> Result<u64, Value> {
     if let Some(addr) = q.addr.as_ref() {
-        return parse_u64(addr)
+        return parse_hex_u64(addr)
             .ok_or_else(|| json!({ "status": "error", "error": format!("invalid addr: {addr}") }));
     }
     if let (Some(so), Some(off_raw)) = (q.so.as_ref(), q.off.as_ref()) {
-        let off = parse_u64(off_raw).ok_or_else(
+        let off = parse_hex_u64(off_raw).ok_or_else(
             || json!({ "status": "error", "error": format!("invalid off: {off_raw}") }),
         )?;
         let candidates = inner.modules.resolve_offset_candidates(so, off);

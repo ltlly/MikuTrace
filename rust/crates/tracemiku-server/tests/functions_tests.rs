@@ -199,28 +199,6 @@ async fn functions_disambiguates_auto_symbols_across_modules() {
         .all(|f| f["entry_rel"].as_u64() == Some(0x100)));
 
     let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/dec/fn/symaddr:0x200100")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["fn_id"], "symaddr:0x200100");
-    assert_eq!(v["name"], "sub_100");
-    assert!(
-        v["markdown"]
-            .as_str()
-            .is_some_and(|md| md.contains("0x200100")),
-        "symaddr decompile should stay in helper module: {v:?}"
-    );
-
-    let resp = app
         .oneshot(
             Request::builder()
                 .uri("/api/records?start=3&count=1")

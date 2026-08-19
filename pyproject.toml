@@ -20,8 +20,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = []
-decomp = []
+# 仓库自带检查工具的依赖（make lint / host pytest / make smoke-ui）。
+# ruff 锁 minor 版本：lint 规则集跟随 ruff 默认 select，跨 minor 升级可能
+# 改变判定结果，升级需 deliberate 并修复新告警。
+test = [
+    "playwright>=1.40",
+    "pytest>=8",
+    "ruff>=0.16,<0.17",
+]
 dev = ["tracemiku[test]"]
 
 [tool.ruff]
@@ -33,6 +39,16 @@ extend-exclude = [
     "tests/arm64_test_bins",
     "tracemiku",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# tests/host_trace_helpers_test.py：S102 是有意行为——无扩展名的 tracemiku
+# 主脚本只能 exec 载入（文件内注释已说明）。
+"tests/host_trace_helpers_test.py" = ["S102"]
+# tools/ 两个脚本本次任务范围外，存量风格待其归属改动统一清理：
+# spawn_hook 是交互式运行脚本；vm_replay_plan_eval 的 exec 是
+# --verify-emitted-python 交叉验证的核心机制（生成代码必须真实执行）。
+"tools/spawn_hook.py" = ["EXE001", "I001", "SIM115"]
+"tools/vm_replay_plan_eval.py" = ["EXE001", "S102"]
 
 [project.urls]
 Homepage = "https://github.com/ltlly/traceMiku"

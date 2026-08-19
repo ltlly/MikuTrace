@@ -209,13 +209,8 @@ impl SymbolMap {
 /// Build a SymbolMap from per-call meta.json::known_offsets and run-meta
 /// `module` info. `base` is the primary-module base PC; offsets in the
 /// known_offsets dict are RELATIVE to that base (per-call meta.json contract).
-pub fn build_from_trace(
-    trace: &Trace,
-    base: u64,
-    known_offsets: &HashMap<u64, String>,
-) -> SymbolMap {
-    let _ = trace; // M2-γ doesn't use the trace bytes; reserved for M2-δ
-                   // when auto_known_offsets walks call instructions.
+/// 不读取 trace 字节：调用方传入的 known_offsets 已含全部符号来源。
+pub fn build_from_trace(base: u64, known_offsets: &HashMap<u64, String>) -> SymbolMap {
     let mut m = SymbolMap::new();
     for (off, name) in known_offsets {
         m.add(base.wrapping_add(*off), name.clone());

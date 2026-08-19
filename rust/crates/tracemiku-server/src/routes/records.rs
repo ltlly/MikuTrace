@@ -65,25 +65,12 @@ pub struct RecordsResponse {
 pub async fn records_handler(
     State(state): State<AppState>,
     Query(q): Query<RecordsQuery>,
-) -> Json<RecordsResponse> {
+) -> Result<Json<RecordsResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || records_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "records worker failed: {err}");
-                RecordsResponse {
-                    start: 0,
-                    end: 0,
-                    count: 0,
-                    returned: 0,
-                    requested_count: 0,
-                    max_count_used: 0,
-                    truncated: false,
-                    records: vec![],
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || records_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("records", &err))?;
+    Ok(Json(response))
 }
 
 fn records_response(inner: &crate::state::AppStateInner, q: RecordsQuery) -> RecordsResponse {

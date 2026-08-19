@@ -151,7 +151,7 @@ export default function CryptoPanel(props: CryptoPanelProps) {
         <p class="dim">loading crypto analysis...</p>
       </Show>
       <Show when={resp.error}>
-        <p class="err">failed: {String(resp.error)}</p>
+        <p class="err">load failed: {String(resp.error)}</p>
       </Show>
 
       <Show when={resp()}>

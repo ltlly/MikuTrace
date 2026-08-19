@@ -1982,12 +1982,6 @@ pub(super) fn module_for_addr(meta: &serde_json::Value, addr: u64) -> serde_json
     serde_json::Value::Null
 }
 
-pub(super) fn json_u64(value: &serde_json::Value) -> Option<u64> {
-    value
-        .as_u64()
-        .or_else(|| value.as_str().and_then(parse_u64_str))
-}
-
 pub(super) fn observed_load_bytes(def_row: &serde_json::Value, size: u64) -> Option<Vec<u8>> {
     let value = def_row
         .pointer("/def/value_after")

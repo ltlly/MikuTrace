@@ -12,6 +12,12 @@
   font-size: 12px;
 }
 
+.functions-filter {
+  width: 100%;
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
 .functions-list li {
   display: flex;
   align-items: baseline;
@@ -385,12 +391,10 @@
   margin: 0;
   font-family: var(--font-mono);
   font-size: 12px;
-  max-height: 320px;
-  overflow-y: auto;
 }
 
-.lp-tab .strings-list {
-  max-height: none;
+.strings-vscroll {
+  max-height: 420px;
 }
 
 .strings-list li {
@@ -403,9 +407,16 @@
   align-items: start;
 }
 
-.lp-tab .strings-list li {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
+.strings-list li.vrow {
+  height: 20px;
+  align-items: center;
+}
+
+.strings-list li.vrow > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .strings-list li:hover {
@@ -616,13 +627,18 @@
 .taint-table th { color: var(--dim, #888); font-weight: normal; }
 .taint-table tbody tr { cursor: pointer; }
 .taint-table tbody tr:hover { background: var(--bg3); }
+.taint-vscroll { max-height: 420px; }
+.taint-table thead { display: block; }
+.taint-table thead tr,
+.taint-table .vrow {
+  display: grid;
+  align-items: stretch;
+  grid-template-columns: var(--taint-cols);
+}
+.taint-table .vrow { height: 20px; }
 .taint-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   font-family: var(--font-mono);
   min-width: 0;
-  overflow-x: auto;
 }
 .taint-tree-row {
   display: grid;
@@ -632,9 +648,9 @@
     "asm asm asm";
   gap: 2px 8px;
   width: 100%;
-  min-height: 22px;
+  height: 40px;
   min-width: 0;
-  align-items: start;
+  align-items: center;
   background: transparent;
   color: var(--fg);
   border: 0;
@@ -673,80 +689,12 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
-
-.decompiler-panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.dec-grid { display: grid; grid-template-columns: minmax(min(360px, 100%), 0.9fr) minmax(min(420px, 100%), 1.1fr); gap: 16px; align-items: start; min-height: 0; }
-#right-col .dec-grid { grid-template-columns: minmax(0, 1fr); overflow: auto; }
-.dec-grid > * { min-width: 0; }
-.dec-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; font-size: 12px; color: var(--dim); }
-.dec-controls label { display: flex; align-items: center; gap: 6px; }
-.dec-controls select,
-.dec-controls input,
-.dec-controls button {
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 2px 6px;
-}
-.dec-controls select { max-width: 100%; }
-.dec-controls input[type="number"] { width: 7em; }
-.dec-controls button { cursor: pointer; }
-.dec-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-.dec-option-note { margin-left: -4px; }
-.dec-function-pane {
-  min-width: 0;
-}
-.dec-function-drawer {
-  border: 1px solid var(--border);
-  background: var(--bg);
-}
-.dec-function-drawer > summary {
-  padding: 4px 8px;
-  color: var(--dim);
-  cursor: pointer;
-  user-select: none;
-}
-.dec-function-drawer[open] > summary {
-  border-bottom: 1px solid var(--border);
-  color: var(--fg);
-}
-.dec-function-list {
-  max-height: max(120px, min(360px, calc(100vh - 360px)));
-  overflow: auto;
-}
-.dec-table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
-.dec-table th, .dec-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.dec-table th { color: var(--dim, #888); font-weight: normal; }
-.dec-table tbody tr { cursor: pointer; }
-.dec-table tbody tr:hover { background: rgba(98, 160, 234, 0.08); }
-.dec-table tbody tr.selected { background: rgba(98, 160, 234, 0.16); }
-.dec-markdown,
-.dec-llm,
-.dec-llil {
-  max-height: 520px;
-  overflow: auto;
-  margin: 0 0 10px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.dec-llm { border-color: rgba(87, 199, 133, 0.35); }
-.dec-llil { border-color: rgba(98, 160, 234, 0.35); }
-@media (max-width: 960px) {
-  .dec-grid { grid-template-columns: 1fr; }
+/* 虚拟渲染行固定高度：why/asm 收敛为单行省略 */
+.taint-tree-row .taint-tree-why,
+.taint-tree-row .taint-tree-asm {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav-panel {

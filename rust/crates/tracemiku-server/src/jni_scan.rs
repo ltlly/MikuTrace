@@ -205,15 +205,6 @@ fn branch_reg(op_str: &str) -> Option<String> {
     (!reg.is_empty()).then_some(reg)
 }
 
-pub(crate) fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
-}
-
 fn load_jni_vtable() -> Option<HashMap<u64, String>> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest.parent()?.parent()?.parent()?;
@@ -233,7 +224,7 @@ fn load_jni_offsets_json(path: &std::path::Path) -> Option<HashMap<u64, String>>
     let raw = value.get("offsets").unwrap_or(&value).as_object()?;
     let mut out = HashMap::new();
     for (k, v) in raw {
-        let offset = parse_int(k)?;
+        let offset = crate::routes::parse::parse_dec_u64(k)?;
         let name = v.as_str()?.to_string();
         out.insert(offset, name);
     }

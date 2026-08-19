@@ -8,11 +8,13 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use axum::extract::{Query, State};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::state::{AppState, AppStateInner, CfgSvgCached};
+use crate::routes::parse;
+use crate::state::{lock_or_recover, AppState, AppStateInner, CfgSvgCached};
 
 #[derive(Debug, Deserialize)]
 pub struct CfgSvgQuery {
@@ -78,7 +80,8 @@ const AUTO_DOT_MAX_BLOCKS: usize = 120;
 const AUTO_DOT_MAX_EDGES: usize = 250;
 const FORCE_DOT_MAX_BLOCKS: usize = 400;
 const FORCE_DOT_MAX_EDGES: usize = 1_000;
-const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
+/// cfg_svg 缓存的单条 SVG 尺寸上限（读侧自动跳过判断与写入侧拦截共用）。
+pub(crate) const AUTO_CACHED_MAX_SVG_BYTES: usize = 1_500_000;
 const LARGE_OVERVIEW_MAX_BLOCKS: usize = 2_000;
 const LARGE_OVERVIEW_MAX_EDGES: usize = 6_000;
 const LARGE_OVERVIEW_MAX_DRAWN_EDGES: usize = 320;
@@ -98,17 +101,13 @@ fn estimate_dot_bytes(block_count: usize, edge_count: usize) -> usize {
 pub async fn cfg_svg_handler(
     State(state): State<AppState>,
     Query(q): Query<CfgSvgQuery>,
-) -> Json<CfgSvgResponse> {
+) -> Response {
     let filter_fn = normalize_fn_filter(&q.fn_name);
     let focus_pc = normalize_pc_filter(&q.pc);
     let local_depth = q.local_depth.clamp(1, LOCAL_CFG_MAX_DEPTH);
     let cache_key = filter_fn.as_deref().unwrap_or("<all>").to_string();
 
-    if let Some(cached) = state
-        .inner
-        .cfg_svg_cache
-        .lock()
-        .expect("cfg svg cache poisoned")
+    if let Some(cached) = lock_or_recover(&state.inner.cfg_svg_cache)
         .get(&cache_key)
         .cloned()
     {
@@ -122,7 +121,8 @@ pub async fn cfg_svg_handler(
                 block_count: cached.block_count,
                 total_block_count: cached.total_block_count,
                 cached: true,
-            });
+            })
+            .into_response();
         }
     }
 
@@ -130,7 +130,7 @@ pub async fn cfg_svg_handler(
     let force = q.force;
     let prepare_filter = filter_fn.clone();
     let prepare_cache_key = cache_key.clone();
-    let prepared = tokio::task::spawn_blocking(move || {
+    let prepared = match tokio::task::spawn_blocking(move || {
         prepare_cfg_svg(
             inner,
             prepare_filter,
@@ -141,15 +141,17 @@ pub async fn cfg_svg_handler(
         )
     })
     .await
-    .unwrap_or_else(|err| {
-        tracing::warn!(target: "tracemiku-server", "cfg svg prepare worker failed: {err}");
-        CfgSvgPrepared::Response(CfgSvgResponse::Error {
-            err: "cfg svg prepare worker failed".to_string(),
-        })
-    });
+    {
+        Ok(prepared) => prepared,
+        Err(err) => {
+            // worker panic 统一 500，不在 async 任务上重跑全量准备逻辑。
+            let (status, body) = crate::routes::worker_panic_response("cfg svg prepare", &err);
+            return (status, body).into_response();
+        }
+    };
 
     let (dot, fn_name, block_count, total_block_count, cache_key) = match prepared {
-        CfgSvgPrepared::Response(response) => return Json(response),
+        CfgSvgPrepared::Response(response) => return Json(response).into_response(),
         CfgSvgPrepared::Dot {
             dot,
             fn_name,
@@ -167,12 +169,8 @@ pub async fn cfg_svg_handler(
                 block_count,
                 total_block_count,
             };
-            state
-                .inner
-                .cfg_svg_cache
-                .lock()
-                .expect("cfg svg cache poisoned")
-                .insert(cache_key, cached);
+            // 写入侧执行尺寸/条目上限与 FIFO 淘汰（state::CfgSvgCache::insert）。
+            lock_or_recover(&state.inner.cfg_svg_cache).insert(cache_key, cached);
             Json(CfgSvgResponse::Ready {
                 svg,
                 fn_name,
@@ -180,8 +178,9 @@ pub async fn cfg_svg_handler(
                 total_block_count,
                 cached: false,
             })
+            .into_response()
         }
-        Err(err) => Json(CfgSvgResponse::Error { err }),
+        Err(err) => Json(CfgSvgResponse::Error { err }).into_response(),
     }
 }
 
@@ -312,7 +311,7 @@ fn build_large_overview_svg(
         .meta
         .module
         .as_ref()
-        .and_then(|m| parse_hex_u64(&m.base))
+        .and_then(|m| parse::parse_hex_u64(&m.base))
         .unwrap_or(0);
     let n = included.len().max(1);
     let cols = ((n as f64).sqrt().ceil() as usize).clamp(1, 24);
@@ -613,7 +612,7 @@ fn build_local_cfg_svg(
         .meta
         .module
         .as_ref()
-        .and_then(|m| parse_hex_u64(&m.base))
+        .and_then(|m| parse::parse_hex_u64(&m.base))
         .unwrap_or(0);
     let svg = render_local_cfg_svg(
         included.len(),
@@ -933,7 +932,9 @@ fn normalize_pc_filter(raw: &str) -> Option<u64> {
     if s.is_empty() {
         return None;
     }
-    parse_hex_u64(s).or_else(|| s.parse::<u64>().ok())
+    // 共享 parse_hex_u64 相对旧的本地版本是超集：额外接受 `d`/`D` 十进制
+    // 前缀与 `0X` 前缀；裸 token 仍按十六进制（与 resolve/coverage 一致）。
+    parse::parse_hex_u64(s).or_else(|| s.parse::<u64>().ok())
 }
 
 fn included_blocks<'a>(
@@ -965,7 +966,7 @@ fn build_dot(
         .meta
         .module
         .as_ref()
-        .and_then(|m| parse_hex_u64(&m.base))
+        .and_then(|m| parse::parse_hex_u64(&m.base))
         .unwrap_or(0);
     let block_insns = collect_first_block_insns(inner, included_starts);
     let loop_colors = loop_border_colors(&inner.cfg);
@@ -1359,10 +1360,6 @@ fn edge_label(kind: &str, count: u64) -> String {
     } else {
         kind.to_string()
     }
-}
-
-fn parse_hex_u64(s: &str) -> Option<u64> {
-    u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
 }
 
 fn html_esc(s: &str) -> String {

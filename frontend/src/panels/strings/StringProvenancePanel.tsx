@@ -197,7 +197,7 @@ export default function StringProvenancePanel(props: StringProvenancePanelProps)
               string @ <code>{req().addr}</code> · len {req().len} · <code class="string-prov-text">{req().text}</code>
             </p>
             <Show when={!resp.loading && resp.error}>
-              <p class="err">provenance failed: {String(resp.error)}</p>
+              <p class="err">load failed: {String(resp.error)}</p>
             </Show>
             <Show when={resp.loading || currentResp()?.status === "loading"}>
               <p class="dim">memory index loading…</p>

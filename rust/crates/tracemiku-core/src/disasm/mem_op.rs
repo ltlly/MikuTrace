@@ -27,8 +27,8 @@ pub struct MemOp {
     pub shift: u32,
     /// Signed displacement in bytes (negative for pre/post-decrement forms).
     pub disp: i64,
-    /// Access size in bytes (1/2/4/8). Derived from mnemonic suffix and
-    /// the size of the source/dest reg operand.
+    /// Access size in bytes (1/2/4/8/16). Derived from mnemonic suffix and
+    /// the register class of the source/dest reg operand.
     pub size: u32,
     /// `true` for stores; `false` for loads.
     pub is_write: bool,
@@ -54,8 +54,35 @@ fn is_exclusive_store_style(mnem: &str) -> bool {
     )
 }
 
-/// Determine size from the mnemonic + operand register class. Mirrors the
-/// Python heuristic in `viewer/disasm.py:108-112`.
+/// 数据寄存器按寄存器类给出的访问宽度（真实 ISA 宽度）：
+/// `x`/`sp`/`xzr` → 8，`w`/`wsp`/`wzr` → 4，`q` → 16，`d` → 8，
+/// `s` → 4，`h` → 2，`b` → 1。
+fn reg_access_size(name: &str) -> u32 {
+    if name == "sp" {
+        return 8;
+    }
+    match name.as_bytes().first().copied().unwrap_or(b'x') {
+        b'q' => 16,
+        b'd' => 8,
+        b's' => 4,
+        b'h' => 2,
+        b'b' => 1,
+        b'w' => 4,
+        _ => 8,
+    }
+}
+
+/// Determine the access size in bytes from the mnemonic and the first
+/// register operand's class.
+///
+/// 判定顺序（按真实访存宽度，非寄存器宽度）：
+/// 1. 显式后缀 `b`/`h` → 1/2 字节（strb/ldrh/sturb/…）；
+/// 2. 符号扩展字加载（`ldrsw`/`ldursw`/`ldtrsw`/`ldpsw`/`ldapursw`，即
+///    `sw` 结尾）→ 恒为 4 字节：目的寄存器是 x 系不代表访存 8 字节；
+/// 3. 其余按第一个寄存器操作数的寄存器类：`str`/`ldr` 由数据寄存器
+///    宽度定（x→8、w→4），SIMD/FP 的 `ldr/str q/d/s/h/b` 分别为
+///    16/8/4/2/1 字节，`swp`/`cas` 等原子操作同理（`swp x*` 是 8 字节，
+///    不能因助记符含 'w' 误判为 4）。mem 操作数里的 base/index 不参与。
 fn op_size(mnem_base: &str, ins: &capstone::Insn, cs: &Capstone) -> u32 {
     if mnem_base.ends_with('b') {
         return 1;
@@ -63,34 +90,22 @@ fn op_size(mnem_base: &str, ins: &capstone::Insn, cs: &Capstone) -> u32 {
     if mnem_base.ends_with('h') {
         return 2;
     }
-    let head = &mnem_base[..mnem_base.len().min(4)];
-    if head.contains('w') {
+    if mnem_base.ends_with("sw") {
         return 4;
     }
-    // Look at register operands to detect 32-bit form (any operand starts with 'w').
     if let Ok(detail) = cs.insn_detail(ins) {
         let arch = detail.arch_detail();
         if let Some(arm64) = arch.arm64() {
             for op in arm64.operands() {
                 if let Arm64OperandType::Reg(reg) = op.op_type {
                     if let Some(name) = cs.reg_name(reg) {
-                        if name.starts_with('w') {
-                            return 4;
-                        }
+                        return reg_access_size(&name);
                     }
                 }
             }
         }
     }
     8
-}
-
-fn reg_access_size(name: &str) -> u32 {
-    if name.starts_with('w') {
-        4
-    } else {
-        8
-    }
 }
 
 /// Extract the list of MemOps from one capstone-decoded instruction.

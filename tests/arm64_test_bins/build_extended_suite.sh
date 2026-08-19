@@ -2,7 +2,8 @@
 # Build extended ARM64 test suite - more comprehensive samples
 CC=aarch64-linux-gnu-gcc
 CFLAGS="-O0 -static"
-OUT=/home/ltlly/Code/traceMiku/tests/arm64_test_bins
+# 输出目录固定为本脚本所在目录（tests/arm64_test_bins），不再硬编码绝对路径。
+OUT="$(cd "$(dirname "$0")" && pwd)"
 
 # === Extended test samples ===
 

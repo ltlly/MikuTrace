@@ -9,25 +9,8 @@ Memory defaults, CFG loading guards, and long-output wrapping.
 from __future__ import annotations
 
 import re
-import sys
-from pathlib import Path
 
-
-REPO = Path(__file__).resolve().parent.parent
-SRC = REPO / "frontend" / "src"
-
-
-def read(rel: str) -> str:
-    return (SRC / rel).read_text()
-
-
-def read_many(*rels: str) -> str:
-    return "\n".join(read(rel) for rel in rels)
-
-
-def require(name: str, ok: bool, failures: list[str]) -> None:
-    if not ok:
-        failures.append(name)
+from _static_audit import read, read_many, report, require
 
 
 def main() -> int:
@@ -41,7 +24,6 @@ def main() -> int:
         "styles/records.css",
         "styles/inspectors.css",
         "styles/analysis.css",
-        "styles/pseudoc.css",
     )
     cfg = read("panels/cfg/CfgPanel.tsx")
     memory = read("panels/memory/MemoryPanel.tsx")
@@ -56,7 +38,6 @@ def main() -> int:
     string_prov = read("panels/strings/StringProvenancePanel.tsx")
     taint = read("panels/taint/TaintPanel.tsx")
     xref = read("panels/xref/XrefPanel.tsx")
-    decompiler = read("panels/decompiler/DecompilerPanel.tsx")
     query = read("panels/query/QueryPanel.tsx")
     prov_graph = read("utils/provenanceGraph.tsx")
     task_center = read("utils/taskCenter.ts")
@@ -64,22 +45,9 @@ def main() -> int:
     failures: list[str] = []
 
     require(
-        "App exposes DecompilerPanel",
-        "DecompilerPanel" in app and '"dec"' in app,
-        failures,
-    )
-    require(
-        "Decompile UI has no visible LLM controls",
-        "call LLM" not in decompiler
-        and "LLIL → LLM" not in decompiler
-        and "callDecLlm" not in decompiler
-        and "callLlilLlm" not in decompiler,
-        failures,
-    )
-    require(
-        "right tabs include cfg/regs/hlil/dec",
+        "right tabs include cfg/regs/hlil",
         re.search(
-            r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"\s*\|\s*"dec"',
+            r'type RightTab\s*=\s*"cfg"\s*\|\s*"regs"\s*\|\s*"hlil"',
             app_types,
         )
         is not None,
@@ -114,7 +82,7 @@ def main() -> int:
     )
     require(
         "ASM resize handles stay fully clickable inside clipped header cells",
-        re.search(r"#stream-header \.col-resize\s*\{[^}]*right:\s*0;", css, re.S)
+        re.search(r"#stream-header \.col-resize\s*\{[^}]*right:\s*0;", css, re.DOTALL)
         is not None,
         failures,
     )
@@ -434,7 +402,7 @@ def main() -> int:
         "same PC executions" in xref
         and "same instruction text" in xref
         and "regex search over decoded assembly text" in xref
-        and "instruction text search failed" in xref
+        and "load failed: {String(asmRefs.error)}" in xref
         and "asm refs" not in xref.lower(),
         failures,
     )
@@ -599,14 +567,7 @@ def main() -> int:
         failures,
     )
 
-    if failures:
-        print("Frontend UI static audit failed:", file=sys.stderr)
-        for failure in failures:
-            print(f"  - {failure}", file=sys.stderr)
-        return 1
-
-    print("OK frontend UI audit")
-    return 0
+    return report("UI", failures, "OK frontend UI audit")
 
 
 if __name__ == "__main__":

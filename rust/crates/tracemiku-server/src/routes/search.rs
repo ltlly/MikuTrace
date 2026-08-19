@@ -58,25 +58,12 @@ pub struct SearchResponse {
 pub async fn search_handler(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
-) -> Json<SearchResponse> {
+) -> Result<Json<SearchResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || search_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "search worker failed: {err}");
-                SearchResponse {
-                    count: 0,
-                    returned: 0,
-                    total_matches: 0,
-                    truncated: false,
-                    max_results_used: 0,
-                    pattern: String::new(),
-                    cursor: None,
-                    hits: Vec::new(),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || search_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("search", &err))?;
+    Ok(Json(response))
 }
 
 fn search_response(inner: &crate::state::AppStateInner, q: SearchQuery) -> SearchResponse {

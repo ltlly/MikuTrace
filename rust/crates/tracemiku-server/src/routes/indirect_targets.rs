@@ -21,7 +21,8 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::routes::resolve::{coord_for_pc, parse_u64, Coord};
+use crate::routes::parse::parse_hex_u64;
+use crate::routes::resolve::{coord_for_pc, Coord};
 use crate::state::AppState;
 
 /// Cap on distinct sources returned by the list-all form.
@@ -61,16 +62,12 @@ pub struct SourceEntry {
 pub async fn indirect_targets_handler(
     State(state): State<AppState>,
     Query(q): Query<IndirectTargetsQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || indirect_targets_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "indirect-targets worker failed: {err}");
-                json!({ "status": "error", "error": "indirect-targets worker panicked" })
-            }),
-    )
+    let value = tokio::task::spawn_blocking(move || indirect_targets_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("indirect-targets", &err))?;
+    Ok(Json(value))
 }
 
 /// Mnemonic at a source PC (first observed execution), if decodable.
@@ -115,12 +112,12 @@ fn indirect_targets_response(
 ) -> Value {
     // Resolve the requested source PC, if any.
     let source_pc: Option<u64> = if let Some(addr) = q.addr.as_ref() {
-        match parse_u64(addr) {
+        match parse_hex_u64(addr) {
             Some(pc) => Some(pc),
             None => return json!({ "status": "error", "error": format!("invalid addr: {addr}") }),
         }
     } else if let (Some(so), Some(off_raw)) = (q.so.as_ref(), q.off.as_ref()) {
-        let Some(off) = parse_u64(off_raw) else {
+        let Some(off) = parse_hex_u64(off_raw) else {
             return json!({ "status": "error", "error": format!("invalid off: {off_raw}") });
         };
         let candidates = inner.modules.resolve_offset_candidates(so, off);

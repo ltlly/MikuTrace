@@ -234,7 +234,7 @@ fn resolve_all_seeds(state: &AppState, q: &BfsSliceQuery, before: usize) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::seed_resolver::parse_u64;
+    use crate::routes::parse::parse_dec_u64;
 
     #[test]
     fn parse_mode_defaults_to_union() {
@@ -261,8 +261,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_u64_accepts_hex_and_decimal() {
-        assert_eq!(parse_u64("0x42"), Some(0x42));
-        assert_eq!(parse_u64("66"), Some(66));
+    fn parse_dec_u64_accepts_hex_and_decimal() {
+        assert_eq!(parse_dec_u64("0x42"), Some(0x42));
+        assert_eq!(parse_dec_u64("66"), Some(66));
     }
 }

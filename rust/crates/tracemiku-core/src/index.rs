@@ -6,14 +6,17 @@
 //! `viewer/index.py:41-54`.
 
 use std::collections::HashMap;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::thread;
 
 use crate::disasm::classify::is_conditional_branch_mnem;
 use crate::disasm::{addr_of, decode};
 use crate::parallel;
-use crate::sidecar_io::{invalid_data, read_len, read_string, read_u64, write_string, write_u64};
+use crate::sidecar_io::{
+    elem_cap, invalid_data, read_len, read_len_capped, read_string, read_u32, read_u64,
+    write_atomic, write_string, write_u32, write_u64,
+};
 use crate::trace::Trace;
 
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -92,44 +95,31 @@ impl Index {
     /// Save this index as a compact binary sidecar. Writes to a temp file in
     /// the call directory and atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
-        let path = Self::sidecar_path(trace);
-        let tmp_name = format!(
-            "{}.tmp.{}",
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("trace.bin.analysis-index.v2.bin"),
-            std::process::id()
-        );
-        let tmp_path = path.with_file_name(tmp_name);
-        let write_result = (|| {
-            let raw = std::fs::File::create(&tmp_path)?;
-            let mut f = BufWriter::with_capacity(1024 * 1024, raw);
-            f.write_all(SIDECAR_MAGIC)?;
-            write_u32(&mut f, SIDECAR_VERSION)?;
-            write_u64(&mut f, trace.raw().len() as u64)?;
-            write_u64(&mut f, trace_fingerprint(trace))?;
-            write_string_vec_map(&mut f, &self.reg_defs)?;
-            write_string_vec_map(&mut f, &self.reg_uses)?;
-            write_memrec_vec(&mut f, &self.mem_writes)?;
-            write_memrec_vec(&mut f, &self.mem_reads)?;
-            write_u64_vec_map(&mut f, &self.pc_to_idxs)?;
-            write_u64_vec_map(&mut f, &self.mem_addr_to_writes)?;
-            write_u64_vec_map(&mut f, &self.mem_addr_to_reads)?;
-            write_usize_vec(&mut f, &self.cond_branches)?;
-            write_usize_vec(&mut f, &self.call_ret_boundaries)?;
-            f.flush()?;
-            f.get_ref().sync_all()?;
-            std::fs::rename(&tmp_path, &path)
-        })();
-        if write_result.is_err() {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        write_result
+        write_atomic(
+            &Self::sidecar_path(trace),
+            "trace.bin.analysis-index.v2.bin",
+            |f| {
+                f.write_all(SIDECAR_MAGIC)?;
+                write_u32(f, SIDECAR_VERSION)?;
+                write_u64(f, trace.raw().len() as u64)?;
+                write_u64(f, trace_fingerprint(trace))?;
+                write_string_vec_map(f, &self.reg_defs)?;
+                write_string_vec_map(f, &self.reg_uses)?;
+                write_memrec_vec(f, &self.mem_writes)?;
+                write_memrec_vec(f, &self.mem_reads)?;
+                write_u64_vec_map(f, &self.pc_to_idxs)?;
+                write_u64_vec_map(f, &self.mem_addr_to_writes)?;
+                write_u64_vec_map(f, &self.mem_addr_to_reads)?;
+                write_usize_vec(f, &self.cond_branches)?;
+                write_usize_vec(f, &self.call_ret_boundaries)
+            },
+        )
     }
 
     fn read_sidecar(trace: &Trace) -> std::io::Result<Self> {
         let path = Self::sidecar_path(trace);
         let raw = std::fs::File::open(path)?;
+        let file_len = raw.metadata()?.len() as usize;
         let mut f = BufReader::with_capacity(1024 * 1024, raw);
         let mut magic = [0u8; 8];
         f.read_exact(&mut magic)?;
@@ -149,15 +139,15 @@ impl Index {
             return Err(invalid_data("stale index sidecar trace fingerprint"));
         }
         let index = Self {
-            reg_defs: read_string_vec_map(&mut f)?,
-            reg_uses: read_string_vec_map(&mut f)?,
-            mem_writes: read_memrec_vec(&mut f)?,
-            mem_reads: read_memrec_vec(&mut f)?,
-            pc_to_idxs: read_u64_vec_map(&mut f)?,
-            mem_addr_to_writes: read_u64_vec_map(&mut f)?,
-            mem_addr_to_reads: read_u64_vec_map(&mut f)?,
-            cond_branches: read_usize_vec(&mut f)?,
-            call_ret_boundaries: read_usize_vec(&mut f)?,
+            reg_defs: read_string_vec_map(&mut f, file_len)?,
+            reg_uses: read_string_vec_map(&mut f, file_len)?,
+            mem_writes: read_memrec_vec(&mut f, file_len)?,
+            mem_reads: read_memrec_vec(&mut f, file_len)?,
+            pc_to_idxs: read_u64_vec_map(&mut f, file_len)?,
+            mem_addr_to_writes: read_u64_vec_map(&mut f, file_len)?,
+            mem_addr_to_reads: read_u64_vec_map(&mut f, file_len)?,
+            cond_branches: read_usize_vec(&mut f, file_len)?,
+            call_ret_boundaries: read_usize_vec(&mut f, file_len)?,
         };
         Ok(index)
     }
@@ -380,12 +370,20 @@ fn write_string_vec_map(
     Ok(())
 }
 
-fn read_string_vec_map(r: &mut impl Read) -> std::io::Result<HashMap<String, Vec<usize>>> {
-    let len = read_len(r)?;
+/// 读入辅助函数的长度上限均以 sidecar 文件自身字节数（`file_len`）推导：
+/// 每个序列化元素在磁盘上至少占的字节数写入各函数注释，`elem_cap`
+/// 保证合法数据的元素数永远不会被拒绝。
+fn read_string_vec_map(
+    r: &mut impl Read,
+    file_len: usize,
+) -> std::io::Result<HashMap<String, Vec<usize>>> {
+    // 每个映射项最少 16 字节：key 长度前缀 8 + key ≥1 字节 + 内层 vec
+    // 长度前缀 8（空 vec）。
+    let len = read_len_capped(r, elem_cap(file_len, 16))?;
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
         let key = read_string(r)?;
-        let values = read_usize_vec(r)?;
+        let values = read_usize_vec(r, file_len)?;
         map.insert(key, values);
     }
     Ok(map)
@@ -400,12 +398,16 @@ fn write_u64_vec_map(w: &mut impl Write, map: &HashMap<u64, Vec<usize>>) -> std:
     Ok(())
 }
 
-fn read_u64_vec_map(r: &mut impl Read) -> std::io::Result<HashMap<u64, Vec<usize>>> {
-    let len = read_len(r)?;
+fn read_u64_vec_map(
+    r: &mut impl Read,
+    file_len: usize,
+) -> std::io::Result<HashMap<u64, Vec<usize>>> {
+    // 每个映射项最少 16 字节：key 8 + 内层 vec 长度前缀 8（空 vec）。
+    let len = read_len_capped(r, elem_cap(file_len, 16))?;
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
         let key = read_u64(r)?;
-        let values = read_usize_vec(r)?;
+        let values = read_usize_vec(r, file_len)?;
         map.insert(key, values);
     }
     Ok(map)
@@ -428,8 +430,10 @@ fn write_memrec_vec(w: &mut impl Write, recs: &[MemRec]) -> std::io::Result<()> 
     Ok(())
 }
 
-fn read_memrec_vec(r: &mut impl Read) -> std::io::Result<Vec<MemRec>> {
-    let len = read_len(r)?;
+fn read_memrec_vec(r: &mut impl Read, file_len: usize) -> std::io::Result<Vec<MemRec>> {
+    // 每个元素最少 21 字节：idx 8 + addr 8 + size 4 + option tag 1
+    // （value 为 None 时无后续字节）。
+    let len = read_len_capped(r, elem_cap(file_len, 21))?;
     let mut recs = Vec::with_capacity(len);
     for _ in 0..len {
         let idx = read_len(r)?;
@@ -460,19 +464,13 @@ fn write_usize_vec(w: &mut impl Write, values: &[usize]) -> std::io::Result<()> 
     Ok(())
 }
 
-fn read_usize_vec(r: &mut impl Read) -> std::io::Result<Vec<usize>> {
-    let len = read_len(r)?;
+fn read_usize_vec(r: &mut impl Read, file_len: usize) -> std::io::Result<Vec<usize>> {
+    // 每个元素 8 字节（write_u64）；元素值本身是记录下标，不驱动分配，
+    // 不在此处设上限。
+    let len = read_len_capped(r, elem_cap(file_len, 8))?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         values.push(read_len(r)?);
     }
     Ok(values)
-}
-fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
-    w.write_all(&v.to_le_bytes())
-}
-fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
-    let mut b = [0u8; 4];
-    r.read_exact(&mut b)?;
-    Ok(u32::from_le_bytes(b))
 }

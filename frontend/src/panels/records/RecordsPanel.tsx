@@ -1,13 +1,13 @@
 import {
   createEffect,
   createMemo,
-  createResource,
   createSignal,
   For,
   onCleanup,
   onMount,
   Show,
 } from "solid-js";
+import type { Resource } from "solid-js";
 
 import {
   fetchBlockForPc,
@@ -16,16 +16,16 @@ import {
   fetchIdxsForBlock,
   fetchIdxsForPc,
   fetchLastWriteOfReg,
-  fetchMeta,
   fetchNextUseOfReg,
   fetchRecords,
   fetchRegValueAt,
 } from "~/api/client";
-import type { AsmToken, CallTreeResponse, RecordRow, RecordsResponse, RegValueAtResponse } from "~/api/types";
+import type { AsmToken, CallTreeResponse, MetaResponse, RecordRow, RecordsResponse, RegValueAtResponse } from "~/api/types";
 import { normalizeReg } from "~/utils/bnTokens";
 import { clamp } from "~/utils/math";
 import { createGuardedResource } from "~/utils/resourceGuards";
 import { useGuarded } from "~/utils/guarded";
+import { virtualRange, visibleRowCount } from "~/utils/virtualList";
 import {
   FOLDED_FETCH_BATCH_RANGES,
   OVERSCAN,
@@ -84,6 +84,8 @@ interface RecordsPanelProps {
   hiddenSos: Set<string>;
   onOpenMemory: (addr: string) => void;
   onRunTaint: (idx: number, reg: string, direction: "forward" | "backward") => void;
+  /// App 层单例 /api/meta resource（避免与 App 重复请求）。
+  meta: Resource<MetaResponse | undefined>;
   // Called whenever a new window of rows is fetched. Lets App.tsx populate
   // its (idx -> {pc, func}) cache so non-row-click selections (keyboard,
   // CallTree, hash deep-link, ...) can update cursorHint without paying a
@@ -110,7 +112,6 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   const [rowCacheVersion, setRowCacheVersion] = createSignal(0);
   const [foldedRowsLoading, setFoldedRowsLoading] = createSignal(false);
   const [foldTreeRequested, setFoldTreeRequested] = createSignal(false);
-  const [meta] = createResource(fetchMeta);
   const [callTreeResp, currentCallTreeResp] = createGuardedResource<number, CallTreeResponse>(
     () => (foldTreeRequested() ? 50 : undefined),
     (depth, signal) => fetchCallTree(depth, signal),
@@ -156,9 +157,9 @@ export default function RecordsPanel(props: RecordsPanelProps) {
     setRowContext(null);
   }
 
-  const totalRecords = createMemo(() => meta()?.records ?? 0);
+  const totalRecords = createMemo(() => props.meta()?.records ?? 0);
   const rowMarksKey = createMemo(() => {
-    const path = meta()?.path;
+    const path = props.meta()?.path;
     return path ? `${ROW_MARKS_PREFIX}${path}` : null;
   });
   const taintOnlyRows = createMemo(() =>
@@ -171,7 +172,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   });
   // Rounded viewport rows avoid 1px layout jitter flipping fetch count at an
   // exact ROW_HEIGHT boundary. Overscan below still covers the partial row.
-  const visibleRows = createMemo(() => Math.max(1, Math.round((viewHeight() || 480) / ROW_HEIGHT)));
+  const visibleRows = createMemo(() => visibleRowCount(viewHeight(), ROW_HEIGHT));
   const activeIdx = createMemo(() => optimisticIdx());
   const foldRanges = createMemo(() => {
     const tree = currentCallTreeResp()?.tree;
@@ -221,9 +222,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         const maxScroll = Math.max(1, innerHeight() - (viewHeight() || 1));
         const maxStart = Math.max(0, total - visibleRows());
         const mapped = Math.floor((scrollTop() / maxScroll) * maxStart);
-        const start = clamp(mapped - OVERSCAN, 0, maxStart);
-        const end = Math.min(total, start + visibleRows() + OVERSCAN * 2);
-        next = { start, count: end - start, end };
+        next = virtualRange(mapped, visibleRows(), total, OVERSCAN);
       } else {
         // Snap scrollTop and viewHeight to ROW_HEIGHT (18px) multiples
         // before computing the window. Without this, sub-pixel browser
@@ -235,15 +234,12 @@ export default function RecordsPanel(props: RecordsPanelProps) {
         // clicked row -> browser drops the click event entirely.
         const sTopRow = Math.floor(scrollTop() / ROW_HEIGHT);
         const vRows = visibleRows();
-        // Clamp `start` so it can never run past `total - vRows`. Without
-        // this, a stale scrollTop signal (e.g. right after a taint-only
-        // mode switch shrinks `virtualTotalRecords`) drives start past
-        // the end of the array, slice yields [], and the panel paints
-        // empty rows.
-        const maxStart = Math.max(0, total - vRows);
-        const start = clamp(sTopRow - OVERSCAN, 0, maxStart);
-        const end = Math.min(total, start + vRows + OVERSCAN * 2);
-        next = { start, count: Math.max(0, end - start), end };
+        // virtualRange clamps `start` so it can never run past
+        // `total - vRows`. Without this, a stale scrollTop signal (e.g.
+        // right after a taint-only mode switch shrinks
+        // `virtualTotalRecords`) drives start past the end of the array,
+        // slice yields [], and the panel paints empty rows.
+        next = virtualRange(sTopRow, vRows, total, OVERSCAN);
       }
 
       // Stable reference when nothing actually changed -> createResource
@@ -324,7 +320,7 @@ export default function RecordsPanel(props: RecordsPanelProps) {
   });
 
   createEffect(() => {
-    const pending = ((meta.loading || resp.loading) && displayRows().length === 0) || foldedRowsLoading();
+    const pending = ((props.meta.loading || resp.loading) && displayRows().length === 0) || foldedRowsLoading();
     if (pending) {
       if (recordsLoadingTimer === undefined && !recordsLoadingVisible()) {
         recordsLoadingTimer = window.setTimeout(() => {
@@ -1097,8 +1093,8 @@ export default function RecordsPanel(props: RecordsPanelProps) {
       closeRowContext();
     }}>
       <h2>Records</h2>
-      <Show when={meta.error}>
-        <p class="err">meta failed: {String(meta.error)}</p>
+      <Show when={props.meta.error}>
+        <p class="err">load failed: {String(props.meta.error)}</p>
       </Show>
       <Show when={resp.error}>
         <p class="err">load failed: {String(resp.error)}</p>

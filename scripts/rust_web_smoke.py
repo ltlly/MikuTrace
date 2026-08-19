@@ -28,7 +28,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TIMEOUT = 180.0
 LARGE_TRACE_PARALLEL_MIN_RECORDS = 1_000_000
@@ -251,11 +250,14 @@ def verify_taint_tree(base: str, timeout: float) -> None:
 
 def fetch_bg_status(base: str, timeout: float) -> dict[str, Any]:
     status = fetch_json(base, "/api/bg-status", timeout)
+    # 下面两处 TRY004 是有意抑制：这是对运行中 server 响应形状的 smoke 校验
+    # （失败即 smoke 不通过），不是调用方传错类型的编程错误，
+    # 语义上应为 RuntimeError 而非 TypeError。
     if not isinstance(status, dict):
-        raise RuntimeError(f"/api/bg-status returned non-object: {status!r}")
+        raise RuntimeError(f"/api/bg-status returned non-object: {status!r}")  # noqa: TRY004
     parallelism = status.get("parallelism")
     if not isinstance(parallelism, dict):
-        raise RuntimeError(f"/api/bg-status missing parallelism object: {status!r}")
+        raise RuntimeError(f"/api/bg-status missing parallelism object: {status!r}")  # noqa: TRY004
     workers = parallelism.get("workers")
     if not isinstance(workers, dict) or not workers:
         raise RuntimeError(
@@ -330,7 +332,7 @@ def main() -> int:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
+        start_new_session=True,  # stop_proc 按进程组 kill，等价 preexec_fn=setsid 且线程安全
     )
     try:
         wait_ready(base, proc, args.timeout)

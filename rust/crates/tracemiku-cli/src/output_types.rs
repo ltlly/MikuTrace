@@ -6,6 +6,19 @@
 //! the committed AI-facing contract — see contract_* tests), so AI consumers
 //! see no change. `schemars` derives let us generate JSON Schema for the
 //! surfaces later without touching output code.
+//!
+//! 截断元数据现状（字段名已被 contract_* 契约测试锁定，统一或改名需
+//! 全链路同步，故先在此登记）：
+//!
+//! - `stats`：`modules_truncated: bool`（配 `modules_total` 数量字段）；
+//! - `byte-writer-map`：`truncated` + `complete` + `warning` 三字段组合；
+//! - `jni-output-strings`（output-backtrace 的 source 段沿用同名字段）：
+//!   `source_truncated: bool`；
+//! - `byte-lineage`（`--count > 1` 批量模式）：`status: "partial_error"` +
+//!   `error_count` 数量字段。
+//!
+//! 新增输出的截断表达统一使用 `truncated: bool` + 数量字段（如
+//! `returned`/`total`）的模式，不再引入新的截断字段拼写。
 
 use schemars::JsonSchema;
 use serde::Serialize;

@@ -14,12 +14,10 @@ import BacktracePanel from "./panels/backtrace/BacktracePanel";
 import { useGuarded } from "./utils/guarded";
 import CallTreePanel from "./panels/calltree/CallTreePanel";
 import CfgPanel, { type CfgDebugState, type CursorRecordHint } from "./panels/cfg/CfgPanel";
-import DecompilerPanel from "./panels/decompiler/DecompilerPanel";
 import ForksPanel from "./panels/forks/ForksPanel";
 import FunctionsPanel from "./panels/functions/FunctionsPanel";
 import HlilPanel from "./panels/hlil/HlilPanel";
 import MemoryPanel from "./panels/memory/MemoryPanel";
-import PseudoCPanel from "./panels/PseudoCPanel";
 import QueryPanel, { type QueryRunRequest } from "./panels/query/QueryPanel";
 import RecordsPanel, { type RecordsTaintOverlay, type RecordsTaintOverlayMode, type RecordsVisibleNavigator } from "./panels/records/RecordsPanel";
 import RegistersPanel from "./panels/registers/RegistersPanel";
@@ -80,6 +78,9 @@ export default function App() {
   let recordsVisibleNavigator: RecordsVisibleNavigator | null = null;
   const [rowHintCacheSize, setRowHintCacheSize] = createSignal(0);
   const [rowHintCacheVersion, setRowHintCacheVersion] = createSignal(0);
+  const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
+  const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
+  const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
   function rememberRows(rows: RecordRow[]) {
     let changed = false;
     for (const row of rows) {
@@ -101,16 +102,35 @@ export default function App() {
       setRowHintCacheVersion((v) => v + 1);
     }
   }
+  // 需要完整 /api/record 详情（regs 等）的面板集合。这些面板原先各自
+  // 重复抓取同一 idx 的 /api/record；现在统一走 App 层单一 resource，
+  // 只在有消费面板激活时才请求，避免 j/k 每步多打 4 份请求。
+  const recordDetailNeeded = createMemo(() =>
+    leftTab() === "xref" ||
+    rightTab() === "regs" ||
+    bottomTab() === "memory" ||
+    bottomTab() === "trace-for-pc",
+  );
   const cursorRecordSource = createMemo(() => {
     const idx = selectedIdx();
     rowHintCacheVersion();
-    return rowHintCache.has(idx) ? undefined : idx;
+    if (rowHintCache.has(idx) && !recordDetailNeeded()) return undefined;
+    return idx;
   });
   let cursorRecordAbort: AbortController | undefined;
   const [cursorRecord] = createResource(cursorRecordSource, (idx) => {
     cursorRecordAbort?.abort();
     cursorRecordAbort = new AbortController();
     return fetchRecord(idx, cursorRecordAbort.signal);
+  });
+  // 读取出错 resource 的值会抛异常；这里兜底为 undefined，错误经
+  // recordError 传给面板展示，避免单个请求失败拖垮整个 App 渲染。
+  const cursorRecordValue = createMemo(() => {
+    try {
+      return cursorRecord();
+    } catch {
+      return undefined;
+    }
   });
   createEffect(() => {
     const idx = selectedIdx();
@@ -132,9 +152,6 @@ export default function App() {
       setCursorHint(hint);
     }
   });
-  const [leftTab, setLeftTab] = createSignal<LeftTab>("funcs");
-  const [rightTab, setRightTab] = createSignal<RightTab>("cfg");
-  const [bottomTab, setBottomTab] = createSignal<BottomTab>("memory");
   const [helpState, setHelpState] = createSignal<HelpState | null>(null);
   const [hiddenSos, setHiddenSosSignal] = createSignal<Set<string>>(initialHiddenSos());
   const [cmdMode, setCmdMode] = createSignal<CmdMode>("");
@@ -873,6 +890,7 @@ export default function App() {
                 onJumpFn={(fn) => selectFunction(fn, true)}
                 onRenameFn={renameFunction}
                 active={leftTab() === "funcs"}
+                functions={functions}
               />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "back" }}>
@@ -913,10 +931,19 @@ export default function App() {
               />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "xref" }}>
-              <XrefPanel idx={selectedIdx()} onSelect={setSelectedIdx} active={leftTab() === "xref"} />
+              <XrefPanel
+                idx={selectedIdx()}
+                onSelect={setSelectedIdx}
+                active={leftTab() === "xref"}
+                record={cursorRecordValue()}
+              />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "sofilter" }}>
-              <SoFilterPanel hiddenSos={hiddenSos()} onHiddenSosChange={setHiddenSos} />
+              <SoFilterPanel
+                hiddenSos={hiddenSos()}
+                onHiddenSosChange={setHiddenSos}
+                active={leftTab() === "sofilter"}
+              />
             </div>
             <div class="lp-tab" classList={{ active: leftTab() === "settings" }}>
               <SettingsPanel
@@ -986,6 +1013,7 @@ export default function App() {
               taintOverlay={taintOverlay()}
               onTaintOverlayModeChange={setTaintOverlayMode}
               onClearTaintOverlay={() => setTaintOverlay(null)}
+              meta={meta}
             />
           </div>
           <div
@@ -1010,6 +1038,7 @@ export default function App() {
                 addrRequest={memoryRequest()}
                 active={bottomTab() === "memory"}
                 onTaskUpdate={reportTask}
+                record={cursorRecordValue()}
               />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "navigation" }}>
@@ -1053,6 +1082,9 @@ export default function App() {
                 idx={selectedIdx()}
                 onSelect={setSelectedIdx}
                 active={bottomTab() === "trace-for-pc"}
+                record={cursorRecordValue()}
+                recordLoading={cursorRecord.loading}
+                recordError={cursorRecord.error}
               />
             </div>
             <div class="bbody" classList={{ active: bottomTab() === "string-provenance" }}>
@@ -1085,9 +1117,7 @@ export default function App() {
                 ? cfgDisplayFn() || "select function"
                 : rightTab() === "hlil"
                   ? cursorHint()?.func ?? cursorHint()?.pc ?? "resolving cursor"
-                  : rightTab() === "pseudoc"
-                    ? selectedFn() || "no fn selected"
-                    : selectedFn() || "no fn selected"}
+                  : selectedFn() || "no fn selected"}
             </span>
             <HelpButton topic="right" onOpen={setHelpState} />
           </div>
@@ -1103,6 +1133,7 @@ export default function App() {
                 onDisplayFnChange={setCfgDisplayFn}
                 onDebugChange={setCfgDebugState}
                 onTaskUpdate={reportTask}
+                functions={functions}
               />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "regs" }}>
@@ -1112,6 +1143,9 @@ export default function App() {
                 onSelectReg={setSelectedReg}
                 onSelect={setSelectedIdx}
                 active={rightTab() === "regs"}
+                record={cursorRecordValue()}
+                recordLoading={cursorRecord.loading}
+                recordError={cursorRecord.error}
               />
             </div>
             <div class="rbody" classList={{ active: rightTab() === "hlil" }}>
@@ -1123,23 +1157,6 @@ export default function App() {
                 onTaskUpdate={reportTask}
               />
             </div>
-            <div class="rbody" classList={{ active: rightTab() === "pseudoc" }}>
-              <PseudoCPanel
-                selectedFn={selectedFn}
-                active={rightTab() === "pseudoc"}
-                selectedIdx={selectedIdx}
-                onTaskUpdate={reportTask}
-              />
-            </div>
-            <div class="rbody" classList={{ active: rightTab() === "dec" }}>
-              <DecompilerPanel
-                selectedFn={selectedFn}
-                onSelectFn={setSelectedFn}
-                selectedIdx={selectedIdx}
-                onSelectIdx={setSelectedIdx}
-                active={rightTab() === "dec"}
-              />
-            </div>
           </div>
         </section>
 
@@ -1147,8 +1164,6 @@ export default function App() {
           {rtab("cfg", "Graph", "Trace CFG")}
           {rtab("regs", "Registers", "当前 cursor 寄存器")}
           {rtab("hlil", "HLIL", "BN HLIL")}
-          {rtab("pseudoc", "Pseudo C", "HLIL pipeline decompile")}
-          {rtab("dec", "Decompile", "Trace IR / LLIL decompile")}
         </aside>
 
         <footer id="cmdbar">

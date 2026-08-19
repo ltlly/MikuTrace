@@ -4,15 +4,21 @@ use std::collections::HashMap;
 
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use hmac::{Hmac, Mac};
 use md5::Md5;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use tracemiku_core::prelude::MemShadow;
 
 use crate::state::AppState;
+
+/// 单请求允许的组合计算总量（inputs × keys × combos × algos）。
+/// 不设上限时单个请求可触发上亿次 hash，阻塞 worker 与内存搜索。
+const MAX_HASH_COMBOS: usize = 200_000;
 
 #[derive(Debug, Deserialize)]
 pub struct HashInputSearchRequest {
@@ -94,14 +100,39 @@ struct PendingMemSearch {
 pub async fn hash_input_search_handler(
     State(state): State<AppState>,
     Json(req): Json<HashInputSearchRequest>,
-) -> Result<Json<HashInputSearchResponse>, StatusCode> {
+) -> Result<Json<HashInputSearchResponse>, Response> {
+    let total = total_hash_combos(&req);
+    if total > MAX_HASH_COMBOS {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "status": "error",
+                "error": "hash combo limit exceeded",
+                "limit": MAX_HASH_COMBOS,
+                "requested": total,
+                "hint": "reduce inputs/keys/combos/algos",
+            })),
+        )
+            .into_response());
+    }
     let response = tokio::task::spawn_blocking(move || hash_input_search_response(&state, req))
         .await
         .map_err(|err| {
             tracing::warn!(target: "tracemiku-server", "hash input search worker failed: {err}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })??;
+            crate::routes::worker_panic_response("hash input search", &err).into_response()
+        })?
+        .map_err(StatusCode::into_response)?;
     Ok(Json(response))
+}
+
+/// inputs × keys × combos × algos 的乘积上界（与 worker 内实际循环一致）。
+fn total_hash_combos(req: &HashInputSearchRequest) -> usize {
+    let keys = req.keys.len().max(1);
+    req.inputs
+        .len()
+        .saturating_mul(keys)
+        .saturating_mul(req.combos.len())
+        .saturating_mul(req.algos.len())
 }
 
 fn hash_input_search_response(

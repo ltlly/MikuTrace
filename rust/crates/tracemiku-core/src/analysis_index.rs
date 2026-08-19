@@ -6,7 +6,7 @@
 //! summaries so later panels/routes can reuse one persisted scan.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,10 @@ use crate::disasm::classify::is_conditional_branch_mnem;
 use crate::disasm::{addr_of, decode, DecodedInsn};
 use crate::index::trace_fingerprint;
 use crate::index::Index;
-use crate::sidecar_io::{invalid_data, read_len, read_string, read_u64, write_string, write_u64};
+use crate::sidecar_io::{
+    elem_cap, invalid_data, read_len, read_len_capped, read_string, read_u32, read_u64,
+    write_atomic, write_string, write_u32, write_u64,
+};
 use crate::symbols::SymbolMap;
 use crate::trace::Trace;
 
@@ -407,43 +410,31 @@ impl AnalysisIndex {
     }
 
     pub fn save_sidecar(&self, trace: &Trace, symbols: &SymbolMap) -> std::io::Result<()> {
-        let path = Self::sidecar_path(trace);
-        let tmp_name = format!(
-            "{}.tmp.{}",
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("trace.bin.analysis-full.v1.bin"),
-            std::process::id()
-        );
-        let tmp_path = path.with_file_name(tmp_name);
-        let write_result = (|| {
-            let raw = std::fs::File::create(&tmp_path)?;
-            let mut f = BufWriter::with_capacity(1024 * 1024, raw);
-            f.write_all(SIDECAR_MAGIC)?;
-            write_u32(&mut f, SIDECAR_VERSION)?;
-            write_u64(&mut f, trace.raw().len() as u64)?;
-            write_u64(&mut f, trace_fingerprint(trace))?;
-            write_u64(&mut f, symbols_fingerprint(symbols))?;
-            write_dependency_index(&mut f, &self.deps)?;
-            write_mem_last_def_vec(&mut f, &self.mem_last_def)?;
-            write_reg_checkpoint_vec(&mut f, &self.reg_checkpoints)?;
-            write_summary(&mut f, &self.summary)?;
-            write_pc_summary_vec(&mut f, &self.pc_summaries)?;
-            write_function_summary_vec(&mut f, &self.function_summaries)?;
-            let call_tree = serde_json::to_vec(&self.call_tree).map_err(std::io::Error::other)?;
-            write_bytes(&mut f, &call_tree)?;
-            f.flush()?;
-            f.get_ref().sync_all()?;
-            std::fs::rename(&tmp_path, &path)
-        })();
-        if write_result.is_err() {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        write_result
+        write_atomic(
+            &Self::sidecar_path(trace),
+            "trace.bin.analysis-full.v1.bin",
+            |f| {
+                f.write_all(SIDECAR_MAGIC)?;
+                write_u32(f, SIDECAR_VERSION)?;
+                write_u64(f, trace.raw().len() as u64)?;
+                write_u64(f, trace_fingerprint(trace))?;
+                write_u64(f, symbols_fingerprint(symbols))?;
+                write_dependency_index(f, &self.deps)?;
+                write_mem_last_def_vec(f, &self.mem_last_def)?;
+                write_reg_checkpoint_vec(f, &self.reg_checkpoints)?;
+                write_summary(f, &self.summary)?;
+                write_pc_summary_vec(f, &self.pc_summaries)?;
+                write_function_summary_vec(f, &self.function_summaries)?;
+                let call_tree =
+                    serde_json::to_vec(&self.call_tree).map_err(std::io::Error::other)?;
+                write_bytes(f, &call_tree)
+            },
+        )
     }
 
     fn read_sidecar(trace: &Trace, symbols: &SymbolMap) -> std::io::Result<Self> {
         let raw = std::fs::File::open(Self::sidecar_path(trace))?;
+        let file_len = raw.metadata()?.len() as usize;
         let mut f = BufReader::with_capacity(1024 * 1024, raw);
         let mut magic = [0u8; 8];
         f.read_exact(&mut magic)?;
@@ -466,12 +457,12 @@ impl AnalysisIndex {
         if symbol_fingerprint != symbols_fingerprint(symbols) {
             return Err(invalid_data("stale analysis sidecar symbol fingerprint"));
         }
-        let deps = read_dependency_index(&mut f)?;
-        let mem_last_def = read_mem_last_def_vec(&mut f)?;
-        let reg_checkpoints = read_reg_checkpoint_vec(&mut f)?;
+        let deps = read_dependency_index(&mut f, file_len)?;
+        let mem_last_def = read_mem_last_def_vec(&mut f, file_len)?;
+        let reg_checkpoints = read_reg_checkpoint_vec(&mut f, file_len)?;
         let summary = read_summary(&mut f)?;
-        let pc_summaries = read_pc_summary_vec(&mut f)?;
-        let function_summaries = read_function_summary_vec(&mut f)?;
+        let pc_summaries = read_pc_summary_vec(&mut f, file_len)?;
+        let function_summaries = read_function_summary_vec(&mut f, file_len)?;
         let call_tree_bytes = read_bytes(&mut f)?;
         let call_tree = serde_json::from_slice(&call_tree_bytes)
             .map_err(|_| invalid_data("bad analysis sidecar call tree json"))?;
@@ -601,9 +592,10 @@ fn write_dependency_index(w: &mut impl Write, deps: &DependencyIndex) -> std::io
     Ok(())
 }
 
-fn read_dependency_index(r: &mut impl Read) -> std::io::Result<DependencyIndex> {
-    let row_offsets = read_u64_vec(r)?;
-    let len = read_len(r)?;
+fn read_dependency_index(r: &mut impl Read, file_len: usize) -> std::io::Result<DependencyIndex> {
+    let row_offsets = read_u64_vec(r, file_len)?;
+    // 每条边最少 9 字节：idx 8 + kind 1。
+    let len = read_len_capped(r, elem_cap(file_len, 9))?;
     let mut edges = Vec::with_capacity(len);
     for _ in 0..len {
         let idx = read_len(r)?;
@@ -627,8 +619,12 @@ fn write_mem_last_def_vec(w: &mut impl Write, values: &[MemLastDefEntry]) -> std
     Ok(())
 }
 
-fn read_mem_last_def_vec(r: &mut impl Read) -> std::io::Result<Vec<MemLastDefEntry>> {
-    let len = read_len(r)?;
+fn read_mem_last_def_vec(
+    r: &mut impl Read,
+    file_len: usize,
+) -> std::io::Result<Vec<MemLastDefEntry>> {
+    // 每个元素 17 字节：addr 8 + idx 8 + value 1。
+    let len = read_len_capped(r, elem_cap(file_len, 17))?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         values.push(MemLastDefEntry {
@@ -658,8 +654,12 @@ fn write_reg_checkpoint_vec(w: &mut impl Write, values: &[RegCheckpoint]) -> std
     Ok(())
 }
 
-fn read_reg_checkpoint_vec(r: &mut impl Read) -> std::io::Result<Vec<RegCheckpoint>> {
-    let len = read_len(r)?;
+fn read_reg_checkpoint_vec(
+    r: &mut impl Read,
+    file_len: usize,
+) -> std::io::Result<Vec<RegCheckpoint>> {
+    // 每个元素 276 字节：idx 8 + pc 8 + 31 个寄存器 248 + sp 8 + nzcv 4。
+    let len = read_len_capped(r, elem_cap(file_len, 276))?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         let idx = read_len(r)?;
@@ -736,8 +736,10 @@ fn write_pc_summary_vec(w: &mut impl Write, values: &[PcSummary]) -> std::io::Re
     Ok(())
 }
 
-fn read_pc_summary_vec(r: &mut impl Read) -> std::io::Result<Vec<PcSummary>> {
-    let len = read_len(r)?;
+fn read_pc_summary_vec(r: &mut impl Read, file_len: usize) -> std::io::Result<Vec<PcSummary>> {
+    // 每个元素最少 88 字节：pc 8 + asm 字符串（长度前缀 8，空串）+ 9 个
+    // 计数字段各 8。
+    let len = read_len_capped(r, elem_cap(file_len, 88))?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         values.push(PcSummary {
@@ -773,8 +775,12 @@ fn write_function_summary_vec(
     Ok(())
 }
 
-fn read_function_summary_vec(r: &mut impl Read) -> std::io::Result<Vec<FunctionSummary>> {
-    let len = read_len(r)?;
+fn read_function_summary_vec(
+    r: &mut impl Read,
+    file_len: usize,
+) -> std::io::Result<Vec<FunctionSummary>> {
+    // 每个元素最少 57 字节：fn_pc 8 + None tag 1 + 6 个计数字段各 8。
+    let len = read_len_capped(r, elem_cap(file_len, 57))?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         values.push(FunctionSummary {
@@ -839,8 +845,9 @@ fn write_u64_vec(w: &mut impl Write, values: &[u64]) -> std::io::Result<()> {
     Ok(())
 }
 
-fn read_u64_vec(r: &mut impl Read) -> std::io::Result<Vec<u64>> {
-    let len = read_len(r)?;
+fn read_u64_vec(r: &mut impl Read, file_len: usize) -> std::io::Result<Vec<u64>> {
+    // 每个元素 8 字节（write_u64）。
+    let len = read_len_capped(r, elem_cap(file_len, 8))?;
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         values.push(read_u64(r)?);
@@ -882,12 +889,4 @@ fn read_optional_string(r: &mut impl Read) -> std::io::Result<Option<String>> {
         1 => Ok(Some(read_string(r)?)),
         _ => Err(invalid_data("bad analysis sidecar option tag")),
     }
-}
-fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
-    w.write_all(&v.to_le_bytes())
-}
-fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
-    let mut b = [0u8; 4];
-    r.read_exact(&mut b)?;
-    Ok(u32::from_le_bytes(b))
 }

@@ -2,7 +2,6 @@
 
 use std::thread;
 
-use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::extract::{OriginalUri, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -10,17 +9,6 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::state::AppState;
-
-pub async fn jobs_ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(|mut socket| async move {
-        let snapshot = json!({
-            "type": "snapshot",
-            "jobs": [],
-            "status": "idle",
-        });
-        let _ = socket.send(Message::Text(snapshot.to_string())).await;
-    })
-}
 
 pub async fn openapi_handler() -> Json<Value> {
     Json(json!({
@@ -33,12 +21,12 @@ pub async fn openapi_handler() -> Json<Value> {
     }))
 }
 
+/// 后台任务状态。cfg/index 在 `AppState::load` 中同步构建完成，直接报
+/// ready 有事实依据；Python 时代的 pc_inst/pc_to_block/block_idxs 在 Rust
+/// 侧没有对应产物（被同步构建的 Index/CFG 覆盖），不再上报。
 pub async fn bg_status_handler(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "cfg": ready_task_status(),
-        "pc_inst": ready_task_status(),
-        "pc_to_block": ready_task_status(),
-        "block_idxs": ready_task_status(),
         "index": ready_task_status(),
         "analysis_index": analysis_index_status_value(&state),
         "mem": mem_status_value(&state),
@@ -122,19 +110,9 @@ fn parallelism_status_value(state: &AppState) -> Value {
 }
 
 fn decomp_status_value(state: &AppState) -> Value {
-    let status = state
-        .inner
-        .bn_sidecar
-        .lock()
-        .map(|sidecar| sidecar.status())
-        .unwrap_or_else(|e| {
-            json!({
-                "ready": false,
-                "configured": false,
-                "so_path": null,
-                "error": e.to_string(),
-            })
-        });
+    // 读 BN sidecar 的无锁 status 快照：request 路径持 manager 锁横跨整个
+    // 往返（最长为请求超时），此处绝不能在 async 上下文抢该锁。
+    let status = state.inner.bn_sidecar_status.value();
     let ready = status
         .get("ready")
         .and_then(|v| v.as_bool())
@@ -234,14 +212,7 @@ fn openapi_paths() -> Value {
         ("/api/bfs-slice", "get"),
         ("/api/diff-traces", "post"),
         ("/api/fn-summary", "get"),
-        ("/api/dec/summary", "get"),
-        ("/api/dec/fn/{fn_id}", "get"),
-        ("/api/dec/llm-call", "post"),
-        ("/api/dec/models", "get"),
-        ("/api/llil/llm", "post"),
-        ("/api/llil/render", "post"),
-        ("/api/llil/pipeline", "post"),
-        ("/ws/jobs", "get"),
+        ("/api/functions", "get"),
         ("/openapi.json", "get"),
     ] {
         paths.insert(

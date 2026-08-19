@@ -21,10 +21,9 @@ MemShadow，并显式区分已观测与未知字节。
 - Phoenix、DREAM、SAILR：控制流结构化与减少 goto。
 - Cifuentes：跳转表与高级控制流恢复。
 
-## 反编译与去混淆
+## 去混淆
 
-- Ghidra decompiler 源码：pass 调度、P-code、类型传播和结构恢复的主要工程参考。
-- Binary Ninja LLIL/MLIL/HLIL：三层 IL 职责划分与交互参考。
+- Binary Ninja HLIL/IL：sidecar 集成与 IL 表达能力的参考。
 - Syntia、Xyntia、QSynth：基于 I/O 的表达式综合。
 - Yadegari 等：trace + taint 去混淆。
 - LLM4Decompile、SLaDe、DIRTY、ReSym：模型辅助反编译、改名和类型恢复；只能作为可选

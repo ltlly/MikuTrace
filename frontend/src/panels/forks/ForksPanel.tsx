@@ -17,6 +17,16 @@ function pidOf(event: Record<string, unknown>): string {
   return typeof pid === "number" ? String(pid) : "";
 }
 
+/// 摘要字段：默认只显示这些，点击行展开时才做完整 JSON.stringify。
+function eventSummary(event: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const key of ["ts", "kind", "tid", "pid"]) {
+    const value = event[key];
+    if (value !== undefined && value !== null) parts.push(`${key}=${String(value)}`);
+  }
+  return parts.length ? parts.join(" ") : "click to expand";
+}
+
 interface ForksPanelProps {
   active: boolean;
 }
@@ -24,6 +34,7 @@ interface ForksPanelProps {
 export default function ForksPanel(props: ForksPanelProps) {
   const [status, setStatus] = createSignal("");
   const [limit, setLimit] = createSignal(DEFAULT_FORK_LIMIT);
+  const [expanded, setExpanded] = createSignal<Set<number>>(new Set());
   const source = createMemo((prev?: { status: string; limit: number }) => {
     if (!props.active) return undefined;
     const next = { status: status(), limit: limit() };
@@ -37,6 +48,15 @@ export default function ForksPanel(props: ForksPanelProps) {
   const failedCount = createMemo(
     () => currentResp()?.events.filter((e) => statusOf(e).startsWith("failed")).length ?? 0,
   );
+
+  function toggleExpand(pos: number) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(pos)) next.delete(pos);
+      else next.add(pos);
+      return next;
+    });
+  }
 
   return (
     <section class="panel">
@@ -93,14 +113,23 @@ export default function ForksPanel(props: ForksPanelProps) {
               </thead>
               <tbody>
                 <For each={r().events}>
-                  {(event) => (
-                    <tr class={statusOf(event).startsWith("failed") ? "failed" : ""}>
-                      <td>{pidOf(event)}</td>
-                      <td>{statusOf(event)}</td>
-                      <td>{event.is_fork_like === true ? "yes" : event.is_fork_like === false ? "no" : ""}</td>
-                      <td><code>{JSON.stringify(event)}</code></td>
-                    </tr>
-                  )}
+                  {(event, i) => {
+                    const open = () => expanded().has(i());
+                    return (
+                      <tr
+                        class={statusOf(event).startsWith("failed") ? "failed" : ""}
+                        title={open() ? "click to collapse" : "click to expand full JSON"}
+                        onClick={() => toggleExpand(i())}
+                      >
+                        <td>{pidOf(event)}</td>
+                        <td>{statusOf(event)}</td>
+                        <td>{event.is_fork_like === true ? "yes" : event.is_fork_like === false ? "no" : ""}</td>
+                        <td>
+                          <code>{open() ? JSON.stringify(event) : eventSummary(event)}</code>
+                        </td>
+                      </tr>
+                    );
+                  }}
                 </For>
               </tbody>
             </table>

@@ -24,6 +24,7 @@ import {
     flushWorkerTraceRings,
     closeWorkerTraceFiles,
     unfollowWorkerThreads,
+    releaseWorkerTraces,
     workerTraceSummaries,
 } from "./core/ring";
 import { applyExcludesOnce, buildIncludeRanges, createTransform } from "./core/stalker";
@@ -95,6 +96,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             }
             if (STATE.fnEntered) { (this as any)._skip = true; return; }
             STATE.fnEntered = true;
+            STATE.callFinalized = false;
             (this as any)._tid = this.threadId;
             STATE.callIdx++;
             (this as any)._callIdx = STATE.callIdx;
@@ -115,6 +117,9 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             }
             STATE.workerEvents = [];
             STATE.followedWorkerTids = {};
+            // 上一 call 的 worker CModule 必须显式 unload: 下一 call 复用同 tid 时
+            // 旧实例的 native 内存 (ring + 编译产物) 不释放会持续泄漏
+            releaseWorkerTraces();
             STATE.workerTraces = {};
             STATE.batchSeq = 0;
 
@@ -182,6 +187,15 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
         },
         onLeave(retv) {
             if ((this as any)._skip) return;
+            // watchdog/maxRecords/环满 已强制终结本 call (已发 trace-end 并关文件):
+            // 再发第二个 trace-end 会让 host 对同 callIdx 重复 open/finalize/pull,
+            // 生成 records=0 的幽灵目录. callFinalized 仅在 finalize 路径与这里置位,
+            // onEnter 每次进入都会重置, 不会挡掉正常路径.
+            if (STATE.callFinalized) {
+                log(`[!] call #${(this as any)._callIdx} 已被强制终结, 跳过 onLeave 重复 trace-end`);
+                return;
+            }
+            STATE.callFinalized = true;
             try { Stalker.unfollow((this as any)._tid); } catch (_) {}
             unfollowWorkerThreads();
             try { Stalker.flush(); } catch (_) {}
@@ -380,7 +394,7 @@ rpc.exports = {
             `(${RING_RECS} recs), flush=${FLUSH_INTERVAL_MS}ms, pkg=${STATE.pkg}, ` +
             `simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"}, ` +
             `workers=${STATE.followWorkers ? STATE.maxWorkerThreads : "off"}`);
-        send({ type: "hello", pid: Process.id, frida: Frida.version, mode: "tracemiku-modular-agent" });
+        send({ type: "hello", pid: Process.id, frida: Frida.version });
 
         // Build CModule
         try { buildCModule(); }
@@ -429,7 +443,11 @@ rpc.exports = {
     },
 
     forceFlush() {
+        // 与定时器路径一致: 主 ring + worker rings + SIMD ring 三者都刷,
+        // 否则 teardown 时 worker/SIMD 侧静默丢失
         flushRingToDisk("force");
+        flushWorkerTraceRings("force");
+        flushSimdRingToDisk("force");
         return "ok";
     },
 

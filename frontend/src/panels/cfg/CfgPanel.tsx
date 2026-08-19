@@ -1,7 +1,8 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import type { Resource } from "solid-js";
 
-import { fetchBnCfgSvgForPc, fetchCfgSvg, fetchFunctions, fetchIdxsForPc } from "~/api/client";
-import type { BnCfgSvgForPcResponse, CfgSvgResponse } from "~/api/types";
+import { fetchBnCfgSvgForPc, fetchCfgSvg, fetchIdxsForPc } from "~/api/client";
+import type { BnCfgSvgForPcResponse, CfgSvgResponse, FunctionsResponse } from "~/api/types";
 import type { UiTaskReporter } from "~/utils/taskCenter";
 import { useGuarded } from "~/utils/guarded";
 
@@ -93,6 +94,8 @@ interface CfgPanelProps {
   onDisplayFnChange: (fn: string) => void;
   onDebugChange?: (state: CfgDebugState) => void;
   onTaskUpdate?: UiTaskReporter;
+  /// App 层单例 /api/functions resource（避免与 App/FunctionsPanel 重复请求）。
+  functions: Resource<FunctionsResponse | undefined>;
 }
 
 export interface CursorRecordHint {
@@ -151,10 +154,6 @@ export default function CfgPanel(props: CfgPanelProps) {
   const graphGuard = useGuarded();
   const jump = useGuarded();
 
-  const [functions] = createResource(
-    () => (props.active ? "active" : undefined),
-    () => fetchFunctions(),
-  );
   // Note: cursorHint is now centrally maintained by App.tsx (which also owns
   // a row-data cache and falls back to /api/record on cache miss). CfgPanel
   // just trusts the hint when its idx matches the current cursor.
@@ -162,6 +161,8 @@ export default function CfgPanel(props: CfgPanelProps) {
     const hint = props.currentHint;
     return hint && hint.idx === props.currentIdx ? hint : undefined;
   });
+  // App 层单例 resource；对象本身稳定，读取 functions()/loading/error 均响应式。
+  const functions = props.functions;
   const selectedFnName = createMemo(() => {
     const want = props.selectedFn;
     if (!want) return "";
@@ -754,7 +755,7 @@ export default function CfgPanel(props: CfgPanelProps) {
       </div>
 
       <Show when={functions.error}>
-        <p class="err">function list failed: {String(functions.error)}</p>
+        <p class="err">load failed: {String(functions.error)}</p>
       </Show>
       <Show when={cfgSource() === "trace" && !fnName() && !functions.loading}>
         <p class="dim">select a function to render trace CFG. Full-trace CFG is not rendered by default.</p>
@@ -763,7 +764,7 @@ export default function CfgPanel(props: CfgPanelProps) {
         <p class="dim">resolving current trace record before loading BN CFG…</p>
       </Show>
       <Show when={graphError()}>
-        {(err) => <p class="err">graph load failed: {String(err())}</p>}
+        {(err) => <p class="err">load failed: {String(err())}</p>}
       </Show>
       <Show when={graphLoading()}>
         <div class="cfg-loading" role="status" aria-live="polite">

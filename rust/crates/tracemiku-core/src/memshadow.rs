@@ -18,12 +18,15 @@
 //! None)` if no event yet.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::thread;
 
 use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
-use crate::sidecar_io::{invalid_data, read_len, read_u64, write_u64};
+use crate::sidecar_io::{
+    elem_cap, invalid_data, read_len, read_len_capped, read_u32, read_u64, write_atomic, write_u32,
+    write_u64,
+};
 use crate::trace::Trace;
 use serde::Serialize;
 
@@ -263,52 +266,40 @@ impl MemShadow {
     /// Save this shadow as v5 binary sidecar. Writes to a temp file in the
     /// call directory and then atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
-        let path = Self::sidecar_path(trace);
-        let tmp_name = format!(
-            "{}.tmp.{}",
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("trace.bin.memshadow.v5.bin"),
-            std::process::id()
-        );
-        let tmp_path = path.with_file_name(tmp_name);
-        let write_result = (|| {
-            let raw = std::fs::File::create(&tmp_path)?;
-            let mut f = BufWriter::with_capacity(1024 * 1024, raw);
-            f.write_all(SIDECAR_MAGIC)?;
-            write_u32(&mut f, SIDECAR_VERSION)?;
-            write_u64(&mut f, trace.raw().len() as u64)?;
-            write_u64(&mut f, self.writes.len() as u64)?;
-            write_u64(&mut f, self.reads.len() as u64)?;
-            write_u64(&mut f, self.bytes.len() as u64)?;
+        write_atomic(
+            &Self::sidecar_path(trace),
+            "trace.bin.memshadow.v5.bin",
+            |f| {
+                f.write_all(SIDECAR_MAGIC)?;
+                write_u32(f, SIDECAR_VERSION)?;
+                write_u64(f, trace.raw().len() as u64)?;
+                write_u64(f, self.writes.len() as u64)?;
+                write_u64(f, self.reads.len() as u64)?;
+                write_u64(f, self.bytes.len() as u64)?;
 
-            for rec in &self.writes {
-                write_memrec(&mut f, rec)?;
-            }
-            for rec in &self.reads {
-                write_memrec(&mut f, rec)?;
-            }
-            for (addr, evs) in &self.bytes {
-                write_u64(&mut f, *addr)?;
-                write_u64(&mut f, evs.len() as u64)?;
-                for ev in evs {
-                    write_u64(&mut f, ev.idx as u64)?;
-                    f.write_all(&[ev.byte, kind_to_code(ev.kind)?])?;
+                for rec in &self.writes {
+                    write_memrec(f, rec)?;
                 }
-            }
-            f.flush()?;
-            f.get_ref().sync_all()?;
-            std::fs::rename(&tmp_path, &path)
-        })();
-        if write_result.is_err() {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        write_result
+                for rec in &self.reads {
+                    write_memrec(f, rec)?;
+                }
+                for (addr, evs) in &self.bytes {
+                    write_u64(f, *addr)?;
+                    write_u64(f, evs.len() as u64)?;
+                    for ev in evs {
+                        write_u64(f, ev.idx as u64)?;
+                        f.write_all(&[ev.byte, kind_to_code(ev.kind)?])?;
+                    }
+                }
+                Ok(())
+            },
+        )
     }
 
     fn read_sidecar(trace: &Trace) -> std::io::Result<Self> {
         let path = Self::sidecar_path(trace);
         let raw = std::fs::File::open(path)?;
+        let file_len = raw.metadata()?.len() as usize;
         let mut f = BufReader::with_capacity(1024 * 1024, raw);
         let mut magic = [0u8; 8];
         f.read_exact(&mut magic)?;
@@ -323,9 +314,15 @@ impl MemShadow {
         if trace_size != trace.raw().len() as u64 {
             return Err(invalid_data("stale memshadow sidecar trace size"));
         }
-        let writes_len = read_len(&mut f)?;
-        let reads_len = read_len(&mut f)?;
-        let addr_len = read_len(&mut f)?;
+        // 长度上限以 sidecar 文件字节数推导：每条 MemRec 最少 28 字节
+        // （idx 8 + addr 8 + size 4 + value 8），损坏文件的超大长度在分配
+        // 前即被拒绝。
+        let memrec_cap = elem_cap(file_len, 28);
+        let writes_len = read_len_capped(&mut f, memrec_cap)?;
+        let reads_len = read_len_capped(&mut f, memrec_cap)?;
+        // 每个地址项最少 26 字节：addr 8 + 事件数前缀 8 + 至少一个事件
+        // （idx 8 + byte/kind 2）；写入端不会序列化空事件表。
+        let addr_len = read_len_capped(&mut f, elem_cap(file_len, 26))?;
 
         let mut writes = Vec::with_capacity(writes_len);
         for _ in 0..writes_len {
@@ -338,7 +335,8 @@ impl MemShadow {
         let mut bytes = BTreeMap::new();
         for _ in 0..addr_len {
             let addr = read_u64(&mut f)?;
-            let event_len = read_len(&mut f)?;
+            // 每个事件 10 字节：idx 8 + byte/kind 2。
+            let event_len = read_len_capped(&mut f, elem_cap(file_len, 10))?;
             let mut evs = Vec::with_capacity(event_len);
             for _ in 0..event_len {
                 let idx = read_len(&mut f)?;
@@ -681,14 +679,6 @@ fn read_memrec(r: &mut impl Read) -> std::io::Result<MemRec> {
     })
 }
 
-fn write_u32(w: &mut impl Write, v: u32) -> std::io::Result<()> {
-    w.write_all(&v.to_le_bytes())
-}
-fn read_u32(r: &mut impl Read) -> std::io::Result<u32> {
-    let mut b = [0u8; 4];
-    r.read_exact(&mut b)?;
-    Ok(u32::from_le_bytes(b))
-}
 fn kind_to_code(kind: &str) -> std::io::Result<u8> {
     match kind {
         "r" => Ok(0),

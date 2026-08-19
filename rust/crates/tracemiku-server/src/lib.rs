@@ -6,7 +6,6 @@
 pub mod bn_sidecar;
 pub mod crypto_scan;
 pub mod jni_scan;
-pub mod llm;
 pub mod phase_scan;
 pub mod routes;
 pub mod state;

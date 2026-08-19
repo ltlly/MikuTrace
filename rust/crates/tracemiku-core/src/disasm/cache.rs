@@ -11,9 +11,12 @@ use crate::disasm::decoder::{raw_decode, DecodedInsn};
 const CAP: usize = 200_000;
 
 struct Cache {
-    map: HashMap<u64, DecodedInsn>,
+    /// 键为 `(pc, inst)` 元组。旧实现用 `(pc << 32) | inst` 打包成 u64，
+    /// 会丢弃 PC 的高 32 位，导致 ARM64 高位地址（PAC/高位栈，如
+    /// 0x1_0000_0000 以上）之间互相串缓存。
+    map: HashMap<(u64, u32), DecodedInsn>,
     /// FIFO queue of keys in insertion order; oldest at front.
-    order: VecDeque<u64>,
+    order: VecDeque<(u64, u32)>,
 }
 
 impl Cache {
@@ -25,7 +28,7 @@ impl Cache {
     }
 
     fn get_or_insert(&mut self, pc: u64, inst: u32) -> DecodedInsn {
-        let key = (pc << 32) | (inst as u64);
+        let key = (pc, inst);
         if let Some(v) = self.map.get(&key) {
             return v.clone();
         }

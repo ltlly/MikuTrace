@@ -180,7 +180,7 @@ fn empty_forward_graph(depth_limit: usize, node_limit: usize, data_only: bool) -
 #[cfg(test)]
 mod tests {
     use super::{default_depth, default_limit, DEFAULT_DEPTH, DEFAULT_LIMIT};
-    use crate::routes::seed_resolver::parse_u64;
+    use crate::routes::parse::parse_dec_u64;
 
     #[test]
     fn defaults_are_stable() {
@@ -189,8 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_u64_accepts_hex_and_decimal() {
-        assert_eq!(parse_u64("0x42"), Some(0x42));
-        assert_eq!(parse_u64("42"), Some(42));
+    fn parse_dec_u64_accepts_hex_and_decimal() {
+        assert_eq!(parse_dec_u64("0x42"), Some(0x42));
+        assert_eq!(parse_dec_u64("42"), Some(42));
     }
 }

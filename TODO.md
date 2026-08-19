@@ -6,12 +6,8 @@
 
 - [ ] Trace 锚定重放 A1：以真实寄存器为 oracle，报告整数执行、SIMD、syscall 和未知
   内存导致的首个发散点。
-- [ ] 为 IL token 增加结构化 provenance，标明寄存器、内存、外部写、常量和未知来源。
+- [ ] 为 VM 分析 token 增加结构化 provenance，标明寄存器、内存、外部写、常量和未知来源。
 - [ ] 将 coverage 和间接跳转命中数叠加到 Web CFG；其他运行时查询保持 CLI 优先。
-
-## P2：分析质量
-
-- [ ] 完成 Varnode -> HighVariable -> VariableGroup 合并，并贯通 MLIL/HLIL。
 
 ## P2：工程治理
 
@@ -25,8 +21,7 @@
 ## 架构原则（已审计确认）
 
 - 后续新增输出时保持「core 只出结构化数据，格式化进 CLI/展示层」原则。当前经审计
-  无跨层格式化错位：`render_calls_*` 仅 core 测试消费（公共 API，契约锁定）、
-  `hex_dump` 属反编译器排除范围、watchpoints status 由 server 构造。
+  无跨层格式化错位：`hex_dump` 属反编译器排除范围、watchpoints status 由 server 构造。
 
 ## 验收原则
 

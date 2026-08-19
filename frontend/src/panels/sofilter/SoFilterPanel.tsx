@@ -5,6 +5,8 @@ import { fetchSoStats } from "~/api/client";
 interface SoFilterPanelProps {
   hiddenSos: Set<string>;
   onHiddenSosChange: (next: Set<string>) => void;
+  /// 仅在面板激活时请求 /api/so-stats（对齐其他面板的 active 门控）。
+  active: boolean;
 }
 
 const SO_COLORS = [
@@ -32,7 +34,10 @@ function soBadge(name: string): string {
 }
 
 export default function SoFilterPanel(props: SoFilterPanelProps) {
-  const [stats] = createResource(() => fetchSoStats(200, false));
+  const [stats] = createResource(
+    () => (props.active ? "active" : undefined),
+    () => fetchSoStats(200, false),
+  );
 
   createEffect(() => {
     document.body.classList.toggle("multi-so", (stats()?.modules.length ?? 0) >= 2);
@@ -58,7 +63,7 @@ export default function SoFilterPanel(props: SoFilterPanelProps) {
     <section class="panel so-filter-panel">
       <h2>SO Filter</h2>
       <Show when={stats.error}>
-        <p class="err">SO stats failed: {String(stats.error)}</p>
+        <p class="err">load failed: {String(stats.error)}</p>
       </Show>
       <Show when={stats.loading}>
         <p class="dim">loading SO stats…</p>

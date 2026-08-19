@@ -137,6 +137,81 @@ fn ldpsw_pair_splits_as_two_32bit_reads_with_x_defs() {
 }
 
 #[test]
+fn ldrsw_records_4_byte_access_not_register_width() {
+    // ldrsw x0, [x1] = 0xb9800020。LDRSW 从内存读取 4 字节并符号扩展到
+    // x 寄存器（ARM DDI 0487 C4.1.62：access size = 4 bytes）；旧实现按
+    // 目的寄存器（x 系）误报 8 字节。
+    let d = decode(0x100000, 0xb9800020);
+    assert_eq!(d.mnemonic, "ldrsw");
+    assert_eq!(d.mem_op.len(), 1);
+    assert_eq!(d.mem_op[0].size, 4);
+    assert!(!d.mem_op[0].is_write);
+}
+
+#[test]
+fn swp_size_follows_data_register_class() {
+    // swp x0, x1, [x2] = 0xf8208041（64 位交换，8 字节）；swp w0, w1, [x2]
+    // = 0xb8208041（32 位交换，4 字节）。旧实现见助记符 head 含 'w' 一律
+    // 报 4，把 swp x* 错报成 4 字节。
+    let d64 = decode(0x100000, 0xf8208041);
+    assert_eq!(d64.mnemonic, "swp");
+    assert_eq!(d64.mem_op.len(), 1);
+    assert_eq!(d64.mem_op[0].size, 8);
+    let d32 = decode(0x100004, 0xb8208041);
+    assert_eq!(d32.mnemonic, "swp");
+    assert_eq!(d32.mem_op.len(), 1);
+    assert_eq!(d32.mem_op[0].size, 4);
+}
+
+#[test]
+fn simd_ldr_str_sizes_follow_register_class() {
+    // FP/SIMD 加载存储的访存宽度由寄存器类决定（ARM DDI 0487 C4.1.60）：
+    // q=128b(16B)、d=64b(8B)、s=32b(4B)、h=16b(2B)、b=8b(1B)。
+    // 旧实现一律按 8 字节。
+    // str q0, [x0] = 0x3d800000; ldr q0, [x0] = 0x3dc00000.
+    assert_eq!(decode(0x100000, 0x3d800000).mem_op[0].size, 16);
+    assert_eq!(decode(0x100004, 0x3dc00000).mem_op[0].size, 16);
+    // str d0, [x0] = 0xfd000000; ldr d0, [x0] = 0xfd400000.
+    assert_eq!(decode(0x100008, 0xfd000000).mem_op[0].size, 8);
+    assert_eq!(decode(0x10000c, 0xfd400000).mem_op[0].size, 8);
+    // str s0, [x0] = 0xbd000000; ldr s0, [x0] = 0xbd400000.
+    assert_eq!(decode(0x100010, 0xbd000000).mem_op[0].size, 4);
+    assert_eq!(decode(0x100014, 0xbd400000).mem_op[0].size, 4);
+    // str h0, [x0] = 0x7d000000; ldr h0, [x0] = 0x7d400000.
+    assert_eq!(decode(0x100018, 0x7d000000).mem_op[0].size, 2);
+    assert_eq!(decode(0x10001c, 0x7d400000).mem_op[0].size, 2);
+    // str b0, [x0] = 0x3d000000; ldr b0, [x0] = 0x3d400000.
+    assert_eq!(decode(0x100020, 0x3d000000).mem_op[0].size, 1);
+    assert_eq!(decode(0x100024, 0x3d400000).mem_op[0].size, 1);
+}
+
+#[test]
+fn stp_q_pair_splits_into_two_16_byte_halves() {
+    // stp q0, q1, [sp] = 0xad0007e0：两个半区各 16 字节（128-bit SIMD 对）。
+    // 旧实现把每半错报为 8 字节。
+    let d = decode(0x100000, 0xad0007e0);
+    assert_eq!(d.mnemonic, "stp");
+    assert_eq!(d.mem_op.len(), 2);
+    assert_eq!(d.mem_op[0].size, 16);
+    assert_eq!(d.mem_op[1].size, 16);
+    assert_eq!(d.mem_op[0].disp + 16, d.mem_op[1].disp);
+    assert_eq!(d.mem_op[0].src_reg, "q0");
+    assert_eq!(d.mem_op[1].src_reg, "q1");
+    assert!(d.mem_op[0].is_write);
+}
+
+#[test]
+fn ldp_d_pair_splits_into_two_8_byte_halves() {
+    // ldp d0, d1, [sp] = 0x6d4007e0：两个半区各 8 字节（64-bit FP 对）。
+    let d = decode(0x100000, 0x6d4007e0);
+    assert_eq!(d.mnemonic, "ldp");
+    assert_eq!(d.mem_op.len(), 2);
+    assert_eq!(d.mem_op[0].size, 8);
+    assert_eq!(d.mem_op[1].size, 8);
+    assert!(!d.mem_op[0].is_write);
+}
+
+#[test]
 fn nop_has_no_mem_op() {
     // nop = 0xd503201f
     let d = decode(0x100000, 0xd503201f);

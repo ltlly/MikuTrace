@@ -111,4 +111,31 @@ async fn crypto_analysis_returns_all_three_scan_types() {
     // Check crypto_instrs present
     assert!(v["crypto_instrs"]["records_scanned"].as_u64().unwrap() > 0);
     assert!(v["crypto_instrs"]["hits"].is_array());
+    // 有发现时不输出空结果提示
+    assert!(
+        v.get("note").is_none(),
+        "note only appears for empty results"
+    );
+}
+
+#[tokio::test]
+async fn crypto_analysis_adds_note_when_all_scans_are_empty() {
+    // 无加密指示物时 server 必须给出 note（无发现 + 建议下一步），
+    // 该语义由 server 统一提供，CLI 只透传。
+    let (_tmp, cd) = synth_call_dir(0x11111111);
+    let (status, v) = get(cd, "/api/crypto-analysis").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["mem_scan"]["any_hit"], false);
+    assert!(v["const_scan"]["hits"].as_array().unwrap().is_empty());
+    assert!(v["crypto_instrs"]["hits"].as_array().unwrap().is_empty());
+    let note = v["note"].as_str().unwrap_or_default();
+    assert!(!note.is_empty(), "empty result must carry a note: {v}");
+    assert!(
+        note.contains("no crypto indicators"),
+        "note should state the finding: {note}"
+    );
+    assert!(
+        note.contains("next steps"),
+        "note should suggest next steps: {note}"
+    );
 }

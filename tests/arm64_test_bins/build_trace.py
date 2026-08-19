@@ -3,8 +3,9 @@
 import struct, subprocess, json, os, tempfile
 from pathlib import Path
 
-ELF = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins/decomp_test_suite")
-WORK = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins")
+WORK = Path(__file__).resolve().parent
+ELF = WORK / "decomp_test_suite"
+REPO_ROOT = WORK.parent.parent
 
 # 1. Disassemble
 objdump = subprocess.check_output(["aarch64-linux-gnu-objdump", "-d", str(ELF)], text=True)
@@ -66,7 +67,7 @@ print(f"trace dir: {trace_dir}")
 # 2. Run decompiler eval tool
 print("\n=== Running decompiler eval ===")
 result = subprocess.run(
-    ["cargo", "run", "--manifest-path", "/home/ltlly/Code/traceMiku/rust/Cargo.toml",
+    ["cargo", "run", "--manifest-path", str(REPO_ROOT / "rust" / "Cargo.toml"),
      "--example", "decompile_trace", "--release", "--",
      str(trace_dir), "--max-fns", "20", "--min-records", "5"],
     capture_output=True, text=True, timeout=120

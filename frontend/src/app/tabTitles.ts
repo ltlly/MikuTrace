@@ -18,8 +18,6 @@ const RIGHT_TITLES: Record<RightTab, string> = {
   cfg: "Graph",
   regs: "Registers",
   hlil: "BN HLIL",
-  dec: "Decompile",
-  pseudoc: "Pseudo C",
 };
 
 export function leftTabTitle(tab: LeftTab): string {

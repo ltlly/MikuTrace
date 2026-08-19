@@ -167,6 +167,8 @@ export interface AgentState {
     fnHooked: boolean;
     excluded: boolean;
     fnEntered: boolean;
+    /** watchdog/maxRecords/环满已强制终结当前 call — onLeave 不得再发第二个 trace-end */
+    callFinalized: boolean;
 
     includeSoPatterns: string[];
     includeRanges: IncludeRange[];
@@ -217,6 +219,8 @@ export interface AgentState {
     lastTotal: number;
     stuckSecs: number;
     stuckThreshold: number;
+    /** 连续观察到主 ring 满载的心跳数 (1 心跳 = 1s), 用于环满降级 */
+    ringFullSecs: number;
 
     jniHookSpecs: any[] | null;
     jniHookEvents: any[];
@@ -254,7 +258,7 @@ export function createInitialState(): AgentState {
     return {
         soPattern: null, exportName: null, methodName: null,
         fnOffset: null, cmdValue: null, cmdArg: null, pkg: null,
-        target: null, fnHooked: false, excluded: false, fnEntered: false,
+        target: null, fnHooked: false, excluded: false, fnEntered: false, callFinalized: false,
 
         includeSoPatterns: [], includeRanges: [],
         deepTrace: false, traceAll: false, stalkerExcludePatterns: null, boundaryDiffPatterns: null,
@@ -276,7 +280,7 @@ export function createInitialState(): AgentState {
         flushTimer: null, hbTimer: null, batchSeq: 0, started: 0,
         callIdx: 0, primaryTid: 0,
         traceFile: null, traceFilePath: null, traceDir: null,
-        lastTotal: 0, stuckSecs: 0, stuckThreshold: 15,
+        lastTotal: 0, stuckSecs: 0, stuckThreshold: 15, ringFullSecs: 0,
 
         jniHookSpecs: null, jniHookEvents: [], jniHooksInstalled: false,
         enableForkHook: false, forkEvents: [], forkHooksInstalled: false,

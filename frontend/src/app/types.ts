@@ -11,7 +11,7 @@ export type LeftTab =
   | "settings"
   | "crypto";
 
-export type RightTab = "cfg" | "regs" | "hlil" | "dec" | "pseudoc";
+export type RightTab = "cfg" | "regs" | "hlil";
 export type BottomTab = "memory" | "navigation" | "trace-for-pc" | "string-provenance" | "query";
 export type HelpTopic = "overview" | "left" | "disasm" | "right" | "bottom";
 export type HelpState = { topic: HelpTopic; x: number; y: number };

@@ -44,27 +44,12 @@ pub struct CfgResponse {
 pub async fn cfg_handler(
     State(state): State<AppState>,
     Query(q): Query<CfgQuery>,
-) -> Json<CfgResponse> {
+) -> Result<Json<CfgResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || cfg_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "cfg worker failed: {err}");
-                CfgResponse {
-                    status: "error",
-                    blocks: Vec::new(),
-                    edges: Vec::new(),
-                    total_blocks: 0,
-                    total_edges: 0,
-                    returned_blocks: 0,
-                    returned_edges: 0,
-                    max_blocks_used: MAX_CFG_BLOCKS,
-                    max_edges_used: MAX_CFG_EDGES,
-                    truncated: false,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || cfg_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("cfg", &err))?;
+    Ok(Json(response))
 }
 
 fn cfg_response(inner: &crate::state::AppStateInner, q: CfgQuery) -> CfgResponse {

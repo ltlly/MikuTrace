@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tracemiku_core::disasm::addr_of;
 use tracemiku_core::prelude::*;
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const MAX_MEM_WRITES_RETURNED: usize = 5_000;
@@ -59,29 +60,21 @@ pub enum LastWriteOfAddrResponse {
 pub async fn last_write_of_addr_handler(
     State(state): State<AppState>,
     Query(q): Query<LastWriteOfAddrQuery>,
-) -> Json<LastWriteOfAddrResponse> {
-    let Some(addr) = parse_int(&q.addr) else {
-        return Json(LastWriteOfAddrResponse::NotFound {
+) -> Result<Json<LastWriteOfAddrResponse>, crate::routes::WorkerFailure> {
+    let Some(addr) = parse::parse_dec_u64(&q.addr) else {
+        return Ok(Json(LastWriteOfAddrResponse::NotFound {
             status: "not-found",
             addr: q.addr,
             before_idx: 0,
             writes_total: 0,
-        });
+        }));
     };
     let inner = state.inner.clone();
-    Json(
+    let response =
         tokio::task::spawn_blocking(move || last_write_of_addr_response(&inner, q, addr))
             .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "last write of addr worker failed: {err}");
-                LastWriteOfAddrResponse::NotFound {
-                    status: "error",
-                    addr: String::new(),
-                    before_idx: 0,
-                    writes_total: 0,
-                }
-            }),
-    )
+            .map_err(|err| crate::routes::worker_panic_response("last write of addr", &err))?;
+    Ok(Json(response))
 }
 
 fn last_write_of_addr_response(
@@ -499,34 +492,19 @@ pub struct TouchingRangeResponse {
 pub async fn idxs_touching_range_handler(
     State(state): State<AppState>,
     Query(q): Query<TouchingRangeQuery>,
-) -> Json<TouchingRangeResponse> {
+) -> Result<Json<TouchingRangeResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || idxs_touching_range_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "idxs touching range worker failed: {err}");
-                TouchingRangeResponse {
-                    status: "error",
-                    addr: String::new(),
-                    size: 0,
-                    cursor: 0,
-                    writers_before: Vec::new(),
-                    writers_after: Vec::new(),
-                    writers_total: 0,
-                    readers_before: Vec::new(),
-                    readers_after: Vec::new(),
-                    readers_total: 0,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || idxs_touching_range_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("idxs touching range", &err))?;
+    Ok(Json(response))
 }
 
 fn idxs_touching_range_response(
     inner: &crate::state::AppStateInner,
     q: TouchingRangeQuery,
 ) -> TouchingRangeResponse {
-    let start = parse_int(&q.addr).unwrap_or(0);
+    let start = parse::parse_dec_u64(&q.addr).unwrap_or(0);
     let size = q.size.max(1);
     let (writers, readers) = if let Some(mem) = inner.memshadow_if_ready() {
         touching_range_idxs_from_memshadow(mem, start, size)
@@ -606,31 +584,19 @@ pub struct TouchingAddrResponse {
 pub async fn idxs_touching_addr_handler(
     State(state): State<AppState>,
     Query(q): Query<TouchingAddrQuery>,
-) -> Json<TouchingAddrResponse> {
+) -> Result<Json<TouchingAddrResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || idxs_touching_addr_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "idxs touching addr worker failed: {err}");
-                TouchingAddrResponse {
-                    status: "error",
-                    addr: String::new(),
-                    cursor: None,
-                    before: Vec::new(),
-                    after: Vec::new(),
-                    total_before: 0,
-                    total_after: 0,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || idxs_touching_addr_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("idxs touching addr", &err))?;
+    Ok(Json(response))
 }
 
 fn idxs_touching_addr_response(
     inner: &crate::state::AppStateInner,
     q: TouchingAddrQuery,
 ) -> TouchingAddrResponse {
-    let addr = parse_int(&q.addr).unwrap_or(0);
+    let addr = parse::parse_dec_u64(&q.addr).unwrap_or(0);
     let mem = if q.with_bytes {
         Some(inner.memshadow())
     } else {
@@ -754,24 +720,12 @@ pub struct FindMemPatternResponse {
 pub async fn find_mem_pattern_handler(
     State(state): State<AppState>,
     Query(q): Query<FindMemPatternQuery>,
-) -> Json<FindMemPatternResponse> {
+) -> Result<Json<FindMemPatternResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || find_mem_pattern_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "find mem pattern worker failed: {err}");
-                FindMemPatternResponse {
-                    status: "error",
-                    pattern: String::new(),
-                    since_idx: -1,
-                    count: 0,
-                    returned: 0,
-                    truncated: false,
-                    hits: Vec::new(),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || find_mem_pattern_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("find mem pattern", &err))?;
+    Ok(Json(response))
 }
 
 fn find_mem_pattern_response(
@@ -858,15 +812,6 @@ fn effective_pattern_max(raw: usize) -> usize {
     }
 }
 
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
-}
-
 fn parse_optional_int(
     name: &str,
     value: &Option<String>,
@@ -874,7 +819,7 @@ fn parse_optional_int(
     let Some(raw) = value.as_deref() else {
         return Ok(None);
     };
-    parse_int(raw).map(Some).ok_or_else(|| {
+    parse::parse_dec_u64(raw).map(Some).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             format!("bad {name}, expected decimal or hex: {raw:?}"),

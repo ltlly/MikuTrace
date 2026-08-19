@@ -40,22 +40,12 @@ pub struct SoStatsResponse {
 pub async fn so_stats_handler(
     State(state): State<AppState>,
     Query(q): Query<SoStatsQuery>,
-) -> Json<SoStatsResponse> {
+) -> Result<Json<SoStatsResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || so_stats_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "so stats worker failed: {err}");
-                SoStatsResponse {
-                    records: 0,
-                    modules_total: 0,
-                    unknown_records: 0,
-                    unknown_percent: 0.0,
-                    modules: Vec::new(),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || so_stats_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("so stats", &err))?;
+    Ok(Json(response))
 }
 
 fn so_stats_response(inner: &crate::state::AppStateInner, q: SoStatsQuery) -> SoStatsResponse {

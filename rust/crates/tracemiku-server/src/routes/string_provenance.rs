@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::prelude::MemRec;
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const WRITERS_CAP: usize = 20;
@@ -60,7 +61,7 @@ fn string_provenance_response(
     inner: &crate::state::AppStateInner,
     q: StringProvenanceQuery,
 ) -> Result<StringProvenanceResponse, StatusCode> {
-    let start = parse_int(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
+    let start = parse::parse_dec_u64(&q.addr).ok_or(StatusCode::BAD_REQUEST)?;
     let length = q.length.clamp(1, MAX_LENGTH);
     let memshadow = match inner.memshadow_ready_or_block_if_idle() {
         Ok(memshadow) => memshadow,
@@ -175,14 +176,5 @@ fn fill_missing_idxs_by_byte(
                 idxs[offset].push(rec.idx);
             }
         }
-    }
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }

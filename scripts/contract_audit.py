@@ -2,8 +2,7 @@
 
 Every CLI command family and every server route that should have a contract
 test must be covered by a black-box test file that contains test functions.
-Exit 0 = complete; exit 1 = gaps (listed as JSON on stdout). The human-
-readable blindspot inventory lives in `.until-done/blindspots.md`.
+Exit 0 = complete; exit 1 = gaps (listed as JSON on stdout).
 """
 
 from __future__ import annotations
@@ -89,9 +88,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "call-tree": ["contract_query"],
     "call-chain": ["contract_query"],
     "watch": ["contract_query"],
-    "dec-summary": ["contract_dec"],
-    "dec-fn": ["contract_dec"],
-    "dec-models": ["contract_dec"],
     "output-backtrace": ["contract_output"],
     "output-map": ["contract_output"],
     "byte-lineage": ["contract_output"],
@@ -107,8 +103,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "idxs-touching-addr": ["contract_query"],
     "idxs-touching-range": ["contract_query"],
     "last-write-of-addr": ["contract_query"],
-    "llil-pipeline": ["contract_basic"],
-    "llil-render": ["contract_basic"],
     "resolve-elf-symbol": ["contract_basic"],
     "resolve-map-addr": ["contract_basic"],
     "resolve-trace-addr": ["contract_basic"],
@@ -116,14 +110,14 @@ CLI_COVERAGE: dict[str, list[str]] = {
 
 # Server routes -> contract test files that cover them. Values are existing or
 # new test files. Routes without dedicated behavior tests land in the new
-# contract_routes_1/2 files (see blindspots.md section 2.2).
+# contract_routes_1/2 files.
 ROUTE_COVERAGE: dict[str, list[str]] = {
     "analysis_index": ["contract_routes_1"],
     "asm_tokens": ["asm_tokens_tests"],
     "auto_phase": ["auto_phase_tests"],
     "backward_taint": ["test_taint_routes"],
     "bfs_slice": ["bfs_slice_tests"],
-    "bn_hlil": ["bn_sidecar_tests", "test_dec_fn_route"],
+    "bn_hlil": ["bn_sidecar_tests"],
     "call_tree": ["test_call_tree_route"],
     "cfg": ["cfg_endpoint_tests"],
     "cfg_svg": ["cfg_endpoint_tests"],
@@ -131,11 +125,6 @@ ROUTE_COVERAGE: dict[str, list[str]] = {
     "crypto_analysis": ["crypto_scan_tests"],
     "crypto_scan": ["crypto_scan_tests"],
     "data_chase": ["data_chase_tests"],
-    "dec_fn": ["test_dec_fn_route"],
-    "dec_llm_call": ["test_dec_llm_call_route"],
-    "dec_models": ["test_dec_llm_call_route"],
-    "dec_options": ["test_dec_fn_route", "test_dec_summary_route"],
-    "dec_summary": ["test_dec_summary_route"],
     "dep_graph": ["dep_graph_tests"],
     "diff_traces": ["diff_traces_tests"],
     "fn_summary": ["fn_summary_tests"],
@@ -153,9 +142,6 @@ ROUTE_COVERAGE: dict[str, list[str]] = {
     "jni_strings": ["jni_strings_tests"],
     "jobj_history": ["jobj_history_tests"],
     "last_write_of_reg": ["functions_tests"],
-    "llil_llm": ["llil_render_tests"],
-    "llil_pipeline": ["llil_render_tests"],
-    "llil_render": ["llil_render_tests"],
     "mem_dump": ["mem_dump_tests"],
     "mem_export": ["contract_routes_1"],
     "mem_flow": ["mem_flow_tests"],
@@ -210,6 +196,7 @@ def live_cli_commands() -> list[str]:
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,  # 非零退出码在下方统一降级到声明映射
     )
     if proc.returncode != 0:
         return sorted(CLI_COVERAGE)

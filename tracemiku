@@ -21,7 +21,7 @@ import os, sys
   tracemiku query traces/run1 forward-taint --from 0 --reg x2 --json
   tracemiku query traces/run1 strings --json
 """
-import sys, os, pathlib, argparse, json, subprocess, time
+import sys, os, pathlib, argparse, json, subprocess, time, threading
 from tracemiku_fork import (_spawn_child_poller, _parse_proc_stat,
                            _poll_child_lifecycle, _print_fork_summary)
 from tracemiku_device import (_check_device,
@@ -81,6 +81,45 @@ def _decode_last_inst(pc, inst):
 
 REC_SIZE = 272  # trace.bin record size (stable contract)
 
+def _data_free_budget_records(rec_size=REC_SIZE):
+    """估算设备 /data 可承载的记录数: (可用字节 × 0.8) / 272.
+
+    adb 不可用或输出无法解析时返回 None (调用方跳过收紧, 不阻断采集).
+    """
+    try:
+        r = subprocess.run(["adb", "shell", "df", "-k", "/data"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode != 0 or not r.stdout:
+            return None
+        # toybox df: 最后一行 = Filesystem 1K-blocks Used Avail Use% Mounted
+        fields = r.stdout.strip().splitlines()[-1].split()
+        if len(fields) < 4:
+            return None
+        avail_kb = int(fields[3])
+        if avail_kb <= 0:
+            return None
+        return max(1, int(avail_kb * 1024 * 0.8 // rec_size))
+    except Exception:
+        return None
+
+def _init_failure_hints(r):
+    """agent init 返回 no-cmodule / no-dlopen 时的修复指引 (frida 版本/编译环境)."""
+    if r == "no-cmodule":
+        return [
+            "[修复指引] CModule 编译失败 (no-cmodule):",
+            "  1. host 端 frida (pip) 与设备 frida-server 大版本必须一致:",
+            "     pip show frida 对比设备 server 版本, 不一致先对齐",
+            "  2. 换官方完整版 frida-server — 精简/魔改版可能裁掉了内置 CModule 编译器",
+            "  3. 确认设备为 arm64 且 /data/local/tmp 可写 (CModule 编译需要临时空间)",
+            "  4. 自编译 server 需包含 gum CModule runtime, 见 vendor/frida-patched/README.md",
+        ]
+    return [
+        "[修复指引] 目标进程找不到 dlopen/android_dlopen_ext 导出 (no-dlopen):",
+        "  1. 目标可能被加固壳隐藏了 dlopen — 改用 --fn-offset 定位已加载 SO",
+        "  2. 先手动触发目标 SO 加载, 再用 --attach-pid 附加已运行进程",
+    ]
+
+
 def _read_trace_tail(bin_path):
     # Reads first/last record bytes directly from trace.bin before meta.json
     # exists (trace-begin/finalize path). This is a deliberate host-side I/O
@@ -136,15 +175,10 @@ def cmd_trace(args):
         except Exception as e:
             print(f"[!] launch 失败: {e}")
             return 2
-    # 选择 agent 文件 (按 --mode)
-    agent_map = {
-        "cmodule": "_agent.js",              # 默认: 模块化 TS agent (frida-compile), CModule + SPSC + 设备落盘, ~1.5M rec/s
-        "legacy":  "agent_cmodule_v5.js",    # 旧版单文件 agent (兼容回退)
-    }
-    agent_name = agent_map.get(args.mode, "_agent.js")
-    AGENT_PATH = HERE / "tracer" / agent_name
+    # 唯一 agent: 模块化 TS 编译产物 _agent.js (CModule + SPSC + 设备落盘, ~1.5M rec/s)
+    AGENT_PATH = HERE / "tracer" / "_agent.js"
     AGENT = AGENT_PATH.read_text()
-    print(f"[host] using agent: {agent_name} (mode={args.mode})", flush=True)
+    print(f"[host] using agent: {AGENT_PATH.name}", flush=True)
 
     OUT = pathlib.Path(args.out); OUT.mkdir(parents=True, exist_ok=True)
     CALLS_DIR = OUT / "calls"; CALLS_DIR.mkdir(exist_ok=True)
@@ -159,16 +193,32 @@ def cmd_trace(args):
         "tracemiku_cli": True, "per_call": True,
     }
 
+    _wlog_lock = threading.Lock()
+
     def wlog(s):
+        # finalize worker / race-attach 线程会并发写日志, 串行化避免行交错;
+        # log_fp 可能已在提前退出路径关闭 (finally 阶段), 写失败不致命
         line = f"[{time.strftime('%H:%M:%S')}] {s}"
-        print(line, flush=True); log_fp.write(line + "\n"); log_fp.flush()
+        with _wlog_lock:
+            print(line, flush=True)
+            try:
+                log_fp.write(line + "\n"); log_fp.flush()
+            except (ValueError, OSError):
+                pass
 
     def open_call(call_idx, tid, pid):
         if call_idx in sess_files: return sess_files[call_idx]
         d = CALLS_DIR / f"_pending_call_{call_idx:03d}"
+        # 只在无同编号 finalize 在途时清空: 崩溃残留目录被复用时, 旧 run 的
+        # 事件文件 (append 打开) 会混入新 run; 但子进程复用 callIdx 时,
+        # 后台 worker 可能正往该目录写 pull 结果, 不能误删.
+        # (需要恢复残留数据先用 `tracemiku finalize`)
+        if d.exists() and not any(k[1] == call_idx for k in finalized_calls):
+            for old in d.iterdir():
+                try: old.unlink()
+                except OSError: pass
         d.mkdir(exist_ok=True)
-        # v5: agent 端落盘到 device, host 不再持久接 stream → fp=None.
-        # 兼容 v3/v4: 若 agent 仍 send blob, on_message 在收到第一个 frames 时 lazy-open 写盘.
+        # agent 端落盘到 device, host 不再持久接 stream → fp=None.
         md = {"callIdx": call_idx, "pid": pid, "tid": tid,
               "ts_in": time.time(), "started_at": time.time(),
               "format_version": 1, "record_size": REC_SIZE,
@@ -343,6 +393,8 @@ def cmd_trace(args):
                     "record_size": rec_size,
                     "records": records,
                     "dropped": int(wt.get("dropped") or 0),
+                    # agent 用 pthread_create 后 1ms 取第一个新 tid 的启发式归因
+                    "tid_attribution": wt.get("tid_attribution", "heuristic"),
                 })
             except Exception as e:
                 wlog(f"[!] pull worker sidecar tid={tid} 失败: {e}")
@@ -387,6 +439,41 @@ def cmd_trace(args):
         json.dump(md, open(s["dir"]/"meta.json","w"), indent=2)
         return md
 
+    # ── 后台 finalize worker ──
+    # adb pull (GB 级 gzip 流可达数十秒) 与 race-attach 不能占住 frida on_message
+    # 回调线程, 否则后续消息 (hb/trace-begin/...) 全部排队阻塞. 单 worker + FIFO
+    # 保持与旧同步实现一致的 per-call finalize 顺序.
+    import queue as _queue_mod
+    finalize_q = _queue_mod.Queue()
+    finalized_calls = set()          # (pid, callIdx) 已见 trace-end → 幂等去重
+    _finalize_stop = [False]
+    _finalize_worker_th = [None]
+    _finalize_lock = threading.Lock()
+
+    def _finalize_worker():
+        while True:
+            try:
+                item = finalize_q.get(timeout=0.5)
+            except _queue_mod.Empty:
+                if _finalize_stop[0]:
+                    return
+                continue
+            ci, s, truncated, tag = item
+            try:
+                finalize_call(s, truncated=truncated)
+                wlog(f"[{tag}] finalize 完成 call#{ci} → {s['dir'].name}")
+            except Exception as e:
+                wlog(f"[{tag}] [!] finalize call#{ci} 失败: {e}")
+
+    def _queue_finalize(ci, s, truncated, tag):
+        finalize_q.put((ci, s, truncated, tag))
+        with _finalize_lock:
+            if _finalize_worker_th[0] is None:
+                th = threading.Thread(target=_finalize_worker, daemon=True,
+                                      name="miku-finalize")
+                _finalize_worker_th[0] = th
+                th.start()
+
     def make_cb(pid, tag):
         def cb(m, data):
             if m["type"] == "send":
@@ -394,20 +481,6 @@ def cmd_trace(args):
                 if isinstance(p, dict):
                     t = p.get("type")
                     if t == "log": wlog(f"[{tag}] {p['msg']}")
-                    elif t == "frames":
-                        ci = p.get("callIdx")
-                        tid = p.get("tid", 0)
-                        if ci is None:
-                            wlog(f"[{tag}] frames 缺 callIdx, 丢弃 {p.get('recs')} 条"); return
-                        s = sess_files.get(ci) or open_call(ci, tid, pid)
-                        # 兼容 v3/v4 的 send-blob 模式 (v5 不送 blob, 直接落盘 device)
-                        if data:
-                            if s.get("fp") is None:
-                                s["fp"] = open(s["dir"]/"trace.bin", "wb")
-                            s["fp"].write(data)
-                            s["meta"]["bytes"] += len(data)
-                        s["meta"]["records"] += p["recs"]
-                        wlog(f"[{tag}] call#{ci} tid={tid} +{p['recs']} (total={p['total']}, {p.get('reason','?')})")
                     elif t == "module":
                         if "module" not in top_meta:
                             top_meta["module"] = {k: p[k] for k in ("name","base","size")}
@@ -437,23 +510,36 @@ def cmd_trace(args):
                         wlog(f"[{tag}] trace 开始 call#{ci} tid={p['tid']}{' device='+p['devicePath'] if p.get('devicePath') else ''}")
                     elif t == "trace-end":
                         ci = p.get("callIdx") or 0
+                        if (pid, ci) in finalized_calls:
+                            # 幂等去重: watchdog/maxRecords 已终结后 onLeave 的
+                            # 重复 trace-end 不能再次 open/finalize/pull
+                            # (设备文件已被 rm, 会生成 records=0 的幽灵目录)
+                            wlog(f"[{tag}] 忽略重复 trace-end call#{ci} (已 finalize)")
+                            return
+                        finalized_calls.add((pid, ci))
                         if ci not in sess_files:
                             open_call(ci, p.get("tid", 0), pid)
-                        s = sess_files[ci]
+                        # 立即移出会话表: 后台 finalize 期间同 callIdx 的新会话
+                        # (如子进程复用编号) 不会错误复用本 session
+                        s = sess_files.pop(ci)
                         s["meta"]["retval"] = p.get("retval")
                         s["meta"]["ms"] = p.get("ms")
                         s["meta"]["dropped"] = p.get("dropped", 0)
                         s["meta"]["ts_out"] = time.time()
-                        if p.get("devicePath"):     # v5
+                        if p.get("devicePath"):
                             s["meta"]["devicePath"] = p["devicePath"]
                         for k in ("simdDevicePath", "simdRecords", "simdDropped",
                                   "simdRecordSize", "simdSampleStride", "workerTraces"):
                             if p.get(k) is not None:
                                 s["meta"][k] = p.get(k)
                         truncated = bool(p.get("truncated", False))
-                        finalize_call(s, truncated=truncated)
-                        del sess_files[ci]
-                        wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} ret={p.get('retval')} truncated={truncated} dropped={p.get('dropped',0)}")
+                        wlog(f"[{tag}] trace 结束 call#{ci} tid={p.get('tid')} ms={p.get('ms')} "
+                             f"ret={p.get('retval')} truncated={truncated} dropped={p.get('dropped',0)} (后台拉取)")
+                        _queue_finalize(ci, s, truncated, tag)
+                    elif t == "flush-error":
+                        # 设备端写盘失败 (磁盘满/IO 错误), agent 已节流上报
+                        wlog(f"[{tag}] [!] flush 失败 call#{p.get('callIdx')}: {p.get('error')} "
+                             f"(磁盘满? 环满降级会在数秒后终结该 call)")
                     elif t == "semantic-events":
                         # Optional semantic IPC stream. Full events are stored as
                         # JSONL; meta keeps only a bounded preview plus a count.
@@ -514,10 +600,17 @@ def cmd_trace(args):
                             wlog(f"[{tag}] [FORK] call#{ci} parent={sym_label} "
                                  f"({ev.get('syscall')}, {kind}) → child pid={ev.get('child_pid')}")
                             cpid = ev.get("child_pid")
-                            # P1-C M2: race-attach to fork-like children
+                            # P1-C M2: race-attach to fork-like children.
+                            # 时间敏感 (child 可能 50-200ms 退出): 独立线程立即
+                            # 执行, 不排队在 finalize worker 的长 pull 后面,
+                            # 也不阻塞 on_message 回调线程
                             if (ev.get("is_fork_like") and cpid and cpid > 0
                                     and child_trace_mode in ("full", "safe")):
-                                _race_attach_child(ev)
+                                at = threading.Thread(
+                                    target=_race_attach_child, args=(ev,),
+                                    daemon=True, name=f"miku-attach-{cpid}")
+                                attach_threads.append(at)
+                                at.start()
                             # P1-C M3: kick off background lifecycle poll
                             if (ev.get("is_fork_like") and cpid and cpid > 0
                                     and getattr(args, "fork_poll_child", True)):
@@ -673,6 +766,19 @@ def cmd_trace(args):
         elif args.max_records > TRACE_ALL_MAX:
             wlog(f"[trace-all] WARN: max_records={args.max_records} is very high; "
                  f"device may freeze/reboot. Proceeding as requested.")
+        # 磁盘预算预检: 50M 记录 ≈ 13.6GB, /data 塞不下会中途写爆
+        # (设备端 flush-error 刷屏 + 环满降级). 按 (可用 × 0.8) / 272 收紧.
+        if args.remote:
+            wlog("[trace-all] --remote 模式跳过 /data 磁盘预算预检")
+        else:
+            budget = _data_free_budget_records()
+            if budget is None:
+                wlog("[trace-all] /data 剩余空间探测失败, 跳过预算收紧")
+            elif args.max_records > budget:
+                wlog(f"[trace-all] /data 剩余空间不足, max_records "
+                     f"{args.max_records:,} → {budget:,}")
+                args.max_records = budget
+        top_meta["max_records_effective"] = args.max_records
         wlog("[trace-all] capturing EVERY instruction (target + libc/libm + all "
              "userland/vendor SOs; ART apex family + linker excluded). "
              "anti-detect is OFF unless --hide-rwx-maps/--block-self-kill/--patch-suicide given.")
@@ -751,6 +857,7 @@ def cmd_trace(args):
     # those get attach_status=failed_short_lived. Long-running children get traced.
     child_sessions = {}   # child_pid → {sess, scr}
     child_trace_mode = getattr(args, "child_trace_mode", "off")
+    attach_threads = []   # fork race-attach 线程 (teardown 时 join)
 
     def _race_attach_child(fork_event):
         """P1-C M2: try to attach + inject agent into a freshly fork()'d child.
@@ -788,146 +895,186 @@ def cmd_trace(args):
             fork_event["attach_status"] = "failed_unknown"
             wlog(f"[fork-attach][!] child {cpid} script load failed: {e}")
 
+    # SIGINT handler 提前安装: attach/init 阶段的 Ctrl+C 只置停止标志,
+    # 不会以 KeyboardInterrupt 逃过 except Exception 导致 spawn gating 泄漏
+    stop = [False]
+    detach_reason = [None]
+    signal.signal(signal.SIGINT, lambda *_: stop.__setitem__(0, True))
+
+    def _on_detached(reason, *rest):
+        # session 意外掉线 (进程崩溃/被反调试杀死/frida-server 挂掉):
+        # 立即置停止标志, 提前进入现有 teardown/pending-finalize 流程
+        detach_reason[0] = str(reason)
+        wlog(f"[!] session detached: {reason} — 提前进入 teardown")
+        stop[0] = True
+
+    spawn_resumed = [False]
     try:
-        sess = device.attach(pid)
-        scr = sess.create_script(AGENT)
-        scr.on("message", make_cb(pid, args.pkg or f"pid{pid}"))
-        scr.load()
-        r = scr.exports_sync.init(AGENT_OPTS)
-        if spawn_pid is not None:
-            # spawn-gating 关键时序: attach + init 全部完成才放行进程
-            device.resume(spawn_pid)
-            wlog(f"[spawn] resume pid={spawn_pid}")
-            if r == "no-dlopen":
-                wlog("[spawn][!] init 返回 no-dlopen (找不到 dlopen 符号), "
-                     "目标 SO 加载时可能无法自动 hook")
-        wlog(f"init -> {r}")
-    except Exception as _e:
-        if spawn_pid is not None:
-            try: device.kill(spawn_pid)
-            except Exception: pass
-        # P0-6: pull last logcat + tombstone, run diagnostic, output hints
-        from tracemiku_diag import diagnose_trace_failure
-        wlog(f"[!] attach/init 失败: {type(_e).__name__}: {_e}")
         try:
-            lc = subprocess.run(["adb", "shell", "logcat", "-d", "-t", "200"],
-                                capture_output=True, text=True, timeout=10).stdout or ""
-        except Exception: lc = ""
-        try:
-            ts_ls = subprocess.run(
-                ["adb", "shell", "ls", "-t", "/data/tombstones/"],
-                capture_output=True, text=True, timeout=5).stdout or ""
-            latest = ts_ls.splitlines()[0].strip() if ts_ls.strip() else ""
-            if latest:
-                tb = subprocess.run(
-                    ["adb", "shell", "cat", f"/data/tombstones/{latest}"],
-                    capture_output=True, text=True, timeout=10).stdout or ""
-            else: tb = ""
-        except Exception: tb = ""
-        cli_flags = {
-            "trace_deep": bool(getattr(args, "trace_deep", False)),
-            "patch_suicide": bool(getattr(args, "patch_suicide", False)),
-            "hide_rwx_maps": bool(getattr(args, "hide_rwx_maps", False)),
-            "jni_hooks": getattr(args, "jni_hooks", None),
-            "semantic_events": bool(getattr(args, "semantic_events", False)),
-            "simd_sidecar": bool(getattr(args, "simd_sidecar", False)),
-            "simd_sample_stride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
-        }
-        for h in diagnose_trace_failure(logcat=lc, tombstone=tb,
-                                          exception=_e, cli_args=cli_flags):
-            wlog(h)
+            sess = device.attach(pid)
+            scr = sess.create_script(AGENT)
+            scr.on("message", make_cb(pid, args.pkg or f"pid{pid}"))
+            sess.on("detached", _on_detached)
+            scr.load()
+            r = scr.exports_sync.init(AGENT_OPTS)
+            if r in ("no-cmodule", "no-dlopen"):
+                # CModule 编译失败 / dlopen 符号缺失: 采集链路无法建立,
+                # 空跑满 duration 没有意义 — 输出修复指引并立即以非零码退出
+                wlog(f"[!] init 返回 {r}, 采集链路无法建立, 立即终止")
+                for h in _init_failure_hints(r):
+                    wlog(h)
+                for label, fn in (("scr.unload", lambda: scr.unload()),
+                                  ("sess.detach", lambda: sess.detach())):
+                    try: fn()
+                    except Exception as _e: wlog(f"[!] {label} 失败: {_e}")
+                log_fp.close()
+                return 2
+            if spawn_pid is not None:
+                # spawn-gating 关键时序: attach + init 全部完成才放行进程
+                device.resume(spawn_pid)
+                spawn_resumed[0] = True
+                wlog(f"[spawn] resume pid={spawn_pid}")
+            wlog(f"init -> {r}")
+        except Exception as _e:
+            # P0-6: pull last logcat + tombstone, run diagnostic, output hints
+            from tracemiku_diag import diagnose_trace_failure
+            wlog(f"[!] attach/init 失败: {type(_e).__name__}: {_e}")
+            try:
+                lc = subprocess.run(["adb", "shell", "logcat", "-d", "-t", "200"],
+                                    capture_output=True, text=True, timeout=10).stdout or ""
+            except Exception: lc = ""
+            try:
+                ts_ls = subprocess.run(
+                    ["adb", "shell", "ls", "-t", "/data/tombstones/"],
+                    capture_output=True, text=True, timeout=5).stdout or ""
+                latest = ts_ls.splitlines()[0].strip() if ts_ls.strip() else ""
+                if latest:
+                    tb = subprocess.run(
+                        ["adb", "shell", "cat", f"/data/tombstones/{latest}"],
+                        capture_output=True, text=True, timeout=10).stdout or ""
+                else: tb = ""
+            except Exception: tb = ""
+            cli_flags = {
+                "trace_deep": bool(getattr(args, "trace_deep", False)),
+                "patch_suicide": bool(getattr(args, "patch_suicide", False)),
+                "hide_rwx_maps": bool(getattr(args, "hide_rwx_maps", False)),
+                "jni_hooks": getattr(args, "jni_hooks", None),
+                "semantic_events": bool(getattr(args, "semantic_events", False)),
+                "simd_sidecar": bool(getattr(args, "simd_sidecar", False)),
+                "simd_sample_stride": max(1, int(getattr(args, "simd_sample_stride", 1) or 1)),
+            }
+            for h in diagnose_trace_failure(logcat=lc, tombstone=tb,
+                                              exception=_e, cli_args=cli_flags):
+                wlog(h)
+            log_fp.close(); return 2
+
+        t0 = time.time()
+        while not stop[0] and time.time() - t0 < args.duration:
+            time.sleep(0.5)
+
+        wlog("teardown")
+        # Frida RPC sync calls 没有 timeout, 在 anti-debug 把 agent 干掉后会永远 block.
+        # 全部包到 daemon thread, 主线程最多等 5s 就放弃.
+        def _try_with_timeout(fn, label, timeout=5):
+            done = [False]
+            def _t():
+                try: fn(); done[0] = True
+                except: done[0] = True
+            th = threading.Thread(target=_t, daemon=True); th.start(); th.join(timeout)
+            if not done[0]: wlog(f"[!] {label} 超时 {timeout}s, 放弃 (agent 可能已死)")
+        _try_with_timeout(lambda: print(f"stats:", scr.exports_sync.stats(), flush=True), "stats")
+        _try_with_timeout(lambda: scr.exports_sync.force_flush(), "force_flush")
+        _try_with_timeout(lambda: scr.unload(), "scr.unload")
+        _try_with_timeout(lambda: sess.detach(), "sess.detach")
+        # fork race-attach 线程收口 (attach_status 要写回 meta, 必须等它结束)
+        for at in attach_threads:
+            at.join(timeout=10)
+            if at.is_alive():
+                wlog("[!] fork race-attach 线程 10s 未结束, 放弃等待")
+        # P1-C M2: tear down child sessions (best-effort; some children may already exited)
+        for cpid, cs in list(child_sessions.items()):
+            _try_with_timeout(lambda cs=cs: cs["scr"].exports_sync.force_flush(),
+                               f"child{cpid} flush", timeout=2)
+            _try_with_timeout(lambda cs=cs: cs["scr"].unload(), f"child{cpid} unload", timeout=2)
+            _try_with_timeout(lambda cs=cs: cs["sess"].detach(), f"child{cpid} detach", timeout=2)
+
+        # 等 finalize worker 排干在途 pull (GB 级 gzip 流可达数十秒), 之后才做
+        # pending-finalize 与 calls/ 重扫, 保证顺序与元数据完整
+        _finalize_stop[0] = True
+        _fw = _finalize_worker_th[0]
+        if _fw is not None:
+            _fw.join(timeout=300)
+            if _fw.is_alive():
+                wlog("[!] finalize worker 300s 未排干, 放弃等待 (后台继续, 元数据可能不全)")
+
+        # 任何 teardown 时仍未结束的 call → 强制关 + 标 truncated
+        pending = list(sess_files.values())
+        for s in pending:
+            s["meta"].setdefault("ts_out", time.time())
+            s["meta"].setdefault("ms", int((s["meta"]["ts_out"] - s["meta"].get("ts_in", s["meta"]["ts_out"]))*1000))
+            finalize_call(s, truncated=True)
+        sess_files.clear()
+
+        # 重新扫一遍 calls/, 写顶层 meta
+        calls_summary = []
+        all_fork_events = []   # P1-C M5: 聚合用
+        for cd in sorted(CALLS_DIR.iterdir()):
+            if not cd.is_dir(): continue
+            mp = cd/"meta.json"
+            if not mp.exists(): continue
+            cm = json.load(open(mp))
+            call_summary = {
+                "callIdx": cm.get("callIdx"), "tid": cm.get("tid"),
+                "records": cm.get("records", 0), "ms": cm.get("ms"),
+                "retval": cm.get("retval"), "truncated": cm.get("truncated", True),
+                "last_insn_is_ret": cm.get("last_insn_is_ret"),
+                "dir": cd.name,
+            }
+            if cm.get("simd_sidecar") is not None:
+                call_summary["simd_sidecar"] = cm.get("simd_sidecar")
+            if cm.get("semantic_events_count") is not None:
+                call_summary["semantic_events_count"] = cm.get("semantic_events_count")
+            if cm.get("worker_events_count") is not None:
+                call_summary["worker_events_count"] = cm.get("worker_events_count")
+            if cm.get("worker_trace_sidecars") is not None:
+                call_summary["worker_trace_sidecars"] = cm.get("worker_trace_sidecars")
+            calls_summary.append(call_summary)
+            for ev in (cm.get("fork_events") or []):
+                all_fork_events.append((cd.name, ev))
+        top_meta["calls"] = calls_summary
+        top_meta["stopped_at"] = time.time()
+        if detach_reason[0] is not None:
+            # session 意外掉线原因 (进程崩溃/被杀/frida-server 挂掉)
+            top_meta["detach_reason"] = detach_reason[0]
+        json.dump(top_meta, open(OUT/"meta.json","w"), indent=2)
+        log_fp.close()
+
+        total_recs = sum(c["records"] for c in calls_summary)
+        print(f"\n[完成] {len(calls_summary)} 个 call, 共 {total_recs} 条记录 → {OUT}")
+        for c in sorted(calls_summary, key=lambda c: -c["records"])[:10]:
+            flag = "✓" if (not c["truncated"] and c["last_insn_is_ret"]) else "?"
+            print(f"  {flag} {c['dir']}  ret={c.get('retval')}")
+
+        # P1-C M5: fork summary table — 聚合所有 fork-event 按 attach_status + is_fork_like
+        if all_fork_events:
+            _print_fork_summary(all_fork_events)
+
+        # P0-6 extension: if trace finished with NO successful call (every call
+        # truncated or zero records), run anti-debug diagnostic on latest tombstone.
+        has_success = any(not c["truncated"] and c["records"] > 1000
+                           for c in calls_summary)
+        if not has_success and len(calls_summary) > 0:
+            _post_trace_diagnose(args, wlog)
+        return 0
+    finally:
+        # spawn gating 收口: 任何退出路径 (no-cmodule / attach 异常 /
+        # Ctrl+C / 正常结束) 都不留开启的 gating 与挂起进程
         if spawn_gating_active:
             try: device.disable_spawn_gating()
+            except Exception as e: wlog(f"[!] disable_spawn_gating 失败: {e}")
+        if spawn_pid is not None and not spawn_resumed[0]:
+            try: device.kill(spawn_pid)
             except Exception: pass
-        log_fp.close(); return 2
-
-    stop = [False]
-    signal.signal(signal.SIGINT, lambda *_: stop.__setitem__(0, True))
-    t0 = time.time()
-    while not stop[0] and time.time() - t0 < args.duration:
-        time.sleep(0.5)
-
-    wlog("teardown")
-    # Frida RPC sync calls 没有 timeout, 在 anti-debug 把 agent 干掉后会永远 block.
-    # 全部包到 daemon thread, 主线程最多等 5s 就放弃.
-    def _try_with_timeout(fn, label, timeout=5):
-        import threading
-        done = [False]
-        def _t():
-            try: fn(); done[0] = True
-            except: done[0] = True
-        th = threading.Thread(target=_t, daemon=True); th.start(); th.join(timeout)
-        if not done[0]: wlog(f"[!] {label} 超时 {timeout}s, 放弃 (agent 可能已死)")
-    _try_with_timeout(lambda: print(f"stats:", scr.exports_sync.stats(), flush=True), "stats")
-    _try_with_timeout(lambda: scr.exports_sync.force_flush(), "force_flush")
-    _try_with_timeout(lambda: scr.unload(), "scr.unload")
-    _try_with_timeout(lambda: sess.detach(), "sess.detach")
-    # P1-C M2: tear down child sessions (best-effort; some children may already exited)
-    for cpid, cs in list(child_sessions.items()):
-        _try_with_timeout(lambda cs=cs: cs["scr"].exports_sync.force_flush(),
-                           f"child{cpid} flush", timeout=2)
-        _try_with_timeout(lambda cs=cs: cs["scr"].unload(), f"child{cpid} unload", timeout=2)
-        _try_with_timeout(lambda cs=cs: cs["sess"].detach(), f"child{cpid} detach", timeout=2)
-
-    # 任何 teardown 时仍未结束的 call → 强制关 + 标 truncated
-    pending = list(sess_files.values())
-    for s in pending:
-        s["meta"].setdefault("ts_out", time.time())
-        s["meta"].setdefault("ms", int((s["meta"]["ts_out"] - s["meta"].get("ts_in", s["meta"]["ts_out"]))*1000))
-        finalize_call(s, truncated=True)
-    sess_files.clear()
-
-    # 重新扫一遍 calls/, 写顶层 meta
-    calls_summary = []
-    all_fork_events = []   # P1-C M5: 聚合用
-    for cd in sorted(CALLS_DIR.iterdir()):
-        if not cd.is_dir(): continue
-        mp = cd/"meta.json"
-        if not mp.exists(): continue
-        cm = json.load(open(mp))
-        call_summary = {
-            "callIdx": cm.get("callIdx"), "tid": cm.get("tid"),
-            "records": cm.get("records", 0), "ms": cm.get("ms"),
-            "retval": cm.get("retval"), "truncated": cm.get("truncated", True),
-            "last_insn_is_ret": cm.get("last_insn_is_ret"),
-            "dir": cd.name,
-        }
-        if cm.get("simd_sidecar") is not None:
-            call_summary["simd_sidecar"] = cm.get("simd_sidecar")
-        if cm.get("semantic_events_count") is not None:
-            call_summary["semantic_events_count"] = cm.get("semantic_events_count")
-        if cm.get("worker_events_count") is not None:
-            call_summary["worker_events_count"] = cm.get("worker_events_count")
-        if cm.get("worker_trace_sidecars") is not None:
-            call_summary["worker_trace_sidecars"] = cm.get("worker_trace_sidecars")
-        calls_summary.append(call_summary)
-        for ev in (cm.get("fork_events") or []):
-            all_fork_events.append((cd.name, ev))
-    top_meta["calls"] = calls_summary
-    top_meta["stopped_at"] = time.time()
-    json.dump(top_meta, open(OUT/"meta.json","w"), indent=2)
-    log_fp.close()
-
-    total_recs = sum(c["records"] for c in calls_summary)
-    print(f"\n[完成] {len(calls_summary)} 个 call, 共 {total_recs} 条记录 → {OUT}")
-    for c in sorted(calls_summary, key=lambda c: -c["records"])[:10]:
-        flag = "✓" if (not c["truncated"] and c["last_insn_is_ret"]) else "?"
-        print(f"  {flag} {c['dir']}  ret={c.get('retval')}")
-
-    # P1-C M5: fork summary table — 聚合所有 fork-event 按 attach_status + is_fork_like
-    if all_fork_events:
-        _print_fork_summary(all_fork_events)
-
-    # P0-6 extension: if trace finished with NO successful call (every call
-    # truncated or zero records), run anti-debug diagnostic on latest tombstone.
-    has_success = any(not c["truncated"] and c["records"] > 1000
-                       for c in calls_summary)
-    if not has_success and len(calls_summary) > 0:
-        _post_trace_diagnose(args, wlog)
-    if spawn_gating_active:
-        try: device.disable_spawn_gating()
-        except Exception as e: wlog(f"[!] disable_spawn_gating 失败: {e}")
-    return 0
 
 
 def _post_trace_diagnose(args, wlog):
@@ -1043,43 +1190,6 @@ def cmd_finalize(args):
 def cmd_view(args):
     return _run_rust_web(path=args.path, host="127.0.0.1", port=18900,
                          no_browser=False, so=None)
-
-
-def cmd_dec(args):
-    """Rust v2 TraceIR markdown wrapper."""
-    p = pathlib.Path(args.path)
-    if not p.exists():
-        print(f"[!] path 不存在: {p}", file=sys.stderr); return 1
-    if args.summary:
-        v = _rust_cli_json(["dec-summary", str(p)])
-        sys.stdout.write(v.get("summary_md", ""))
-        return 0
-    if args.fn:
-        v = _rust_cli_json(["dec-fn", str(p), args.fn, "--tier", args.tier])
-        sys.stdout.write(v.get("markdown", ""))
-        return 0
-
-    summary = _rust_cli_json(["dec-summary", str(p)])
-    out_root = pathlib.Path(args.out) if args.out else p
-    dec_dir = out_root / "decompile"
-    fns_dir = dec_dir / "fns"
-    fns_dir.mkdir(parents=True, exist_ok=True)
-    (dec_dir / "summary.md").write_text(summary.get("summary_md", ""), encoding="utf-8")
-    for fn in summary.get("fns", []):
-        fn_id = fn.get("id")
-        if not fn_id:
-            continue
-        try:
-            one = _rust_cli_json(["dec-fn", str(p), fn_id, "--tier", args.tier])
-        except Exception as e:
-            print(f"[dec] skip {fn_id}: {e}", file=sys.stderr)
-            continue
-        safe = fn_id.replace(":", "_").replace("/", "_")
-        (fns_dir / f"{safe}.md").write_text(one.get("markdown", ""), encoding="utf-8")
-    print(f"[dec] wrote: {dec_dir}", file=sys.stderr)
-    print(f"  summary: {dec_dir / 'summary.md'}", file=sys.stderr)
-    print(f"  fns:     {len(list(fns_dir.glob('*.md')))} files in {fns_dir}/", file=sys.stderr)
-    return 0
 
 
 def cmd_web(args):
@@ -1219,94 +1329,6 @@ def cmd_info(args):
     if args.json:
         cmd.append("--json")
     return _run_rust_cli(cmd)
-
-
-def _info_call(p, args):
-    """单 call 目录: 重新解码 last insn 并核对 last_insn_is_ret."""
-    meta = {}
-    mp = p/"meta.json"
-    if mp.exists():
-        meta = json.load(open(mp))
-    bin_path = p/"trace.bin"
-    n, first_pc, last_pc, last_inst = _read_trace_tail(bin_path)
-    last_is_ret = None
-    last_asm = None
-    if last_inst is not None:
-        last_is_ret, last_asm = _decode_last_inst(last_pc, last_inst)
-    truncated = bool(meta.get("truncated", False))
-    complete = (not truncated) and last_is_ret
-    out = {
-        "path": str(p),
-        "callIdx": meta.get("callIdx"),
-        "tid": meta.get("tid"),
-        "records": n,
-        "ms": meta.get("ms"),
-        "retval": meta.get("retval"),
-        "truncated": truncated,
-        "last_insn_is_ret": last_is_ret,
-        "first_pc": hex(first_pc) if first_pc is not None else None,
-        "last_pc":  hex(last_pc)  if last_pc  is not None else None,
-        "last_asm": last_asm,
-        "is_complete": bool(complete),
-    }
-    # rate sanity
-    ms = meta.get("ms")
-    if isinstance(ms, (int, float)) and ms > 0:
-        out["rec_per_sec"] = int(n / (ms/1000.0))
-    if args.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-    else:
-        flag = "✓ 完整" if complete else ("✗ 截断" if truncated else "? 未结束/未 ret")
-        print(f"路径:   {p}")
-        print(f"call#:  {out['callIdx']}  tid={out['tid']}")
-        print(f"记录:   {n} 条" + (f"  ({out['rec_per_sec']} rec/s)" if "rec_per_sec" in out else ""))
-        print(f"用时:   {ms} ms")
-        print(f"返回值: {out['retval']}")
-        print(f"truncated:        {truncated}")
-        print(f"last_insn_is_ret: {last_is_ret}")
-        print(f"first_pc: {out['first_pc']}")
-        print(f"last_pc:  {out['last_pc']}  ({last_asm})")
-        print(f"完整性:  {flag}")
-    return 0
-
-
-def _info_run(p, args):
-    top = {}
-    if (p/"meta.json").exists():
-        top = json.load(open(p/"meta.json"))
-    calls_dir = p/"calls"
-    calls = []
-    for cd in sorted(calls_dir.iterdir()):
-        if not cd.is_dir(): continue
-        mp = cd/"meta.json"
-        if not mp.exists(): continue
-        cm = json.load(open(mp)); cm["dir"] = cd.name
-        calls.append(cm)
-    calls.sort(key=lambda c: -(c.get("records") or 0))
-    out = {
-        "path": str(p),
-        "pkg": top.get("pkg"), "so": top.get("so"),
-        "method": top.get("method"), "cmd": top.get("cmd"),
-        "fn_offset": top.get("fn_offset"), "fn_addr": top.get("fn_addr"),
-        "module": top.get("module"),
-        "calls_count": len(calls),
-        "total_records": sum(c.get("records",0) for c in calls),
-        "max_records":   max((c.get("records",0) for c in calls), default=0),
-        "calls": calls,
-    }
-    if args.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
-    print(f"路径:    {p}")
-    print(f"pkg/so:  {out['pkg']} / {out['so']}")
-    print(f"method:  {out['method']}  cmd={out['cmd']}  fn={out['fn_addr']}")
-    print(f"calls:   {out['calls_count']}, 总 {out['total_records']} 条, 最长 {out['max_records']}")
-    print()
-    for c in calls[:30]:
-        complete = (c.get("truncated") is False) and (c.get("last_insn_is_ret") is True)
-        flag = "✓" if complete else ("✗" if c.get("truncated") else "?")
-        print(f"  {flag} call#{c.get('callIdx')}  tid={c.get('tid')}  recs={c.get('records')}  "
-              f"ms={c.get('ms')}  ret={c.get('retval')}  {c['dir']}")
-    return 0
 
 
 def cmd_query(args):
@@ -1597,7 +1619,7 @@ def main():
     # `./tracemiku capabilities`（机器可读功能清单）。
     _PY_SUBCOMMANDS = {
         "trace", "view", "api", "query", "list", "info", "finalize",
-        "dec", "crypto", "watch", "web", "doctor", "probe",
+        "crypto", "watch", "web", "doctor", "probe",
     }
     if len(sys.argv) > 1:
         first = sys.argv[1]
@@ -1608,7 +1630,7 @@ def main():
     ap.epilog = (
         "除以上子命令外，其余子命令透传给 Rust 分析 CLI。常用如:\n"
         "  resolve / indirect-targets / reg-at / mem-export / coverage /\n"
-        "  call-tree / strings / mem-dump / taint-bwd / bfs-slice / dec-summary\n"
+        "  call-tree / strings / mem-dump / taint-bwd / bfs-slice\n"
         "完整清单与机器可读 JSON: ./tracemiku capabilities\n"
         "任意透传命令的帮助: ./tracemiku <cmd> --help"
     )
@@ -1713,9 +1735,6 @@ def main():
     p_tr.add_argument("--remote", default=None,
                       help="frida-server TCP 地址 (如 127.0.0.1:6699). "
                            "不传则默认走 USB 连接.")
-    p_tr.add_argument("--mode", choices=["js", "cmodule", "cmodule-v3"], default="cmodule",
-                      help="trace 实现: js=JS callout (~30K rec/s); cmodule=CModule native (10x+, 默认); "
-                           "cmodule-v3=回归对比 baseline (CModule + send blob, 仅基准用)")
     p_tr.add_argument("--launch", action="store_true",
                       help="非破坏式启动 app: force-stop+monkey 后立刻 attach, 不执行 pm clear")
     p_tr.add_argument("--spawn", action="store_true",
@@ -1819,21 +1838,6 @@ def main():
     p_fz = sp.add_parser("finalize", help="扫 run/calls/_pending_call_* 补 meta + 重命名 (恢复中断的 trace)")
     p_fz.add_argument("path", help="run 目录")
 
-    # dec (Rust v2 decompiler facade)
-    p_dc = sp.add_parser("dec",
-                         help="Rust v2 反编译 markdown facade")
-    p_dc.add_argument("path", help="trace 目录 (per-call 或 single-bin)")
-    p_dc.add_argument("--fn", default=None,
-                      help="只输出指定 fn id (e.g. F0) 到 stdout, 不落盘")
-    p_dc.add_argument("--summary", action="store_true",
-                      help="只输出 summary.md 到 stdout, 不落盘")
-    p_dc.add_argument("--out", default=None,
-                      help="输出根 (默认 = path/decompile)")
-    p_dc.add_argument("--tier", default="hot",
-                      choices=("full", "hot", "summary"),
-                      help="block 渲染粒度: full=全部 asm; hot=top exec_count + 冷块 stub "
-                           "(默认, 单 fn 通常 < 60KB 适合 LLM); summary=只 fn 概要")
-
     # crypto
     p_crypto = sp.add_parser("crypto", help="Combined crypto analysis (constant scan + ARM CE detection)")
     p_crypto.add_argument("call_dir", help="Per-call trace directory")
@@ -1900,7 +1904,6 @@ def main():
         if args.addr: cmd += ["--addr", args.addr]
         if args.value: cmd += ["--value", args.value]
         return _run_rust_cli(cmd)
-    if args.subcommand == "dec":     return cmd_dec(args)
     if args.subcommand == "probe":   return cmd_probe(args)
     if args.subcommand == "doctor":  return cmd_doctor(args)
     ap.print_help(); return 1

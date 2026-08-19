@@ -13,10 +13,9 @@ traceMiku 是 Android 真机 ARM64 指令级动态追踪与分析工具。核心
 
 当前运行架构：
 
-- `tracer/`：Frida 设备端采集器。默认入口是由 TypeScript 编译生成的 `_agent.js`；
-  `agent_cmodule_v5.js` 仅为旧版回退。
-- `rust/crates/tracemiku-core/`：Trace 解析、反汇编、索引、CFG、污点、MemShadow 和
-  IL 分析的唯一实现源。
+- `tracer/`：Frida 设备端采集器。入口是由 TypeScript 编译生成的 `_agent.js`。
+- `rust/crates/tracemiku-core/`：Trace 解析、反汇编、索引、CFG、污点和 MemShadow
+  分析的唯一实现源。
 - `rust/crates/tracemiku-cli/`：面向 AI 和脚本的结构化 JSON 命令。
 - `rust/crates/tracemiku-server/`：Axum API、任务调度、静态前端和 BN sidecar 桥接。
 - `frontend/`：Solid + Vite Web UI，也是唯一交互界面。
@@ -46,8 +45,8 @@ traceMiku 是 Android 真机 ARM64 指令级动态追踪与分析工具。核心
 前端只负责交互和显示，不能重新实现分析算法。跨层改动必须验证 agent、host、
 `meta.json`、core、server 和显示链路。
 
-TraceIR、本地 LLIL -> MLIL -> HLIL、trace 增强 IL 是三个不同用途的现有路径。未经
-明确产品决策不得互相合并或删除。LLM 调用必须可选，本地分析不能依赖 LLM。
+反编译统一由 Binary Ninja sidecar 提供（外部反编译器），本仓库不维护本地反编译
+管线。LLM 调用必须可选，本地分析不能依赖 LLM。
 
 ## AI 开发纪律
 
@@ -102,10 +101,10 @@ make test-device
 ./tracemiku records <call_dir> --start 0 --count 50 --regs x0,x1,sp
 ./tracemiku taint-bwd <call_dir> --start 100 --reg x0
 ./tracemiku resolve <call_dir> --so libfoo.so --off 0x1234
-./tracemiku dec-summary <call_dir>
+./tracemiku hlil-for-fn <call_dir> --fn sym:f_root
 ```
 
-只有不存在专用 CLI 的 API 才使用 `./tracemiku api`。地址和偏移默认按十六进制解析，
+地址和偏移默认按十六进制解析，
 需要十进制时使用命令帮助所示的显式格式。
 
 CLI 输出是 AI 消费方的稳定契约：字段名、类型与嵌套结构由

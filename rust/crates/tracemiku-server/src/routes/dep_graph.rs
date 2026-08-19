@@ -213,7 +213,7 @@ fn empty_graph(depth_limit: usize, node_limit: usize) -> DepGraph {
 #[cfg(test)]
 mod tests {
     use super::{default_depth, default_limit, DEFAULT_DEPTH, DEFAULT_LIMIT};
-    use crate::routes::seed_resolver::parse_u64;
+    use crate::routes::parse::parse_dec_u64;
 
     #[test]
     fn defaults_are_stable() {
@@ -222,8 +222,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_u64_accepts_hex_and_decimal() {
-        assert_eq!(parse_u64("0x7000"), Some(0x7000));
-        assert_eq!(parse_u64("28672"), Some(0x7000));
+    fn parse_dec_u64_accepts_hex_and_decimal() {
+        assert_eq!(parse_dec_u64("0x7000"), Some(0x7000));
+        assert_eq!(parse_dec_u64("28672"), Some(0x7000));
     }
 }

@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import {
   fetchBfsSlice,
@@ -8,6 +8,7 @@ import {
   type ForwardDepTreeResponse,
 } from "~/api/client";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import { createVirtualList } from "~/utils/virtualList";
 
 type SliceResponse = BfsSliceResponse | ForwardDepTreeResponse;
 
@@ -38,6 +39,10 @@ const DEFAULT_LIMIT_FORWARD = 200;
 const DEFAULT_DEPTH = 8;
 const MAX_BACKWARD_LIMIT = 200_000;
 const MAX_FORWARD_LIMIT = 2_000;
+/// Records 面板 j/k 每步都会换 props.idx；防抖期内不重发 BFS 查询。
+const IDX_DEBOUNCE_MS = 80;
+/// 反向切片行高（slice-table 虚拟行）。
+const SLICE_ROW_HEIGHT = 20;
 
 export default function SlicePanel(props: SlicePanelProps) {
   const [direction, setDirection] = createSignal<Direction>("backward");
@@ -48,6 +53,29 @@ export default function SlicePanel(props: SlicePanelProps) {
   const [limitForward, setLimitForward] = createSignal(DEFAULT_LIMIT_FORWARD);
   const [depth, setDepth] = createSignal(DEFAULT_DEPTH);
   const [token, setToken] = createSignal(0);
+  const [debouncedIdx, setDebouncedIdx] = createSignal<number | undefined>();
+  let idxTimer: number | undefined;
+
+  // 光标防抖：j/k 连按时 80ms 内只保留最后一个 idx，避免每次按键都
+  // 触发一次最多 200k 节点的 BFS（参照 BacktracePanel 的 timer 模式）。
+  createEffect(() => {
+    if (idxTimer !== undefined) {
+      window.clearTimeout(idxTimer);
+      idxTimer = undefined;
+    }
+    if (!props.active) {
+      setDebouncedIdx(undefined);
+      return;
+    }
+    const idx = props.idx;
+    idxTimer = window.setTimeout(() => {
+      idxTimer = undefined;
+      setDebouncedIdx(idx);
+    }, IDX_DEBOUNCE_MS);
+  });
+  onCleanup(() => {
+    if (idxTimer !== undefined) window.clearTimeout(idxTimer);
+  });
 
   const secondary = createMemo<number | null>(() => {
     const raw = secondaryRaw().trim();
@@ -57,10 +85,11 @@ export default function SlicePanel(props: SlicePanelProps) {
   });
 
   const query = createMemo<SliceQuery | undefined>((prev?: SliceQuery) => {
-    if (!props.active || props.idx < 0) return undefined;
+    const primaryIdx = debouncedIdx();
+    if (!props.active || primaryIdx === undefined || primaryIdx < 0) return undefined;
     const next: SliceQuery = {
       direction: direction(),
-      primaryIdx: props.idx,
+      primaryIdx,
       secondaryIdx: secondary(),
       reg: props.reg || null,
       dataOnly: dataOnly(),
@@ -262,6 +291,19 @@ function BackwardSliceView(props: BackwardViewProps) {
   const r = props.response;
   const seeds = r.seeds ?? [r.seed];
   const stats = r.edge_stats;
+  // slice 本体可达 200k idx；前 ROW_DETAIL_BUDGET 行带详情，其余只回 raw idx。
+  // 全量渲染会生成 200k 个 <tr>，改为固定行高窗口渲染。
+  const rawTail = r.rows_capped ? r.slice.slice(r.rows.length) : [];
+  const totalRows = r.rows.length + rawTail.length;
+  const list = createVirtualList(() => totalRows, SLICE_ROW_HEIGHT);
+  const windowItems = createMemo<Array<DepNode | number>>(() => {
+    const w = list.window();
+    const out: Array<DepNode | number> = [];
+    for (let pos = w.start; pos < w.end; pos += 1) {
+      out.push(pos < r.rows.length ? r.rows[pos] : rawTail[pos - r.rows.length]);
+    }
+    return out;
+  });
   return (
     <div class="slice-backward">
       <p class="dim small">
@@ -305,44 +347,52 @@ function BackwardSliceView(props: BackwardViewProps) {
           {r.slice.length.toLocaleString()} idx — extra rows show as raw idx only
         </p>
       </Show>
-      <table class="slice-table">
-        <thead>
-          <tr>
-            <th>idx</th>
-            <th>pc</th>
-            <th>fn</th>
-            <th>asm</th>
-          </tr>
-        </thead>
-        <tbody>
-          <For each={r.rows}>
-            {(row) => (
-              <tr onClick={() => props.onSelect(row.idx)}>
-                <td>{row.idx}</td>
-                <td>
-                  <code>{row.pc}</code>
-                </td>
-                <td>{row.func ?? ""}</td>
-                <td>
-                  <code>{row.asm}</code>
-                </td>
-              </tr>
-            )}
-          </For>
-          <Show when={r.rows_capped}>
-            <For each={r.slice.slice(r.rows.length)}>
-              {(idx) => (
-                <tr onClick={() => props.onSelect(idx)} class="dim">
-                  <td>{idx}</td>
-                  <td colSpan={3} class="dim">
-                    (no detail past row cap)
-                  </td>
-                </tr>
-              )}
+      <div class="vscroll slice-vscroll" ref={list.ref} onScroll={list.onScroll}>
+        <table class="slice-table slice-vtable">
+          <thead>
+            <tr>
+              <th>idx</th>
+              <th>pc</th>
+              <th>fn</th>
+              <th>asm</th>
+            </tr>
+          </thead>
+          <tbody class="vbody" style={{ height: `${list.window().height}px` }}>
+            <For each={windowItems()}>
+              {(item, i) => {
+                const row = typeof item === "number" ? null : item;
+                const idx = typeof item === "number" ? item : item.idx;
+                const pos = () => list.window().start + i();
+                return (
+                  <tr
+                    class="vrow"
+                    classList={{ dim: !row }}
+                    style={{ top: `${pos() * SLICE_ROW_HEIGHT}px` }}
+                    onClick={() => props.onSelect(idx)}
+                  >
+                    <td>{idx}</td>
+                    {row ? (
+                      <>
+                        <td>
+                          <code>{row.pc}</code>
+                        </td>
+                        <td>{row.func ?? ""}</td>
+                        <td>
+                          <code>{row.asm}</code>
+                        </td>
+                      </>
+                    ) : (
+                      <td colSpan={3} class="dim slice-tail-note">
+                        (no detail past row cap)
+                      </td>
+                    )}
+                  </tr>
+                );
+              }}
             </For>
-          </Show>
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
       <Show when={r.slice.length === 0}>
         <p class="dim small">empty slice — try a different seed or disable data-only</p>
       </Show>

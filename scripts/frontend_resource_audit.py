@@ -13,55 +13,27 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
 
-
-REPO = Path(__file__).resolve().parent.parent
-SRC = REPO / "frontend" / "src"
+from _static_audit import SRC, read
 
 ALLOWED_RAW_RESOURCES = {
     ("App.tsx", "cursorRecord"),
     ("App.tsx", "functions"),
     ("App.tsx", "meta"),
-    ("panels/cfg/CfgPanel.tsx", "functions"),
     ("panels/crypto/CryptoPanel.tsx", "resp"),
-    ("panels/functions/FunctionsPanel.tsx", "resp"),
-    ("panels/memory/MemoryPanel.tsx", "record"),
-    ("panels/records/RecordsPanel.tsx", "meta"),
-    ("panels/registers/RegistersPanel.tsx", "record"),
     ("panels/settings/SettingsPanel.tsx", "bg"),
     ("panels/settings/SettingsPanel.tsx", "decomp"),
     ("panels/settings/SettingsPanel.tsx", "meta"),
     ("panels/settings/SettingsPanel.tsx", "openapi"),
     ("panels/sofilter/SoFilterPanel.tsx", "stats"),
-    ("panels/tracepc/TraceForPcPanel.tsx", "record"),
-    ("panels/xref/XrefPanel.tsx", "record"),
 }
 
 REQUIRED_RAW_RESOURCE_MARKERS = {
     ("App.tsx", "cursorRecord"): [
-        "rowHintCache.has(idx) ? undefined : idx",
+        "rowHintCache.has(idx) && !recordDetailNeeded()",
         "const r = cursorRecord()",
         "if (r && r.idx === idx)",
         "setCursorHint(hint)",
-    ],
-    ("panels/memory/MemoryPanel.tsx", "record"): [
-        "const currentRecord = createMemo(() =>",
-        "return r && r.idx === props.idx ? r : undefined",
-    ],
-    ("panels/registers/RegistersPanel.tsx", "record"): [
-        "const currentRecord = createMemo(() =>",
-        "return r && r.idx === props.idx ? r : undefined",
-    ],
-    ("panels/tracepc/TraceForPcPanel.tsx", "record"): [
-        "const currentRecord = createMemo(() =>",
-        "return r && r.idx === props.idx ? r : undefined",
-        "const [idxs, currentHistory] = createGuardedResource",
-    ],
-    ("panels/xref/XrefPanel.tsx", "record"): [
-        "const currentRecord = createMemo(() =>",
-        "return r && r.idx === props.idx ? r : undefined",
-        "const [pcRefs, currentPcRefs] = createGuardedResource",
     ],
 }
 
@@ -86,7 +58,7 @@ def main() -> int:
         rel, name = key
         if key not in found:
             continue
-        text = (SRC / rel).read_text()
+        text = read(rel)
         absent = [marker for marker in markers if marker not in text]
         if absent:
             marker_failures.append(f"{rel}: {name} missing markers {absent!r}")

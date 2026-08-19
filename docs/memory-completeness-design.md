@@ -53,7 +53,7 @@ region_count:u32
 
 ## 消费者规则
 
-- `mem-dump`、`mem-export`、lineage、VM 和反编译必须传播来源与完整度。
+- `mem-dump`、`mem-export`、lineage 和 VM 分析必须传播来源与完整度。
 - 导出未知区间时可以为文件布局填零，但必须同时返回缺口和 `completeness < 1`。
 - 缓存必须包含 trace 指纹及快照/外部写输入，输入变化后失效。
 - 完整性阈值只能提示风险，不能把推断升级为事实。

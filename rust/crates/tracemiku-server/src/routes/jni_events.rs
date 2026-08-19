@@ -34,20 +34,12 @@ pub struct JniEventsResponse {
 pub async fn jni_events_handler(
     State(state): State<AppState>,
     Query(q): Query<JniEventsQuery>,
-) -> Json<JniEventsResponse> {
+) -> Result<Json<JniEventsResponse>, crate::routes::WorkerFailure> {
     let trace_dir = state.inner.trace_dir.clone();
     let response = tokio::task::spawn_blocking(move || jni_events_response(trace_dir, q))
         .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(target: "tracemiku-server", "jni events worker failed: {err}");
-            JniEventsResponse {
-                count: 0,
-                returned: 0,
-                truncated: false,
-                events: Vec::new(),
-            }
-        });
-    Json(response)
+        .map_err(|err| crate::routes::worker_panic_response("jni events", &err))?;
+    Ok(Json(response))
 }
 
 fn jni_events_response(trace_dir: std::path::PathBuf, q: JniEventsQuery) -> JniEventsResponse {

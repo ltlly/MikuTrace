@@ -4,8 +4,10 @@ import subprocess, struct, json, os, sys
 from pathlib import Path
 from datetime import datetime
 
-ELF = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins/decomp_test_suite")
-OUT = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins/comparison_results")
+WORK = Path(__file__).resolve().parent
+REPO_ROOT = WORK.parent.parent
+ELF = WORK / "decomp_test_suite"
+OUT = WORK / "comparison_results"
 OUT.mkdir(exist_ok=True)
 
 # 10 representative functions covering all categories
@@ -90,7 +92,7 @@ fn compare_{name}() {{
     print(f"[{category:15s}] {name:30s}: {len(insns):3d} insns @ {start:#x}-{end:#x}")
 
 # Write Rust test
-test_path = Path("/home/ltlly/Code/traceMiku/rust/crates/tracemiku-core/tests/bn_comparison_tests.rs")
+test_path = REPO_ROOT / "rust" / "crates" / "tracemiku-core" / "tests" / "bn_comparison_tests.rs"
 test_path.write_text(rust_code)
 
 # Write JSON summary
@@ -99,4 +101,4 @@ with open(OUT / "comparison_index.json", 'w') as f:
 
 print(f"\n{len(comparisons)} comparisons written to {test_path}")
 print(f"Index: {OUT / 'comparison_index.json'}")
-print(f"\nRun: cargo test --manifest-path /home/ltlly/Code/traceMiku/rust/Cargo.toml -p tracemiku-core --test bn_comparison_tests -- --nocapture")
+print(f"\nRun: cargo test --manifest-path {REPO_ROOT / 'rust' / 'Cargo.toml'} -p tracemiku-core --test bn_comparison_tests -- --nocapture")

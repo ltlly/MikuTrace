@@ -12,9 +12,11 @@ import time
 def launch_start(pkg, max_pid_wait=15):
     """force-stop + monkey 拉起, 不清应用数据, 等 pid 出现就返回.
     用于需要尽早 attach 但不能 `pm clear` 破坏登录/本地状态的场景.
+    所有 adb 调用统一 10s timeout — adb 挂死时快速失败而不是永远阻塞.
     """
     print(f"[launch] force-stop {pkg} (no pm clear)", flush=True)
-    subprocess.run(["adb", "shell", "am", "force-stop", pkg], capture_output=True)
+    subprocess.run(["adb", "shell", "am", "force-stop", pkg],
+                   capture_output=True, timeout=10)
     time.sleep(0.5)
     print("[launch] monkey 拉起", flush=True)
     subprocess.run(
@@ -29,11 +31,13 @@ def launch_start(pkg, max_pid_wait=15):
             "1",
         ],
         capture_output=True,
+        timeout=10,
     )
     t0 = time.time()
     while time.time() - t0 < max_pid_wait:
         r = subprocess.run(
-            ["adb", "shell", "pidof", pkg], capture_output=True, text=True
+            ["adb", "shell", "pidof", pkg], capture_output=True, text=True,
+            timeout=10,
         )
         s = r.stdout.strip()
         if s:
@@ -90,8 +94,16 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
             )
 
     # 3. frida-server running
+    # 精确进程名匹配: ps -A 的 NAME 列是 comm (≤15 字符). 子串匹配会把任意
+    # 名字含 "miku"/"frida" 的进程 (如 com.miku.app) 误判为 server 在跑.
+    # 实际进程名约定: stealth server = .miku-srv (comm 可能截断为 miku),
+    # 官方/patched server = frida-server[-NN] (comm 15 字符截断).
     rc, out, _ = _run("frida", ["adb", "shell", "ps -A"])
-    if "miku" in out.lower() or "frida" in out.lower():
+    server_names = {".miku-srv", "frida-server", "miku"}
+    proc_names = [
+        ln.split()[-1] for ln in out.splitlines()[1:] if ln.strip()
+    ]
+    if any(n in server_names or n.startswith("frida-server") for n in proc_names):
         results.append(("frida-server", True, "process found"))
     else:
         results.append(

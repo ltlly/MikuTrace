@@ -54,23 +54,12 @@ pub struct StringsResponse {
 pub async fn strings_handler(
     State(state): State<AppState>,
     Query(q): Query<StringsQuery>,
-) -> Json<StringsResponse> {
+) -> Result<Json<StringsResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || strings_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "strings worker failed: {err}");
-                StringsResponse {
-                    status: "error",
-                    count: 0,
-                    returned: 0,
-                    truncated: false,
-                    cursor: -1,
-                    strings: Vec::new(),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || strings_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("strings", &err))?;
+    Ok(Json(response))
 }
 
 fn strings_response(inner: &crate::state::AppStateInner, q: StringsQuery) -> StringsResponse {

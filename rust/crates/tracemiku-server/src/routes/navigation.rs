@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use tracemiku_core::prelude::*;
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const MAX_CALL_CHAIN_DEPTH: usize = 256;
@@ -33,7 +34,7 @@ pub async fn block_for_pc_handler(
     State(state): State<AppState>,
     Query(q): Query<PcQuery>,
 ) -> Json<BlockForPcResponse> {
-    let pc = parse_int(&q.pc).unwrap_or(0);
+    let pc = parse::parse_dec_u64(&q.pc).unwrap_or(0);
     let block = find_block_for_pc(&state, pc).map(|b| format!("{:#x}", b.start_pc));
     Json(BlockForPcResponse {
         pc: q.pc,
@@ -78,7 +79,7 @@ pub async fn block_handler(
     State(state): State<AppState>,
     Query(q): Query<PcQuery>,
 ) -> Result<Json<BlockDetail>, StatusCode> {
-    let pc = parse_int(&q.pc).ok_or(StatusCode::BAD_REQUEST)?;
+    let pc = parse::parse_dec_u64(&q.pc).ok_or(StatusCode::BAD_REQUEST)?;
     let inner = state.inner.clone();
     let detail = tokio::task::spawn_blocking(move || block_detail_response(&inner, pc))
         .await
@@ -171,20 +172,14 @@ pub struct LoopsResponse {
     pub count: usize,
 }
 
-pub async fn loops_handler(State(state): State<AppState>) -> Json<LoopsResponse> {
+pub async fn loops_handler(
+    State(state): State<AppState>,
+) -> Result<Json<LoopsResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || loops_response(&inner))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "loops worker failed: {err}");
-                LoopsResponse {
-                    status: "error",
-                    loops: Vec::new(),
-                    count: 0,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || loops_response(&inner))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("loops", &err))?;
+    Ok(Json(response))
 }
 
 fn loops_response(inner: &crate::state::AppStateInner) -> LoopsResponse {
@@ -466,15 +461,6 @@ fn fmt_pc_inner(inner: &crate::state::AppStateInner, pc: u64) -> String {
         format!("{fn_name}+{off:#x}")
     } else {
         format!("+{rel:#x}")
-    }
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }
 

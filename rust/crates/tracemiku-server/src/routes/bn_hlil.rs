@@ -1,7 +1,6 @@
 //! Binary Ninja sidecar-backed HLIL and static CFG endpoints.
 
-use crate::routes::seed_resolver::parse_u64;
-use std::collections::HashMap;
+use crate::routes::parse::parse_dec_u64;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -10,10 +9,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracemiku_core::function_index::parse_id;
 
-use crate::state::{bn_response_cache_path, AppState};
+use crate::state::AppState;
 
 const MAX_TRACE_FN_HINT_SPAN: u64 = 16 * 1024 * 1024;
-const MAX_PERSISTED_BN_RESPONSES: usize = 256;
 
 #[derive(Debug, Deserialize)]
 pub struct PcQuery {
@@ -39,20 +37,15 @@ pub struct FnQuery {
 }
 
 pub async fn bn_sidecar_status_handler(State(state): State<AppState>) -> Json<Value> {
-    let status = state
-        .inner
-        .bn_sidecar
-        .lock()
-        .map(|sidecar| sidecar.status())
-        .unwrap_or_else(|e| json!({"ready": false, "configured": false, "error": e.to_string()}));
-    Json(status)
+    // 读无锁快照，不与进行中的 sidecar 请求（持 manager 锁最长到超时）竞争。
+    Json(state.inner.bn_sidecar_status.value())
 }
 
 pub async fn hlil_for_pc_handler(
     State(state): State<AppState>,
     Query(q): Query<PcQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let pc = parse_u64(&q.pc).ok_or_else(|| {
+    let pc = parse_dec_u64(&q.pc).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             format!("invalid pc, expected decimal or hex: {}", q.pc),
@@ -87,7 +80,7 @@ pub async fn bn_cfg_for_pc_handler(
     State(state): State<AppState>,
     Query(q): Query<BnCfgForPcQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let pc = parse_u64(&q.pc).ok_or_else(|| {
+    let pc = parse_dec_u64(&q.pc).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             format!("invalid pc, expected decimal or hex: {}", q.pc),
@@ -105,7 +98,7 @@ pub async fn bn_cfg_svg_for_pc_handler(
     State(state): State<AppState>,
     Query(q): Query<BnCfgSvgForPcQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let pc = parse_u64(&q.pc).ok_or_else(|| {
+    let pc = parse_dec_u64(&q.pc).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             format!("invalid pc, expected decimal or hex: {}", q.pc),
@@ -120,9 +113,10 @@ pub async fn bn_cfg_svg_for_pc_handler(
     let ok = cfg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     let ready = cfg.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
     let mut out = json!({
-        "ok": cfg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
-        "ready": cfg.get("ready").and_then(|v| v.as_bool()).unwrap_or(false),
-        "svg": cfg.get("svg").and_then(|v| v.as_str()).unwrap_or(""),
+        "ok": ok,
+        "ready": ready,
+        // sidecar 明确报错（如 cfg_for 未实现）时透传错误，不展示空图。
+        "svg": ok.then(|| cfg.get("svg").and_then(|v| v.as_str()).unwrap_or("")),
         "error": cfg.get("error").cloned().unwrap_or(Value::Null),
         "status": cfg.get("status").and_then(|v| v.as_str()).unwrap_or(if ok && ready { "ok" } else { "not-ready" }),
     });
@@ -163,11 +157,7 @@ async fn request_sidecar_blocking(
 
 fn request_sidecar(state: &AppState, method: &str, params: Value) -> Value {
     let cache_key = bn_cache_key(method, &params);
-    if let Some(mut cached) = state
-        .inner
-        .bn_response_cache
-        .lock()
-        .expect("bn response cache poisoned")
+    if let Some(mut cached) = crate::state::lock_or_recover(&state.inner.bn_response_cache)
         .get(&cache_key)
         .cloned()
     {
@@ -184,55 +174,12 @@ fn request_sidecar(state: &AppState, method: &str, params: Value) -> Value {
                 if let Some(obj) = response.as_object_mut() {
                     obj.insert("cache_hit".to_string(), json!(false));
                 }
-                let entries = {
-                    let mut cache = state
-                        .inner
-                        .bn_response_cache
-                        .lock()
-                        .expect("bn response cache poisoned");
-                    if cache.len() >= MAX_PERSISTED_BN_RESPONSES {
-                        if let Some(oldest_key) = cache.keys().next().cloned() {
-                            cache.remove(&oldest_key);
-                        }
-                    }
-                    cache.insert(cache_key, response.clone());
-                    cache.clone()
-                };
-                persist_bn_response_cache(state, &entries);
+                // FIFO 容量淘汰与防抖落盘由 state 层统一实现。
+                state.inner.cache_bn_response(cache_key, response.clone());
             }
             response
         }
         Err(e) => json!({"ok": false, "ready": false, "error": e.to_string()}),
-    }
-}
-
-fn persist_bn_response_cache(state: &AppState, entries: &HashMap<String, Value>) {
-    let path = bn_response_cache_path(&state.inner.trace);
-    let tmp_path = path.with_file_name(format!(
-        "{}.tmp.{}",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("trace.bin.bn-sidecar-cache.v1.json"),
-        std::process::id()
-    ));
-    let doc = json!({
-        "version": 1,
-        "trace_bytes": state.inner.trace.raw().len() as u64,
-        "entries": entries,
-    });
-    let write_result = (|| -> std::io::Result<()> {
-        let raw = serde_json::to_vec(&doc).map_err(std::io::Error::other)?;
-        std::fs::write(&tmp_path, raw)?;
-        std::fs::rename(&tmp_path, &path)?;
-        Ok(())
-    })();
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&tmp_path);
-        tracing::warn!(
-            target: "tracemiku-server",
-            path = %path.display(),
-            "failed to persist BN sidecar cache: {err}"
-        );
     }
 }
 
@@ -278,19 +225,13 @@ fn resolve_fn_pc(state: &AppState, fn_id: &str) -> Result<u64, (StatusCode, Stri
     let (src, payload) =
         parse_id(fn_id).map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid fn_id: {e}")))?;
     match src.as_str() {
-        "trace" => state
-            .inner
-            .top_ir()
-            .fn_by_id(&payload)
-            .map(|f| f.pc_start)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such trace fn {fn_id}"))),
         "sym" | "symaddr" => state
             .inner
             .function_index
             .by_id(fn_id)
             .and_then(|f| f.entry_pc)
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no such {src} fn {payload}"))),
-        "bn" => parse_u64(&payload)
+        "bn" => parse_dec_u64(&payload)
             .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("invalid bn fn id {fn_id}"))),
         _ => Err((
             StatusCode::BAD_REQUEST,
@@ -321,7 +262,11 @@ fn enrich_hlil_for_pc_response(state: &AppState, pc: u64, mut response: Value) -
     if let Some(lines) = obj.get("lines").and_then(|v| v.as_array()) {
         let mut best: Option<(usize, u64)> = None;
         for (i, line) in lines.iter().enumerate() {
-            let Some(line_pc) = line.get("pc").and_then(|v| v.as_str()).and_then(parse_u64) else {
+            let Some(line_pc) = line
+                .get("pc")
+                .and_then(|v| v.as_str())
+                .and_then(parse_dec_u64)
+            else {
                 continue;
             };
             if line_pc == pc {

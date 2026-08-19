@@ -98,6 +98,54 @@ async fn diff_traces_requires_two_traces() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn diff_traces_rejects_more_than_eight_traces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run1 = make_trace_dir(tmp.path(), "run1", "signature", b"AAAAAAAA");
+    let traces: Vec<String> = (0..9)
+        .map(|i| {
+            make_trace_dir(tmp.path(), &format!("run{i}"), "signature", b"AAAAAAAA")
+                .display()
+                .to_string()
+        })
+        .collect();
+    let body = json!({"traces": traces});
+    let (status, v) = post(run1, body).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["limit"], 8);
+    assert_eq!(v["requested"], 9);
+}
+
+#[tokio::test]
+async fn diff_traces_reports_truncation_metadata() {
+    // 响应必须携带 truncated 标记字段；小输入下均为 false。
+    let tmp = tempfile::tempdir().unwrap();
+    let run1 = make_trace_dir(
+        tmp.path(),
+        "run1",
+        "signature",
+        &hex_bytes("6b360108aaaaaaaa11111111"),
+    );
+    let run2 = make_trace_dir(
+        tmp.path(),
+        "run2",
+        "signature",
+        &hex_bytes("6b360108bbbbbbbb11111111"),
+    );
+    let body = json!({
+        "traces": [run1.display().to_string(), run2.display().to_string()],
+        "show_per_byte": true
+    });
+    let (status, v) = post(run1, body).await;
+    assert_eq!(status, StatusCode::OK);
+    let signature = &v["headers"]["signature"];
+    assert_eq!(signature["per_byte_truncated"], false);
+    assert_eq!(signature["alias_groups_truncated"], false);
+    assert_eq!(signature["nibble_findings_truncated"], false);
+    assert!(signature["per_byte"].as_array().unwrap().len() == 12);
+}
+
 fn hex_bytes(s: &str) -> Vec<u8> {
     (0..s.len())
         .step_by(2)

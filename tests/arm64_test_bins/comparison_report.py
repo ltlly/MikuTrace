@@ -4,17 +4,20 @@ import subprocess, struct, json, os, re
 from pathlib import Path
 from datetime import datetime
 
+WORK = Path(__file__).resolve().parent
+REPO_ROOT = WORK.parent.parent
+
 BINS = {
-    "decomp_test_suite": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/decomp_test_suite",
-    "test_strings": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_strings",
-    "test_linkedlist": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_linkedlist",
-    "test_arrays": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_arrays",
-    "test_hash": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_hash",
-    "test_fsm": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_fsm",
-    "test_fp": "/home/ltlly/Code/traceMiku/tests/arm64_test_bins/test_fp",
+    "decomp_test_suite": str(WORK / "decomp_test_suite"),
+    "test_strings": str(WORK / "test_strings"),
+    "test_linkedlist": str(WORK / "test_linkedlist"),
+    "test_arrays": str(WORK / "test_arrays"),
+    "test_hash": str(WORK / "test_hash"),
+    "test_fsm": str(WORK / "test_fsm"),
+    "test_fp": str(WORK / "test_fp"),
 }
 
-OUT = Path("/home/ltlly/Code/traceMiku/tests/arm64_test_bins/comparison_results")
+OUT = WORK / "comparison_results"
 OUT.mkdir(exist_ok=True)
 
 all_funcs = []

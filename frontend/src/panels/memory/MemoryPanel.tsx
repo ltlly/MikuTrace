@@ -1,13 +1,12 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
 import {
   fetchIdxsTouchingRange,
   fetchMemDiff,
   fetchMemDump,
   fetchMemWritesInRange,
-  fetchRecord,
 } from "~/api/client";
-import type { MemDumpByte, MemWritesInRangeResponse, TouchingRangeResponse } from "~/api/types";
+import type { MemDumpByte, MemWritesInRangeResponse, RecordDetail, TouchingRangeResponse } from "~/api/types";
 import { clamp } from "~/utils/math";
 import { useGuarded } from "~/utils/guarded";
 import { createGuardedResource } from "~/utils/resourceGuards";
@@ -20,6 +19,8 @@ interface MemoryPanelProps {
   addrRequest?: { token: number; addr: string; count?: number };
   active: boolean;
   onTaskUpdate?: UiTaskReporter;
+  /// App 层统一的当前 idx /api/record 响应（寄存器地址解析用）。
+  record?: RecordDetail;
 }
 
 const REG_ORDER = [
@@ -162,17 +163,8 @@ export default function MemoryPanel(props: MemoryPanelProps) {
   const [dragAnchor, setDragAnchor] = createSignal<string | null>(null);
   const [dumpRetry, setDumpRetry] = createSignal(0);
   const [diffRetry, setDiffRetry] = createSignal(0);
-  let recordAbort: AbortController | undefined;
-  const [record] = createResource(
-    () => (props.active ? props.idx : undefined),
-    (idx) => {
-      recordAbort?.abort();
-      recordAbort = new AbortController();
-      return fetchRecord(idx, recordAbort.signal);
-    },
-  );
   const currentRecord = createMemo(() => {
-    const r = record();
+    const r = props.record;
     return r && r.idx === props.idx ? r : undefined;
   });
   let autoAddr = "";
@@ -633,7 +625,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                     </button>
                   </Show>
                   <Show when={ctx().err}>
-                    <p class="err small">{ctx().err}</p>
+                    <p class="err small">load failed: {ctx().err}</p>
                   </Show>
                   <Show when={!ctx().hits && !ctx().err}>
                     <p class="dim small">加载读写分析...</p>
@@ -707,7 +699,7 @@ export default function MemoryPanel(props: MemoryPanelProps) {
                           </div>
                         </Show>
                         <Show when={ctx().writeErr}>
-                          <p class="err small">write details unavailable: {ctx().writeErr}</p>
+                          <p class="err small">load failed: {ctx().writeErr}</p>
                         </Show>
                       </>
                     )}

@@ -6,21 +6,14 @@ use axum::Json;
 use crate::crypto_scan::{scan_crypto_memory, CryptoScanResponse};
 use crate::state::AppState;
 
-pub async fn crypto_scan_handler(State(state): State<AppState>) -> Json<CryptoScanResponse> {
+pub async fn crypto_scan_handler(
+    State(state): State<AppState>,
+) -> Result<Json<CryptoScanResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || crypto_scan_response(&inner))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "crypto scan worker failed: {err}");
-                CryptoScanResponse {
-                    status: "error",
-                    scanned: 0,
-                    primitives: Vec::new(),
-                    any_hit: false,
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || crypto_scan_response(&inner))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("crypto scan", &err))?;
+    Ok(Json(response))
 }
 
 fn crypto_scan_response(inner: &crate::state::AppStateInner) -> CryptoScanResponse {

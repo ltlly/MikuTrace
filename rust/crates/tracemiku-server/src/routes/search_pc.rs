@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 const MAX_SEARCH_PC_IDXS: usize = 50_000;
@@ -36,7 +37,7 @@ pub async fn search_pc_handler(
     State(state): State<AppState>,
     Query(q): Query<SearchPcQuery>,
 ) -> Result<Json<SearchPcResponse>, StatusCode> {
-    let target = parse_int(&q.pc).ok_or(StatusCode::BAD_REQUEST)?;
+    let target = parse::parse_dec_u64(&q.pc).ok_or(StatusCode::BAD_REQUEST)?;
     let all = state
         .inner
         .index
@@ -57,15 +58,6 @@ pub async fn search_pc_handler(
         idxs,
         truncated: count > effective_limit,
     }))
-}
-
-fn parse_int(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
 }
 
 #[cfg(test)]

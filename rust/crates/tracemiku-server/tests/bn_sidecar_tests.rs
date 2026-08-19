@@ -81,7 +81,7 @@ async fn hlil_and_bn_cfg_endpoints_degrade_when_sidecar_is_absent() {
     drop(_guard);
     for uri in [
         "/api/hlil-for-pc?pc=0x100000",
-        "/api/hlil-for-fn?fn_id=trace:F0",
+        "/api/hlil-for-fn?fn_id=bn:0x100000",
         "/api/bn-cfg-for-pc?pc=0x100000",
         "/api/bn-cfg-svg-for-pc?pc=0x100000",
     ] {
@@ -107,7 +107,7 @@ async fn hlil_and_bn_cfg_endpoints_degrade_when_sidecar_is_absent() {
 }
 
 #[tokio::test]
-async fn hlil_for_fn_rejects_unknown_trace_fn() {
+async fn hlil_for_fn_rejects_unknown_sym_fn() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var("TRACEMIKU_BN_SO");
     std::env::remove_var("TRACEMIKU_BN_SIDECAR");
@@ -118,7 +118,7 @@ async fn hlil_for_fn_rejects_unknown_trace_fn() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/hlil-for-fn?fn_id=trace:F99")
+                .uri("/api/hlil-for-fn?fn_id=sym:no_such_fn")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -189,7 +189,11 @@ for line in sys.stdin:
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["current_line_idx"], 1);
+    assert!(
+        v.get("error").map(|e| e.is_null()).unwrap_or(true),
+        "sidecar request failed: {v}"
+    );
+    assert_eq!(v["current_line_idx"], 1, "{v}");
     assert_eq!(v["pc"], "0x100004");
     assert_eq!(v["status"], "ok");
 }
@@ -256,7 +260,10 @@ for line in sys.stdin:
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["cache_hit"], false);
+    assert_eq!(
+        v["cache_hit"], false,
+        "first request must reach sidecar: {v}"
+    );
     assert_eq!(v["created_function"], true);
     assert_eq!(fs::read_to_string(&count_file).unwrap(), "1");
     assert!(call_dir(&dir)
@@ -443,4 +450,244 @@ for line in sys.stdin:
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["svg"], "mode=hlil;timeout=17");
+}
+
+/// 带权限地写入可执行 fake sidecar 脚本并返回路径。
+fn write_sidecar(dir: &tempfile::TempDir, name: &str, body: &str) -> std::path::PathBuf {
+    let sidecar = dir.path().join(name);
+    fs::write(&sidecar, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&sidecar).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&sidecar, perms).unwrap();
+    }
+    sidecar
+}
+
+#[tokio::test]
+async fn bn_sidecar_drops_stray_stdout_lines_before_matching_response() {
+    let dir = synth_trace();
+    let sidecar = write_sidecar(
+        &dir,
+        "fake_stray_sidecar.py",
+        r#"#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    req = json.loads(line)
+    # 先打印几行杂散日志（无 id 字段），再回正确响应。
+    print("sidecar starting up", flush=True)
+    print(json.dumps({"noise": True}), flush=True)
+    result = {"ok": True, "ready": True, "fn": {"name": "bn_root", "start": 1048576}, "lines": [], "vars": []}
+    print(json.dumps({"id": req.get("id"), "result": result}), flush=True)
+"#,
+    );
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", &sidecar);
+    let app = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/hlil-for-pc?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        v["ok"], true,
+        "stray lines must be dropped, not served: {v}"
+    );
+    assert_eq!(v["fn"]["name"], "bn_root");
+}
+
+#[tokio::test]
+async fn bn_sidecar_rebuilds_session_after_id_desync() {
+    let dir = synth_trace();
+    let sidecar = write_sidecar(
+        &dir,
+        "fake_desync_sidecar.py",
+        r#"#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    req = json.loads(line)
+    # 每个请求回多条错位 id 的响应：协议错位必须触发重建，
+    # 而不是错拿别人的结果或干等到超时。
+    for _ in range(6):
+        result = {"ok": True, "ready": True, "fn": {"name": "wrong_response"}}
+        print(json.dumps({"id": 999, "result": result}), flush=True)
+"#,
+    );
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", &sidecar);
+    let app = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/hlil-for-pc?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["ok"], false, "desynced responses must not be served: {v}");
+    assert!(
+        v["error"].as_str().unwrap_or_default().contains("desync"),
+        "error should explain the desync: {v}"
+    );
+}
+
+#[tokio::test]
+async fn bn_sidecar_request_times_out_and_reports_structured_error() {
+    let dir = synth_trace();
+    let sidecar = write_sidecar(
+        &dir,
+        "fake_hanging_sidecar.py",
+        r#"#!/usr/bin/env python3
+import sys
+import time
+
+for _ in sys.stdin:
+    time.sleep(600)
+"#,
+    );
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", &sidecar);
+    // 超时值在 manager 构造时快照，构建后即可清理环境变量。
+    std::env::set_var("TRACEMIKU_BN_SIDECAR_TIMEOUT_SECS", "1");
+    let app = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR_TIMEOUT_SECS");
+    drop(_guard);
+
+    let started = std::time::Instant::now();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/hlil-for-pc?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        elapsed.as_secs() < 30,
+        "timeout must bound the request, took {elapsed:?}"
+    );
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["ready"], false);
+    assert!(
+        v["error"].as_str().unwrap_or_default().contains("timeout"),
+        "error should be a structured timeout: {v}"
+    );
+
+    // 超时后会话被 kill，status 快照必须反映 ready:false 且不阻塞。
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/bn-sidecar/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["ready"], false);
+}
+
+#[tokio::test]
+async fn bn_cfg_svg_for_pc_passes_through_sidecar_error_instead_of_empty_svg() {
+    let dir = synth_trace();
+    let sidecar = write_sidecar(
+        &dir,
+        "fake_cfg_not_implemented_sidecar.py",
+        r#"#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req.get("method")
+    if method == "cfg_for":
+        result = {"ok": False, "ready": True, "error": "not implemented"}
+    else:
+        result = {"ok": False, "ready": True, "error": f"unexpected method {method}"}
+    print(json.dumps({"id": req.get("id"), "result": result}), flush=True)
+"#,
+    );
+
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::set_var("TRACEMIKU_BN_SO", dir.path().join("libt.so"));
+    std::env::set_var("TRACEMIKU_BN_SIDECAR", &sidecar);
+    let app = tracemiku_server::build_router(call_dir(&dir)).expect("router builds");
+    std::env::remove_var("TRACEMIKU_BN_SO");
+    std::env::remove_var("TRACEMIKU_BN_SIDECAR");
+    drop(_guard);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/bn-cfg-svg-for-pc?pc=0x100000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["error"], "not implemented");
+    assert!(
+        v["svg"].is_null(),
+        "sidecar error must not be masked by an empty svg: {v}"
+    );
+    assert_eq!(v["status"], "not-ready");
 }

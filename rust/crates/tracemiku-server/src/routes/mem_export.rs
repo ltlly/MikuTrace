@@ -19,7 +19,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::routes::resolve::parse_u64;
+use crate::routes::parse::parse_hex_u64;
 use crate::state::AppState;
 
 /// Bounded so a single export can't blow up the response. 256 KiB of bytes ->
@@ -47,11 +47,11 @@ pub struct ProvRun {
 
 fn resolve_start_pc(inner: &crate::state::AppStateInner, q: &MemExportQuery) -> Result<u64, Value> {
     if let Some(addr) = q.addr.as_ref() {
-        return parse_u64(addr)
+        return parse_hex_u64(addr)
             .ok_or_else(|| json!({ "status": "error", "error": format!("invalid addr: {addr}") }));
     }
     if let (Some(so), Some(off_raw)) = (q.so.as_ref(), q.off.as_ref()) {
-        let off = parse_u64(off_raw).ok_or_else(
+        let off = parse_hex_u64(off_raw).ok_or_else(
             || json!({ "status": "error", "error": format!("invalid off: {off_raw}") }),
         )?;
         let candidates = inner.modules.resolve_offset_candidates(so, off);
@@ -86,16 +86,12 @@ fn resolve_start_pc(inner: &crate::state::AppStateInner, q: &MemExportQuery) -> 
 pub async fn mem_export_handler(
     State(state): State<AppState>,
     Query(q): Query<MemExportQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || mem_export_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "mem-export worker failed: {err}");
-                json!({ "status": "error", "error": "mem-export worker panicked" })
-            }),
-    )
+    let value = tokio::task::spawn_blocking(move || mem_export_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("mem-export", &err))?;
+    Ok(Json(value))
 }
 
 fn mem_export_response(inner: &crate::state::AppStateInner, q: MemExportQuery) -> Value {
@@ -104,7 +100,7 @@ fn mem_export_response(inner: &crate::state::AppStateInner, q: MemExportQuery) -
         Err(v) => return v,
     };
     let len_raw = match q.len.as_ref() {
-        Some(l) => match parse_u64(l) {
+        Some(l) => match parse_hex_u64(l) {
             Some(n) => n as usize,
             None => return json!({ "status": "error", "error": format!("invalid len: {l}") }),
         },

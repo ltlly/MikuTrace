@@ -173,12 +173,19 @@ pub async fn run() -> anyhow::Result<()> {
                     .filter_map(|s| s.trim().parse().ok())
                     .collect();
                 let mut results = Vec::new();
-                for idx in &idxs {
-                    let path = format!("/api/record/{idx}");
-                    match route_get_json_value(trace_dir.clone(), path).await {
-                        Ok(v) => results.push(v),
-                        Err(_) => {
-                            results.push(serde_json::json!({"idx": idx, "error": "not found"}))
+                if !idxs.is_empty() {
+                    // Router 只构建一次并在循环内复用：每次 build 都会经
+                    // AppState::load 重新读 TraceMeta/Trace/Index，逐 idx
+                    // 重建纯属浪费。所有请求都命中 /api/record/<idx>。
+                    let app =
+                        build_cli_router(trace_dir, &format!("/api/record/{}", idxs[0]), None)?;
+                    for idx in &idxs {
+                        let path = format!("/api/record/{idx}");
+                        match route_get_json_value_on(&app, path).await {
+                            Ok(v) => results.push(v),
+                            Err(_) => {
+                                results.push(serde_json::json!({"idx": idx, "error": "not found"}))
+                            }
                         }
                     }
                 }
@@ -1003,27 +1010,10 @@ pub async fn run() -> anyhow::Result<()> {
         Some(Cmd::CryptoScan { trace_dir }) => {
             route_get_json(trace_dir, "/api/crypto-scan".to_string()).await
         }
+        // crypto 只透传 server 的 /api/crypto-analysis 响应；空结果的
+        // note 由 server 侧统一补充，CLI 不再修补分析结果。
         Some(Cmd::Crypto { trace_dir }) => {
-            let mut value =
-                route_get_json_value(trace_dir, "/api/crypto-analysis".to_string()).await?;
-            if let Some(obj) = value.as_object_mut() {
-                let has_findings = obj.iter().any(|(k, v)| {
-                    (k.contains("findings") || k.contains("hits") || k.contains("instructions"))
-                        && v.as_array().is_some_and(|a| !a.is_empty())
-                });
-                if !has_findings {
-                    obj.insert(
-                        "note".to_string(),
-                        serde_json::json!(
-                            "No crypto constants, byte patterns, or ARM CE instructions detected. \
-                         This may mean: (1) the function doesn't use crypto, (2) crypto is in a \
-                         different call, or (3) constants are obfuscated."
-                        ),
-                    );
-                }
-            }
-            print_pretty(&value)?;
-            Ok(())
+            route_get_json(trace_dir, "/api/crypto-analysis".to_string()).await
         }
         Some(Cmd::HashFinalizeDetect {
             trace_dir,
@@ -1518,59 +1508,6 @@ pub async fn run() -> anyhow::Result<()> {
             let params = vec![("max", max.to_string()), ("max_len", max_len.to_string())];
             route_get_json(trace_dir, route_path("/api/jni-strings", &params)).await
         }
-        Some(Cmd::DecSummary { trace_dir }) => {
-            route_get_json(trace_dir, "/api/dec/summary".to_string()).await
-        }
-        Some(Cmd::DecFn {
-            trace_dir,
-            fn_id,
-            tier,
-        }) => {
-            let path = format!(
-                "/api/dec/fn/{}?tier={}",
-                pct_encode(&fn_id),
-                pct_encode(&tier)
-            );
-            route_get_json(trace_dir, path).await
-        }
-        Some(Cmd::DecModels { trace_dir }) => {
-            route_get_json(trace_dir, "/api/dec/models".to_string()).await
-        }
-        Some(Cmd::LlilPipeline {
-            trace_dir,
-            fn_id,
-            max_records,
-            include_text,
-            include_call_analysis,
-            json: _json,
-        }) => {
-            let body = serde_json::json!({
-                "fn_id": fn_id,
-                "max_records": max_records,
-                "include_text": include_text,
-                "include_call_analysis": include_call_analysis,
-            });
-            route_post_json(trace_dir, "/api/llil/pipeline".to_string(), body).await
-        }
-        Some(Cmd::LlilRender {
-            trace_dir,
-            fn_id,
-            max_records,
-            no_ssa,
-            no_constfold,
-            no_flag_elim,
-            dce,
-        }) => {
-            let body = serde_json::json!({
-                "fn_id": fn_id,
-                "max_records": max_records,
-                "ssa": !no_ssa,
-                "constfold": !no_constfold,
-                "flag_elim": !no_flag_elim,
-                "dce": dce,
-            });
-            route_post_json(trace_dir, "/api/llil/render".to_string(), body).await
-        }
         None => {
             eprintln!("run with --help to list Rust v2 CLI commands");
             Ok(())
@@ -1578,96 +1515,16 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
-async fn route_post_json(
-    trace_dir: PathBuf,
-    path: String,
-    body: serde_json::Value,
-) -> anyhow::Result<()> {
-    let app = build_cli_router(trace_dir, &path, Some(&body))?;
-    let resp = app
-        .oneshot(
-            axum::http::Request::builder()
-                .method(axum::http::Method::POST)
-                .uri(&path)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(Body::from(serde_json::to_vec(&body)?))?,
-        )
-        .await?;
-    let status = resp.status();
-    let body = resp.into_body().collect().await?.to_bytes();
-    if !status.is_success() {
-        bail!(
-            "{} returned {}: {}",
-            path,
-            status,
-            String::from_utf8_lossy(&body)
-        );
-    }
-    let value: serde_json::Value = serde_json::from_slice(&body)?;
-    print_pretty(&value)
-}
-
 fn build_cli_router(
     trace_dir: PathBuf,
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> anyhow::Result<axum::Router> {
-    if route_needs_memshadow(path, body) {
+    if tracemiku_server::routes::route_requires_memshadow(path, body) {
         tracemiku_server::build_router_with_memshadow(trace_dir)
     } else {
         tracemiku_server::build_router(trace_dir)
     }
-}
-
-fn route_needs_memshadow(path: &str, body: Option<&serde_json::Value>) -> bool {
-    let endpoint = path.split('?').next().unwrap_or(path);
-    if matches!(endpoint, "/api/backward-taint" | "/api/forward-taint") {
-        return path.contains("through_mem=true");
-    }
-    if endpoint == "/api/mem-writes-in-range" {
-        return path.contains("src_byte=");
-    }
-    if matches!(
-        endpoint,
-        "/api/auto-phase-detect"
-            | "/api/crypto-analysis"
-            | "/api/crypto-scan"
-            | "/api/find-mem-pattern"
-            | "/api/hash-finalize-detect"
-            | "/api/jni-strings"
-            | "/api/mem-diff"
-            | "/api/mem-dump"
-            | "/api/mem-flow"
-            | "/api/string-provenance"
-            | "/api/strings"
-    ) {
-        return true;
-    }
-    if endpoint == "/api/hash-input-search" {
-        return body
-            .and_then(|v| v.get("search_in_mem"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-    }
-    endpoint == "/api/query"
-        && [
-            "kind=mem",
-            "kind=memory",
-            "kind=read",
-            "kind=reads",
-            "kind=reader",
-            "kind=readers",
-            "kind=write",
-            "kind=writes",
-            "kind=writer",
-            "kind=writers",
-            "kind=string",
-            "kind=strings",
-            "kind=provenance",
-            "kind=prov",
-        ]
-        .iter()
-        .any(|needle| path.contains(needle))
 }
 
 #[cfg(test)]

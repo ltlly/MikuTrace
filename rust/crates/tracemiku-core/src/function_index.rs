@@ -1,19 +1,16 @@
 //! Unified FunctionIndex consumed by the SPA Functions panel and CLI.
 //!
-//! Direct port of viewer/function_index.py. Stable id format:
-//!   - `trace:F0` / `trace:F1` / ...
+//! Stable id format:
 //!   - `symaddr:<hex_addr>` for symbol/module functions
 //!   - `bn:<hex_addr>`
 //!
 //! Legacy aliases the parser still accepts:
-//!   - bare `F0` → ("trace", "F0")
 //!   - `cfg:<name>` → ("sym", "<name>")
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-const TRACE_PREFIX: &str = "trace:";
 const SYM_PREFIX: &str = "sym:";
 const SYMADDR_PREFIX: &str = "symaddr:";
 const BN_PREFIX: &str = "bn:";
@@ -36,12 +33,6 @@ pub enum ParseError {
 pub fn parse_id(fn_id: &str) -> Result<(String, String), ParseError> {
     if fn_id.is_empty() {
         return Err(ParseError::Empty);
-    }
-    if let Some(payload) = fn_id.strip_prefix(TRACE_PREFIX) {
-        if payload.is_empty() {
-            return Err(ParseError::EmptyPayload("trace", fn_id.to_string()));
-        }
-        return Ok(("trace".to_string(), payload.to_string()));
     }
     if let Some(payload) = fn_id.strip_prefix(SYM_PREFIX) {
         if payload.is_empty() {
@@ -72,16 +63,7 @@ pub fn parse_id(fn_id: &str) -> Result<(String, String), ParseError> {
         }
         return Ok(("sym".to_string(), payload.to_string()));
     }
-    if let Some(rest) = fn_id.strip_prefix('F') {
-        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
-            return Ok(("trace".to_string(), fn_id.to_string()));
-        }
-    }
     Err(ParseError::Unrecognized(fn_id.to_string()))
-}
-
-pub fn make_trace_id(trace_ir_id: &str) -> String {
-    format!("{TRACE_PREFIX}{trace_ir_id}")
 }
 
 pub fn make_sym_id(name: &str) -> String {
@@ -106,9 +88,7 @@ pub struct FunctionEntry {
     pub records: u64,
     pub module: Option<String>,
     pub entry_rel: Option<u64>,
-    pub trace_ir_id: Option<String>,
     pub bn_start: Option<u64>,
-    pub can_llil: bool,
     pub can_bn_hlil: bool,
 }
 
@@ -125,9 +105,6 @@ impl FunctionIndex {
     pub fn by_id(&self, fn_id: &str) -> Option<&FunctionEntry> {
         let (src, payload) = parse_id(fn_id).ok()?;
         match src.as_str() {
-            "trace" => self.entries.iter().find(|e| {
-                e.source == "trace-ir" && e.trace_ir_id.as_deref() == Some(payload.as_str())
-            }),
             "sym" => {
                 let mut matches = self
                     .entries
@@ -206,9 +183,7 @@ pub fn build_from_symbols(
             records,
             module,
             entry_rel,
-            trace_ir_id: None,
             bn_start: None,
-            can_llil: false,
             can_bn_hlil: false,
         });
     }

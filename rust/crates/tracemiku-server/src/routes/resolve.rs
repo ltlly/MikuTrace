@@ -20,6 +20,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::routes::parse;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -56,26 +57,12 @@ pub struct Coord {
 pub async fn resolve_handler(
     State(state): State<AppState>,
     Query(q): Query<ResolveQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || resolve_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "resolve worker failed: {err}");
-                json!({ "status": "error", "error": "resolve worker panicked" })
-            }),
-    )
-}
-
-/// Parse an address/offset the way a reverse engineer writes one.
-///
-/// Addresses and offsets are universally hex in IDA/BN/Ghidra, so a bare token
-/// is hex (`10` -> `0x10`), NOT decimal — otherwise `--off 10` and `--off 6a30`
-/// would silently use different bases. A leading `0x`/`0X` is also accepted.
-/// Use `d`/`D` prefix to force decimal when genuinely needed (`d16` -> 16).
-pub(crate) fn parse_u64(raw: &str) -> Option<u64> {
-    crate::routes::parse::parse_hex_u64(raw)
+    let value = tokio::task::spawn_blocking(move || resolve_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("resolve", &err))?;
+    Ok(Json(value))
 }
 
 pub(crate) fn coord_for_pc(inner: &crate::state::AppStateInner, pc: u64) -> Coord {
@@ -102,7 +89,7 @@ pub(crate) fn coord_for_pc(inner: &crate::state::AppStateInner, pc: u64) -> Coor
 fn resolve_response(inner: &crate::state::AppStateInner, q: ResolveQuery) -> Value {
     // Reverse direction: (so, off) → PC. Takes precedence when both provided.
     if let (Some(so), Some(off_raw)) = (q.so.as_ref(), q.off.as_ref()) {
-        let Some(off) = parse_u64(off_raw) else {
+        let Some(off) = parse::parse_hex_u64(off_raw) else {
             return json!({ "status": "error", "error": format!("invalid off: {off_raw}") });
         };
         let candidates = inner.modules.resolve_offset_candidates(so, off);
@@ -157,7 +144,7 @@ fn resolve_response(inner: &crate::state::AppStateInner, q: ResolveQuery) -> Val
 
     // Forward direction: absolute PC → (module, offset).
     if let Some(addr_raw) = q.addr.as_ref() {
-        let Some(pc) = parse_u64(addr_raw) else {
+        let Some(pc) = parse::parse_hex_u64(addr_raw) else {
             return json!({ "status": "error", "error": format!("invalid addr: {addr_raw}") });
         };
         let coord = coord_for_pc(inner, pc);
@@ -177,21 +164,21 @@ fn resolve_response(inner: &crate::state::AppStateInner, q: ResolveQuery) -> Val
 
 #[cfg(test)]
 mod tests {
-    use super::parse_u64;
+    use crate::routes::parse::parse_hex_u64;
 
     #[test]
-    fn parse_u64_treats_bare_token_as_hex() {
+    fn parse_hex_u64_treats_bare_token_as_hex() {
         // disassembler convention: bare offsets/addrs are hex
-        assert_eq!(parse_u64("0x10"), Some(16));
-        assert_eq!(parse_u64("0X10"), Some(16));
-        assert_eq!(parse_u64("10"), Some(16)); // hex, NOT decimal 10
-        assert_eq!(parse_u64("6a30"), Some(0x6a30));
-        assert_eq!(parse_u64("ff"), Some(255));
+        assert_eq!(parse_hex_u64("0x10"), Some(16));
+        assert_eq!(parse_hex_u64("0X10"), Some(16));
+        assert_eq!(parse_hex_u64("10"), Some(16)); // hex, NOT decimal 10
+        assert_eq!(parse_hex_u64("6a30"), Some(0x6a30));
+        assert_eq!(parse_hex_u64("ff"), Some(255));
         // explicit decimal escape hatch
-        assert_eq!(parse_u64("d16"), Some(16));
-        assert_eq!(parse_u64("D255"), Some(255));
+        assert_eq!(parse_hex_u64("d16"), Some(16));
+        assert_eq!(parse_hex_u64("D255"), Some(255));
         // garbage
-        assert_eq!(parse_u64("zz"), None);
-        assert_eq!(parse_u64("0xZZ"), None);
+        assert_eq!(parse_hex_u64("zz"), None);
+        assert_eq!(parse_hex_u64("0xZZ"), None);
     }
 }

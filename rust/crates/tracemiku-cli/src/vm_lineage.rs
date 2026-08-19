@@ -43,6 +43,10 @@ pub(super) async fn cmd_byte_lineage(
     let app = tracemiku_server::build_router_with_memshadow(trace_dir)?;
     if count > 1 {
         let mut results = Vec::with_capacity(count);
+        // 逐字节串行执行：router 已在循环外构建一次（每次 build 都要
+        // 加载 Trace + MemShadow），循环内只剩路由调用成本。保持串行是
+        // 为了结果按 offset 有序、单字节失败互不影响；如需并发应改成
+        // 有界窗口（如 8），但那需要为本 crate 引入 futures 依赖，暂不做。
         for offset in 0..count {
             let byte_addr = addr + offset as u64;
             let entry = match byte_lineage_value_on(
@@ -1155,10 +1159,9 @@ pub(super) fn operand_effective_value_u64(operand: &serde_json::Value) -> Option
         .or_else(|| operand_value_u64(operand))
 }
 
+/// json_u64 的薄包装（沿用历史调用名）；实现统一在 cli_support::json_u64。
 pub(super) fn value_as_u64(value: &serde_json::Value) -> Option<u64> {
-    value
-        .as_u64()
-        .or_else(|| value.as_str().and_then(parse_u64_str))
+    json_u64(value)
 }
 
 pub(super) fn byte_at_lane(value: u64, lane: usize) -> Option<u8> {
@@ -1457,11 +1460,9 @@ pub(super) fn local_class(node: &serde_json::Value) -> Option<&str> {
     node.pointer("/local_def/class").and_then(|v| v.as_str())
 }
 
+/// 节点 value 字段转 u64；数值解析统一走 cli_support::json_u64。
 pub(super) fn node_value_u64(node: &serde_json::Value) -> Option<u64> {
-    node.get("value")
-        .and_then(|v| v.as_str())
-        .and_then(parse_u64_str)
-        .or_else(|| node.get("value").and_then(|v| v.as_u64()))
+    node.get("value").and_then(json_u64)
 }
 
 pub(super) fn compact_tree_node_summary(node: &serde_json::Value) -> serde_json::Value {

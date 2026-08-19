@@ -31,3 +31,16 @@ fn decode_works_on_many_distinct_pcs() {
         assert_eq!(d.pc, 0x100000 + i * 4);
     }
 }
+
+#[test]
+fn decode_keeps_high_pc_bits_in_cache_key() {
+    // 低 32 位相同、高位不同的两个 PC（ARM64 PAC/高位栈地址常见形态）。
+    // 旧实现用 `(pc << 32) | inst` 打包键会丢弃 PC 高 32 位，第二个调用
+    // 命中第一个的缓存项并返回错误的 pc 字段。
+    let low = decode(0x0010_0000, 0xd503201f);
+    let high = decode(0x1_0010_0000, 0xd503201f);
+    assert_eq!(low.mnemonic, "nop");
+    assert_eq!(high.mnemonic, "nop");
+    assert_eq!(low.pc, 0x0010_0000);
+    assert_eq!(high.pc, 0x1_0010_0000);
+}

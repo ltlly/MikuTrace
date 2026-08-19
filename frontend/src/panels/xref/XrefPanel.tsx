@@ -1,12 +1,16 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 
-import { fetchIdxsForPc, fetchRecord, fetchSearch } from "~/api/client";
+import { fetchIdxsForPc, fetchSearch } from "~/api/client";
+import type { RecordDetail } from "~/api/types";
 import { createGuardedResource } from "~/utils/resourceGuards";
+import { createVirtualList } from "~/utils/virtualList";
 
 interface XrefPanelProps {
   idx: number;
   onSelect: (idx: number) => void;
   active: boolean;
+  /// App 层统一的当前 idx /api/record 响应（含 loading/error 由 App 统一展示策略驱动）。
+  record?: RecordDetail;
 }
 
 interface AsmSearchSource {
@@ -25,6 +29,7 @@ const DEFAULT_PC_REF_LIMIT = 60;
 const MAX_PC_REF_LIMIT = 5000;
 const DEFAULT_ASM_REF_LIMIT = 120;
 const MAX_ASM_REF_LIMIT = 5000;
+const XREF_ROW_HEIGHT = 20;
 
 function refPattern(pc: string | undefined): string {
   if (!pc) return "";
@@ -44,17 +49,8 @@ export default function XrefPanel(props: XrefPanelProps) {
     setPcRefLimit(DEFAULT_PC_REF_LIMIT);
   });
 
-  let recordAbort: AbortController | undefined;
-  const [record] = createResource(
-    () => (props.active ? props.idx : undefined),
-    (idx) => {
-      recordAbort?.abort();
-      recordAbort = new AbortController();
-      return fetchRecord(idx, recordAbort.signal);
-    },
-  );
   const currentRecord = createMemo(() => {
-    const r = record();
+    const r = props.record;
     return r && r.idx === props.idx ? r : undefined;
   });
   const pcSource = createMemo<PcRefSource | undefined>((prev) => {
@@ -113,6 +109,36 @@ export default function XrefPanel(props: XrefPanelProps) {
     }
   }
 
+  // same-PC 执行历史：before+after 各最多 5000 行，固定行高窗口渲染。
+  const execList = createVirtualList(
+    () => {
+      const r = currentPcRefs();
+      return r ? r.before.length + r.after.length : 0;
+    },
+    XREF_ROW_HEIGHT,
+  );
+  const execWindowItems = createMemo(() => {
+    const w = execList.window();
+    const before = currentPcRefs()?.before ?? [];
+    const after = currentPcRefs()?.after ?? [];
+    const out: number[] = [];
+    for (let pos = w.start; pos < w.end; pos += 1) {
+      const idx = pos < before.length ? before[pos] : after[pos - before.length];
+      if (idx !== undefined) out.push(idx);
+    }
+    return out;
+  });
+  // 指令文本搜索命中：最多 5000 行，同样窗口渲染。
+  const hitsList = createVirtualList(
+    () => currentAsmRefs()?.hits.length ?? 0,
+    XREF_ROW_HEIGHT,
+  );
+  const hitsWindowItems = createMemo(() => {
+    const w = hitsList.window();
+    const hits = currentAsmRefs()?.hits ?? [];
+    return hits.slice(w.start, w.end);
+  });
+
   return (
     <section class="panel">
       <h2>Refs</h2>
@@ -145,10 +171,10 @@ export default function XrefPanel(props: XrefPanelProps) {
         </Show>
       </div>
       <Show when={!pcRefs.loading && pcRefs.error}>
-        <p class="err">pc refs failed: {String(pcRefs.error)}</p>
+        <p class="err">load failed: {String(pcRefs.error)}</p>
       </Show>
       <Show when={!asmRefs.loading && asmRefs.error}>
-        <p class="err">instruction text search failed: {String(asmRefs.error)}</p>
+        <p class="err">load failed: {String(asmRefs.error)}</p>
       </Show>
       <div class="xref-grid">
         <div>
@@ -178,41 +204,33 @@ export default function XrefPanel(props: XrefPanelProps) {
                     </Show>
                   </div>
                 </Show>
-                <table class="xref-table xref-exec-table">
-                  <thead>
-                    <tr>
-                      <th>idx</th>
-                      <th>where</th>
-                      <th>distance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={r().before}>
-                      {(idx) => (
-                        <tr
-                          class={idx === props.idx ? "selected" : ""}
-                          onClick={() => props.onSelect(idx)}
-                        >
-                          <td>{idx}</td>
-                          <td>{idx < props.idx ? "before" : idx > props.idx ? "after" : "current"}</td>
-                          <td>{idx === props.idx ? 0 : Math.abs(idx - props.idx)}</td>
-                        </tr>
-                      )}
-                    </For>
-                    <For each={r().after}>
-                      {(idx) => (
-                        <tr
-                          class={idx === props.idx ? "selected" : ""}
-                          onClick={() => props.onSelect(idx)}
-                        >
-                          <td>{idx}</td>
-                          <td>{idx < props.idx ? "before" : idx > props.idx ? "after" : "current"}</td>
-                          <td>{idx === props.idx ? 0 : Math.abs(idx - props.idx)}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
+                <div class="vscroll xref-vscroll" ref={execList.ref} onScroll={execList.onScroll}>
+                  <table class="xref-table xref-exec-table xref-vtable">
+                    <thead>
+                      <tr>
+                        <th>idx</th>
+                        <th>where</th>
+                        <th>distance</th>
+                      </tr>
+                    </thead>
+                    <tbody class="vbody" style={{ height: `${execList.window().height}px` }}>
+                      <For each={execWindowItems()}>
+                        {(idx, i) => (
+                          <tr
+                            class="vrow"
+                            classList={{ selected: idx === props.idx }}
+                            style={{ top: `${(execList.window().start + i()) * XREF_ROW_HEIGHT}px` }}
+                            onClick={() => props.onSelect(idx)}
+                          >
+                            <td>{idx}</td>
+                            <td>{idx < props.idx ? "before" : idx > props.idx ? "after" : "current"}</td>
+                            <td>{idx === props.idx ? 0 : Math.abs(idx - props.idx)}</td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
                 <Show when={r().before.length === 0 && r().after.length === 0}>
                   <p class="dim small">no executions around current cursor</p>
                 </Show>
@@ -251,28 +269,34 @@ export default function XrefPanel(props: XrefPanelProps) {
                     </Show>
                   </div>
                 </Show>
-                <table class="xref-table">
-                  <thead>
-                    <tr>
-                      <th>idx</th>
-                      <th>pc</th>
-                      <th>fn</th>
-                      <th>asm</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={r().hits}>
-                      {(hit) => (
-                        <tr onClick={() => props.onSelect(hit.idx)}>
-                          <td>{hit.idx}</td>
-                          <td><code>{hit.pc}</code></td>
-                          <td>{hit.func ?? ""}</td>
-                          <td><code>{hit.asm}</code></td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
+                <div class="vscroll xref-vscroll" ref={hitsList.ref} onScroll={hitsList.onScroll}>
+                  <table class="xref-table xref-hits-table xref-vtable">
+                    <thead>
+                      <tr>
+                        <th>idx</th>
+                        <th>pc</th>
+                        <th>fn</th>
+                        <th>asm</th>
+                      </tr>
+                    </thead>
+                    <tbody class="vbody" style={{ height: `${hitsList.window().height}px` }}>
+                      <For each={hitsWindowItems()}>
+                        {(hit, i) => (
+                          <tr
+                            class="vrow"
+                            style={{ top: `${(hitsList.window().start + i()) * XREF_ROW_HEIGHT}px` }}
+                            onClick={() => props.onSelect(hit.idx)}
+                          >
+                            <td>{hit.idx}</td>
+                            <td><code>{hit.pc}</code></td>
+                            <td>{hit.func ?? ""}</td>
+                            <td><code>{hit.asm}</code></td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
                 <Show when={r().count === 0}>
                   <p class="dim small">no decoded instruction text matches</p>
                 </Show>

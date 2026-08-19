@@ -18,6 +18,7 @@ rust/crates/tracemiku-server/   Axum API 与静态站点
 frontend/                       Solid Web UI
 tools/hooks/                    目标相关 JSON 配置
 examples/                       示例配置与算法验证
+vendor/                         frida-patched 反检测运行资产与 JNI 头文件
 docs/                           当前契约和专题指南
 docs/FEATURES.md                全量功能目录（新人/AI 的功能入口）
 ```
@@ -37,8 +38,7 @@ npm --prefix tracer install
 npm --prefix tracer run build
 ```
 
-`_agent.js` 是默认采集器，由 `tracer/src/` 编译生成；仓库内的
-`agent_cmodule_v5.js` 只用于 `--mode legacy` 回退。
+`_agent.js` 是唯一采集器，由 `tracer/src/` 编译生成。
 
 ## 快速开始
 
@@ -88,7 +88,7 @@ npm --prefix tracer run build
 ```text
 参数校验与互斥检查
 → (可选) launch 启动进程；--spawn 走 gating 挂起
-→ 选择 agent（默认 tracer/_agent.js，legacy 回退 agent_cmodule_v5.js）
+→ 选择 agent（tracer/_agent.js，唯一实现）
 → 建输出目录 <out>/calls/，写顶层 meta 骨架
 → 加载 --jni-hooks / --suicide-patch-spec 等 JSON spec
 → 组装 AGENT_OPTS，device.attach(pid) → load → init(AGENT_OPTS)
@@ -150,9 +150,8 @@ CLI 是首选自动化入口，输出为结构化 JSON。所有分析命令都�
 ./tracemiku indirect-targets <call_dir> --so libtarget.so --off 0x1234
 ./tracemiku reg-at <call_dir> --reg x0 --so libtarget.so --off 0x1234
 ./tracemiku mem-export <call_dir> --so libtarget.so --off 0x2000 --len 0x100
-./tracemiku coverage <call_dir> --fn trace:F0
+./tracemiku coverage <call_dir> --fn sym:f_root
 ./tracemiku taint-bwd <call_dir> --start 1000 --reg x0
-./tracemiku dec-summary <call_dir>
 ```
 
 地址和偏移默认按十六进制解析（`10` 即 `0x10`），需要十进制时加 `d` 前缀（`d16`）。
@@ -165,9 +164,9 @@ CLI 是首选自动化入口，输出为结构化 JSON。所有分析命令都�
 trace load、外部写和初始快照；`??` 表示未知，绝不能当作零。详情见
 [内存完整性设计](docs/memory-completeness-design.md)。
 
-TraceIR、本地 LLIL -> MLIL -> HLIL 和 trace 增强反编译管线均为当前能力，区别见
-[反编译架构](docs/trace-decompiler-design.md)。Trace 目录及二进制格式见
-[Trace 数据契约](docs/PER_CALL_TRACE_DESIGN.md)。
+Trace 目录及二进制格式见
+[Trace 数据契约](docs/PER_CALL_TRACE_DESIGN.md)。反编译参考由 Binary Ninja
+sidecar 提供（`hlil-for-pc`/`hlil-for-fn`，需配置目标 SO）。
 
 ## 开发与测试
 

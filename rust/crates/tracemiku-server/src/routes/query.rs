@@ -12,7 +12,7 @@ use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::jni_scan::parse_int;
+use crate::routes::parse::parse_dec_u64;
 use crate::state::AppState;
 
 const DEFAULT_LIMIT: usize = 200;
@@ -65,26 +65,12 @@ pub struct TraceQueryResponse {
 pub async fn query_handler(
     State(state): State<AppState>,
     Query(q): Query<TraceQuery>,
-) -> Json<TraceQueryResponse> {
+) -> Result<Json<TraceQueryResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || query_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "query worker failed: {err}");
-                TraceQueryResponse {
-                    status: "error",
-                    kind: String::new(),
-                    q: String::new(),
-                    count: 0,
-                    returned: 0,
-                    truncated: false,
-                    max_used: 0,
-                    rows: Vec::new(),
-                    note: Some("query worker failed".to_string()),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || query_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("query", &err))?;
+    Ok(Json(response))
 }
 
 fn query_response(inner: &crate::state::AppStateInner, q: TraceQuery) -> TraceQueryResponse {
@@ -200,8 +186,8 @@ fn query_mem(
     let Some(addr) = q
         .addr
         .as_deref()
-        .and_then(parse_int)
-        .or_else(|| parse_int(&q.q))
+        .and_then(parse_dec_u64)
+        .or_else(|| parse_dec_u64(&q.q))
     else {
         return finish(
             "mem",
@@ -284,7 +270,6 @@ fn query_functions(
                 "entry_pc": entry.entry_pc.map(|pc| format!("{pc:#x}")),
                 "blocks": entry.blocks,
                 "records": entry.records,
-                "trace_ir_id": entry.trace_ir_id.as_deref(),
                 "bn_start": entry.bn_start.map(|pc| format!("{pc:#x}")),
             })
         })
@@ -421,8 +406,8 @@ fn query_provenance(
     let Some(addr) = q
         .addr
         .as_deref()
-        .and_then(parse_int)
-        .or_else(|| parse_int(&q.q))
+        .and_then(parse_dec_u64)
+        .or_else(|| parse_dec_u64(&q.q))
     else {
         return finish(
             "provenance",

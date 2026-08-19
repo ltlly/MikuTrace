@@ -9,21 +9,7 @@ those warnings.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-REPO = Path(__file__).resolve().parent.parent
-SRC = REPO / "frontend" / "src"
-
-
-def read(rel: str) -> str:
-    return (SRC / rel).read_text()
-
-
-def require(name: str, ok: bool, failures: list[str]) -> None:
-    if not ok:
-        failures.append(name)
+from _static_audit import read, report, require
 
 
 def has_all(rel: str, *tokens: str) -> bool:
@@ -163,25 +149,6 @@ def main() -> int:
         failures,
     )
     require(
-        "hidden decompiler summary still marks partial output",
-        has_all(
-            "panels/decompiler/DecompilerPanel.tsx",
-            "r().truncated",
-            "cap-notice",
-            "partial result",
-        ),
-        failures,
-    )
-    require(
-        "hidden LLIL output still marks truncated render",
-        has_all(
-            "panels/decompiler/DecompilerPanel.tsx",
-            'r.truncated ? " · partial result" : ""',
-            "llilMaxRecords",
-        ),
-        failures,
-    )
-    require(
         "cap notice styling exists",
         has_all_in(
             (
@@ -189,7 +156,6 @@ def main() -> int:
                 "styles/records.css",
                 "styles/inspectors.css",
                 "styles/analysis.css",
-                "styles/pseudoc.css",
             ),
             ".cap-notice",
             ".cap-notice button",
@@ -197,14 +163,7 @@ def main() -> int:
         failures,
     )
 
-    if failures:
-        print("Frontend cap static audit failed:", file=sys.stderr)
-        for failure in failures:
-            print(f"  - {failure}", file=sys.stderr)
-        return 1
-
-    print("OK frontend cap audit")
-    return 0
+    return report("cap", failures, "OK frontend cap audit")
 
 
 if __name__ == "__main__":

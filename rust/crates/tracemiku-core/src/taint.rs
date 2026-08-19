@@ -85,42 +85,133 @@ fn push_next_reg_events(
     push_next_reg_event(heap, index.reg_defs.get(reg), reg, lo, REG_DEF_EVENT);
 }
 
-fn next_mem_touch_after(
-    index: &Index,
-    tainted_mem: &HashMap<u64, TaintProvenance>,
-    lo: usize,
-) -> Option<usize> {
-    if tainted_mem.is_empty() {
-        return None;
+/// 前向污点的内存触碰事件游标（事件驱动）。
+///
+/// 旧实现对每条处理过的指令都全量扫描 `tainted_mem` 的每个污染地址并取
+/// 最小"下一次触碰"，复杂度 O(指令数 × 污染字节数 × log n)，`through_mem`
+/// 扫大缓冲区时灾难性变慢。本结构改为按地址维护候选事件：
+/// `(下一次触碰 idx, 地址)` 存入小顶堆，堆顶即全局最小。正确性依赖：
+/// 1. 候选项的 idx 一定是该地址在 reads/writes 倒排表中的真实记录下标，
+///    且插入/推进时是"当时游标之后的第一个下标"；游标单调不减，因此
+///    任何 idx > 游标的候选项恰好是该地址当前的下一次触碰；
+/// 2. 失活（地址已去污）或过期（idx <= 游标）的候选项只在堆顶暴露时被
+///    惰性丢弃/推进；字节重新污染时总是插入新候选项。
+///
+/// 单次查询均摊 O(log n)，每个倒排表项至多被游标消费一次。
+struct MemTouchTracker<'a> {
+    reads: &'a HashMap<u64, Vec<usize>>,
+    writes: &'a HashMap<u64, Vec<usize>>,
+    /// 候选事件堆：`(下一次触碰 idx, 污染地址)`，按 idx 取最小。
+    heap: BinaryHeap<Reverse<(usize, u64)>>,
+    /// 已处理到的记录下标（单调不减）。
+    cursor: usize,
+}
+
+impl<'a> MemTouchTracker<'a> {
+    fn new(index: &'a Index) -> Self {
+        Self {
+            reads: &index.mem_addr_to_reads,
+            writes: &index.mem_addr_to_writes,
+            heap: BinaryHeap::new(),
+            cursor: 0,
+        }
     }
-    let next_in = |addr_to_idxs: &HashMap<u64, Vec<usize>>| {
-        tainted_mem
-            .keys()
-            .filter_map(|addr| {
-                let entries = addr_to_idxs.get(addr)?;
-                let pos = entries.partition_point(|&idx| idx <= lo);
-                entries.get(pos).copied()
-            })
-            .min()
-    };
-    match (
-        next_in(&index.mem_addr_to_reads),
-        next_in(&index.mem_addr_to_writes),
+
+    /// 地址 `addr` 在 `lo` 之后（不含）的第一次读取/写入记录下标。
+    fn next_posting(&self, addr: u64, lo: usize) -> Option<usize> {
+        let next_in = |entries: Option<&Vec<usize>>| {
+            let entries = entries?;
+            let pos = entries.partition_point(|&idx| idx <= lo);
+            entries.get(pos).copied()
+        };
+        match (
+            next_in(self.reads.get(&addr)),
+            next_in(self.writes.get(&addr)),
+        ) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// 字节地址新被污染时登记候选事件。
+    fn taint(&mut self, addr: u64) {
+        if let Some(idx) = self.next_posting(addr, self.cursor) {
+            self.heap.push(Reverse((idx, addr)));
+        }
+    }
+
+    fn advance_to(&mut self, idx: usize) {
+        self.cursor = self.cursor.max(idx);
+    }
+
+    /// 当前全部污染字节的下一次触碰（读取或写入）的最小记录下标。
+    fn next_touch(&mut self, tainted_mem: &HashMap<u64, TaintProvenance>) -> Option<usize> {
+        while let Some(&Reverse((idx, addr))) = self.heap.peek() {
+            if !tainted_mem.contains_key(&addr) {
+                // 失活候选项：地址已去污，惰性丢弃。
+                self.heap.pop();
+                continue;
+            }
+            if idx > self.cursor {
+                return Some(idx);
+            }
+            // 过期候选项：推进到游标之后的下一次触碰（没有则丢弃）。
+            self.heap.pop();
+            if let Some(next) = self.next_posting(addr, self.cursor) {
+                self.heap.push(Reverse((next, addr)));
+            }
+        }
+        None
+    }
+
+    /// 污染 `[addr, addr+size)`（`through_mem=false` 时只污染 `addr`）。
+    /// 仅在新污染的字节上登记候选事件；已污染字节只刷新 provenance。
+    fn write_span(
+        &mut self,
+        tainted_mem: &mut HashMap<u64, TaintProvenance>,
+        addr: u64,
+        size: u32,
+        through_mem: bool,
+        provenance: TaintProvenance,
     ) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
+        if through_mem {
+            for o in 0..size as u64 {
+                if tainted_mem.insert(addr + o, provenance).is_none() {
+                    self.taint(addr + o);
+                }
+            }
+        } else if tainted_mem.insert(addr, provenance).is_none() {
+            self.taint(addr);
+        }
+    }
+
+    /// 去污 `[addr, addr+size)`。候选事件无需同步清理：失活项会在
+    /// `next_touch` 堆顶暴露时被惰性丢弃。
+    fn clear_span(
+        &mut self,
+        tainted_mem: &mut HashMap<u64, TaintProvenance>,
+        addr: u64,
+        size: u32,
+        through_mem: bool,
+    ) {
+        if through_mem {
+            for o in 0..size as u64 {
+                tainted_mem.remove(&(addr + o));
+            }
+        } else {
+            tainted_mem.remove(&addr);
+        }
     }
 }
 
 fn push_next_mem_touch(
     heap: &mut BinaryHeap<Reverse<(usize, u8, String, usize)>>,
-    index: &Index,
+    mem_touch: &mut MemTouchTracker<'_>,
     tainted_mem: &HashMap<u64, TaintProvenance>,
     lo: usize,
 ) {
-    if let Some(idx) = next_mem_touch_after(index, tainted_mem, lo) {
+    mem_touch.advance_to(lo);
+    if let Some(idx) = mem_touch.next_touch(tainted_mem) {
         heap.push(Reverse((idx, MEM_TOUCH_EVENT, String::new(), 0)));
     }
 }
@@ -206,37 +297,6 @@ fn store_source_regs_for_addr(
 
 fn tainted_mem_overlaps(tainted_mem: &HashMap<u64, TaintProvenance>, addr: u64, size: u32) -> bool {
     (0..size as u64).any(|o| tainted_mem.contains_key(&(addr + o)))
-}
-
-fn clear_tainted_mem_span(
-    tainted_mem: &mut HashMap<u64, TaintProvenance>,
-    addr: u64,
-    size: u32,
-    through_mem: bool,
-) {
-    if through_mem {
-        for o in 0..size as u64 {
-            tainted_mem.remove(&(addr + o));
-        }
-    } else {
-        tainted_mem.remove(&addr);
-    }
-}
-
-fn write_tainted_mem_span(
-    tainted_mem: &mut HashMap<u64, TaintProvenance>,
-    addr: u64,
-    size: u32,
-    through_mem: bool,
-    provenance: TaintProvenance,
-) {
-    if through_mem {
-        for o in 0..size as u64 {
-            tainted_mem.insert(addr + o, provenance);
-        }
-    } else {
-        tainted_mem.insert(addr, provenance);
-    }
 }
 
 fn last_cond_before(index: &Index, before_idx: usize) -> Option<usize> {
@@ -527,6 +587,7 @@ pub fn forward_taint_ext(
     let mut tainted_regs: HashMap<String, TaintProvenance> = HashMap::new();
     tainted_regs.insert(taint_reg.to_string(), TaintProvenance::seed());
     let mut tainted_mem: HashMap<u64, TaintProvenance> = HashMap::new();
+    let mut mem_touch = MemTouchTracker::new(index);
     let mut heap: BinaryHeap<Reverse<(usize, u8, String, usize)>> = BinaryHeap::new();
     push_next_reg_events(&mut heap, index, exclude_regs, taint_reg, start_idx);
 
@@ -652,10 +713,10 @@ pub fn forward_taint_ext(
                         .iter()
                         .any(|src| tainted_regs.contains_key(src));
                     if !src_tainted {
-                        clear_tainted_mem_span(&mut tainted_mem, base, op.size, through_mem);
+                        mem_touch.clear_span(&mut tainted_mem, base, op.size, through_mem);
                     }
                 }
-                push_next_mem_touch(&mut heap, index, &tainted_mem, i);
+                push_next_mem_touch(&mut heap, &mut mem_touch, &tainted_mem, i);
             }
             continue;
         }
@@ -742,7 +803,7 @@ pub fn forward_taint_ext(
                 .iter()
                 .any(|src| tainted_regs.contains_key(src));
             if src_tainted {
-                write_tainted_mem_span(
+                mem_touch.write_span(
                     &mut tainted_mem,
                     base,
                     op.size,
@@ -750,10 +811,10 @@ pub fn forward_taint_ext(
                     next_provenance,
                 );
             } else {
-                clear_tainted_mem_span(&mut tainted_mem, base, op.size, through_mem);
+                mem_touch.clear_span(&mut tainted_mem, base, op.size, through_mem);
             }
         }
-        push_next_mem_touch(&mut heap, index, &tainted_mem, i);
+        push_next_mem_touch(&mut heap, &mut mem_touch, &tainted_mem, i);
     }
 
     TaintWalkResult {

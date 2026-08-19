@@ -1,6 +1,7 @@
 //! GET /api/fn-summary.
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::Json;
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -60,19 +61,12 @@ pub enum FnSummaryResponse {
 pub async fn fn_summary_handler(
     State(state): State<AppState>,
     Query(q): Query<FnSummaryQuery>,
-) -> Json<FnSummaryResponse> {
+) -> Result<Json<FnSummaryResponse>, (StatusCode, Json<serde_json::Value>)> {
     let inner = state.inner.clone();
-    Json(
-        tokio::task::spawn_blocking(move || fn_summary_response(&inner, q))
-            .await
-            .unwrap_or_else(|err| {
-                tracing::warn!(target: "tracemiku-server", "fn summary worker failed: {err}");
-                FnSummaryResponse::NotFound {
-                    status: "worker-failed",
-                    fn_name: String::new(),
-                }
-            }),
-    )
+    let response = tokio::task::spawn_blocking(move || fn_summary_response(&inner, q))
+        .await
+        .map_err(|err| crate::routes::worker_panic_response("fn summary", &err))?;
+    Ok(Json(response))
 }
 
 fn fn_summary_response(

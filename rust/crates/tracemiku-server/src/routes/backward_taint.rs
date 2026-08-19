@@ -101,28 +101,12 @@ impl TaintGraphRow for TaintChainRow {
 pub async fn backward_taint_handler(
     State(state): State<AppState>,
     Query(q): Query<BackwardTaintQuery>,
-) -> Json<BackwardTaintResponse> {
-    let start = q.start;
-    let reg = q.reg.clone();
+) -> Result<Json<BackwardTaintResponse>, crate::routes::WorkerFailure> {
     let inner = state.inner.clone();
     let response = tokio::task::spawn_blocking(move || backward_taint_response(&inner, q))
         .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(target: "tracemiku-server", "backward taint worker failed: {err}");
-            BackwardTaintResponse {
-                status: "error",
-                count: 0,
-                from: start,
-                graph: empty_taint_graph(start, &reg),
-                reg,
-                chain: Vec::new(),
-                stopped_at_max: true,
-                max_count_used: 0,
-                stop_reason: "error",
-                scan_limit_used: None,
-            }
-        });
-    Json(response)
+        .map_err(|err| crate::routes::worker_panic_response("backward taint", &err))?;
+    Ok(Json(response))
 }
 
 fn backward_taint_response(

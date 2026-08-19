@@ -5,6 +5,7 @@ use std::path::Path;
 
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -12,6 +13,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::state::AppState;
+
+/// 单请求最多对比的 trace 目录数。
+const MAX_DIFF_TRACES: usize = 8;
+/// 逐字节数组/别名组/nibble 发现的响应上限；超限截断并置 truncated 标记。
+const MAX_PER_BYTE_ENTRIES: usize = 4_096;
+const MAX_ALIAS_GROUPS: usize = 256;
+const MAX_NIBBLE_FINDINGS: usize = 1_024;
 
 #[derive(Debug, Deserialize)]
 pub struct DiffTracesRequest {
@@ -39,13 +47,26 @@ struct OutputValue {
 pub async fn diff_traces_handler(
     State(_state): State<AppState>,
     Json(req): Json<DiffTracesRequest>,
-) -> Result<Json<DiffTracesResponse>, StatusCode> {
+) -> Result<Json<DiffTracesResponse>, Response> {
+    if req.traces.len() > MAX_DIFF_TRACES {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "status": "error",
+                "error": "too many traces",
+                "limit": MAX_DIFF_TRACES,
+                "requested": req.traces.len(),
+            })),
+        )
+            .into_response());
+    }
     tokio::task::spawn_blocking(move || diff_traces_response(req))
         .await
         .map_err(|err| {
             tracing::warn!(target: "tracemiku-server", "diff traces worker failed: {err}");
-            StatusCode::INTERNAL_SERVER_ERROR
+            crate::routes::worker_panic_response("diff traces", &err).into_response()
         })?
+        .map_err(StatusCode::into_response)
         .map(Json)
 }
 
@@ -205,6 +226,9 @@ fn diff_header(binaries: &[&[u8]], req: &DiffTracesRequest) -> Value {
         }
     }
 
+    let per_byte_truncated = per_byte.len() > MAX_PER_BYTE_ENTRIES;
+    per_byte.truncate(MAX_PER_BYTE_ENTRIES);
+
     let mut alias_map: BTreeMap<Vec<u8>, Vec<usize>> = BTreeMap::new();
     for &offset in &variable_offsets {
         let tuple: Vec<u8> = binaries.iter().map(|b| b[offset]).collect();
@@ -230,6 +254,9 @@ fn diff_header(binaries: &[&[u8]], req: &DiffTracesRequest) -> Value {
                 .unwrap_or_default(),
         )
     });
+    let alias_groups_truncated = alias_groups.len() > MAX_ALIAS_GROUPS;
+    let alias_group_count = alias_groups.len();
+    alias_groups.truncate(MAX_ALIAS_GROUPS);
 
     let mut nibble_findings = Vec::new();
     for &offset in &variable_offsets {
@@ -254,13 +281,14 @@ fn diff_header(binaries: &[&[u8]], req: &DiffTracesRequest) -> Value {
             }));
         }
     }
+    let nibble_findings_truncated = nibble_findings.len() > MAX_NIBBLE_FINDINGS;
+    nibble_findings.truncate(MAX_NIBBLE_FINDINGS);
 
     let stable_pct = if n == 0 {
         0.0
     } else {
         ((1000.0 * stable_offsets.len() as f64 / n as f64).round()) / 10.0
     };
-    let alias_group_count = alias_groups.len();
     json!({
         "len_compared": n,
         "lens_per_trace": lens,
@@ -272,8 +300,11 @@ fn diff_header(binaries: &[&[u8]], req: &DiffTracesRequest) -> Value {
         "variable_offsets": req.show_offsets.then_some(variable_offsets),
         "alias_groups": alias_groups,
         "alias_group_count": alias_group_count,
+        "alias_groups_truncated": alias_groups_truncated,
         "nibble_findings": nibble_findings,
+        "nibble_findings_truncated": nibble_findings_truncated,
         "per_byte": req.show_per_byte.then_some(per_byte),
+        "per_byte_truncated": per_byte_truncated,
     })
 }
 

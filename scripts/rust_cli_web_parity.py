@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -229,7 +228,6 @@ def cases() -> list[Case]:
             "/api/jni-events?limit=10",
             ("jni-events", "--limit", "10"),
         ),
-        Case("dec-summary", "/api/dec/summary", ("dec-summary",)),
         Case(
             "resolve",
             "/api/resolve?so=libt.so&off=0x100",
@@ -287,7 +285,7 @@ def main() -> int:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid,
+        start_new_session=True,  # stop_proc 按进程组 kill，等价 preexec_fn=setsid 且线程安全
     )
     try:
         wait_ready(base, proc, args.timeout)

@@ -97,7 +97,7 @@ fn rust_router_methods() -> BTreeSet<(String, String)> {
         .captures_iter(&routes)
         .filter_map(|cap| {
             let raw = cap.get(1)?.as_str();
-            if !(raw.starts_with("/api/") || raw == "/openapi.json" || raw == "/ws/jobs") {
+            if !(raw.starts_with("/api/") || raw == "/openapi.json") {
                 return None;
             }
             let method = cap.get(2)?.as_str();
@@ -122,9 +122,6 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "crypto_analysis.rs",
     "crypto_scan.rs",
     "data_chase.rs",
-    "dec_fn.rs",
-    "dec_llm_call.rs",
-    "dec_summary.rs",
     "dep_graph.rs",
     "diff_traces.rs",
     "fn_summary.rs",
@@ -138,9 +135,6 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
     "jni_events.rs",
     "jni_strings.rs",
     "jobj_history.rs",
-    "llil_llm.rs",
-    "llil_pipeline.rs",
-    "llil_render.rs",
     "mem_dump.rs",
     "mem_export.rs",
     "mem_flow.rs",
@@ -162,8 +156,6 @@ const HEAVY_ROUTE_FILES: &[&str] = &[
 const LIGHT_ROUTE_FILES: &[&str] = &[
     "api_infra.rs",
     "asm_tokens.rs",
-    "dec_models.rs",
-    "dec_options.rs",
     "fork_events.rs",
     "idxs_for_block.rs",
     "idxs_for_pc.rs",
@@ -183,7 +175,6 @@ const HEAVY_ROUTE_HANDLERS: &[(&str, &str)] = &[
     ("navigation.rs", "call_chain_handler"),
     ("query.rs", "query_handler"),
     ("records.rs", "records_handler"),
-    ("llil_pipeline.rs", "llil_pipeline_handler"),
 ];
 
 // Endpoint surface from main:webui/server.py. Keep this list normalized with
@@ -206,10 +197,6 @@ const PYTHON_WEB_API_METHODS: &[(&str, &str)] = &[
     ("/api/crypto-scan", "get"),
     ("/api/watchpoints", "get"),
     ("/api/data-chase", "get"),
-    ("/api/dec/fn/{}", "get"),
-    ("/api/dec/llm-call", "post"),
-    ("/api/dec/models", "get"),
-    ("/api/dec/summary", "get"),
     ("/api/decomp-status", "get"),
     ("/api/diff-traces", "post"),
     ("/api/find-mem-pattern", "get"),
@@ -229,9 +216,6 @@ const PYTHON_WEB_API_METHODS: &[(&str, &str)] = &[
     ("/api/jobj-history", "get"),
     ("/api/last-write-of-addr", "get"),
     ("/api/last-write-of-reg", "get"),
-    ("/api/llil/llm", "post"),
-    ("/api/llil/pipeline", "post"),
-    ("/api/llil/render", "post"),
     ("/api/loops", "get"),
     ("/api/mem-diff", "get"),
     ("/api/mem-dump", "get"),
@@ -412,7 +396,6 @@ async fn openapi_json_lists_current_paths() {
     assert!(v["paths"]["/api/decomp-status"]["get"].is_object());
     assert!(v["paths"]["/api/mem-writes-in-range"]["get"].is_object());
     assert!(v["paths"]["/api/hash-input-search"]["post"].is_object());
-    assert!(v["paths"]["/ws/jobs"]["get"].is_object());
 
     let openapi_methods = v["paths"]
         .as_object()
@@ -462,6 +445,26 @@ async fn python_web_compat_status_endpoints_are_available() {
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         if uri == "/api/bg-status" {
+            // 锁定真实字段集：cfg/index 由 AppState::load 同步构建；
+            // Python 时代的 pc_inst/pc_to_block/block_idxs 无对应产物，已移除。
+            let fields = v
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                fields,
+                BTreeSet::from([
+                    "analysis_index".to_string(),
+                    "cfg".to_string(),
+                    "decomp".to_string(),
+                    "index".to_string(),
+                    "mem".to_string(),
+                    "parallelism".to_string(),
+                ]),
+                "bg-status must only report fields backed by real state"
+            );
             assert_eq!(v["cfg"]["status"], "ready");
             assert_eq!(v["index"]["status"], "ready");
             assert_eq!(v["analysis_index"]["status"], "idle");
@@ -525,7 +528,9 @@ async fn missing_api_route_returns_json_404() {
 }
 
 #[tokio::test]
-async fn ws_jobs_requires_websocket_upgrade() {
+async fn ws_jobs_endpoint_is_removed() {
+    // /ws/jobs 是 Python 时代的占位实现（升级后只发一条 idle 即静默），
+    // 前端零引用，已删除；确认它不再是注册路由。
     let (_tmp, cd) = synth_call_dir();
     let app = tracemiku_server::build_router(cd).expect("build router");
     let resp = app
@@ -537,5 +542,5 @@ async fn ws_jobs_requires_websocket_upgrade() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

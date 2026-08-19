@@ -1529,6 +1529,8 @@ pub(super) fn matching_byte_load_for_value<'a>(
         .cloned()
 }
 
+/// 表达式左值（`lhs = rhs` 的 lhs）转 u64；字符串数值解析统一走
+/// cli_support 的 parse_u64_str，不再平行实现。
 pub(super) fn expression_lhs_u64(value: &serde_json::Value) -> Option<u64> {
     let text = value.as_str()?;
     let lhs = text.split('=').next()?.trim();
@@ -1632,6 +1634,10 @@ pub(super) async fn load_vm_rows_chunked(
     } else {
         chunk_size.max(1)
     };
+    // 每个 chunk 都请求 /api/records（不需要 MemShadow）：router 只构建
+    // 一次并在循环内复用，否则每个 chunk 都会经 AppState::load 重新读
+    // TraceMeta/Trace/Index。
+    let app = build_cli_router(trace_dir, "/api/records", None)?;
     let mut cursor = start;
     let mut rows = Vec::new();
     let mut source_returned = 0usize;
@@ -1649,8 +1655,8 @@ pub(super) async fn load_vm_rows_chunked(
         };
         let requested = request_end.saturating_sub(cursor);
         let non_overlap_requested = chunk_end.saturating_sub(cursor);
-        let (mut chunk_rows, returned, chunk_base) = load_vm_rows(
-            trace_dir.clone(),
+        let (mut chunk_rows, returned, chunk_base) = load_vm_rows_on(
+            &app,
             cursor,
             request_end,
             regs.clone(),
@@ -1701,6 +1707,22 @@ pub(super) async fn load_vm_rows(
     base_ip: Option<String>,
     profile: &VmProfile,
 ) -> anyhow::Result<(Vec<serde_json::Value>, usize, Option<u64>)> {
+    let app = build_cli_router(trace_dir, "/api/records", None)?;
+    load_vm_rows_on(&app, start, end, regs, only_vm, base_ip, profile).await
+}
+
+/// load_vm_rows 的共用 router 版本：分块调用方（load_vm_rows_chunked）在
+/// 循环外构建一次 router 后经本函数复用，避免逐 chunk 重新加载 trace。
+#[allow(clippy::too_many_arguments)] // wire orchestration; refactor is separate work
+pub(super) async fn load_vm_rows_on(
+    app: &axum::Router,
+    start: usize,
+    end: usize,
+    regs: String,
+    only_vm: bool,
+    base_ip: Option<String>,
+    profile: &VmProfile,
+) -> anyhow::Result<(Vec<serde_json::Value>, usize, Option<u64>)> {
     let count = end.saturating_sub(start);
     let regs = regs_with_vm_profile(regs, profile);
     let params = vec![
@@ -1708,7 +1730,7 @@ pub(super) async fn load_vm_rows(
         ("count", count.to_string()),
         ("regs", regs),
     ];
-    let response = route_get_json_value(trace_dir, route_path("/api/records", &params)).await?;
+    let response = route_get_json_value_on(app, route_path("/api/records", &params)).await?;
     let records = response
         .get("records")
         .and_then(|v| v.as_array())
