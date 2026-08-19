@@ -40,7 +40,8 @@ import { BUILTIN_PLUGINS } from "./anti_detect/plugin_interface";
 // ─────────── RegisterNatives fallback ────────
 
 function hookRegisterNatives(onResolved: (fp: NativePointer) => void): boolean {
-    const sym = Module.findExportByName(null, "JNI_GetCreatedJavaVMs");
+    // Frida 17 移除了静态 Module.findExportByName; getExport 带 global 兜底
+    const sym = getExport("JNI_GetCreatedJavaVMs");
     if (!sym) return false;
     try {
         const fn = new NativeFunction(sym, "int", ["pointer", "int", "pointer"]);
@@ -267,13 +268,19 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
             try { fp = (m as any).getExportByName(STATE.exportName); } catch (_) {}
         }
         if (!fp) {
-            fp = Module.findExportByName(m.name, STATE.exportName);
-        }
-        if (!fp) {
             try {
                 const exps = m.enumerateExports();
                 const e = exps.find(x => x.name === STATE.exportName);
                 if (e) fp = e.address;
+            } catch (_) {}
+        }
+        if (!fp) {
+            // 未 strip 的静态/PIE 二进制没有 .dynsym 导出, 只有 .symtab 符号表
+            // (NDK 默认构建即如此); enumerateSymbols 是唯一解析途径.
+            try {
+                const syms = m.enumerateSymbols();
+                const s = syms.find(x => x.name === STATE.exportName);
+                if (s) fp = s.address;
             } catch (_) {}
         }
         if (!fp) {

@@ -97,7 +97,9 @@ int sum_array(int *arr, int n) {
 }
 
 // Exported entry — tracemiku will hook this
-__attribute__((visibility("default")))
+// noinline 必须保留: -O1 下单一调用点会被内联进 main, .symtab 里的
+// outline 副本将无人执行, --export hook 会静默落空.
+__attribute__((noinline, visibility("default")))
 int tracemiku_test_entry(void) {
     const int N = 500;
     int arr[500];

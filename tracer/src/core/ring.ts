@@ -182,9 +182,8 @@ export function ensureTraceDir(): void {
     // Try multiple methods to get package name
     if (!STATE.pkg) {
         try {
-            const cmdF = new File("/proc/self/cmdline", "rb");
-            const buf = (cmdF as any).read(256);
-            cmdF.close();
+            // Frida 的 File 没有 read(); readAllBytes 可处理 cmdline 的 NUL 分隔
+            const buf = (File as any).readAllBytes("/proc/self/cmdline") as ArrayBuffer;
             const pkg = String.fromCharCode.apply(null, new Uint8Array(buf) as any).split("\0")[0];
             if (pkg && pkg.length > 0 && pkg !== "unknown") {
                 STATE.pkg = pkg;
@@ -194,9 +193,7 @@ export function ensureTraceDir(): void {
 
     if (!STATE.pkg || STATE.pkg === "unknown") {
         try {
-            const attrF = new File("/proc/self/attr/current", "rb");
-            const buf = (attrF as any).read(256);
-            attrF.close();
+            const buf = (File as any).readAllBytes("/proc/self/attr/current") as ArrayBuffer;
             const context = String.fromCharCode.apply(null, new Uint8Array(buf) as any).split("\0")[0];
             const parts = context.split(":");
             if (parts.length >= 4) {
