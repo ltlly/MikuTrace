@@ -1,6 +1,6 @@
 //! Sparse byte-level memory shadow built from a trace.
 //!
-//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v5 binary
+//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v6 binary
 //! sidecar for fast reloads on large traces.
 //!
 //! Each instruction has full register state captured BEFORE its execution.
@@ -29,6 +29,7 @@ use crate::sidecar_io::{
 };
 use crate::trace::Trace;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 /// Errors surfaced when MemShadow is not ready to serve a query.
 ///
@@ -84,9 +85,9 @@ pub struct MemRec {
     pub value: u64,
 }
 
-const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV5\0\0";
-const SIDECAR_VERSION: u32 = 5;
-pub const SIDECAR_SUFFIX: &str = ".memshadow.v5.bin";
+const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV6\0\0";
+const SIDECAR_VERSION: u32 = 6;
+pub const SIDECAR_SUFFIX: &str = ".memshadow.v6.bin";
 const EXTERNAL_WRITES_FILE: &str = "external_writes.bin";
 const EXTERNAL_WRITE_RECORD_SIZE: usize = 17;
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -126,8 +127,14 @@ impl MemSnapshot {
         if raw.len() < 16 || &raw[0..8] != SNAPSHOT_MAGIC {
             return None;
         }
-        let _version = u32::from_le_bytes(raw[8..12].try_into().ok()?);
+        let version = u32::from_le_bytes(raw[8..12].try_into().ok()?);
+        if version != 1 {
+            return None;
+        }
         let count = u32::from_le_bytes(raw[12..16].try_into().ok()?) as usize;
+        if count > (raw.len() - 16) / 24 {
+            return None;
+        }
         let mut regions = Vec::with_capacity(count);
         let mut off = 16usize;
         for _ in 0..count {
@@ -139,7 +146,7 @@ impl MemSnapshot {
             let size = u64::from_le_bytes(raw[off + 8..off + 16].try_into().ok()?) as usize;
             let perms = u32::from_le_bytes(raw[off + 16..off + 20].try_into().ok()?);
             off += 24;
-            if off + size > raw.len() {
+            if size > raw.len().saturating_sub(off) || base.checked_add(size as u64).is_none() {
                 break;
             }
             regions.push(SnapRegion {
@@ -196,20 +203,25 @@ pub struct MemShadow {
 }
 
 impl MemShadow {
-    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v5.bin`.
+    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v6.bin`.
     pub fn sidecar_path(trace: &Trace) -> PathBuf {
         trace.call_dir().join(format!("trace.bin{SIDECAR_SUFFIX}"))
     }
 
-    /// Load from a valid v5 sidecar when possible; otherwise cold-build and
+    /// Load from a valid v6 sidecar when possible; otherwise cold-build and
     /// best-effort save. Corrupt/stale sidecars are ignored.
     pub fn load_or_build(trace: &Trace) -> Self {
         if let Some(mut mem) = Self::try_load_sidecar(trace) {
             mem.snapshot = MemSnapshot::load(trace);
             return mem;
         }
+        let before = memory_input_digest(trace).ok();
         let mut mem = Self::build_from_trace(trace);
-        let _ = mem.save_sidecar(trace);
+        // A live append/change during reconstruction must not create a cache
+        // that claims to represent the new inputs.
+        if before.is_some() && before == memory_input_digest(trace).ok() {
+            let _ = mem.save_sidecar(trace);
+        }
         mem.snapshot = MemSnapshot::load(trace);
         mem
     }
@@ -254,7 +266,7 @@ impl MemShadow {
         mem
     }
 
-    /// Try to load `<call_dir>/trace.bin.memshadow.v5.bin`.
+    /// Try to load `<call_dir>/trace.bin.memshadow.v6.bin`.
     ///
     /// Returns `None` for miss, stale trace size, schema mismatch, or corrupt
     /// content. Callers that want a ready MemShadow should use
@@ -263,16 +275,17 @@ impl MemShadow {
         Self::read_sidecar(trace).ok()
     }
 
-    /// Save this shadow as v5 binary sidecar. Writes to a temp file in the
+    /// Save this shadow as v6 binary sidecar. Writes to a temp file in the
     /// call directory and then atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
         write_atomic(
             &Self::sidecar_path(trace),
-            "trace.bin.memshadow.v5.bin",
+            "trace.bin.memshadow.v6.bin",
             |f| {
                 f.write_all(SIDECAR_MAGIC)?;
                 write_u32(f, SIDECAR_VERSION)?;
                 write_u64(f, trace.raw().len() as u64)?;
+                f.write_all(&memory_input_digest(trace)?)?;
                 write_u64(f, self.writes.len() as u64)?;
                 write_u64(f, self.reads.len() as u64)?;
                 write_u64(f, self.bytes.len() as u64)?;
@@ -313,6 +326,11 @@ impl MemShadow {
         let trace_size = read_u64(&mut f)?;
         if trace_size != trace.raw().len() as u64 {
             return Err(invalid_data("stale memshadow sidecar trace size"));
+        }
+        let mut digest = [0; 32];
+        f.read_exact(&mut digest)?;
+        if digest != memory_input_digest(trace)? {
+            return Err(invalid_data("stale memshadow sidecar inputs"));
         }
         // 长度上限以 sidecar 文件字节数推导：每条 MemRec 最少 28 字节
         // （idx 8 + addr 8 + size 4 + value 8），损坏文件的超大长度在分配
@@ -419,6 +437,29 @@ impl MemShadow {
             }
         }
         None
+    }
+
+    /// Independent input oracle for replay: preceding stores/external writes
+    /// or the initial snapshot. Never reuse a load inferred from its output.
+    pub fn input_byte(
+        &self,
+        addr: u64,
+        before_idx: usize,
+    ) -> (Option<u8>, &'static str, Option<usize>) {
+        if let Some(events) = self.bytes.get(&addr) {
+            let end = events.partition_point(|e| e.idx < before_idx);
+            if let Some(e) = events[..end]
+                .iter()
+                .rev()
+                .find(|e| e.kind == "w" || e.kind == "x")
+            {
+                return (Some(e.byte), e.kind, Some(e.idx));
+            }
+        }
+        if let Some(byte) = self.snapshot.as_ref().and_then(|s| s.byte_at(addr)) {
+            return (Some(byte), "i", None);
+        }
+        (None, "??", None)
     }
 
     /// Scan known bytes (latest event at each addr) for printable-ASCII runs
@@ -566,7 +607,7 @@ fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
         return;
     };
     let mut seen: BTreeSet<(usize, u64, u8)> = BTreeSet::new();
-    for chunk in raw.chunks_exact(EXTERNAL_WRITE_RECORD_SIZE) {
+    for chunk in raw.as_chunks::<EXTERNAL_WRITE_RECORD_SIZE>().0 {
         let idx_u64 = u64::from_le_bytes(chunk[0..8].try_into().unwrap());
         let Ok(idx) = usize::try_from(idx_u64) else {
             continue;
@@ -635,6 +676,17 @@ fn splat_bytes(
 /// `op.src_reg` directly; otherwise fall back to the first non-base/non-idx
 /// reg in `regs_use`.
 fn value_of_write(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) -> Option<u64> {
+    // An exclusive store is only an observed write when its captured status
+    // confirms success. Pre-state source bytes alone do not prove a write.
+    if matches!(
+        decoded.mnemonic.as_str(),
+        "stxr" | "stxrb" | "stxrh" | "stxp" | "stlxr" | "stlxrb" | "stlxrh" | "stlxp"
+    ) {
+        let status = decoded.op_str.split(',').next()?.trim();
+        if trace.post_record(i)?.reg_by_name(status)? != 0 {
+            return None;
+        }
+    }
     let src = if !op.src_reg.is_empty() {
         op.src_reg.clone()
     } else {
@@ -652,15 +704,45 @@ fn value_of_write(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) ->
 /// record's post-state. For ldp pair-split entries, capstone fills
 /// `op.src_reg`; otherwise fall back to `regs_def[0]`.
 fn value_of_read(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) -> Option<u64> {
-    if i + 1 >= trace.len() {
-        return None;
-    }
+    let post = trace.post_record(i)?;
     let dest = if !op.src_reg.is_empty() {
         op.src_reg.clone()
     } else {
         decoded.regs_def.first().cloned()?
     };
-    trace.record(i + 1).reg_by_name(&dest)
+    post.reg_by_name(&dest)
+}
+
+/// Bind reconstructed events to all inputs that affect them. Snapshots are
+/// loaded fresh and are not serialized in the event cache.
+fn memory_input_digest(trace: &Trace) -> std::io::Result<[u8; 32]> {
+    let mut hash = Sha256::new();
+    hash.update(trace.digest());
+    hash.update(trace.quality().dropped.to_le_bytes());
+    hash.update([
+        trace.quality().truncated as u8,
+        trace.quality().metadata_valid as u8,
+        trace.quality().metadata_present as u8,
+    ]);
+    for name in [EXTERNAL_WRITES_FILE, "meta.json"] {
+        hash.update(name.as_bytes());
+        match std::fs::File::open(trace.call_dir().join(name)) {
+            Ok(mut file) => {
+                hash.update([1]);
+                let mut buf = [0; 64 * 1024];
+                loop {
+                    let n = file.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    hash.update(&buf[..n]);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => hash.update([0]),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(hash.finalize().into())
 }
 
 fn write_memrec(w: &mut impl Write, rec: &MemRec) -> std::io::Result<()> {

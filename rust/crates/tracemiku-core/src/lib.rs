@@ -24,6 +24,7 @@ pub mod memshadow;
 pub mod ollvmdet;
 pub mod parallel;
 pub mod prelude;
+pub mod replay;
 pub mod sidecar_io;
 pub mod symbols;
 pub mod taint;

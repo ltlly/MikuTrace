@@ -176,7 +176,7 @@ fn memshadow_loads_external_writes_as_x_events() {
 }
 
 #[test]
-fn memshadow_v5_sidecar_roundtrip_preserves_shadow() {
+fn memshadow_v6_sidecar_roundtrip_preserves_shadow() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -193,7 +193,7 @@ fn memshadow_v5_sidecar_roundtrip_preserves_shadow() {
 }
 
 #[test]
-fn memshadow_v5_sidecar_stale_trace_size_rebuilds() {
+fn memshadow_v6_sidecar_stale_trace_size_rebuilds() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -213,7 +213,7 @@ fn memshadow_v5_sidecar_stale_trace_size_rebuilds() {
 }
 
 #[test]
-fn memshadow_v5_corrupt_sidecar_is_ignored() {
+fn memshadow_v6_corrupt_sidecar_is_ignored() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();

@@ -47,9 +47,9 @@ struct OutputValue {
 pub async fn diff_traces_handler(
     State(_state): State<AppState>,
     Json(req): Json<DiffTracesRequest>,
-) -> Result<Json<DiffTracesResponse>, Response> {
+) -> Response {
     if req.traces.len() > MAX_DIFF_TRACES {
-        return Err((
+        return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({
                 "status": "error",
@@ -58,16 +58,13 @@ pub async fn diff_traces_handler(
                 "requested": req.traces.len(),
             })),
         )
-            .into_response());
+            .into_response();
     }
-    tokio::task::spawn_blocking(move || diff_traces_response(req))
-        .await
-        .map_err(|err| {
-            tracing::warn!(target: "tracemiku-server", "diff traces worker failed: {err}");
-            crate::routes::worker_panic_response("diff traces", &err).into_response()
-        })?
-        .map_err(StatusCode::into_response)
-        .map(Json)
+    match tokio::task::spawn_blocking(move || diff_traces_response(req)).await {
+        Ok(Ok(response)) => Json(response).into_response(),
+        Ok(Err(status)) => status.into_response(),
+        Err(err) => crate::routes::worker_panic_response("diff traces", &err).into_response(),
+    }
 }
 
 fn diff_traces_response(req: DiffTracesRequest) -> Result<DiffTracesResponse, StatusCode> {

@@ -4,6 +4,7 @@
 //! - [`record`] — 272-byte on-disk record layout (M2-α)
 //! - [`trace`] — mmap'd record stream (M2-α)
 
+pub mod evidence;
 pub mod meta;
 pub mod record;
 #[allow(clippy::module_inception)]

@@ -4,7 +4,7 @@
 //! single highest-frequency wall in static RE of obfuscated/optimized code.
 //! A disassembler shows `br x8` / `blr x9` / a jump-table dispatch and stops;
 //! it cannot know the target without running the code. traceMiku does: every
-//! executed indirect branch's successor PC is right there in the trace.
+//! indirect branch operand is captured in the instruction's register pre-state.
 //!
 //! Keyed tool-neutrally on the shared `(SO, offset)` coordinate:
 //!

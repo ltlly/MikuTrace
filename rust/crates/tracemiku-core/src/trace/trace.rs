@@ -6,8 +6,11 @@
 //! Zero-copy: `record(idx)` returns a `Record` value bytemuck-cast from the
 //! mmap slice without any allocation.
 
+use super::evidence::{expected_next_pc, CaptureQuality};
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use memmap2::Mmap;
@@ -24,6 +27,8 @@ pub struct Trace {
     mmap: Option<Mmap>,
     /// Number of complete records. Cached at construction.
     n: usize,
+    quality: CaptureQuality,
+    digest: OnceLock<[u8; 32]>,
 }
 
 impl Trace {
@@ -36,12 +41,25 @@ impl Trace {
             .metadata()
             .with_context(|| format!("stat trace.bin at {}", bin.display()))?
             .len() as usize;
+        let meta = call_dir.join("meta.json");
+        let metadata_present = meta.exists();
+        let parsed = File::open(&meta).ok().and_then(|file| {
+            // Bound metadata parsing even for untrusted/offline captures.
+            use std::io::Read;
+            serde_json::from_reader::<_, CaptureQuality>(file.take(8 * 1024 * 1024)).ok()
+        });
+        let mut quality = parsed.clone().unwrap_or_default();
+        quality.metadata_present = metadata_present;
+        quality.metadata_valid = !metadata_present || parsed.is_some();
+        quality.truncated |= !len.is_multiple_of(REC_SIZE);
 
         if len == 0 {
             return Ok(Self {
                 call_dir: call_dir.to_path_buf(),
                 mmap: None,
                 n: 0,
+                quality,
+                digest: OnceLock::new(),
             });
         }
 
@@ -56,6 +74,8 @@ impl Trace {
             call_dir: call_dir.to_path_buf(),
             n,
             mmap: Some(mmap),
+            quality,
+            digest: OnceLock::new(),
         })
     }
 
@@ -72,6 +92,32 @@ impl Trace {
     /// Per-call directory this trace was loaded from.
     pub fn call_dir(&self) -> &Path {
         &self.call_dir
+    }
+
+    pub fn quality(&self) -> &CaptureQuality {
+        &self.quality
+    }
+
+    /// Full-content identity, computed once per mapped trace.
+    pub fn digest(&self) -> [u8; 32] {
+        *self
+            .digest
+            .get_or_init(|| Sha256::digest(self.raw()).into())
+    }
+
+    /// Only expose the next captured state as a post-state when immediate
+    /// execution continuity is supported. Unlocated dropped records make
+    /// every transition uncertain; matching PCs alone cannot repair that.
+    pub fn post_record(&self, idx: usize) -> Option<super::Record> {
+        if idx >= self.n
+            || idx + 1 >= self.n
+            || self.quality.dropped != 0
+            || !self.quality.metadata_valid
+        {
+            return None;
+        }
+        let next = self.record(idx + 1);
+        (expected_next_pc(&self.record(idx)) == Some(next.pc)).then_some(next)
     }
 
     /// Raw mmap bytes (read-only), or `&[]` for empty trace. Exposed for

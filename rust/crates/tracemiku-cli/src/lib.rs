@@ -27,6 +27,7 @@ pub mod output_lineage;
 use output_lineage::*;
 mod output_semantics;
 use output_semantics::*;
+mod replay_command;
 mod trace_api;
 use trace_api::*;
 mod vm_backtrace;
@@ -132,6 +133,7 @@ impl VmProfile {
 pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
+        Some(Cmd::TraceReplay { args }) => replay_command::run(args).await,
         Some(Cmd::Capabilities) => print_pretty(&capabilities_json()),
         Some(Cmd::Completions { shell }) => {
             use clap::CommandFactory;

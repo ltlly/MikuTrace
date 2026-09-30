@@ -4,8 +4,6 @@
 
 ## P1：运行时真相
 
-- [ ] Trace 锚定重放 A1：以真实寄存器为 oracle，报告整数执行、SIMD、syscall 和未知
-  内存导致的首个发散点。
 - [ ] 为 VM 分析 token 增加结构化 provenance，标明寄存器、内存、外部写、常量和未知来源。
 - [ ] 将 coverage 和间接跳转命中数叠加到 Web CFG；其他运行时查询保持 CLI 优先。
 

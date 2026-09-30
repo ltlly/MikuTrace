@@ -213,6 +213,7 @@ fn openapi_paths() -> Value {
         ("/api/diff-traces", "post"),
         ("/api/fn-summary", "get"),
         ("/api/functions", "get"),
+        ("/api/trace-replay", "get"),
         ("/openapi.json", "get"),
     ] {
         paths.insert(

@@ -86,7 +86,7 @@
 | `block-for-pc` | PC → 基本块 | |
 | `block` | 基本块详情 | |
 | `loops` | 循环检测结果 | |
-| `coverage` | 函数执行覆盖 + 分支方向塌缩 | 静态“可能双向”的分支在此塌缩为真实方向 |
+| `coverage` | 函数执行路径与观测分支分布 | 单向观测不证明另一方向不可能执行 |
 | `indirect-targets` | `br/blr` 的运行时真实跳转目标分布 | 静态工具拿不到的事实 |
 | `backtrace` | 指定位置的调用回溯 | |
 
@@ -237,12 +237,40 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
+| `trace-replay` | 用真实 pre/post 状态检查 ARM64 指令，返回首个发散/证据缺口与补采建议 | GET |
 | `hlil-for-pc` | Binary Ninja HLIL（按 PC） | 需要 BN sidecar 与目标 SO |
 | `hlil-for-fn` | Binary Ninja HLIL（按函数） | 需要 BN sidecar 与目标 SO |
 | `bn-cfg-for-pc` | Binary Ninja CFG（按 PC） | 需要 BN sidecar 与目标 SO |
 | `bn-cfg-svg-for-pc` | Binary Ninja CFG 的 SVG | 需要 BN sidecar 与目标 SO |
 | `bn-sidecar-status` | BN sidecar 状态 | |
 | `decomp-status` / `bg-status` | BN sidecar 与后台索引状态 | 见第 1 节 |
+
+### Trace 锚定验证与证据来源
+
+```bash
+./tracemiku trace-replay <call_dir> --start 100 --count 200
+```
+
+`trace-replay` 的 `mode=per_instruction_anchored_arm64`：每条指令重新锚定捕获的寄存器
+前状态，推演已支持的 ARM64 指令，并比较直接后状态。硬上限 10000 条；`checked` 只统计已匹配的
+转移。`matched` 表示请求窗口内匹配，`diverged` 表示寄存器/PC 不匹配，`stopped` 表示
+缺少证据、语义不支持或达到上限。`stop` 包含 idx、PC、原因、预期/实际值和
+`next_capture`。参数无效返回错误，不默默换窗口。Web 使用 `GET /api/trace-replay`；
+内存索引仍在后台构建时返回 503，可在其就绪后重试。
+
+支持范围：NOP、MOVN/MOVZ/MOVK、ADD/SUB（立即数与移位寄存器，含 NZCV）、移位
+逻辑运算、ADR/ADRP、普通分支及整数 LDR/STR（无符号偏移、非缩放及 pre/post 写回）。
+其他编码明确返回 `unsupported_instruction`，不会假设为无操作。
+
+内存输入只采用此前的 store、外部写和初始快照；绝不拿本次 load 的输出验证自己。
+未知内存、SIMD/FP、syscall、未跟踪的 callee、丢记录和缺失直接后状态都会停止。
+当前版本未接入 SIMD sidecar，不验证实际设备内存写入，也不证明完整函数、高级 IL
+或未观测路径正确。`metadata_present=false` 的旧 trace 只能进行结构连续性检查，
+没有完整采集质量证明；有未定位的 dropped 记录时，所有转移保守视为不确定。
+
+从 `output-backtrace` / `byte-lineage` 找到 writer idx 后，可用 `trace-replay` 检查附近的
+指令窗口，再根据 `stop.next_capture` 补采缺失内存或扩大跟踪范围。发现寄存器/PC 发散
+时先核对原始编码和指令语义，避免把未验证结论继续传给 AI。
 
 ## 14. 观察点、函数与 fork
 

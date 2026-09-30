@@ -20,6 +20,8 @@
 //! 新增输出的截断表达统一使用 `truncated: bool` + 数量字段（如
 //! `returned`/`total`）的模式，不再引入新的截断字段拼写。
 
+pub use tracemiku_core::replay::ReplayReport;
+
 use schemars::JsonSchema;
 use serde::Serialize;
 

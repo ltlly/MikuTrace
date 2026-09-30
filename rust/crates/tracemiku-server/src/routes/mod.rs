@@ -51,6 +51,7 @@ pub mod so_stats;
 pub mod string_provenance;
 pub mod strings;
 pub mod timeline_diff;
+pub mod trace_replay;
 pub mod watchpoints;
 
 use axum::routing::{any, get, post};
@@ -89,6 +90,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/decomp-status", get(api_infra::decomp_status_handler))
         .route("/api/so-stats", get(so_stats::so_stats_handler))
         .route("/api/reg-at", get(reg_at::reg_at_handler))
+        .route("/api/trace-replay", get(trace_replay::trace_replay_handler))
         .route("/api/coverage", get(coverage::coverage_handler))
         .route("/api/resolve", get(resolve::resolve_handler))
         .route(
@@ -243,6 +245,7 @@ pub fn route_requires_memshadow(path: &str, body: Option<&serde_json::Value>) ->
     if matches!(
         endpoint,
         "/api/auto-phase-detect"
+            | "/api/trace-replay"
             | "/api/crypto-analysis"
             | "/api/crypto-scan"
             | "/api/hash-finalize-detect"

@@ -136,6 +136,7 @@ def normalize_case(case: Case, value: Any) -> Any:
 def cases() -> list[Case]:
     return [
         Case("meta", "/api/meta", ("meta",)),
+        Case("trace-replay", "/api/trace-replay?start=0&count=9", ("trace-replay", "--start", "0", "--count", "9")),
         Case(
             "records",
             "/api/records?start=0&count=9",

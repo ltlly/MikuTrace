@@ -389,8 +389,8 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
 /// Resolve indirect branch (br xN, blr xN) dispatch targets from trace data.
 ///
 /// For each indirect branch instruction in the trace, collects every unique
-/// successor PC observed immediately after the instruction (the actual jump
-/// target at runtime). These targets can be added to the CFG as
+/// register operand captured before execution. The next recorded PC may be
+/// a return site when the callee is excluded. These targets can be added as
 /// `EdgeKind::IndirectDispatch` edges.
 ///
 /// Returns a map `source_pc → Vec<(target_pc, count)>`.
@@ -411,11 +411,13 @@ pub fn resolve_indirect_branch_targets(
         if mnem != "br" && mnem != "blr" {
             continue;
         }
-        if i + 1 >= n {
-            continue;
-        }
         let src_pc = trace.pc(i);
-        let target_pc = trace.pc(i + 1);
+        let Some(target_pc) = trace
+            .record(i)
+            .reg_by_name(&format!("x{}", (inst >> 5) & 31))
+        else {
+            continue;
+        };
 
         dispatch_count
             .entry(src_pc)
@@ -428,7 +430,7 @@ pub fn resolve_indirect_branch_targets(
     let mut result: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
     for (src, targets) in dispatch_count {
         let mut vec: Vec<(u64, u64)> = targets.into_iter().collect();
-        vec.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        vec.sort_by_key(|(target, count)| (std::cmp::Reverse(*count), *target));
         result.insert(src, vec);
     }
     result
@@ -603,6 +605,10 @@ mod tests {
             let off = i * REC_SIZE;
             buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
             buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+            if matches!(inst & 0xffff_fc1f, 0xd61f0000 | 0xd63f0000) && i + 1 < pcs.len() {
+                let rn = ((inst >> 5) & 31) as usize;
+                buf[off + 8 + rn * 8..off + 16 + rn * 8].copy_from_slice(&pcs[i + 1].to_le_bytes());
+            }
         }
         std::fs::write(cd.join("trace.bin"), &buf).unwrap();
         std::fs::write(cd.join("meta.json"), r#"{"records":3}"#).unwrap();
@@ -655,6 +661,10 @@ mod tests {
             let off = i * REC_SIZE;
             buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
             buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+            if matches!(inst & 0xffff_fc1f, 0xd61f0000 | 0xd63f0000) && i + 1 < pcs.len() {
+                let rn = ((inst >> 5) & 31) as usize;
+                buf[off + 8 + rn * 8..off + 16 + rn * 8].copy_from_slice(&pcs[i + 1].to_le_bytes());
+            }
         }
         std::fs::write(cd.join("trace.bin"), &buf).unwrap();
         std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
@@ -688,6 +698,10 @@ mod tests {
             let off = i * REC_SIZE;
             buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
             buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+            if matches!(inst & 0xffff_fc1f, 0xd61f0000 | 0xd63f0000) && i + 1 < pcs.len() {
+                let rn = ((inst >> 5) & 31) as usize;
+                buf[off + 8 + rn * 8..off + 16 + rn * 8].copy_from_slice(&pcs[i + 1].to_le_bytes());
+            }
         }
         std::fs::write(cd.join("trace.bin"), &buf).unwrap();
         std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
@@ -720,6 +734,10 @@ mod tests {
             let off = i * REC_SIZE;
             buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
             buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+            if matches!(inst & 0xffff_fc1f, 0xd61f0000 | 0xd63f0000) && i + 1 < pcs.len() {
+                let rn = ((inst >> 5) & 31) as usize;
+                buf[off + 8 + rn * 8..off + 16 + rn * 8].copy_from_slice(&pcs[i + 1].to_le_bytes());
+            }
         }
         std::fs::write(cd.join("trace.bin"), &buf).unwrap();
         std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();

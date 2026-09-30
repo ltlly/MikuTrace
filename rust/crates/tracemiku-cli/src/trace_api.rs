@@ -423,7 +423,7 @@ pub(super) fn jni_string_pair_rows<'a>(
     key: Option<&'a str>,
     contains: Option<&'a str>,
 ) -> impl Iterator<Item = serde_json::Value> + 'a {
-    events.chunks_exact(2).filter_map(move |pair| {
+    events.as_chunks::<2>().0.iter().filter_map(move |pair| {
         let key_text = pair[0].get("text").and_then(|v| v.as_str()).unwrap_or("");
         let value_text = pair[1].get("text").and_then(|v| v.as_str()).unwrap_or("");
         if key.is_some_and(|needle| key_text != needle) {

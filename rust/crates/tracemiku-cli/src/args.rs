@@ -15,6 +15,11 @@ pub(super) struct Cli {
 pub(super) enum Cmd {
     /// Describe every CLI command and argument as machine-readable JSON.
     Capabilities,
+    /// Verify supported ARM64 instructions against captured pre/post states and report the first evidence frontier.
+    TraceReplay {
+        #[command(flatten)]
+        args: super::replay_command::ReplayArgs,
+    },
     /// Generate shell completion scripts for bash, zsh, fish, or powershell.
     Completions {
         /// Shell type: bash, zsh, fish, powershell.

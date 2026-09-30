@@ -100,10 +100,10 @@ struct PendingMemSearch {
 pub async fn hash_input_search_handler(
     State(state): State<AppState>,
     Json(req): Json<HashInputSearchRequest>,
-) -> Result<Json<HashInputSearchResponse>, Response> {
+) -> Response {
     let total = total_hash_combos(&req);
     if total > MAX_HASH_COMBOS {
-        return Err((
+        return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({
                 "status": "error",
@@ -113,16 +113,13 @@ pub async fn hash_input_search_handler(
                 "hint": "reduce inputs/keys/combos/algos",
             })),
         )
-            .into_response());
+            .into_response();
     }
-    let response = tokio::task::spawn_blocking(move || hash_input_search_response(&state, req))
-        .await
-        .map_err(|err| {
-            tracing::warn!(target: "tracemiku-server", "hash input search worker failed: {err}");
-            crate::routes::worker_panic_response("hash input search", &err).into_response()
-        })?
-        .map_err(StatusCode::into_response)?;
-    Ok(Json(response))
+    match tokio::task::spawn_blocking(move || hash_input_search_response(&state, req)).await {
+        Ok(Ok(response)) => Json(response).into_response(),
+        Ok(Err(status)) => status.into_response(),
+        Err(err) => crate::routes::worker_panic_response("hash input search", &err).into_response(),
+    }
 }
 
 /// inputs × keys × combos × algos 的乘积上界（与 worker 内实际循环一致）。

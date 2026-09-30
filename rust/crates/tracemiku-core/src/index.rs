@@ -322,40 +322,8 @@ fn push_mem_addr_idx(map: &mut HashMap<u64, Vec<usize>>, addr: u64, size: u32, i
 }
 
 pub(crate) fn trace_fingerprint(trace: &Trace) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    const SAMPLE: usize = 4096;
-
-    fn mix(mut h: u64, bytes: &[u8]) -> u64 {
-        for byte in bytes {
-            h ^= u64::from(*byte);
-            h = h.wrapping_mul(FNV_PRIME);
-        }
-        h
-    }
-
-    fn mix_u64(h: u64, value: u64) -> u64 {
-        mix(h, &value.to_le_bytes())
-    }
-
-    let raw = trace.raw();
-    let len = raw.len();
-    let mut h = mix_u64(FNV_OFFSET, len as u64);
-    if len == 0 {
-        return h;
-    }
-
-    let mid = len.saturating_sub(SAMPLE) / 2;
-    let ranges = [
-        (0usize, len.min(SAMPLE)),
-        (mid, (mid + SAMPLE).min(len)),
-        (len.saturating_sub(SAMPLE), len),
-    ];
-    for (start, end) in ranges {
-        h = mix_u64(h, start as u64);
-        h = mix(h, &raw[start..end]);
-    }
-    h
+    // Full-content digest; old sampled fingerprints are rejected on reload.
+    u64::from_le_bytes(trace.digest()[..8].try_into().unwrap())
 }
 
 fn write_string_vec_map(

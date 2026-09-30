@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use schemars::schema_for;
 
 use tracemiku_cli::output_lineage::{LineageBatchReport, LineageRow};
-use tracemiku_cli::output_types::{BacktraceReport, OutputMapReport, StatsReport};
+use tracemiku_cli::output_types::{BacktraceReport, OutputMapReport, ReplayReport, StatsReport};
 use tracemiku_cli::output_vm::{VmOpsReport, VmSliceReport};
 
 fn emit(dir: &PathBuf, name: &str, schema: &serde_json::Value) -> std::io::Result<()> {
@@ -31,6 +31,10 @@ fn main() -> std::io::Result<()> {
     fs::create_dir_all(&dir)?;
 
     let models: Vec<(&str, serde_json::Value)> = vec![
+        (
+            "replay-report",
+            serde_json::to_value(schema_for!(ReplayReport)).unwrap(),
+        ),
         (
             "backtrace-report",
             serde_json::to_value(schema_for!(BacktraceReport)).unwrap(),

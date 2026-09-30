@@ -1,0 +1,200 @@
+{
+  "$defs": {
+    "CaptureRequest": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "addr": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "before_idx": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "before_idx",
+        "explanation"
+      ],
+      "type": "object"
+    },
+    "ReplayReason": {
+      "enum": [
+        "register_mismatch",
+        "pc_mismatch",
+        "trace_gap",
+        "missing_post_state",
+        "unknown_memory",
+        "unsupported_instruction",
+        "simd_state_unavailable",
+        "syscall_boundary",
+        "excluded_call",
+        "limit_reached"
+      ],
+      "type": "string"
+    },
+    "ReplayStop": {
+      "properties": {
+        "expected": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "idx": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instruction": {
+          "type": "string"
+        },
+        "next_capture": {
+          "$ref": "#/$defs/CaptureRequest"
+        },
+        "observed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pc": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/ReplayReason"
+        },
+        "register": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "idx",
+        "pc",
+        "instruction",
+        "next_capture"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "capture_truncated": {
+      "type": "boolean"
+    },
+    "checked": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "dropped_records": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "effective_count": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "independent_memory_bytes": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "metadata_present": {
+      "type": "boolean"
+    },
+    "metadata_valid": {
+      "type": "boolean"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "register_comparisons": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "requested_count": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "start": {
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "description": "matched: requested transitions matched; stopped: unavailable evidence;\ndiverged: a supported architectural result disagreed with the captured post-state.",
+      "type": "string"
+    },
+    "stop": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReplayStop"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "status",
+    "mode",
+    "start",
+    "requested_count",
+    "effective_count",
+    "checked",
+    "register_comparisons",
+    "independent_memory_bytes",
+    "truncated",
+    "dropped_records",
+    "capture_truncated",
+    "metadata_present",
+    "metadata_valid",
+    "limitations"
+  ],
+  "title": "ReplayReport",
+  "type": "object"
+}
