@@ -231,7 +231,7 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 `byte-writer-map` / `output-map` / `output-backtrace` 只有在开启 VM 链分析时
 （如 `--vm-chain-steps`、`--tree-depth`）才要求这些参数。
 
-## 13. Binary Ninja 集成
+## 13. Binary Ninja 集成与 Trace 锚定验证
 
 反编译统一走 Binary Ninja sidecar（外部反编译器）；本地自研反编译管线已移除。
 
@@ -246,6 +246,8 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 | `decomp-status` / `bg-status` | BN sidecar 与后台索引状态 | 见第 1 节 |
 
 ### Trace 锚定验证与证据来源
+
+`trace-replay` 可直接运行，无需启动 Binary Ninja sidecar。
 
 ```bash
 ./tracemiku trace-replay <call_dir> --start 100 --count 200
@@ -263,6 +265,9 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 其他编码明确返回 `unsupported_instruction`，不会假设为无操作。
 
 内存输入只采用此前的 store、外部写和初始快照；绝不拿本次 load 的输出验证自己。
+内存来源只沿连续且语义已支持的指令向前回看，最多 10000 条。遇到未知执行边界或
+不支持的指令后，边界之前的快照和写入失效；之后的新 store/外部写可逐字节恢复证据。
+超出回看上限的来源也视为未知，返回 `capture_memory_before_instruction`。
 未知内存、SIMD/FP、syscall、未跟踪的 callee、丢记录和缺失直接后状态都会停止。
 当前版本未接入 SIMD sidecar，不验证实际设备内存写入，也不证明完整函数、高级 IL
 或未观测路径正确。`metadata_present=false` 的旧 trace 只能进行结构连续性检查，

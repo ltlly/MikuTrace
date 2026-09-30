@@ -439,25 +439,30 @@ impl MemShadow {
         None
     }
 
-    /// Independent input oracle for replay: preceding stores/external writes
-    /// or the initial snapshot. Never reuse a load inferred from its output.
+    /// Independent input oracle for replay within `[evidence_start, before_idx)`.
+    /// Only preceding stores/external writes count. The initial snapshot is
+    /// usable only when evidence_start is zero; load outputs never validate inputs.
     pub fn input_byte(
         &self,
         addr: u64,
         before_idx: usize,
+        evidence_start: usize,
     ) -> (Option<u8>, &'static str, Option<usize>) {
         if let Some(events) = self.bytes.get(&addr) {
             let end = events.partition_point(|e| e.idx < before_idx);
             if let Some(e) = events[..end]
                 .iter()
                 .rev()
+                .take_while(|e| e.idx >= evidence_start)
                 .find(|e| e.kind == "w" || e.kind == "x")
             {
                 return (Some(e.byte), e.kind, Some(e.idx));
             }
         }
-        if let Some(byte) = self.snapshot.as_ref().and_then(|s| s.byte_at(addr)) {
-            return (Some(byte), "i", None);
+        if evidence_start == 0 {
+            if let Some(byte) = self.snapshot.as_ref().and_then(|s| s.byte_at(addr)) {
+                return (Some(byte), "i", None);
+            }
         }
         (None, "??", None)
     }

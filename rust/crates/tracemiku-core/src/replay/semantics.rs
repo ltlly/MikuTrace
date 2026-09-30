@@ -1,7 +1,8 @@
 //! Deliberately bounded architectural checking, independent of decompilers.
 //! Unsupported encodings fail closed instead of preserving registers as a NOP.
+use super::memory::MemoryInputs;
 use super::{Fault, ReplayReason};
-use crate::{memshadow::MemShadow, trace::Record};
+use crate::trace::Record;
 
 fn reg(rec: &Record, n: u32, sp: bool) -> u64 {
     if n == 31 {
@@ -64,7 +65,7 @@ fn shifted(value: u64, kind: u32, amount: u32, wide: bool) -> u64 {
     }
 }
 fn load(
-    mem: &MemShadow,
+    mem: &MemoryInputs<'_>,
     idx: usize,
     addr: u64,
     size: usize,
@@ -75,7 +76,7 @@ fn load(
         let address = addr
             .checked_add(offset as u64)
             .ok_or_else(Fault::unsupported)?;
-        *byte = mem.input_byte(address, idx).0.ok_or(Fault {
+        *byte = mem.byte(address, idx).ok_or(Fault {
             reason: ReplayReason::UnknownMemory,
             addr: Some(addr),
             size: Some(size),
@@ -86,7 +87,7 @@ fn load(
 }
 pub(super) fn run(
     rec: Record,
-    mem: &MemShadow,
+    mem: &MemoryInputs<'_>,
     idx: usize,
     reads: &mut usize,
 ) -> Result<Record, Fault> {

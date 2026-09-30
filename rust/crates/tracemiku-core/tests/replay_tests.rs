@@ -233,3 +233,131 @@ fn unmodelled_control_flow_requests_semantics_instead_of_more_capture() {
         assert_eq!(stop.next_capture.action, "inspect_instruction_semantics");
     }
 }
+
+#[test]
+fn starting_after_unknown_execution_cannot_reuse_pre_boundary_memory() {
+    // Old value even agrees with the load output: agreement cannot repair its origin.
+    for (inst, next_pc) in [
+        (0xd63f0100, 0x1008), // excluded BLR x8
+        (0xd4000001, 0x1008), // SVC
+        (0xd503201f, 0x1010), // capture gap
+        (0x3d800020, 0x1008), // str q0,[x1], SIMD write is unavailable
+    ] {
+        let states = [
+            record(0x1000, 0xf9000020, 65, 0x7000),
+            record(0x1004, inst, 65, 0x7000),
+            record(next_pc, 0xf9400020, 65, 0x7000),
+            record(next_pc + 4, 0xd503201f, 65, 0x7000),
+        ];
+        let (_tmp, trace, mut mem) = fixture(&states, "{}");
+        mem.snapshot = Some(MemSnapshot {
+            regions: vec![SnapRegion {
+                base: 0x7000,
+                perms: 1,
+                data: 65u64.to_le_bytes().to_vec(),
+            }],
+        });
+        let out = replay_trace(&trace, &mem, 2, 1).unwrap();
+        assert_eq!(out.checked, 0, "boundary={inst:x}");
+        let stop = out.stop.unwrap();
+        assert_eq!(stop.reason, ReplayReason::UnknownMemory);
+        assert_eq!(
+            stop.next_capture.action,
+            "capture_memory_before_instruction"
+        );
+        assert_eq!(stop.next_capture.addr, Some(0x7000));
+    }
+}
+
+#[test]
+fn new_writes_after_boundary_restore_only_the_bytes_they_cover() {
+    let states = [
+        record(0x1000, 0xd4000001, 65, 0x7000),
+        record(0x1004, 0xf9000020, 65, 0x7000),
+        record(0x1008, 0xf9400020, 65, 0x7000),
+        record(0x100c, 0xd503201f, 65, 0x7000),
+    ];
+    let (_tmp, trace, mem) = fixture(&states, "{}");
+    let out = replay_trace(&trace, &mem, 2, 1).unwrap();
+    assert_eq!(out.status, "matched", "{:?}", out.stop);
+    assert_eq!(out.independent_memory_bytes, 8);
+    let mut partial = states;
+    partial[1].inst = 0x39000020; // strb supplies just one byte
+    let (_tmp, trace, mut mem) = fixture(&partial, "{}");
+    mem.snapshot = Some(MemSnapshot {
+        regions: vec![SnapRegion {
+            base: 0x7000,
+            perms: 1,
+            data: 65u64.to_le_bytes().to_vec(),
+        }],
+    });
+    assert_eq!(
+        replay_trace(&trace, &mem, 2, 1)
+            .unwrap()
+            .stop
+            .unwrap()
+            .reason,
+        ReplayReason::UnknownMemory
+    );
+}
+
+#[test]
+fn memory_lookback_is_bounded_and_keeps_recent_independent_stores() {
+    let mut states: Vec<_> = (0..MAX_REPLAY_RECORDS + 3)
+        .map(|idx| record(0x1000 + idx as u64 * 4, 0xd503201f, 65, 0x7000))
+        .collect();
+    states[0].inst = 0xf9000020;
+    states[MAX_REPLAY_RECORDS + 1].inst = 0xf9400020;
+    let (_tmp, trace, mem) = fixture(&states, "{}");
+    let out = replay_trace(&trace, &mem, MAX_REPLAY_RECORDS + 1, 1).unwrap();
+    assert_eq!(out.stop.unwrap().reason, ReplayReason::UnknownMemory);
+    states[MAX_REPLAY_RECORDS].inst = 0xf9000020;
+    let (_tmp, trace, mem) = fixture(&states, "{}");
+    assert_eq!(
+        replay_trace(&trace, &mem, MAX_REPLAY_RECORDS + 1, 1)
+            .unwrap()
+            .status,
+        "matched"
+    );
+}
+
+#[test]
+fn independently_captured_external_bytes_after_boundary_can_supply_a_load() {
+    let (tmp, trace, _) = fixture(
+        &[
+            record(0x1000, 0xd4000001, 65, 0x7000),
+            record(0x1004, 0xd503201f, 65, 0x7000),
+            record(0x1008, 0xf9400020, 65, 0x7000),
+            record(0x100c, 0xd503201f, 65, 0x7000),
+        ],
+        "{}",
+    );
+    let mut external = Vec::new();
+    for (offset, byte) in 65u64.to_le_bytes().into_iter().enumerate() {
+        external.extend(1u64.to_le_bytes());
+        external.extend((0x7000u64 + offset as u64).to_le_bytes());
+        external.push(byte);
+    }
+    std::fs::write(tmp.path().join("external_writes.bin"), external).unwrap();
+    let mem = MemShadow::load_or_build(&trace);
+    let out = replay_trace(&trace, &mem, 2, 1).unwrap();
+    assert_eq!(out.status, "matched", "{:?}", out.stop);
+    assert_eq!(out.independent_memory_bytes, 8);
+}
+
+#[test]
+fn a_call_to_the_adjacent_instruction_is_not_an_excluded_callee() {
+    for inst in [0x94000001, 0xd63f0100] {
+        // bl PC+4; blr x8 with x8=PC+4
+        let mut before = record(0x1000, inst, 0, 0);
+        before.regs[8] = 0x1004;
+        let mut after = before;
+        after.pc = 0x1004;
+        after.inst = 0xd503201f;
+        after.regs[30] = 0x1004;
+        let (_tmp, trace, mem) = fixture(&[before, after], "{}");
+        let out = replay_trace(&trace, &mem, 0, 1).unwrap();
+        assert_eq!(out.status, "matched", "inst={inst:x}: {:?}", out.stop);
+        assert_eq!(out.checked, 1);
+    }
+}

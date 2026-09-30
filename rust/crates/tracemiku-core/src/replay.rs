@@ -6,6 +6,7 @@ use crate::trace::{Record, Trace};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+mod memory;
 mod semantics;
 
 pub const MAX_REPLAY_RECORDS: usize = 10_000;
@@ -92,7 +93,7 @@ fn stop(
     let (action, explanation) = match fault.reason {
         ReplayReason::UnknownMemory => (
             "capture_memory_before_instruction",
-            "采集读取地址在指令执行前的字节；load 输出不能充当独立输入证据。",
+            "采集读取地址在指令执行前的字节；load 输出、跨未知执行边界的旧快照或旧写入不能充当独立输入证据。",
         ),
         ReplayReason::SimdStateUnavailable => (
             "capture_simd_state",
@@ -170,8 +171,10 @@ pub fn replay_trace(
             "每条指令重新锚定真实 pre-state；匹配不证明完整函数、未观测路径或高级 IL 正确。".into(),
             "存储只推演有效地址、写回和寄存器后状态；未独立验证实际设备内存写入。".into(),
             "内存 oracle 只采用之前的 store/外部写和初始快照；不包含未采集的其他线程写入。".into(),
+            format!("内存证据最多向前回看 {} 条连续且语义已支持的指令；更早来源或未知边界前的值视为未知。", memory::MAX_INPUT_LOOKBACK),
         ],
     };
+    let inputs = memory::MemoryInputs::new(trace, mem, start);
     for idx in start..start + effective_count {
         let rec = trace.record(idx);
         let decoded = decode(rec.pc, rec.inst);
@@ -191,10 +194,13 @@ pub fn replay_trace(
             Some(ReplayReason::TraceGap)
         } else if idx + 1 >= trace.len() {
             Some(ReplayReason::MissingPostState)
-        } else if decoded.is_call && trace.pc(idx + 1) == rec.pc.wrapping_add(4) {
-            Some(ReplayReason::ExcludedCall)
         } else if crate::trace::evidence::expected_next_pc(&rec).is_none() {
             Some(ReplayReason::UnsupportedInstruction)
+        } else if decoded.is_call
+            && trace.pc(idx + 1) == rec.pc.wrapping_add(4)
+            && crate::trace::evidence::expected_next_pc(&rec) != Some(trace.pc(idx + 1))
+        {
+            Some(ReplayReason::ExcludedCall)
         } else if trace.post_record(idx).is_none() {
             Some(ReplayReason::TraceGap)
         } else {
@@ -212,7 +218,7 @@ pub fn replay_trace(
             break;
         }
         let mut reads = 0;
-        let predicted = match semantics::run(rec, mem, idx, &mut reads) {
+        let predicted = match semantics::run(rec, &inputs, idx, &mut reads) {
             Ok(predicted) => predicted,
             Err(fault) => {
                 report.stop = Some(stop(rec, idx, fault, None, None, None));

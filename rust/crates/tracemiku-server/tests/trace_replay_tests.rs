@@ -75,3 +75,51 @@ async fn replay_rejects_empty_and_out_of_range_queries() {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
+
+#[tokio::test]
+async fn replay_reports_stale_memory_after_syscall_as_missing_evidence() {
+    let (_tmp, cd) = fixture(0xd4000001, 65);
+    let mut records = Vec::new();
+    for (idx, inst) in [0xf9000020, 0xd4000001, 0xf9400020, 0xd503201f]
+        .into_iter()
+        .enumerate()
+    {
+        let mut rec = Record::zero(0x1000 + idx as u64 * 4);
+        rec.inst = inst;
+        rec.regs[0] = 65;
+        rec.regs[1] = 0x7000;
+        records.push(rec);
+    }
+    let mut raw = Vec::new();
+    for rec in records {
+        raw.extend(rec.pc.to_le_bytes());
+        for value in rec.regs {
+            raw.extend(value.to_le_bytes());
+        }
+        raw.extend(rec.sp.to_le_bytes());
+        raw.extend(rec.nzcv.to_le_bytes());
+        raw.extend(rec.inst.to_le_bytes());
+    }
+    std::fs::write(cd.join("trace.bin"), raw).unwrap();
+    std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+    let response = tracemiku_server::build_router(cd)
+        .unwrap()
+        .oneshot(
+            Request::builder()
+                .uri("/api/trace-replay?start=2&count=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "stopped");
+    assert_eq!(json["checked"], 0);
+    assert_eq!(json["stop"]["reason"], "unknown_memory");
+    assert_eq!(json["stop"]["next_capture"]["addr"], 0x7000);
+    assert_eq!(json["stop"]["next_capture"]["size"], 8);
+}
