@@ -225,8 +225,9 @@ def cmd_trace(args):
         print("[!] Frida 回传暂不支持 child race-attach；请使用 --child-trace-mode off", file=sys.stderr)
         return 2
     max_calls = getattr(args, "max_calls", 64)
-    if not 1 <= max_calls <= 1024 or not 1 <= args.max_records <= PULL_MAX_BYTES // REC_SIZE:
-        print("[!] max_calls 必须在 1..1024；max_records 必须在 1..8GiB/272", file=sys.stderr)
+    # max_records=0 表示不限条数(agent 侧按 ring 容量自然封顶), 不设人为上限。
+    if not 1 <= max_calls <= 1024 or not (0 <= args.max_records <= PULL_MAX_BYTES // REC_SIZE):
+        print("[!] max_calls 必须在 1..1024；max_records 必须在 0..8GiB/272 (0=不限)", file=sys.stderr)
         return 2
     host_plugin = HostPlugin(profile["host_plugin"]) if profile and profile["host_plugin"] else None
     plugin_results = []
@@ -1006,6 +1007,9 @@ def cmd_trace(args):
         **({"cmdArg": args.cmd_arg} if args.cmd is not None else {}),
         **({"cmdValue": args.cmd} if args.cmd is not None else {}),
         "maxRecords": args.max_records,
+        # ring 容量: 显式指定 --ring-recs, 或按 max_records 自动放大
+        "ringRecs": (args.ring_recs if getattr(args, "ring_recs", None)
+                     else (args.max_records * 2 if args.max_records else 0)),
         "maxCalls": max_calls,
         "targetPlugins": profile["agent_plugins"] if profile else [],
         "followWorkers": bool(getattr(args, "follow_workers", False)),
@@ -1949,6 +1953,9 @@ def main():
                            "捕获目标 SO 各段 + 可读 rw-/匿名/堆区. 见 docs/memory-completeness-design.md.")
     p_tr.add_argument("--snapshot-max-mb", type=int, default=512, dest="snapshot_max_mb",
                       help="--snapshot-mem 的字节预算上限 (MB), 默认 512. 保护设备不被大快照拖垮.")
+    p_tr.add_argument("--ring-recs", type=int, default=0,
+                      help="Stalker ring 容量(条, 默认由 --max-records 推导; "
+                           "上限 4194304 ≈ 1.14GB)。窗口被静默截断时用它放大")
     p_tr.add_argument("--max-records", type=int, default=5000000)
     p_tr.add_argument("--pull-after-session-end", action="store_true",
                       help="等采集会话结束再拉取 (默认每个 call 结束立刻拉: 被 trace 的"

@@ -9,7 +9,7 @@
  */
 
 import {
-    STATE, RING_BYTES, RING_RECS, SIMD_RING_BYTES, SIMD_RING_RECS,
+    STATE, RING_RECS, ringBytes, setRingRecs, SIMD_RING_BYTES, SIMD_RING_RECS,
     SIMD_REC_SIZE, FLUSH_INTERVAL_MS, InitOptions
 } from "./core/state";
 import { log, getExport } from "./core/utils";
@@ -408,12 +408,18 @@ rpc.exports = {
         const maxR = (opts.maxRecords != null && opts.maxRecords > 0) ? opts.maxRecords : 0;
         STATE.maxRecords = maxR;
 
+        // ring 容量: 优先用 opts.ringRecs, 否则取 maxRecords 的 2 倍留出余量,
+        // 都不给则用默认。百万级指令的目标必须显式放大, 否则窗口会被静默截断。
+        const wantRecs = (opts as any).ringRecs > 0 ? (opts as any).ringRecs
+                         : (maxR > 0 ? maxR * 2 : 0);
+        const effRecs = wantRecs > 0 ? setRingRecs(wantRecs) : RING_RECS;
+
         // Allocate SPSC ring buffers
-        STATE.ringBuf = Memory.alloc(RING_BYTES);
+        STATE.ringBuf = Memory.alloc(ringBytes());
         STATE.headBuf = Memory.alloc(8); STATE.headBuf.writeU64(0);
         STATE.tailBuf = Memory.alloc(8); STATE.tailBuf.writeU64(0);
         STATE.droppedBuf = Memory.alloc(8); STATE.droppedBuf.writeU64(0);
-        STATE.ringRecsBuf = Memory.alloc(8); STATE.ringRecsBuf.writeU64(RING_RECS);
+        STATE.ringRecsBuf = Memory.alloc(8); STATE.ringRecsBuf.writeU64(effRecs);
         STATE.maxRecordsBuf = Memory.alloc(8); STATE.maxRecordsBuf.writeU64(maxR);
 
         if (STATE.simdSidecar) {
@@ -425,7 +431,7 @@ rpc.exports = {
             STATE.simdStrideBuf = Memory.alloc(8); STATE.simdStrideBuf.writeU64(STATE.simdSampleStride);
         }
 
-        log(`[*] traceMiku agent (modular) SPSC lock-free, ring=${(RING_BYTES / 1024 / 1024).toFixed(1)}MB ` +
+        log(`[*] traceMiku agent (modular) SPSC lock-free, ring=${(ringBytes() / 1024 / 1024).toFixed(1)}MB/${effRecs}recs ` +
             `(${RING_RECS} recs), flush=${FLUSH_INTERVAL_MS}ms, pkg=${STATE.pkg}, ` +
             `simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"}, ` +
             `workers=${STATE.followWorkers ? STATE.maxWorkerThreads : "off"}`);

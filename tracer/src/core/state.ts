@@ -3,8 +3,17 @@
  */
 
 export const REC_SIZE = 272;
-export const RING_RECS = 65536;               // ~17.6 MB
-export const RING_BYTES = REC_SIZE * RING_RECS;
+/** ring 容量默认值；initOpts.ringRecs 可在运行时下调/上调（硬上限 4M 条 ≈ 1.09 GB）。 */
+export const DEFAULT_RING_RECS = 65536;        // ~17.8 MB
+export const MAX_RING_RECS = 4194304;          // ~1.14 GB
+/** 生效值：init() 时按 opts.ringRecs 设定。 */
+export let RING_RECS = DEFAULT_RING_RECS;
+export function setRingRecs(n: number): number {
+    const v = Math.max(1024, Math.min(MAX_RING_RECS, Math.floor(n)));
+    RING_RECS = v;
+    return v;
+}
+export function ringBytes(): number { return REC_SIZE * RING_RECS; }
 export const WORKER_RING_RECS = 8192;         // ~2.1 MB per optional worker
 export const WORKER_RING_BYTES = REC_SIZE * WORKER_RING_RECS;
 export const SIMD_REC_SIZE = 8 + 32 * 16;     // trace_idx:u64 + q0..q31 = 520
@@ -134,6 +143,8 @@ export interface InitOptions {
     cmdArg?: number | null;
     maxRecords?: number | null;
     pkg?: string | null;
+    /** SPSC ring 容量(条)。不设则由 maxRecords 推导, 都没有则用 65536。 */
+    ringRecs?: number | null;
     /** host 预建的 trace 目录; 必须避开 app 私有 cache (app 退出时会被清理) */
     traceDir?: string | null;
     includeSoPatterns?: string[];

@@ -322,5 +322,37 @@
     15
    ]
   }
+ },
+ "full_trace": {
+  "run": "traces/FULL/calls/call_001_tid4643_8154376r_5949ms",
+  "records": 8154376,
+  "bytes": 2217990272,
+  "ms": 5949,
+  "rec_per_sec": 1370714,
+  "dropped": 0,
+  "is_complete": true,
+  "last_insn_is_ret": true,
+  "truncated": false,
+  "module_base": "0x74c02f9000",
+  "cmd": "--max-records 0 (不限) --ring-recs 4194304 --max-calls 1",
+  "finding": "完整覆盖单次 70102 调用; ring 循环复用, 记录数(8.15M)远超 ring 容量(4.19M)",
+  "key_name_access": {
+   "assembly_region": "模块偏移 0x1b1870-0x1b193c",
+   "keys_in_tail": {
+    "x-mini-wua": 240,
+    "x-umt": 240,
+    "x-sgext": 240,
+    "x-sign": 240,
+    "x-pipu1": 0,
+    "x-us": 0,
+    "wua": 0,
+    "x-gst": 0
+   },
+   "note": "前 4 个键在尾部(idx>7.14M)各出现 240 次且共用同一段代码, 即结果 HashMap 装配循环;x-sign 键地址作为参数传入 0x1453cc 的函数 (读 [x20+8] 与 [x20+0xc] 做比较)",
+   "early_region": "idx 602-1590 为键名解码阶段(avg_getSecurityFactors 262 次)"
+  },
+  "blr_dispatch_in_full_trace": {
+   "pending": "待用完整 trace 重新提取 0x555cc 的全部分发"
+  }
  }
 }

@@ -317,3 +317,56 @@ Stalker 上限 65536），载荷生产逻辑在窗口之外。`--max-records` �
 - **新增**：在二进制中定位到 RC4（含 drop-N）实现、MD5/SHA padding 常量页、
   base64 查表，以及 588 处常量页引用点与 14 个 RC4 调用者清单。
 - 未变：明文生产逻辑仍需设备。
+
+
+## 2.10 完整 trace（设备恢复后重采，815 万条，`is_complete=True`）
+
+按「不设捕获上限」的要求重采：
+
+```bash
+./tracemiku trace --pkg <pkg> --spawn --so libsgmainso \
+  --method doCommandNative --cmd 70102 --cmd-arg 2 --remote 127.0.0.1:27099 \
+  --transport frida --out traces/FULL --duration 120 \
+  --max-calls 1 --max-records 0 --ring-recs 4194304
+```
+
+结果：
+
+```
+records = 8,154,376     bytes = 2,217,990,272     ms = 5,949
+rec_per_sec = 1,370,714     dropped = 0
+last_asm = ret     last_insn_is_ret = true     is_complete = true     truncated = false
+```
+
+**ring 是循环复用的暂存缓冲**（消费端每 10ms 落盘），因此记录数（8.15M）可以远超 ring 容量（4.19M）。
+要拿到完整调用，正确的组合是 `--max-records 0`（不设上限）+ 足够大的 `--ring-recs` 吸收 IO 抖动，
+而不是调小 `--max-records`（那会主动截断调用）。
+
+### 完整 trace 带来的新结论
+
+对 8,154,376 条全量扫描寄存器（31 GPR）后：
+
+| 区域 | 现象 |
+|---|---|
+| idx 602..1590 | 键名解码阶段（`avg_getSecurityFactors` 262 次；`x-pipu1`/`x-us`/`wua`/`x-gst` 只在此出现） |
+| idx > 7,140,000（尾部 8.15M） | **结果装配区**：`x-mini-wua`/`x-umt`/`x-sgext`/`x-sign` 各出现 **240 次**，且**共用同一段代码 0x1b1870–0x1b193c** |
+
+- 装配区对 4 个键走同一条路径 → 是同一个「键 + 值」写入循环。
+- `x-sign` 键地址被作为参数传入 `0x1453cc` 的函数：
+  ```asm
+  0x1453cc  stp x29,x30,[sp,#-0x30]!
+  0x1453dc  mov  x20, x0        ; x0 = 目标结构
+  0x1453e8  mov  x19, x1        ; x1 = "x-sign" 键地址
+  0x1453f0  ldr  w21,[x20,#8]    ; 读一个 32 位字段
+  0x1453f8  ldr  w8, [x20,#0xc]
+  0x1453fc  cmp  w21, w8
+  ```
+- 之前「窗口内 0 命中键名」的结论**只对 24000 条的小窗口成立**；完整 trace 下键名在尾部
+  大量出现，说明装配确实在调用末尾——现在有完整数据可继续回溯。
+
+剩余工作（用这份完整 trace 即可完成，不再需要重新采集）：
+1. 用 `coverage` / `call-tree` 覆盖 0x1b1870–0x1b193c 的装配循环；
+2. 找出「值」侧：x-sign 对应的 base64 字符串缓冲地址（`--snapshot-mem` 或在装配点对寄存器
+   指向的堆区做 `mem-dump`）；
+3. 沿 `x-sign` 的值反向 `taint-bwd` 回溯到请求缓冲，判定 10 字节 nonce 是
+   `Enc(key, H(INPUT))` 还是含随机掩模。
