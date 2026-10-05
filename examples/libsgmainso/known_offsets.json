@@ -254,6 +254,73 @@
    "chain": "0x57b60 -> (混淆跳转) 0x57c24 -> bl 0x553d8 -> bl 0x54c10 -> 运行时命令表 -> blr@0x555cc -> 0x4e5f0 -> bl 0x13688c -> blr [x0+0x10]",
    "offline_decoder_note": "自建 trace 解码器已用 ./tracemiku records 逐条校验: pc@0, inst@268, regs[i]@8+8i; blr 寄存器在 bits[9:5]",
    "requirement": "trace 需 --max-records 60000+ (ring 65536) 才能覆盖真实 handler"
+  },
+  "five_generators": {
+   "dispatch": "blr x8 @ 0x555cc in sub_54c10; 之后直接 ret, 即尾调用",
+   "generators": [
+    {
+     "offset": "0x97010",
+     "w2": 32,
+     "w3": 12,
+     "calls": 1
+    },
+    {
+     "offset": "0x62968",
+     "w2": 31,
+     "w3": 3,
+     "calls": 1
+    },
+    {
+     "offset": "0x72cc4",
+     "w2": 8,
+     "w3": 2,
+     "calls": 1,
+     "pages": [
+      "0xe4000",
+      "0x33a000"
+     ]
+    },
+    {
+     "offset": "0x965c0",
+     "w2": 32,
+     "w3": 9,
+     "calls": 1,
+     "pages": [
+      "0x360000",
+      "0x25f000",
+      "0xbe000",
+      "0x24d000",
+      "0xba000"
+     ],
+     "note": "引用 0x25f000 加密数据块区, 最可能走 VM"
+    },
+    {
+     "offset": "0x60340",
+     "w2": 31,
+     "w3": 15,
+     "calls": 1
+    }
+   ],
+   "shared_loader": {
+    "offset": "0x4e5f0",
+    "calls": 4,
+    "args_same": true,
+    "note": "幂等, 非生成器"
+   },
+   "count_match": "5 个各调用一次 <-→ 5 个输出参数, 一一对应",
+   "correction": "5 个生成器是模块内固定地址(静态可分析); 只有共享 loader 0x4e5f0 的 [x0+0x10] 是运行时指针",
+   "w2_values": [
+    8,
+    31,
+    32
+   ],
+   "w3_values": [
+    2,
+    3,
+    9,
+    12,
+    15
+   ]
   }
  }
 }
