@@ -215,6 +215,20 @@
    "corroboration": "设备侧 app_SGLib/.utask_64/<id>/52@24 约 200KB VM 任务块",
    "implication": "70102 载荷生产疑被 AVMP 风格字节码保护; 解释器通用, 数据流仍可用 taint 追踪, 但需先定位 dispatch 循环",
    "next_step": "设备上对 VM dispatch 做 trace + coverage 拿解释器块集合, 再 taint 请求缓冲->输出缓冲"
+  },
+  "jni_dispatch_chain": {
+   "entry": "doCommandNative @ 0x57b60",
+   "derive": "(s64)cmd*0x68db8bad -> /10000; cmd%10000; (int16)*0x147b; >>19 => w1; (s64)cmd*0x51eb851f -> /100; cmd%100 => w2",
+   "cmd_70102": {
+    "w1": 1,
+    "w2": "cmd%100 = 2",
+    "w8_raw": "(int16)(102)*0x147b = 534786"
+   },
+   "next": "bl 0x553d8  (x0=sp+0x28, x1=w1, x2=w2, x3=1, x4=sp+0x28, x5=sp+0x24)",
+   "stage2": "0x553d8: bl 0x54b70(self,4) 初始化 -> 取全局 [0x2c73b0] -> bl 0x1b18d0 -> bl 0x54c10(x0=表项, w1, w2, w3, 0, sp+0x40)",
+   "core": "sub_54c10 @ 0x54c10: 以 w23(=w1) 为 id 在**运行时命令表** x26 中线性查找 (元素首 int == id), 未命中走 index 分支 ((w23*10000 + w21*100 + w20)*10000 + 0x26b0)",
+   "conclusion": "70102 的实际处理函数是**运行时注册表里的函数指针**, 静态不可解析 —— 这解释了 ghidra 在该区域无法形成函数、也无法反编译; 只能靠 trace 观测 bl/blr 的实际目标",
+   "obfuscation": "多处「ldrsw 字面量 + sub/eor/mvn + add -> br xN」的常量跳转, 目的: 让静态反汇编看不出真实控制流。已逐个解出 (0x57be4->0x57c24, 0x5542c->0x55460, 0x54c64->0x54c98)"
   }
  }
 }
