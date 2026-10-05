@@ -208,6 +208,13 @@
    "取执行偏移集合与 14 个 RC4 调用者求交, 定位 RC4 使用点",
    "对命中调用者做 coverage + call-tree, 找写 76 字节缓冲的循环 (w1=0x4c)",
    "taint-bwd 回溯, 判断 nonce 是否 = RC4(key, H(请求))"
-  ]
+  ],
+  "avmp_hypothesis": {
+   "evidence": "0x25000 是 4KB 页; 0x25400-0x25f00 为大块随机字节, 588 处 adrp 引用中最高频的 24 个偏移几乎全在该区间",
+   "hot_cluster": "0x05da80..0x05e79c (99 refs)",
+   "corroboration": "设备侧 app_SGLib/.utask_64/<id>/52@24 约 200KB VM 任务块",
+   "implication": "70102 载荷生产疑被 AVMP 风格字节码保护; 解释器通用, 数据流仍可用 taint 追踪, 但需先定位 dispatch 循环",
+   "next_step": "设备上对 VM dispatch 做 trace + coverage 拿解释器块集合, 再 taint 请求缓冲->输出缓冲"
+  }
  }
 }
