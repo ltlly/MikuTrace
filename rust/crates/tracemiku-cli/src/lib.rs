@@ -1510,6 +1510,7 @@ pub async fn run() -> anyhow::Result<()> {
             let params = vec![("max", max.to_string()), ("max_len", max_len.to_string())];
             route_get_json(trace_dir, route_path("/api/jni-strings", &params)).await
         }
+        Some(Cmd::Finalize { path }) => cmd_finalize(&path),
         None => {
             eprintln!("run with --help to list Rust v2 CLI commands");
             Ok(())
@@ -1540,5 +1541,19 @@ fn print_pretty(value: &serde_json::Value) -> anyhow::Result<()> {
         serde_json::to_string(value)?
     };
     println!("{s}");
+    Ok(())
+}
+
+/// `finalize` 的唯一语义实现来自 core；CLI 只做参数解析与序列化。
+fn cmd_finalize(path: &std::path::Path) -> anyhow::Result<()> {
+    use tracemiku_core::trace::finalize::finalize_run;
+    let report = finalize_run(path)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report.pending > 0 {
+        eprintln!(
+            "[!] {} 个 call 缺少本地 trace.bin, 保持 pending; 设备数据就绪后重跑 finalize",
+            report.pending
+        );
+    }
     Ok(())
 }

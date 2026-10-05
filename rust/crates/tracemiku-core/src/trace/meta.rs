@@ -45,6 +45,11 @@ pub enum MetaError {
     UnsupportedFormatVersion { found: u32, expected: u32 },
     #[error("unsupported trace record_size {found}; expected {expected}")]
     UnsupportedRecordSize { found: usize, expected: usize },
+    #[error(
+        "调用元数据尚未完成: {path} 缺少 records;\
+         若 trace.bin 已落盘, 先执行 `./tracemiku finalize <run>` 再重试"
+    )]
+    RecordsUnresolved { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -74,15 +79,18 @@ impl ModuleInfo {
 /// Per-call meta.json fields we consume.
 #[derive(Debug, Clone, Deserialize)]
 struct PerCallMetaRaw {
-    pub records: u64,
+    /// `null` 表示 host 侧尚未落定（例如拉取失败），不是 0。
+    /// 缺 `records` 时给出可读恢复提示，而不是 serde 类型错误。
+    pub records: Option<u64>,
     #[serde(default)]
     pub format_version: Option<u32>,
     #[serde(default)]
     pub record_size: Option<usize>,
     #[serde(default)]
     pub truncated: bool,
+    /// 缺失/显式 `null` 都归一为「未知」，不参与 bool 反序列化。
     #[serde(default)]
-    pub last_insn_is_ret: bool,
+    pub last_insn_is_ret: Option<bool>,
     #[serde(default)]
     pub fork_events: Vec<serde_json::Value>,
 }
@@ -147,7 +155,9 @@ pub struct TraceMeta {
     pub fn_addr: Option<String>,
     pub regs: &'static [&'static str],
     pub truncated: bool,
-    pub last_insn_is_ret: bool,
+    /// 三值语义：`Some(false)` 末指令不是 ret，`Some(true)` 是 ret，
+    /// `None` 未知（缺失或显式 null）。未知不得折叠成 false。
+    pub last_insn_is_ret: Option<bool>,
     pub fork_events: Vec<serde_json::Value>,
 }
 
@@ -213,9 +223,15 @@ impl TraceMeta {
             (None, None) => vec![],
         };
 
+        let records = per_call
+            .records
+            .ok_or_else(|| MetaError::RecordsUnresolved {
+                path: per_call_path.display().to_string(),
+            })?;
+
         Ok(TraceMeta {
             path: call_dir.display().to_string(),
-            records: per_call.records,
+            records,
             format_version,
             record_size,
             module,

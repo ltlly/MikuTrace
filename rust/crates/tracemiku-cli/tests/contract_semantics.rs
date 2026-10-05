@@ -102,4 +102,13 @@ fn capabilities_lock_output_contract() {
         .collect();
     assert!(names.contains(&"output-backtrace"));
     assert!(names.contains(&"vm-ops"));
+    let capture = &value["capture_extensions"];
+    assert_eq!(capture["command"], "trace");
+    assert_eq!(capture["profile_argument"], "--target-profile");
+    assert_eq!(capture["transport_argument"], "--transport");
+    assert_eq!(capture["call_limit_argument"], "--max-calls");
+    assert_eq!(capture["transports"], serde_json::json!(["frida", "adb"]));
+    assert_eq!(capture["agent_plugin_api_version"], 1);
+    assert_eq!(capture["host_plugin_api_version"], 1);
+    assert_eq!(capture["trusted_code_only"], true);
 }

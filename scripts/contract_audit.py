@@ -18,7 +18,8 @@ SVR = REPO / "rust" / "crates" / "tracemiku-server" / "tests"
 # CLI command families -> contract test file that must exist and contain tests.
 # Keys are command names from args.rs; values are test files (no suffix).
 CLI_COVERAGE: dict[str, list[str]] = {
-    "capabilities": ["contract_basic"],
+    "capabilities": ["contract_basic", "contract_semantics"],
+    "finalize": ["contract_basic"],
     "completions": ["contract_completions"],
     "stats": ["contract_basic"],
     "meta": ["contract_basic"],

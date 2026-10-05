@@ -26,6 +26,7 @@ import {
     unfollowWorkerThreads,
     releaseWorkerTraces,
     workerTraceSummaries,
+    finalizeActiveCall,
 } from "./core/ring";
 import { applyExcludesOnce, buildIncludeRanges, createTransform } from "./core/stalker";
 import { flushSimdRingToDisk } from "./sidecar/simd";
@@ -36,6 +37,13 @@ import { installForkHooksOnce, flushForkEvents } from "./hooks/fork_monitor";
 import { installPthreadFollowOnce, flushWorkerEvents } from "./hooks/pthread_follow";
 import { refreshWritableRanges, flushExtWriteEvents } from "./hooks/boundary_diff";
 import { BUILTIN_PLUGINS } from "./anti_detect/plugin_interface";
+import { installSpoolTransport } from "./transport/spool";
+import { installTargetPlugins, runTargetPlugins, invokeTargetPlugin } from "./target_plugins";
+
+installSpoolTransport(STATE);
+let acceptingCalls = true;
+let maxCalls = 64;
+let callLimitReported = false;
 
 // ─────────── RegisterNatives fallback ────────
 
@@ -91,11 +99,25 @@ function hookRegisterNatives(onResolved: (fp: NativePointer) => void): boolean {
 function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
     Interceptor.attach(fp, {
         onEnter(args) {
+            if (!acceptingCalls || STATE.callIdx >= maxCalls) {
+                (this as any)._skip = true;
+                if (acceptingCalls && !callLimitReported) {
+                    callLimitReported = true;
+                    send({ type: "capture-limit", resource: "calls", limit: maxCalls });
+                }
+                return;
+            }
             if (STATE.cmdValue != null && STATE.cmdArg != null) {
                 const c = args[STATE.cmdArg!].toInt32();
                 if (c !== STATE.cmdValue) { (this as any)._skip = true; return; }
             }
             if (STATE.fnEntered) { (this as any)._skip = true; return; }
+            try { runTargetPlugins("beforeTrace", { args, tid: this.threadId, address: fp }); }
+            catch (e) {
+                (this as any)._skip = true;
+                log(`[target-plugin][!] trace refused: ${e}`);
+                return;
+            }
             STATE.fnEntered = true;
             STATE.callFinalized = false;
             (this as any)._tid = this.threadId;
@@ -241,6 +263,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
 // ─────────── Target resolution and arming ───────────────────────────────────
 
 function armWithModule(m: Module, onInsn: NativePointer): void {
+    runTargetPlugins("onModule", { module: m });
     STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
     log(`[+] target ${m.name} base=${m.base} end=${m.base.add(m.size)}`);
     send({ type: "module", name: m.name, base: m.base.toString(), size: m.size, pid: Process.id });
@@ -324,6 +347,9 @@ rpc.exports = {
         if (STATE.fnOffset == null && !STATE.exportName && !STATE.methodName) {
             throw new Error("init: must provide fnOffset OR exportName OR methodName");
         }
+        installTargetPlugins((opts as any).targetPlugins || []);
+        maxCalls = (opts as any).maxCalls ?? 64;
+        if (!Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > 1024) throw new Error("maxCalls must be in 1..1024");
 
         // Anti-detect config
         STATE.suicidePatchSpec = (opts as any).suicidePatchSpec || null;
@@ -334,6 +360,8 @@ rpc.exports = {
         if (opts.cmdValue !== undefined) STATE.cmdValue = opts.cmdValue!;
         if (opts.cmdArg !== undefined) STATE.cmdArg = opts.cmdArg!;
         STATE.pkg = opts.pkg || null;
+        // host 预建的 trace 目录: 优先于 app 私有 cache (后者随 app 退出被清理)
+        if (opts.traceDir) STATE.traceDir = opts.traceDir;
         STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns) ? opts.includeSoPatterns : [];
         STATE.deepTrace = !!opts.deepTrace;
         STATE.traceAll = !!opts.traceAll;
@@ -455,6 +483,14 @@ rpc.exports = {
         flushRingToDisk("force");
         flushWorkerTraceRings("force");
         flushSimdRingToDisk("force");
+        return "ok";
+    },
+
+    pluginCall(id: string, payload: any) { return invokeTargetPlugin(id, payload); },
+    disposePlugins() { runTargetPlugins("dispose"); return "ok"; },
+    stopCapture() {
+        acceptingCalls = false;
+        if (STATE.fnEntered && !STATE.callFinalized) finalizeActiveCall("host-stop");
         return "ok";
     },
 

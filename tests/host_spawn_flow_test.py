@@ -260,9 +260,13 @@ def test_duplicate_trace_end_finalizes_once(frida_mock, tmp_path, monkeypatch):
     call_dirs = [d for d in calls_dir.iterdir() if d.is_dir()]
     # 只有第一个 trace-end (truncated=true) 产生目录; 第二个被忽略, 无幽灵 _dup 目录
     assert len(call_dirs) == 1
-    assert call_dirs[0].name.startswith("_truncated_call_001")
+    # 目录名统一 call_<序号>_tid<线程>_<记录数>r_<耗时>ms; 截断只由 meta.truncated 表达
+    assert call_dirs[0].name.startswith("call_001_tid111_")
+    cm = json.loads((call_dirs[0] / "meta.json").read_text())
+    assert cm["truncated"] is True
     top_meta = json.loads((tmp_path / "run" / "meta.json").read_text())
     assert len(top_meta["calls"]) == 1
+    assert top_meta["calls"][0]["truncated"] is True
 
 
 def test_pending_call_dir_reuse_clears_stale_files(frida_mock, tmp_path, monkeypatch):
@@ -291,3 +295,95 @@ def test_pending_call_dir_reuse_clears_stale_files(frida_mock, tmp_path, monkeyp
     for f in final_dir.iterdir():
         if f.is_file():
             assert "STALE_FROM_PREVIOUS_RUN" not in f.read_text(errors="replace")
+
+
+def test_frida_four_calls_transfer_before_unload_without_adb_subprocess(frida_mock, tmp_path, monkeypatch):
+    """四个实际协议回传在 unload 前结束；Stalker 后不再调用 adb shell。"""
+    mod = _load_tracemiku()
+    _device, script = frida_mock
+    monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
+    rpc = _FakeRpc(script)
+    rpc.stop_capture = lambda: "ok"
+    rpc.dispose_plugins = lambda: "ok"
+    monkeypatch.setattr(FakeScript, "exports_sync", property(lambda self: rpc))
+    record = bytearray(272)
+    record[:8] = (0x1000).to_bytes(8, "little")
+    record[268:] = (0xD503201F).to_bytes(4, "little")
+    binary = bytes(record) * 10
+    state = {"reads": 0, "closed": 0, "loaded": False}
+    original_load = script.load
+
+    def load():
+        state["loaded"] = True
+        original_load()
+
+    def post(message):
+        assert not script.unloaded
+        p = message["payload"]
+        response = {"type": "spool-response", "op": p["op"], "id": p["id"]}
+        data = None
+        if p["op"] == "open":
+            response["size"] = len(binary)
+        elif p["op"] == "read":
+            response["offset"] = p["offset"]
+            data = binary[p["offset"]:p["offset"] + p["count"]]
+            state["reads"] += 1
+        elif p["op"] == "close":
+            state["closed"] += 1
+        script.message_cb({"type": "send", "payload": response}, data)
+
+    def unload():
+        assert state["closed"] == 4
+        script.unloaded = True
+
+    def adb_run(*args, **kwargs):
+        assert not state["loaded"], "加载 agent 后不能通过 adb subprocess 传输/诊断/停止 app"
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(script, "load", load)
+    monkeypatch.setattr(script, "post", post, raising=False)
+    monkeypatch.setattr(script, "unload", unload, raising=False)
+    monkeypatch.setattr(mod.subprocess, "run", adb_run)
+    for i in range(1, 5):
+        script.messages += [
+            ({"type": "trace-begin", "callIdx": i, "tid": 111, "ts": i,
+              "devicePath": f"/spool/trace_{i}.bin"}, None),
+            ({**_trace_end_payload(i, total=10), "devicePath": f"/spool/trace_{i}.bin"}, None),
+        ]
+    assert mod.cmd_trace(_args(tmp_path, transport="frida")) == 0
+    assert state["reads"] == 4 and script.unloaded
+    bins = list((tmp_path / "run" / "calls").glob("call_*/trace.bin"))
+    assert len(bins) == 4
+    for path in bins:
+        assert path.read_bytes() == binary
+        meta = json.loads((path.parent / "meta.json").read_text())
+        assert meta["records"] == 10 and meta["bytes"] == len(binary)
+        assert meta["first_pc"] == "0x1000"
+
+
+def test_frida_transfer_failure_retains_manifest_and_pending(frida_mock, tmp_path, monkeypatch):
+    mod = _load_tracemiku()
+    _device, script = frida_mock
+    monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
+    rpc = _FakeRpc(script)
+    rpc.stop_capture = lambda: "ok"
+    rpc.dispose_plugins = lambda: "ok"
+    monkeypatch.setattr(FakeScript, "exports_sync", property(lambda self: rpc))
+
+    def post(message):
+        p = message["payload"]
+        if p["op"] != "cancel":
+            script.message_cb({"type": "send", "payload": {
+                "type": "spool-response", "id": p["id"], "op": p["op"], "error": "disconnected",
+            }}, None)
+
+    monkeypatch.setattr(script, "post", post, raising=False)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""))
+    script.messages = [({**_trace_end_payload(), "devicePath": "/spool/trace_1.bin"}, None)]
+    assert mod.cmd_trace(_args(tmp_path, transport="frida")) == 2
+    pending = tmp_path / "run" / "calls" / "_pending_call_001"
+    meta = json.loads((pending / "meta.json").read_text())
+    assert meta["records"] is None
+    assert meta["devicePath"] == "/spool/trace_1.bin"
+    assert "disconnected" in meta["pull_error"]
+    assert not (pending / "trace.bin").exists()

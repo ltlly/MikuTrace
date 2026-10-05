@@ -1448,4 +1448,9 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 128)]
         max_len: usize,
     },
+    /// Repair per-call meta.json from trace.bin and normalize call directory names.
+    Finalize {
+        /// Run directory (contains calls/).
+        path: PathBuf,
+    },
 }

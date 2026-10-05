@@ -177,7 +177,16 @@ function probeDirWritable(dir: string): boolean {
 
 /** Ensure trace dir exists, with fallbacks for attach-pid mode */
 export function ensureTraceDir(): void {
-    if (STATE.traceDir) return;
+    // host 预建的目录: 已由 host 建好并 chmod, 这里只探测可写性。
+    // 不可写必须回退, 不能带着一个写不出去的路径继续 (否则 trace 静默为 0 条)。
+    if (STATE.traceDir) {
+        if (probeDirWritable(STATE.traceDir)) {
+            log(`[+] trace dir (host) = ${STATE.traceDir}`);
+            return;
+        }
+        log(`[!] host 指定目录不可写: ${STATE.traceDir}, 回退默认位置`);
+        STATE.traceDir = null;
+    }
 
     // Try multiple methods to get package name
     if (!STATE.pkg) {
@@ -221,9 +230,23 @@ export function ensureTraceDir(): void {
         return;
     }
 
-    // Primary location: app private cache (no permission issues)
+    // Host-provided dir wins: app 私有 cache 会在 app 退出时被清理, 拉取窗口极窄。
+    if (STATE.traceDir) {
+        const hostDir = STATE.traceDir;
+        const rc0 = mkdir(Memory.allocUtf8String(hostDir), 0o777) as unknown as number;
+        if ((rc0 === 0 || rc0 === -1) && probeDirWritable(hostDir)) {
+            STATE.traceDir = hostDir;
+            log(`[+] trace dir (host) = ${STATE.traceDir}`);
+            return;
+        }
+        log(`[!] host 指定目录不可写 (mkdir rc=${rc0}), 回退默认位置`);
+    }
+
+    // 应用私有 files；不依赖 host root mkdir、不使用容易被清理的 cache。
     if (STATE.pkg !== "unknown") {
-        const primaryDir = `/data/data/${STATE.pkg}/cache/.miku`;
+        const parentDir = `/data/data/${STATE.pkg}/files/.miku`;
+        mkdir(Memory.allocUtf8String(parentDir), 0o700);
+        const primaryDir = `${parentDir}/session_${Process.id}_${Date.now()}`;
         const result = mkdir(Memory.allocUtf8String(primaryDir), 0o755) as unknown as number;
         // mkdir rc=-1 兼 EEXIST 与 EPERM — 必须实际写入探测, 不可写则降级 fallback
         if ((result === 0 || result === -1) && probeDirWritable(primaryDir)) {
@@ -290,7 +313,7 @@ const RING_FULL_FINALIZE_HEARTBEATS = 5;
  * 强制终结当前 call: unfollow + flush + 关文件 + sidecar 事件 + trace-end(truncated).
  * maxRecords / watchdog / 环满降级三条路径共用. 置 callFinalized 防 onLeave 重复发 trace-end.
  */
-function finalizeActiveCall(reason: string): void {
+export function finalizeActiveCall(reason: string): void {
     try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
     unfollowWorkerThreads();
     try { Stalker.flush(); } catch (_) {}

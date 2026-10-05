@@ -21,6 +21,18 @@ pub(super) fn capabilities_json() -> serde_json::Value {
             "preferred_interface": "specialized commands; api is a fallback only"
         },
         "commands": commands,
+        "capture_extensions": {
+            "command": "trace",
+            "implementation": "host",
+            "profile_argument": "--target-profile",
+            "profile_schema_version": 1,
+            "transport_argument": "--transport",
+            "transports": ["frida", "adb"],
+            "call_limit_argument": "--max-calls",
+            "agent_plugin_api_version": 1,
+            "host_plugin_api_version": 1,
+            "trusted_code_only": true
+        },
     })
 }
 

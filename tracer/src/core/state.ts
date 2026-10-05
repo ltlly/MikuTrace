@@ -134,6 +134,8 @@ export interface InitOptions {
     cmdArg?: number | null;
     maxRecords?: number | null;
     pkg?: string | null;
+    /** host 预建的 trace 目录; 必须避开 app 私有 cache (app 退出时会被清理) */
+    traceDir?: string | null;
     includeSoPatterns?: string[];
     deepTrace?: boolean;
     traceAll?: boolean;
@@ -215,6 +217,7 @@ export interface AgentState {
     primaryTid: number;
     traceFile: any | null;
     traceFilePath: string | null;
+    /** trace 输出目录; host 可通过 initOpts.traceDir 指定以避开 app 私有 cache */
     traceDir: string | null;
     lastTotal: number;
     stuckSecs: number;

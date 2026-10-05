@@ -1,0 +1,96 @@
+{
+ "target": "libsgmainso-6.8.260602.so",
+ "app": "com.aliyun.tongyi",
+ "app_version": "7.3.6.3039 (versionCode 70306)，md5 ccf7ad2bf8dea184cf91223c3790ddec",
+ "app_apk_sha256": "(见 notes，7.3.6 由 25pp 分发，md5 已校验)",
+ "sg_version": "6.8.260602",
+ "device": "OPD2404 / Android 16 (SDK 36) / arm64-v8a / KernelSU",
+ "mtop_appkey": "34394984",
+ "mtop_env": 0,
+ "notes": "so 在磁盘上 ELF 头与段表被破坏（readelf: no .dynamic section in the dynamic segment），本文所有偏移均相对「运行时解密后内存镜像」的模块基址，即 file offset == module-relative vaddr。",
+ "entry_point": {
+  "jni_class": "com.taobao.wireless.security.adapter.JNICLibrary",
+  "jni_method": "doCommandNative",
+  "jni_signature": "public static native java.lang.Object doCommandNative(int, java.lang.Object...)",
+  "jni_signature_expected": "(JNIEnv*, jclass, jint cmd, jobjectArray args) -> x0=env, x1=clazz, w2=cmd, x3=args",
+  "class_container": "lib/arm64/libsgmain.so",
+  "class_container_note": "该 .so 不是 ELF，是 zip；内含 classes.dex（58 个类）。SG 插件类不在 APK dex 内，由 PathClassLoader 从这里加载。",
+  "java_caller": "com.alibaba.wireless.security.mainplugin._u434.doCommand(int, Object[]) -> JNICLibrary.doCommandNative",
+  "router_impl_runtime_class": "6.8 起 ISGPluginManager 为动态代理；取 router 需枚举 classloader 找 DexPathList 含 libsgmain.so 的那个"
+ },
+ "cmd_70102": {
+  "meaning": "统一安全因子生成（unified sign）：一次产出 x-sign / x-mini-wua / x-sgext / x-umt / wua",
+  "java_call_site": "com/alibaba/wireless/security/middletierplugin/_u434/_u432/_u430.java:314（getSecurityFactors）；6.8 在 70102 前新增 doCommand(70103,[bizId])，整块在 synchronized 内",
+  "public_api": "com.alibaba.wireless.security.open.middletier.IUnifiedSecurityComponent.getSecurityFactors(HashMap)",
+  "mtop_entry": "mtopsdk.security.InnerSignImpl.getUnifiedSign -> InnerProtocolParamBuilderImpl.buildParams 消费返回 map 的 x-sign/wua/x-mini-wua/x-umt/x-sgext",
+  "args": [
+   "appkey (String)",
+   "data (String) = mtop canonical INPUT",
+   "useWua (Boolean)",
+   "env (int) 0=prod 1=prepare 2=test",
+   "api (String)",
+   "extendParas (String) urlencoded k=v&k=v",
+   "authCode (String) 可为 null",
+   "signKey (String)",
+   "miniWua (String)",
+   "requestId (String)",
+   "bizId (int)",
+   "flag (int)"
+  ],
+  "returns": "java.util.HashMap，键为 x-sign / x-mini-wua / x-sgext / x-umt / wua",
+  "input_layout": "utdid&uid&reqbiz-ext&appKey&md5(data)&t&api&v&sid&ttid&deviceId&lat&lng&extdata&x-features&accessToken*8&open-biz-data",
+  "input_layout_source": "mtopsdk.security.InnerSignImpl.convertInnerBaseStrMap(map, appKey, true)",
+  "useWua_false_effect": "返回 map 中没有 wua 键",
+  "unknown_appkey_effect": "appKey=12574478 抛 com.alibaba.wireless.security.open.SecException，native 侧查表校验",
+  "app_state_note": "千问 5.0.6 运行时 mUnifiedSign 与 IMiddleTierGenericComponent 均为 null，SwitchConfig.getUseSecurityAdapter()==6（bit4 未开），app 自身从不触发 70102；当前全部向量由 Frida 直接调用 native 构造。"
+ },
+ "decrypted_image": {
+  "source": "6.8 的 libsgmainso 磁盘 ELF 头有效，但仍需运行时镜像；本文件尚未记录 6.8 的分段 dump 结果",
+  "status": "pending"
+ },
+ "known_strings_in_image": [
+  {
+   "value": "JNI_OnLoad",
+   "kind": "dynstr"
+  },
+  {
+   "value": "com.taobao.taobao:channel",
+   "kind": "rodata 明文"
+  },
+  {
+   "value": "ch_rm_minilibc",
+   "kind": "rodata 明文"
+  },
+  {
+   "value": ".rmminilibc",
+   "kind": "rodata 明文"
+  },
+  {
+   "value": "/storage/com.taobao.main",
+   "kind": "rodata 明文"
+  }
+ ],
+ "other_plugins": [
+  {
+   "container": "lib/arm64/libsgmain.so",
+   "is": "zip",
+   "classes_dex_size": 254108,
+   "notes": "6.8 起 mainplugin 与 middletierplugin 合并进同一个容器（213 个类）；libsgmainso 不再有 middletier/securitybody 独立容器"
+  }
+ ],
+ "runtime_artifacts": {
+  "app_SGLib/app_1791178262": "SG 热更新插件目录，出现在 router classloader 的 nativeLibraryDirectories 中",
+  ".mwua": "89 字节，wua 缓存",
+  ".utask_64/<id>/52@24": "约 200KB 二进制块，疑似 AVMP/VM 化任务数据",
+  "SG_INNER_DATA_AVMP": "492 字节"
+ },
+ "open_questions": [
+  "x-sign 76 字节中 26..69（44 字节）是设备/会话常量，除 env 与 miniWua 外与 12 个入参全部无关（6.8 单进程单字段差分，29 组）。",
+  "偏移 11..21 的 11 字节每调用全变：可能是纯随机，也可能是 MAC(请求)^随机掩码。黑盒无法区分，必须在 native 侧定位填充函数。",
+  "偏移 9 的低基数字节、偏移 21 与计数器的 +0x20 关系（6.6）、68..75 计数器初值的播种源，均未定位。",
+  "0x00000183（387）语义未确定。",
+  "6.8 的 x-sgext 明文含 MyProcessor^offset^length 与 MySecurityKeyLow，疑似 offset/length 三元组结构，未分析。",
+  "70102 的实际执行模块（libsgmainso vs AVMP 匿名映射）尚未动态确认；6.8 的 libsgmainso 磁盘 ELF 头有效但仍需运行时解密镜像。"
+ ],
+ "app_state_note": "千问 7.3.6.3039 运行时 mUnifiedSign 与 IMiddleTierGenericComponent 均为 null，SwitchConfig.getUseSecurityAdapter()==6（bit4 未开），且启动停在登录页；app 自身到不了 70102，全部向量由 Frida 直接调用 native 构造。"
+}

@@ -366,6 +366,49 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 
 ## 18. tools/ 与 examples/
 
+### 每个 app 的目标描述与可信插件
+
+`trace` 可加载用户自己的 JSON 目标描述、普通 JS agent 模块和 Python host 模块，
+无需改项目源码或重新编译用户脚本。脱敏示例在 `examples/custom_target/`，没有真实
+目标偏移或检测补丁；复制到自己的目录并填写自己的 SO/入口/命令号。
+
+```bash
+./tracemiku trace --target-profile examples/custom_target/target.json --out traces/demo
+# 显式 CLI 参数覆盖 profile：例如切换到已经启动的进程
+./tracemiku trace --target-profile /path/to/my/target.json --attach-pid 1234 --out traces/new
+./tracemiku trace --pkg com.example.demo --so libdemo.so --export demo_entry \
+  --transport frida --max-calls 4 --out traces/raw
+```
+
+- `target`：`pkg/so/method/export/fn_offset/cmd/cmd_arg`；`fn_offset` 是十六进制字符串。
+  `capture` 提供采集参数默认值；未知字段、错误类型、缺失脚本、重复插件 ID 都报错，
+  不静默跳过。相对 JS/Python/JNI spec 路径按 JSON 所在目录解析。
+- `agent_plugins`：最多 8 个 `{id,path,config}`。普通 JS 用 `module.exports` 导出
+  `apiVersion: 1`；扩展点是同步 `install/onModule/beforeTrace/dispose`，上下文含
+  `config` 和有界 `emit`；`onModule` 还含 `module`，`beforeTrace` 含 `args/tid/address`。
+  可选 `invoke(ctx)` 由 host 的 `script.exports_sync.plugin_call(id,payload)` 调用。
+  原生 Frida API 可用；不自动提供 Java bridge。异步/Java 触发器须由用户显式管理。
+- `host_plugin`：一个 `{path,config}`，Python 模块声明 `API_VERSION = 1`；扩展点
+  为 `prepare(ctx)`、`on_ready(ctx)`、`finish(ctx)`。`prepare` 在 attach 前，`on_ready`
+  在 init/resume 后，`finish` 在 Frida 回传后、unload 前。上下文含 `args/config`，
+  后两者还含 `script/session/pid`；`on_ready` 含 `device`。返回值写到 run meta。
+  目前 host 的 `finish` 只在 Frida 回传模式调用。
+- 两类插件都是**可信任的任意代码，不是沙箱**。不要加载不可信文件。单文件最多
+  1MiB、config/host 返回值最多 64KiB；agent 事件最多 200 条、每条 16KiB。
+  Python 生命周期等待上限 30 秒；超时采集失败，但 Python 线程不能强杀。
+  JS 生命周期要求同步；无法抢占恶意或卡死的 JS/native hook。
+- Frida 回传的窗口为 1，二进制块最多 256KiB、文件最多 8GiB、单文件总时限
+  180 秒、会话排空最多 900 秒；目录中未封口文件拒绝回传。成功 `.part` 原子提交，
+  失败保留 pending 和设备源 spool，退出码 2；不会自动退回 adb shell。
+  设备 spool 保留在 app 的 `files/.miku/`，成功也不删除；用户自行管理磁盘。
+- 该能力绕过的是 **adb subprocess 回传路径**，不是已证实的通用反检测补丁。
+  app 自杀、内核挂死、Frida 断线仍会失败；需要恢复时按 pending `meta.json` 的
+  `devicePath` 手工取回对应 `trace.bin`，再执行 `./tracemiku finalize <run>`。
+  Frida 模式暂不支持 child race-attach，且不启动 adb child lifecycle poll。
+
+机器发现信息在 `./tracemiku capabilities` 的 `capture_extensions`；参数上限和默认值
+以 `./tracemiku trace --help` 为准。无插件时仍支持原来的 CLI 目标参数。
+
 | 文件 | 用途 | 备注 |
 |---|---|---|
 | `tools/native_sign_hooks_v4.js` | Frida 脚本：native 签名 SO hook 事件 | |

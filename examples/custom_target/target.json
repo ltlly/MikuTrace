@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "target": {
+    "pkg": "com.example.demo",
+    "so": "libdemo.so",
+    "export": "demo_entry"
+  },
+  "capture": {
+    "max_records": 6000,
+    "duration": 60,
+    "jni_hooks": "none"
+  },
+  "transport": "frida",
+  "agent_plugins": [
+    {"id": "demo", "path": "agent.js", "config": {"enabled": true}}
+  ],
+  "host_plugin": {"path": "host.py", "config": {"message": "demo-ready"}}
+}

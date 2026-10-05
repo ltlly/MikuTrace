@@ -12,6 +12,7 @@ FRONTEND_AUDITS := scripts/frontend_resource_audit.py \
 # tracemiku_{fork,device,diag}.py 被 tracemiku 模块级（或运行期）导入，
 # py_compile 不跟随导入，必须逐个编译。
 PY_CHECKS := tracemiku tracemiku_fork.py tracemiku_device.py tracemiku_diag.py \
+    tracemiku_transport.py tracemiku_target.py \
 	$(FRONTEND_AUDITS) \
 	scripts/_static_audit.py \
 	scripts/rust_cli_web_parity.py scripts/rust_web_smoke.py \
@@ -19,7 +20,8 @@ PY_CHECKS := tracemiku tracemiku_fork.py tracemiku_device.py tracemiku_diag.py \
 	scripts/device_trace_integration.py tools/vm_replay_plan_eval.py \
 	examples/llm_cookbook.py scripts/contract_audit.py
 
-HOST_TESTS := tests/host_trace_helpers_test.py tests/host_spawn_flow_test.py
+HOST_TESTS := tests/host_trace_helpers_test.py tests/host_spawn_flow_test.py \
+             tests/host_device_link_test.py tests/host_plugins_transport_test.py
 
 .PHONY: help fmt lint test test-v2 test-fast test-device smoke-web smoke-ui webui clean test-contract py-compile frontend-audits host-tests
 
@@ -33,10 +35,22 @@ help:
 	@echo "make smoke-web RUN=<trace_dir> [SMOKE_ARGS='--all-surfaces']"
 	@echo "make smoke-ui BASE=<url> [UI_SMOKE_ARGS='--browser chromium']"
 	@echo "make webui RUN=<trace_dir> [PORT=18900]"
+	@echo "make agent     - build tracer/_agent.js (frida agent)"
 	@echo "make clean     - rm local caches/build outputs"
 
 fmt:
 	cd rust && $(CARGO) fmt
+
+# Frida agent 构建。必须用 lockfile 装依赖并显式走本地 node_modules:
+# 缺依赖时 PATH 上的全局 frida-compile 会解析到不匹配的 @types/frida-gum,
+# 报出一堆与本仓库无关的 TS 错误。frida 包有 install script, npm 默认会拦,
+# 需要 npm rebuild frida 生成 frida_binding.node。
+agent:
+	cd tracer && npm install
+	cd tracer && npm rebuild frida
+	cd tracer && npm run build
+	@test -s tracer/_agent.js || { echo "tracer/_agent.js 未产出"; exit 1; }
+	@echo "agent ok: $$(wc -c < tracer/_agent.js) bytes"
 
 lint:
 	@if command -v uv >/dev/null 2>&1; then \
@@ -68,6 +82,7 @@ test-v2: py-compile frontend-audits host-tests
 	$(PYTHON) scripts/rust_cli_web_parity.py --debug-bin
 
 test-fast: py-compile frontend-audits host-tests
+	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd rust && $(CARGO) test -p tracemiku-cli
 
@@ -81,6 +96,7 @@ test-contract:
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/external_writes_contract_test.ts
+	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
 	$(PYTHON) scripts/rust_cli_web_parity.py --debug-bin
 
 test-device:
