@@ -353,6 +353,26 @@
   },
   "blr_dispatch_in_full_trace": {
    "pending": "待用完整 trace 重新提取 0x555cc 的全部分发"
+  },
+  "result_assembly": {
+   "put_site": {
+    "pc": "0x0cd288",
+    "insn": "blr x8",
+    "args": {
+     "x0": "0x70bf881d40 (HashMap)",
+     "x1": "\"x-sign\" 键地址",
+     "x2": "0x70e28f1f80 (值指针 = base64 字符串)"
+    },
+    "key_load": "0x0cd280 adrp x9,#0x2cb000 / 0x0cd284 add x1,x9,#0xa7d",
+    "value_load": "0x0cd278 ldr x2,[sp,#0x2a0]"
+   },
+   "value_pointer_first_seen": {
+    "addr": "0x70e28f1f80",
+    "idx": 8148494,
+    "loaded_at": "0x144690 ldr x9,[x20] (从结构体取出)",
+    "context": "0x144648..0x1446a0 为一个容器填充例程, 末尾 bl 0x1b1ad0"
+   },
+   "next_step": "沿 x2 的来源(结构体字段)继续回溯到 76 字节载荷缓冲的写入点, 再判定 nonce 是否含请求内容"
   }
  }
 }
