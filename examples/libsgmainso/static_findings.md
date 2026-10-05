@@ -231,6 +231,53 @@ first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整�
 **下一步（设备）**：对 5 个生成器分别 `coverage` + `mem-dump`，把输出缓冲与
 `x-sign`/`wua` 等键名对应起来（生成器返回的 HashMap 条目），再对命中者做 `taint-bwd`。
 
+## 2.8 窗口边界与「结果组装」的位置（离线分析的终点）
+
+时间线（单次 70102 调用，trace idx）：
+
+```
+   137..12553   sub_54c10 主循环
+   477..1189    键名解码（sub_54b70 尾调用 9 次）→ 写入 0x2cba64..0x2cba9b
+                x-mini-wua 0x2cba64 / x-umt 0x2cba6f / x-sgext 0x2cba75 / x-sign 0x2cba7d
+                x-pipu1 0x2cba84 / x-us 0x2cba8c / wua 0x2cba93 / x-gst 0x2cba97
+                avg_getSecurityFactors 0x2cba9b
+   6611..23999  5 个生成器依次执行（见 §2.7）
+   >24000       结果 HashMap 的组装（超窗口）
+```
+
+**离线能做的已经做完**，原因有三条硬证据：
+
+1. 5 个生成器在窗口内**都没有持有任何键名地址**（逐寄存器扫过 31 个 GPR × 各生成器区间，
+   0 命中）——说明「键 → 值」的装配发生在窗口之后。
+2. 生成器 E（`0x60340`）拿到 12320 条记录仍未返回，热点是 `0x17c680` 处
+   **16 条指令的循环、执行 71 次**，且循环体内是 `br x5` 尾调用（状态机式逐字节处理，
+   不是普通 base64 编码器）。
+3. 输出缓冲在堆上，trace 的 memshadow 不覆盖 → 离线无法 `mem-dump` 载荷。
+
+## 2.9 设备恢复后的精确执行清单
+
+```bash
+# 1) 一次 trace 覆盖整次调用（ring 上限 65536）
+./tracemiku trace --pkg <pkg> --spawn --so libsgmainso   --method doCommandNative --cmd 70102 --cmd-arg 2 --remote 127.0.0.1:27099   --transport frida --out traces/full --duration 60 --max-records 65000
+
+# 2) 确认窗口覆盖到结果组装：sub_54c10 的 blr 次数应 >= 10 且生成器区间延伸到 trace 末尾
+# 3) 对 5 个生成器分别取覆盖与块集合
+for g in 0x97010 0x62968 0x72cc4 0x965c0 0x60340; do
+  ./tracemiku resolve traces/full/calls/<call> --addr $((BASE+g))   # 拿绝对地址
+  ./tracemiku coverage traces/full/calls/<call> --addr <abs>
+done
+
+# 4) 用 watch --kind mem-touch 在每个生成器的输出缓冲上设观察点，
+#    再 taint-bwd 回溯到请求缓冲，判定 nonce 是否 = Enc(key, H(INPUT))
+# 5) 用 mem-dump 读出 x-sign 的 76 字节缓冲，验证与 test_vectors.json 的黑盒结论一致
+```
+
+已就绪的离线资产（无需重新摸索）：
+- 5 个生成器地址 + `(w2,w3)` 指纹（`known_offsets.json` 的 `five_generators`）
+- JNI 分发链与常量跳转解法（`static_findings.md` §2.6）
+- 键名运行时地址表（§2.8）
+- 自建 trace 解码器（校验过的字段布局，`inst@268`、`blr` 寄存器在 bits[9:5]）
+
 ## 3. 字符串混淆形态
 
 - 字符串多以**编码字节**存放（如 `0x12309b` 处是 `f0 22 85 2f 91 69 0d`），由运行时解码器还原。
