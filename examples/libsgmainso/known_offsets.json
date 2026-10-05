@@ -92,5 +92,44 @@
   "6.8 的 x-sgext 明文含 MyProcessor^offset^length 与 MySecurityKeyLow，疑似 offset/length 三元组结构，未分析。",
   "70102 的实际执行模块（libsgmainso vs AVMP 匿名映射）尚未动态确认；6.8 的 libsgmainso 磁盘 ELF 头有效但仍需运行时解密镜像。"
  ],
- "app_state_note": "千问 7.3.6.3039 运行时 mUnifiedSign 与 IMiddleTierGenericComponent 均为 null，SwitchConfig.getUseSecurityAdapter()==6（bit4 未开），且启动停在登录页；app 自身到不了 70102，全部向量由 Frida 直接调用 native 构造。"
+ "app_state_note": "千问 7.3.6.3039 运行时 mUnifiedSign 与 IMiddleTierGenericComponent 均为 null，SwitchConfig.getUseSecurityAdapter()==6（bit4 未开），且启动停在登录页；app 自身到不了 70102，全部向量由 Frida 直接调用 native 构造。",
+ "trace_findings": {
+  "trace_run": "traces/real1 (SG 6.8.260602 / 千问 7.3.6.3039, transport=frida, 4 calls x 6000 recs)",
+  "module_base_in_trace": "0x743b898000",
+  "output_key_strings": {
+   "note": "70102 返回 HashMap 的键字面量, 在 rodata 连续排布, 偏移相对模块基址",
+   "x-mini-wua": "0x2cba64",
+   "x-umt": "0x2cba6f",
+   "x-sgext": "0x2cba75",
+   "x-sign": "0x2cba7d",
+   "x-pipu1": "0x2cba84",
+   "x-us": "0x2cba8c",
+   "wua": "0x2cba93",
+   "x-gst": "0x2cba97",
+   "avg_getSecurityFactors": "0x2cba9b"
+  },
+  "decode_loop": {
+   "pc": "0x743b8eca68",
+   "offset": "0x54a68",
+   "function": "sub_54b70 (0x54b70)",
+   "exec_count": 3,
+   "first_idx": 550,
+   "last_idx": 1129,
+   "formula": "dst[i] = src2[i] ^ (src1[i] - key)   (key=0x81, step w4=4, 本次长度 w1=5)",
+   "tail_call_caller": {
+    "pc": "0x743b964541",
+    "offset": "0xcc541",
+    "caller_fn": "sub_cc4f4 (0xcc4f4)",
+    "dst": "0x743bb639e5 (off 0x2c9e5)",
+    "src1": "0x743b8bc3412 (off 0x2cb412, .rodata)",
+    "src2": "0x743b8bc618 (off 0x2c4618, .rodata)",
+    "key": "0x81",
+    "len": 5,
+    "step": 4
+   },
+   "verdict": "sub_54b70 是**字符串常量解码器**: 输入全部来自 .rodata 常量区, 不含运行时请求数据。它解出的明文就是 strings 扫到的那批输出键名 (x-sign/x-mini-wua/x-umt/x-sgext/wua/x-pipu1/x-us/x-gst)以及内部名 avg_getSecurityFactors。find-mem-pattern 命中 'x-sign' 于 idx=936 即该 strb 所在指令。",
+   "open": "尚未定位解码 76 字节 x-sign **载荷**的那个循环 (长度 76, 与本次 len=5 不同); 需要继续在 trace 中定位 w1=0x4c(=76) 或写入 76 字节缓冲区的调用点, 再判别其 src 是否读入请求缓冲。"
+  },
+  "implication": "载荷并非'每调用全随机'。观察到的 2 字节交替掩码 (n[i]=b[i]^b[74+(i&1)]) 就是这个解码循环的简化形式: 掩码字节随 (src1,key) 变化, 所以看起来逐调用不同; 归一化后 26..69 恒定说明那段明文是设备/会话常量。未决: src1/src2 是否包含请求内容。"
+ }
 }
