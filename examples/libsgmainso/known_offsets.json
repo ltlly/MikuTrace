@@ -131,5 +131,83 @@
    "open": "尚未定位解码 76 字节 x-sign **载荷**的那个循环 (长度 76, 与本次 len=5 不同); 需要继续在 trace 中定位 w1=0x4c(=76) 或写入 76 字节缓冲区的调用点, 再判别其 src 是否读入请求缓冲。"
   },
   "implication": "载荷并非'每调用全随机'。观察到的 2 字节交替掩码 (n[i]=b[i]^b[74+(i&1)]) 就是这个解码循环的简化形式: 掩码字节随 (src1,key) 变化, 所以看起来逐调用不同; 归一化后 26..69 恒定说明那段明文是设备/会话常量。未决: src1/src2 是否包含请求内容。"
+ },
+ "static_analysis": {
+  "tool": "ghidra-cli (Ghidra 12.1.4), project sg68, 1819 functions auto-detected",
+  "note": "so 的 section header 被剥, Ghidra 只在 0x1xxxx-0x25xxx 识别函数; 0x4e000-0x1b2000 未被识别为函数",
+  "rc4": {
+   "fn": "FUN_00254ee4",
+   "offset": "0x254ee4",
+   "formula": "KSA: j = j + S[i] + key[i % keylen]; PRGA: out = S[(S[i]+S[j])&0xff] ^ *key",
+   "drop_n": "param_5 -> i - (i/drop)*drop == i % drop",
+   "callers": [
+    "0x254cec",
+    "0x2651c4",
+    "0x263418",
+    "0x2635e8",
+    "0x2636d0",
+    "0x2a0108",
+    "0x2a0270",
+    "0x2a04c8",
+    "0x2a0630",
+    "0x2a5e2c",
+    "0x2a58c8",
+    "0x2a59ac",
+    "0x2a5f8c",
+    "0x2a5528"
+   ]
+  },
+  "constant_page_0x25000": {
+   "refs_by_adrp": 588,
+   "md5_padding@0x25080": "0123456789abcdeffedcba9876543210",
+   "hash_round_consts": [
+    "0x25010",
+    "0x25020",
+    "0x25030",
+    "0x25060",
+    "0x25070",
+    "0x25090"
+   ],
+   "base64_like_tables": [
+    "0x25040",
+    "0x25050",
+    "0x250a0",
+    "0x250b0",
+    "0x250c0",
+    "0x250d0",
+    "0x250e0",
+    "0x250f0"
+   ],
+   "hottest_code_clusters": {
+    "0x05da80..0x05e79c": 99,
+    "0x05eb20..0x05efa0": 37,
+    "0x071034..0x071494": 30,
+    "0x05cacc..0x05d06c": 24,
+    "0x06a494..0x06a704": 19,
+    "0x058490..0x058658": 17
+   }
+  },
+  "trace_window": {
+   "calls": 4,
+   "records_each": 24000,
+   "unique_offsets": "5160-5166",
+   "offset_range": "0x4e5f0..0x1b206c",
+   "hit": {
+    "doCommandNative": 51,
+    "sub_54b70": 252,
+    "sub_cc4f4": 268
+   },
+   "miss": {
+    "rc4_FUN_00254ee4": 0,
+    "rc4_callers": 0
+   },
+   "conclusion": "4 份 trace 只覆盖 70102 调用的开头窗口, 载荷生产在窗口外; --max-records 需提到 60000+"
+  },
+  "next_step_with_device": [
+   "re-trace with --max-records 65536 (ring 上限) 并放宽 duration",
+   "取执行偏移集合与 14 个 RC4 调用者求交, 定位 RC4 使用点",
+   "对命中调用者做 coverage + call-tree, 找写 76 字节缓冲的循环 (w1=0x4c)",
+   "taint-bwd 回溯, 判断 nonce 是否 = RC4(key, H(请求))"
+  ]
  }
 }

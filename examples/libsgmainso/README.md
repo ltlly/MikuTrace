@@ -13,6 +13,7 @@
 | `xsign_codec.py` | x-sign 编解码参考实现，`--selftest` 对全部向量做载荷级往返校验 |
 | `xparams_format.md` | 五个输出参数（x-sign / x-mini-wua / x-sgext / x-umt / wua）的结构、编码层与「能否离线生成」判定 |
 | `xparams_codec.py` | 五个参数统一编解码 + 一致性自检 |
+| `static_findings.md` | 6.8 so 的静态分析结果：RC4 实现、常量页、字符串混淆形态、trace 窗口量化 |
 | `test_vectors.json` | 135 组真值向量（`oracle_vectors` 76 / `diff_vectors` 29 / `fixed_vectors` 30），每组带完整 12 个入参 |
 | `fr_session.py` | Frida 会话驱动（Python API + 显式注入 java bridge + 可选 adb UI 驱动） |
 | `diff_probe.js` | 单字段差分探针（70102 定点调用） |
