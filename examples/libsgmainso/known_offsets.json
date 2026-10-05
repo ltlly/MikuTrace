@@ -229,6 +229,31 @@
    "core": "sub_54c10 @ 0x54c10: 以 w23(=w1) 为 id 在**运行时命令表** x26 中线性查找 (元素首 int == id), 未命中走 index 分支 ((w23*10000 + w21*100 + w20)*10000 + 0x26b0)",
    "conclusion": "70102 的实际处理函数是**运行时注册表里的函数指针**, 静态不可解析 —— 这解释了 ghidra 在该区域无法形成函数、也无法反编译; 只能靠 trace 观测 bl/blr 的实际目标",
    "obfuscation": "多处「ldrsw 字面量 + sub/eor/mvn + add -> br xN」的常量跳转, 目的: 让静态反汇编看不出真实控制流。已逐个解出 (0x57be4->0x57c24, 0x5542c->0x55460, 0x54c64->0x54c98)"
+  },
+  "handler_70102": {
+   "offset": "0x4e5f0",
+   "evidence": "resolve exec_count=4 (first_idx 2630, last 5581) 与 4 次 70102 调用一一对应; 亦为 trace 最小执行偏移",
+   "kind": "lazy-init stub",
+   "stub": {
+    "init_flag": "0x2c72e0",
+    "const_block": "0x1b6248 (24 字节)",
+    "init_fn": "0x13688c",
+    "real_handler_ptr": "[x0+0x10] —— 运行时函数指针, 静态不可达",
+    "call_args": "w0=1, w1=0x1e, w2=1, w3=0, x4=sp+0x10, x5=sp+0xc"
+   },
+   "dispatch_site": "0x555cc (blr x8) in sub_54c10, exec_count=10",
+   "other_targets": {
+    "0xcc4f4": "字符串解码器",
+    "0x97010": 1,
+    "0x62968": 1,
+    "0x72cc4": 1,
+    "0x965c0": 1,
+    "0x60340": 1,
+    "0x1abd00": 1
+   },
+   "chain": "0x57b60 -> (混淆跳转) 0x57c24 -> bl 0x553d8 -> bl 0x54c10 -> 运行时命令表 -> blr@0x555cc -> 0x4e5f0 -> bl 0x13688c -> blr [x0+0x10]",
+   "offline_decoder_note": "自建 trace 解码器已用 ./tracemiku records 逐条校验: pc@0, inst@268, regs[i]@8+8i; blr 寄存器在 bits[9:5]",
+   "requirement": "trace 需 --max-records 60000+ (ring 65536) 才能覆盖真实 handler"
   }
  }
 }

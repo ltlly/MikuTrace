@@ -142,6 +142,49 @@ for (i = 0; ; i++) { p = base[i]; if (*(int*)p == w23) { found = p; break; } }
 - 为什么静态反汇编毫无进展——目标根本不在静态可达路径上；
 - 唯一可行的定位手段是 trace：**观测 `sub_54c10` 里那个 `blr` 的实际目标地址**。
 
+## 2.6 完整定位链（trace + capstone 交叉确认，设备断开期间完成）
+
+自建离线 trace 解码器（已用工具输出逐条校验：idx 0/1 的反汇编与 `./tracemiku records` 完全一致；
+`pc` 在记录偏移 0，`inst` 在偏移 268，`regs[i]=x_i` 在偏移 `8+8i`；注意 `blr` 的寄存器在
+bits[9:5] 而非 bits[4:0]）扫描出全部 `blr`，与 `./tracemiku resolve` 交叉验证：
+
+```
+doCommandNative  0x57b60
+  └─ [常量跳转混淆] → 0x57c24
+     bl 0x553d8   (x0=sp+0x28, x1=1, x2=cmd%100, x3=1, x4=sp+0x28, x5=sp+0x24)
+        ├─ bl 0x54b70(自身, 4)          字符串常量解码器, 一次性初始化
+        ├─ 取全局 [0x2c73b0]; bl 0x1b18d0
+        └─ bl 0x54c10(表项, w1=1, w2=2, w3, 0, sp+0x40)      exec_count=11
+              └─ 以 w1(=1) 为 id 在**运行时命令表**线性查找
+                 blr x8 @ 0x555cc        exec_count=10   ← 分发点
+                    ├─→ 0xcc4f4    (字符串解码器, 1 次)
+                    ├─→ 0x4e5f0    ★ 4 次 = 4 次 70102 调用
+                    ├─→ 0x97010 / 0x62968 / 0x72cc4 / 0x965c0 / 0x60340  (各 1 次, 其它子命令)
+                    └─→ 0x1abd00   (1 次)
+```
+
+**`libsgmainso+0x4e5f0` 就是 70102 的 handler**（`resolve` 确认 exec_count=4，
+first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整个 trace 的最小执行偏移）。
+
+而 0x4e5f0 本身只是一个 **lazy-init stub**：
+
+```asm
+0x4e5f0  sub sp,sp,#0x50 ... ldrb w9,[0x2c72e0] ; tbnz -> 已初始化则直接跳 0x4e660
+0x4e618  x10 = 0x1b6248 ; str wzr,[sp,#0xc] ; strb 1,[0x2c72e0]      ; 置初始化标记
+0x4e62c  ldr q0,[x10] ; ldr x10,[x10,#0x10] ; str q0,[sp,#0x10] ; str x10,[sp,#0x20]
+0x4e63c  bl  0x13688c                      ; ★ 一次性初始化(AVMP 装载)
+0x4e640  ldr x8,[x0,#0x10]                 ; ★ 从返回结构取**运行时函数指针**
+0x4e64c  w0=1, w1=0x1e(30), w2=1, w3=0, x4=sp+0x10, x5=sp+0xc
+0x4e65c  blr x8                             ; ★ 真正的 handler
+```
+
+**结论：真正的载荷生产函数地址是运行时决定的（`[x0+0x10]`），静态不可达。**
+这与 §1.5 的 AVMP 假设完全一致，并给出了确凿证据链。
+
+设备恢复后要做的事因此非常明确：trace 必须 `--max-records 60000` 以上
+（ring 上限 65536），让 70102 的真实 handler 落在窗口内；然后
+`resolve` 出 `[x0+0x10]` 的目标、`coverage` 拿其块集合、对它做 `taint-bwd`。
+
 ## 3. 字符串混淆形态
 
 - 字符串多以**编码字节**存放（如 `0x12309b` 处是 `f0 22 85 2f 91 69 0d`），由运行时解码器还原。
