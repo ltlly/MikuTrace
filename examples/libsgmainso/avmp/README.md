@@ -129,6 +129,22 @@ $ python3 -c "从 +0x3340 起跑"
 即：把设备上 dump 出来的 JIT 区 + x23 表 + 帧数组装进离线解释器后，
 VM 程序能**连续执行数千步而不出错**，帧推进与 handler 切换都正确。
 
+## native helper：40 个全在 JIT 区内
+
+JIT 区里扫 `sub sp,sp,#imm` + `mrs x?, tpidr_el0` 匹配到 **40 个 canary stub**，
+这就是 VM 的全部 native helper。它们**不是**动态解密到别处，只是入口做了
+控制流平坦化（`udf` 里藏密钥 + `eor/mvn` 解出 `br` 目标），函数体就在
+紧随其后的 JIT 流里。
+
+已还原两个：
+
+| 名称 | JIT 偏移 | 语义 |
+|---|---|---|
+| `sbox_xor_16` | `0xf124` | `out[i] = in[i] ^ S[(&out[i]) & 0xff]`，S 盒在 `ctx+0x1e0`，展开成 16 字节一组 |
+| `mem_rw` | `0xe9b8` | `*( *(ctx+0x240) + 0x1a0 ) + off`（**inline 小函数**，不是 canary stub） |
+
+实现见 `helpers.py`，测试见 `test_avmp_vm.py::TestNativeHelpers`。
+
 ## 剩余缺口
 
 1. **帧数组只覆盖了一次调用的一部分。** 设备侧 `0x17c680` 被多个 VM 实例
@@ -141,9 +157,13 @@ VM 程序能**连续执行数千步而不出错**，帧推进与 handler 切换�
      设备上这个槽同样指向零，但**设备不会真的跳过去**，说明 x23 表
      （`[x23, w, lsl #3]`）的索引不是 w，而是别的编码值。需要再采一次
      「每次 dispatch 实际 branch 到的地址」来反推。
-   - `bl to 0xe8784672cc` —— 4 个 native helper（frame_id 17/22/539/540）
-     调用 JIT 区外的函数，尚未 dump。
-3. **native helper 未还原**，nonce 的最终混合大概率在 helper 里。
+   - `bl` 到 canary stub 时解释器不认（`NotImplementedError`）——需要在
+     解释器里实现 canary 解密：`udf` 里的密钥 + `adrp` 全局值做
+     `eor/mvn/add`，得到 `br` 的真实目标，然后继续解释该函数体。
+3. **随机源未定位**。已确证 nonce 每次调用都变（见
+   `known_offsets.json` 的 `xsign_randomness`），但产生这个随机量的
+   40 个 helper 里哪一个还没对上号。候选：`stk` 很小（16/32/64）且只有
+   `strb` 的那几个（`0x2fad4`..`0x48528` 段）最像取随机/时间的原语。
 
 ## 关键经验（跨运行混用会得到假错误）
 

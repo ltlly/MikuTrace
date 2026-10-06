@@ -157,3 +157,68 @@ class TestArm64(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestNativeHelpers(unittest.TestCase):
+    """AVMP native helper 原语（JIT 区反汇编还原）。"""
+
+    def setUp(self):
+        from avmp.arm64 import load_jit
+        self.jb, self.jd = load_jit(os.path.join(HERE, "jit.bin"))
+
+    def test_canary_stubs_found(self):
+        """JIT 区里应能扫出 40 个 canary stub —— 全部 native helper 都在区内。"""
+        from avmp.helpers import find_canary_stubs
+        stubs = find_canary_stubs(self.jb, self.jd)
+        self.assertEqual(len(stubs), 40)
+
+    def test_sbox_helper_offset(self):
+        """sbox_xor_16 是 canary stub；mem_rw 是 inline 小函数，两类都要能定位。"""
+        from avmp.arm64 import MD
+        from avmp.helpers import HELPER_OFFSETS, find_canary_stubs
+        stubs = {a - self.jb: stk for a, stk in find_canary_stubs(self.jb, self.jd)}
+        off = HELPER_OFFSETS["sbox_xor_16"]
+        self.assertIn(off, stubs, "sbox_xor_16 偏移 0x%x 不是 canary stub" % off)
+        # sbox_xor_16 必须真的读 S 盒 (ldr ?, [?, #0x1e0]) 并做 eor
+        ins = list(MD.disasm(self.jd[off:off + 0x100], self.jb + off))
+        self.assertTrue(any("#0x1e0" in i.op_str for i in ins), "未见 S 盒基址 +0x1e0")
+        self.assertTrue(any(i.mnemonic == "eor" for i in ins), "未见 eor")
+
+    def test_mem_rw_offset(self):
+        """mem_rw: ldr x?,[x1,#0x240] / ldr x?,[x?,#0x1a0] / add x0,x8,x2 / ret。"""
+        from avmp.arm64 import MD
+        from avmp.helpers import HELPER_OFFSETS
+        off = HELPER_OFFSETS["mem_rw"]
+        ins = list(MD.disasm(self.jd[off:off + 0x30], self.jb + off))
+        text = []
+        for i in ins:
+            text.append((i.mnemonic, i.op_str))
+            if i.mnemonic == "ret":
+                break
+        self.assertTrue(any(m == "ldr" and "#0x240" in o for m, o in text), text)
+        self.assertTrue(any(m == "ldr" and "#0x1a0" in o for m, o in text), text)
+        self.assertTrue(any(m == "add" and o.startswith("x0,") for m, o in text), text)
+        self.assertTrue(any(m == "ret" for m, o in text), text)
+        self.assertEqual(text[0][0], "stp", "mem_rw 应以 stp x29,x30 开头")
+
+    def test_sbox_xor_16(self):
+        """out[i] = in[i] ^ S[(&out[i]) & 0xff]，索引取的是**写后地址**的低 8 位。"""
+        from avmp.helpers import sbox_xor_16
+        sbox = bytes((i * 7 + 3) & 0xFF for i in range(256))
+        base = 0x40
+        buf = bytearray(b"\x00" * 64)
+        buf[base:base + 16] = bytes(range(16))
+        sbox_xor_16(buf, sbox, base)
+        want = bytes(buf[base + i] for i in range(16))
+        for i in range(16):
+            self.assertEqual(want[i], i ^ sbox[(base + i) & 0xFF])
+
+    def test_mem_rw_semantics(self):
+        """mem_rw 是两级解引用：*( *(ctx+0x240) + 0x1a0 ) + off。"""
+        from avmp.helpers import mem_rw
+        ctx = bytearray(0x400)
+        level1 = 0x100          # *(ctx+0x240) 指向的中间结构
+        ctx[0x240:0x248] = level1.to_bytes(8, "little")
+        ctx[level1 + 0x1A0:level1 + 0x1A8] = (0x2000).to_bytes(8, "little")
+        self.assertEqual(mem_rw(ctx, 0), 0x2000)
+        self.assertEqual(mem_rw(ctx, 0x30), 0x2030)

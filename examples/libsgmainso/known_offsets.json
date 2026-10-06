@@ -511,5 +511,34 @@
   ],
   "artifacts": "examples/libsgmainso/avmp/{arm64.py,vm.py,README.md,jit.bin,handlers_map.txt,frames.txt,regs.txt,vmops.txt}",
   "remaining": "(1) frames.txt 读起点 lo 会落到零页, 需用 SEQ 已知帧地址定位; (2) x23 表需与帧数组同一次运行落盘(xtab.bin 目前跨运行); (3) 4 个 native helper 尚未还原, nonce 混合很可能在其中"
+ },
+ "xsign_randomness": {
+  "verdict": "nonce 不是请求内容的纯函数 —— 每次调用都含新的随机/时间相关量",
+  "decisive_evidence": {
+   "experiment": "same00..same39: 同一进程内 12 个参数完全相同的 40 次连续 70102 调用",
+   "input": "完全相同(含 rid/api/ext/flag/bizId)",
+   "result": "nonce[11:22] 40/40 全部互不相同; [9] 12 种取值; [70:72] 40 种取值",
+   "conclusion": "同进程同入参下 nonce 仍逐次变化 => nonce 含每次调用的随机或时间相关源, 不是 (INPUT, device_blob, counter) 的纯函数"
+  },
+  "counter_rule": {
+   "field": "payload[72:74] 大端 u16",
+   "behaviour": "每个 (进程, api) 首次调用为 0x3010, 之后每次同 api 调用 +0x10; 换 api 不推进",
+   "evidence": "same00..v_1 连续 69 次严格 +0x10 (0x3010..0x3430); api_0..api_3 各自首次出现均为 0x3010; data_0 恢复 0x3440(承接 v_1 的 0x3430)",
+   "note": "换 api 不推进是因为每个 api 有独立计数器, 不是因为调用不计数"
+  },
+  "per_call_fields": {
+   "payload[9]": "每次调用变, 取值集中在 0xa0..0xaf",
+   "payload[70:72]": "每次调用变; 低字节低 nibble 恒为 0, 高字节高 nibble 恒为 0x7 => 实际只有 12 bit 变化",
+   "payload[11:22]": "nonce, 每次调用全变"
+  },
+  "random_source_status": {
+   "vm_helpers": [
+    "frame_id 17 -> 0x743c2188bc: canary 0xab + adrp 0x743c35d000 全局 + ldrsw udf#0xc8 密钥 eor 后 br 到动态目标",
+    "frame_id 22 -> 0x743c218d24: canary 0x59 同构, mvn/add 解出动态目标",
+    "frame_id 539/540 -> 0x743c226368: 内存读写 helper (x1+0x240 -> +0x1a0 -> +x2)"
+   ],
+   "obstruction": "helper 入口用 canary + udf 里的密钥算出 br 目标(自解密/加固 JIT), 真实函数体不在 so 也不在已 dump 的静态 JIT 区内, 需在设备上跟随该 br",
+   "next_step": "设备上 Interceptor.attach 这两个 helper 入口, 在 br 执行前读 x5/x24 得到真实目标并 dump"
+  }
  }
 }
