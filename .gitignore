@@ -2,6 +2,8 @@
 # 测试 APK + 解包目录 + 参考 PDF 都放 example/, 永远不进 git
 traces/
 *.bin
+# AVMP JIT 区字节码是 x-sign 还原的核心产物, 必须版本化
+!examples/libsgmainso/avmp/jit.bin
 /example/
 *.apk
 *.pdf

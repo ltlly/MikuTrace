@@ -489,6 +489,27 @@
   "opcode_bodies": "0x17c6a8 起的 ubfx/and/strb 序列是各个 opcode 的 handler 体, 不是 base64",
   "implication": "76 字节载荷的生成逻辑运行在这个 VM 内部; 直接找 5 个生成器里的 str 循环是找不到的",
   "next_step": "在设备上 hook 0x17c680, 读 VM 上下文的字节码基址, 把**解密后的 VM 字节码**落盘, 然后离线解释该 VM 还原 5 个参数(含 x-sign)的纯算法",
-  "correction": "先前记录里 '0x17c680 是 base64 编码器(4 次 ubfx 取 6 位)' 一条不成立: 那是 VM handler 体"
+  "correction": "先前记录里 '0x17c680 是 base64 编码器(4 次 ubfx 取 6 位)' 一条不成立: 那是 VM handler 体",
+  "handler_count": 85,
+  "handler_semantics_mapped": "75/76 条已反汇编; 见 avmp/README.md 的语义表",
+  "frame_advance": "add x21, x21, imm, lsl #4 (imm 可负); 帧偏移不连续, 实测 0x9f70->0xa080 跨 17 帧",
+  "frame_end_criterion": "写 [x27+8] = 本帧结束(换帧); 不写 = 跳板, 继续在 JIT 流里执行",
+  "handler_lookup": "handler(F) = x23[ u16_at(F) ] —— 帧开头 2 字节就是自己的 handler id",
+  "jit_region": "handler 不在 so 里, 是运行时 JIT 的; 落盘为 avmp/jit.bin (JIT_BASE + 0x30000 字节)",
+  "payload_write_handlers": [
+   622,
+   627,
+   634,
+   639,
+   643
+  ],
+  "native_helper_handlers": [
+   17,
+   22,
+   539,
+   540
+  ],
+  "artifacts": "examples/libsgmainso/avmp/{arm64.py,vm.py,README.md,jit.bin,handlers_map.txt,frames.txt,regs.txt,vmops.txt}",
+  "remaining": "(1) frames.txt 读起点 lo 会落到零页, 需用 SEQ 已知帧地址定位; (2) x23 表需与帧数组同一次运行落盘(xtab.bin 目前跨运行); (3) 4 个 native helper 尚未还原, nonce 混合很可能在其中"
  }
 }

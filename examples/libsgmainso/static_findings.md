@@ -407,3 +407,42 @@ last_asm = ret     last_insn_is_ret = true     is_complete = true     truncated 
 **因此纯算法还原的下一步明确**：在设备上 hook `0x17c680`，读出 VM 上下文的字节码基址，
 把**解密后的 VM 字节码**落盘（对应 so 里 0x25400–0x25f00 那片加密数据），
 然后离线解释这个 VM，直接还原 5 个参数的算法。
+
+## 2.12 AVMP VM：x-sign 生成程序的实际形态
+
+x-sign 的 76 字节载荷不是由普通 ARM64 代码拼出来的，而是由一个
+**threaded-code VM**（AVMP）生成。模块内 dispatcher 在 `libsgmainso+0x17c680`：
+
+```asm
+ldrb w20, [x21, #6]          ; 源寄存器号
+ldr  x0,  [x25, x20, lsl #3]  ; 表1
+ldr  x1,  [x21, #8]           ; 立即数
+add  x2,  x0, x1
+ldrb w3,  [x21, #5]           ; 目标寄存器号
+str  x2,  [x25, x3, lsl #3]   ; 寄存器文件 x25
+ldrh w4,  [x21, #0x10]!       ; 下一帧 id（后索引）
+ldr  x5,  [x23, w4, lsl #3]   ; frame_id -> handler
+str  x21, [x27, #8]           ; 保存帧指针
+br   x5
+```
+
+要点：
+
+- **x21** 帧指针，16 字节/帧；**x25** 寄存器文件（8 字节/槽）；
+  **x23** `frame_id -> handler` 表；**x27+8** 帧指针保存槽。
+- handler 是**运行时 JIT 出来的代码，不在 so 文件里**（实测在模块外
+  `0x7439dc6c44` 起的 0x30000 字节区），每条 handler 就是一条 VM 语义。
+- `handler(F) = x23[ u16_at(F) ]`：帧开头 2 字节就是自己的 handler id。
+- 帧推进由 `add x21, x21, imm, lsl #4` 完成，`imm` 可为负；**帧偏移不连续**
+  （实测 0x9f70 -> 0xa080 跨 0x110 = 17 帧）。
+- 写 `[x27+8]` 是「本帧结束」的判据；不写就是跳板（位置无关 fall-through），
+  要继续在 JIT 流里执行。
+- **载荷字节由 handler 622/627/634/639/643 写出**（`strb`/`str`/`str w`）。
+- 另有 4 个 handler（17/22/539/540）`bl` 调 JIT 区内 native helper，
+  疑似 MD5/RC4/base64，**nonce 的最终混合大概率在这里**。
+
+已把整套 JIT 区、帧数组、寄存器文件落盘，并写了可执行的 ARM64 子集解释器：
+`examples/libsgmainso/avmp/`（含 `README.md` 记录结构、语义表与剩余缺口）。
+
+这也解释了为什么在 5 个生成器（0x97010/0x62968/0x72cc4/0x965c0/0x60340）里
+找不到写载荷的 `strb` 循环：那些函数只是调用 VM，逻辑在 JIT 出来的 handler 里。
