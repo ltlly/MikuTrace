@@ -373,6 +373,78 @@
     "context": "0x144648..0x1446a0 为一个容器填充例程, 末尾 bl 0x1b1ad0"
    },
    "next_step": "沿 x2 的来源(结构体字段)继续回溯到 76 字节载荷缓冲的写入点, 再判定 nonce 是否含请求内容"
+  },
+  "taint_bwd": {
+   "seed": "libsgmainso+0xcd278 (ldr x2,[sp,#0x2a0]) --reg x2 --data-only",
+   "stop_reason": "completed",
+   "chain_len": 10,
+   "chain_oldest_first": [
+    {
+     "idx": 8082205,
+     "rel": "0x1456d4",
+     "func": "sub_145698",
+     "asm": "mov w8, #0x20",
+     "note": "0x20=32, 长度/容量常量"
+    },
+    {
+     "idx": 8082209,
+     "rel": "0x1456e4",
+     "func": "sub_145698",
+     "asm": "str w8, [x20, #0xc]",
+     "note": "写入 [x20+0xc]"
+    },
+    {
+     "idx": 8152269,
+     "rel": "0x1453f4",
+     "func": "sub_145224",
+     "asm": "tbnz w21,#0x1f",
+     "note": "检查 [x20+8] 的标志位"
+    },
+    {
+     "idx": 8152270,
+     "rel": "0x1453f8",
+     "func": "sub_145224",
+     "asm": "ldr w8, [x20, #0xc]"
+    },
+    {
+     "idx": 8152271,
+     "rel": "0x1453fc",
+     "func": "sub_145224",
+     "asm": "cmp w21, w8"
+    },
+    {
+     "idx": 8152359,
+     "rel": "0x145a40",
+     "func": "sub_1459c8",
+     "asm": "cbz x20, #..."
+    },
+    {
+     "idx": 8152360,
+     "rel": "0x145a44",
+     "func": "sub_1459c8",
+     "asm": "mov x0, x20"
+    },
+    {
+     "idx": 8152366,
+     "rel": "0x145a4c",
+     "func": "sub_1459c8",
+     "asm": "mov x2, x0"
+    },
+    {
+     "idx": 8152381,
+     "rel": "0x14587c",
+     "func": "sub_145854",
+     "asm": "mov w21, w2"
+    },
+    {
+     "idx": 8152401,
+     "rel": "0x145908",
+     "func": "sub_145854",
+     "asm": "mov w2, w21"
+    }
+   ],
+   "reading": "x2 指向一个 Java 字符串对象; [x20+0xc] 是其长度/容量字段(写入 0x20=32),[x20+8] 的 bit0x1f 是类型/状态标志(0x1453f4 用 tbnz #0x1f 检查)。sub_145698 负责构造该字符串对象, sub_145224/sub_1459c8/sub_145854 是它的消费者/搬运者。",
+   "open": "0x20=32 与 x-sign 的 102 字符不符, 需确认这是中间缓冲还是被分块写入;下一步要回到 0x145698 之前, 找到真正填入 base64 内容的调用"
   }
  }
 }
