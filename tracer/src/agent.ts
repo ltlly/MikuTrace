@@ -364,6 +364,7 @@ rpc.exports = {
         if (opts.traceDir) STATE.traceDir = opts.traceDir;
         STATE.includeSoPatterns = Array.isArray(opts.includeSoPatterns) ? opts.includeSoPatterns : [];
         STATE.deepTrace = !!opts.deepTrace;
+        STATE.execOnly = !!opts.execOnly;
         STATE.traceAll = !!opts.traceAll;
         // --trace-all implies the per-symbol deep path machinery (writable-range
         // tracking etc.), so turn deepTrace on too when traceAll is requested.

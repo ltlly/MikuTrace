@@ -1018,6 +1018,8 @@ def cmd_trace(args):
         "traceDir": device_trace_dir,   # 避开 app 私有 cache
         "includeSoPatterns": incl_pats,     # multi-SO trace
         "deepTrace": bool(getattr(args, "trace_deep", False)),
+        # 只放开 libc/libm(libc 的 memcpy/memset 会写输出缓冲), 继续排除 libart
+        "execOnly": bool(getattr(args, "trace_exec", False)),
         "traceAll": trace_all,
         "stalkerExcludePatterns": stalker_exc_pats,
         "boundaryDiffPatterns": diff_pats,
@@ -1894,6 +1896,10 @@ def main():
                            "可恢复 stat/time 等 libc 边界写. 反调试默认**关闭** —— "
                            "有反检测的目标需显式加 --patch-suicide / --hide-rwx-maps / "
                            "--block-self-kill.")
+    p_tr.add_argument("--trace-exec", action="store_true",
+                      help="放开 libc/libm/libdl/libpthread (memcpy/memset 会写输出缓冲), "
+                           "但继续排除 libart 与 linker。比 --trace-deep 安全: "
+                           "libart 是自修改+stripped 代码, Stalker 跟进必然 SIGSEGV")
     p_tr.add_argument("--stalker-exclude-patterns", default=None, dest="stalker_exclude_patterns",
                       help="逗号分隔, 覆盖默认 Stalker.exclude 名单 (per-symbol). 仅 --trace-deep 下生效.")
     p_tr.add_argument("--boundary-diff-patterns", default=None, dest="boundary_diff_patterns",

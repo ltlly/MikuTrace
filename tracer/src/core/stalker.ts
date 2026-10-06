@@ -4,7 +4,7 @@
 
 import {
     STATE, HARD_EXCL, SOFT_EXCL, DEEP_KEEP_EXCL, TRACE_ALL_KEEP_EXCL,
-    STALKER_EXCLUDE_PATTERNS, IncludeRange
+    STALKER_EXCLUDE_PATTERNS, IncludeRange, ART_EXCL,
 } from "./state";
 import { log } from "./utils";
 import { collectBoundaryDiffSymbols, installBoundaryDiffHooksOnce } from "../hooks/boundary_diff";
@@ -22,6 +22,7 @@ export function applyExcludesOnce(): void {
     const userIncl = STATE.includeSoPatterns || [];
     const matchesUser = (name: string) => userIncl.some(pat => name.indexOf(pat) !== -1);
     const deep = !!STATE.deepTrace;
+    const execOnly = !!STATE.execOnly;
     const traceAll = !!STATE.traceAll;
     const stalkerPatterns = STATE.stalkerExcludePatterns || STALKER_EXCLUDE_PATTERNS;
     const diffPatterns = STATE.boundaryDiffPatterns || DEFAULT_BOUNDARY_DIFF_PATTERNS;
@@ -125,6 +126,7 @@ export function buildIncludeRanges(): void {
 
     const userIncl = STATE.includeSoPatterns || [];
     const deep = !!STATE.deepTrace;
+    const execOnly = !!STATE.execOnly;
     const traceAll = !!STATE.traceAll;
 
     // --trace-all: every module except the structural linker set is in-range.
@@ -144,7 +146,9 @@ export function buildIncludeRanges(): void {
 
     for (const m of Process.enumerateModules()) {
         if (STATE.target && m.name === STATE.target.name) continue;
-        const isHard = HARD_EXCL.some(p => m.name.indexOf(p) !== -1);
+        // --trace-exec 只放开 exec 类模块; ART apex 继续排除(跟它必 SIGSEGV)
+        const hardList: string[] = execOnly ? ART_EXCL : HARD_EXCL;
+        const isHard = hardList.some((p: string) => m.name.indexOf(p) !== -1);
         if (isHard && !deep) continue;
         for (const pat of userIncl) {
             if (m.name.indexOf(pat) !== -1) {

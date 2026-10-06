@@ -370,3 +370,40 @@ last_asm = ret     last_insn_is_ret = true     is_complete = true     truncated 
    指向的堆区做 `mem-dump`）；
 3. 沿 `x-sign` 的值反向 `taint-bwd` 回溯到请求缓冲，判定 10 字节 nonce 是
    `Enc(key, H(INPUT))` 还是含随机掩模。
+
+
+## 2.11 关键更正：0x17c680 是 AVMP VM 分发器，不是 base64 编码器
+
+先前据 `ubfx #0x1a/#0x14/#0xe/#0x8` + `and #0x3f` + `strb` 判它是 base64 编码器，**该判断不成立**。
+完整看 0x17c680 起的一整块：
+
+```asm
+0x17c680  ldrb  w20, [x21, #6]         ; opcode = ctx[6]
+0x17c684  ldr   x0,  [x25, x20, lsl #3] ; handler 表: x25 + opcode*8
+0x17c688  ldr   x1,  [x21, #8]          ; 下一条字节码地址
+0x17c68c  add   x2,  x0, x1
+0x17c690  ldrb  w3,  [x21, #5]          ; 寄存器号
+0x17c694  str   x2,  [x25, x3, lsl #3]  ; 回写 VM 寄存器
+0x17c698  ldrh  w4,  [x21, #0x10]!      ; 下一个字节码偏移(后索引自增)
+0x17c69c  ldr   x5,  [x23, x4, lsl #3]  ; 第二张表 base=x23
+0x17c6a0  str   x21, [x27, #8]           ; 保存 VM 上下文
+0x17c6a4  br    x5                      ; 尾调用下一个 handler
+```
+
+这是标准的 **threaded-code VM**：opcode 索引 handler 表，算出下一 handler 后 `br` 过去。
+`0x17c6a8` 起那一大片 `ubfx / and / strb` 是**各个 opcode 的 handler 体**，与 base64 无关。
+
+- VM 上下文 = `x21`；`ctx[5]`=寄存器号、`ctx[6]`=opcode、`ctx[8]`=下一条地址、
+  `ctx[0x10]`=字节码偏移（**后索引**，用完自增）。
+- 两张表：`x25`（handler 表）、`x23`（续表）。`x27[8]` 保存上下文。
+- 完整 trace 里 `0x17c680` 被执行 125 次，`x21` 每次都不同 → 一个上下文跑一条 VM 程序。
+
+**影响**：76 字节载荷的生成逻辑整体运行在这个 VM 里。因此
+1. 在 5 个生成器（0x97010/0x62968/0x72cc4/0x965c0/0x60340）里找 `strb` 循环是找不到的；
+2. 载荷缓冲（`x19=0x70d4fe20a0`、编码器输入 `x21=0x71abdc4670`）在 trace 内**没有任何写指令**，
+   因为写入方也在 VM 内部（VM 解释器的 `strb` 走的是 VM 寄存器间接寻址，
+   不落在「模块内 store 目标 = 堆地址」这个过滤条件上）。
+
+**因此纯算法还原的下一步明确**：在设备上 hook `0x17c680`，读出 VM 上下文的字节码基址，
+把**解密后的 VM 字节码**落盘（对应 so 里 0x25400–0x25f00 那片加密数据），
+然后离线解释这个 VM，直接还原 5 个参数的算法。

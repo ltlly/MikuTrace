@@ -22,6 +22,13 @@ export const SIMD_RING_BYTES = SIMD_REC_SIZE * SIMD_RING_RECS;
 export const FLUSH_INTERVAL_MS = 10;
 
 // HARD_EXCL: atomic deadlock / early-init / re-entrant — NEVER trace these
+/** --trace-exec: 放开 libc/libm/libdl/libpthread（memcpy/memset 等会写输出缓冲），
+ *  但继续排除 ART apex（libart 自修改+stripped, Stalker 跟它必 SIGSEGV）与 linker。 */
+export const EXEC_HARD_EXCL = [
+    "libc.so", "libm.so", "libdl.so", "libpthread.so"
+];
+export const ART_EXCL = ["libart.so", "libartbase.so", "libartpalette.so"];
+
 export const HARD_EXCL = [
     "libc.so", "libm.so", "libdl.so", "libpthread.so", "libart.so",
     "libartbase.so", "libartpalette.so", "linker", "linker64"
@@ -143,6 +150,8 @@ export interface InitOptions {
     cmdArg?: number | null;
     maxRecords?: number | null;
     pkg?: string | null;
+    /** 只放开 libc/libm/libdl/libpthread, 继续排除 libart/linker (比 --trace-deep 安全) */
+    execOnly?: boolean | null;
     /** SPSC ring 容量(条)。不设则由 maxRecords 推导, 都没有则用 65536。 */
     ringRecs?: number | null;
     /** host 预建的 trace 目录; 必须避开 app 私有 cache (app 退出时会被清理) */
@@ -176,6 +185,8 @@ export interface AgentState {
     cmdValue: number | null;
     cmdArg: number | null;
     pkg: string | null;
+    /** --trace-exec: 放开 exec 类模块, 但继续排除 ART apex */
+    execOnly: boolean;
     target: { name: string; base: NativePointer; end: NativePointer } | null;
     fnHooked: boolean;
     excluded: boolean;
@@ -271,7 +282,7 @@ export interface AgentState {
 export function createInitialState(): AgentState {
     return {
         soPattern: null, exportName: null, methodName: null,
-        fnOffset: null, cmdValue: null, cmdArg: null, pkg: null,
+        fnOffset: null, cmdValue: null, cmdArg: null, pkg: null, execOnly: false,
         target: null, fnHooked: false, excluded: false, fnEntered: false, callFinalized: false,
 
         includeSoPatterns: [], includeRanges: [],

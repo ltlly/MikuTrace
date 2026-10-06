@@ -469,5 +469,26 @@
    },
    "next_step": "从 idx 8148918 所在循环继续回溯: x19(索引) 与 x8(源基址) 的来源, 找到 76 字节缓冲的起点, 再对源缓冲做 mem-dump 取明文, 与黑盒 135 组向量交叉验证"
   }
+ },
+ "avmp_vm": {
+  "dispatcher": "0x17c680 (libsgmainso+0x17c680)",
+  "kind": "threaded-code VM 分发器 (不是 base64 编码器 —— 更正先前判断)",
+  "code": [
+   "ldrb w20, [x21, #6]        ; opcode = ctx[6]",
+   "ldr  x0,  [x25, x20, lsl #3]; handler 表 base=x25, 8B/项",
+   "ldr  x1,  [x21, #8]         ; 下一条字节码地址",
+   "add  x2,  x0, x1",
+   "ldrb w3,  [x21, #5]         ; 寄存器号",
+   "str  x2,  [x25, x3, lsl #3]; 回写 VM 寄存器",
+   "ldrh w4,  [x21, #0x10]!     ; 下一个字节码偏移, 后索引自增",
+   "ldr  x5,  [x23, x4, lsl #3] ; 第二张表 base=x23",
+   "str  x21, [x27, #8]         ; 保存 VM 上下文",
+   "br   x5                     ; 尾调用下一 handler"
+  ],
+  "context": "x21 = VM 上下文; ctx[5]=寄存器号 ctx[6]=opcode ctx[8]=下一条地址 ctx[0x10]=字节码偏移(后索引)",
+  "opcode_bodies": "0x17c6a8 起的 ubfx/and/strb 序列是各个 opcode 的 handler 体, 不是 base64",
+  "implication": "76 字节载荷的生成逻辑运行在这个 VM 内部; 直接找 5 个生成器里的 str 循环是找不到的",
+  "next_step": "在设备上 hook 0x17c680, 读 VM 上下文的字节码基址, 把**解密后的 VM 字节码**落盘, 然后离线解释该 VM 还原 5 个参数(含 x-sign)的纯算法",
+  "correction": "先前记录里 '0x17c680 是 base64 编码器(4 次 ubfx 取 6 位)' 一条不成立: 那是 VM handler 体"
  }
 }
