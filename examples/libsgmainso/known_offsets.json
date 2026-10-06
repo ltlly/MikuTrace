@@ -445,6 +445,29 @@
    ],
    "reading": "x2 指向一个 Java 字符串对象; [x20+0xc] 是其长度/容量字段(写入 0x20=32),[x20+8] 的 bit0x1f 是类型/状态标志(0x1453f4 用 tbnz #0x1f 检查)。sub_145698 负责构造该字符串对象, sub_145224/sub_1459c8/sub_145854 是它的消费者/搬运者。",
    "open": "0x20=32 与 x-sign 的 102 字符不符, 需确认这是中间缓冲还是被分块写入;下一步要回到 0x145698 之前, 找到真正填入 base64 内容的调用"
+  },
+  "taint_bwd_xsign": {
+   "seed": "--start 8152466 --reg x2 (0x0cd278 ldr x2,[sp,#0x2a0], 精确对准 x-sign 那次 put)",
+   "stop_reason": "max_count",
+   "chain_len": 200,
+   "loop": {
+    "driver": "sub_13e4bc @0x13e71c: mov w2,#1/#2/#3... (递增计数器)",
+    "body": "sub_144570 @0x14465c..0x1446ac: ldr w8,[x20,#8]; add w8,w8,w19; str w8,[x20,#8]",
+    "note": "按 w19 递增地追加到 [x20+8] 长度字段; 循环步长约 78 条记录"
+   },
+   "mask_evidence": {
+    "idx": 8148918,
+    "asm": [
+     "0x194 add  x8, x19, x8",
+     "0x198 ldrb w8, [x8]        ; 逐字节读源缓冲",
+     "0x19c strb w8, [sp, #0x24]",
+     "0x1a4 sturb w8, [x29, #-0x10]",
+     "0x1ac mov  w9, #0xdf",
+     "0x1b0 and  w8, w8, w9      ; & 0xdf = 清 bit5"
+    ],
+    "significance": "0x20/0xdf 即早前推出的 2 字节交替掩码: base64 字母表 bit5 恰好标记大小写,x^0x20 == 大小写翻转, 与 n[i]=b[i]^b[74+(i&1)] 的观测一致"
+   },
+   "next_step": "从 idx 8148918 所在循环继续回溯: x19(索引) 与 x8(源基址) 的来源, 找到 76 字节缓冲的起点, 再对源缓冲做 mem-dump 取明文, 与黑盒 135 组向量交叉验证"
   }
  }
 }
