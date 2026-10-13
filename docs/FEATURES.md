@@ -7,33 +7,37 @@
 
 ## 阅读规则
 
-- 统一入口：所有子命令都通过 `./tracemiku` 调用。设备采集与少量编排命令由 Python
-  层实现，其余 88 个分析命令透传给 Rust CLI（`tracemiku-cli`）。不要直接调用
+- 统一入口：所有子命令都通过 `./tracemiku` 调用。设备采集与能力发现由 Python
+  层实现，全部分析命令透传给 Rust CLI（`tracemiku-cli`）。不要直接调用
   `rust/target/*/tracemiku-cli`。
-- 机器可读清单：`./tracemiku capabilities` 输出全部命令、参数和默认值的 JSON，
-  供 AI/脚本编程式发现能力。新增命令后该清单自动更新（由 clap 生成）。
+- 机器可读清单：`./tracemiku capabilities` 返回统一入口的命令摘要，
+  `./tracemiku capabilities --command <name>` 返回该命令的完整参数与默认值。
+  `schema_version=2`，采集参数来自 argparse，分析参数来自 Rust clap。
 - 参数事实源：本文件不复制参数细节；以 `./tracemiku <cmd> --help` 为准。
 - 地址与偏移默认十六进制（`10` = `0x10`），十进制用 `d` 前缀（`d16` = 16）。
-- CLI 优先：存在专用命令时不要用通用 `api`；不要仅为查询启动 Web server。
-- 输出契约：字段名、类型和嵌套结构是 AI 消费方的稳定契约，定义在
-  `rust/crates/tracemiku-cli/src/output_types*.rs` 并由 `contract_*` 测试锁定。
-  对应 JSON schema 在 `docs/schema/`。
+- 使用专用命令；统一入口不再提供 Web、BN 展示、通用 route 包装和旧别名。
+- 输出契约：字段名、类型和嵌套结构是 AI 消费方的稳定契约。
+  部分报告定义在 `rust/crates/tracemiku-cli/src/output_types*.rs`，其余仍由 server
+  响应类型或 JSON 构造定义，并由 `contract_*` 测试锁定。已生成的部分报告 schema
+  在 `docs/schema/`。
+
+Web 与 BN 实现仍是待拆除的内部依赖，已退出公开命令；目标维护范围和裁剪边界见
+[采集与 CLI 设计](CLI_FIRST_DESIGN.md)。本目录在实际删除或改名命令时同步调整。
 
 ## 1. 元数据与入口
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
-| `capabilities` | 全部命令/参数/默认值的机器可读 JSON | AI 发现能力的首选入口 |
+| `capabilities` | 统一入口的采集与分析命令摘要 | 指定 `--command` 按需取得参数 |
 | `completions` | 生成 shell 补全脚本 | `--help` 查看 shell 类型 |
-| `stats` | trace 元数据 JSON | |
-| `meta` | 原始 `/api/meta` 响应 | 与 `stats` 的差别见各自 `--help` |
-| `list` | 列 run 或 run 下的 calls | Python 层实现，默认人类可读表，`--json` 输出 JSON |
-| `info` | run/per-call 元信息 | Python 层实现；`--json` 转发 Rust JSON 输出 |
-| `bg-status` | 后台索引构建状态 | 配合 `decomp-status` 使用 |
-| `decomp-status` | BN sidecar 状态 | |
+| `stats` | 单次 trace 的记录数与有界模块映射摘要 | 模块按映射大小排序；执行频次用 `so-stats` |
+| `meta` | 单次 trace 的采集元数据与格式信息 | 读取采集上下文；运行完成度用 `info` |
+| `list` | 列 run 或 run 下的 calls | `--json` 输出一个 JSON 数组；默认逐行 JSON |
+| `info` | run/per-call 元信息与完成度 | Rust 实现，支持 run 与单次调用 |
 
 ```bash
-./tracemiku capabilities | python3 -m json.tool | head
+./tracemiku capabilities
+./tracemiku capabilities --command records
 ./tracemiku list traces/run1 --json
 ./tracemiku info <call_dir> --json
 ```
@@ -62,12 +66,10 @@
 | 命令 | 用途 | 备注 |
 |---|---|---|
 | `records` | 按区间导出指令记录，可选寄存器列 | `--start/--count/--regs/--indices` |
-| `record` | 单条记录 `GET /api/record/{idx}` | |
+| `record` | 单条记录与寄存器注释详情 | 批量导出用 `records` |
 | `idxs-for-pc` | 某 PC 被执行的 trace 下标集合 | |
 | `search-pc` | 按 PC 搜 | |
 | `search` | 反汇编/操作数正则搜索 | |
-| `search-asm` | `search` 的旧名别名 | |
-| `query` | 通用查询路由 `GET /api/query` | 有专用命令时优先专用命令 |
 | `asm-tokens-for-pcs` | 批量 PC 的汇编 token | |
 
 ```bash
@@ -81,7 +83,6 @@
 | 命令 | 用途 | 备注 |
 |---|---|---|
 | `cfg` | 函数控制流图数据 | |
-| `cfg-svg` | CFG 的 SVG 渲染 | |
 | `idxs-for-block` | 块命中次数与所属记录 | |
 | `block-for-pc` | PC → 基本块 | |
 | `block` | 基本块详情 | |
@@ -109,7 +110,6 @@
 |---|---|---|
 | `reg-at` | (SO,offset)/PC 处的寄存器值 + 跨执行去重分布 | 首选点查 |
 | `reg-value-at` | 单次执行的寄存器值 | |
-| `reg-at-idx` | `reg-value-at` 的旧名别名 | |
 | `last-write-of-reg` | 寄存器最近一次被写的位置 | |
 | `next-use-of-reg` | 寄存器下一次被读的位置 | |
 | `reg-timeline` | 寄存器随 trace 区间变化的时间线 | 最多 `--max-points` 点 |
@@ -195,7 +195,7 @@
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
-| `crypto` | 组合分析：常量扫描 + ARM CE 指令检测 | Python 层入口，转发 Rust |
+| `crypto` | 组合分析：常量扫描 + ARM CE 指令检测 | Rust 专用命令 |
 | `crypto-scan` | 密码学常量指纹扫描 | |
 | `hash-finalize-detect` | 检测 hash finalize 模式 | |
 | `hash-input-search` | 已知目标摘要反查输入（指定算法组合） | POST |
@@ -231,19 +231,13 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 `byte-writer-map` / `output-map` / `output-backtrace` 只有在开启 VM 链分析时
 （如 `--vm-chain-steps`、`--tree-depth`）才要求这些参数。
 
-## 13. Binary Ninja 集成与 Trace 锚定验证
+## 13. Trace 锚定验证
 
-反编译统一走 Binary Ninja sidecar（外部反编译器）；本地自研反编译管线已移除。
+反编译由外部静态工具承担；本地分析不依赖 Binary Ninja。
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
-| `trace-replay` | 用真实 pre/post 状态检查 ARM64 指令，返回首个发散/证据缺口与补采建议 | GET |
-| `hlil-for-pc` | Binary Ninja HLIL（按 PC） | 需要 BN sidecar 与目标 SO |
-| `hlil-for-fn` | Binary Ninja HLIL（按函数） | 需要 BN sidecar 与目标 SO |
-| `bn-cfg-for-pc` | Binary Ninja CFG（按 PC） | 需要 BN sidecar 与目标 SO |
-| `bn-cfg-svg-for-pc` | Binary Ninja CFG 的 SVG | 需要 BN sidecar 与目标 SO |
-| `bn-sidecar-status` | BN sidecar 状态 | |
-| `decomp-status` / `bg-status` | BN sidecar 与后台索引状态 | 见第 1 节 |
+| `trace-replay` | 用真实 pre/post 状态检查 ARM64 指令，返回首个发散/证据缺口与补采建议 | |
 
 ### Trace 锚定验证与证据来源
 
@@ -281,13 +275,13 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
-| `watch` | 观察点扫描：`reg-change`/`reg-equals`/`mem-touch` | Python 层入口，转发 Rust |
+| `watch` | 观察点扫描：`reg-change`/`reg-equals`/`mem-touch` | Rust 专用命令 |
 | `fn-summary` | 函数命中频次与热门块 | `--fn` 必填 |
 | `fork-events` | fork 事件（反调试常用） | 采集时需 `--enable-fork-hook` |
 
-## 15. 设备采集层（Python 原生子命令）
+## 15. 设备采集与恢复
 
-这些命令不是查询，而是设备工作流：
+`trace/probe/doctor` 由 Python 实现；`finalize` 的恢复语义由 Rust core 提供：
 
 | 命令 | 用途 |
 |---|---|
@@ -296,10 +290,6 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 | `probe` | 轻量 Interceptor 导出函数计数，不启动 Stalker、无 trace.bin |
 | `doctor` | 采集前置检查（adb/root/frida/SELinux/包名/输出目录） |
 | `finalize` | 恢复中断的 trace：扫 `_pending_call_*` 补 meta 并重命名 |
-| `web` | 启动 Rust Solid SPA；`--so` 可启用 HLIL 反编译 tab |
-| `view` | 旧 Web 查看器，已被 `web` 取代 |
-| `query` | 旧版查询包装（`records/backward-taint/...` 语法与透传命令不同），保持兼容；新用法优先直接调用对应透传命令 |
-| `api` | 任意 route 兜底；仅当没有专用命令时使用 |
 
 采集入口过滤：`--cmd` 必须与 `--cmd-arg` 一起显式给定（按 JNI 入口整数参数过滤，
 无目标默认值）。反检测插件（`--patch-suicide/--hide-rwx-maps/--block-self-kill`）
@@ -311,25 +301,22 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
   --out traces/run1
 ./tracemiku probe --pkg com.example.app --so libfoo.so --duration 10
 ./tracemiku finalize traces/run1
-./tracemiku web <call_dir> --port 18900
 ```
 
-## 16. 兜底：`api`
+## 16. 已移除入口的替代选择
 
-只有不存在专用命令时才用：
+以下入口不再接受调用，也不会出现在能力清单和补全中。旧脚本需显式迁移，未保留
+自动转发别名；通用包装中的参数不保证与专用命令逐项相同，以命令帮助为准。
 
-```bash
-./tracemiku api <call_dir> /api/backtrace --method GET -p idx=1000
-./tracemiku api <call_dir> /api/diff-traces --method POST --json-body '{...}'
-```
-
-server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）；需要完整路由表时以
-`./tracemiku capabilities` 与 server OpenAPI 为准。仅由 server 暴露、无专用 CLI
-命令的接口：
-
-- `/v1/chat/completions`：OpenAI 兼容聊天接口
-
-这些接口通过 `./tracemiku api <call_dir> <route>` 访问。
+| 已移除入口 | 替代选择或去向 |
+|---|---|
+| `search-asm` | `search` |
+| `reg-at-idx` | `reg-value-at`；按 PC 的多次执行分布用 `reg-at` |
+| `api`、`query` | 使用本目录中的专用记录、寄存器、内存、JNI 或污点命令 |
+| `web`、`view` | Web 交互退出维护范围 |
+| `bg-status`、`decomp-status`、`bn-sidecar-status` | 一次性离线命令不提供 Web 后台状态轮询 |
+| `cfg-svg`、`bn-cfg-svg-for-pc` | trace 结构用 `cfg` JSON；图形渲染交给消费者 |
+| `hlil-for-pc`、`hlil-for-fn`、`bn-cfg-for-pc` | 静态反编译与 CFG 由外部静态工具提供 |
 
 ## 选择指南（防止重复造轮子）
 
@@ -342,29 +329,10 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 - “静态分析说这里有跳转，实际跳哪” → `indirect-targets`；函数级路径 → `coverage`。
 - “发现动态 VM 解释器” → 先用 `ollvm-detect-vm` 初筛，再按 profile 用 `vm-ops`
   聚合、`vm-back*` 回溯。
-- “给 LLM 准备函数上下文” → 用 `records`/`fn-summary`/`cfg` 拼 JSON，或经
-  BN sidecar 的 `hlil-for-fn` 拿反编译文本。
+- “给 LLM 准备函数上下文” → 用 `records`/`fn-summary`/`cfg` 拼 JSON，按模块偏移
+  与外部静态工具的反编译结果对齐。
 
-## 17. Web UI 面板
-
-`./tracemiku web <path>` 启动 Solid SPA。面板对应关系（前端只负责交互与显示，
-分析全部来自 core/API）：
-
-| 面板 | 功能 |
-|---|---|
-| Records / Query | 指令流浏览与 JSON 查询 |
-| CFG | 函数控制流图（trace 与 BN 两种来源） |
-| TraceForPc / Xref | PC 命中与交叉引用 |
-| CallTree / Backtrace | 调用树与回溯 |
-| Registers / Watchpoints | 寄存器与观察点 |
-| Memory / Strings | 内存与字符串及来源 |
-| Taint / Slice | 污点与依赖切片 |
-| Crypto | 密码学扫描结果 |
-| HLIL | Binary Ninja 反编译参考 |
-| Functions / SO Filter / Meta | 函数、模块与元信息 |
-| Forks / Settings | fork 事件与界面设置 |
-
-## 18. tools/ 与 examples/
+## 17. tools/ 与 examples/
 
 ### 每个 app 的目标描述与可信插件
 
@@ -426,6 +394,7 @@ server 路由与 CLI 命令一一对应（命令表中的 route 即路由名）�
 | `docs/FEATURES.md`（本文件） | 全量功能目录与命令选择，唯一命令用法汇总 |
 | `AGENTS.md` | 工程规则与不可破坏边界（唯一规范） |
 | `TODO.md` | 未完成路线图（唯一 backlog） |
+| `docs/CLI_FIRST_DESIGN.md` | 采集与 CLI 的需求、当前依赖及目标维护边界 |
 | `docs/PER_CALL_TRACE_DESIGN.md` | trace.bin/meta.json 数据契约 |
 | `docs/memory-completeness-design.md` | MemShadow 来源模型与消费者规则 |
 | `docs/anti-detection-catalog.md` | 设备采集反检测层次与故障分类 |

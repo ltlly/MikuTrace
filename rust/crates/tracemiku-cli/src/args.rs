@@ -2,8 +2,8 @@ use super::*;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "tracemiku-cli",
-    about = "traceMiku v2 CLI (Rust analysis + JSON route wrappers)",
+    name = "tracemiku",
+    about = "Android ARM64 trace 离线分析与 JSON 证据查询",
     version
 )]
 pub(super) struct Cli {
@@ -25,22 +25,6 @@ pub(super) enum Cmd {
         /// Shell type: bash, zsh, fish, powershell.
         shell: clap_complete::Shell,
     },
-    /// Invoke any JSON web API route in-process.
-    Api {
-        /// Per-call trace directory.
-        trace_dir: PathBuf,
-        /// Route path such as /api/backtrace or /api/diff-traces.
-        path: String,
-        /// HTTP method. Supports GET and POST. Default GET.
-        #[arg(long, default_value = "GET")]
-        method: String,
-        /// Query parameter key=value. Can be repeated.
-        #[arg(long = "param", short = 'p')]
-        params: Vec<String>,
-        /// JSON request body for POST routes.
-        #[arg(long = "json-body")]
-        json_body: Option<String>,
-    },
     /// Print trace metadata as JSON.
     Stats {
         /// Per-call trace directory.
@@ -52,7 +36,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 10)]
         top_modules: usize,
     },
-    /// GET /api/meta.
+    /// 单次 trace 的采集元数据与格式信息。
     Meta { trace_dir: PathBuf },
     /// List runs under a trace root or calls under one run.
     List {
@@ -61,7 +45,7 @@ pub(super) enum Cmd {
         /// Base trace dir when path is omitted.
         #[arg(long, default_value = "traces")]
         dir: PathBuf,
-        /// Emit JSON instead of a compact table.
+        /// Emit one JSON array instead of one JSON row per line.
         #[arg(long)]
         json: bool,
     },
@@ -77,7 +61,7 @@ pub(super) enum Cmd {
     ResolveTraceAddr { trace_dir: PathBuf, addr: String },
     /// Resolve an ELF/shared-library virtual offset to the nearest symbol.
     ResolveElfSymbol { elf_file: PathBuf, offset: String },
-    /// GET /api/records.
+    /// 按区间导出指令记录，可选寄存器列。
     Records {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = 0)]
@@ -89,13 +73,9 @@ pub(super) enum Cmd {
         #[arg(long)]
         indices: Option<String>,
     },
-    /// GET /api/record/{idx}.
+    /// 单条记录与寄存器注释详情。
     Record { trace_dir: PathBuf, idx: usize },
-    /// GET /api/bg-status.
-    BgStatus { trace_dir: PathBuf },
-    /// GET /api/decomp-status.
-    DecompStatus { trace_dir: PathBuf },
-    /// GET /api/idxs-for-pc.
+    /// 某 PC 被执行的 trace 下标集合。
     IdxsForPc {
         trace_dir: PathBuf,
         pc: String,
@@ -104,14 +84,14 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 30)]
         limit: usize,
     },
-    /// GET /api/search-pc.
+    /// 按 PC 搜。
     SearchPc {
         trace_dir: PathBuf,
         pc: String,
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// GET /api/search.
+    /// 反汇编/操作数正则搜索。
     Search {
         trace_dir: PathBuf,
         pattern: String,
@@ -120,34 +100,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         cursor: Option<usize>,
     },
-    /// Alias for GET /api/search, matching the legacy command name.
-    SearchAsm {
-        trace_dir: PathBuf,
-        pattern: String,
-        #[arg(long, default_value_t = 2000)]
-        max_results: usize,
-        #[arg(long)]
-        cursor: Option<usize>,
-    },
-    /// GET /api/query.
-    Query {
-        trace_dir: PathBuf,
-        #[arg(long, default_value = "records")]
-        kind: String,
-        #[arg(long = "q", default_value = "")]
-        q: String,
-        #[arg(long)]
-        idx: Option<usize>,
-        #[arg(long)]
-        reg: Option<String>,
-        #[arg(long)]
-        addr: Option<String>,
-        #[arg(long, default_value_t = 1)]
-        len: u64,
-        #[arg(long, default_value_t = 200)]
-        limit: usize,
-    },
-    /// GET /api/so-stats.
+    /// 各 SO 的 trace 统计。
     SoStats {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = 50)]
@@ -155,7 +108,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         all: bool,
     },
-    /// GET /api/resolve — tool-neutral (SO, offset) <-> PC translation.
+    /// (SO,offset) ↔ 绝对 PC 双向解析，并返回执行事实。
     ///
     /// Forward:  --addr 0x... (absolute PC) -> module, offset, exec facts.
     /// Reverse:  --so libfoo --off 0x...    (module+offset) -> absolute PC.
@@ -175,7 +128,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         off: Option<String>,
     },
-    /// GET /api/indirect-targets — where a br/blr actually jumped at runtime.
+    /// `br/blr` 的运行时真实跳转目标分布。
     ///
     /// Resolves the real target distribution + hit counts for an indirect
     /// branch/call, keyed on (SO, offset) or absolute PC. With no source given,
@@ -197,7 +150,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         min_count: Option<u64>,
     },
-    /// GET /api/reg-at — runtime register value(s) at a (SO,offset) or PC.
+    /// (SO,offset)/PC 处的寄存器值 + 跨执行去重分布。
     ///
     /// "At libfoo+0x1234, what was x0?" Reads the register at EVERY execution
     /// of that PC and returns both the per-hit values and a distinct-value
@@ -222,7 +175,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         max: Option<usize>,
     },
-    /// GET /api/reg-value-at.
+    /// 单次执行的寄存器值。
     RegValueAt {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -230,15 +183,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         reg: String,
     },
-    /// Alias for GET /api/reg-value-at.
-    RegAtIdx {
-        trace_dir: PathBuf,
-        #[arg(long)]
-        idx: usize,
-        #[arg(long)]
-        reg: String,
-    },
-    /// GET /api/last-write-of-reg.
+    /// 寄存器最近一次被写的位置。
     LastWriteOfReg {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -248,7 +193,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         cursor: Option<usize>,
     },
-    /// GET /api/next-use-of-reg.
+    /// 寄存器下一次被读的位置。
     NextUseOfReg {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -256,7 +201,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         after: Option<usize>,
     },
-    /// GET /api/watchpoints.
+    /// 观察点扫描：`reg-change`/`reg-equals`/`mem-touch`。
     Watch {
         trace_dir: PathBuf,
         #[arg(long, default_value = "reg-change")]
@@ -274,9 +219,9 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
-    /// GET /api/functions.
+    /// 列出函数（symbol 与 trace 来源）。
     Functions { trace_dir: PathBuf },
-    /// GET /api/fork-events.
+    /// fork 事件（反调试常用）。
     ForkEvents {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -286,27 +231,13 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 1000)]
         limit: usize,
     },
-    /// GET /api/cfg.
+    /// 函数控制流图数据。
     Cfg {
         trace_dir: PathBuf,
         #[arg(long = "fn")]
         fn_name: Option<String>,
     },
-    /// GET /api/cfg-svg.
-    CfgSvg {
-        trace_dir: PathBuf,
-        #[arg(long = "fn")]
-        fn_name: Option<String>,
-        #[arg(long)]
-        pc: Option<String>,
-        #[arg(long, default_value_t = 2)]
-        local_depth: usize,
-        #[arg(long, default_value_t = 60)]
-        timeout: u64,
-        #[arg(long)]
-        force: bool,
-    },
-    /// GET /api/idxs-for-block.
+    /// 块命中次数与所属记录。
     IdxsForBlock {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -316,21 +247,21 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = -1)]
         near: isize,
     },
-    /// GET /api/block-for-pc.
+    /// PC → 基本块。
     BlockForPc {
         trace_dir: PathBuf,
         #[arg(long)]
         pc: String,
     },
-    /// GET /api/block.
+    /// 基本块详情。
     Block {
         trace_dir: PathBuf,
         #[arg(long)]
         pc: String,
     },
-    /// GET /api/loops.
+    /// 循环检测结果。
     Loops { trace_dir: PathBuf },
-    /// GET /api/coverage — executed-path coverage + branch-direction collapse
+    /// 函数执行路径与观测分支分布。
     /// for the function at a (SO,offset)/PC, or by --fn name. For each branch:
     /// which way it actually went and how often (static "both possible" ->
     /// the real path). one_sided branches = static ambiguity collapsed.
@@ -349,7 +280,7 @@ pub(super) enum Cmd {
         #[arg(long = "fn")]
         fn_name: Option<String>,
     },
-    /// GET /api/backtrace.
+    /// 指定位置的调用回溯。
     Backtrace {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -357,13 +288,13 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 256)]
         limit: usize,
     },
-    /// GET /api/call-tree.
+    /// 调用树。
     CallTree {
         trace_dir: PathBuf,
         #[arg(long)]
         max_depth: Option<usize>,
     },
-    /// GET /api/call-chain.
+    /// 命中函数之间的调用链。
     CallChain {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -371,7 +302,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 5)]
         depth: usize,
     },
-    /// GET /api/strings.
+    /// 从 trace 观察到的字符串。
     Strings {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = 4)]
@@ -383,7 +314,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// GET /api/string-provenance.
+    /// 某字符串每个字节的来源。
     StringProvenance {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -391,7 +322,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 32)]
         length: usize,
     },
-    /// GET /api/mem-dump.
+    /// 内存范围 hex dump。
     MemDump {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -416,7 +347,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 64)]
         length: usize,
     },
-    /// GET /api/mem-export — export runtime-decrypted bytes by (SO,offset,len).
+    /// 按 (SO,offset,len) 导出运行时解密字节。
     ///
     /// Reconstructs the real bytes the program saw (MemShadow w/x/i layers) for
     /// a packed/VMP'd/self-decrypting region a static disassembler can't read.
@@ -445,7 +376,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// GET /api/last-write-of-addr.
+    /// 某地址最后一次写入者。
     LastWriteOfAddr {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -456,7 +387,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         with_external: bool,
     },
-    /// GET /api/idxs-touching-addr.
+    /// 触碰某地址的全部记录。
     IdxsTouchingAddr {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -469,7 +400,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         with_bytes: bool,
     },
-    /// GET /api/idxs-touching-range.
+    /// 触碰某范围的全部记录。
     IdxsTouchingRange {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -481,7 +412,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// GET /api/find-mem-pattern.
+    /// 在 trace 访问过的内存中找字节模式。
     FindMemPattern {
         trace_dir: PathBuf,
         #[arg(long = "bytes-hex")]
@@ -495,7 +426,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         idx_hi: Option<usize>,
     },
-    /// GET /api/forward-taint — index-accelerated forward propagation from
+    /// 从 (start,reg) 正向逐指令传播。
     /// (start, reg) following def/use through registers and (optionally)
     /// memory. Use when you need per-instruction propagation steps with
     /// parent_idxs / taint_depth; for "all rows that depend on this" use
@@ -528,7 +459,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         scan_limit: Option<usize>,
     },
-    /// GET /api/backward-taint — chase the lineage of (start, reg) backwards
+    /// 从 (start,reg) 反向追来源。
     /// through register defs and (optionally) memory writes. Returns each
     /// upstream row with parent_idxs, taint_depth, and edge_kind. For "what
     /// rows did this seed depend on" without per-instruction modeling, use
@@ -572,7 +503,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         scan_limit: Option<usize>,
     },
-    /// GET /api/data-chase.
+    /// 沿寄存器数据流追踪，跳过 sp/fp/lr 噪声。
     DataChase {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -584,7 +515,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value = "sp,fp,lr")]
         exclude_regs: String,
     },
-    /// GET /api/dep-graph.
+    /// 依赖图。
     DepGraph {
         trace_dir: PathBuf,
         /// Concrete trace record index to use as seed.
@@ -603,7 +534,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 160)]
         limit: usize,
     },
-    /// GET /api/bfs-slice — backward BFS slice on the persistent dependency
+    /// 后向 BFS 依赖切片，多种子并/交。
     /// CSR, with multi-seed union/intersection. Use this when you want every
     /// trace row a value transitively depends on, faster than taint and
     /// without having to model propagation. Multi-seed `intersection` finds
@@ -655,7 +586,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 0)]
         occurrence: usize,
     },
-    /// GET /api/forward-dep-tree — def→use DAG. Returns rows that
+    /// def→use DAG，某值被谁消费。
     /// transitively consumed the seed's value. Inverse direction of
     /// `dep-graph` / `bfs-slice`.
     ForwardDepTree {
@@ -693,7 +624,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 0)]
         occurrence: usize,
     },
-    /// GET /api/reg-timeline.
+    /// 寄存器随 trace 区间变化的时间线。
     RegTimeline {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -705,7 +636,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 1000)]
         max_points: usize,
     },
-    /// GET /api/mem-diff.
+    /// 两段内存差异。
     MemDiff {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -715,7 +646,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 16)]
         size: usize,
     },
-    /// GET /api/mem-flow.
+    /// 内存写入流。
     MemFlow {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -733,7 +664,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         readers_only: bool,
     },
-    /// GET /api/mem-writes-in-range.
+    /// 范围内的全部内存写。
     MemWritesInRange {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -794,7 +725,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         vm_infra_regs: Option<String>,
     },
-    /// GET /api/ollvm-detect-vm.
+    /// 检测 OLLVM 风格 VM。
     OllvmDetectVm {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = 10)]
@@ -802,7 +733,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 0.5)]
         threshold: f64,
     },
-    /// GET /api/fn-summary.
+    /// 函数命中频次与热门块。
     FnSummary {
         trace_dir: PathBuf,
         #[arg(long = "fn")]
@@ -810,14 +741,14 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 5)]
         top_blocks: usize,
     },
-    /// GET /api/crypto-scan.
+    /// 密码学常量指纹扫描。
     CryptoScan { trace_dir: PathBuf },
     /// Run combined crypto analysis (const scan + crypto instr detection).
     Crypto {
         /// Per-call trace directory.
         trace_dir: PathBuf,
     },
-    /// GET /api/hash-finalize-detect.
+    /// 检测 hash finalize 模式。
     HashFinalizeDetect {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = 500)]
@@ -839,7 +770,7 @@ pub(super) enum Cmd {
         #[arg(long = "target-bytes")]
         target_bytes: Option<String>,
     },
-    /// POST /api/hash-input-search.
+    /// 已知目标摘要反查输入（指定算法组合）。
     HashInputSearch {
         trace_dir: PathBuf,
         #[arg(long = "target-bytes")]
@@ -857,7 +788,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = false)]
         search_in_mem: bool,
     },
-    /// POST /api/diff-traces.
+    /// 多条 trace 的稳定/变化字节对比。
     DiffTraces {
         traces: Vec<PathBuf>,
         /// Output key to diff. Repeat to compare multiple keys. Defaults to all observed keys.
@@ -868,46 +799,14 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = false)]
         show_per_byte: bool,
     },
-    /// GET /api/asm-tokens-for-pcs.
+    /// 批量 PC 的汇编 token。
     AsmTokensForPcs {
         trace_dir: PathBuf,
         /// Comma-separated PCs.
         #[arg(long)]
         pcs: String,
     },
-    /// GET /api/bn-sidecar/status.
-    BnSidecarStatus { trace_dir: PathBuf },
-    /// GET /api/hlil-for-pc.
-    HlilForPc {
-        trace_dir: PathBuf,
-        #[arg(long)]
-        pc: String,
-    },
-    /// GET /api/hlil-for-fn.
-    HlilForFn {
-        trace_dir: PathBuf,
-        #[arg(long = "fn-id")]
-        fn_id: String,
-    },
-    /// GET /api/bn-cfg-for-pc.
-    BnCfgForPc {
-        trace_dir: PathBuf,
-        #[arg(long)]
-        pc: String,
-        #[arg(long, default_value = "asm")]
-        mode: String,
-    },
-    /// GET /api/bn-cfg-svg-for-pc.
-    BnCfgSvgForPc {
-        trace_dir: PathBuf,
-        #[arg(long)]
-        pc: String,
-        #[arg(long, default_value = "asm")]
-        mode: String,
-        #[arg(long)]
-        timeout: Option<u64>,
-    },
-    /// GET /api/auto-phase-detect.
+    /// 自动检测执行阶段。
     AutoPhaseDetect {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = true)]
@@ -915,7 +814,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 2000)]
         max_phases: usize,
     },
-    /// GET /api/jni-calls.
+    /// JNI 调用列表。
     JniCalls {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -923,7 +822,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
-    /// GET /api/jni-events.
+    /// JNI 事件（含参数/返回值）。
     JniEvents {
         trace_dir: PathBuf,
         #[arg(long, alias = "kind")]
@@ -1169,7 +1068,7 @@ pub(super) enum Cmd {
         /// Number of records when --end is not set.
         #[arg(long, default_value_t = 300)]
         count: usize,
-        /// Comma-separated registers to request from /api/records.
+        /// Comma-separated registers to include in the analysis.
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1208,7 +1107,7 @@ pub(super) enum Cmd {
         /// Number of records when --end is not set.
         #[arg(long, default_value_t = 300)]
         count: usize,
-        /// Comma-separated registers to request from /api/records.
+        /// Comma-separated registers to include in the analysis.
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1234,7 +1133,7 @@ pub(super) enum Cmd {
         /// Max VM op groups to return.
         #[arg(long, default_value_t = 80)]
         max_ops: usize,
-        /// Max records per /api/records request. Use 0 to keep the old single-request behavior.
+        /// Max records per analysis chunk; 0 requests the whole selected window.
         #[arg(long, default_value_t = 900)]
         chunk_size: usize,
         /// Emit a compact AI-readable summary.
@@ -1274,7 +1173,7 @@ pub(super) enum Cmd {
         /// Max memory writes to collect while looking for the last one.
         #[arg(long, default_value_t = 5000)]
         max_writes: usize,
-        /// Comma-separated registers to request from /api/records.
+        /// Comma-separated registers to include in the analysis.
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1305,7 +1204,7 @@ pub(super) enum Cmd {
         /// Max memory writes to collect while looking for the last one.
         #[arg(long, default_value_t = 5000)]
         max_writes: usize,
-        /// Comma-separated registers to request from /api/records.
+        /// Comma-separated registers to include in the analysis.
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1356,7 +1255,7 @@ pub(super) enum Cmd {
         /// Emit a compact AI-readable summary instead of the full step payload.
         #[arg(long)]
         summary: bool,
-        /// Comma-separated registers to request from /api/records.
+        /// Comma-separated registers to include in the analysis.
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1407,7 +1306,7 @@ pub(super) enum Cmd {
         /// Emit a compact AI-readable summary instead of the full node tree.
         #[arg(long)]
         summary: bool,
-        /// Comma-separated registers to request from /api/records.
+        /// Comma-separated registers to include in the analysis.
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1428,7 +1327,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         vm_infra_regs: Option<String>,
     },
-    /// GET /api/jobj-history.
+    /// 指定 JNI jobject 的历史。
     JobjHistory {
         trace_dir: PathBuf,
         #[arg(long)]
@@ -1440,7 +1339,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
-    /// GET /api/jni-strings.
+    /// JNI NewStringUTF 输出串。
     JniStrings {
         trace_dir: PathBuf,
         #[arg(long, default_value_t = 200)]

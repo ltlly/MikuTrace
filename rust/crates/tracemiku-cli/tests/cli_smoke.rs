@@ -345,7 +345,7 @@ fn inspect_wrappers_use_server_wire_shape() {
     assert_eq!(v["idx"], 1);
 
     let v = run_json(&[
-        "search-asm".into(),
+        "search".into(),
         cd.display().to_string(),
         "ret".into(),
         "--max-results".into(),
@@ -364,7 +364,7 @@ fn inspect_wrappers_use_server_wire_shape() {
     assert_eq!(v["modules"][0]["name"], "libt.so");
 
     let v = run_json(&[
-        "reg-at-idx".into(),
+        "reg-value-at".into(),
         cd.display().to_string(),
         "--idx".into(),
         "0".into(),

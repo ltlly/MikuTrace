@@ -208,10 +208,9 @@ fn branch_reg(op_str: &str) -> Option<String> {
 fn load_jni_vtable() -> Option<HashMap<u64, String>> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest.parent()?.parent()?.parent()?;
-    for path in [repo_root.join("tools").join("jni_offsets.json")] {
-        if let Some(table) = load_jni_offsets_json(&path) {
-            return Some(table);
-        }
+    let path = repo_root.join("tools").join("jni_offsets.json");
+    if let Some(table) = load_jni_offsets_json(&path) {
+        return Some(table);
     }
 
     let header_path = repo_root.join("vendor").join("jni").join("jni_bn.h");

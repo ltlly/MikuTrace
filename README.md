@@ -1,12 +1,16 @@
 # traceMiku
 
 traceMiku 是面向 Android 真机 ARM64 的指令级动态追踪和运行时分析工具。它记录真实
-执行路径，并提供 CFG、调用树、寄存器与内存查询、污点追踪、数据来源、密码特征扫描、
-本地三层 IL 和 Web 交互分析。
+执行路径，并提供 CFG、调用树、寄存器与内存查询、污点追踪、数据来源、密码特征扫描
+和 Trace 锚定验证。
 
 项目不试图替代 IDA、Ghidra 或 Binary Ninja。静态工具负责完整代码结构，traceMiku
 通过统一的 `(SO, 静态偏移)` 坐标补充真实跳转目标、运行时值、解密后内存和跨函数
 数据来源。
+
+维护方向收敛为 **trace 采集与离线分析 CLI**。Web、BN 展示和旧包装命令已退出统一入口；
+现有 server 与前端代码尚待拆除，CLI 对 server 的内部依赖仍需解耦。需求、现状和裁剪边界见
+[采集与 CLI 设计](docs/CLI_FIRST_DESIGN.md)。
 
 ## 目录
 
@@ -30,10 +34,9 @@ docs/FEATURES.md                全量功能目录（新人/AI 的功能入口�
 - Node.js 与 npm
 - 真机采集需要 adb、root 和 Frida 17.x
 
-安装前端和采集器依赖：
+安装采集器构建依赖：
 
 ```bash
-npm --prefix frontend install
 npm --prefix tracer install
 npm --prefix tracer run build
 ```
@@ -56,15 +59,6 @@ npm --prefix tracer run build
 # 查看采集结果
 ./tracemiku list traces/run1 --json
 ./tracemiku info traces/run1/calls/<call_dir> --json
-
-# 启动 Web UI
-./tracemiku web traces/run1/calls/<call_dir> --port 18900
-```
-
-需要 Binary Ninja HLIL/CFG 时传入目标 SO：
-
-```bash
-./tracemiku web <call_dir> --so /path/to/libtarget.so --port 18900
 ```
 
 ## trace 捕获是怎么工作的
@@ -145,7 +139,8 @@ CLI 是首选自动化入口，输出为结构化 JSON。所有分析命令都�
 `./tracemiku capabilities`：
 
 ```bash
-./tracemiku capabilities                    # 全部命令/参数/默认值的 JSON
+./tracemiku capabilities                    # 采集与分析命令摘要
+./tracemiku capabilities --command records  # 单个命令的完整参数
 ./tracemiku resolve <call_dir> --so libtarget.so --off 0x1234
 ./tracemiku indirect-targets <call_dir> --so libtarget.so --off 0x1234
 ./tracemiku reg-at <call_dir> --reg x0 --so libtarget.so --off 0x1234
@@ -155,8 +150,8 @@ CLI 是首选自动化入口，输出为结构化 JSON。所有分析命令都�
 ```
 
 地址和偏移默认按十六进制解析（`10` 即 `0x10`），需要十进制时加 `d` 前缀（`d16`）。
-每个命令的参数以 `./tracemiku <cmd> --help` 为准。已有专用命令时不要使用通用
-`api`，也不要仅为查询而启动 Web server。
+每个命令的参数以 `./tracemiku <cmd> --help` 为准。统一入口只提供专用分析
+命令；已移除的旧入口与替代选择见功能目录。
 
 ## 分析边界
 
@@ -165,8 +160,8 @@ trace load、外部写和初始快照；`??` 表示未知，绝不能当作零�
 [内存完整性设计](docs/memory-completeness-design.md)。
 
 Trace 目录及二进制格式见
-[Trace 数据契约](docs/PER_CALL_TRACE_DESIGN.md)。反编译参考由 Binary Ninja
-sidecar 提供（`hlil-for-pc`/`hlil-for-fn`，需配置目标 SO）。
+[Trace 数据契约](docs/PER_CALL_TRACE_DESIGN.md)。反编译参考由外部静态工具提供，
+通过模块名和偏移与 trace 对齐。
 
 ## 开发与测试
 
@@ -181,9 +176,9 @@ make test-device     # 需要 Android 设备
 契约测试（`make test-contract`）是黑盒/公共接口级：CLI 的每个命令输出和 server
 的每个 route 都必须在 `scripts/contract_audit.py` 声明的契约测试文件中有 schema
 校验与语义断言覆盖；tracer 的 272 字节记录格式有独立的 TS 契约测试；CLI 与 server
-同分析结果逐字段一致（`scripts/rust_cli_web_parity.py`）。CLI 输出由
-`rust/crates/tracemiku-cli/src/output_types*.rs` 的类型化模型序列化，字段名与结构
-是 AI 消费方的稳定契约，改动必须同步更新契约测试。
+同分析结果逐字段一致（`scripts/rust_cli_web_parity.py`）。CLI 输出的字段名与结构
+是 AI 消费方的稳定契约，改动必须同步更新契约测试；现有类型与 schema 的覆盖范围
+见 [功能目录](docs/FEATURES.md)。
 
 工程规则见 [AGENTS.md](AGENTS.md)，当前路线图见 [TODO.md](TODO.md)，性能基线见
 [BENCHMARKS.md](BENCHMARKS.md)。

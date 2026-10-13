@@ -72,6 +72,8 @@ def cli_cmd(trace: Path, args: tuple[str, ...]) -> list[str]:
         "rust/Cargo.toml",
         "-p",
         "tracemiku-cli",
+        "--bin",
+        "tracemiku-cli",
         "--",
         *args[:1],
         str(trace),
@@ -142,17 +144,7 @@ def cases() -> list[Case]:
             "/api/records?start=0&count=9",
             ("records", "--start", "0", "--count", "9"),
         ),
-        Case(
-            "api-records",
-            "/api/records?start=0&count=2",
-            ("api", "/api/records", "-p", "start=0", "-p", "count=2"),
-        ),
         Case("cfg", "/api/cfg", ("cfg",)),
-        Case(
-            "query-records",
-            "/api/query?kind=records&q=ret&idx=0&limit=10",
-            ("query", "--kind", "records", "--q", "ret", "--idx", "0", "--limit", "10"),
-        ),
         Case(
             "search-cursor",
             "/api/search?pattern=ret&max_results=4&cursor=4",
@@ -270,13 +262,8 @@ def main() -> int:
     if not trace.is_dir() or not (trace / "trace.bin").exists():
         print(f"FAIL invalid trace call_dir: {trace}", file=sys.stderr)
         return 2
+    # 此门禁只比较 JSON API；server 的静态文件不是 API 就绪条件。
     static_dir = REPO_ROOT / "frontend" / "dist"
-    if not (static_dir / "index.html").exists():
-        print(
-            "FAIL frontend/dist/index.html missing; run npm run build in frontend/",
-            file=sys.stderr,
-        )
-        return 2
 
     port = free_port()
     base = f"http://127.0.0.1:{port}"

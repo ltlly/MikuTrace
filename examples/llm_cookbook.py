@@ -1,8 +1,7 @@
 """traceMiku Rust v2 CLI cookbook for LLM/tooling agents.
 
 The old Python `viewer` SDK was removed during the Rust/Solid v2 cutover.
-These examples intentionally use the stable top-level CLI and JSON route
-wrappers instead, so they work in the same environment as `make test-v2`.
+These examples use specialized commands through the top-level JSON CLI.
 
 Usage:
     uv run python examples/llm_cookbook.py <example> [call_dir]
@@ -17,9 +16,9 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
+from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_TRACE = Path("/tmp/tracemiku_smoke/run/calls/call_001_tid100_9r_2ms")
@@ -48,16 +47,13 @@ def run_json(*args: str) -> Any:
         cwd=REPO,
         text=True,
         capture_output=True,
+        check=False,
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         sys.stderr.write(proc.stdout)
         raise SystemExit(proc.returncode)
     return json.loads(proc.stdout)
-
-
-def query(path: Path, subcommand: str, *args: str) -> Any:
-    return run_json("query", str(path), subcommand, *args)
 
 
 def print_json(value: Any) -> None:
@@ -71,7 +67,7 @@ def info(path: Path) -> None:
 
 def first_records(path: Path) -> None:
     """First 12 decoded records with symbol annotations."""
-    resp = query(path, "records", "--range", "0..12", "--regs", "x0,x1,sp")
+    resp = run_json("records", str(path), "--start", "0", "--count", "12", "--regs", "x0,x1,sp")
     rows = [
         {
             "idx": r["idx"],
@@ -87,7 +83,7 @@ def first_records(path: Path) -> None:
 
 def cfg_summary(path: Path) -> None:
     """CFG size and hottest blocks."""
-    cfg = query(path, "cfg")
+    cfg = run_json("cfg", str(path))
     blocks = sorted(cfg.get("blocks", []), key=lambda b: -int(b.get("executions", 0)))
     print_json(
         {
@@ -101,7 +97,7 @@ def cfg_summary(path: Path) -> None:
 
 def functions(path: Path) -> None:
     """FunctionIndex summary."""
-    resp = query(path, "func-summary")
+    resp = run_json("functions", str(path))
     print_json(
         {
             "counts": resp.get("counts"),
@@ -121,7 +117,7 @@ def functions(path: Path) -> None:
 
 def search_calls(path: Path) -> None:
     """Search decoded assembly for call instructions."""
-    resp = query(path, "search", "--pattern", r"^bl\b", "--max", "20")
+    resp = run_json("search", str(path), r"^bl\b", "--max-results", "20")
     print_json(
         {
             "returned": resp.get("returned"),
@@ -134,7 +130,7 @@ def search_calls(path: Path) -> None:
 
 def strings(path: Path) -> None:
     """Printable strings found through MemShadow."""
-    resp = query(path, "strings", "--min-len", "8")
+    resp = run_json("strings", str(path), "--min-len", "8")
     print_json(
         {
             "count": resp.get("count"),
@@ -147,22 +143,22 @@ def strings(path: Path) -> None:
 
 def taint_fwd(path: Path) -> None:
     """Forward taint from x0 at trace idx 0."""
-    print_json(query(path, "forward-taint", "--from", "0", "--reg", "x0", "--max", "20"))
+    print_json(run_json("taint-fwd", str(path), "--start", "0", "--reg", "x0", "--max-count", "20"))
 
 
 def taint_bwd(path: Path) -> None:
     """Backward taint for x0 near the middle of the trace."""
     meta = run_json("info", str(path), "--json")
     start = max(0, int(meta.get("records") or 0) // 2)
-    print_json(query(path, "backward-taint", "--from", str(start), "--reg", "x0", "--max", "20"))
+    print_json(run_json("taint-bwd", str(path), "--start", str(start), "--reg", "x0", "--max-count", "20"))
 
 
 def overview(path: Path) -> None:
     """One compact context bundle for an LLM agent."""
     meta = run_json("info", str(path), "--json")
-    recs = query(path, "records", "--range", "0..8")
-    cfg = query(path, "cfg")
-    funcs = query(path, "func-summary")
+    recs = run_json("records", str(path), "--start", "0", "--count", "8")
+    cfg = run_json("cfg", str(path))
+    funcs = run_json("functions", str(path))
     print_json(
         {
             "trace": {

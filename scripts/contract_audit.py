@@ -8,6 +8,7 @@ Exit 0 = complete; exit 1 = gaps (listed as JSON on stdout).
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,27 +17,25 @@ CLI = REPO / "rust" / "crates" / "tracemiku-cli" / "tests"
 SVR = REPO / "rust" / "crates" / "tracemiku-server" / "tests"
 
 # CLI command families -> contract test file that must exist and contain tests.
-# Keys are command names from args.rs; values are test files (no suffix).
+# Keys are public commands from ./tracemiku; values are test files (no suffix).
 CLI_COVERAGE: dict[str, list[str]] = {
-    "capabilities": ["contract_basic", "contract_semantics"],
+    "trace": ["contract_entrypoint"],
+    "probe": ["contract_entrypoint"],
+    "doctor": ["contract_entrypoint"],
+    "capabilities": ["contract_basic", "contract_semantics", "contract_entrypoint"],
     "finalize": ["contract_basic"],
     "completions": ["contract_completions"],
     "stats": ["contract_basic"],
     "meta": ["contract_basic"],
     "list": ["contract_basic"],
     "info": ["contract_basic"],
-    "decomp-status": ["contract_basic"],
-    "bg-status": ["contract_basic"],
     "records": ["contract_query"],
     "record": ["contract_query"],
     "resolve": ["contract_query"],
-    "query": ["contract_query"],
     "search": ["contract_query"],
     "search-pc": ["contract_query"],
-    "search-asm": ["contract_query"],
     "reg-at": ["contract_query"],
     "reg-value-at": ["contract_query"],
-    "reg-at-idx": ["contract_query"],
     "last-write-of-reg": ["contract_query"],
     "next-use-of-reg": ["contract_query"],
     "indirect-targets": ["contract_query"],
@@ -66,11 +65,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "hash-input-search": ["contract_query"],
     "diff-traces": ["contract_query"],
     "asm-tokens-for-pcs": ["contract_query"],
-    "bn-sidecar-status": ["contract_query"],
-    "hlil-for-pc": ["contract_query"],
-    "hlil-for-fn": ["contract_query"],
-    "bn-cfg-for-pc": ["contract_query"],
-    "bn-cfg-svg-for-pc": ["contract_query"],
     "auto-phase-detect": ["contract_query"],
     "jni-calls": ["contract_query"],
     "jni-events": ["contract_query"],
@@ -79,7 +73,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "jobj-history": ["contract_query"],
     "jni-strings": ["contract_query"],
     "cfg": ["contract_query"],
-    "cfg-svg": ["contract_query"],
     "idxs-for-block": ["contract_query"],
     "block-for-pc": ["contract_query"],
     "block": ["contract_query"],
@@ -98,7 +91,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "vm-backstep": ["contract_vm"],
     "vm-backchain": ["contract_vm"],
     "vm-backtree": ["contract_vm"],
-    "api": ["contract_basic"],
     "fork-events": ["contract_query"],
     "functions": ["contract_query"],
     "idxs-for-pc": ["contract_query"],
@@ -187,27 +179,23 @@ def check_coverage(mapping: dict[str, list[str]], root: Path) -> list[str]:
 
 
 def live_cli_commands() -> list[str]:
-    """Actual command names from the built binary's capabilities output."""
-    import subprocess
+    """Read the public catalog; never substitute declarations for executable evidence."""
+    import os
 
-    bin_path = REPO / "rust" / "target" / "debug" / "tracemiku-cli"
-    if not bin_path.exists():
-        # Fall back to the declared mapping when the binary is not built.
-        return sorted(CLI_COVERAGE)
+    bin_path = Path(os.environ.get(
+        "TRACEMIKU_CLI_BIN", REPO / "rust" / "target" / "debug" / "tracemiku-cli"
+    ))
+    if not bin_path.is_file():
+        raise RuntimeError("CLI binary missing; run make cli before the contract audit")
+    env = dict(os.environ, TRACEMIKU_CLI_BIN=str(bin_path.resolve()))
     proc = subprocess.run(
-        [str(bin_path), "capabilities"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,  # 非零退出码在下方统一降级到声明映射
+        [sys.executable, str(REPO / "tracemiku"), "capabilities"],
+        capture_output=True, text=True, timeout=30, check=True, env=env,
     )
-    if proc.returncode != 0:
-        return sorted(CLI_COVERAGE)
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return sorted(CLI_COVERAGE)
-    return [c["name"] for c in data.get("commands", [])]
+    data = json.loads(proc.stdout)
+    if data.get("schema_version") != 2 or not isinstance(data.get("commands"), list):
+        raise ValueError("unsupported capabilities schema")
+    return [command["name"] for command in data["commands"]]
 
 
 def main() -> int:
@@ -215,7 +203,11 @@ def main() -> int:
     route_gaps = check_coverage(ROUTE_COVERAGE, SVR)
     # Cross-check the declared command mapping against the real binary so a
     # renamed/removed command cannot silently leave a stale audit entry.
-    live = set(live_cli_commands())
+    try:
+        live = set(live_cli_commands())
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(json.dumps({"cli_discovery_error": str(exc)}, ensure_ascii=False))
+        return 1
     declared = set(CLI_COVERAGE)
     stale = sorted(declared - live)
     missing = sorted(live - declared)

@@ -142,13 +142,6 @@ pub async fn run() -> anyhow::Result<()> {
             clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
             Ok(())
         }
-        Some(Cmd::Api {
-            trace_dir,
-            path,
-            method,
-            params,
-            json_body,
-        }) => cmd_api(trace_dir, path, method, params, json_body).await,
         Some(Cmd::Stats {
             trace_dir,
             all_modules,
@@ -203,12 +196,6 @@ pub async fn run() -> anyhow::Result<()> {
         Some(Cmd::Record { trace_dir, idx }) => {
             route_get_json(trace_dir, format!("/api/record/{idx}")).await
         }
-        Some(Cmd::BgStatus { trace_dir }) => {
-            route_get_json(trace_dir, "/api/bg-status".to_string()).await
-        }
-        Some(Cmd::DecompStatus { trace_dir }) => {
-            route_get_json(trace_dir, "/api/decomp-status".to_string()).await
-        }
         Some(Cmd::IdxsForPc {
             trace_dir,
             pc,
@@ -235,12 +222,6 @@ pub async fn run() -> anyhow::Result<()> {
             pattern,
             max_results,
             cursor,
-        })
-        | Some(Cmd::SearchAsm {
-            trace_dir,
-            pattern,
-            max_results,
-            cursor,
         }) => {
             let mut params = vec![
                 ("pattern", pattern),
@@ -250,33 +231,6 @@ pub async fn run() -> anyhow::Result<()> {
                 params.push(("cursor", cursor.to_string()));
             }
             route_get_json(trace_dir, route_path("/api/search", &params)).await
-        }
-        Some(Cmd::Query {
-            trace_dir,
-            kind,
-            q,
-            idx,
-            reg,
-            addr,
-            len,
-            limit,
-        }) => {
-            let mut params = vec![
-                ("kind", kind),
-                ("q", q),
-                ("len", len.to_string()),
-                ("limit", limit.to_string()),
-            ];
-            if let Some(idx) = idx {
-                params.push(("idx", idx.to_string()));
-            }
-            if let Some(reg) = reg {
-                params.push(("reg", reg));
-            }
-            if let Some(addr) = addr {
-                params.push(("addr", addr));
-            }
-            route_get_json(trace_dir, route_path("/api/query", &params)).await
         }
         Some(Cmd::SoStats {
             trace_dir,
@@ -350,11 +304,6 @@ pub async fn run() -> anyhow::Result<()> {
             route_get_json(trace_dir, route_path("/api/reg-at", &params)).await
         }
         Some(Cmd::RegValueAt {
-            trace_dir,
-            idx,
-            reg,
-        })
-        | Some(Cmd::RegAtIdx {
             trace_dir,
             idx,
             reg,
@@ -439,27 +388,6 @@ pub async fn run() -> anyhow::Result<()> {
                 params.push(("fn", name));
             }
             route_get_json(trace_dir, route_path("/api/cfg", &params)).await
-        }
-        Some(Cmd::CfgSvg {
-            trace_dir,
-            fn_name,
-            pc,
-            local_depth,
-            timeout,
-            force,
-        }) => {
-            let mut params = vec![
-                ("timeout", timeout.to_string()),
-                ("local_depth", local_depth.to_string()),
-                ("force", force.to_string()),
-            ];
-            if let Some(name) = fn_name {
-                params.push(("fn", name));
-            }
-            if let Some(pc) = pc {
-                params.push(("pc", pc));
-            }
-            route_get_json(trace_dir, route_path("/api/cfg-svg", &params)).await
         }
         Some(Cmd::IdxsForBlock {
             trace_dir,
@@ -1087,39 +1015,6 @@ pub async fn run() -> anyhow::Result<()> {
                 route_path("/api/asm-tokens-for-pcs", &[("pcs", pcs)]),
             )
             .await
-        }
-        Some(Cmd::BnSidecarStatus { trace_dir }) => {
-            route_get_json(trace_dir, "/api/bn-sidecar/status".to_string()).await
-        }
-        Some(Cmd::HlilForPc { trace_dir, pc }) => {
-            route_get_json(trace_dir, route_path("/api/hlil-for-pc", &[("pc", pc)])).await
-        }
-        Some(Cmd::HlilForFn { trace_dir, fn_id }) => {
-            route_get_json(
-                trace_dir,
-                route_path("/api/hlil-for-fn", &[("fn_id", fn_id)]),
-            )
-            .await
-        }
-        Some(Cmd::BnCfgForPc {
-            trace_dir,
-            pc,
-            mode,
-        }) => {
-            let params = vec![("pc", pc), ("mode", mode)];
-            route_get_json(trace_dir, route_path("/api/bn-cfg-for-pc", &params)).await
-        }
-        Some(Cmd::BnCfgSvgForPc {
-            trace_dir,
-            pc,
-            mode,
-            timeout,
-        }) => {
-            let mut params = vec![("pc", pc), ("mode", mode)];
-            if let Some(timeout) = timeout {
-                params.push(("timeout", timeout.to_string()));
-            }
-            route_get_json(trace_dir, route_path("/api/bn-cfg-svg-for-pc", &params)).await
         }
         Some(Cmd::AutoPhaseDetect {
             trace_dir,

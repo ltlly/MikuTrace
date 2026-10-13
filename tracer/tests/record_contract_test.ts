@@ -11,8 +11,11 @@
  */
 import {
   REC_SIZE,
+  DEFAULT_RING_RECS,
+  MAX_RING_RECS,
   RING_RECS,
-  RING_BYTES,
+  ringBytes,
+  setRingRecs,
   WORKER_RING_RECS,
   WORKER_RING_BYTES,
   SIMD_REC_SIZE,
@@ -41,8 +44,25 @@ check(
   8 + 31 * 8 + 8 + 4 + 4 === REC_SIZE,
 );
 
-check("RING_RECS is 65536 (~17.6MB ring)", RING_RECS === 65536);
-check("RING_BYTES == REC_SIZE * RING_RECS", RING_BYTES === REC_SIZE * RING_RECS);
+check("RING_RECS defaults to 65536 (17MiB ring)", RING_RECS === 65536);
+check("ringBytes() == REC_SIZE * RING_RECS", ringBytes() === REC_SIZE * RING_RECS);
+
+// Ring capacity is configurable; its byte budget must follow the effective
+// capacity, including the lower and upper safety bounds.
+try {
+  setRingRecs(4096);
+  check("configured ring holds 4096 records", RING_RECS === 4096);
+  check("configured ring byte budget follows capacity", ringBytes() === 272 * 4096);
+  setRingRecs(0);
+  check("ring capacity cannot drop below 1024", RING_RECS === 1024);
+  check("minimum ring byte budget", ringBytes() === 272 * 1024);
+  setRingRecs(MAX_RING_RECS + 1);
+  check("ring capacity cannot exceed the hard limit", RING_RECS === MAX_RING_RECS);
+  check("maximum ring byte budget", ringBytes() === REC_SIZE * MAX_RING_RECS);
+} finally {
+  setRingRecs(DEFAULT_RING_RECS);
+}
+
 check("WORKER_RING_RECS is 8192", WORKER_RING_RECS === 8192);
 check(
   "WORKER_RING_BYTES == REC_SIZE * WORKER_RING_RECS",

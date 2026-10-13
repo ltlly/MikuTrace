@@ -14,11 +14,11 @@ pub(super) fn capabilities_json() -> serde_json::Value {
         "tool": "tracemiku-cli",
         "version": env!("CARGO_PKG_VERSION"),
         "output_contract": {
-            "stdout": "one JSON document for analysis commands",
+            "stdout": "one JSON document for analysis commands; list requires --json; completions emits shell source",
             "stderr": "diagnostics only",
             "success_exit_code": 0,
             "address_default": "hexadecimal; use the command help for explicit decimal syntax",
-            "preferred_interface": "specialized commands; api is a fallback only"
+            "preferred_interface": "specialized commands through ./tracemiku"
         },
         "commands": commands,
         "capture_extensions": {

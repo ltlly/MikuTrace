@@ -31,20 +31,6 @@ fn records_matches_schema() {
 }
 
 #[test]
-fn query_records_matches_schema() {
-    let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&["query", cd.to_str().unwrap(), "--kind", "records"]);
-    assert_valid(
-        serde_json::json!({
-            "type": "object",
-            "required": ["kind", "status", "count", "returned", "rows", "truncated"],
-            "properties": {"kind": {"const": "records"}, "rows": {"type": "array"}},
-        }),
-        &value,
-    );
-}
-
-#[test]
 fn backward_taint_matches_schema() {
     let (_tmp, cd) = synth_call_dir();
     let value = run_json(&[
@@ -154,23 +140,28 @@ fn call_tree_matches_schema() {
 fn reg_at_matches_schema() {
     let (_tmp, cd) = synth_call_dir();
     let value = run_json(&[
-        "query",
-        cd.to_str().unwrap(),
-        "--kind",
         "reg-at",
-        "--idx",
-        "4",
+        cd.to_str().unwrap(),
+        "--addr",
+        "0x100000",
         "--reg",
         "x0",
     ]);
     assert_valid(
         serde_json::json!({
             "type": "object",
-            "required": ["kind", "status", "rows", "count"],
-            "properties": {"rows": {"type": "array"}},
+            "required": ["status", "source", "reg", "hits", "exec_count", "hits_capped"],
+            "properties": {
+                "status": {"const": "hit"},
+                "reg": {"const": "x0"},
+                "hits": {"type": "array", "minItems": 1},
+                "exec_count": {"const": 1}
+            },
         }),
         &value,
     );
+    assert_eq!(value["hits"][0]["idx"], 0);
+    assert_eq!(value["hits"][0]["value"], "0x0");
 }
 
 #[test]

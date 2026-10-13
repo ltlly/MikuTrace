@@ -4,12 +4,13 @@ Rust 是 traceMiku 分析语义的唯一实现源。
 
 ## Crate
 
-- `tracemiku-core`：trace、反汇编、索引、CFG、污点、MemShadow、符号和 IL。
+- `tracemiku-core`：trace、反汇编、索引、CFG、污点、MemShadow、符号和 Trace 锚定验证。
 - `tracemiku-cli`：结构化命令与高层分析编排。
 - `tracemiku-server`：Axum API、后台任务、前端静态文件和 BN sidecar。
 
-依赖方向必须保持 `core <- cli/server`。core 不依赖 Web、CLI 参数或目标专用配置；
-route 不应复制分析语义。
+目前 CLI 还依赖 server 的 AppState 和路由，部分命令通过进程内 Router 调用分析。
+目标是 `core <- cli`；需求和边界见 [采集与 CLI 设计](../docs/CLI_FIRST_DESIGN.md)。
+core 不依赖 Web、CLI 参数或目标专用配置；迁移时将 route 中的分析语义归入 core。
 
 ## 构建与测试
 
@@ -18,7 +19,7 @@ cd rust
 cargo fmt --check
 cargo clippy --workspace --all-targets
 cargo test --workspace
-cargo run -p tracemiku-cli -- --help
+../tracemiku capabilities
 ```
 
 从仓库根目录运行 `make test-v2` 可同时验证 Python 入口、Rust、前端和 CLI/API 一致性。

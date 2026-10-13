@@ -1,34 +1,5 @@
 use super::*;
 
-pub(super) fn normalize_api_path(path: &str) -> anyhow::Result<String> {
-    let path = path.trim();
-    let path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{path}")
-    };
-    if path.starts_with("/api/") || path == "/openapi.json" {
-        Ok(path)
-    } else {
-        bail!("api path must start with /api/ or be /openapi.json: {path}")
-    }
-}
-
-pub(super) fn parse_key_values(raw: Vec<String>) -> anyhow::Result<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    for item in raw {
-        let Some((k, v)) = item.split_once('=') else {
-            bail!("--param must be key=value, got {item:?}");
-        };
-        let key = k.trim();
-        if key.is_empty() {
-            bail!("--param key must not be empty");
-        }
-        out.push((key.to_string(), v.to_string()));
-    }
-    Ok(out)
-}
-
 pub(super) fn split_csv(s: &str) -> Vec<String> {
     s.split(',')
         .map(str::trim)
@@ -542,7 +513,7 @@ pub(super) fn taint_params(
 }
 
 /// route_path 的键类型放宽为 AsRef<str>：字面量键（&'static str）与
-/// parse_key_values 产出的 String 键都能直接拼接，无需为绕生命周期泄漏。
+/// String 键可以直接拼接，无需为绕生命周期泄漏。
 pub(super) fn route_path(base: &str, params: &[(impl AsRef<str>, String)]) -> String {
     if params.is_empty() {
         return base.to_string();
@@ -681,30 +652,6 @@ pub(super) fn utf8_preview(bytes: &[u8], max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalize_api_path_adds_slash_and_prefix() {
-        assert_eq!(normalize_api_path("api/records").unwrap(), "/api/records");
-        assert_eq!(normalize_api_path("/api/records").unwrap(), "/api/records");
-        assert_eq!(
-            normalize_api_path(" /openapi.json ").unwrap(),
-            "/openapi.json"
-        );
-        assert!(
-            normalize_api_path("records").is_err(),
-            "missing /api/ prefix"
-        );
-        assert!(normalize_api_path("/other/path").is_err());
-    }
-
-    #[test]
-    fn parse_key_values_requires_equals() {
-        let ok = parse_key_values(vec!["a=1".into(), "b=2".into()]).unwrap();
-        assert_eq!(ok.len(), 2);
-        assert_eq!((ok[0].0.as_str(), ok[0].1.as_str()), ("a", "1"));
-        assert!(parse_key_values(vec!["noequals".into()]).is_err());
-        assert!(parse_key_values(vec!["=x".into()]).is_err(), "empty key");
-    }
 
     #[test]
     fn split_csv_trims_and_drops_empty() {

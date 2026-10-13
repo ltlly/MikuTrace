@@ -17,11 +17,16 @@ from argparse import Namespace
 import pytest
 
 
-def _load_tracemiku():
+def _load_tracemiku(tmp_path):
     loader = importlib.machinery.SourceFileLoader("tracemiku_main", "tracemiku")
     spec = importlib.util.spec_from_loader("tracemiku_main", loader)
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
+    # Frida 在此完全由 FakeScript 执行；host 生命周期测试不依赖本机生成物。
+    mod.HERE = tmp_path / "repo"
+    agent = mod.HERE / "tracer" / "_agent.js"
+    agent.parent.mkdir(parents=True, exist_ok=True)
+    agent.write_text("// Mocked by FakeScript in host lifecycle tests.\n")
     return mod
 
 
@@ -172,7 +177,7 @@ def frida_mock(monkeypatch):
 
 
 def test_spawn_flow_order_and_cleanup(frida_mock, tmp_path, monkeypatch):
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     device, _ = frida_mock
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
 
@@ -191,7 +196,7 @@ def test_spawn_flow_order_and_cleanup(frida_mock, tmp_path, monkeypatch):
 
 
 def test_spawn_init_failure_kills_and_disables(frida_mock, tmp_path, monkeypatch):
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     device, script = frida_mock
     script.fail_init = True
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
@@ -205,7 +210,7 @@ def test_spawn_init_failure_kills_and_disables(frida_mock, tmp_path, monkeypatch
 
 
 def test_spawn_rejects_launch_combination(frida_mock, tmp_path, monkeypatch):
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
 
     rc = mod.cmd_trace(_args(tmp_path, launch=True))
@@ -215,7 +220,7 @@ def test_spawn_rejects_launch_combination(frida_mock, tmp_path, monkeypatch):
 
 def test_spawn_no_cmodule_aborts_without_resume(frida_mock, tmp_path, monkeypatch):
     """init 返回 no-cmodule: 立即以非零码退出, 不 resume 挂起进程, gating 收口."""
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     device, script = frida_mock
     script.init_result = "no-cmodule"
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
@@ -244,7 +249,7 @@ def test_duplicate_trace_end_finalizes_once(frida_mock, tmp_path, monkeypatch):
     模拟 watchdog/maxRecords 先发 trace-end(truncated:true), 目标函数真正返回时
     agent 再发第二个 trace-end(truncated:false) — 只允许 finalize 一次.
     """
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     _device, script = frida_mock
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
     script.messages = [
@@ -271,7 +276,7 @@ def test_duplicate_trace_end_finalizes_once(frida_mock, tmp_path, monkeypatch):
 
 def test_pending_call_dir_reuse_clears_stale_files(frida_mock, tmp_path, monkeypatch):
     """_pending_call_NNN 复用前必须清空上一 run 的残留事件文件 (append 打开)."""
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     _device, script = frida_mock
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
     stale_dir = tmp_path / "run" / "calls" / "_pending_call_001"
@@ -299,7 +304,7 @@ def test_pending_call_dir_reuse_clears_stale_files(frida_mock, tmp_path, monkeyp
 
 def test_frida_four_calls_transfer_before_unload_without_adb_subprocess(frida_mock, tmp_path, monkeypatch):
     """四个实际协议回传在 unload 前结束；Stalker 后不再调用 adb shell。"""
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     _device, script = frida_mock
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
     rpc = _FakeRpc(script)
@@ -362,7 +367,7 @@ def test_frida_four_calls_transfer_before_unload_without_adb_subprocess(frida_mo
 
 
 def test_frida_transfer_failure_retains_manifest_and_pending(frida_mock, tmp_path, monkeypatch):
-    mod = _load_tracemiku()
+    mod = _load_tracemiku(tmp_path)
     _device, script = frida_mock
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
     rpc = _FakeRpc(script)

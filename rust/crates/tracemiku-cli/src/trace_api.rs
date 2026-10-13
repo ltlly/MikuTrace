@@ -361,32 +361,6 @@ pub(super) async fn cmd_hash_finalize_detect(
     print_pretty(&response)
 }
 
-pub(super) async fn cmd_api(
-    trace_dir: PathBuf,
-    path: String,
-    method: String,
-    params: Vec<String>,
-    json_body: Option<String>,
-) -> anyhow::Result<()> {
-    let path = route_path(&normalize_api_path(&path)?, &parse_key_values(params)?);
-    match method.trim().to_ascii_uppercase().as_str() {
-        "GET" => {
-            if json_body.is_some() {
-                bail!("--json-body is only valid for POST");
-            }
-            route_get_json(trace_dir, path).await
-        }
-        "POST" => {
-            let body = match json_body {
-                Some(raw) => serde_json::from_str(&raw).context("parse --json-body")?,
-                None => serde_json::json!({}),
-            };
-            route_post_json(trace_dir, path, body).await
-        }
-        other => bail!("unsupported --method {other}; expected GET or POST"),
-    }
-}
-
 pub(super) async fn cmd_jni_output_strings(
     trace_dir: PathBuf,
     key: Option<String>,
