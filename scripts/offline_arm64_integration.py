@@ -54,6 +54,7 @@ CASES = [
     ("unsafe_ips", 42, "43", 1, [(0, 42), (4, 42), (8, 42), (12, 43)], None),
     ("tail", 42, "42", 1, None, None),
     ("atomic", 42, "1", 1, None, None),
+    ("acquire", 42, "0", 1, [(0, 42), (4, 42), (8, 42), (12, 0)], None),
     ("atomic_entry", 42, "42", 1, None, "exclusive instruction"),
     ("lr_sensitive", 42, "nonzero", 1, None, "caller-address-sensitive"),
 ]

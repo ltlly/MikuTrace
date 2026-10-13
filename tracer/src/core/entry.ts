@@ -30,7 +30,7 @@ export function attachEntryHook(target: NativePointer, callbacks: ScriptInvocati
         const ins = Instruction.parse(target.add(offset)) as Arm64Instruction;
         // 原子窗口不能被拆到两个翻译块；读取 LR 的跳板也不能用普通搬移替代
         // Frida 的 caller-address 修正。此类入口明确失败，不退回漏采集路径。
-        if (/^(ldax?[rp]|ldxr|ldxp|stlx?[rp]|stxr|stxp|clrex)/.test(ins.mnemonic)) {
+        if (/^(?:ld(?:a)?x[pr]|st(?:l)?x[pr])[bh]?$|^clrex$/.test(ins.mnemonic)) {
             throw new Error(`exclusive instruction in entry prologue: ${ins}`);
         }
         if (ins.mnemonic === "mov" && ins.operands[1]?.type === "reg" &&

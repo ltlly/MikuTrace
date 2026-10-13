@@ -24,7 +24,8 @@ function fixture(fault = "") {
     }
     const target = new Pointer(0x1000n);
     function instruction(address: Pointer) {
-        return { address, mnemonic: fault === "exclusive" ? "ldaxr" : fault === "lr" ? "mov" : "nop",
+        return { address, mnemonic: fault === "exclusive" ? "ldaxr" : fault === "lr" ? "mov"
+            : fault === "acquire" ? "ldar" : fault === "release" ? "stlr" : "nop",
             operands: [{}, { type: "reg", value: "lr" }],
             regsAccessed: { read: fault === "ips" ? ["w16", "x17"] : [], written: [] } };
     }
@@ -83,6 +84,12 @@ for (const fault of ["race", "patch-after-write"]) {
     assert.equal(f.detached(), 1);
     f.exports.releaseEntryHook();
     assert.equal(f.detached(), 1);
+}
+for (const operation of ["acquire", "release"]) {
+    const f = fixture(operation);
+    f.exports.attachEntryHook(f.target, {});
+    f.exports.releaseEntryHook();
+    assert.equal(f.target.readU32(), 0xd503201f, "普通 acquire/release 不使用独占监视器");
 }
 const f = fixture();
 f.exports.attachEntryHook(f.target, {});
