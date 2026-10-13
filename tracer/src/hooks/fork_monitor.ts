@@ -1,3 +1,4 @@
+import { persistEvents } from "../transport/manifest";
 /**
  * Fork/clone/vfork hook — Tier 1 fork-event logging
  *
@@ -67,6 +68,7 @@ export function installForkHooksOnce(): void {
                 ts: Date.now(),
                 attach_status: "not_attempted",
             });
+            if (STATE.forkEvents.length >= 128) flushForkEvents(STATE.callIdx);
         } catch (e) {
             log("[fork] push event failed: " + e);
         }
@@ -139,7 +141,8 @@ export function installForkHooksOnce(): void {
 export function flushForkEvents(callIdx: number): number {
     if (!STATE.forkEvents || STATE.forkEvents.length === 0) return 0;
     const events = STATE.forkEvents;
+    persistEvents("fork_events.jsonl", events);
     STATE.forkEvents = [];
-    send({ type: "fork-events", callIdx, count: events.length, events });
+
     return events.length;
 }

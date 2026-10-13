@@ -1,75 +1,93 @@
-/** 在 mock Frida 上执行实际 onLeave：快速返回不能绕过采集上限的截断语义。 */
+/** 实际 onLeave 的封口顺序、无记录上限、停止等待语义及 JNI 事件持久化。 */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 
 const noop = () => {};
-const state: any = {};
-let callbacks: any;
-let events: any[] = [];
-const modules: Record<string, any> = {
-    "./core/state": { STATE: state, SIMD_REC_SIZE: 520 },
-    "./core/utils": { log: noop },
-    "./core/cmodule": {},
-    "./core/ring": {
-        unfollowWorkerThreads: noop, flushRingToDisk: noop, flushWorkerTraceRings: noop,
-        closeTraceFile: noop, closeWorkerTraceFiles: noop, closeSimdTraceFile: noop,
-        workerTraceSummaries: () => [],
-    },
-    "./core/stalker": {},
-    "./sidecar/simd": { flushSimdRingToDisk: noop },
-    "./sidecar/mem_snapshot": {},
-    "./sidecar/semantic": { flushSemanticEvents: noop },
-    "./hooks/jni_vtable": { flushJniHookEvents: noop },
-    "./hooks/fork_monitor": { flushForkEvents: noop },
-    "./hooks/pthread_follow": { flushWorkerEvents: noop },
-    "./hooks/boundary_diff": { flushExtWriteEvents: noop },
-    "./anti_detect/plugin_interface": {},
-    "./transport/spool": { installSpoolTransport: noop },
-    "./target_plugins": {},
-};
-// 仅在测试编译时暴露私有 hook 安装函数，不复制生产回调实现。
 const source = readFileSync(new URL("../src/agent.ts", import.meta.url), "utf8") +
-    "\nexport { installFnHook };\n";
+    "\nexport { installFnHook, armWithModule };\n" +
+    "export function acceptCallsForTest() { acceptingCalls = true; }\n";
 const compiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
-const exports: any = {};
-runInNewContext(compiled, {
-    exports, rpc: {}, send: (event: any) => events.push(event),
-    Stalker: { unfollow: noop, flush: noop },
-    Interceptor: { attach: (_fp: any, handlers: any) => { callbacks = handlers; } },
-    require: (name: string) => {
-        assert.ok(name in modules, `unmocked module ${name}`);
-        return modules[name];
-    },
-});
-exports.installFnHook({}, {});
 
-for (const [total, cap, dropped, truncated] of [
-    [1999, 2000, 0, false],
-    [2000, 2000, 0, true],
-    [2001, 2000, 0, true],
-    [2000, 0, 0, false],
-    [1999, 2000, 1, true],
-]) {
-    events = [];
-    Object.assign(state, {
-        callFinalized: false, fnEntered: true, started: Date.now(), maxRecords: cap,
+for (const total of [0, 2000, 5_000_001, 50_000_001]) {
+    const order: string[] = [];
+    const events: any[] = [];
+    const state: any = {
+        callIdx: 1, callFinalized: false, fnEntered: true, started: Date.now(),
         headBuf: { readU64: () => ({ toNumber: () => total }) },
-        droppedBuf: { readU64: () => ({ toNumber: () => dropped }) },
+        tailBuf: { readU64: () => ({ toNumber: () => total }) },
+        droppedBuf: { readU64: () => ({ toNumber: () => 0 }) },
         simdSidecar: false, traceFilePath: "/spool/trace.bin",
+    };
+    let callbacks: any;
+    const modules: Record<string, any> = {
+        "./core/state": { STATE: state, SIMD_REC_SIZE: 520 },
+        "./core/utils": { log: noop }, "./core/cmodule": {}, "./core/native_io": { ioHealth: () => [] },
+        "./core/ring": {
+            unfollowWorkerThreads: noop, flushRingToDisk: () => order.push("flush"),
+            flushWorkerTraceRings: noop, closeTraceFile: () => order.push("close"),
+            closeWorkerTraceFiles: noop, closeSimdTraceFile: noop, workerTraceSummaries: () => [],
+        },
+        "./core/stalker": {}, "./sidecar/simd": { flushSimdRingToDisk: noop },
+        "./sidecar/mem_snapshot": {}, "./sidecar/semantic": { flushSemanticEvents: noop },
+        "./hooks/jni_vtable": { flushJniHookEvents: () => order.push("jni") },
+        "./hooks/fork_monitor": { flushForkEvents: noop },
+        "./hooks/pthread_follow": { flushWorkerEvents: noop },
+        "./hooks/boundary_diff": { flushExtWriteEvents: noop },
+        "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: noop },
+        "./transport/control": { controlAddress: noop },
+        "./transport/manifest": { sealManifest: () => { order.push("seal"); return "/spool/call_1.json"; } },
+    };
+    const exports: any = {};
+    const rpc: any = {};
+    runInNewContext(compiled, {
+        exports, rpc, send: (event: any) => { order.push("notify"); events.push(event); },
+        Stalker: { unfollow: noop, flush: noop }, clearInterval: noop, setImmediate: noop,
+        Process: { id: 1, enumerateModules: () => [] },
+        Interceptor: { attach: (_fp: any, handlers: any) => { callbacks = handlers; } },
+        require: (name: string) => { assert.ok(name in modules, name); return modules[name]; },
     });
+    exports.installFnHook({}, {});
+    // host 离开等待只关闭新的调用窗口，不能截断正在执行的函数。
+    assert.equal(rpc.exports.stopCapture(), "capturing");
+    assert.equal(state.callFinalized, false);
+    assert.equal(events.length, 0);
     const context = { _tid: 42, _callIdx: 1 };
     callbacks.onLeave.call(context, { toString: () => "0x42" });
     assert.equal(events.length, 1);
-    assert.equal(events[0].type, "trace-end");
     assert.equal(events[0].total, total);
-    assert.equal(events[0].truncated, truncated, `total=${total}, cap=${cap}, dropped=${dropped}`);
+    assert.equal(events[0].truncated, false);
+    assert.deepEqual(order, ["flush", "close", "jni", "seal", "notify"]);
+    assert.equal(rpc.exports.stats().completedCalls, 1);
     assert.equal(state.fnEntered, false);
     callbacks.onLeave.call(context, { toString: () => "0x42" });
-    assert.equal(events.length, 1, "已封口的调用不能重复发 trace-end");
+    assert.equal(events.length, 1, "一次返回只封口一次");
+    if (total === 2000) {
+        state.exportName = "missing";
+        state.fnOffset = null;
+        const address = { add() { return this; }, toString() { return "0x1000"; } };
+        assert.throws(() => exports.armWithModule({ name: "fixture.so", base: address, size: 4096,
+            enumerateExports: () => [], enumerateSymbols: () => [] }, {}), /export "missing" not found/,
+        "没有时间上限时，解析失败必须立即报错，不能无限等待未安装的 hook");
+        let failure: string | undefined;
+        modules["./transport/manifest"].sealSession = (error: string) => { failure = error; };
+        modules["./target_plugins"].runTargetPlugins = (phase: string) => {
+            assert.equal(phase, "beforeTrace");
+            throw new Error("fixture refusal");
+        };
+        state.callIdx = 0;
+        exports.acceptCallsForTest();
+        const entry: any = { threadId: 42 };
+        callbacks.onEnter.call(entry, []);
+        assert.equal(entry._skip, true);
+        assert.match(failure!, /fixture refusal/);
+        assert.equal(rpc.exports.stats().error, failure,
+            "插件拒绝采集必须持久化失败并告知 host，不能无限等待目标返回");
+        assert.equal(state.fnEntered, false);
+    }
 }
 // Frida 17 无静态 Module.findExportByName；实际 JNI 模块必须使用共享解析器。
 const jniExports: any = {};
@@ -105,6 +123,7 @@ runInNewContext(ts.transpileModule(jniSource, {
     Memory: { alloc: () => ({}) },
     Interceptor: { attach: (_address: any, handlers: any) => jniHandlers.push(handlers) },
     require: (name: string) => {
+        if (name === "../transport/manifest") return { persistEvents: noop };
         if (name === "../core/state") return { STATE: jniState };
         if (name === "../core/utils") return { log: noop, getExport: (symbol: string) => {
             assert.equal(symbol, "JNI_GetCreatedJavaVMs"); return getVMs;

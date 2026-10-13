@@ -7,31 +7,10 @@ so the adb/UI launch logic is a separate, importable module. Pure subprocess
 
 import os
 import subprocess
+import sys
 import time
 
-
-def adb_command(*args):
-    """构造 adb argv: 尊重 ANDROID_ADB_SERVER_PORT / ANDROID_SERIAL。
-
-    设备可能只在非默认 adb server 上可见 (例如 root adb server 占着 USB 接口),
-    或需要锁定具体 serial。集中在这里, 避免各调用点硬编码 adb_command(...)。
-    """
-    cmd = ["adb"]
-    port = os.environ.get("ANDROID_ADB_SERVER_PORT")
-    if port:          # 空串视为未设置
-        try:
-            port_num = int(port)
-        except ValueError:
-            raise ValueError(
-                f"ANDROID_ADB_SERVER_PORT 必须是整数, 得到 {port!r}") from None
-        if not 1 <= port_num <= 65535:
-            raise ValueError(
-                f"ANDROID_ADB_SERVER_PORT 必须在 1..65535, 得到 {port_num}")
-        cmd += ["-P", str(port_num)]
-    serial = os.environ.get("ANDROID_SERIAL")
-    if serial:
-        cmd += ["-s", serial]
-    return [*cmd, *args]
+from tracemiku_common import adb_command
 
 
 def usable_devices(devices_output, want_serial):
@@ -56,11 +35,11 @@ def launch_start(pkg, max_pid_wait=15):
     用于需要尽早 attach 但不能 `pm clear` 破坏登录/本地状态的场景.
     所有 adb 调用统一 10s timeout — adb 挂死时快速失败而不是永远阻塞.
     """
-    print(f"[launch] force-stop {pkg} (no pm clear)", flush=True)
+    print(f"[launch] force-stop {pkg} (no pm clear)", file=sys.stderr, flush=True)
     subprocess.run(adb_command("shell", "am", "force-stop", pkg),
-                   capture_output=True, timeout=10)
+                   capture_output=True, timeout=10, check=False)
     time.sleep(0.5)
-    print("[launch] monkey 拉起", flush=True)
+    print("[launch] monkey 拉起", file=sys.stderr, flush=True)
     subprocess.run(
         adb_command(
             "shell",
@@ -73,17 +52,18 @@ def launch_start(pkg, max_pid_wait=15):
         ),
         capture_output=True,
         timeout=10,
+        check=False,
     )
     t0 = time.time()
     while time.time() - t0 < max_pid_wait:
         r = subprocess.run(
             adb_command("shell", "pidof", pkg), capture_output=True, text=True,
-            timeout=10,
+            timeout=10, check=False,
         )
         s = r.stdout.strip()
         if s:
             pid = int(s.split()[0])
-            print(f"[launch] pid={pid} ({int(time.time() - t0)}s)", flush=True)
+            print(f"[launch] pid={pid} ({int(time.time() - t0)}s)", file=sys.stderr, flush=True)
             return pid
         time.sleep(0.25)
     raise RuntimeError(f"launch {pkg} 拿不到 pid 超时 {max_pid_wait}s")
@@ -96,7 +76,7 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
 
     def _run(label, cmd):
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False)
             return r.returncode, r.stdout.strip(), r.stderr.strip()
         except FileNotFoundError:
             return -1, "", f"{cmd[0]} not found"
@@ -106,7 +86,7 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
     # 1. ADB connectivity
     # 第二列必须严格等于 "device": unauthorized / offline / no permissions 都
     # 不是可用设备, 子串匹配会全部误判成已连接。指定 serial 时只认该 serial。
-    rc, out, err = _run("adb", adb_command("devices"))
+    rc, out, _err = _run("adb", adb_command("devices"))
     want_serial = os.environ.get("ANDROID_SERIAL")
     devices = usable_devices(out, want_serial)
     endpoint = []
@@ -131,7 +111,7 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
     if "uid=0" in out:
         results.append(("root access", True, "running as root"))
     else:
-        rc2, out2, _ = _run("su", adb_command("shell", "su", "-c", "id"))
+        _rc2, out2, _ = _run("su", adb_command("shell", "su", "-c", "id"))
         if "uid=0" in out2:
             results.append(("root access", True, "su available"))
         else:
@@ -196,7 +176,7 @@ def _check_device(pkg=None, out_dir=None, verbose=True):
 
     # 6. Output directory writable (optional)
     if out_dir:
-        rc, out, err = _run(
+        rc, out, _err = _run(
             "write-test",
             adb_command("shell", f"touch {out_dir}/.miku_test && rm {out_dir}/.miku_test"),
         )

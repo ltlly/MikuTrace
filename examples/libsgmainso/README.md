@@ -35,16 +35,9 @@ PY
 `avg_getSecurityFactors` / `x-mini-wua` 等字符串**不在文件里**，因为它们是运行时
 解码出来的（见 `known_offsets.json` 的 `trace_findings.decode_loop`）。
 
-## 采集 trace
+## 采集目标
 
-```bash
-./tracemiku trace \
-  --pkg <pkg> --spawn --so libsgmainso \
-  --method doCommandNative --cmd 70102 --cmd-arg 2 \
-  --remote 127.0.0.1:27099 --transport frida \
-  --out traces/<run> --duration 30 --max-records 24000
-```
-
-该目标在 Android 16 / OPD2404 上曾于 Stalker 启动后阻塞 `adb shell/logcat`，
-而 Frida、adb 文件传输和设备侧独立 helper 仍可用；确切等待点未定位。采集使用
-`--transport frida`。
+入口为 `doCommandNative`，按参数下标 2 的值 70102 过滤。当前采集默认等待一次调用
+自然返回，封口后使用 gzip + ADB 回传；通用用法见[命令目录](../../docs/FEATURES.md#采集与恢复)。
+历史上该设备出现过 adb shell 阻塞；全局 spawn gating 会拦截 ADB 启动的进程，当前
+spawn 流程仅挂起目标进程，不启用全局 gating。目标其他反检测行为须单独核对。

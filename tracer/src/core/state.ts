@@ -4,7 +4,7 @@
 
 export const REC_SIZE = 272;
 /** ring 容量默认值；initOpts.ringRecs 可在运行时下调/上调（硬上限 4M 条 ≈ 1.09 GB）。 */
-export const DEFAULT_RING_RECS = 65536;        // ~17.8 MB
+export const DEFAULT_RING_RECS = 4096;        // ~1.1 MB
 export const MAX_RING_RECS = 4194304;          // ~1.14 GB
 /** 生效值：init() 时按 opts.ringRecs 设定。 */
 export let RING_RECS = DEFAULT_RING_RECS;
@@ -19,7 +19,6 @@ export const WORKER_RING_BYTES = REC_SIZE * WORKER_RING_RECS;
 export const SIMD_REC_SIZE = 8 + 32 * 16;     // trace_idx:u64 + q0..q31 = 520
 export const SIMD_RING_RECS = 8192;           // ~4.1 MB
 export const SIMD_RING_BYTES = SIMD_REC_SIZE * SIMD_RING_RECS;
-export const FLUSH_INTERVAL_MS = 10;
 
 // HARD_EXCL: atomic deadlock / early-init / re-entrant — NEVER trace these
 /** --trace-exec: 放开 libc/libm/libdl/libpthread（memcpy/memset 等会写输出缓冲），
@@ -127,7 +126,9 @@ export interface TraceRingState {
     tailBuf: NativePointer;
     droppedBuf: NativePointer;
     ringRecsBuf: NativePointer;
-    maxRecordsBuf: NativePointer;
+    ioState: NativePointer;
+    flushNative: any;
+    active: NativePointer;
     ringRecs: number;
     file: any | null;
     filePath: string | null;
@@ -148,11 +149,10 @@ export interface InitOptions {
     fnOffset?: number | null;
     cmdValue?: number | null;
     cmdArg?: number | null;
-    maxRecords?: number | null;
     pkg?: string | null;
     /** 只放开 libc/libm/libdl/libpthread, 继续排除 libart/linker (比 --trace-deep 安全) */
     execOnly?: boolean | null;
-    /** SPSC ring 容量(条)。不设则由 maxRecords 推导, 都没有则用 65536。 */
+    /** native 分批写盘的固定缓冲容量；不是采集条数上限。 */
     ringRecs?: number | null;
     /** host 预建的 trace 目录; 必须避开 app 私有 cache (app 退出时会被清理) */
     traceDir?: string | null;
@@ -171,7 +171,6 @@ export interface InitOptions {
     simdSampleStride?: number;
     semanticEvents?: boolean;
     snapshotMem?: boolean;
-    snapshotMaxBytes?: number;
     // Anti-detect plugins (list of module ids to load)
     antiDetect?: string[];
     antiDetectConfig?: Record<string, any>;
@@ -191,7 +190,7 @@ export interface AgentState {
     fnHooked: boolean;
     excluded: boolean;
     fnEntered: boolean;
-    /** watchdog/maxRecords/环满已强制终结当前 call — onLeave 不得再发第二个 trace-end */
+    /** 本次调用只允许封口一次。 */
     callFinalized: boolean;
 
     includeSoPatterns: string[];
@@ -208,8 +207,11 @@ export interface AgentState {
     tailBuf: NativePointer | null;
     droppedBuf: NativePointer | null;
     ringRecsBuf: NativePointer | null;
-    maxRecords: number;
-    maxRecordsBuf: NativePointer | null;
+    active: NativePointer | null;
+    traceIoState: NativePointer | null;
+    simdIoState: NativePointer | null;
+    flushNative: any;
+    flushSimdNative: any;
 
     simdSidecar: boolean;
     simdSampleStride: number;
@@ -229,9 +231,7 @@ export interface AgentState {
     onSvcEventCb: NativePointer | null;
 
     snapshotMem: boolean;
-    snapshotMaxBytes: number;
 
-    flushTimer: any;
     hbTimer: any;
     batchSeq: number;
     started: number;
@@ -241,11 +241,6 @@ export interface AgentState {
     traceFilePath: string | null;
     /** trace 输出目录; host 可通过 initOpts.traceDir 指定以避开 app 私有 cache */
     traceDir: string | null;
-    lastTotal: number;
-    stuckSecs: number;
-    stuckThreshold: number;
-    /** 连续观察到主 ring 满载的心跳数 (1 心跳 = 1s), 用于环满降级 */
-    ringFullSecs: number;
 
     jniHookSpecs: any[] | null;
     jniHookEvents: any[];
@@ -264,10 +259,6 @@ export interface AgentState {
     diffSymAddrs: Record<string, boolean>;
     boundaryHooksInstalled: boolean;
     extWriteEvents: any[];
-    /** Total cap for external-write events (0 = unlimited legacy). */
-    extWriteCap: number;
-    /** Count of events already emitted toward the cap. */
-    extWriteEmitted: number;
     writableRanges: any[] | null;
 
     rwxMapsHidden: boolean;
@@ -290,7 +281,7 @@ export function createInitialState(): AgentState {
 
         cm: null, onInsnPtr: null,
         ringBuf: null, headBuf: null, tailBuf: null, droppedBuf: null, ringRecsBuf: null,
-        maxRecords: 0, maxRecordsBuf: null,
+        active: null, traceIoState: null, simdIoState: null, flushNative: null, flushSimdNative: null,
 
         simdSidecar: false, simdSampleStride: 1,
         simdRingBuf: null, simdHeadBuf: null, simdTailBuf: null,
@@ -300,12 +291,11 @@ export function createInitialState(): AgentState {
         semanticEvents: false, semanticEventBuf: [], semanticHooksInstalled: false,
         semanticEventSeq: 0, onSvcEventCb: null,
 
-        snapshotMem: false, snapshotMaxBytes: 512 * 1024 * 1024,
+        snapshotMem: false,
 
-        flushTimer: null, hbTimer: null, batchSeq: 0, started: 0,
+        hbTimer: null, batchSeq: 0, started: 0,
         callIdx: 0, primaryTid: 0,
         traceFile: null, traceFilePath: null, traceDir: null,
-        lastTotal: 0, stuckSecs: 0, stuckThreshold: 15, ringFullSecs: 0,
 
         jniHookSpecs: null, jniHookEvents: [], jniHooksInstalled: false,
         enableForkHook: false, forkEvents: [], forkHooksInstalled: false,
@@ -313,7 +303,7 @@ export function createInitialState(): AgentState {
         workerEvents: [], workerTraces: {}, pthreadHooksInstalled: false,
 
         diffSyms: [], diffSymAddrs: {}, boundaryHooksInstalled: false,
-        extWriteEvents: [], writableRanges: null, extWriteCap: 0, extWriteEmitted: 0,
+        extWriteEvents: [], writableRanges: null,
 
         rwxMapsHidden: false, suicidePatched: false,
         suicidePatchSpec: null, patchSuicide: false, hideRwxMaps: false,

@@ -181,8 +181,7 @@ first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整�
 **结论：真正的载荷生产函数地址是运行时决定的（`[x0+0x10]`），静态不可达。**
 这与 §1.5 的 AVMP 假设完全一致，并给出了确凿证据链。
 
-设备恢复后要做的事因此非常明确：trace 必须 `--max-records 60000` 以上
-（ring 上限 65536），让 70102 的真实 handler 落在窗口内；然后
+需采集 70102 一次自然返回的完整调用，使真实 handler 落在窗口内；然后
 `resolve` 出 `[x0+0x10]` 的目标、`coverage` 拿其块集合、对它做 `taint-bwd`。
 
 ## 2.7 五个输出参数的生成器地址（逐一对应）
@@ -254,23 +253,11 @@ first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整�
    不是普通 base64 编码器）。
 3. 输出缓冲在堆上，trace 的 memshadow 不覆盖 → 离线无法 `mem-dump` 载荷。
 
-## 2.9 设备恢复后的精确执行清单
+## 2.9 后续运行时验证
 
-```bash
-# 1) 一次 trace 覆盖整次调用（ring 上限 65536）
-./tracemiku trace --pkg <pkg> --spawn --so libsgmainso   --method doCommandNative --cmd 70102 --cmd-arg 2 --remote 127.0.0.1:27099   --transport frida --out traces/full --duration 60 --max-records 65000
-
-# 2) 确认窗口覆盖到结果组装：sub_54c10 的 blr 次数应 >= 10 且生成器区间延伸到 trace 末尾
-# 3) 对 5 个生成器分别取覆盖与块集合
-for g in 0x97010 0x62968 0x72cc4 0x965c0 0x60340; do
-  ./tracemiku resolve traces/full/calls/<call> --addr $((BASE+g))   # 拿绝对地址
-  ./tracemiku coverage traces/full/calls/<call> --addr <abs>
-done
-
-# 4) 用 watch --kind mem-touch 在每个生成器的输出缓冲上设观察点，
-#    再 taint-bwd 回溯到请求缓冲，判定 nonce 是否 = Enc(key, H(INPUT))
-# 5) 用 mem-dump 读出 x-sign 的 76 字节缓冲，验证与 test_vectors.json 的黑盒结论一致
-```
+采集入口 `doCommandNative`，按参数下标 2 过滤 70102；通用命令见
+[命令目录](../../docs/FEATURES.md#采集与恢复)。用 `cfg`、`call-tree` 定位五个生成器
+的动态范围，再用 `mem-accesses`、`taint-bwd` 回溯输出缓冲与请求缓冲的依赖。
 
 已就绪的离线资产（无需重新摸索）：
 - 5 个生成器地址 + `(w2,w3)` 指纹（`known_offsets.json` 的 `five_generators`）
@@ -296,15 +283,14 @@ done
 - 命中：`doCommandNative` 入口 51 处、`sub_54b70` 252 处、`sub_cc4f4` 268 处
 - **未命中**：`FUN_00254ee4`(RC4) 0 处、其 14 个调用者全部 0 处
 
-即：**这 4 份 trace 只覆盖了 70102 调用的开头一小段**（24000/65536 条，
-Stalker 上限 65536），载荷生产逻辑在窗口之外。`--max-records` 需要提到 60000 以上
-才可能覆盖整次调用。
+即：**这 4 份 trace 只覆盖了 70102 调用的开头一小段**（每份被旧配置截为 24000 条），载荷生产逻辑在窗口之外。当前采集不设条数上限，
+应以自然返回和封口元数据确认边界，不能预估一个更大的记录数来保证覆盖。
 
 执行偏移集合已存为 `/tmp/opencode/offs_call_*.txt`，供设备恢复后直接比对。
 
 ## 5. 设备恢复后的确定步骤
 
-1. 重新 trace，`--max-records 65536`（ring 上限），`--duration` 放宽，确保单次 70102 完整覆盖。
+1. 采集一次 70102 自然返回的完整调用，检查封口和缺口元数据。
 2. 用执行偏移集合与 `find calls FUN_00254ee4` 的 14 个调用者取交集 → 定位 RC4 使用点。
 3. 对命中的调用者做 `coverage` + `call-tree`，找写 76 字节缓冲的循环（`w1=0x4c`）。
 4. `taint-bwd` 从该循环回溯，判断 nonce 是否 = `RC4(key, H(请求))` 之类。
@@ -321,14 +307,7 @@ Stalker 上限 65536），载荷生产逻辑在窗口之外。`--max-records` �
 
 ## 2.10 完整 trace（设备恢复后重采，815 万条，`is_complete=True`）
 
-按「不设捕获上限」的要求重采：
-
-```bash
-./tracemiku trace --pkg <pkg> --spawn --so libsgmainso \
-  --method doCommandNative --cmd 70102 --cmd-arg 2 --remote 127.0.0.1:27099 \
-  --transport frida --out traces/FULL --duration 120 \
-  --max-calls 1 --max-records 0 --ring-recs 4194304
-```
+以下是历史设备样本的记录事实；当前采集用法见[命令目录](../../docs/FEATURES.md#采集与恢复)。
 
 结果：
 
@@ -338,9 +317,8 @@ rec_per_sec = 1,370,714     dropped = 0
 last_asm = ret     last_insn_is_ret = true     is_complete = true     truncated = false
 ```
 
-**ring 是循环复用的暂存缓冲**（消费端每 10ms 落盘），因此记录数（8.15M）可以远超 ring 容量（4.19M）。
-要拿到完整调用，正确的组合是 `--max-records 0`（不设上限）+ 足够大的 `--ring-recs` 吸收 IO 抖动，
-而不是调小 `--max-records`（那会主动截断调用）。
+记录条数可以远超缓冲容量。当前 native writer 在固定批缓冲满时同步落盘，
+通过背压处理 I/O 抖动，不需要放大缓冲来猜测调用长度。
 
 ### 完整 trace 带来的新结论
 

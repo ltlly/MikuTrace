@@ -1,180 +1,138 @@
-/**
- * CModule — SPSC ring producer (ARM64 native, runs in Stalker context)
- *
- * 生成 C 源码, 通过 Frida CModule 编译到 on_insn callout.
- * 支持可选 SIMD sidecar 和 semantic SVC event callback.
- */
+/** Native 分批写盘；生产线程承担背压，不等待 JavaScript 消费者。 */
+import { STATE, REC_SIZE, RING_RECS, SIMD_REC_SIZE, TraceRingState } from "./state";
+import { getExport, log } from "./utils";
+import { nativeIoSymbols } from "./native_io";
 
-import { STATE, REC_SIZE, RING_RECS, SIMD_REC_SIZE, SIMD_RING_RECS, TraceRingState } from "./state";
-import { log } from "./utils";
+function source(simd: boolean, semantic: boolean): string {
+    return `
+#include <gum/gumstalker.h>
+#include <string.h>
+#define REC ${REC_SIZE}
+extern unsigned char ring[];
+extern unsigned long long ring_recs;
+extern volatile unsigned long long head;
+extern volatile unsigned long long tail;
+extern int trace_io[];
+extern int active;
+extern int mutex[];
+extern int lock(void *mutex);
+extern int unlock(void *mutex);
+extern void write_all(int *state, const unsigned char *buf, unsigned long size);
+extern void sync_all(int *state);
 
-/**
- * Build and compile the CModule with SPSC ring producer.
- * Must be called after STATE ring buffers are allocated.
- */
-export function buildCModule(): void {
-    const simdDecls = STATE.simdSidecar ? `
+static void drain_trace(void) {
+    unsigned long long h = head, t = tail;
+    while (t < h) {
+        unsigned long long offset = t % ring_recs;
+        unsigned long long count = ring_recs - offset;
+        if (count > h - t) count = h - t;
+        write_all(trace_io, ring + offset * REC, count * REC);
+        t += count;
+        tail = t;
+    }
+}
+void flush_trace(void) {
+    lock(mutex);
+    active = 0;
+    drain_trace();
+    sync_all(trace_io);
+    unlock(mutex);
+}
+${simd ? `
 #define SIMD_REC ${SIMD_REC_SIZE}
-#define C_ASSERT(name, expr) typedef char c_assert_##name[(expr) ? 1 : -1]
 extern unsigned char simd_ring[];
 extern unsigned long long simd_ring_recs;
 extern unsigned long long simd_stride;
 extern volatile unsigned long long simd_head;
 extern volatile unsigned long long simd_tail;
-extern volatile unsigned long long simd_dropped;
-C_ASSERT(simd_rec_size, SIMD_REC == ${SIMD_REC_SIZE});
-C_ASSERT(arm64_vector_reg_size, sizeof(((GumCpuContext *) 0)->v[0]) == 16);
-C_ASSERT(arm64_vector_q_size, sizeof(((GumCpuContext *) 0)->v[0].q) == 16);
-C_ASSERT(arm64_vector_count, sizeof(((GumCpuContext *) 0)->v) == (32 * 16));
-
-static void write_simd_snapshot(GumCpuContext *ctx, unsigned long long trace_idx) {
-    if (simd_stride > 1 && (trace_idx % simd_stride) != 0) return;
+extern int simd_io[];
+typedef char check_vector_size[(sizeof(((GumCpuContext *)0)->v) == 512) ? 1 : -1];
+static void drain_simd(void) {
+    unsigned long long h = simd_head, t = simd_tail;
+    while (t < h) {
+        unsigned long long offset = t % simd_ring_recs;
+        unsigned long long count = simd_ring_recs - offset;
+        if (count > h - t) count = h - t;
+        write_all(simd_io, simd_ring + offset * SIMD_REC, count * SIMD_REC);
+        t += count;
+        simd_tail = t;
+    }
+}
+void flush_simd(void) {
+    lock(mutex);
+    drain_simd();
+    sync_all(simd_io);
+    unlock(mutex);
+}
+static void write_simd(GumCpuContext *ctx, unsigned long long idx) {
+    if (simd_stride > 1 && idx % simd_stride != 0) return;
     unsigned long long h = simd_head;
-    unsigned long long t = simd_tail;
-    if (h - t >= simd_ring_recs) { simd_dropped = simd_dropped + 1; return; }
-    unsigned char *p = simd_ring + ((h % simd_ring_recs) * SIMD_REC);
-    *(unsigned long long *)(p + 0) = trace_idx;
-    for (int i = 0; i < 32; i++) {
-        memcpy(p + 8 + (i * 16), ctx->v[i].q, 16);
-    }
+    unsigned char *p = simd_ring + (h % simd_ring_recs) * SIMD_REC;
+    *(unsigned long long *)p = idx;
+    memcpy(p + 8, ctx->v, 512);
     simd_head = h + 1;
+    if (simd_head - simd_tail == simd_ring_recs) drain_simd();
 }
-` : "";
-
-    const semanticDecls = STATE.semanticEvents ? `
-extern void on_svc_event(unsigned long long idx,
-                         unsigned long long pc,
-                         unsigned long long nr,
-                         unsigned long long x0,
-                         unsigned long long x1,
-                         unsigned long long x2,
-                         unsigned long long x3,
-                         unsigned long long x4,
-                         unsigned long long x5);
-` : "";
-
-    const simdWrite = STATE.simdSidecar ? `    write_simd_snapshot(ctx, h);\n` : "";
-
-    const semanticWrite = STATE.semanticEvents ? `
-    if ((inst & 0xffe0001fU) == 0xd4000001U) {
-        on_svc_event(h, cu[0], cu[3+8], cu[3+0], cu[3+1], cu[3+2], cu[3+3], cu[3+4], cu[3+5]);
-    }
-` : "";
-
-    const src = `
-#include <gum/gumstalker.h>
-#include <string.h>
-#define REC ${REC_SIZE}
-#define SPIN_MAX 200000000
-
-extern unsigned char ring[];
-extern unsigned long long ring_recs;
-extern volatile unsigned long long head;
-extern volatile unsigned long long tail;
-extern volatile unsigned long long dropped;
-extern unsigned long long max_records;
-${simdDecls}
-${semanticDecls}
-
+` : ""}
+${semantic ? `extern void on_svc_event(unsigned long long idx, unsigned long long pc,
+    unsigned long long nr, unsigned long long x0, unsigned long long x1,
+    unsigned long long x2, unsigned long long x3, unsigned long long x4, unsigned long long x5);` : ""}
 void on_insn(GumCpuContext *ctx, void *user_data) {
-    unsigned long long h = head;       /* 64-bit aligned read on ARM64 = atomic */
-    if (max_records > 0 && h >= max_records) return;  /* hard cap */
-    unsigned long long t = tail;
-    unsigned long long spin = 0;
-    while (h - t >= ring_recs) {
-        if (++spin > SPIN_MAX) { dropped = dropped + 1; return; }
-        t = tail;
-    }
-    unsigned long long off = (h % ring_recs) * REC;
-    unsigned char *p = ring + off;
-    unsigned long long *cu = (unsigned long long *)ctx;
-    *(unsigned long long *)(p + 0) = cu[0];          // pc
-    memcpy(p + 8, &cu[3], 29 * 8);                    // x0..x28
-    *(unsigned long long *)(p + 8 + 29*8) = cu[3+29]; // fp
-    *(unsigned long long *)(p + 8 + 30*8) = cu[3+30]; // lr
-    *(unsigned long long *)(p + 256) = cu[1];         // sp
-    *(unsigned int *)(p + 264) = (unsigned int)(cu[2] & 0xffffffffULL);
-    /* inst: 读 pc 处 4 字节机器码 */
-    unsigned int inst = *(unsigned int *)cu[0];
-    *(unsigned int *)(p + 268) = inst;
-${simdWrite}${semanticWrite}
-    head = h + 1;     /* volatile store */
-}
-`;
-
-    const symbols: Record<string, NativePointer> = {
-        ring: STATE.ringBuf!,
-        ring_recs: STATE.ringRecsBuf!,
-        head: STATE.headBuf!,
-        tail: STATE.tailBuf!,
-        dropped: STATE.droppedBuf!,
-        max_records: STATE.maxRecordsBuf!,
-    };
-
-    if (STATE.simdSidecar) {
-        symbols.simd_ring = STATE.simdRingBuf!;
-        symbols.simd_ring_recs = STATE.simdRingRecsBuf!;
-        symbols.simd_stride = STATE.simdStrideBuf!;
-        symbols.simd_head = STATE.simdHeadBuf!;
-        symbols.simd_tail = STATE.simdTailBuf!;
-        symbols.simd_dropped = STATE.simdDroppedBuf!;
-    }
-
-    if (STATE.semanticEvents) {
-        symbols.on_svc_event = STATE.onSvcEventCb!;
-    }
-
-    STATE.cm = new CModule(src, symbols);
-    STATE.onInsnPtr = (STATE.cm as any).on_insn;
-    log(`[+] CModule loaded: on_insn @ ${(STATE.cm as any).on_insn} ` +
-        `(SPSC lock-free, simd=${STATE.simdSidecar ? "on" : "off"}, ` +
-        `semantic=${STATE.semanticEvents ? "on" : "off"})`);
-}
-
-export function buildTraceRingCModule(ring: TraceRingState): any {
-    const src = `
-#include <gum/gumstalker.h>
-#include <string.h>
-#define REC ${REC_SIZE}
-#define SPIN_MAX 200000000
-
-extern unsigned char ring[];
-extern unsigned long long ring_recs;
-extern volatile unsigned long long head;
-extern volatile unsigned long long tail;
-extern volatile unsigned long long dropped;
-extern unsigned long long max_records;
-
-void on_insn(GumCpuContext *ctx, void *user_data) {
+    lock(mutex);
+    if (!active) { unlock(mutex); return; }
     unsigned long long h = head;
-    if (max_records > 0 && h >= max_records) return;
-    unsigned long long t = tail;
-    unsigned long long spin = 0;
-    while (h - t >= ring_recs) {
-        if (++spin > SPIN_MAX) { dropped = dropped + 1; return; }
-        t = tail;
-    }
-    unsigned long long off = (h % ring_recs) * REC;
-    unsigned char *p = ring + off;
+    unsigned char *p = ring + (h % ring_recs) * REC;
     unsigned long long *cu = (unsigned long long *)ctx;
     *(unsigned long long *)(p + 0) = cu[0];
-    memcpy(p + 8, &cu[3], 29 * 8);
-    *(unsigned long long *)(p + 8 + 29*8) = cu[3+29];
-    *(unsigned long long *)(p + 8 + 30*8) = cu[3+30];
+    memcpy(p + 8, &cu[3], 31 * 8);
     *(unsigned long long *)(p + 256) = cu[1];
-    *(unsigned int *)(p + 264) = (unsigned int)(cu[2] & 0xffffffffULL);
+    *(unsigned int *)(p + 264) = (unsigned int)cu[2];
     unsigned int inst = *(unsigned int *)cu[0];
     *(unsigned int *)(p + 268) = inst;
+    ${simd ? "write_simd(ctx, h);" : ""}
     head = h + 1;
+    if (head - tail == ring_recs) drain_trace();
+    unlock(mutex);
+    ${semantic ? `if ((inst & 0xffe0001fU) == 0xd4000001U)
+        on_svc_event(h, cu[0], cu[11], cu[3], cu[4], cu[5], cu[6], cu[7], cu[8]);` : ""}
 }
 `;
+}
 
-    return new CModule(src, {
-        ring: ring.ringBuf,
-        ring_recs: ring.ringRecsBuf,
-        head: ring.headBuf,
-        tail: ring.tailBuf,
-        dropped: ring.droppedBuf,
-        max_records: ring.maxRecordsBuf,
+function compile(ring: TraceRingState, simd = false, semantic = false): CModule {
+    const symbols: Record<string, NativePointer> = {
+        ...nativeIoSymbols(),
+        ring: ring.ringBuf, ring_recs: ring.ringRecsBuf,
+        head: ring.headBuf, tail: ring.tailBuf, trace_io: ring.ioState,
+        active: ring.active, mutex: Memory.alloc(64), lock: getExport("pthread_mutex_lock")!,
+        unlock: getExport("pthread_mutex_unlock")!,
+    };
+    if (simd) Object.assign(symbols, {
+        simd_ring: STATE.simdRingBuf, simd_ring_recs: STATE.simdRingRecsBuf,
+        simd_stride: STATE.simdStrideBuf, simd_head: STATE.simdHeadBuf,
+        simd_tail: STATE.simdTailBuf, simd_io: STATE.simdIoState,
     });
+    if (semantic) symbols.on_svc_event = STATE.onSvcEventCb!;
+    const cm = new CModule(source(simd, semantic), symbols);
+    // extern 数据的 JS 句柄与 writer 同寿命，特别是没有其他 STATE 引用的 mutex。
+    (cm as any).keepAlive = symbols;
+    ring.flushNative = new NativeFunction((cm as any).flush_trace, "void", []);
+    return cm;
+}
+
+export function buildCModule(): void {
+    const ring = {
+        ringBuf: STATE.ringBuf!, headBuf: STATE.headBuf!, tailBuf: STATE.tailBuf!,
+        ringRecsBuf: STATE.ringRecsBuf!, ioState: STATE.traceIoState!,
+        active: STATE.active!, flushNative: null,
+    } as unknown as TraceRingState;
+    STATE.cm = compile(ring, STATE.simdSidecar, STATE.semanticEvents);
+    STATE.flushNative = ring.flushNative;
+    if (STATE.simdSidecar) STATE.flushSimdNative = new NativeFunction(STATE.cm.flush_simd, "void", []);
+    STATE.onInsnPtr = STATE.cm.on_insn;
+    log(`[+] native writer: batch=${RING_RECS}, disk backpressure, no record cap`);
+}
+
+export function buildTraceRingCModule(ring: TraceRingState): CModule {
+    return compile(ring);
 }

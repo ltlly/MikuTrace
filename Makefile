@@ -2,16 +2,16 @@ PYTHON ?= uv run python
 CARGO  ?= cargo
 NPM    ?= npm
 
-# tracemiku_{fork,device,diag}.py 被 tracemiku 模块级（或运行期）导入，
+# host 模块被 tracemiku 模块级（或运行期）导入，
 # py_compile 不跟随导入，必须逐个编译。
-PY_CHECKS := tracemiku tracemiku_fork.py tracemiku_device.py tracemiku_diag.py \
-    tracemiku_transport.py tracemiku_target.py tracemiku_commands.py \
+PY_CHECKS := tracemiku tracemiku_device.py \
+    tracemiku_common.py tracemiku_spool.py tracemiku_capture.py tracemiku_target.py tracemiku_commands.py \
 	scripts/build_smoke_trace.py scripts/benchmark_records.py \
 	scripts/device_trace_integration.py tools/vm_replay_plan_eval.py \
 	examples/llm_cookbook.py scripts/contract_audit.py
 
-HOST_TESTS := tests/host_trace_helpers_test.py tests/host_spawn_flow_test.py \
-             tests/host_device_link_test.py tests/host_plugins_transport_test.py
+HOST_TESTS := tests/host_spool_test.py tests/host_spawn_flow_test.py \
+             tests/host_device_link_test.py tests/host_plugins_test.py
 
 .PHONY: help fmt lint test test-v2 test-fast test-device cli clean test-contract py-compile host-tests
 
@@ -22,6 +22,7 @@ help:
 	@echo "make test-v2   - fmt check + Python compile + host pytest + Rust tests + agent typecheck + format contracts"
 	@echo "make test-contract - contract coverage audit + core/CLI + unified entrypoint contract tests (offline)"
 	@echo "make test-fast - Python compile + host pytest + Rust core/cli tests"
+	@echo "make test-device - 真机验证；DEVICE_ARGS 可选择断线、长调用和 sidecar 场景"
 	@echo "make cli       - build the Rust analysis CLI"
 	@echo "make agent     - build tracer/_agent.js (frida agent)"
 	@echo "make clean     - rm local caches/build outputs"
@@ -59,15 +60,19 @@ test-v2: py-compile host-tests
 	cd tracer && $(NPM) run typecheck
 	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/external_writes_contract_test.ts
-	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
+	cd tracer && node --experimental-strip-types tests/plugins_test.ts
 	cd tracer && node --experimental-strip-types tests/agent_lifecycle_test.ts
+	cd tracer && node --experimental-strip-types tests/native_writer_test.ts
+	cd tracer && node --experimental-strip-types tests/device_spool_test.ts
 	cd rust && $(CARGO) fmt --check
 	cd rust && $(CARGO) test -p tracemiku-core -- --nocapture
 	cd rust && $(CARGO) test -p tracemiku-cli -- --nocapture
 
 test-fast: py-compile host-tests
-	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
+	cd tracer && node --experimental-strip-types tests/plugins_test.ts
 	cd tracer && node --experimental-strip-types tests/agent_lifecycle_test.ts
+	cd tracer && node --experimental-strip-types tests/native_writer_test.ts
+	cd tracer && node --experimental-strip-types tests/device_spool_test.ts
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd rust && $(CARGO) test -p tracemiku-cli
 
@@ -83,12 +88,14 @@ test-contract: cli host-tests
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/external_writes_contract_test.ts
-	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
+	cd tracer && node --experimental-strip-types tests/plugins_test.ts
 	cd tracer && node --experimental-strip-types tests/agent_lifecycle_test.ts
+	cd tracer && node --experimental-strip-types tests/native_writer_test.ts
+	cd tracer && node --experimental-strip-types tests/device_spool_test.ts
 
 test-device:
 	@echo "=== Device integration: cross-compile → push → trace → verify ==="
-	$(PYTHON) scripts/device_trace_integration.py
+	$(PYTHON) scripts/device_trace_integration.py $(DEVICE_ARGS)
 
 clean:
 	rm -rf .pytest_cache __pycache__ */__pycache__ */*/__pycache__ build dist *.egg-info

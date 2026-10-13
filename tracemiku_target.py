@@ -11,9 +11,9 @@ MAX_PLUGINS = 8
 MAX_CONFIG_BYTES = 64 * 1024
 TARGET_FIELDS = {"pkg", "so", "method", "export", "fn_offset", "cmd", "cmd_arg"}
 CAPTURE_FIELDS = {
-    "max_records", "max_calls", "duration", "jni_hooks", "follow_workers", "max_worker_threads",
+    "max_calls", "jni_hooks", "follow_workers", "max_worker_threads",
     "hide_rwx_maps", "block_self_kill", "trace_deep", "trace_all", "include_so",
-    "semantic_events", "snapshot_mem", "snapshot_max_mb", "simd_sidecar",
+    "semantic_events", "snapshot_mem", "simd_sidecar",
 }
 
 
@@ -33,7 +33,7 @@ def _keys(value, allowed, name):
 def load_target(path):
     path = pathlib.Path(path).resolve()
     doc = json.loads(_read(path))
-    _keys(doc, {"schema_version", "target", "capture", "transport", "agent_plugins",
+    _keys(doc, {"schema_version", "target", "capture", "agent_plugins",
                 "host_plugin"}, "target profile")
     if type(doc.get("schema_version")) is not int or doc["schema_version"] != 1:
         raise ValueError("目标配置 schema_version 必须为 1")
@@ -42,7 +42,7 @@ def load_target(path):
     _keys(target, TARGET_FIELDS, "target")
     _keys(capture, CAPTURE_FIELDS, "capture")
     for key, value in {**target, **capture}.items():
-        if key in {"cmd", "cmd_arg", "max_records", "max_calls", "duration", "max_worker_threads", "snapshot_max_mb"}:
+        if key in {"cmd", "cmd_arg", "max_calls", "max_worker_threads"}:
             if type(value) is not int:
                 raise ValueError(f"{key} 必须是整数")
         elif key in {"pkg", "so", "method", "export", "fn_offset", "jni_hooks", "include_so"}:
@@ -50,9 +50,6 @@ def load_target(path):
                 raise ValueError(f"{key} 必须是非空字符串")
         elif type(value) is not bool:
             raise ValueError(f"{key} 必须是布尔值")
-    transport = doc.get("transport", "frida")
-    if transport not in ("frida", "adb"):
-        raise ValueError("transport 必须为 frida 或 adb")
     specs = doc.get("agent_plugins", [])
     if not isinstance(specs, list) or len(specs) > MAX_PLUGINS:
         raise ValueError("agent_plugins 最多 8 个")
@@ -84,13 +81,12 @@ def load_target(path):
     if "jni_hooks" in capture and capture["jni_hooks"] != "none":
         capture["jni_hooks"] = str((path.parent / capture["jni_hooks"]).resolve())
     return {"path": str(path), "target": target, "capture": capture,
-            "transport": transport, "agent_plugins": plugins, "host_plugin": host}
+            "agent_plugins": plugins, "host_plugin": host}
 
 
 def apply_target(args, profile, explicit):
     """CLI 显式参数覆盖 profile；默认值不覆盖用户文件。"""
-    for key, value in {**profile["target"], **profile["capture"],
-                       "transport": profile["transport"]}.items():
+    for key, value in {**profile["target"], **profile["capture"]}.items():
         if key not in explicit:
             setattr(args, key, value)
     return args
@@ -127,7 +123,7 @@ class HostPlugin:
                 if len(encoded.encode()) > MAX_CONFIG_BYTES:
                     raise ValueError("host plugin 输出超过 64KiB")
                 results.append(result)
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 -- 将插件线程的异常传回主线程
                 errors.append(exc)
 
         th = threading.Thread(target=run, daemon=True, name="miku-target-" + phase)

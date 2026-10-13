@@ -1,8 +1,8 @@
 /**
- * Contract tests for the external-writes sidecar format and cap policy.
+ * Contract tests for the external-writes sidecar format.
  *
  * Pins the 17-byte on-disk record (idx:u64, addr:u64, byte:u8) and the
- * total-cap allowance against the Rust core's
+ * format against the Rust core's
  * `EXTERNAL_WRITE_RECORD_SIZE` / merge_external_writes, so the agent and
  * core cannot drift. Pure module — no Frida runtime needed.
  *
@@ -11,8 +11,7 @@
 import {
   EXT_WRITE_RECORD_SIZE,
   encodeExtWriteEvent,
-  extWriteAllowance,
-} from "../src/core/ext_write_cap.ts";
+} from "../src/core/external_writes.ts";
 
 let failures = 0;
 
@@ -58,14 +57,6 @@ check("record size is 17 bytes", EXT_WRITE_RECORD_SIZE === 17);
     dv.getUint32(8, true) === 0 && dv.getUint32(12, true) === 0xffff0000,
   );
 }
-
-// ── cap policy ──────────────────────────────────────────────────────────
-check("cap 0 drops everything", extWriteAllowance(0, 0, 5) === 0);
-check("cap reached drops rest", extWriteAllowance(100, 100, 5) === 0);
-check("cap exact fit", extWriteAllowance(90, 100, 10) === 10);
-check("cap partial fit", extWriteAllowance(95, 100, 10) === 5);
-check("cap over-remaining", extWriteAllowance(50, 100, 100) === 50);
-check("never negative", extWriteAllowance(200, 100, 1) === 0);
 
 if (failures > 0) {
   console.error(`\n${failures} FAILED`);

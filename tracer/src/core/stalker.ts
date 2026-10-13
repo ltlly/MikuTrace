@@ -1,3 +1,4 @@
+import { persistEvents } from "../transport/manifest";
 /**
  * Stalker configuration — module excludes, include-ranges, and transform callback
  */
@@ -178,16 +179,8 @@ export function createTransform(
     return function transform(iter: StalkerArm64Iterator) {
         try {
             let ins: Arm64Instruction | null;
-            let count = 0;
-            const MAX_INSNS = 100000;
 
             while ((ins = iter.next()) !== null) {
-                count++;
-                if (count > MAX_INSNS) {
-                    log(`[!] transform: block exceeds ${MAX_INSNS} insns, truncating`);
-                    break;
-                }
-
                 const a = ins.address;
 
                 // Fast path: target SO range
@@ -210,29 +203,23 @@ export function createTransform(
                 }
 
                 if (inRange) {
-                    // ARM64 exclusive-monitor guard. Inside an LDXR/STXR window
-                    // frida-gum reports iter.memoryAccess === "exclusive". A
-                    // putCallout there emits a FULL_PROLOG (register spill) +
-                    // ring-buffer write between the load-exclusive and the
-                    // store-exclusive. Any such memory access clears the CPU's
-                    // exclusive monitor, so STXR always fails and the lock
-                    // retry loop spins forever (hang) or faults (crash). frida
-                    // suppresses ITS OWN exec/block events here but does NOT
-                    // suppress user callouts — that is on us. Skip the callout;
-                    // we lose a few atomic-spin records, which carry no
-                    // analysis value anyway.
-                    if (iter.memoryAccess !== "exclusive") {
-                        try {
-                            iter.putCallout(onInsn);
-                        } catch (_) {
-                            // putCallout can fail on some instructions
+                    // Frida 不能在 exclusive-monitor 区间插入有内存访问的 callout。
+                    // 将无法插桩的事实持久化，不能声称这类窗口具有完整指令覆盖。
+                    if (iter.memoryAccess === "exclusive") {
+                        persistEvents("coverage_gaps.jsonl", [{ pc: a.toString(),
+                            reason: "exclusive-monitor", evidence: "translation", instruction: ins.toString() }]);
+                    } else {
+                        try { iter.putCallout(onInsn); }
+                        catch (error) {
+                            persistEvents("coverage_gaps.jsonl", [{ pc: a.toString(),
+                                reason: "callout-failed", evidence: "translation", error: String(error) }]);
                         }
                     }
                 }
                 iter.keep();
             }
         } catch (e) {
-            log(`[!] transform error: ${e}`);
+            persistEvents("coverage_gaps.jsonl", [{ reason: "transform-failed", error: String(e), evidence: "translation" }]);
             let ins: Arm64Instruction | null;
             while ((ins = iter.next()) !== null) {
                 iter.keep();

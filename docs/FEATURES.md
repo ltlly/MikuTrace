@@ -7,7 +7,7 @@
 - `--fn` / `--in-fn` 使用 `functions` 返回项的 `name`（符号名称）。
 - 地址/偏移默认十六进制：`10` = `0x10`，`d16` = 十进制 16。分析命令通常接收 `<call_dir>`。
 - Rust 分析成功退出 0，输出 JSON；`list` 默认逐行 JSON，`--json` 返回数组；`completions` 输出 shell 源码。
-- Rust 执行错误退出 1，stdout 为 `{"status":"error","error":{"code":"…","message":"…"}}`（可带 `error.details`）；参数错误退出 2，诊断在 stderr。部分旧查询退出 0 但结果含 `status=error`，须同时检查；host 采集沿用自己的诊断和退出码。
+- Rust 执行错误退出 1，stdout 为 `{"status":"error","error":{"code":"…","message":"…"}}`（可带 `error.details`）；参数错误退出 2，诊断在 stderr。部分旧查询退出 0 但结果含 `status=error`，须同时检查。`trace/recover` 输出单个 JSON，诊断在 stderr；`ok` 退出 0，`incomplete/pending/error` 退出 2。
 - 输出字段受契约测试约束，部分报告另有 [JSON schema](schema/)。内存来源与缺口见 [内存契约](memory-completeness-design.md)。
 
 ## 发现与元数据
@@ -94,7 +94,7 @@ GetStringUTFChars 已观测返回和 ReleaseStringUTFChars 输入；`bytes_hex` 
 modified UTF-8，`string` 是 UTF-8 有损显示，`read_stop` 区分 NUL、证据缺失与读取
 上限，不保证完整字符串。
 
-`events` 读取 `jni_hooks.jsonl` 或 `meta.json` 的 `fork_events`。缺文件返回
+`events` 读取 `jni_hooks.jsonl`、`fork_events.jsonl` 或旧 `meta.json` 的 `fork_events`。缺文件返回
 `available=false`，坏行/超长行计数单列；每页最多 5000 条，扫描与紧凑 JSON 响应
 预算各为 8 MiB。JNI 单行上限 64 KiB，无法在扫描预算内跨过的超长行报错；超预算
 的 meta.json 报错。续页原样传回 `next_cursor`；筛选条件与来源须保持一致。
@@ -140,10 +140,11 @@ CLI 维护运行时证据与分析语义。
 
 | 命令 | 用途 |
 |---|---|
-| `trace` | Frida 指令采集 |
+| `trace` | 默认采集一次完整调用，设备封口后压缩回传 |
+| `recover` | 按 `recovery.json` 恢复压缩回传，复用已校验分块，不重跑目标 |
 | `probe` | Interceptor 函数计数，不产生 trace |
 | `doctor` | adb/root/Frida 进程/配置检查，不执行注入 |
-| `finalize` | 按 `trace.bin` 修复 pending/call 元数据 |
+| `finalize` | 离线回填派生元数据；未完成回传的目录仍保持 pending |
 
 默认 attach；`--spawn` 在挂起进程中 attach/init 后 resume，`--launch` 则先启动再 attach。
 入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--cmd` 过滤须同时给
@@ -152,13 +153,21 @@ CLI 维护运行时证据与分析语义。
 ```bash
 ./tracemiku trace --pkg com.example.app --so libfoo.so --export sign --out traces/run1
 ./tracemiku trace --target-profile examples/custom_target/target.json --out traces/demo
+./tracemiku recover traces/run1
 ./tracemiku finalize traces/run1
 ```
 
-Frida 回传默认窗口 1、块上限 256KiB、文件上限 8GiB；单文件限时 180 秒，会话排空
-限时 900 秒。未封口文件拒绝回传，完成后 `.part` 原子提交；失败保留 pending 和设备
-spool、退出 2，不自动退回 adb。设备 `files/.miku/` 中的 spool 成功后也保留。
-Frida 模式不支持 child race-attach。中断后可按 pending meta 的 `devicePath` 取回文件再 finalize。
+`trace` 等待目标函数自然返回，不设记录条数、调用时长或文件总量上限。固定大小
+native 缓冲满后同步写盘，慢盘或磁盘错误阻塞生产线程；不会为追赶生产速度而丢弃记录。
+封口后使用 gzip + ADB 分块回传，逐块和逐文件校验 SHA-256。文件与 sidecar 全部验证
+后才提交目录。传输仅有无进展超时，失败后运行 `recover`。
+结果含每次调用的 `is_complete`，直接采用 core `info` 的判定；文件已回传但采集有
+缺口时返回 `incomplete`，数据仍可用于离线分析。
+
+Ctrl+C 结束 host 等待并停止接受新调用，已开始的调用继续在设备采集。host 进程或
+控制连接突然断开也不卸载采集器。`recover` 遇到未封口 session 返回 `pending`，不猜测
+函数已经结束。设备原件、恢复描述和已校验压缩块保留，方便复核。目标崩溃可能遗留
+未落盘的尾批，不能报告完整；采集范围及其他缺口见[格式契约](PER_CALL_TRACE_DESIGN.md)。
 
 ### 目标配置与插件
 
@@ -172,9 +181,12 @@ Frida 模式不支持 child race-attach。中断后可按 pending meta 的 `devi
 | `host_plugin` | 一个 `{path,config}`；Python `API_VERSION = 1`，`prepare/on_ready/finish`；返回值写 run meta |
 
 agent 上下文含 `config/emit`；`onModule` 含 `module`，`beforeTrace` 含 `args/tid/address`。
+采集前与采集中产生的 agent 生命周期事件保存在调用目录的 `target_plugin_events.jsonl`。
 host 可调用 `script.exports_sync.plugin_call(id,payload)`；Java bridge 不自动注入。
-host 的 `prepare` 在 attach 前，`on_ready` 在 init/resume 后，`finish` 仅在 Frida 回传后、
-unload 前；上下文含 `args/config`，后两者还有 `script/session/pid`，`on_ready` 另含 `device`。
+host 的 `prepare` 在 attach 前，`on_ready` 在 init/resume 后，`finish` 在退出采集等待后、
+压缩回传前执行；连接已断开时跳过。上下文含 `args/config`，后两者还有
+`script/session/pid`，`on_ready` 另含 `device`。`script` 为可卸载控制桥，支持
+`plugin_call/stats/stop_capture`；不承载 trace 或 sidecar 的唯一副本。
 
 插件执行任意可信代码，无沙箱。单文件限 1MiB，config/host 返回值限 64KiB；agent
 事件限 200 条、`detail` JSON 文本限 16384 个 UTF-16 码元。Python 生命周期等待 30 秒后失败，不能强杀线程；JS 卡死无法抢占。

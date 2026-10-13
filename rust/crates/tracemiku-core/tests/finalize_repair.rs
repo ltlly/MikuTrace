@@ -52,6 +52,48 @@ fn base_meta(idx: u64, tid: i64, ms: i64) -> serde_json::Value {
     })
 }
 
+#[test]
+fn pending_transfer_with_trace_present_never_commits_until_all_sidecars_verified() {
+    let run = tmpdir("pending-sidecar");
+    let mut meta = base_meta(1, 9, 7);
+    meta["records"] = 2.into();
+    meta["transfer_state"] = "PENDING".into();
+    meta["required_artifacts"] = serde_json::json!(["trace.bin", "simd_trace.bin"]);
+    let call = write_call(&run, "_pending_call_001", meta.clone(), 2);
+    let result = finalize_run(&run).unwrap();
+    assert_eq!(result.pending, 1);
+    assert!(call.exists());
+    meta["transfer_state"] = "VERIFIED".into();
+    meta["artifact_checksums"] = serde_json::json!([
+        {"name":"trace.bin", "bytes": 2 * REC_SIZE},
+        {"name":"simd_trace.bin", "bytes":1040}
+    ]);
+    fs::write(call.join("meta.json"), meta.to_string()).unwrap();
+    assert_eq!(
+        finalize_run(&run).unwrap().pending,
+        1,
+        "missing SIMD is not complete"
+    );
+    fs::write(call.join("simd_trace.bin"), vec![0; 1040]).unwrap();
+    let result = finalize_run(&run).unwrap();
+    assert_eq!(result.pending, 0);
+    assert_eq!(result.renamed, 1);
+    assert!(run.join("calls/call_001_tid9_2r_7ms/trace.bin").is_file());
+}
+
+#[test]
+fn per_call_modules_survive_host_disconnect_without_run_metadata() {
+    let run = tmpdir("device-module-meta");
+    let mut meta = base_meta(1, 9, 7);
+    meta["records"] = 2.into();
+    meta["module"] = serde_json::json!({"name":"libcapture.so", "base":"0x4000", "size":8192});
+    meta["modules"] = serde_json::json!([meta["module"].clone()]);
+    let call = write_call(&run, "call_001_tid9_2r_7ms", meta, 2);
+    let loaded = TraceMeta::load(&call).unwrap();
+    assert_eq!(loaded.module.unwrap().name, "libcapture.so");
+    assert_eq!(loaded.modules[0].end, "0x6000");
+}
+
 // ── meta 三值语义 ────────────────────────────────────────────────────────
 
 #[test]

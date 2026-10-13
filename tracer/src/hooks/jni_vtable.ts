@@ -1,3 +1,4 @@
+import { persistEvents } from "../transport/manifest";
 /**
  * JSON-driven JNI vtable hooks (libart, Interceptor — not Stalker)
  *
@@ -108,6 +109,7 @@ function _makeJsonHookHandler(spec: any) {
                 ret,
             };
             STATE.jniHookEvents.push(event);
+            if (STATE.jniHookEvents.length >= 128) flushJniHookEvents(STATE.callIdx);
             pushSemanticEvent({
                 kind: "jni",
                 source: "jni_vtable",
@@ -158,7 +160,8 @@ export function installJniHooksOnce(): void {
 export function flushJniHookEvents(callIdx: number): number {
     if (!STATE.jniHookEvents || STATE.jniHookEvents.length === 0) return 0;
     const events = STATE.jniHookEvents;
+    persistEvents("jni_hooks.jsonl", events);
     STATE.jniHookEvents = [];
-    send({ type: "jni-hooks", callIdx, count: events.length, events });
+
     return events.length;
 }

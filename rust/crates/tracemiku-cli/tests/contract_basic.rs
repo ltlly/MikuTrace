@@ -28,11 +28,16 @@ fn capabilities_matches_output_contract_schema() {
             },
             "capture_extensions": {
                 "type": "object",
-                "required": ["command", "implementation", "profile_argument", "profile_schema_version", "transport_argument", "transports", "call_limit_argument", "agent_plugin_api_version", "host_plugin_api_version", "trusted_code_only"],
+                "required": ["schema_version", "command", "implementation", "profile_argument", "profile_schema_version", "transport", "recovery_command", "completion_boundary", "default_complete_calls", "capture_output_schema_version", "call_limit_argument", "agent_plugin_api_version", "host_plugin_api_version", "trusted_code_only"],
                 "properties": {
                     "profile_schema_version": {"type": "integer", "const": 1},
                     "trusted_code_only": {"type": "boolean", "const": true},
-                    "transports": {"type": "array", "items": {"type": "string"}}
+                    "schema_version": {"const": 2},
+                    "transport": {"const": "adb-gzip"},
+                    "recovery_command": {"const": "recover"},
+                    "completion_boundary": {"const": "function-return"},
+                    "default_complete_calls": {"const": 1},
+                    "capture_output_schema_version": {"const": 1}
                 }
             },
         },

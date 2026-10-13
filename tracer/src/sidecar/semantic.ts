@@ -1,3 +1,5 @@
+import { internalFds, internalIoActive } from "../core/native_io";
+import { persistEvents } from "../transport/manifest";
 /**
  * Semantic events sidecar — libc/syscall Interceptor hooks
  *
@@ -31,8 +33,9 @@ export function pushSemanticEvent(ev: Record<string, any>): void {
 export function flushSemanticEvents(callIdx: number): number {
     if (!STATE.semanticEvents || !STATE.semanticEventBuf || STATE.semanticEventBuf.length === 0) return 0;
     const events = STATE.semanticEventBuf;
+    persistEvents("semantic_events.jsonl", events);
     STATE.semanticEventBuf = [];
-    send({ type: "semantic-events", callIdx, count: events.length, events });
+
     return events.length;
 }
 
@@ -67,7 +70,8 @@ export function installSemanticHooksOnce(): void {
         try {
             Interceptor.attach(fp, {
                 onEnter(args) {
-                    if (!STATE.fnEntered || this.threadId !== STATE.primaryTid) {
+                    if (!STATE.fnEntered || this.threadId !== STATE.primaryTid || internalIoActive(this.threadId) ||
+                        (["write", "pwrite64"].includes(spec.name) && internalFds.has(args[0].toInt32()))) {
                         (this as any)._skip = true;
                         return;
                     }

@@ -88,8 +88,11 @@ pub fn read_events(path: &Path, q: EventsQuery) -> Result<EventsResponse, Analys
                 AnalysisError::invalid("cursor belongs to another source or is malformed")
             })?,
     };
+    let jsonl = q.source == "jni" || path.join("fork_events.jsonl").is_file();
     let file = path.join(if q.source == "jni" {
         "jni_hooks.jsonl"
+    } else if jsonl {
+        "fork_events.jsonl"
     } else {
         "meta.json"
     });
@@ -117,7 +120,7 @@ pub fn read_events(path: &Path, q: EventsQuery) -> Result<EventsResponse, Analys
     };
     let limit = q.limit.min(5000);
     let mut output_bytes = ENVELOPE_BYTES;
-    if q.source == "fork" {
+    if q.source == "fork" && !jsonl {
         if input.metadata().map_err(io_error)?.len() > BUDGET as u64 {
             return Err(AnalysisError::limit("meta.json exceeds 8 MiB event budget"));
         }
@@ -192,7 +195,7 @@ pub fn read_events(path: &Path, q: EventsQuery) -> Result<EventsResponse, Analys
         loop {
             if BUDGET - out.scanned_bytes < MAX_LINE + 1 {
                 out.truncated = (offset as u64) < length;
-                out.next_cursor = out.truncated.then(|| format!("jni:{offset}"));
+                out.next_cursor = out.truncated.then(|| format!("{}:{offset}", q.source));
                 out.stop_reason = if out.truncated { "scan_budget" } else { "end" };
                 break;
             }
@@ -236,7 +239,7 @@ pub fn read_events(path: &Path, q: EventsQuery) -> Result<EventsResponse, Analys
                         if matches(&event, &q) {
                             let event = EventRow {
                                 source: q.source.clone(),
-                                cursor: format!("jni:{row}"),
+                                cursor: format!("{}:{row}", q.source),
                                 event,
                             };
                             let bytes = serde_json::to_vec(&event)
@@ -245,7 +248,7 @@ pub fn read_events(path: &Path, q: EventsQuery) -> Result<EventsResponse, Analys
                                 + 1;
                             if out.events.len() == limit || output_bytes + bytes > BUDGET {
                                 out.truncated = true;
-                                out.next_cursor = Some(format!("jni:{row}"));
+                                out.next_cursor = Some(format!("{}:{row}", q.source));
                                 out.stop_reason = "limit";
                                 break;
                             }
@@ -258,7 +261,7 @@ pub fn read_events(path: &Path, q: EventsQuery) -> Result<EventsResponse, Analys
             }
             if out.scanned_bytes >= BUDGET {
                 out.truncated = !reader.fill_buf().map_err(io_error)?.is_empty();
-                out.next_cursor = out.truncated.then(|| format!("jni:{offset}"));
+                out.next_cursor = out.truncated.then(|| format!("{}:{offset}", q.source));
                 out.stop_reason = if out.truncated { "scan_budget" } else { "end" };
                 break;
             }

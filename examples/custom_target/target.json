@@ -6,11 +6,9 @@
     "export": "demo_entry"
   },
   "capture": {
-    "max_records": 6000,
-    "duration": 60,
+    "max_calls": 1,
     "jni_hooks": "none"
   },
-  "transport": "frida",
   "agent_plugins": [
     {"id": "demo", "path": "agent.js", "config": {"enabled": true}}
   ],

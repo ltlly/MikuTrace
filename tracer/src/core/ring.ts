@@ -1,89 +1,18 @@
-/**
- * SPSC lock-free ring buffer — V8 consumer (flush to disk)
- *
- * 架构:
- *   cmodule on_insn → SPSC ring (17MB, head/tail monotonic 计数, atomic) →
- *   v8 setInterval 10ms → File.write → device file
- */
+/** native 写盘生命周期：路径探测、打开、封口、线程收尾。 */
 
-import { STATE, REC_SIZE, RING_RECS, FLUSH_INTERVAL_MS, TraceRingState, WorkerTraceState } from "./state";
+import { STATE, REC_SIZE, TraceRingState, WorkerTraceState } from "./state";
 import { log, getExport } from "./utils";
 import { flushSimdRingToDisk } from "../sidecar/simd";
 
-/** flush-error 上报节流间隔 (ms): 磁盘满时每 10ms 一次会刷屏 */
-const FLUSH_ERROR_REPORT_INTERVAL_MS = 5000;
-let lastFlushErrorTs = 0;
+import { NativeFile } from "./native_io";
 
-function sendFlushError(e: unknown): void {
-    const now = Date.now();
-    if (now - lastFlushErrorTs < FLUSH_ERROR_REPORT_INTERVAL_MS) return;
-    lastFlushErrorTs = now;
-    send({
-        type: "flush-error",
-        callIdx: STATE.callIdx,
-        traceFilePath: STATE.traceFilePath,
-        error: String(e),
-        ts: now,
-    });
-}
-
-/** Flush main trace ring to disk */
+/** 只在生产结束或显式停止后刷尾部；采集期间由 native 满批写入。 */
 export function flushRingToDisk(_reason?: string): void {
-    if (!STATE.traceFile) return;
-    const flushed = flushTraceRingToFile({
-        ringBuf: STATE.ringBuf!,
-        headBuf: STATE.headBuf!,
-        tailBuf: STATE.tailBuf!,
-        droppedBuf: STATE.droppedBuf!,
-        ringRecsBuf: STATE.ringRecsBuf!,
-        maxRecordsBuf: STATE.maxRecordsBuf!,
-        ringRecs: RING_RECS,
-        file: STATE.traceFile,
-        filePath: STATE.traceFilePath,
-    });
-    if (flushed) STATE.batchSeq++;
+    if (STATE.traceFile) STATE.flushNative();
 }
-
 export function flushTraceRingToFile(ring: TraceRingState): boolean {
     if (!ring.file) return false;
-    const h = ring.headBuf.readU64().toNumber();
-    const t = ring.tailBuf.readU64().toNumber();
-    const avail = h - t;
-    if (avail <= 0) return false;
-
-    const tOff = t % ring.ringRecs;
-    const hOff = h % ring.ringRecs;
-
-    // 写盘失败 (磁盘满/IO 错误) 不能让异常逃逸: timer 回调里会刷屏且 tail 永不推进.
-    // 失败时报告 host 并保持 tail 不变, 下个周期重试; 持续失败由环满降级终结本 call.
-    try {
-        if (avail >= ring.ringRecs) {
-            // Ring wrote full circle
-            ring.file.write(
-                ring.ringBuf.add(tOff * REC_SIZE).readByteArray((ring.ringRecs - tOff) * REC_SIZE)
-            );
-            if (tOff > 0) {
-                ring.file.write(ring.ringBuf.readByteArray(tOff * REC_SIZE));
-            }
-        } else if (hOff > tOff) {
-            // No wrap: single segment
-            ring.file.write(
-                ring.ringBuf.add(tOff * REC_SIZE).readByteArray(avail * REC_SIZE)
-            );
-        } else {
-            // Wrap: two segments
-            ring.file.write(
-                ring.ringBuf.add(tOff * REC_SIZE).readByteArray((ring.ringRecs - tOff) * REC_SIZE)
-            );
-            if (hOff > 0) {
-                ring.file.write(ring.ringBuf.readByteArray(hOff * REC_SIZE));
-            }
-        }
-    } catch (e) {
-        sendFlushError(e);
-        return false;
-    }
-    ring.tailBuf.writeU64(h);
+    ring.flushNative();
     return true;
 }
 
@@ -139,7 +68,7 @@ export function releaseWorkerTraces(): void {
             worker.file = null;
         }
         if (worker.cm) {
-            try { (worker.cm as any).unload(); } catch (_) {}
+            try { (worker.cm as any).dispose(); } catch (_) {}
             worker.cm = null;
         }
     }
@@ -154,134 +83,75 @@ function getMkdirFn(): NativeFunction<number, [NativePointerValue, number]> | nu
     return null;
 }
 
-/** 实际探测目录可写: 创建并删除探测文件.
- *  mkdir 返回 -1 无法区分 EEXIST 与 EPERM/EACCES — 只有真实写入才能确认. */
+/** 用实际目标 UID 做创建、写入、fsync 和回读探测。 */
 function probeDirWritable(dir: string): boolean {
-    const probePath = `${dir}/.miku_probe_${Date.now()}`;
+    const path = `${dir}/.probe_${Date.now()}`;
     try {
-        const f = new File(probePath, "wb");
-        f.write(new Uint8Array(1).buffer);
-        f.close();
-    } catch (_) {
-        return false;
-    }
-    try {
-        const unlinkPtr = getExport("unlink");
-        if (unlinkPtr) {
-            const unlink = new NativeFunction(unlinkPtr, "int", ["pointer"]);
-            unlink(Memory.allocUtf8String(probePath));
-        }
-    } catch (_) { /* unlink 失败只残留 1 字节探测文件, 无害 */ }
-    return true;
+        const file = new NativeFile(path);
+        file.write("tracemiku-probe");
+        file.close();
+        const bytes = new Uint8Array(File.readAllBytes(path));
+        if (String.fromCharCode(...bytes) !== "tracemiku-probe") return false;
+        const unlink = new NativeFunction(getExport("unlink")!, "int", ["pointer"]);
+        return unlink(Memory.allocUtf8String(path)) === 0;
+    } catch (_) { return false; }
 }
 
-/** Ensure trace dir exists, with fallbacks for attach-pid mode */
+/** 只采用经过目标进程写探测的路径；host 随后必须验证同一个 session.json。 */
 export function ensureTraceDir(): void {
-    // host 预建的目录: 已由 host 建好并 chmod, 这里只探测可写性。
-    // 不可写必须回退, 不能带着一个写不出去的路径继续 (否则 trace 静默为 0 条)。
-    if (STATE.traceDir) {
-        if (probeDirWritable(STATE.traceDir)) {
-            log(`[+] trace dir (host) = ${STATE.traceDir}`);
-            return;
-        }
-        log(`[!] host 指定目录不可写: ${STATE.traceDir}, 回退默认位置`);
-        STATE.traceDir = null;
-    }
-
-    // Try multiple methods to get package name
-    if (!STATE.pkg) {
-        try {
-            // Frida 的 File 没有 read(); readAllBytes 可处理 cmdline 的 NUL 分隔
-            const buf = (File as any).readAllBytes("/proc/self/cmdline") as ArrayBuffer;
-            const pkg = String.fromCharCode.apply(null, new Uint8Array(buf) as any).split("\0")[0];
-            if (pkg && pkg.length > 0 && pkg !== "unknown") {
-                STATE.pkg = pkg;
-            }
-        } catch (_) {}
-    }
-
-    if (!STATE.pkg || STATE.pkg === "unknown") {
-        try {
-            const buf = (File as any).readAllBytes("/proc/self/attr/current") as ArrayBuffer;
-            const context = String.fromCharCode.apply(null, new Uint8Array(buf) as any).split("\0")[0];
-            const parts = context.split(":");
-            if (parts.length >= 4) {
-                const lastPart = parts[3];
-                const commaParts = lastPart.split(",");
-                for (const part of commaParts) {
-                    if (part.includes(".") && part.length > 3) {
-                        STATE.pkg = part;
-                        break;
-                    }
-                }
-            }
-        } catch (_) {}
-    }
-
-    if (!STATE.pkg || STATE.pkg === "unknown") {
-        STATE.pkg = "unknown";
-    }
-
     const mkdir = getMkdirFn();
-    if (!mkdir) {
-        // Cannot find mkdir at all — use /data/local/tmp and hope File() can create
-        log("[!] mkdir 符号未找到, 尝试直接 File 写入 /data/local/tmp");
-        STATE.traceDir = `/data/local/tmp/.miku_${Process.id}`;
+    if (!mkdir) throw new Error("mkdir unavailable");
+    if (STATE.traceDir) {
+        mkdir(Memory.allocUtf8String(STATE.traceDir), 0o700);
+        if (!probeDirWritable(STATE.traceDir)) throw new Error(`trace directory is not writable: ${STATE.traceDir}`);
         return;
     }
-
-    // Host-provided dir wins: app 私有 cache 会在 app 退出时被清理, 拉取窗口极窄。
-    if (STATE.traceDir) {
-        const hostDir = STATE.traceDir;
-        const rc0 = mkdir(Memory.allocUtf8String(hostDir), 0o777) as unknown as number;
-        if ((rc0 === 0 || rc0 === -1) && probeDirWritable(hostDir)) {
-            STATE.traceDir = hostDir;
-            log(`[+] trace dir (host) = ${STATE.traceDir}`);
+    if (!STATE.pkg) {
+        try {
+            STATE.pkg = String.fromCharCode(...new Uint8Array(File.readAllBytes("/proc/self/cmdline"))).split("\0")[0];
+        } catch (_) {}
+    }
+    const parents: string[] = [];
+    // 路径只是候选，绝不以包名推断可写性或回传源。
+    if (STATE.pkg && /^[a-zA-Z0-9_.]+$/.test(STATE.pkg)) {
+        parents.push(`/data/data/${STATE.pkg}/files/.miku`);
+        try {
+            const uid = new NativeFunction(getExport("getuid")!, "uint", [])();
+            parents.unshift(`/data/user/${Math.floor(uid / 100000)}/${STATE.pkg}/files/.miku`);
+        } catch (_) {}
+    }
+    parents.push("/data/local/tmp");
+    for (const parent of parents) {
+        // 全新安装的 app 在 spawn 挂起点尚未调用 Context.getFilesDir()。
+        // 用目标 UID 创建自己的 files，不能要求 host 代写或 chmod 私有目录。
+        if (parent.endsWith("/files/.miku")) {
+            mkdir(Memory.allocUtf8String(parent.slice(0, -6)), 0o700);
+        }
+        mkdir(Memory.allocUtf8String(parent), 0o700);
+        const dir = `${parent}/session_${Process.id}_${Date.now()}`;
+        if (mkdir(Memory.allocUtf8String(dir), 0o700) !== 0) continue;
+        if (probeDirWritable(dir)) {
+            STATE.traceDir = dir;
+            log(`[+] verified target writable spool: ${dir}`);
             return;
         }
-        log(`[!] host 指定目录不可写 (mkdir rc=${rc0}), 回退默认位置`);
     }
-
-    // 应用私有 files；不依赖 host root mkdir、不使用容易被清理的 cache。
-    if (STATE.pkg !== "unknown") {
-        const parentDir = `/data/data/${STATE.pkg}/files/.miku`;
-        mkdir(Memory.allocUtf8String(parentDir), 0o700);
-        const primaryDir = `${parentDir}/session_${Process.id}_${Date.now()}`;
-        const result = mkdir(Memory.allocUtf8String(primaryDir), 0o755) as unknown as number;
-        // mkdir rc=-1 兼 EEXIST 与 EPERM — 必须实际写入探测, 不可写则降级 fallback
-        if ((result === 0 || result === -1) && probeDirWritable(primaryDir)) {
-            STATE.traceDir = primaryDir;
-            log(`[+] trace dir = ${STATE.traceDir}`);
-            return;
-        }
-        log(`[!] primary 目录不可写 (mkdir rc=${result}), 降级 /data/local/tmp`);
-    }
-
-    // Fallback: /data/local/tmp (requires root/shell writable)
-    const fallbackDir = `/data/local/tmp/.miku_${Process.id}`;
-    const rc = mkdir(Memory.allocUtf8String(fallbackDir), 0o755) as unknown as number;
-    if ((rc === 0 || rc === -1) && probeDirWritable(fallbackDir)) {
-        STATE.traceDir = fallbackDir;
-        log(`[+] trace dir (fallback) = ${STATE.traceDir}`);
-    } else {
-        // Last resort — set it anyway, openTraceFile will fail with a clear error
-        STATE.traceDir = fallbackDir;
-        log(`[!] mkdir fallback 也失败了 (rc=${rc}), 继续尝试写入`);
-    }
+    throw new Error("no target-writable spool directory; specify --device-dir");
 }
 
 /** Open trace output file for a call */
 export function openTraceFile(callIdx: number, tid: number): void {
     ensureTraceDir();
     const path = `${STATE.traceDir}/trace_call${callIdx}_tid${tid}.bin`;
-    STATE.traceFile = new File(path, "wb");
+    STATE.traceFile = new NativeFile(path, STATE.traceIoState!);
     STATE.traceFilePath = path;
+    STATE.active!.writeS32(1);
     log(`[+] trace 文件 = ${path}`);
 
     if (STATE.simdSidecar) {
         const { SIMD_REC_SIZE } = require("./state");
         const simdPath = `${STATE.traceDir}/simd_trace_call${callIdx}_tid${tid}.bin`;
-        STATE.simdTraceFile = new File(simdPath, "wb");
+        STATE.simdTraceFile = new NativeFile(simdPath, STATE.simdIoState!);
         STATE.simdTraceFilePath = simdPath;
         log(`[+] SIMD sidecar 文件 = ${simdPath} (record=${SIMD_REC_SIZE} stride=${STATE.simdSampleStride})`);
     } else {
@@ -304,117 +174,14 @@ export function closeSimdTraceFile(): void {
     }
 }
 
-/** 环满降级阈值: 连续 N 个心跳 (每个 1s) 观察到主 ring 满载即强制终结.
- *  环满时生产端自旋 (SPIN_MAX 后丢记录), 且 watchdog 的 ringQueue===0 前置条件
- *  永不满足 — 必须独立降级路径, 否则磁盘满会让 call 永远挂着. */
-const RING_FULL_FINALIZE_HEARTBEATS = 5;
-
-/**
- * 强制终结当前 call: unfollow + flush + 关文件 + sidecar 事件 + trace-end(truncated).
- * maxRecords / watchdog / 环满降级三条路径共用. 置 callFinalized 防 onLeave 重复发 trace-end.
- */
-export function finalizeActiveCall(reason: string): void {
-    try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
-    unfollowWorkerThreads();
-    try { Stalker.flush(); } catch (_) {}
-    flushRingToDisk(reason);
-    flushWorkerTraceRings(reason);
-    flushSimdRingToDisk(reason);
-    closeTraceFile();
-    closeWorkerTraceFiles();
-    closeSimdTraceFile();
-    const ms = Date.now() - STATE.started;
-    const total = STATE.headBuf!.readU64().toNumber();
-    const dropped = STATE.droppedBuf!.readU64().toNumber();
-
-    const { flushJniHookEvents } = require("../hooks/jni_vtable");
-    const { flushSemanticEvents } = require("../sidecar/semantic");
-    const { flushExtWriteEvents } = require("../hooks/boundary_diff");
-    const { flushForkEvents } = require("../hooks/fork_monitor");
-    const { flushWorkerEvents } = require("../hooks/pthread_follow");
-    try { flushJniHookEvents(STATE.callIdx); } catch (e) { log(`[!] flushJni: ${e}`); }
-    try { flushSemanticEvents(STATE.callIdx); } catch (e) { log(`[!] flushSemantic: ${e}`); }
-    try { flushExtWriteEvents(); } catch (e) { log(`[!] flushExt: ${e}`); }
-    try { flushForkEvents(STATE.callIdx); } catch (e) { log(`[!] flushFork: ${e}`); }
-    try { flushWorkerEvents(STATE.callIdx); } catch (e) { log(`[!] flushWorkers: ${e}`); }
-
-    const { SIMD_REC_SIZE } = require("./state");
-    send({
-        type: "trace-end", callIdx: STATE.callIdx,
-        tid: STATE.primaryTid, retval: "?",
-        ms, total, dropped, truncated: true,
-        devicePath: STATE.traceFilePath,
-        simdDevicePath: STATE.simdTraceFilePath,
-        simdRecords: STATE.simdSidecar ? STATE.simdHeadBuf!.readU64().toNumber() : 0,
-        simdDropped: STATE.simdSidecar ? STATE.simdDroppedBuf!.readU64().toNumber() : 0,
-        simdRecordSize: SIMD_REC_SIZE,
-        simdSampleStride: STATE.simdSampleStride,
-        workerTraces: workerTraceSummaries()
-    });
-    STATE.fnEntered = false;
-    STATE.callFinalized = true;
-    STATE.stuckSecs = 0;
-    STATE.ringFullSecs = 0;
-    STATE.lastTotal = total;
-}
-
-/** Start the periodic flush timer + heartbeat watchdog */
+/** 心跳只观测，不以无进展时间决定调用结束。 */
 export function ensureFlushTimer(): void {
-    if (STATE.flushTimer) return;
-
-    STATE.flushTimer = setInterval(() => {
-        try {
-            flushRingToDisk("interval");
-            flushWorkerTraceRings("interval");
-            flushSimdRingToDisk("interval");
-        } catch (e) {
-            sendFlushError(e);
-        }
-    }, FLUSH_INTERVAL_MS);
-
-    if (!STATE.hbTimer) {
-        STATE.hbTimer = setInterval(() => {
-            const h = STATE.headBuf!.readU64().toNumber();
-            const t = STATE.tailBuf!.readU64().toNumber();
-            const dropped = STATE.droppedBuf!.readU64().toNumber();
-            const ringQueue = h - t;
-            const total = h;
-
-            send({
-                type: "hb", head: h, tail: t, queued: ringQueue,
-                total, dropped, fnEntered: STATE.fnEntered, callIdx: STATE.callIdx
-            });
-
-            // maxRecords cap: if CModule stopped producing, finalize the call
-            if (STATE.fnEntered && STATE.maxRecords > 0 && total >= STATE.maxRecords && ringQueue === 0) {
-                log(`[!] maxRecords cap reached (${total} >= ${STATE.maxRecords}), finalizing call #${STATE.callIdx}`);
-                finalizeActiveCall("max-records");
-                return;
-            }
-
-            // 环满降级: 消费端 (磁盘满/IO 卡死) 持续落后, 生产端已开始丢记录.
-            if (STATE.fnEntered && ringQueue >= RING_RECS) {
-                STATE.ringFullSecs++;
-                if (STATE.ringFullSecs >= RING_FULL_FINALIZE_HEARTBEATS) {
-                    log(`[!] ring 满载 ${STATE.ringFullSecs}s (queued=${ringQueue}, dropped=${dropped}), ` +
-                        `降级终结 call #${STATE.callIdx}`);
-                    finalizeActiveCall("ring-full");
-                    return;
-                }
-            } else {
-                STATE.ringFullSecs = 0;
-            }
-
-            if (STATE.fnEntered && total === STATE.lastTotal && ringQueue === 0) {
-                STATE.stuckSecs++;
-                if (STATE.stuckSecs >= STATE.stuckThreshold) {
-                    log(`[!] watchdog: call #${STATE.callIdx} 卡死 ${STATE.stuckSecs}s, 强制结束`);
-                    finalizeActiveCall("watchdog");
-                }
-            } else {
-                STATE.stuckSecs = 0;
-            }
-            STATE.lastTotal = total;
-        }, 1000);
-    }
+    if (STATE.hbTimer) return;
+    STATE.hbTimer = setInterval(() => {
+        const h = STATE.headBuf!.readU64().toNumber();
+        const t = STATE.tailBuf!.readU64().toNumber();
+        send({ type: "hb", head: h, tail: t, queued: h - t, total: h,
+            dropped: 0, fnEntered: STATE.fnEntered, callIdx: STATE.callIdx,
+            io_errno: STATE.traceIoState?.add(4).readS32() || 0 });
+    }, 1000);
 }

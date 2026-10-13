@@ -170,9 +170,13 @@ fn capabilities_lock_output_contract() {
     let capture = &value["capture_extensions"];
     assert_eq!(capture["command"], "trace");
     assert_eq!(capture["profile_argument"], "--target-profile");
-    assert_eq!(capture["transport_argument"], "--transport");
+    assert!(capture.get("transport_argument").is_none());
     assert_eq!(capture["call_limit_argument"], "--max-calls");
-    assert_eq!(capture["transports"], serde_json::json!(["frida", "adb"]));
+    assert!(capture.get("transports").is_none());
+    assert_eq!(capture["transport"], "adb-gzip");
+    assert_eq!(capture["recovery_command"], "recover");
+    assert_eq!(capture["default_complete_calls"], 1);
+    assert_eq!(capture["completion_boundary"], "function-return");
     assert_eq!(capture["agent_plugin_api_version"], 1);
     assert_eq!(capture["host_plugin_api_version"], 1);
     assert_eq!(capture["trusted_code_only"], true);

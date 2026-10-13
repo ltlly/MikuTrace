@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the external-writes sidecar (`external_writes.bin`).
  *
- * Kept free of Frida imports so the format and the total-cap policy can be
+ * Kept free of Frida imports so the format can be
  * contract-tested in Node (see tests/external_writes_contract_test.ts) and
  * shared by the agent (boundary_diff.ts) and any host-side consumer.
  *
@@ -28,17 +28,4 @@ export function encodeExtWriteEvent(ev: ExtWriteEvent): Uint8Array {
   dv.setUint32(12, Number((addr >> 32n) & 0xffffffffn), true);
   dv.setUint8(16, ev.byte & 0xff);
   return out;
-}
-
-/**
- * Total-cap policy for external-write events. Returns the number of events
- * allowed under `cap` given the count already emitted. Once the cap is hit,
- * all further events are dropped (the analysis degrades gracefully instead
- * of unbounded growth).
- */
-export function extWriteAllowance(emitted: number, cap: number, incoming: number): number {
-  if (cap <= 0) return 0;
-  const remaining = cap - emitted;
-  if (remaining <= 0) return 0;
-  return Math.min(remaining, incoming);
 }

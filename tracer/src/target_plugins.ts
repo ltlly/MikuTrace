@@ -5,6 +5,14 @@ let plugins: { id: string; api: any; config: any }[] = [];
 let eventCount = 0;
 const MAX_EVENTS = 200;
 let failureReported = false;
+let pendingEvents: any[] = [];
+
+/** 生命周期通知必须随设备结果保存，不能只依赖已断开的 host 消息通道。 */
+export function drainTargetPluginEvents(): any[] {
+    const events = pendingEvents;
+    pendingEvents = [];
+    return events;
+}
 
 function emit(id: string, phase: string, status: string, detail?: any): void {
     // 为失败保留一个通知槽；正常事件耗尽预算不能把拒绝采集变成静默成功。
@@ -15,7 +23,9 @@ function emit(id: string, phase: string, status: string, detail?: any): void {
     const text = JSON.stringify(detail ?? null);
     if (text.length > 16384) throw new Error("plugin event exceeds 16KiB");
     eventCount++;
-    send({ type: "target-plugin", id, phase, status, detail: JSON.parse(text) });
+    const event = { type: "target-plugin", id, phase, status, detail: JSON.parse(text) };
+    pendingEvents.push(event);
+    send(event);
 }
 
 export function runTargetPlugins(phase: Phase, context: any = {}): void {

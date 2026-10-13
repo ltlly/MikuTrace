@@ -8,7 +8,7 @@
 | 位置 | 职责 |
 |---|---|
 | `tracer/src/` | Stalker/CModule、ring、调用边界、sidecar、插件 |
-| `tracemiku`、`tracemiku_{device,transport,target,commands}.py` | 统一入口、采集、回传、profile 与能力发现 |
+| `tracemiku`、`tracemiku_{device,capture,spool,common,target,commands}.py` | 统一入口、采集编排、设备恢复、profile 与能力发现 |
 | `rust/crates/tracemiku-core/src/` | 格式、索引、CFG、污点、MemShadow、replay |
 | core `analysis/`、`analysis/reports/` | 类型化查询、输出回溯、lineage、VM 与目录报告 |
 | `rust/crates/tracemiku-cli/src/` | clap、core 调用、JSON 与文件输出 |

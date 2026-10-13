@@ -164,7 +164,8 @@ pub fn repair_call(calls_dir: &Path, dir_name: &str) -> Result<CallRepair, Final
     let mut md = read_meta(&dir)?;
     let from = dir_name.to_string();
 
-    if !dir.join("trace.bin").exists() {
+    let transfer_pending = transfer_pending_reason(&dir, &md);
+    if !dir.join("trace.bin").exists() || transfer_pending.is_some() {
         md.entry("records".to_string()).or_insert(Value::Null);
         let body = serde_json::to_string_pretty(&Value::Object(md.clone())).map_err(|source| {
             FinalizeError::Meta {
@@ -184,7 +185,9 @@ pub fn repair_call(calls_dir: &Path, dir_name: &str) -> Result<CallRepair, Final
             last_pc: None,
             last_insn_is_ret: None,
             renamed: false,
-            warnings: vec!["缺少本地 trace.bin, 保持 pending".to_string()],
+            warnings: vec![
+                transfer_pending.unwrap_or_else(|| "缺少本地 trace.bin, 保持 pending".to_string())
+            ],
         });
     }
 
@@ -261,6 +264,40 @@ pub fn repair_call(calls_dir: &Path, dir_name: &str) -> Result<CallRepair, Final
         renamed,
         warnings,
     })
+}
+
+/// 新采集格式要求全部声明的文件通过回传校验。旧 trace 没有此字段，保留旧契约。
+/// 查询只验证提交状态与长度；SHA-256 在回传提交时流式验证，不能让 info 扫描整个 trace。
+pub fn transfer_pending_reason(dir: &Path, meta: &Map<String, Value>) -> Option<String> {
+    if let Some(state) = meta.get("transfer_state") {
+        if state.as_str() != Some("VERIFIED") {
+            return Some("回传尚未全部校验；请执行 recover，保持 pending".to_string());
+        }
+        let required = match meta.get("required_artifacts").and_then(Value::as_array) {
+            Some(required) if required.iter().any(|name| name == "trace.bin") => required,
+            _ => return Some("缺少必需文件清单，保持 pending".to_string()),
+        };
+        let receipts = match meta.get("artifact_checksums").and_then(Value::as_array) {
+            Some(receipts) => receipts,
+            None => return Some("缺少文件校验凭据，保持 pending".to_string()),
+        };
+        for name in required {
+            let name = match name.as_str() {
+                Some(name) if !name.contains(['/', '\\']) && name != "." && name != ".." => name,
+                _ => return Some("无效的回传文件名，保持 pending".to_string()),
+            };
+            let receipt = receipts.iter().find(|receipt| receipt["name"] == name);
+            let expected = receipt.and_then(|receipt| receipt["bytes"].as_u64());
+            let actual = fs::metadata(dir.join(name))
+                .ok()
+                .filter(|meta| meta.is_file())
+                .map(|meta| meta.len());
+            if expected.is_none() || actual != expected {
+                return Some(format!("回传文件 {name} 缺失或长度不符，保持 pending"));
+            }
+        }
+    }
+    None
 }
 
 fn run_summary_entry(dir_name: &str, md: &Map<String, Value>, n: Option<u64>) -> Value {

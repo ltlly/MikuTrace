@@ -1,3 +1,4 @@
+import { persistEvents } from "../transport/manifest";
 /**
  * Optional pthread worker Stalker follow.
  *
@@ -8,22 +9,23 @@
  */
 
 import { STATE, REC_SIZE, WORKER_RING_BYTES, WORKER_RING_RECS, WorkerTraceState } from "../core/state";
-import { log } from "../core/utils";
+import { log, getExport } from "../core/utils";
 import { createTransform } from "../core/stalker";
+import { NativeFile } from "../core/native_io";
 import { buildTraceRingCModule } from "../core/cmodule";
 
 function findExport(name: string): NativePointer | null {
-    try { return Module.findExportByName(null, name); } catch (_) {}
-    try { return Module.findExportByName("libc.so", name); } catch (_) {}
-    return null;
+    return getExport(name);
 }
 
 function rememberWorkerEvent(event: Record<string, unknown>): void {
     STATE.workerEvents.push({ type: "worker-thread", ts: Date.now(), ...event });
+    if (STATE.workerEvents.length >= 128) flushWorkerEvents(STATE.callIdx);
 }
 
 function openWorkerTrace(tid: number, pthread: string, start: NativePointer): WorkerTraceState {
     const path = `${STATE.traceDir}/worker_trace_call${STATE.callIdx}_tid${tid}.bin`;
+    const file = new NativeFile(path);
     const worker: WorkerTraceState = {
         tid,
         pthread,
@@ -33,18 +35,17 @@ function openWorkerTrace(tid: number, pthread: string, start: NativePointer): Wo
         tailBuf: Memory.alloc(8),
         droppedBuf: Memory.alloc(8),
         ringRecsBuf: Memory.alloc(8),
-        maxRecordsBuf: Memory.alloc(8),
         ringRecs: WORKER_RING_RECS,
-        file: new File(path, "wb"),
+        file, ioState: file.state, flushNative: null, active: Memory.alloc(4),
         filePath: path,
         cm: null,
         onInsnPtr: NULL,
     };
+    worker.active.writeS32(1);
     worker.headBuf.writeU64(0);
     worker.tailBuf.writeU64(0);
     worker.droppedBuf.writeU64(0);
     worker.ringRecsBuf.writeU64(WORKER_RING_RECS);
-    worker.maxRecordsBuf.writeU64(STATE.maxRecords);
     worker.cm = buildTraceRingCModule(worker);
     worker.onInsnPtr = (worker.cm as any).on_insn;
     STATE.workerTraces[String(tid)] = worker;
@@ -79,8 +80,10 @@ export function installPthreadFollowOnce(): void {
             try { pthreadValue = (this as any)._threadPtr.readPointer().toString(); } catch (_) {}
             const start = (this as any)._start as NativePointer;
             rememberWorkerEvent({ status: "created", pthread: pthreadValue, start: start.toString() });
+            const callIdx = STATE.callIdx;
 
             setTimeout(() => {
+                if (!STATE.fnEntered || STATE.callFinalized || STATE.callIdx !== callIdx) return;
                 try {
                     const tids = Process.enumerateThreads().map(t => t.id);
                     for (const tid of tids) {
@@ -118,7 +121,8 @@ export function installPthreadFollowOnce(): void {
 export function flushWorkerEvents(callIdx: number): number {
     if (!STATE.workerEvents || STATE.workerEvents.length === 0) return 0;
     const events = STATE.workerEvents;
+    persistEvents("worker_events.jsonl", events);
     STATE.workerEvents = [];
-    send({ type: "worker-events", callIdx, tid: STATE.primaryTid, count: events.length, events });
+
     return events.length;
 }

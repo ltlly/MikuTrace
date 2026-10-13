@@ -44,7 +44,7 @@ check(
   8 + 31 * 8 + 8 + 4 + 4 === REC_SIZE,
 );
 
-check("RING_RECS defaults to 65536 (17MiB ring)", RING_RECS === 65536);
+check("RING_RECS defaults to 4096 (~1.1MiB native batch)", RING_RECS === 4096);
 check("ringBytes() == REC_SIZE * RING_RECS", ringBytes() === REC_SIZE * RING_RECS);
 
 // Ring capacity is configurable; its byte budget must follow the effective

@@ -1,3 +1,4 @@
+import { persistEvents } from "../transport/manifest";
 /**
  * Boundary memory diff — Interceptor-based external write detection
  *
@@ -7,7 +8,6 @@
  */
 
 import { STATE } from "../core/state";
-import { extWriteAllowance } from "../core/ext_write_cap";
 import { log } from "../core/utils";
 
 const PTR_WIN = 256;  // bytes to snapshot around each pointer arg
@@ -64,16 +64,10 @@ export function collectBoundaryDiffSymbols(m: Module, diffPatterns: string[]): n
     return n;
 }
 
-/**
- * Emit an external-write event honoring the total cap. Once the cap is
- * reached the event is dropped (analysis degrades gracefully instead of
- * unbounded growth).
- */
+/** 分批持久化外部写事件，不设置总量上限。 */
 function emitExtWrite(ev: { attrIdx: number; addr: string; byte: number }): void {
-  const cap = STATE.extWriteCap || 0;
-  if (cap > 0 && STATE.extWriteEmitted >= cap) return;
   STATE.extWriteEvents.push(ev);
-  if (cap > 0) STATE.extWriteEmitted += 1;
+  if (STATE.extWriteEvents.length >= 4096) flushExtWriteEvents();
 }
 
 function makeBoundaryDiffHook(symName: string) {
@@ -160,7 +154,8 @@ export function installBoundaryDiffHooksOnce(): void {
 export function flushExtWriteEvents(): number {
     if (!STATE.extWriteEvents || STATE.extWriteEvents.length === 0) return 0;
     const events = STATE.extWriteEvents;
+    persistEvents("external_writes.bin", events);
     STATE.extWriteEvents = [];
-    send({ type: "ext-write", callIdx: STATE.callIdx, count: events.length, events });
+
     return events.length;
 }

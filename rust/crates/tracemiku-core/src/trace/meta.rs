@@ -79,6 +79,16 @@ impl ModuleInfo {
 /// Per-call meta.json fields we consume.
 #[derive(Debug, Clone, Deserialize)]
 struct PerCallMetaRaw {
+    #[serde(default)]
+    pub module: Option<ModuleInfoRaw>,
+    #[serde(default)]
+    pub modules: Option<Vec<ModuleInfoRaw>>,
+    #[serde(default)]
+    pub method: Option<String>,
+    #[serde(default)]
+    pub cmd: Option<i64>,
+    #[serde(default)]
+    pub fn_addr: Option<String>,
     /// `null` 表示 host 侧尚未落定（例如拉取失败），不是 0。
     /// 缺 `records` 时给出可读恢复提示，而不是 serde 类型错误。
     pub records: Option<u64>,
@@ -213,8 +223,12 @@ impl TraceMeta {
             }
         };
 
-        let module = run.module.map(ModuleInfo::try_from).transpose()?;
-        let modules: Vec<ModuleInfo> = match (run.modules, module.clone()) {
+        let module = per_call
+            .module
+            .or(run.module)
+            .map(ModuleInfo::try_from)
+            .transpose()?;
+        let modules: Vec<ModuleInfo> = match (per_call.modules.or(run.modules), module.clone()) {
             (Some(list), _) => list
                 .into_iter()
                 .map(ModuleInfo::try_from)
@@ -236,9 +250,9 @@ impl TraceMeta {
             record_size,
             module,
             modules,
-            method: run.method.unwrap_or_default(),
-            cmd: run.cmd,
-            fn_addr: run.fn_addr,
+            method: per_call.method.or(run.method).unwrap_or_default(),
+            cmd: per_call.cmd.or(run.cmd),
+            fn_addr: per_call.fn_addr.or(run.fn_addr),
             regs: REG_NAMES,
             truncated: per_call.truncated,
             last_insn_is_ret: per_call.last_insn_is_ret,

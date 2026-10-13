@@ -1,8 +1,10 @@
+import { controlAddress } from "./transport/control";
+import { beginManifest, sealManifest, prepareManifest, sealSession } from "./transport/manifest";
 /**
  * traceMiku Agent — modular entry point
  *
  * Architecture:
- *   CModule on_insn → SPSC ring (17MB) → V8 setInterval flush → device file
+ *   CModule on_insn → 有界 native 批缓冲 → 同步写盘背压 → 函数返回后 fsync/manifest
  *   Optional: SIMD sidecar, semantic events, JNI hooks, fork monitor, anti-detect plugins
  *
  * Build: frida-compile src/agent.ts -o _agent.js
@@ -10,9 +12,10 @@
 
 import {
     STATE, RING_RECS, ringBytes, setRingRecs, SIMD_RING_BYTES, SIMD_RING_RECS,
-    SIMD_REC_SIZE, FLUSH_INTERVAL_MS, InitOptions
+    SIMD_REC_SIZE, InitOptions
 } from "./core/state";
 import { log, getExport } from "./core/utils";
+import { ioState, ioHealth } from "./core/native_io";
 import { buildCModule } from "./core/cmodule";
 import {
     flushRingToDisk,
@@ -26,7 +29,6 @@ import {
     unfollowWorkerThreads,
     releaseWorkerTraces,
     workerTraceSummaries,
-    finalizeActiveCall,
 } from "./core/ring";
 import { applyExcludesOnce, buildIncludeRanges, createTransform } from "./core/stalker";
 import { flushSimdRingToDisk } from "./sidecar/simd";
@@ -37,13 +39,33 @@ import { installForkHooksOnce, flushForkEvents } from "./hooks/fork_monitor";
 import { installPthreadFollowOnce, flushWorkerEvents } from "./hooks/pthread_follow";
 import { refreshWritableRanges, flushExtWriteEvents } from "./hooks/boundary_diff";
 import { BUILTIN_PLUGINS } from "./anti_detect/plugin_interface";
-import { installSpoolTransport } from "./transport/spool";
 import { installTargetPlugins, runTargetPlugins, invokeTargetPlugin } from "./target_plugins";
 
-installSpoolTransport(STATE);
-let acceptingCalls = true;
-let maxCalls = 64;
-let callLimitReported = false;
+let acceptingCalls = false;
+let endedManifest: string | null = null;
+let completedCalls = 0;
+let lastHead = 0;
+let lastTail = 0;
+let retired = false;
+let fatalError: string | null = null;
+function retireCapture(): void {
+    if (retired) return;
+    retired = true;
+    acceptingCalls = false;
+    if (STATE.hbTimer) { clearInterval(STATE.hbTimer); STATE.hbTimer = null; }
+    // 下一个 JS tick 已离开 onLeave；先回收 Stalker 翻译，再释放生产器及批缓冲。
+    setImmediate(() => {
+        Interceptor.detachAll();
+        Stalker.garbageCollect();
+        releaseWorkerTraces();
+        STATE.workerTraces = {};
+        if (STATE.cm) { STATE.cm.dispose(); STATE.cm = null; }
+        STATE.flushNative = null; STATE.flushSimdNative = null; STATE.onInsnPtr = null;
+        STATE.ringBuf = null; STATE.headBuf = null; STATE.tailBuf = null;
+        STATE.simdRingBuf = null; STATE.simdHeadBuf = null; STATE.simdTailBuf = null;
+    });
+}
+let maxCalls = 1;
 
 // ─────────── RegisterNatives fallback ────────
 
@@ -97,14 +119,11 @@ function hookRegisterNatives(onResolved: (fp: NativePointer) => void): boolean {
 // ─────────── Main hook installation ─────────────────────────────────────────
 
 function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
+    if (STATE.target) STATE.fnOffset = fp.sub(STATE.target.base).toUInt32();
     Interceptor.attach(fp, {
         onEnter(args) {
             if (!acceptingCalls || STATE.callIdx >= maxCalls) {
                 (this as any)._skip = true;
-                if (acceptingCalls && !callLimitReported) {
-                    callLimitReported = true;
-                    send({ type: "capture-limit", resource: "calls", limit: maxCalls });
-                }
                 return;
             }
             if (STATE.cmdValue != null && STATE.cmdArg != null) {
@@ -115,7 +134,9 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             try { runTargetPlugins("beforeTrace", { args, tid: this.threadId, address: fp }); }
             catch (e) {
                 (this as any)._skip = true;
-                log(`[target-plugin][!] trace refused: ${e}`);
+                fatalError = `target plugin refused capture: ${e}`;
+                sealSession(fatalError);
+                retireCapture();
                 return;
             }
             STATE.fnEntered = true;
@@ -147,6 +168,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             STATE.batchSeq = 0;
 
             openTraceFile((this as any)._callIdx, (this as any)._tid);
+            beginManifest();
             log(`[>] call #${(this as any)._callIdx} tid=${(this as any)._tid}`);
             send({
                 type: "trace-begin", callIdx: (this as any)._callIdx,
@@ -205,15 +227,12 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 transform: createTransform(onInsn, ranges),
             });
             try { installPthreadFollowOnce(); } catch (e) { log("[pthread-follow][!] " + e); }
-            log(`[+] Stalker.follow tid=${(this as any)._tid} (SPSC lock-free, device-spool)`);
+            log(`[+] Stalker.follow tid=${(this as any)._tid} (native writer, device-spool)`);
             send({ type: "follow", tid: (this as any)._tid });
         },
         onLeave(retv) {
             if ((this as any)._skip) return;
-            // watchdog/maxRecords/环满 已强制终结本 call (已发 trace-end 并关文件):
-            // 再发第二个 trace-end 会让 host 对同 callIdx 重复 open/finalize/pull,
-            // 生成 records=0 的幽灵目录. callFinalized 仅在 finalize 路径与这里置位,
-            // onEnter 每次进入都会重置, 不会挡掉正常路径.
+            // onLeave 幂等；不能重开或重复提交已封口文件。
             if (STATE.callFinalized) {
                 log(`[!] call #${(this as any)._callIdx} 已被强制终结, 跳过 onLeave 重复 trace-end`);
                 return;
@@ -244,20 +263,26 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             try { flushWorkerEvents((this as any)._callIdx); } catch (e) { log(`[!] flushWorkers: ${e}`); }
 
             log(`[<] call #${(this as any)._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
-            send({
+            const end = {
                 type: "trace-end", callIdx: (this as any)._callIdx,
                 tid: (this as any)._tid, retval: retv.toString(),
-                // 快速函数可能先于 1s 心跳返回；CModule 已触顶停止写记录时，
-                // 正常 onLeave 仍必须如实标记采集截断。
                 ms: elapsed, total, dropped,
-                truncated: dropped > 0 || (STATE.maxRecords > 0 && total >= STATE.maxRecords),
+                truncated: dropped > 0,
                 devicePath: STATE.traceFilePath,
                 simdDevicePath: STATE.simdTraceFilePath,
                 simdRecords: simdTotal, simdDropped: simdDropped,
                 simdRecordSize: SIMD_REC_SIZE,
                 simdSampleStride: STATE.simdSampleStride,
                 workerTraces
-            });
+            };
+            const manifestPath = sealManifest(end, STATE.callIdx >= maxCalls || !acceptingCalls);
+            endedManifest = manifestPath;
+            completedCalls++;
+            send({ ...end, manifestPath });
+            lastHead = total; lastTail = total;
+            if (STATE.callIdx >= maxCalls || !acceptingCalls) retireCapture();
+            clearInterval(STATE.hbTimer); STATE.hbTimer = null;
+
             STATE.fnEntered = false;
         }
     });
@@ -310,8 +335,7 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
             } catch (_) {}
         }
         if (!fp) {
-            log(`[!!] export "${STATE.exportName}" not found in ${m.name}`);
-            return;
+            throw new Error(`export "${STATE.exportName}" not found in ${m.name}`);
         }
         STATE.fnOffset = fp.sub(m.base).toInt32();
         label = `${STATE.soPattern}!${STATE.exportName}`;
@@ -323,7 +347,7 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
             log(`[+] hook ${STATE.methodName} @ ${resolvedFp} via RegisterNatives`);
         });
         if (!ok) {
-            log(`[!] RegisterNatives hook failed, will retry`);
+            throw new Error("RegisterNatives hook unavailable; use a resolved export or offset");
         }
         return;
     } else {
@@ -338,6 +362,19 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
 // ─────────── RPC exports ────────────────────────────────────────────────────
 
 rpc.exports = {
+    controlAddress,
+    startCapture() {
+        if (retired) throw new Error("capture session already sealed");
+        acceptingCalls = true; return "ok";
+    },
+    prepareSpool(opts: { sessionId: string; pkg?: string; traceDir?: string }) {
+        STATE.pkg = opts.pkg || null;
+        STATE.traceDir = opts.traceDir || null;
+        ensureTraceDir();
+        prepareManifest(opts.sessionId);
+        return { deviceDir: STATE.traceDir, sessionId: opts.sessionId,
+            manifestPath: `${STATE.traceDir}/session.json`, pid: Process.id };
+    },
     init(opts: InitOptions) {
         // soPattern required
         STATE.soPattern = opts.soPattern;
@@ -351,8 +388,8 @@ rpc.exports = {
             throw new Error("init: must provide fnOffset OR exportName OR methodName");
         }
         installTargetPlugins((opts as any).targetPlugins || []);
-        maxCalls = (opts as any).maxCalls ?? 64;
-        if (!Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > 1024) throw new Error("maxCalls must be in 1..1024");
+        maxCalls = (opts as any).maxCalls ?? 1;
+        if (!Number.isSafeInteger(maxCalls) || maxCalls < 1) throw new Error("maxCalls must be positive");
 
         // Anti-detect config
         STATE.suicidePatchSpec = (opts as any).suicidePatchSpec || null;
@@ -375,10 +412,6 @@ rpc.exports = {
         STATE.stalkerExcludePatterns = Array.isArray(opts.stalkerExcludePatterns) && opts.stalkerExcludePatterns.length
             ? opts.stalkerExcludePatterns : null;
         STATE.boundaryDiffPatterns = Array.isArray(opts.boundaryDiffPatterns) ? opts.boundaryDiffPatterns : null;
-        if (typeof (opts as any).extWriteCap === "number" && (opts as any).extWriteCap > 0) {
-            STATE.extWriteCap = (opts as any).extWriteCap;
-        }
-
         // JNI hooks
         STATE.jniHookSpecs = Array.isArray(opts.jniHooks) ? opts.jniHooks : null;
 
@@ -393,10 +426,6 @@ rpc.exports = {
 
         // Initial memory snapshot
         STATE.snapshotMem = !!opts.snapshotMem;
-        if (typeof opts.snapshotMaxBytes === "number" && opts.snapshotMaxBytes > 0) {
-            STATE.snapshotMaxBytes = opts.snapshotMaxBytes;
-        }
-
         // SIMD sidecar
         STATE.simdSidecar = !!opts.simdSidecar;
         const stride = parseInt(String(opts.simdSampleStride || 1));
@@ -408,23 +437,17 @@ rpc.exports = {
         const workerCap = parseInt(String((opts as any).maxWorkerThreads || 4));
         STATE.maxWorkerThreads = Number.isFinite(workerCap) && workerCap > 0 ? Math.min(workerCap, 32) : 4;
 
-        // maxRecords enforcement (0 = unlimited)
-        const maxR = (opts.maxRecords != null && opts.maxRecords > 0) ? opts.maxRecords : 0;
-        STATE.maxRecords = maxR;
+        const effRecs = opts.ringRecs ? setRingRecs(opts.ringRecs) : RING_RECS;
 
-        // ring 容量: 优先用 opts.ringRecs, 否则取 maxRecords 的 2 倍留出余量,
-        // 都不给则用默认。百万级指令的目标必须显式放大, 否则窗口会被静默截断。
-        const wantRecs = (opts as any).ringRecs > 0 ? (opts as any).ringRecs
-                         : (maxR > 0 ? maxR * 2 : 0);
-        const effRecs = wantRecs > 0 ? setRingRecs(wantRecs) : RING_RECS;
-
-        // Allocate SPSC ring buffers
+        // 分批同步写入的有界缓冲
+        STATE.active = Memory.alloc(4);
+        STATE.traceIoState = ioState();
+        STATE.simdIoState = ioState();
         STATE.ringBuf = Memory.alloc(ringBytes());
         STATE.headBuf = Memory.alloc(8); STATE.headBuf.writeU64(0);
         STATE.tailBuf = Memory.alloc(8); STATE.tailBuf.writeU64(0);
         STATE.droppedBuf = Memory.alloc(8); STATE.droppedBuf.writeU64(0);
         STATE.ringRecsBuf = Memory.alloc(8); STATE.ringRecsBuf.writeU64(effRecs);
-        STATE.maxRecordsBuf = Memory.alloc(8); STATE.maxRecordsBuf.writeU64(maxR);
 
         if (STATE.simdSidecar) {
             STATE.simdRingBuf = Memory.alloc(SIMD_RING_BYTES);
@@ -435,8 +458,8 @@ rpc.exports = {
             STATE.simdStrideBuf = Memory.alloc(8); STATE.simdStrideBuf.writeU64(STATE.simdSampleStride);
         }
 
-        log(`[*] traceMiku agent (modular) SPSC lock-free, ring=${(ringBytes() / 1024 / 1024).toFixed(1)}MB/${effRecs}recs ` +
-            `(${RING_RECS} recs), flush=${FLUSH_INTERVAL_MS}ms, pkg=${STATE.pkg}, ` +
+        log(`[*] traceMiku agent (modular) native backpressure, buffer=${(ringBytes() / 1024 / 1024).toFixed(1)}MB/${effRecs}recs ` +
+            `pkg=${STATE.pkg}, ` +
             `simd=${STATE.simdSidecar ? "on" : "off"}, semantic=${STATE.semanticEvents ? "on" : "off"}, ` +
             `workers=${STATE.followWorkers ? STATE.maxWorkerThreads : "off"}`);
         send({ type: "hello", pid: Process.id, frida: Frida.version });
@@ -478,7 +501,14 @@ rpc.exports = {
                     if (!(this as any)._p || (this as any)._p.indexOf(STATE.soPattern!) < 0) return;
                     if (STATE.target) return;
                     const m2 = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern!) !== -1);
-                    if (m2) armWithModule(m2, onInsn);
+                    if (m2) {
+                        try { armWithModule(m2, onInsn); }
+                        catch (error) {
+                            fatalError = String(error);
+                            sealSession(fatalError);
+                            retireCapture();
+                        }
+                    }
                 }
             });
             return "waiting-dlopen";
@@ -487,28 +517,21 @@ rpc.exports = {
         return "armed";
     },
 
-    forceFlush() {
-        // 与定时器路径一致: 主 ring + worker rings + SIMD ring 三者都刷,
-        // 否则 teardown 时 worker/SIMD 侧静默丢失
-        flushRingToDisk("force");
-        flushWorkerTraceRings("force");
-        flushSimdRingToDisk("force");
-        return "ok";
-    },
-
     pluginCall(id: string, payload: any) { return invokeTargetPlugin(id, payload); },
     disposePlugins() { runTargetPlugins("dispose"); return "ok"; },
     stopCapture() {
         acceptingCalls = false;
-        if (STATE.fnEntered && !STATE.callFinalized) finalizeActiveCall("host-stop");
-        return "ok";
+        if (!STATE.fnEntered) { sealSession(); retireCapture(); }
+        return STATE.fnEntered ? "capturing" : "stopped";
     },
 
     stats() {
         return {
+            endedManifest, acceptingCalls, completedCalls, error: fatalError,
+            blockedIo: ioHealth(),
             target: STATE.target ? STATE.target.name : null,
-            head: STATE.headBuf ? STATE.headBuf.readU64().toNumber() : 0,
-            tail: STATE.tailBuf ? STATE.tailBuf.readU64().toNumber() : 0,
+            head: STATE.headBuf ? STATE.headBuf.readU64().toNumber() : lastHead,
+            tail: STATE.tailBuf ? STATE.tailBuf.readU64().toNumber() : lastTail,
             dropped: STATE.droppedBuf ? STATE.droppedBuf.readU64().toNumber() : 0,
             primaryTid: STATE.primaryTid,
             callIdx: STATE.callIdx,

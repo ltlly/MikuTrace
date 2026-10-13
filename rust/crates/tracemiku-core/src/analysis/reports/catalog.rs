@@ -145,7 +145,19 @@ pub(super) fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
         .get("truncated")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let complete = !truncated && last_insn_is_ret.unwrap_or(false);
+    let transfer_ready = meta.as_object().is_some_and(|fields| {
+        crate::trace::finalize::transfer_pending_reason(path, fields).is_none()
+    });
+    let no_drops = meta.get("dropped").and_then(|v| v.as_u64()).unwrap_or(0) == 0;
+    let count_matches = meta
+        .get("device_records")
+        .and_then(|v| v.as_u64())
+        .is_none_or(|records| records == n as u64);
+    let complete = !truncated
+        && last_insn_is_ret.unwrap_or(false)
+        && transfer_ready
+        && no_drops
+        && count_matches;
     let ms = meta.get("ms").and_then(|v| v.as_f64());
     let rec_per_sec = ms
         .filter(|ms| *ms > 0.0)

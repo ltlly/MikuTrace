@@ -15,13 +15,8 @@ sys.path.insert(0, str(ROOT))
 
 
 def _load_tracemiku():
-    import importlib.machinery
-
-    loader = importlib.machinery.SourceFileLoader("tracemiku_main", str(ROOT / "tracemiku"))
-    spec = importlib.util.spec_from_loader("tracemiku_main", loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    return mod
+    import tracemiku_common
+    return tracemiku_common
 
 
 # ── adb_command: 端点选择 ────────────────────────────────────────────────
@@ -151,65 +146,22 @@ def test_detectors_are_independent_per_collection(monkeypatch):
     assert mod.make_su_detector()() is True
 
 
-def test_pull_retries_with_backoff():
-    """目标进程活着时 adb 通道会被拖死, 死后立刻恢复: 拉取必须重试。"""
-    _load_tracemiku()
-    src = (ROOT / "tracemiku").read_text()
-    assert "PULL_RETRY_DELAYS" in src
-    assert "_pull_with_retry" in src, "拉取必须有重试阶梯"
-    delays = mod_delays()
-    assert len(delays) >= 2 and delays == tuple(sorted(delays)), "重试间隔必须递增"
-    assert max(delays) >= 30, "要给目标进程自杀并释放 adb 通道留足时间"
+def test_transfer_budget_is_a_chunk_not_a_capture_limit():
+    from tracemiku_spool import CHUNK_BYTES, TRANSFER_IDLE_SECONDS
+    assert CHUNK_BYTES % 272 == 0
+    assert CHUNK_BYTES > 0
+    assert TRANSFER_IDLE_SECONDS > 0
 
 
-def mod_delays():
-    import importlib.machinery
+def test_launch_diagnostics_do_not_pollute_capture_json(monkeypatch, capsys):
+    from types import SimpleNamespace
 
-    loader = importlib.machinery.SourceFileLoader("tm2", str(ROOT / "tracemiku"))
-    spec = importlib.util.spec_from_loader("tm2", loader)
-    m = importlib.util.module_from_spec(spec)
-    loader.exec_module(m)
-    return m.PULL_RETRY_DELAYS
+    import tracemiku_device
 
-
-def test_pull_budgets_are_generous():
-    """满载 trace 时 adb shell 显著变慢, 探测超时应远大于 5s。"""
-    mod = _load_tracemiku()
-    assert mod.ADB_PROBE_TIMEOUT >= 20
-    assert mod.PULL_ATTEMPT_TIMEOUT >= 120
-    assert mod.PULL_MAX_BYTES > 0
-    assert mod.PULL_STAGE_TIMEOUT > 0
-    assert mod.PULL_GATE_TIMEOUT > 0
-
-
-def test_transfer_is_transactional():
-    """传输必须先写 .part, 成功才替换; 且不得使用 adb exec-out 长连接。"""
-    _load_tracemiku()
-    src = (ROOT / "tracemiku").read_text()
-    body = src[src.index("def adb_pull_device_trace("):]
-    body = body[: body.index("\n    def ")]
-    assert 'part = dst_path + ".part"' in body, "必须先写 .part"
-    assert "os.replace(part, dst_path)" in body, "必须提交式替换"
-    assert "os.unlink(part)" in body, "失败路径必须清理临时文件"
-    # 提交(原子替换)必须早于删除设备源文件
-    assert body.index("os.replace(part, dst_path)") < body.rindex("quote(device_path))")
-    # 不得真的构造 exec-out 调用 (文档里提到它是可以的)
-    assert 'adb_command("exec-out"' not in body, "传输不得使用 adb exec-out 长连接"
-    assert "Popen" not in body, "传输不得留长连接子进程"
-    assert 'adb_command("pull"' in body, "必须走 adb pull 完成传输"
-    assert "expect_records" in body, "必须按 agent 上报的记录数校验字节数"
-
-
-def test_transfer_disconnects_stdin():
-    """adb exec-out 会把 stdin 传给设备端; 不切断会让 su/gzip 一直等输入。"""
-    src = (ROOT / "tracemiku").read_text()
-    assert 'stdin=subprocess.DEVNULL' in src
-    assert src.count("stdin=subprocess.DEVNULL") >= 3, "探测/传输/删除三处都要切断 stdin"
-
-
-def test_trace_never_reports_records_zero_as_complete():
-    """拉取失败不得写出 records=0 的完成 call。"""
-    src = (ROOT / "tracemiku").read_text()
-    assert '"records": None if is_pending' in src
-    assert 'trace_exit_code = 2' in src, "有 pending 时退出码必须非零"
-    assert "./tracemiku finalize" in src, "必须打印恢复命令"
+    monkeypatch.setattr(tracemiku_device.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(tracemiku_device.subprocess, "run", lambda *args, **kwargs:
+                        SimpleNamespace(returncode=0, stdout="4242", stderr=""))
+    assert tracemiku_device.launch_start("dev.fixture") == 4242
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "[launch]" in output.err

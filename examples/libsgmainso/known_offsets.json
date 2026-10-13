@@ -201,10 +201,10 @@
     "rc4_FUN_00254ee4": 0,
     "rc4_callers": 0
    },
-   "conclusion": "4 份 trace 只覆盖 70102 调用的开头窗口, 载荷生产在窗口外; --max-records 需提到 60000+"
+   "conclusion": "4 份 trace 只覆盖 70102 调用的开头窗口, 载荷生产在窗口外; 需按自然返回采集完整调用"
   },
   "next_step_with_device": [
-   "re-trace with --max-records 65536 (ring 上限) 并放宽 duration",
+   "按一次调用自然返回重新采集，检查封口元数据",
    "取执行偏移集合与 14 个 RC4 调用者求交, 定位 RC4 使用点",
    "对命中调用者做 coverage + call-tree, 找写 76 字节缓冲的循环 (w1=0x4c)",
    "taint-bwd 回溯, 判断 nonce 是否 = RC4(key, H(请求))"
@@ -253,7 +253,7 @@
    },
    "chain": "0x57b60 -> (混淆跳转) 0x57c24 -> bl 0x553d8 -> bl 0x54c10 -> 运行时命令表 -> blr@0x555cc -> 0x4e5f0 -> bl 0x13688c -> blr [x0+0x10]",
    "offline_decoder_note": "自建 trace 解码器已用 ./tracemiku records 逐条校验: pc@0, inst@268, regs[i]@8+8i; blr 寄存器在 bits[9:5]",
-   "requirement": "trace 需 --max-records 60000+ (ring 65536) 才能覆盖真实 handler"
+   "requirement": "trace 需完整覆盖一次自然返回的调用才能验证真实 handler"
   },
   "five_generators": {
    "dispatch": "blr x8 @ 0x555cc in sub_54c10; 之后直接 ret, 即尾调用",
@@ -334,7 +334,7 @@
   "last_insn_is_ret": true,
   "truncated": false,
   "module_base": "0x74c02f9000",
-  "cmd": "--max-records 0 (不限) --ring-recs 4194304 --max-calls 1",
+  "cmd": "历史采集不设条数上限；当前默认一次调用自然返回",
   "finding": "完整覆盖单次 70102 调用; ring 循环复用, 记录数(8.15M)远超 ring 容量(4.19M)",
   "key_name_access": {
    "assembly_region": "模块偏移 0x1b1870-0x1b193c",
