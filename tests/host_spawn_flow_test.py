@@ -209,6 +209,23 @@ def test_spawn_init_failure_kills_and_disables(frida_mock, tmp_path, monkeypatch
     assert device.gating is False
 
 
+def test_spawn_releases_global_gating_before_capture_teardown(frida_mock, tmp_path, monkeypatch):
+    """全局 gating 不能跟随回传生命周期，否则恢复用的 adb shell/su 也会挂起。"""
+    mod = _load_tracemiku(tmp_path)
+    device, _ = frida_mock
+    monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))
+    checked = []
+
+    def stats(_self):
+        checked.append(device.gating)
+        return {}
+
+    monkeypatch.setattr(_FakeRpc, "stats", stats)
+    assert mod.cmd_trace(_args(tmp_path)) == 0
+    assert checked == [False]
+    assert device.calls.count("disable_spawn_gating") == 1
+
+
 def test_spawn_rejects_launch_combination(frida_mock, tmp_path, monkeypatch):
     mod = _load_tracemiku(tmp_path)
     monkeypatch.setattr(mod, "_check_device", lambda **kw: (0, 0, []))

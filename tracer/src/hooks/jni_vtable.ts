@@ -6,16 +6,12 @@
  */
 
 import { STATE } from "../core/state";
-import { log, PTR_UNTAG_MASK } from "../core/utils";
+import { getExport, log, PTR_UNTAG_MASK } from "../core/utils";
 import { pushSemanticEvent } from "../sidecar/semantic";
 
 /** Direct JNIEnv* acquisition without Java module (Frida 17 removed it) */
 function getJNIEnvDirect(): NativePointer | null {
-    let getVMs: NativePointer | null = null;
-    try { getVMs = Module.findExportByName(null, "JNI_GetCreatedJavaVMs"); } catch (_) {}
-    if (!getVMs) {
-        try { getVMs = Module.findExportByName("libart.so", "JNI_GetCreatedJavaVMs"); } catch (_) {}
-    }
+    const getVMs = getExport("JNI_GetCreatedJavaVMs");
     if (!getVMs) return null;
 
     try {
@@ -75,7 +71,10 @@ function _readArgVal(arg: NativePointer, spec: any): any {
 function _makeJsonHookHandler(spec: any) {
     return {
         onEnter(this: InvocationContext, args: InvocationArguments) {
-            if (this.threadId !== STATE.primaryTid) { (this as any)._skip = true; return; }
+            if (!STATE.fnEntered || this.threadId !== STATE.primaryTid) {
+                (this as any)._skip = true;
+                return;
+            }
             (this as any)._spec = spec;
             (this as any)._argVals = new Array(spec.args.length);
             (this as any)._pendingArgs = [];

@@ -2,6 +2,7 @@
 import json
 import pathlib
 import sys
+import threading
 import types
 
 import pytest
@@ -87,6 +88,61 @@ def test_existing_part_is_not_overwritten_or_deleted(tmp_path):
     with pytest.raises(FileExistsError):
         scr.receiver.pull("/spool/trace.bin", dst)
     assert part.read_bytes() == b"other transaction"
+
+
+def test_disconnect_wakes_inflight_read_and_rejects_later_transfers(tmp_path):
+    scr = Script(b"a" * 10000)
+    scr.receiver.timeout = 30
+    waiting = threading.Event()
+    original_post = scr.post
+
+    def post(message):
+        if message["payload"]["op"] == "read":
+            waiting.set()  # 模拟设备退出，当前块永远不会返回。
+        else:
+            original_post(message)
+
+    scr.post = post
+    dst = tmp_path / "trace.bin"
+    dst.write_bytes(b"original")
+    errors = []
+
+    def pull():
+        try:
+            scr.receiver.pull("/spool/trace.bin", dst)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+
+    worker = threading.Thread(target=pull, daemon=True)
+    worker.start()
+    assert waiting.wait(1)
+    scr.receiver.close("process-terminated")
+    worker.join(1)
+    assert not worker.is_alive(), "断线不应等待 30 秒的文件回传时限"
+    assert len(errors) == 1 and "process-terminated" in errors[0]
+    assert dst.read_bytes() == b"original"
+    assert not (tmp_path / "trace.bin.part").exists()
+    ops = list(scr.ops)
+    with pytest.raises(RuntimeError, match="process-terminated"):
+        scr.receiver.pull("/spool/next.bin", dst)
+    assert scr.ops == ops
+
+
+def test_disconnect_overrides_queued_response_and_is_idempotent(tmp_path):
+    scr = Script(b"abc")
+    original_post = scr.post
+
+    def post(message):
+        original_post(message)
+        if message["payload"]["op"] == "open":
+            scr.receiver.close("connection-terminated")
+            scr.receiver.close("second reason")
+
+    scr.post = post
+    with pytest.raises(RuntimeError, match="connection-terminated"):
+        scr.receiver.pull("/spool/trace.bin", tmp_path / "trace.bin")
+    assert "read" not in scr.ops
+    assert not (tmp_path / "trace.bin").exists()
 
 
 def profile(tmp_path, **overrides):

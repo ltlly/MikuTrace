@@ -60,12 +60,14 @@ test-v2: py-compile host-tests
 	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/external_writes_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
+	cd tracer && node --experimental-strip-types tests/agent_lifecycle_test.ts
 	cd rust && $(CARGO) fmt --check
 	cd rust && $(CARGO) test -p tracemiku-core -- --nocapture
 	cd rust && $(CARGO) test -p tracemiku-cli -- --nocapture
 
 test-fast: py-compile host-tests
 	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
+	cd tracer && node --experimental-strip-types tests/agent_lifecycle_test.ts
 	cd rust && $(CARGO) test -p tracemiku-core
 	cd rust && $(CARGO) test -p tracemiku-cli
 
@@ -82,6 +84,7 @@ test-contract: cli host-tests
 	cd tracer && node --experimental-strip-types tests/record_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/external_writes_contract_test.ts
 	cd tracer && node --experimental-strip-types tests/plugins_transport_test.ts
+	cd tracer && node --experimental-strip-types tests/agent_lifecycle_test.ts
 
 test-device:
 	@echo "=== Device integration: cross-compile → push → trace → verify ==="

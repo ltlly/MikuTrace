@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 import uuid
+from contextlib import suppress
 
 MAX_BYTES = 8 * 1024**3
 CHUNK_BYTES = 256 * 1024
@@ -35,6 +36,22 @@ class FridaTransport:
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._active = None
+        self._closed_reason = None
+
+    def close(self, reason):
+        """连接已断开：唤醒在途请求，并拒绝同一 Script 的后续回传。"""
+        with self._state_lock:
+            if self._closed_reason is not None:
+                return
+            self._closed_reason = f"Frida session 已断开: {str(reason)[:200]}；设备源文件保留"
+            if self._active is not None:
+                mailbox = self._active[1]
+                # 已排队的响应也不能掩盖断线；窗口始终保持 1。
+                try:
+                    mailbox.get_nowait()
+                except queue.Empty:
+                    pass
+                mailbox.put_nowait(({"error": self._closed_reason}, None))
 
     def on_message(self, message, data):
         payload = message.get("payload")
@@ -43,6 +60,8 @@ class FridaTransport:
         if payload.get("type") != "spool-response":
             return False
         with self._state_lock:
+            if self._closed_reason is not None:
+                return True
             active = self._active
             if active is not None and payload.get("id") == active[0]:
                 # 每次请求只有一个响应；满邮箱意味着协议错误，不能无限排队。
@@ -68,10 +87,15 @@ class FridaTransport:
             mailbox = queue.Queue(maxsize=1)
             overflow = threading.Event()
             with self._state_lock:
+                if self._closed_reason is not None:
+                    raise RuntimeError(self._closed_reason)
                 self._active = (transfer_id, mailbox, overflow)
             deadline = time.monotonic() + self.timeout
 
             def request(op, **fields):
+                with self._state_lock:
+                    if self._closed_reason is not None:
+                        raise RuntimeError(self._closed_reason)
                 self.script.post({"type": "spool-request", "payload": {
                     "id": transfer_id, "op": op, **fields,
                 }})
@@ -82,6 +106,9 @@ class FridaTransport:
                     payload, binary = mailbox.get(timeout=remaining)
                 except queue.Empty:
                     raise TimeoutError("Frida spool 响应超时；设备源文件保留") from None
+                with self._state_lock:
+                    if self._closed_reason is not None:
+                        raise RuntimeError(self._closed_reason)
                 if overflow.is_set():
                     raise RuntimeError("Frida spool 响应窗口溢出")
                 if payload.get("error"):
@@ -119,12 +146,10 @@ class FridaTransport:
                 # .part 已存在时不能误删别的事务留下的文件。
                 if 'fp' in locals():
                     part.unlink(missing_ok=True)
-                try:
+                with suppress(Exception):
                     self.script.post({"type": "spool-request", "payload": {
                         "id": transfer_id, "op": "cancel",
                     }})
-                except Exception:
-                    pass
                 raise
             finally:
                 with self._state_lock:

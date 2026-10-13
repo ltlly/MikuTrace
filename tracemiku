@@ -1111,6 +1111,9 @@ def cmd_trace(args):
         # session 意外掉线 (进程崩溃/被反调试杀死/frida-server 挂掉):
         # 立即置停止标志, 提前进入现有 teardown/pending-finalize 流程
         detach_reason[0] = str(reason)
+        transport = transport_by_pid.get(pid)
+        if transport is not None:
+            transport.close(reason)
         wlog(f"[!] session detached: {reason} — 提前进入 teardown")
         stop[0] = True
 
@@ -1142,6 +1145,10 @@ def cmd_trace(args):
                 device.resume(spawn_pid)
                 spawn_resumed[0] = True
                 wlog(f"[spawn] resume pid={spawn_pid}")
+                # gating 只保护 attach/init。保留到回传结束会挂起后续启动的
+                # 进程，连 adb shell/su 的恢复命令也可能被卡住。
+                device.disable_spawn_gating()
+                spawn_gating_active = False
             wlog(f"init -> {r}")
             if host_plugin:
                 plugin_results.append({"phase": "on_ready", "result": host_plugin.call("on_ready", {

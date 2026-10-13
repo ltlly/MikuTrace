@@ -27,6 +27,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent
 REC_SIZE = 272
+sys.path.insert(0, str(PROJECT))
+
+from tracemiku_device import adb_command, usable_devices
 
 # ─────────────────────────── NDK detection ───────────────────────────
 
@@ -111,15 +114,16 @@ int tracemiku_test_entry(void) {
     return result;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     // Signal readiness, then call entry, then sleep to allow trace collection
     printf("TRACEMIKU_TEST_READY pid=%d\n", getpid());
     fflush(stdout);
     // Sleep briefly to give the tracer time to attach
-    sleep(2);
-    tracemiku_test_entry();
-    // Keep alive for tracer to finish
     sleep(3);
+    int calls = argc > 1 ? atoi(argv[1]) : 1;
+    for (int i = 0; i < calls; i++) tracemiku_test_entry();
+    // Frida 回传需要目标存活；由 host 在验证完成后终止测试进程。
+    sleep(argc > 2 ? atoi(argv[2]) : 300);
     printf("TRACEMIKU_TEST_DONE\n");
     fflush(stdout);
     return 0;
@@ -131,7 +135,7 @@ int main(void) {
 
 def adb(*cmd, check=True, capture=True):
     """Run adb command."""
-    full = ["adb"] + list(cmd)
+    full = adb_command(*cmd)
     # check=False：返回码由下方按 `check` 形参统一判定并带上下文报错。
     r = subprocess.run(
         full, capture_output=capture, text=True, timeout=30, check=False
@@ -158,6 +162,8 @@ def verify_trace(call_dir: Path) -> dict:
         raise AssertionError(f"trace.bin size {size} not aligned to {REC_SIZE}")
 
     num_records = size // REC_SIZE
+    if num_records < 10:
+        raise AssertionError(f"too few trace records: {num_records}")
     meta = json.loads(meta_json.read_text())
 
     # meta must declare records count
@@ -182,6 +188,29 @@ def verify_trace(call_dir: Path) -> dict:
                     f"record {i} has inst=0 (unlikely for valid ARM64)"
                 )
 
+    # 统一入口必须能消费真机产物，不能只检查文件长度。
+    def cli(*args):
+        result = subprocess.run(
+            [sys.executable, str(PROJECT / "tracemiku"), *args],
+            capture_output=True, text=True, timeout=60, check=True,
+        )
+        return json.loads(result.stdout)
+
+    info = cli("info", str(call_dir))
+    assert info["records"] == num_records
+    assert info["record_size"] == REC_SIZE
+    rows = cli("records", str(call_dir), "--indices", f"0,{num_records - 1}",
+               "--regs", "x0,sp")["records"]
+    assert len(rows) == 2
+    with trace_bin.open("rb") as f:
+        for row, idx in zip(rows, (0, num_records - 1)):
+            f.seek(idx * REC_SIZE)
+            raw = f.read(REC_SIZE)
+            assert row["idx"] == idx
+            assert int(row["pc"], 16) == struct.unpack_from("<Q", raw, 0)[0]
+            assert int(row["regs"]["x0"], 16) == struct.unpack_from("<Q", raw, 8)[0]
+            assert int(row["regs"]["sp"], 16) == struct.unpack_from("<Q", raw, 256)[0]
+
     return {
         "records": num_records,
         "size_mb": size / (1024 * 1024),
@@ -199,8 +228,18 @@ def main():
     ap.add_argument("--remote", default=None, help="frida-server address")
     ap.add_argument("--duration", type=int, default=12, help="trace duration seconds")
     ap.add_argument("--max-records", type=int, default=500000, help="max trace records")
+    ap.add_argument("--transport", choices=("frida", "adb"), default="frida")
+    ap.add_argument("--max-calls", type=int, default=1, help="capture call limit")
+    ap.add_argument("--target-calls", type=int, default=1, help="calls made by the test target")
+    ap.add_argument("--target-linger", type=int, default=300,
+                    help="seconds the target stays alive for file transfer")
+    ap.add_argument("--simd-sidecar", action="store_true")
     ap.add_argument("--keep", action="store_true", help="keep output trace dir")
     args = ap.parse_args()
+    if (not 1 <= args.target_calls <= 8 or not 1 <= args.max_calls <= 8 or
+            not 10 <= args.max_records <= 500000 or not 4 <= args.duration <= 60 or
+            not 0 <= args.target_linger <= 300):
+        ap.error("calls must be 1..8, records 10..500000, duration 4..60, linger 0..300")
 
     print("=" * 60)
     print("traceMiku Device Integration Test")
@@ -211,23 +250,26 @@ def main():
     try:
         cc = find_ndk_clang()
     except RuntimeError as e:
-        print(f"  SKIP: {e}", file=sys.stderr)
-        print("  (No NDK available — skipping device integration test)")
-        return 0  # Not a failure, just skip
+        print(f"  FAIL: {e}", file=sys.stderr)
+        return 1
     print(f"  CC = {cc}")
 
     # 2. Check device connectivity
     print("\n[2/6] Checking adb device...")
     try:
         r = adb("devices")
-        lines = [line for line in r.stdout.strip().splitlines()[1:] if "device" in line]
-        if not lines:
-            print("  SKIP: no adb device connected")
-            return 0
-        print(f"  Device: {lines[0].split()[0]}")
+        devices = usable_devices(r.stdout, os.environ.get("ANDROID_SERIAL"))
+        if not devices:
+            print("  FAIL: no selected adb device connected")
+            return 1
+        if len(devices) != 1:
+            print("  FAIL: set ANDROID_SERIAL to select one device", file=sys.stderr)
+            return 1
+        os.environ["ANDROID_SERIAL"] = devices[0]
+        print(f"  Device: {devices[0]}")
     except (RuntimeError, subprocess.TimeoutExpired) as e:
-        print(f"  SKIP: adb not available ({e})")
-        return 0
+        print(f"  FAIL: adb not available ({e})")
+        return 1
 
     # 3. Cross-compile
     print("\n[3/6] Cross-compiling ARM64 test binary...")
@@ -261,14 +303,14 @@ def main():
 
     # 4. Push to device and run
     print("\n[4/6] Pushing to device and launching...")
-    device_path = "/data/local/tmp/tracemiku_devtest"
+    device_path = f"/data/local/tmp/{tmp.name}"
     adb("push", str(bin_file), device_path)
     adb("shell", f"chmod 755 {device_path}")
 
     # Launch in background, capture pid
     # Use shell nohup to keep it alive
     proc = subprocess.Popen(
-        ["adb", "shell", device_path],
+        adb_command("shell", device_path, str(args.target_calls), str(args.target_linger)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -310,6 +352,12 @@ def main():
         "tracemiku_test_entry",
         "--max-records",
         str(args.max_records),
+        "--max-calls",
+        str(args.max_calls),
+        "--transport",
+        args.transport,
+        "--jni-hooks",
+        "none",
         "--duration",
         str(args.duration),
         "--out",
@@ -317,26 +365,34 @@ def main():
     ]
     if args.remote:
         trace_cmd += ["--remote", args.remote]
+    if args.simd_sidecar:
+        trace_cmd += ["--simd-sidecar"]
     print(f"  cmd: {' '.join(trace_cmd[-8:])}")
 
     # check=False：trace 子进程的返回码在等待目标进程结束后由下方统一判定。
-    tr = subprocess.run(
-        trace_cmd,
-        capture_output=True,
-        text=True,
-        timeout=args.duration + 30,
-        check=False,
-    )
-    # Wait for target to finish
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+        tr = subprocess.run(
+            trace_cmd, capture_output=True, text=True,
+            timeout=args.duration + 210, check=False,
+        )
+        (tmp / "trace.stdout").write_text(tr.stdout)
+        (tmp / "trace.stderr").write_text(tr.stderr)
+    finally:
+        # 只终止本次启动的测试 PID；不遗留 adb 子进程或设备目标。
+        adb("shell", "kill", str(pid), check=False)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+        adb("shell", "rm", "-f", device_path, check=False)
 
     if tr.returncode != 0:
-        print(f"  WARN: trace exited {tr.returncode}")
+        print(f"  FAIL: trace exited {tr.returncode}")
+        print(f"  trace stdout: {tr.stdout[-2000:]}")
         if tr.stderr:
             print(f"  stderr: {tr.stderr[:500]}")
+        return 1
 
     # 6. Verify output
     print("\n[6/6] Verifying trace output...")
@@ -346,33 +402,28 @@ def main():
         # Maybe direct output
         calls_dir = out_dir
     call_dirs = sorted(calls_dir.glob("call_*"))
-    if not call_dirs:
-        print(f"  FAIL: no call directories found in {out_dir}")
-        print(f"  trace stdout: {tr.stdout[-500:]}")
-        print(f"  trace stderr: {tr.stderr[-500:]}")
-        if not args.keep:
-            shutil.rmtree(tmp)
+    if len(call_dirs) != min(args.max_calls, args.target_calls):
+        print(f"  FAIL: expected {min(args.max_calls, args.target_calls)} calls, got {len(call_dirs)}")
+        print(f"  trace stdout: {tr.stdout[-2000:]}")
         return 1
-
     for cd in call_dirs:
         try:
             stats = verify_trace(cd)
+            assert stats["records"] <= args.max_records, "record limit exceeded"
+            if stats["records"] == args.max_records:
+                assert stats["meta"]["truncated"] is True, "record cap reached without truncated=true"
+            if args.simd_sidecar:
+                simd = stats["meta"]["simd_sidecar"]
+                assert simd["records"] > 0
+                assert (cd / simd["file"]).stat().st_size == simd["records"] * simd["record_size"]
             print(
                 f"  ✓ {cd.name}: {stats['records']} records, {stats['size_mb']:.2f} MB"
             )
-            if stats["records"] < 10:
-                print(
-                    f"    WARN: very few records ({stats['records']}), "
-                    "target may not have executed enough"
-                )
         except AssertionError as e:
             print(f"  ✗ {cd.name}: {e}", file=sys.stderr)
             if not args.keep:
                 shutil.rmtree(tmp)
             return 1
-
-    # Cleanup device
-    adb("shell", f"rm -f {device_path}", check=False)
 
     total_recs = sum(
         json.loads((cd / "meta.json").read_text()).get("records", 0) for cd in call_dirs

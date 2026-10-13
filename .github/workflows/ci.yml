@@ -55,6 +55,7 @@ jobs:
       - run: node --experimental-strip-types tests/record_contract_test.ts
       - run: node --experimental-strip-types tests/external_writes_contract_test.ts
       - run: node --experimental-strip-types tests/plugins_transport_test.ts
+      - run: node --experimental-strip-types tests/agent_lifecycle_test.ts
 
   host:
     name: host (offline capture flow)

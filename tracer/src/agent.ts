@@ -247,7 +247,10 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
             send({
                 type: "trace-end", callIdx: (this as any)._callIdx,
                 tid: (this as any)._tid, retval: retv.toString(),
-                ms: elapsed, total, dropped, truncated: false,
+                // 快速函数可能先于 1s 心跳返回；CModule 已触顶停止写记录时，
+                // 正常 onLeave 仍必须如实标记采集截断。
+                ms: elapsed, total, dropped,
+                truncated: dropped > 0 || (STATE.maxRecords > 0 && total >= STATE.maxRecords),
                 devicePath: STATE.traceFilePath,
                 simdDevicePath: STATE.simdTraceFilePath,
                 simdRecords: simdTotal, simdDropped: simdDropped,
