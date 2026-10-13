@@ -66,7 +66,10 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn forward_dep_tree_walks_def_to_use_direction() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-graph?idx=0&depth=4&limit=32");
+    let (status, v) = get(
+        cd,
+        "bfs-slice?view=graph&direction=forward&idx=0&depth=4&limit=32",
+    );
     assert_eq!(status, None);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["seed"]["kind"], "idx");
@@ -91,20 +94,26 @@ fn forward_dep_tree_walks_def_to_use_direction() {
 #[test]
 fn forward_dep_tree_data_only_drops_control_users() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, loose) = get(cd.clone(), "forward-dep-graph?idx=0&depth=8");
+    let (status, loose) = get(
+        cd.clone(),
+        "bfs-slice?view=graph&direction=forward&idx=0&depth=8",
+    );
     assert_eq!(status, None);
-    let (status, strict) = get(cd, "forward-dep-graph?idx=0&depth=8&data_only=true");
+    let (status, strict) = get(
+        cd,
+        "bfs-slice?view=graph&direction=forward&idx=0&depth=8&data_only=true",
+    );
     assert_eq!(status, None);
     let loose_nodes = loose["graph"]["nodes"].as_array().unwrap().len();
     let strict_nodes = strict["graph"]["nodes"].as_array().unwrap().len();
     assert!(strict_nodes <= loose_nodes, "data_only enlarged graph");
-    assert_eq!(strict["graph"]["data_only"], true);
+    assert_eq!(strict["data_only"], true);
 }
 
 #[test]
 fn forward_dep_tree_seed_outside_trace_returns_note() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-graph?idx=999");
+    let (status, v) = get(cd, "bfs-slice?view=graph&direction=forward&idx=999");
     assert_eq!(status, None);
     assert_eq!(v["graph"]["nodes"].as_array().unwrap().len(), 0);
     assert!(v["seed"]["note"]
@@ -116,7 +125,7 @@ fn forward_dep_tree_seed_outside_trace_returns_note() {
 #[test]
 fn forward_dep_tree_resolves_reg_seed() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-graph?reg=x0&before=3");
+    let (status, v) = get(cd, "bfs-slice?view=graph&direction=forward&reg=x0&before=3");
     assert_eq!(status, None);
     assert_eq!(v["seed"]["kind"], "reg");
     assert_eq!(v["seed"]["reg"], "x0");
@@ -127,7 +136,7 @@ fn forward_dep_tree_resolves_reg_seed() {
 #[test]
 fn forward_dep_tree_truncates_at_node_limit() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-graph?idx=0&limit=1");
+    let (status, v) = get(cd, "bfs-slice?view=graph&direction=forward&idx=0&limit=1");
     assert_eq!(status, None);
     assert_eq!(v["graph"]["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(v["graph"]["truncated"], true);
@@ -136,7 +145,7 @@ fn forward_dep_tree_truncates_at_node_limit() {
 #[test]
 fn forward_dep_tree_invalid_addr_literal_reports_note() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-graph?addr=bogus");
+    let (status, v) = get(cd, "bfs-slice?view=graph&direction=forward&addr=bogus");
     assert_eq!(status, None);
     assert_eq!(v["seed"]["kind"], "addr");
     assert!(v["seed"]["note"]
@@ -150,7 +159,10 @@ fn forward_dep_tree_addr_seed_resolves_to_writer() {
     let (_tmp, cd) = synth_call_dir();
     // The synthetic call dir stores x0 to [sp]=0x7000 at idx=1. addr seed
     // should resolve to that writer.
-    let (status, v) = get(cd, "forward-dep-graph?addr=0x7000&before=5");
+    let (status, v) = get(
+        cd,
+        "bfs-slice?view=graph&direction=forward&addr=0x7000&before=5",
+    );
     assert_eq!(status, None);
     assert_eq!(v["seed"]["kind"], "addr");
     assert_eq!(v["seed"]["addr"], "0x7000");
@@ -158,20 +170,20 @@ fn forward_dep_tree_addr_seed_resolves_to_writer() {
 }
 
 #[test]
-fn forward_dep_tree_truncation_reports_hidden_edges() {
+fn forward_dependency_graph_reports_incomplete_frontier() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-graph?idx=0&limit=1");
+    let (status, v) = get(cd, "bfs-slice?view=graph&direction=forward&idx=0&limit=1");
     assert_eq!(status, None);
     assert_eq!(v["graph"]["truncated"], true);
-    let hidden = v["graph"]["hidden_edges"].as_u64().unwrap_or(0);
-    assert!(hidden > 0, "expected hidden_edges > 0 when capped: {v}");
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["node_limit"], 1);
 }
 
 #[test]
 fn forward_dep_tree_depth_zero_returns_seed_only() {
     let (_tmp, cd) = synth_call_dir();
     // Audit P0-1: depth=0 must mean "seed only", not silently rewritten to 1.
-    let (status, v) = get(cd, "forward-dep-graph?idx=0&depth=0");
+    let (status, v) = get(cd, "bfs-slice?view=graph&direction=forward&idx=0&depth=0");
     assert_eq!(status, None);
     let nodes = v["graph"]["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 1, "depth=0 must emit only the seed: {nodes:?}");

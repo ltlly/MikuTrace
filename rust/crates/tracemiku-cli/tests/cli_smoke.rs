@@ -111,27 +111,6 @@ fn make_output_trace(root: &std::path::Path, name: &str) -> PathBuf {
     dir
 }
 
-fn make_output_map_hit_order_trace(root: &std::path::Path, name: &str) -> PathBuf {
-    let dir = root.join(name);
-    std::fs::create_dir_all(&dir).unwrap();
-    let output = STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd]);
-    assert_eq!(output.len(), 8);
-    let output_word = u64::from_le_bytes(output.as_bytes().try_into().unwrap());
-    let addrs = [0x8000u64, 0x7000u64];
-    let mut buf = vec![0u8; 272 * addrs.len()];
-    for (i, addr) in addrs.iter().enumerate() {
-        let off = i * 272;
-        buf[off..off + 8].copy_from_slice(&(0x100000u64 + (i as u64 * 4)).to_le_bytes());
-        buf[off + 8..off + 16].copy_from_slice(&output_word.to_le_bytes()); // x0
-        buf[off + 16..off + 24].copy_from_slice(&addr.to_le_bytes()); // x1
-        let str_x0_x1 = 0xf9000020u32;
-        buf[off + 268..off + 272].copy_from_slice(&str_x0_x1.to_le_bytes());
-    }
-    std::fs::write(dir.join("trace.bin"), &buf).unwrap();
-    std::fs::write(dir.join("meta.json"), r#"{"records":2}"#).unwrap();
-    dir
-}
-
 fn make_word_load_byte_branch_trace(root: &std::path::Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -228,16 +207,15 @@ fn records_wrapper_preserves_core_output() {
 fn string_provenance_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "mem-byte-history".into(),
+        "mem-provenance".into(),
         cd.display().to_string(),
         "--addr".into(),
         "0x7000".into(),
-        "--length".into(),
+        "--count".into(),
         "4".into(),
     ]);
-    assert_eq!(v["status"], "ready");
     assert_eq!(v["addr"], "0x7000");
-    assert_eq!(v["length"], 4);
+    assert_eq!(v["count"], 4);
     assert_eq!(v["bytes"].as_array().unwrap().len(), 4);
 }
 
@@ -256,13 +234,12 @@ fn functions_wrapper_lists_symbol_functions() {
 fn fn_summary_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "fn-summary".into(),
+        "functions".into(),
         cd.display().to_string(),
         "--fn".into(),
         "f".into(),
-        "--top-blocks".into(),
-        "2".into(),
     ]);
+    let v = &v["summary"];
     assert_eq!(v["status"], "ready");
     assert_eq!(v["fn"], "f");
     assert_eq!(v["pc"], "0x100000");
@@ -323,118 +300,92 @@ fn inspect_wrappers_use_server_wire_shape() {
     assert_eq!(v["modules"][0]["name"], "libt.so");
 
     let v = run_json(&[
-        "reg-value-at".into(),
+        "records".into(),
         cd.display().to_string(),
-        "--idx".into(),
+        "--indices".into(),
         "0".into(),
-        "--reg".into(),
+        "--regs".into(),
         "x0".into(),
     ]);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["value"], "0x6f6c6c6568");
+    assert_eq!(v["records"][0]["regs"]["x0"], "0x6f6c6c6568");
 }
 
 #[test]
 fn fork_events_wrapper_filters_status() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "fork-events".into(),
+        "events".into(),
+        "--source".into(),
+        "fork".into(),
         cd.display().to_string(),
         "--status".into(),
         "failed_ptrace_conflict".into(),
     ]);
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["events"][0]["child_pid"], 456);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["events"][0]["event"]["child_pid"], 456);
 }
-
 #[test]
 fn memory_query_wrappers_use_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
     append_external_write(&cd, 2, 0x7002, b'X');
-
+    let call = cd.display().to_string();
     let v = run_json(&[
         "last-write-of-addr".into(),
-        cd.display().to_string(),
+        call.clone(),
         "--addr".into(),
         "0x7000".into(),
     ]);
-    assert_eq!(v["status"], "found");
     assert_eq!(v["writer_idx"], 0);
-
     let v = run_json(&[
         "last-write-of-addr".into(),
-        cd.display().to_string(),
+        call.clone(),
         "--addr".into(),
         "0x7002".into(),
         "--before-idx".into(),
         "3".into(),
         "--with-external".into(),
     ]);
-    assert_eq!(v["status"], "found");
     assert_eq!(v["writer_idx"], 2);
     assert_eq!(v["write_kind"], "x");
     assert_eq!(v["src_value"], "0x58");
-
     let v = run_json(&[
         "mem-accesses".into(),
-        cd.display().to_string(),
+        call.clone(),
         "--addr".into(),
         "0x7002".into(),
-        "--cursor".into(),
+        "--start".into(),
+        "2".into(),
+        "--end".into(),
         "3".into(),
-        "--with-bytes".into(),
+        "--kind".into(),
+        "write".into(),
     ]);
-    assert_eq!(
-        v["before"][0],
-        serde_json::json!({"idx":2,"kind":"x","byte":88})
-    );
-
-    let v = run_json(&[
-        "mem-writes-in-range".into(),
-        cd.display().to_string(),
-        "--idx-lo".into(),
-        "0".into(),
-        "--idx-hi".into(),
-        "3".into(),
-        "--addr-lo".into(),
-        "0x7002".into(),
-        "--addr-hi".into(),
-        "0x7003".into(),
-        "--with-external".into(),
-    ]);
-    assert!(v["writes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|row| row["idx"] == 2 && row["write_kind"] == "x"));
-
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["events"][0]["source"], "external");
+    assert_eq!(v["events"][0]["bytes"], serde_json::json!([88]));
     let v = run_json(&[
         "mem-accesses".into(),
-        cd.display().to_string(),
+        call.clone(),
         "--addr".into(),
         "0x7000".into(),
-        "--cursor".into(),
-        "1".into(),
     ]);
-    assert_eq!(v["before"], serde_json::json!([{"idx":0,"kind":"w"}]));
-    assert_eq!(v["after"], serde_json::json!([{"idx":1,"kind":"r"}]));
-
+    assert_eq!(v["events"][0]["kind"], "write");
+    assert_eq!(v["events"][0]["idx"], 0);
+    assert_eq!(v["events"][1]["kind"], "read");
+    assert_eq!(v["events"][1]["idx"], 1);
     let v = run_json(&[
-        "mem-range-accesses".into(),
-        cd.display().to_string(),
+        "mem-accesses".into(),
+        call.clone(),
         "--addr".into(),
         "0x7004".into(),
         "--size".into(),
         "4".into(),
-        "--cursor".into(),
-        "1".into(),
     ]);
-    assert_eq!(v["writers_before"], serde_json::json!([0]));
-    assert_eq!(v["readers_after"], serde_json::json!([1]));
-
+    assert_eq!(v["events"][0]["size"], 4);
+    assert_eq!(v["events"][1]["size"], 4);
     let v = run_json(&[
         "find-mem-pattern".into(),
-        cd.display().to_string(),
+        call,
         "--bytes-hex".into(),
         "68656c6c6f".into(),
         "--since".into(),
@@ -450,41 +401,27 @@ fn memory_query_wrappers_use_server_wire_shape() {
 fn call_chain_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "call-chain".into(),
+        "backtrace".into(),
+        "--lr-clues".into(),
         cd.display().to_string(),
         "--idx".into(),
         "2".into(),
-        "--depth".into(),
+        "--limit".into(),
         "3".into(),
     ]);
+    let v = &v["lr_clues"];
     assert_eq!(v["start_idx"], 2);
     assert_eq!(v["chain"][0]["lr"], "0x100008");
     assert_eq!(v["chain"][0]["caller_pc"], "0x100004");
 }
 
 #[test]
-fn data_chase_wrapper_preserves_core_output() {
-    let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&[
-        "reg-chase".into(),
-        cd.display().to_string(),
-        "--start".into(),
-        "2".into(),
-        "--reg".into(),
-        "x2".into(),
-        "--max-steps".into(),
-        "5".into(),
-    ]);
-    assert_eq!(v["from"], 2);
-    assert_eq!(v["reg"], "x2");
-    assert_eq!(v["steps"][0]["via"], "mem-load");
-}
-
-#[test]
 fn dep_graph_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "dep-graph".into(),
+        "bfs-slice".into(),
+        "--view".into(),
+        "graph".into(),
         cd.display().to_string(),
         "--idx".into(),
         "1".into(),
@@ -545,7 +482,11 @@ fn bfs_slice_intersection_combines_two_seeds() {
 fn forward_dep_tree_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "forward-dep-graph".into(),
+        "bfs-slice".into(),
+        "--direction".into(),
+        "forward".into(),
+        "--view".into(),
+        "graph".into(),
         cd.display().to_string(),
         "--idx".into(),
         "0".into(),
@@ -624,17 +565,19 @@ fn timeline_diff_wrappers_use_server_wire_shape() {
     assert_eq!(v["points"][0]["value"], "0x6f6c6c6568");
 
     let v = run_json(&[
-        "mem-diff".into(),
+        "mem-dump".into(),
+        "--compare-at".into(),
+        "0".into(),
         cd.display().to_string(),
-        "--idx".into(),
+        "--at".into(),
         "1".into(),
         "--addr".into(),
         "0x7000".into(),
-        "--size".into(),
+        "--count".into(),
         "1".into(),
     ]);
-    assert_eq!(v["idx"], 1);
-    assert_eq!(v["size"], 1);
+    assert_eq!(v["at"], 1);
+    assert_eq!(v["count"], 1);
     assert_eq!(v["bytes"].as_array().unwrap().len(), 1);
 }
 
@@ -642,20 +585,21 @@ fn timeline_diff_wrappers_use_server_wire_shape() {
 fn mem_flow_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "mem-flow".into(),
+        "mem-accesses".into(),
         cd.display().to_string(),
         "--addr".into(),
         "0x7000".into(),
-        "--count".into(),
+        "--size".into(),
         "1".into(),
-        "--writers-only".into(),
-        "--events-per-byte".into(),
+        "--kind".into(),
+        "write".into(),
+        "--limit".into(),
         "1".into(),
     ]);
     assert_eq!(v["addr"], "0x7000");
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["bytes"].as_array().unwrap().len(), 1);
-    assert_eq!(v["bytes"][0]["events"].as_array().unwrap().len(), 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["events"].as_array().unwrap().len(), 1);
+    assert_eq!(v["events"][0]["bytes"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -677,50 +621,12 @@ fn crypto_includes_memory_fingerprints() {
 }
 
 #[test]
-fn mem_write_bursts_wrapper_preserves_core_output() {
-    let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&[
-        "mem-write-bursts".into(),
-        cd.display().to_string(),
-        "--window".into(),
-        "500".into(),
-        "--min-size".into(),
-        "16".into(),
-    ]);
-    assert_eq!(v["window"], 500);
-    assert_eq!(v["min_size"], 16);
-    assert!(v["candidates"].is_array());
-}
-
-#[test]
-fn hash_input_search_wrapper_preserves_core_output() {
-    let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&[
-        "hash-input-search".into(),
-        cd.display().to_string(),
-        "--target-bytes".into(),
-        "aaf4c61d".into(),
-        "--inputs".into(),
-        "hello,world".into(),
-        "--algos".into(),
-        "sha1".into(),
-        "--combos".into(),
-        "plain".into(),
-        "--prefix-bytes".into(),
-        "4".into(),
-    ]);
-    assert_eq!(v["target_prefix"], "aaf4c61d");
-    assert_eq!(v["found_count"], 1);
-    assert_eq!(v["found"][0]["input"], "hello");
-}
-
-#[test]
 fn jni_calls_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "jni-calls".into(),
         cd.display().to_string(),
-        "--max".into(),
+        "--limit".into(),
         "5".into(),
     ]);
     assert!(v["vtable_size"].as_u64().unwrap() > 100);
@@ -731,14 +637,14 @@ fn jni_calls_wrapper_preserves_core_output() {
 fn jobj_history_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "jni-object-history".into(),
+        "jni-calls".into(),
         cd.display().to_string(),
         "--jobject".into(),
         "0x2222".into(),
-        "--max".into(),
+        "--limit".into(),
         "5".into(),
     ]);
-    assert_eq!(v["jobject"], "0x2222");
+    assert_eq!(v["returned"], 0);
     assert!(v["hits"].is_array());
 }
 
@@ -746,14 +652,15 @@ fn jobj_history_wrapper_preserves_core_output() {
 fn jni_strings_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "jni-strings".into(),
+        "jni-calls".into(),
+        "--strings".into(),
         cd.display().to_string(),
-        "--max".into(),
+        "--limit".into(),
         "5".into(),
         "--max-len".into(),
         "32".into(),
     ]);
-    assert!(v["note"].as_str().unwrap().contains("GetStringUTFChars"));
+    assert_eq!(v["encoding"], "modified_utf8");
     assert!(v["hits"].is_array());
 }
 
@@ -785,121 +692,11 @@ fn output_backtrace_starts_from_explicit_output_value() {
 }
 
 #[test]
-fn output_map_defaults_to_earliest_generation_hit() {
-    let tmp = tempfile::tempdir().unwrap();
-    let cd = make_output_map_hit_order_trace(tmp.path(), "run1");
-    let base_args = vec![
-        "base64-map".into(),
-        cd.display().to_string(),
-        "--value".into(),
-        STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd]),
-        "--max-mem-hits".into(),
-        "2".into(),
-        "--groups".into(),
-        "1".into(),
-    ];
-
-    let v = run_json(&base_args);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["selected_hit_order"], "earliest");
-    assert_eq!(v["tree_frontier_with_next"], false);
-    assert_eq!(v["selected_hit"]["addr"], "0x8000");
-    assert_eq!(v["selected_hit"]["first_idx"], 0);
-    assert_eq!(v["hit_candidates"][0]["rank"], 0);
-    assert_eq!(v["hit_candidates"][0]["addr"], "0x8000");
-    assert_eq!(v["groups"][0]["base64"]["indices"][0]["char"], "q");
-    assert_eq!(v["groups"][0]["base64"]["indices"][0]["index"], 42);
-    assert_eq!(
-        v["groups"][0]["base64"]["decoded_bytes"][0]["formula"],
-        "(i0 << 2) | (i1 >> 4)"
-    );
-
-    let mut nearest_args = base_args;
-    nearest_args.push("--hit-order".into());
-    nearest_args.push("nearest".into());
-    nearest_args.extend(["--at-idx".into(), "1".into()]);
-    nearest_args.push("--tree-frontier-with-next".into());
-    let v = run_json(&nearest_args);
-    assert_eq!(v["selected_hit_order"], "nearest");
-    assert_eq!(v["tree_frontier_with_next"], true);
-    assert_eq!(v["selected_hit"]["addr"], "0x7000");
-    assert_eq!(v["selected_hit"]["first_idx"], 1);
-}
-
-#[test]
-fn output_map_can_group_aligned_base64_tail() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fixed = "azYBCM007xAA";
-    let tail = &STANDARD.encode([0x00, 0x0a, 0x62, 0x61, 0x05])[2..];
-    let cd = make_output_trace(tmp.path(), "run1");
-    let v = run_json(&[
-        "base64-map".into(),
-        cd.display().to_string(),
-        "--value".into(),
-        format!("{fixed}{tail}"),
-        "--max-mem-hits".into(),
-        "0".into(),
-        "--base64-tail-start".into(),
-        fixed.len().to_string(),
-        "--base64-tail-align-prefix".into(),
-        "AA".into(),
-        "--base64-tail-drop".into(),
-        "1".into(),
-        "--groups".into(),
-        "2".into(),
-        "--summary".into(),
-    ]);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["base64_context"]["mode"], "aligned_tail");
-    assert_eq!(v["base64_context"]["semantic_drop_bytes"], 1);
-    assert_eq!(v["groups"][0]["chars"], "AApi");
-    assert_eq!(v["groups"][0]["original_output_start"], fixed.len());
-    assert_eq!(v["groups"][0]["original_output_end"], fixed.len() + 2);
-    assert_eq!(
-        v["groups"][0]["decoded_payload"][0]["dropped_by_alignment"],
-        true
-    );
-    assert_eq!(v["groups"][0]["decoded_payload"][1]["semantic_offset"], 0);
-    assert_eq!(v["groups"][0]["decoded_payload"][1]["value_hex"], "0a");
-    assert_eq!(v["groups"][0]["decoded_payload"][2]["semantic_offset"], 1);
-    assert_eq!(v["groups"][0]["decoded_payload"][2]["value_hex"], "62");
-    assert_eq!(v["groups"][1]["chars"], "YQU=");
-    assert_eq!(v["groups"][1]["decoded_payload"][0]["semantic_offset"], 2);
-    assert_eq!(v["groups"][1]["decoded_payload"][0]["value_hex"], "61");
-
-    let v = run_json(&[
-        "base64-map".into(),
-        cd.display().to_string(),
-        "--value".into(),
-        format!("{fixed}{tail}"),
-        "--max-mem-hits".into(),
-        "0".into(),
-        "--base64-tail-start".into(),
-        fixed.len().to_string(),
-        "--base64-tail-align-prefix".into(),
-        "AA".into(),
-        "--base64-tail-drop".into(),
-        "1".into(),
-        "--semantic-offset".into(),
-        "2".into(),
-        "--semantic-count".into(),
-        "3".into(),
-        "--summary".into(),
-    ]);
-    assert_eq!(
-        v["selected_semantic_range"],
-        serde_json::json!({"start": 2, "end": 5, "length": 3})
-    );
-    assert_eq!(v["selected_group_start"], 1);
-    assert_eq!(v["selected_group_end"], 2);
-    assert_eq!(v["groups"][0]["chars"], "YQU=");
-}
-
-#[test]
 fn vm_backtree_branches_word_load_to_byte_writers() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
     let v = run_json(&[
+        "experimental".into(),
         "vm-backtree".into(),
         cd.display().to_string(),
         "--idx".into(),
@@ -931,6 +728,7 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
     assert_eq!(v["highlights"]["word_loads"][0]["bytes_hex"], "41424344");
 
     let summary = run_json(&[
+        "experimental".into(),
         "vm-backtree".into(),
         cd.display().to_string(),
         "--idx".into(),
@@ -962,6 +760,7 @@ fn vm_backstep_uses_target_row_when_it_defines_requested_reg() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
     let v = run_json(&[
+        "experimental".into(),
         "vm-backstep".into(),
         cd.display().to_string(),
         "--idx".into(),
@@ -1127,6 +926,7 @@ fn vm_ops_groups_rows_by_vm_ip() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_vm_ops_trace(tmp.path(), "run1");
     let v = run_json(&[
+        "experimental".into(),
         "vm-ops".into(),
         cd.display().to_string(),
         "--start".into(),
@@ -1159,6 +959,7 @@ fn vm_ops_groups_rows_by_vm_ip() {
     assert_eq!(op["dispatches"][0]["idx"], 4);
 
     let chunked = run_json(&[
+        "experimental".into(),
         "vm-ops".into(),
         cd.display().to_string(),
         "--start".into(),

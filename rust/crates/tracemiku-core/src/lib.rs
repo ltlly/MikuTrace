@@ -27,5 +27,3 @@ pub mod sidecar_io;
 pub mod symbols;
 pub mod taint;
 pub mod trace;
-pub mod watchpoints;
-pub mod write_bursts;

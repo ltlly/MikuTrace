@@ -35,5 +35,3 @@ pub use crate::trace::{
     CallInfo, MetaError, ModuleInfo, Record, Trace, TraceMeta, FORMAT_VERSION, REC_NUM_REGS,
     REC_SIZE,
 };
-pub use crate::watchpoints::{watchpoint_scan, WatchpointHit, WatchpointScan, WatchpointSpec};
-pub use crate::write_bursts::{mem_write_bursts, WriteBurstCandidate};

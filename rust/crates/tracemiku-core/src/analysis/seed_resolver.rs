@@ -1,18 +1,4 @@
-//! Shared helpers for queries that take an `idx | reg | addr | idxs | regs |
-//! addrs` seed and emit a graph/slice over the persistent dependency CSR.
-//!
-//! Originally inlined three times across `dep_graph`, `bfs_slice`, and
-//! `forward_dep_tree`. This module centralises:
-//!
-//! * `split_csv` — `"1, 2,3"` → ["1", "2", "3"], dropping empties.
-//! * `ResolvedSeed` — common JSON shape for the seed envelope.
-//! * `resolve_*` — fall back to the trace's index for register/address
-//!   look-ups, returning a single-seed envelope.
-//! * `edge_kind` / `edge_label` / `node_id` — string formatting helpers.
-//! * `render_dep_node` — common node payload (PC, asm, func, expression, via)
-//!   used by both `dep_graph` and `forward_dep_tree`.
-//!
-//! 数字字面量解析统一走 `crate::analysis::parse`（十进制优先，`0x` 前缀十六进制）。
+//! 依赖查询共享的种子解析、节点说明与边标签。
 
 use crate::analysis_index::DepKind;
 use crate::disasm::decode;
@@ -78,7 +64,7 @@ pub fn split_csv(raw: &str) -> impl Iterator<Item = &str> {
 }
 
 pub fn resolve_reg(state: &AnalysisContext, reg: &str, before: usize) -> ResolvedSeed {
-    let idx = state.inner.index.last_def_before(reg, before);
+    let idx = state.inner.index().last_def_before(reg, before);
     ResolvedSeed {
         kind: "reg",
         idx,
@@ -104,7 +90,7 @@ pub fn resolve_addr(state: &AnalysisContext, addr_raw: &str, before: usize) -> R
     };
     let idx = state
         .inner
-        .index
+        .index()
         .mem_addr_to_writes
         .get(&addr)
         .and_then(|idxs| {
@@ -123,7 +109,7 @@ pub fn resolve_addr(state: &AnalysisContext, addr_raw: &str, before: usize) -> R
     }
 }
 
-/// Resolution priority shared by `dep_graph` / `forward_dep_tree` (the
+/// Resolve one dependency seed (the
 /// single-seed queries): explicit `idx` wins, then `reg`, then `addr`. The
 /// returned `Option<usize>` is the resolved trace index, if any.
 pub fn resolve_one(
@@ -244,7 +230,7 @@ pub fn render_dep_node(
     });
     let func = state
         .inner
-        .symbols
+        .symbols()
         .lookup_entry(rec.pc)
         .map(|entry| entry.name);
     DepNode {

@@ -62,7 +62,7 @@ fn string_provenance_response(
     let (mut writers, mut writers_total) =
         idxs_by_byte_from_memshadow(memshadow, start, length, true);
     fill_missing_idxs_by_byte(
-        &inner.index.mem_writes,
+        &inner.index().mem_writes,
         start,
         &mut writers,
         &mut writers_total,
@@ -70,7 +70,7 @@ fn string_provenance_response(
     let (mut readers, mut readers_total) =
         idxs_by_byte_from_memshadow(memshadow, start, length, false);
     fill_missing_idxs_by_byte(
-        &inner.index.mem_reads,
+        &inner.index().mem_reads,
         start,
         &mut readers,
         &mut readers_total,

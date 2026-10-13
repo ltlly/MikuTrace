@@ -54,3 +54,39 @@ fn functions_response_from_entries(fns: Vec<FunctionEntry>) -> FunctionsResponse
         truncated: total_functions > returned_functions,
     }
 }
+
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct FunctionsQuery {
+    pub fn_name: Option<String>,
+}
+#[derive(Debug, Serialize)]
+pub struct FunctionsInspection {
+    #[serde(flatten)]
+    pub catalog: FunctionsResponse,
+    pub summary: Option<super::fn_summary::FnSummaryResponse>,
+}
+pub fn inspect(
+    state: &AnalysisContext,
+    q: FunctionsQuery,
+) -> Result<FunctionsInspection, AnalysisError> {
+    let mut entries = state.inner.function_index().entries.clone();
+    if let Some(name) = q.fn_name.as_ref() {
+        entries.retain(|f| &f.name == name);
+    }
+    let summary = q
+        .fn_name
+        .map(|name| {
+            super::fn_summary::fn_summary(
+                state,
+                super::fn_summary::FnSummaryQuery {
+                    fn_name: name,
+                    ..Default::default()
+                },
+            )
+        })
+        .transpose()?;
+    Ok(FunctionsInspection {
+        catalog: functions_response_from_entries(entries),
+        summary,
+    })
+}

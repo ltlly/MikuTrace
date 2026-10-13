@@ -28,7 +28,7 @@ pub fn next_use_of_reg(state: &AnalysisContext, q: NextUseQuery) -> NextUseRespo
     let after = q.after.unwrap_or(0);
     let canon = normalize_disasm_reg(&q.reg);
     let reg = if canon.is_empty() { q.reg } else { canon };
-    let idx = state.inner.index.next_use_after(&reg, after);
+    let idx = state.inner.index().next_use_after(&reg, after);
     let value = idx.and_then(|use_idx| {
         (use_idx < state.inner.trace.len())
             .then(|| state.inner.trace.record(use_idx).reg_by_name(&reg))

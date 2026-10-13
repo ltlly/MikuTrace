@@ -16,18 +16,18 @@ fn mem_provenance_returns_structured_provenance() {
         cd.to_str().unwrap(),
         "--addr",
         "0x2000",
-        "--length",
+        "--count",
         "8",
     ]);
-    assert_eq!(v["addr"], 8192, "0x2000 parsed");
-    assert_eq!(v["len"], 8);
+    assert_eq!(v["addr"], "0x2000", "0x2000 parsed");
+    assert_eq!(v["count"], 8);
     let bytes = v["bytes"].as_array().expect("bytes array");
     assert_eq!(bytes.len(), 8, "one entry per byte");
     for b in bytes {
-        let src = &b["source"];
-        assert!(src["kind"].is_string(), "every byte has a source kind: {b}");
-        assert!(b["offset"].is_u64());
-        assert!(b["value"].is_u64());
+        assert!(b["kind"].is_string(), "every byte has a source kind: {b}");
+        assert!(b["addr"].is_string());
+        assert!(b["byte"].is_u64());
+        assert!(b["last_writer"].is_object());
     }
 }
 
@@ -41,7 +41,7 @@ fn mem_provenance_zero_length_is_error() {
             cd.to_str().unwrap(),
             "--addr",
             "0x2000",
-            "--length",
+            "--count",
             "0",
         ])
         .output()
@@ -50,10 +50,10 @@ fn mem_provenance_zero_length_is_error() {
     assert_eq!(out.status.code(), Some(1));
     let failure: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(failure["status"], "error");
-    assert_eq!(failure["error"]["code"], "command_failed");
+    assert_eq!(failure["error"]["code"], "invalid_argument");
     let message = failure["error"]["message"].as_str().unwrap();
     assert!(
-        message.contains("out of range"),
+        message.contains("positive"),
         "error.message explains the failure: {message}"
     );
 }

@@ -52,7 +52,7 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn jni_calls_detects_vtable_call() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-calls?max=5");
+    let (status, v) = get(cd, "jni-calls?limit=5");
     assert_eq!(status, None);
     assert_eq!(v["count"], 2);
     assert_eq!(v["returned"], 2);
@@ -77,7 +77,7 @@ fn jni_calls_filters_function() {
 #[test]
 fn jni_calls_reports_total_and_truncation() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-calls?max=1");
+    let (status, v) = get(cd, "jni-calls?limit=1");
     assert_eq!(status, None);
     assert_eq!(v["count"], 2);
     assert_eq!(v["returned"], 1);

@@ -72,7 +72,7 @@ fn search_response(
         if !matches_pattern(&re, &q.pattern, &asm_group.asm) {
             continue;
         }
-        let Some(idxs) = inner.index.pc_to_idxs.get(&asm_group.pc) else {
+        let Some(idxs) = inner.index().pc_to_idxs.get(&asm_group.pc) else {
             continue;
         };
         groups.push(MatchedGroup {
@@ -211,7 +211,7 @@ fn make_hit(
     idx: usize,
 ) -> SearchHit {
     let r = inner.trace.record(idx);
-    let (func_name, func_off) = inner.symbols.lookup(r.pc);
+    let (func_name, func_off) = inner.symbols().lookup(r.pc);
     let (func, off) = if func_name.is_empty() {
         (None, None)
     } else {

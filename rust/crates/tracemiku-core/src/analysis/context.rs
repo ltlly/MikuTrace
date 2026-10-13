@@ -10,7 +10,6 @@ use crate::prelude::{
     FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
 };
 use crate::symbols::auto_known_symbols_with_modules;
-use crate::write_bursts::{WriteBurstCandidate, WriteBurstIndex};
 
 use crate::analysis::jni_scan::{scan_jni_calls, JniCallScan};
 use crate::analysis::parse::parse_dec_u64;
@@ -27,8 +26,8 @@ pub struct AnalysisData {
     pub trace_dir: PathBuf,
     pub meta: TraceMeta,
     pub trace: Trace,
-    pub index: Index,
-    pub symbols: SymbolMap,
+    index: OnceLock<Index>,
+    symbols: OnceLock<SymbolMap>,
     pub modules: ModuleResolver,
     cfg: OnceLock<CFG>,
     function_index: OnceLock<FunctionIndex>,
@@ -42,7 +41,6 @@ pub struct AnalysisData {
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
     pub(crate) crypto_analysis: OnceLock<crate::analysis::crypto_analysis::CryptoAnalysisResponse>,
-    write_burst_index: OnceLock<WriteBurstIndex>,
     pub(crate) reg_timeline_cache: Mutex<RegTimelineCache>,
 }
 
@@ -63,79 +61,14 @@ impl AnalysisContext {
         let meta = TraceMeta::load(&trace_dir)?;
         let trace = Trace::load(&trace_dir)?;
 
-        let index = Index::load_or_build(&trace);
         let modules = ModuleResolver::from_modules(&meta.modules);
-
-        // Build SymbolMap from per-call meta.json::known_offsets if present,
-        // otherwise empty. Format from per-call meta.json:
-        //   { "known_offsets": { "0x0": "f_root", "0x100": "f_alpha", ... } }
-        // Offsets are RELATIVE to the primary module base.
-        let primary_base: u64 = meta
-            .module
-            .as_ref()
-            .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
-            .unwrap_or(0);
-        let mut known_offsets = parse_known_offsets(&trace_dir).unwrap_or_default();
-        // Resolve repo root once for the examples known-offsets overlay.
-        let repo_root = find_repo_root(&trace_dir);
-        // Merge examples/<so>/known_offsets.json overlay if present. Static
-        // (per-call meta.json) WIN; examples WIN over auto.
-        if let Some(root) = repo_root.as_ref() {
-            if let Some(so_name) = meta.module.as_ref().and_then(|m| {
-                m.name
-                    .strip_suffix(".so")
-                    .map(|s| s.to_string())
-                    .or_else(|| Some(m.name.clone()))
-            }) {
-                if let Some(examples) = parse_examples_known_offsets(root, &so_name) {
-                    for (off, name) in examples {
-                        known_offsets.entry(off).or_insert(name);
-                    }
-                }
-            }
-        }
-        // Mirror Python's priority: when fn_addr aligns to an offset in known_offsets
-        // AND meta.method is non-empty, replace that entry's name with method.
-        // (Python: `name = m.method or known_offsets.get(off, "func")` when pc==fn_addr)
-        if !meta.method.is_empty() {
-            if let Some(fn_addr_str) = &meta.fn_addr {
-                let fn_abs =
-                    u64::from_str_radix(fn_addr_str.trim_start_matches("0x"), 16).unwrap_or(0);
-                let fn_off = fn_abs.wrapping_sub(primary_base);
-                if let std::collections::hash_map::Entry::Occupied(mut e) =
-                    known_offsets.entry(fn_off)
-                {
-                    e.insert(meta.method.clone());
-                }
-            }
-        }
-        let mut symbols = SymbolMap::new();
-        for (off, name) in &known_offsets {
-            let pc = primary_base.wrapping_add(*off);
-            if let Some(module) = meta.module.as_ref() {
-                symbols.add_with_module(pc, name.clone(), module);
-            } else {
-                symbols.add(pc, name.clone());
-            }
-        }
-        // Merge auto-discovered bl-target entries; examples + static WIN.
-        // These are module-aware, so calls into app-private helper SOs get a
-        // name relative to the target SO rather than the primary SO base.
-        let auto = auto_known_symbols_with_modules(&trace, &modules);
-        for (pc, name) in auto {
-            if symbols.has_start_pc(pc) {
-                continue;
-            }
-            symbols.add_resolved(pc, name, &modules);
-        }
-        symbols.freeze();
 
         let inner = Arc::new(AnalysisData {
             trace_dir,
             meta,
             trace,
-            index,
-            symbols,
+            index: OnceLock::new(),
+            symbols: OnceLock::new(),
             modules,
             cfg: OnceLock::new(),
             function_index: OnceLock::new(),
@@ -149,7 +82,6 @@ impl AnalysisContext {
             asm_groups: OnceLock::new(),
             jni_calls: OnceLock::new(),
             crypto_analysis: OnceLock::new(),
-            write_burst_index: OnceLock::new(),
             reg_timeline_cache: Mutex::new(HashMap::new()),
         });
 
@@ -165,13 +97,116 @@ pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl AnalysisData {
+    pub fn index(&self) -> &Index {
+        self.index.get_or_init(|| Index::load_or_build(&self.trace))
+    }
+
+    pub fn symbols(&self) -> &SymbolMap {
+        self.symbols.get_or_init(|| {
+            let trace_dir = &self.trace_dir;
+            let meta = &self.meta;
+            let trace = &self.trace;
+            let modules = &self.modules;
+            // Build SymbolMap from per-call meta.json::known_offsets if present,
+            // otherwise empty. Format from per-call meta.json:
+            //   { "known_offsets": { "0x0": "f_root", "0x100": "f_alpha", ... } }
+            // Offsets are RELATIVE to the primary module base.
+            let primary_base: u64 = meta
+                .module
+                .as_ref()
+                .map(|m| u64::from_str_radix(m.base.trim_start_matches("0x"), 16).unwrap_or(0))
+                .unwrap_or(0);
+            let mut known_offsets = parse_known_offsets(trace_dir).unwrap_or_default();
+            // Resolve repo root once for the examples known-offsets overlay.
+            let repo_root = find_repo_root(trace_dir);
+            // Merge examples/<so>/known_offsets.json overlay if present. Static
+            // (per-call meta.json) WIN; examples WIN over auto.
+            if let Some(root) = repo_root.as_ref() {
+                if let Some(so_name) = meta.module.as_ref().and_then(|m| {
+                    m.name
+                        .strip_suffix(".so")
+                        .map(|s| s.to_string())
+                        .or_else(|| Some(m.name.clone()))
+                }) {
+                    if let Some(examples) = parse_examples_known_offsets(root, &so_name) {
+                        for (off, name) in examples {
+                            known_offsets.entry(off).or_insert(name);
+                        }
+                    }
+                }
+            }
+            // Mirror Python's priority: when fn_addr aligns to an offset in known_offsets
+            // AND meta.method is non-empty, replace that entry's name with method.
+            // (Python: `name = m.method or known_offsets.get(off, "func")` when pc==fn_addr)
+            if !meta.method.is_empty() {
+                if let Some(fn_addr_str) = &meta.fn_addr {
+                    let fn_abs =
+                        u64::from_str_radix(fn_addr_str.trim_start_matches("0x"), 16).unwrap_or(0);
+                    let fn_off = fn_abs.wrapping_sub(primary_base);
+                    if let std::collections::hash_map::Entry::Occupied(mut e) =
+                        known_offsets.entry(fn_off)
+                    {
+                        e.insert(meta.method.clone());
+                    }
+                }
+            }
+            let mut symbols = SymbolMap::new();
+            for (off, name) in &known_offsets {
+                let pc = primary_base.wrapping_add(*off);
+                if let Some(module) = meta.module.as_ref() {
+                    symbols.add_with_module(pc, name.clone(), module);
+                } else {
+                    symbols.add(pc, name.clone());
+                }
+            }
+            // Merge auto-discovered bl-target entries; examples + static WIN.
+            // These are module-aware, so calls into app-private helper SOs get a
+            // name relative to the target SO rather than the primary SO base.
+            let auto = auto_known_symbols_with_modules(trace, modules);
+            for (pc, name) in auto {
+                if symbols.has_start_pc(pc) {
+                    continue;
+                }
+                symbols.add_resolved(pc, name, modules);
+            }
+            symbols.freeze();
+            symbols
+        })
+    }
+
+    /// 用于断言轻量查询没有隐式构建整份索引。
+    pub fn loaded_components(&self) -> [&'static str; 4] {
+        [
+            if self.index.get().is_some() {
+                "ready"
+            } else {
+                "idle"
+            },
+            if self.symbols.get().is_some() {
+                "ready"
+            } else {
+                "idle"
+            },
+            if self.cfg.get().is_some() {
+                "ready"
+            } else {
+                "idle"
+            },
+            if self.memshadow.get().is_some() {
+                "ready"
+            } else {
+                "idle"
+            },
+        ]
+    }
+
     pub fn cfg(&self) -> &CFG {
         self.cfg.get_or_init(|| build_cfg(&self.trace))
     }
 
     pub fn function_index(&self) -> &FunctionIndex {
         self.function_index
-            .get_or_init(|| build_function_index(&self.symbols, Some(self.cfg())))
+            .get_or_init(|| build_function_index(self.symbols(), Some(self.cfg())))
     }
 
     pub fn memshadow(&self) -> &MemShadow {
@@ -185,7 +220,7 @@ impl AnalysisData {
 
     pub fn analysis_index(&self) -> &AnalysisIndex {
         self.analysis_index
-            .get_or_init(|| AnalysisIndex::load_or_build(&self.trace, &self.symbols, &self.index))
+            .get_or_init(|| AnalysisIndex::load_or_build(&self.trace, self.symbols(), self.index()))
     }
 
     pub fn analysis_index_status(&self) -> &'static str {
@@ -208,7 +243,7 @@ impl AnalysisData {
 
     pub fn call_tree(&self) -> &CallNode {
         self.call_tree
-            .get_or_init(|| build_call_tree_indexed(&self.trace, &self.symbols, &self.index, 50))
+            .get_or_init(|| build_call_tree_indexed(&self.trace, self.symbols(), self.index(), 50))
     }
 
     pub fn call_tree_for_depth(&self, max_depth: usize) -> CallNode {
@@ -221,7 +256,7 @@ impl AnalysisData {
             }
         }
 
-        let tree = build_call_tree_indexed(&self.trace, &self.symbols, &self.index, max_depth);
+        let tree = build_call_tree_indexed(&self.trace, self.symbols(), self.index(), max_depth);
         if let Ok(mut cache) = self.call_tree_depth_cache.lock() {
             return cache
                 .entry(max_depth)
@@ -240,7 +275,7 @@ impl AnalysisData {
         self.backtrace_events
             .get_or_init(|| {
                 let mut events = Vec::new();
-                for (&pc, idxs) in &self.index.pc_to_idxs {
+                for (&pc, idxs) in &self.index().pc_to_idxs {
                     let Some(&first_idx) = idxs.first() else {
                         continue;
                     };
@@ -262,8 +297,8 @@ impl AnalysisData {
     pub fn asm_groups(&self) -> &[AsmSearchGroup] {
         self.asm_groups
             .get_or_init(|| {
-                let mut groups = Vec::with_capacity(self.index.pc_to_idxs.len());
-                for (&pc, idxs) in &self.index.pc_to_idxs {
+                let mut groups = Vec::with_capacity(self.index().pc_to_idxs.len());
+                for (&pc, idxs) in &self.index().pc_to_idxs {
                     let Some(&first_idx) = idxs.first() else {
                         continue;
                     };
@@ -283,20 +318,13 @@ impl AnalysisData {
 
     pub fn jni_calls(&self) -> &JniCallScan {
         self.jni_calls.get_or_init(|| {
-            scan_jni_calls(&self.trace, &self.index, &self.symbols, primary_base(self))
+            scan_jni_calls(
+                &self.trace,
+                self.index(),
+                self.symbols(),
+                primary_base(self),
+            )
         })
-    }
-
-    pub fn write_burst_candidates(
-        &self,
-        mem: &MemShadow,
-        window: usize,
-        min_size: u64,
-        limit: usize,
-    ) -> (usize, Vec<WriteBurstCandidate>) {
-        self.write_burst_index
-            .get_or_init(|| WriteBurstIndex::build(mem))
-            .detect_limited(window, min_size, limit)
     }
 }
 

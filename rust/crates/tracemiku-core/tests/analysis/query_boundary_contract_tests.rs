@@ -84,46 +84,47 @@ fn reg_at_invalid_addr_returns_error() {
 #[test]
 fn mem_export_len_zero_returns_error() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-export?addr=0x100000&len=0");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "error", "len must be > 0");
+    let (status, v) = get_json(cd, "mem-dump?addr=0x100000&count=0");
+    assert_eq!(status, Some("invalid_argument"));
+    assert_eq!(v["status"], "error", "count must be > 0");
 }
 
 #[test]
 fn mem_export_missing_len_returns_error() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-export?addr=0x100000");
-    assert_eq!(status, None);
+    let (status, v) = get_json(cd, "mem-dump?addr=0xffffffffffffffff&count=2");
+    assert_eq!(status, Some("invalid_argument"));
     assert_eq!(v["status"], "error");
 }
 
 #[test]
 fn mem_export_huge_len_truncates() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-export?addr=0x100000&len=999999999");
+    let (status, v) = get_json(cd, "mem-dump?addr=0x100000&count=999999999");
     assert_eq!(status, None);
     let errors = validate(
         &serde_json::json!({
             "type": "object",
-            "required": ["status", "len", "requested_len", "hex"],
+            "required": ["status", "count", "requested_count", "bytes", "truncated"],
         }),
         &v,
     );
     assert!(errors.is_empty(), "schema errors: {errors:?}");
-    assert!(v["len"].as_u64().unwrap() <= 1_000_000, "capped export");
+    assert_eq!(v["count"], 4096);
+    assert_eq!(v["truncated"], true);
 }
 
 #[test]
 fn watchpoints_reg_change_query_hits() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "watchpoints?reg=x0&cursor=0&limit=10");
+    let (status, v) = get_json(cd, "reg-inspect?reg=x0&start=0&max_points=10");
     assert_eq!(status, None);
     let errors = validate(
         &serde_json::json!({
             "type": "object",
-            "required": ["status", "returned", "total_matches", "truncated", "hits"],
+            "required": ["mode", "count", "truncated", "points", "next_cursor"],
             "properties": {
-                "hits": {"type": "array"},
+                "points": {"type": "array"},
                 "truncated": {"type": "boolean"},
             },
         }),

@@ -6,7 +6,7 @@ NPM    ?= npm
 # py_compile 不跟随导入，必须逐个编译。
 PY_CHECKS := tracemiku tracemiku_fork.py tracemiku_device.py tracemiku_diag.py \
     tracemiku_transport.py tracemiku_target.py tracemiku_commands.py \
-	scripts/build_smoke_trace.py \
+	scripts/build_smoke_trace.py scripts/benchmark_records.py \
 	scripts/device_trace_integration.py tools/vm_replay_plan_eval.py \
 	examples/llm_cookbook.py scripts/contract_audit.py
 

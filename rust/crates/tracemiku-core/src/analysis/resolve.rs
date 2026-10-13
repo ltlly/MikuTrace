@@ -60,7 +60,7 @@ pub fn resolve(state: &AnalysisContext, q: ResolveQuery) -> Result<Value, Analys
 }
 
 pub(crate) fn coord_for_pc(inner: &crate::analysis::context::AnalysisData, pc: u64) -> Coord {
-    let idxs = inner.index.pc_to_idxs.get(&pc);
+    let idxs = inner.index().pc_to_idxs.get(&pc);
     let exec_count = idxs.map(Vec::len).unwrap_or(0);
     let first_idx = idxs.and_then(|v| v.first().copied());
     let last_idx = idxs.and_then(|v| v.last().copied());
@@ -174,5 +174,37 @@ mod tests {
         // garbage
         assert_eq!(parse_hex_u64("zz"), None);
         assert_eq!(parse_hex_u64("0xZZ"), None);
+    }
+}
+
+/// 内存与地址查询共用模块解析；歧义必须由调用方消除。
+pub fn memory_address(
+    state: &AnalysisContext,
+    addr: &str,
+    so: Option<&str>,
+    off: Option<&str>,
+) -> Result<u64, AnalysisError> {
+    if !addr.is_empty() {
+        if so.is_some() || off.is_some() {
+            return Err(AnalysisError::invalid(
+                "address conflicts with module offset",
+            ));
+        }
+        return crate::address_parse::parse_address(addr)
+            .map_err(|e| AnalysisError::invalid(e.to_string()));
+    }
+    let (so, off) = so
+        .zip(off)
+        .ok_or_else(|| AnalysisError::invalid("provide addr or so plus off"))?;
+    let off = crate::address_parse::parse_address(off)
+        .map_err(|e| AnalysisError::invalid(e.to_string()))?;
+    let candidates = state.inner.modules.resolve_offset_candidates(so, off);
+    match candidates.as_slice() {
+        [] => Err(AnalysisError::not_found("no module matched")),
+        [(_, base, end, addr)] if addr >= base && addr < end => Ok(*addr),
+        [_] => Err(AnalysisError::invalid("offset exceeds module mapped range")),
+        _ => Err(AnalysisError::invalid(
+            serde_json::json!({"error":"ambiguous module; use a unique name", "candidates":candidates}),
+        )),
     }
 }

@@ -71,7 +71,7 @@ pub fn record(state: &AnalysisContext, idx: usize) -> Result<RecordDetail, Analy
         .collect();
 
     // Symbol resolution (M2-γ).
-    let (func_name, func_off) = inner.symbols.lookup(r.pc);
+    let (func_name, func_off) = inner.symbols().lookup(r.pc);
     let (func, off) = if func_name.is_empty() {
         (None, None)
     } else {
@@ -148,7 +148,7 @@ pub(crate) fn classify_reg_value(
                 .as_ref()
                 .is_some_and(|m| m.name == module.name)
             {
-                let (fname, foff) = inner.symbols.lookup(cur);
+                let (fname, foff) = inner.symbols().lookup(cur);
                 if !fname.is_empty() {
                     parts.push(format!("[{fname}+{foff:#x}]"));
                 } else {

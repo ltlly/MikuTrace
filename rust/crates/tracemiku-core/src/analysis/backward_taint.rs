@@ -123,7 +123,7 @@ fn backward_taint_response(
     let scan_limit = effective_scan_limit(q.scan_limit);
     let walk = backward_taint_ext(
         &inner.trace,
-        &inner.index,
+        inner.index(),
         q.start,
         &reg,
         eff,
@@ -147,7 +147,7 @@ fn backward_taint_response(
         .map(|h| {
             let r = inner.trace.record(h.idx);
             let d = decode(r.pc, r.inst);
-            let (fname, _) = inner.symbols.lookup(r.pc);
+            let (fname, _) = inner.symbols().lookup(r.pc);
             TaintChainRow {
                 idx: h.idx,
                 pc: format!("{:#x}", r.pc),

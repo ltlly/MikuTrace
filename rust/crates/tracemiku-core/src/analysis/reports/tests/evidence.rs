@@ -362,16 +362,6 @@ fn lineage_uses_byte_lane_when_following_shift_frontier() {
 }
 
 #[test]
-fn finds_hex_byte_offsets_on_byte_boundaries() {
-    assert_eq!(
-        find_hex_byte_offsets("aa 62:61_62 bb 62 61 62", "626162"),
-        vec![1, 5]
-    );
-    assert!(find_hex_byte_offsets("0626162", "626162").is_empty());
-    assert!(find_hex_byte_offsets("626162", "00").is_empty());
-}
-
-#[test]
 fn resolves_proc_maps_addresses() {
     let maps = "\
 787beb8000-787bf61000 r-xp 0005b000 07:128 126231 /apex/com.android.runtime/lib64/bionic/libc.so\n";
@@ -384,32 +374,6 @@ fn resolves_proc_maps_addresses() {
         serde_json::json!("/apex/com.android.runtime/lib64/bionic/libc.so")
     );
     assert!(resolve_addr_in_maps_text(maps, 0x7601b72790).is_none());
-}
-
-#[test]
-fn resolves_nm_symbols_by_nearest_preceding_offset() {
-    let target = parse_nm_symbol_line("0000000000001200 0000000000000038 T target_func@@LIB")
-        .expect("parse symbol");
-    assert_eq!(target.addr, 0x1200);
-    assert_eq!(target.size, Some(0x38));
-    assert_eq!(target.name, "target_func@@LIB");
-
-    let symbols = vec![
-        ElfSymbol {
-            addr: 0x1000,
-            size: Some(0x20),
-            kind: "T".to_string(),
-            name: "helper_func@@LIB".to_string(),
-        },
-        target,
-    ];
-    let hit = resolve_elf_symbol_json(&symbols, 0x1204).unwrap();
-    assert_eq!(hit["status"], serde_json::json!("nearest"));
-    assert_eq!(hit["symbol_addr"], serde_json::json!("0x1200"));
-    assert_eq!(hit["delta"], serde_json::json!("0x4"));
-    assert_eq!(hit["name"], serde_json::json!("target_func@@LIB"));
-    assert_eq!(hit["base_name"], serde_json::json!("target_func"));
-    assert_eq!(hit["in_symbol_range"], serde_json::json!(true));
 }
 
 #[test]

@@ -26,7 +26,7 @@ pub fn last_write_of_reg(state: &AnalysisContext, q: LastWriteQuery) -> LastWrit
     let before = q.before.unwrap_or_else(|| state.inner.trace.len());
     let canon = normalize_disasm_reg(&q.reg);
     let reg = if canon.is_empty() { q.reg } else { canon };
-    let idx = state.inner.index.last_def_before(&reg, before);
+    let idx = state.inner.index().last_def_before(&reg, before);
     let value = if before < state.inner.trace.len() {
         state
             .inner

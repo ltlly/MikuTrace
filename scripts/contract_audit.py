@@ -19,124 +19,88 @@ CORE = REPO / "rust" / "crates" / "tracemiku-core" / "tests"
 # CLI command families -> contract test file that must exist and contain tests.
 # Keys are public commands from ./tracemiku; values are test files (no suffix).
 CLI_COVERAGE: dict[str, list[str]] = {
+    "events": ["contract_consolidated"],
+    "experimental": ["contract_vm", "contract_consolidated"],
+    "experimental vm-slice": ["contract_vm"],
+    "experimental vm-ops": ["contract_vm"],
+    "experimental vm-backstep": ["contract_vm"],
+    "experimental vm-backchain": ["contract_vm"],
+    "experimental vm-backtree": ["contract_vm"],
     "trace": ["contract_entrypoint"],
     "probe": ["contract_entrypoint"],
     "doctor": ["contract_entrypoint"],
     "capabilities": ["contract_basic", "contract_semantics", "contract_entrypoint"],
     "finalize": ["contract_basic"],
     "completions": ["contract_completions"],
-    "meta": ["contract_basic"],
     "list": ["contract_basic"],
-    "info": ["contract_basic"],
-    "records": ["contract_query"],
-    "record": ["contract_query"],
-    "resolve": ["contract_query"],
+    "info": ["contract_consolidated", "contract_basic"],
+    "records": ["contract_consolidated", "contract_query"],
+    "resolve": ["contract_consolidated", "contract_query"],
     "search": ["contract_query"],
     "reg-at": ["contract_query"],
-    "reg-value-at": ["contract_query"],
     "last-write-of-reg": ["contract_query"],
     "next-use-of-reg": ["contract_query"],
     "indirect-targets": ["contract_query"],
     "so-stats": ["contract_query"],
     "strings": ["contract_query"],
-    "mem-byte-history": ["contract_query"],
-    "mem-dump": ["contract_query"],
-    "mem-export": ["contract_query"],
-    "mem-provenance": ["contract_tenet", "contract_offline"],
+    "mem-dump": ["contract_consolidated", "contract_query"],
+    "mem-provenance": ["contract_consolidated", "contract_tenet", "contract_offline"],
     "find-mem-pattern": ["contract_query"],
     "taint-bwd": ["contract_query"],
     "taint-fwd": ["contract_query"],
-    "reg-chase": ["contract_query"],
-    "dep-graph": ["contract_query"],
-    "bfs-slice": ["contract_query"],
-    "forward-dep-graph": ["contract_query"],
-    "reg-timeline": ["contract_query"],
-    "mem-diff": ["contract_query"],
-    "mem-flow": ["contract_query"],
-    "mem-writes-in-range": ["contract_query"],
-    "byte-writer-map": ["contract_query"],
-    "fn-summary": ["contract_query"],
+    "bfs-slice": ["contract_consolidated", "contract_query"],
+    "reg-timeline": ["contract_consolidated", "contract_query"],
     "crypto": ["contract_query"],
-    "mem-write-bursts": ["contract_query"],
-    "hash-input-search": ["contract_query"],  # 不同算法摘要长度的查询边界
-    "jni-calls": ["contract_query"],
-    "jni-events": ["contract_query"],
-    "jni-object-history": ["contract_query"],
-    "jni-strings": ["contract_query"],  # 字节预览、编码和停止原因契约
-    "cfg": ["contract_query"],
-    "block-hits": ["contract_query"],
-    "block": ["contract_query"],
+    "jni-calls": ["contract_consolidated", "contract_query"],
+    "cfg": ["contract_consolidated", "contract_query"],
     "loops": ["contract_query"],
-    "branch-coverage": ["contract_query"],
     "trace-replay": ["contract_replay"],
-    "backtrace": ["contract_query"],
+    "backtrace": ["contract_consolidated", "contract_query"],
     "call-tree": ["contract_query"],
-    "call-chain": ["contract_query"],
-    "watch": ["contract_query"],
     "output-backtrace": ["contract_output"],
-    "base64-map": ["contract_output", "contract_output_boundary"],
     "byte-lineage": ["contract_output"],
-    "vm-slice": ["contract_vm"],
-    "vm-ops": ["contract_vm"],
-    "vm-backstep": ["contract_vm"],
-    "vm-backchain": ["contract_vm"],
-    "vm-backtree": ["contract_vm"],
-    "fork-events": ["contract_query"],
-    "functions": ["contract_query"],
+    "functions": ["contract_consolidated", "contract_query"],
     "pc-hits": ["contract_query"],
-    "mem-accesses": ["contract_query"],
-    "mem-range-accesses": ["contract_query"],
+    "mem-accesses": ["contract_consolidated", "contract_query"],
     "last-write-of-addr": ["contract_query"],
-    "resolve-elf-symbol": ["contract_basic"],
-    "resolve-map-addr": ["contract_basic"],
 }
 
 # 核心查询与其独立 fixture 断言；不依赖 HTTP 或浏览器。
 QUERY_COVERAGE: dict[str, list[str]] = {
+    "dependency_query": ["consolidated_queries", "analysis/dep_graph_tests", "analysis/forward_dep_tree_tests", "analysis/bfs_slice_tests"],
+    "dependency_seeds": ["analysis/bfs_slice_tests"],
+    "events": ["event_queries", "analysis/jni_events_tests", "analysis/fork_events_tests"],
+    "mem_accesses": ["consolidated_queries", "analysis/mem_flow_tests"],
+    "mem_provenance": ["consolidated_queries"],
     "analysis_index": ["analysis/contract_queries_1"],
     "backward_taint": ["analysis/test_taint_queries"],
-    "bfs_slice": ["analysis/bfs_slice_tests"],
     "call_tree": ["analysis/test_call_tree_query"],
     "cfg": ["analysis/cfg_queries_tests"],
     "coverage": ["analysis/coverage_contract_tests"],
     "crypto_analysis": ["analysis/crypto_scan_tests"],
-    "data_chase": ["analysis/data_chase_tests"],
-    "dep_graph": ["analysis/dep_graph_tests"],
     "fn_summary": ["analysis/fn_summary_tests"],
-    "fork_events": ["analysis/fork_events_tests"],
-    "forward_dep_tree": ["analysis/forward_dep_tree_tests"],
     "forward_taint": ["analysis/test_taint_queries"],
     "functions": ["analysis/functions_tests"],
-    "mem_write_bursts": ["analysis/mem_write_bursts_tests"],
-    "hash_input_search": ["analysis/hash_input_search_tests"],
     "idxs_for_block": ["analysis/cfg_queries_tests"],
     "idxs_for_pc": ["analysis/idxs_for_pc_tests"],
     "indirect_targets": ["analysis/contract_queries_1", "analysis/indirect_targets_boundary_tests"],
-    "jni_calls": ["analysis/jni_calls_tests"],
-    "jni_events": ["analysis/jni_events_tests"],
+    "jni_calls": ["analysis/jni_calls_tests", "analysis/jobj_history_tests"],
     "jni_strings": ["analysis/jni_strings_tests"],
-    "jobj_history": ["analysis/jobj_history_tests"],
     "last_write_of_reg": ["analysis/functions_tests"],
     "trace_replay": ["analysis/trace_replay_tests"],
     "mem_dump": ["analysis/mem_dump_tests"],
-    "mem_export": ["analysis/contract_queries_1"],
-    "mem_flow": ["analysis/mem_flow_tests"],
     "memory_query": ["analysis/memory_query_tests"],
-    "meta": ["analysis/meta_queries"],
     "navigation": ["analysis/navigation_tests"],
     "next_use_of_reg": ["analysis/functions_tests"],
-    "record": ["analysis/records_queries"],
-    "records": ["analysis/records_queries"],
+    "records": ["consolidated_queries", "analysis/records_queries"],
     "reg_at": ["analysis/contract_queries_1"],
-    "reg_value_at": ["analysis/inspect_queries_tests"],
-    "resolve": ["analysis/records_queries", "analysis/dep_graph_tests"],
+    "resolve": ["consolidated_queries", "analysis/records_queries", "analysis/dep_graph_tests"],
     "search": ["analysis/search_tests"],
     "seed_resolver": ["analysis/dep_graph_tests", "analysis/bfs_slice_tests", "analysis/forward_dep_tree_tests"],
     "so_stats": ["analysis/inspect_queries_tests"],
     "string_provenance": ["analysis/string_provenance_tests"],
     "strings": ["analysis/strings_tests"],
-    "timeline_diff": ["analysis/timeline_diff_tests"],
-    "watchpoints": ["analysis/watchpoints_tests"],
+    "timeline_diff": ["register_query_contracts", "analysis/timeline_diff_tests", "analysis/watchpoints_tests"],
 }
 
 
@@ -152,7 +116,7 @@ def check_coverage(mapping: dict[str, list[str]], root: Path) -> list[str]:
     return [
         s
         for s, files in mapping.items()
-        if not any(file_has_tests(root, f) for f in files)
+        if not all(file_has_tests(root, f) for f in files)
     ]
 
 
@@ -173,7 +137,12 @@ def live_cli_commands() -> list[str]:
     data = json.loads(proc.stdout)
     if data.get("schema_version") != 2 or not isinstance(data.get("commands"), list):
         raise ValueError("unsupported capabilities schema")
-    return [command["name"] for command in data["commands"]]
+    def paths(commands, prefix=""):
+        for command in commands:
+            name = f'{prefix}{command["name"]}'
+            yield name
+            yield from paths(command.get("subcommands", []), name + " ")
+    return list(paths(data["commands"]))
 
 
 def main() -> int:

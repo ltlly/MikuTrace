@@ -14,7 +14,12 @@ pub(super) fn vm_backstep_value_on(
     let start = idx.saturating_sub(context);
     let count = context.saturating_add(3);
     let regs = regs_with_vm_profile(regs, profile);
-    let params = crate::analysis::records::RecordsQuery { start, count, regs };
+    let params = crate::analysis::records::RecordsQuery {
+        start,
+        count,
+        regs,
+        ..Default::default()
+    };
     let response = query_value_on(analysis, Query::Records(params))?;
     let records = response
         .get("records")

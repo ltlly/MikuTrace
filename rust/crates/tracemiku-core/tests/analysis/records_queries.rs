@@ -107,7 +107,7 @@ fn records_default_window() {
     assert!(r0["func"].is_null());
     assert!(r0["off"].is_null());
     assert!(r0["annotation"].is_null());
-    assert_eq!(r0["exec_count"], 1);
+    assert!(r0["exec_count"].is_null());
     assert!(r0.get("regs").is_none_or(|v| v.is_null()));
 
     let r1 = &v["records"][1];
@@ -276,7 +276,7 @@ fn synth_call_dir_with_symbols() -> (tempfile::TempDir, PathBuf) {
 fn records_with_symbols_populates_func_off() {
     let (_tmp, call_dir) = synth_call_dir_with_symbols();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "records?count=9", None);
+    let resp = analysis_support::query(&app, "records?count=9&detail=true", None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
 

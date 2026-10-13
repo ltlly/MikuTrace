@@ -8,13 +8,6 @@ pub fn split_csv(s: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn split_csv_allow_empty(s: &str) -> Vec<String> {
-    if s.is_empty() {
-        return vec![String::new()];
-    }
-    split_csv(s)
-}
-
 pub fn list_runs(base: &Path) -> anyhow::Result<Vec<serde_json::Value>> {
     let mut rows = Vec::new();
     for entry in std::fs::read_dir(base)? {
@@ -94,28 +87,6 @@ pub fn resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<serd
     Ok(out)
 }
 
-pub fn resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<serde_json::Value> {
-    let offset = parse_addr_str(&offset).with_context(|| format!("invalid offset: {offset}"))?;
-    let (tool, symbols) = elf_symbols_from_nm(&elf_file)
-        .with_context(|| format!("failed to read ELF symbols: {}", elf_file.display()))?;
-    let out = resolve_elf_symbol_json(&symbols, offset).unwrap_or_else(|| {
-        serde_json::json!({
-            "status": "miss",
-            "elf_file": elf_file.display().to_string(),
-            "offset": format!("{offset:#x}"),
-            "symbol_count": symbols.len(),
-            "source_tool": tool,
-        })
-    });
-    let mut obj = out.as_object().cloned().unwrap_or_default();
-    obj.insert(
-        "elf_file".to_string(),
-        serde_json::Value::String(elf_file.display().to_string()),
-    );
-    obj.insert("source_tool".to_string(), serde_json::Value::String(tool));
-    Ok(serde_json::Value::Object(obj))
-}
-
 pub(super) fn resolve_addr_in_maps_text(text: &str, addr: u64) -> Option<serde_json::Value> {
     for line in text.lines() {
         let mut parts = line.split_whitespace();
@@ -152,144 +123,11 @@ pub(super) fn resolve_addr_in_maps_text(text: &str, addr: u64) -> Option<serde_j
     None
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ElfSymbol {
-    pub(super) addr: u64,
-    pub(super) size: Option<u64>,
-    pub(super) kind: String,
-    pub(super) name: String,
-}
-
-pub(super) fn elf_symbols_from_nm(elf_file: &Path) -> anyhow::Result<(String, Vec<ElfSymbol>)> {
-    let attempts: &[(&str, &[&str])] = &[
-        ("llvm-nm", &["-D", "--defined-only", "--print-size"]),
-        ("llvm-nm", &["--defined-only", "--print-size"]),
-        ("nm", &["-D", "--defined-only", "--print-size"]),
-        ("nm", &["--defined-only", "--print-size"]),
-    ];
-    let mut errors = Vec::new();
-    for (tool, args) in attempts {
-        match run_nm_command(tool, args, elf_file) {
-            Ok(text) => {
-                let mut symbols = parse_nm_symbols(&text);
-                if !symbols.is_empty() {
-                    symbols.sort_by_key(|sym| sym.addr);
-                    return Ok((format!("{} {}", tool, args.join(" ")), symbols));
-                }
-                errors.push(format!(
-                    "{} {} returned no defined symbols",
-                    tool,
-                    args.join(" ")
-                ));
-            }
-            Err(err) => errors.push(format!("{} {}: {err}", tool, args.join(" "))),
-        }
-    }
-    bail!("{}", errors.join("; "))
-}
-
-pub(super) fn run_nm_command(tool: &str, args: &[&str], elf_file: &Path) -> anyhow::Result<String> {
-    let output = Command::new(tool)
-        .args(args)
-        .arg(elf_file)
-        .output()
-        .with_context(|| format!("failed to execute {tool}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        bail!(
-            "exit status {}{}",
-            output.status,
-            if stderr.is_empty() {
-                String::new()
-            } else {
-                format!(": {stderr}")
-            }
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-pub(super) fn parse_nm_symbols(text: &str) -> Vec<ElfSymbol> {
-    text.lines()
-        .filter_map(parse_nm_symbol_line)
-        .collect::<Vec<_>>()
-}
-
-pub(super) fn parse_nm_symbol_line(line: &str) -> Option<ElfSymbol> {
-    let parts = line.split_whitespace().collect::<Vec<_>>();
-    if parts.len() < 3 {
-        return None;
-    }
-    let addr = u64::from_str_radix(parts[0].trim_start_matches("0x"), 16).ok()?;
-    let (size, kind_idx, name_idx) = if parts.len() >= 4 && is_nm_kind(parts[2]) {
-        (
-            u64::from_str_radix(parts[1].trim_start_matches("0x"), 16).ok(),
-            2usize,
-            3usize,
-        )
-    } else if is_nm_kind(parts[1]) {
-        (None, 1usize, 2usize)
-    } else {
-        return None;
-    };
-    let kind = parts[kind_idx].to_string();
-    if kind.eq_ignore_ascii_case("U") {
-        return None;
-    }
-    let name = parts[name_idx..].join(" ");
-    (!name.is_empty()).then_some(ElfSymbol {
-        addr,
-        size,
-        kind,
-        name,
-    })
-}
-
-pub(super) fn is_nm_kind(s: &str) -> bool {
-    s.len() == 1 && s.as_bytes()[0].is_ascii_alphabetic()
-}
-
-pub(super) fn resolve_elf_symbol_json(
-    symbols: &[ElfSymbol],
-    offset: u64,
-) -> Option<serde_json::Value> {
-    let sym = symbols.iter().rev().find(|sym| sym.addr <= offset)?;
-    let delta = offset.saturating_sub(sym.addr);
-    let next = symbols.iter().find(|next| next.addr > sym.addr);
-    let in_size = sym
-        .size
-        .map(|size| delta < size)
-        .or_else(|| next.map(|next| offset < next.addr));
-    Some(serde_json::json!({
-        "status": if delta == 0 { "exact" } else { "nearest" },
-        "offset": format!("{offset:#x}"),
-        "symbol_addr": format!("{:#x}", sym.addr),
-        "symbol_size": sym.size.map(|size| format!("{size:#x}")),
-        "delta": format!("{delta:#x}"),
-        "name": sym.name,
-        "base_name": elf_symbol_base_name(&sym.name),
-        "kind": sym.kind,
-        "in_symbol_range": in_size,
-        "next_symbol_addr": next.map(|sym| format!("{:#x}", sym.addr)),
-        "next_symbol": next.map(|sym| sym.name.clone()),
-        "symbol_count": symbols.len(),
-    }))
-}
-
-pub(super) fn elf_symbol_base_name(name: &str) -> String {
-    name.split("@@")
-        .next()
-        .unwrap_or(name)
-        .split('@')
-        .next()
-        .unwrap_or(name)
-        .to_string()
-}
-
 pub(super) fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
     let meta = enriched_trace_meta(path);
     let trace = crate::prelude::Trace::load(path)?;
     let n = trace.len();
+    let trace_meta = crate::prelude::TraceMeta::load(path)?;
     let mut first_pc = None;
     let mut last_pc = None;
     let mut last_asm = None;
@@ -328,6 +166,9 @@ pub(super) fn info_call(path: &Path) -> anyhow::Result<serde_json::Value> {
         "last_asm": last_asm,
         "is_complete": complete,
         "rec_per_sec": rec_per_sec,
+        "record_size": 272,
+        "format_version": trace_meta.format_version,
+        "metadata": trace_meta,
     }))
 }
 
@@ -394,21 +235,6 @@ pub fn parse_hex_bytes_cli(raw: &str) -> anyhow::Result<Vec<u8>> {
         );
     }
     Ok(out)
-}
-
-pub(super) fn find_hex_byte_offsets(haystack_hex: &str, needle_hex: &str) -> Vec<usize> {
-    let mut haystack = haystack_hex.trim().to_ascii_lowercase();
-    let mut needle = needle_hex.trim().to_ascii_lowercase();
-    haystack.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
-    needle.retain(|ch| !ch.is_ascii_whitespace() && ch != '_' && ch != ':');
-    if needle.is_empty() || !needle.len().is_multiple_of(2) || haystack.len() < needle.len() {
-        return Vec::new();
-    }
-    (0..=haystack.len() - needle.len())
-        .step_by(2)
-        .filter(|&idx| haystack[idx..idx + needle.len()] == needle)
-        .map(|idx| idx / 2)
-        .collect()
 }
 
 pub(super) fn parse_u64_str(raw: &str) -> Option<u64> {
@@ -483,7 +309,6 @@ mod tests {
         assert_eq!(split_csv("a, b ,c"), vec!["a", "b", "c"]);
         assert_eq!(split_csv(""), Vec::<String>::new());
         assert_eq!(split_csv(" , , "), Vec::<String>::new());
-        assert_eq!(split_csv_allow_empty(""), vec![String::new()]);
     }
 
     #[test]

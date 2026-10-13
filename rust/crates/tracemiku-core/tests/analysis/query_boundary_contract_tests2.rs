@@ -85,11 +85,3 @@ fn indirect_targets_no_dispatch_reports_miss() {
         "unexpected status: {v:?}"
     );
 }
-
-#[test]
-fn mem_write_bursts_without_writes_has_no_candidates() {
-    let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-write-bursts");
-    assert_eq!(status, None);
-    assert_eq!(v["candidates"], serde_json::json!([]));
-}

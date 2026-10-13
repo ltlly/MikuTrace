@@ -178,7 +178,7 @@ fn functions_disambiguates_auto_symbols_across_modules() {
         .iter()
         .all(|f| f["entry_rel"].as_u64() == Some(0x100)));
 
-    let resp = analysis_support::query(&app, "records?start=3&count=1", None);
+    let resp = analysis_support::query(&app, "records?detail=true&start=3&count=1", None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let row = &v["records"][0];

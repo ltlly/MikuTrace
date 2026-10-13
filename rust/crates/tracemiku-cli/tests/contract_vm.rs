@@ -9,6 +9,7 @@ use common::{assert_valid, run_json, synth_deep_dir};
 fn vm_slice_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
+        "experimental",
         "vm-slice",
         "--start",
         "0",
@@ -43,6 +44,7 @@ fn vm_slice_matches_schema() {
 fn vm_ops_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
+        "experimental",
         "vm-ops",
         "--start",
         "0",
@@ -81,6 +83,7 @@ fn vm_ops_matches_schema() {
 fn vm_backstep_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
+        "experimental",
         "vm-backstep",
         "--idx",
         "4",
@@ -111,6 +114,7 @@ fn vm_backstep_matches_schema() {
 fn vm_backchain_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
+        "experimental",
         "vm-backchain",
         "--idx",
         "4",
@@ -141,6 +145,7 @@ fn vm_backchain_matches_schema() {
 fn vm_backtree_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
+        "experimental",
         "vm-backtree",
         "--idx",
         "4",
@@ -173,6 +178,7 @@ fn vm_profile_requires_an_explicit_slot_layout() {
     let (_tmp, cd) = synth_deep_dir();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_tracemiku-cli"))
         .args([
+            "experimental",
             "vm-slice",
             cd.to_str().unwrap(),
             "--start",

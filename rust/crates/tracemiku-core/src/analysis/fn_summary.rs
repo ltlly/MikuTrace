@@ -75,7 +75,7 @@ fn fn_summary_response(
         .into_iter()
         .filter(|block| {
             inner
-                .symbols
+                .symbols()
                 .lookup(block.start_pc)
                 .0
                 .eq(q.fn_name.as_str())
@@ -91,7 +91,7 @@ fn fn_summary_response(
     blocks.sort_by_key(|block| block.start_pc);
     let entry_pc = blocks[0].start_pc;
     let total_executions = blocks.iter().map(|block| block.executions).sum();
-    let entry_idx_src = inner.index.pc_to_idxs.get(&entry_pc).map(Vec::as_slice);
+    let entry_idx_src = inner.index().pc_to_idxs.get(&entry_pc).map(Vec::as_slice);
     let entry_idxs_total = entry_idx_src.map_or(0, <[usize]>::len);
     let entry_idxs = entry_idx_src
         .map(|idxs| idxs.iter().take(50).copied().collect())
@@ -152,7 +152,7 @@ fn fn_summary_response(
     let callees = callees
         .into_iter()
         .map(|(pc, count)| {
-            let (func_name, _) = inner.symbols.lookup(pc);
+            let (func_name, _) = inner.symbols().lookup(pc);
             FnSummaryCallee {
                 pc: format!("{pc:#x}"),
                 func: (!func_name.is_empty()).then_some(func_name),

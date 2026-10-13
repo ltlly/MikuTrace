@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Evaluate traceMiku vm-ops --replay-plan JSON.
+"""Evaluate traceMiku experimental vm-ops --replay-plan JSON.
 
 This is intentionally trace-generic. It executes the compact
-``python_with_values`` expressions emitted by ``tracemiku-cli vm-ops
+``python_with_values`` expressions emitted by ``./tracemiku experimental vm-ops
 --replay-plan`` and reports which effects were computed from prior state versus
 which effects required observed trace values as a fallback.
 """
@@ -380,7 +380,7 @@ def generate_python_replay(
     redundant_seeds = redundant_seed_slots or []
     observed_byte_loads = replay_plan_observed_byte_loads(plan)
     lines = [
-        "# Generated from traceMiku vm-ops --replay-plan.",
+        "# Generated from traceMiku experimental vm-ops --replay-plan.",
         "# This is a generic trace replay skeleton, not a target-specific algorithm.",
         "# SUGGESTED_SEED_SLOTS are formula-derived from observed trace values.",
         "# EFFECTIVE_SEED_SLOTS are the minimized subset used by default.",
@@ -598,7 +598,7 @@ def seed_lineage_commands(
                 "suggested_value": suggestion.get("value"),
                 "addr": f"{addr:#x}",
                 "command": (
-                    "tracemiku-cli byte-lineage "
+                    "./tracemiku byte-lineage "
                     f"{trace_dir} --addr {addr:#x} --before-idx {idx} "
                     f"--depth {depth} --lookback {lookback} --compact"
                 ),

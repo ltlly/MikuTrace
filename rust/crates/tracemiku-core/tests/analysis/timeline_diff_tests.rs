@@ -77,12 +77,10 @@ fn reg_timeline_unknown_reg_is_invalid_argument() {
 #[test]
 fn mem_diff_compares_idx_minus_one_to_idx() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "mem-diff?idx=1&addr=0x7000&size=2");
+    let (status, v) = get(cd, "mem-dump?at=1&compare_at=0&addr=0x7000&count=2");
     assert_eq!(status, None);
     assert_eq!(v["status"], "ready");
-    assert_eq!(v["idx"], 1);
-    assert_eq!(v["changed_count"], 1);
-    assert_eq!(v["bytes"][0]["before"], 65);
-    assert_eq!(v["bytes"][0]["after"], 66);
-    assert_eq!(v["bytes"][1]["changed"], false);
+    assert_eq!(v["bytes"][0]["comparison"]["byte"], 65);
+    assert_eq!(v["bytes"][0]["byte"], 66);
+    assert_eq!(v["bytes"][1]["comparison"]["change"], "unchanged");
 }

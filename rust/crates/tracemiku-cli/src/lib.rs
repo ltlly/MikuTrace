@@ -1,12 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracemiku_core::analysis::{AnalysisContext, Query};
 
 use anyhow::{bail, Context};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 use tracemiku_core::analysis::reports::{
-    self as core_reports, list_calls, list_runs, mem_dump_summary, resolve_offset_to_idx,
-    split_csv, split_csv_allow_empty, OutputBacktraceOpts, OutputMapOpts, VmProfile,
+    self as core_reports, list_calls, list_runs, resolve_offset_to_idx, OutputBacktraceOpts,
+    VmProfile,
 };
 mod reports;
 use reports::*;
@@ -16,6 +16,7 @@ mod capabilities;
 use capabilities::*;
 mod args;
 use args::*;
+mod experimental;
 mod query;
 mod replay_command;
 mod vm_args;
@@ -33,53 +34,25 @@ pub fn run() -> anyhow::Result<()> {
             clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
             Ok(())
         }
-        Some(Cmd::Meta { trace_dir }) => query_json(trace_dir, Query::Meta),
         Some(Cmd::List { path, dir, json }) => cmd_list(path, dir, json),
         Some(Cmd::Info { path }) => cmd_info(path),
-        Some(Cmd::ResolveMapAddr { maps_file, addr }) => cmd_resolve_map_addr(maps_file, addr),
-        Some(Cmd::ResolveElfSymbol { elf_file, offset }) => {
-            cmd_resolve_elf_symbol(elf_file, offset)
-        }
         Some(Cmd::Records {
             trace_dir,
             start,
             count,
             regs,
             indices,
-        }) => {
-            if let Some(idx_str) = indices {
-                let idxs: Vec<usize> = idx_str
-                    .split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect();
-                let mut results = Vec::new();
-                if !idxs.is_empty() {
-                    // 批量查询复用同一个分析上下文，避免逐条重读 trace 与索引。
-                    let context = AnalysisContext::load(trace_dir)?;
-                    for idx in &idxs {
-                        let path = Query::Record(*idx);
-                        match query_value_on(&context, path) {
-                            Ok(v) => results.push(v),
-                            Err(_) => {
-                                results.push(serde_json::json!({"idx": idx, "error": "not found"}))
-                            }
-                        }
-                    }
-                }
-                print_pretty(&serde_json::Value::Array(results))?;
-                return Ok(());
-            }
-            let mut params = tracemiku_core::analysis::records::RecordsQuery {
+            detail,
+        }) => query_json(
+            trace_dir,
+            Query::Records(tracemiku_core::analysis::records::RecordsQuery {
                 start,
                 count,
-                ..Default::default()
-            };
-            if let Some(regs) = regs {
-                params.regs = regs;
-            }
-            query_json(trace_dir, Query::Records(params))
-        }
-        Some(Cmd::Record { trace_dir, idx }) => query_json(trace_dir, Query::Record(idx)),
+                regs,
+                indices,
+                detail,
+            }),
+        ),
         Some(Cmd::IdxsForPc {
             trace_dir,
             pc,
@@ -116,24 +89,28 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Cmd::Resolve {
             trace_dir,
+            maps,
             addr,
             so,
             off,
         }) => {
-            let mut params = tracemiku_core::analysis::resolve::ResolveQuery {
-                ..Default::default()
-            };
-            if let Some(addr) = addr {
-                params.addr = Some(addr);
+            if let Some(maps) = maps {
+                print_pretty(&core_reports::resolve_map_addr(
+                    maps,
+                    addr.context("--maps requires --addr")?,
+                )?)
+            } else {
+                query_json(
+                    trace_dir.context("provide a call directory or --maps")?,
+                    Query::Resolve(tracemiku_core::analysis::resolve::ResolveQuery {
+                        addr,
+                        so,
+                        off,
+                    }),
+                )
             }
-            if let Some(so) = so {
-                params.so = Some(so);
-            }
-            if let Some(off) = off {
-                params.off = Some(off);
-            }
-            query_json(trace_dir, Query::Resolve(params))
         }
+
         Some(Cmd::IndirectTargets {
             trace_dir,
             addr,
@@ -184,14 +161,6 @@ pub fn run() -> anyhow::Result<()> {
             }
             query_json(trace_dir, Query::RegAt(params))
         }
-        Some(Cmd::RegValueAt {
-            trace_dir,
-            idx,
-            reg,
-        }) => {
-            let params = tracemiku_core::analysis::reg_value_at::RegValueAtQuery { idx, reg };
-            query_json(trace_dir, Query::RegValueAt(params))
-        }
         Some(Cmd::LastWriteOfReg {
             trace_dir,
             reg,
@@ -220,112 +189,47 @@ pub fn run() -> anyhow::Result<()> {
             }
             query_json(trace_dir, Query::NextUseOfReg(params))
         }
-        Some(Cmd::Watch {
+        Some(Cmd::Functions { trace_dir, fn_id }) => query_json(
             trace_dir,
-            kind,
-            reg,
-            addr,
-            value,
-            size,
+            Query::FunctionsInspect(tracemiku_core::analysis::functions::FunctionsQuery {
+                fn_name: fn_id,
+            }),
+        ),
+        Some(Cmd::Cfg {
+            trace_dir,
+            fn_name,
+            pc,
+            hits,
+            coverage,
             cursor,
             limit,
-        }) => {
-            let mut params = tracemiku_core::analysis::watchpoints::WatchpointsQuery {
-                kind,
-                size,
+        }) => query_json(
+            trace_dir,
+            Query::CfgInspect(tracemiku_core::analysis::cfg::CfgInspectQuery {
+                fn_name: fn_name.unwrap_or_default(),
+                pc,
+                hits,
+                coverage,
                 cursor,
                 limit,
-                ..Default::default()
-            };
-            if let Some(reg) = reg {
-                params.reg = Some(reg);
-            }
-            if let Some(addr) = addr {
-                params.addr = Some(addr);
-            }
-            if let Some(value) = value {
-                params.value = Some(value);
-            }
-            query_json(trace_dir, Query::Watchpoints(params))
-        }
-        Some(Cmd::Functions { trace_dir }) => query_json(trace_dir, Query::Functions),
-        Some(Cmd::ForkEvents {
-            trace_dir,
-            status,
-            is_fork_like,
-            limit,
-        }) => {
-            let mut params = tracemiku_core::analysis::fork_events::ForkEventsQuery {
-                limit,
-                ..Default::default()
-            };
-            if let Some(status) = status {
-                params.status = Some(status);
-            }
-            if let Some(is_fork_like) = is_fork_like {
-                params.is_fork_like = Some(is_fork_like);
-            }
-            query_json(trace_dir, Query::ForkEvents(params))
-        }
-        Some(Cmd::Cfg { trace_dir, fn_name }) => {
-            let mut params = tracemiku_core::analysis::cfg::CfgQuery {
-                ..Default::default()
-            };
-            if let Some(name) = fn_name {
-                params.fn_name = name;
-            }
-            query_json(trace_dir, Query::Cfg(params))
-        }
-        Some(Cmd::IdxsForBlock {
-            trace_dir,
-            pc,
-            max_count,
-            near,
-        }) => {
-            let params = tracemiku_core::analysis::idxs_for_block::IdxsForBlockQuery {
-                pc,
-                max_count,
-                near,
-            };
-            query_json(trace_dir, Query::IdxsForBlock(params))
-        }
-        Some(Cmd::Block { trace_dir, pc }) => query_json(
-            trace_dir,
-            Query::Block(tracemiku_core::analysis::navigation::PcQuery { pc }),
+            }),
         ),
         Some(Cmd::Loops { trace_dir }) => query_json(trace_dir, Query::Loops),
-        Some(Cmd::Coverage {
-            trace_dir,
-            addr,
-            so,
-            off,
-            fn_name,
-        }) => {
-            let mut params = tracemiku_core::analysis::coverage::CoverageQuery {
-                ..Default::default()
-            };
-            if let Some(addr) = addr {
-                params.addr = Some(addr);
-            }
-            if let Some(so) = so {
-                params.so = Some(so);
-            }
-            if let Some(off) = off {
-                params.off = Some(off);
-            }
-            if let Some(fn_name) = fn_name {
-                params.fn_name = fn_name;
-            }
-            query_json(trace_dir, Query::Coverage(params))
-        }
         Some(Cmd::Backtrace {
             trace_dir,
             idx,
             limit,
-        }) => {
-            let params = tracemiku_core::analysis::navigation::BacktraceQuery { idx, limit };
-            query_json(trace_dir, Query::Backtrace(params))
-        }
+            lr_clues,
+        }) => query_json(
+            trace_dir,
+            Query::BacktraceInspect(
+                tracemiku_core::analysis::navigation::BacktraceInspectQuery {
+                    idx,
+                    limit,
+                    lr_clues,
+                },
+            ),
+        ),
         Some(Cmd::CallTree {
             trace_dir,
             max_depth,
@@ -337,14 +241,6 @@ pub fn run() -> anyhow::Result<()> {
                 params.max_depth = Some(depth);
             }
             query_json(trace_dir, Query::CallTree(params))
-        }
-        Some(Cmd::CallChain {
-            trace_dir,
-            idx,
-            depth,
-        }) => {
-            let params = tracemiku_core::analysis::navigation::CallChainQuery { idx, depth };
-            query_json(trace_dir, Query::CallChain(params))
         }
         Some(Cmd::Strings {
             trace_dir,
@@ -361,77 +257,47 @@ pub fn run() -> anyhow::Result<()> {
             };
             query_json(trace_dir, Query::Strings(params))
         }
-        Some(Cmd::StringProvenance {
-            trace_dir,
-            addr,
-            length,
-        }) => {
-            let params =
-                tracemiku_core::analysis::string_provenance::StringProvenanceQuery { addr, length };
-            query_json(trace_dir, Query::StringProvenance(params))
-        }
         Some(Cmd::MemDump {
-            trace_dir,
-            addr,
-            count,
-            cursor,
-            summary,
-            cstr,
-        }) => {
-            let mut params = tracemiku_core::analysis::mem_dump::MemDumpQuery {
-                addr,
-                count,
-                ..Default::default()
-            };
-            if let Some(cursor) = cursor {
-                params.cursor = Some(cursor);
-            }
-            let path = Query::MemDump(params);
-            if summary || cstr {
-                let value = query_value(trace_dir, path)?;
-                print_pretty(&mem_dump_summary(&value, cstr))
-            } else {
-                query_json(trace_dir, path)
-            }
-        }
-        Some(Cmd::MemTenet {
-            trace_dir,
-            addr,
-            length,
-        }) => cmd_mem_provenance(trace_dir, addr, length),
-        Some(Cmd::MemExport {
             trace_dir,
             addr,
             so,
             off,
-            len,
-            cursor,
+            count,
+            at,
+            compare_at,
             out,
         }) => {
-            let mut params = tracemiku_core::analysis::mem_export::MemExportQuery {
-                len: Some(len),
-                ..Default::default()
-            };
-            if let Some(addr) = addr {
-                params.addr = Some(addr);
+            let context = AnalysisContext::load(trace_dir)?;
+            let dump = tracemiku_core::analysis::mem_dump::mem_dump(
+                &context,
+                tracemiku_core::analysis::mem_dump::MemDumpQuery {
+                    addr: addr.unwrap_or_default(),
+                    so,
+                    off,
+                    count,
+                    at,
+                    compare_at,
+                },
+            )?;
+            if let Some(path) = out {
+                let bytes = tracemiku_core::analysis::mem_dump::export_bytes(&dump)?;
+                std::fs::write(&path, bytes)
+                    .with_context(|| format!("write {}", path.display()))?;
             }
-            if let Some(so) = so {
-                params.so = Some(so);
-            }
-            if let Some(off) = off {
-                params.off = Some(off);
-            }
-            if let Some(cursor) = cursor {
-                params.cursor = Some(cursor);
-            }
-            let path = Query::MemExport(params);
-            let value = query_value(trace_dir, path)?;
-            if let Some(out_path) = out {
-                cmd_mem_export_write(&value, &out_path)
-            } else {
-                print_pretty(&value)
-            }
+            print_pretty(&serde_json::to_value(dump)?)
         }
+
+        Some(Cmd::MemTenet {
+            trace_dir,
+            addr,
+            count,
+            at,
+        }) => query_json(
+            trace_dir,
+            Query::MemProvenance(
+                tracemiku_core::analysis::mem_provenance::MemProvenanceQuery { addr, count, at },
+            ),
+        ),
         Some(Cmd::LastWriteOfAddr {
             trace_dir,
             addr,
@@ -448,33 +314,24 @@ pub fn run() -> anyhow::Result<()> {
         Some(Cmd::IdxsTouchingAddr {
             trace_dir,
             addr,
-            cursor,
-            limit,
-            with_bytes,
-        }) => {
-            let params = tracemiku_core::analysis::memory_query::TouchingAddrQuery {
-                addr,
-                cursor,
-                limit,
-                with_bytes,
-            };
-            query_json(trace_dir, Query::IdxsTouchingAddr(params))
-        }
-        Some(Cmd::IdxsTouchingRange {
-            trace_dir,
-            addr,
             size,
-            cursor,
+            start,
+            end,
+            kind,
             limit,
-        }) => {
-            let params = tracemiku_core::analysis::memory_query::TouchingRangeQuery {
+            cursor,
+        }) => query_json(
+            trace_dir,
+            Query::MemAccesses(tracemiku_core::analysis::mem_accesses::MemAccessesQuery {
                 addr,
                 size,
-                cursor,
+                start,
+                end,
+                kind,
                 limit,
-            };
-            query_json(trace_dir, Query::IdxsTouchingRange(params))
-        }
+                cursor,
+            }),
+        ),
         Some(Cmd::FindMemPattern {
             trace_dir,
             bytes_hex,
@@ -554,51 +411,11 @@ pub fn run() -> anyhow::Result<()> {
             let value = query_value_on(&context, Query::BackwardTaint(params))?;
             print_pretty(&value)
         }
-        Some(Cmd::DataChase {
-            trace_dir,
-            start,
-            reg,
-            max_steps,
-            exclude_regs,
-        }) => {
-            let params = tracemiku_core::analysis::data_chase::DataChaseQuery {
-                start,
-                reg,
-                max_steps,
-                exclude_regs,
-            };
-            query_json(trace_dir, Query::DataChase(params))
-        }
-        Some(Cmd::DepGraph {
-            trace_dir,
-            idx,
-            reg,
-            addr,
-            before,
-            depth,
-            limit,
-        }) => {
-            let mut params = tracemiku_core::analysis::dep_graph::DepGraphQuery {
-                depth,
-                limit,
-                ..Default::default()
-            };
-            if let Some(idx) = idx {
-                params.idx = Some(idx);
-            }
-            if let Some(reg) = reg {
-                params.reg = Some(reg);
-            }
-            if let Some(addr) = addr {
-                params.addr = Some(addr);
-            }
-            if let Some(before) = before {
-                params.before = Some(before);
-            }
-            query_json(trace_dir, Query::DepGraph(params))
-        }
         Some(Cmd::BfsSlice {
             trace_dir,
+            direction,
+            view,
+            depth,
             idx,
             idxs,
             reg,
@@ -624,7 +441,7 @@ pub fn run() -> anyhow::Result<()> {
                 }
                 (None, None) => None,
             };
-            let mut params = tracemiku_core::analysis::bfs_slice::BfsSliceQuery {
+            let mut params = tracemiku_core::analysis::dependency_seeds::DependencySeeds {
                 limit,
                 data_only,
                 mode: Some(mode),
@@ -651,52 +468,17 @@ pub fn run() -> anyhow::Result<()> {
             if let Some(v) = before {
                 params.before = Some(v);
             }
-            let value = query_value_on(&context, Query::BfsSlice(params))?;
-            print_pretty(&value)
-        }
-        Some(Cmd::ForwardDepTree {
-            trace_dir,
-            idx,
-            reg,
-            addr,
-            before,
-            depth,
-            limit,
-            data_only,
-            so,
-            off,
-            occurrence,
-        }) => {
-            let context = AnalysisContext::load(trace_dir)?;
-            let resolved_idx = match (so.as_ref(), off.as_ref()) {
-                (Some(so), Some(off)) => {
-                    let (i, _pc) = resolve_offset_to_idx(&context, so, off, occurrence)?;
-                    Some(i)
-                }
-                (Some(_), None) | (None, Some(_)) => {
-                    bail!("forward-dep-graph --so and --off must be given together")
-                }
-                (None, None) => None,
-            };
-            let mut params = tracemiku_core::analysis::forward_dep_tree::ForwardDepTreeQuery {
-                depth,
-                limit,
-                data_only,
-                ..Default::default()
-            };
-            if let Some(v) = resolved_idx.or(idx) {
-                params.idx = Some(v);
-            }
-            if let Some(v) = reg {
-                params.reg = Some(v);
-            }
-            if let Some(v) = addr {
-                params.addr = Some(v);
-            }
-            if let Some(v) = before {
-                params.before = Some(v);
-            }
-            let value = query_value_on(&context, Query::ForwardDepTree(params))?;
+            let value = query_value_on(
+                &context,
+                Query::Dependencies(
+                    tracemiku_core::analysis::dependency_query::DependencyQuery {
+                        seeds: params,
+                        direction,
+                        view,
+                        depth,
+                    },
+                ),
+            )?;
             print_pretty(&value)
         }
         Some(Cmd::RegTimeline {
@@ -705,200 +487,43 @@ pub fn run() -> anyhow::Result<()> {
             start,
             end,
             max_points,
-        }) => {
-            let params = tracemiku_core::analysis::timeline_diff::RegTimelineQuery {
+            equals,
+        }) => query_json(
+            trace_dir,
+            Query::RegInspect(tracemiku_core::analysis::timeline_diff::RegInspectQuery {
                 reg,
                 start,
                 end,
                 max_points,
-            };
-            query_json(trace_dir, Query::RegTimeline(params))
-        }
-        Some(Cmd::MemDiff {
-            trace_dir,
-            idx,
-            addr,
-            size,
-        }) => {
-            let params = tracemiku_core::analysis::timeline_diff::MemDiffQuery { idx, addr, size };
-            query_json(trace_dir, Query::MemDiff(params))
-        }
-        Some(Cmd::MemFlow {
-            trace_dir,
-            addr,
-            count,
-            idx_lo,
-            idx_hi,
-            events_per_byte,
-            writers_only,
-            readers_only,
-        }) => {
-            let mut params = tracemiku_core::analysis::mem_flow::MemFlowQuery {
-                addr,
-                count,
-                events_per_byte,
-                writers_only,
-                readers_only,
-                ..Default::default()
-            };
-            if let Some(idx_lo) = idx_lo {
-                params.idx_lo = Some(idx_lo);
-            }
-            if let Some(idx_hi) = idx_hi {
-                params.idx_hi = Some(idx_hi);
-            }
-            query_json(trace_dir, Query::MemFlow(params))
-        }
-        Some(Cmd::MemWritesInRange {
-            trace_dir,
-            idx_lo,
-            idx_hi,
-            addr_lo,
-            addr_hi,
-            src_byte,
-            with_external,
-            max,
-        }) => {
-            let mut params = tracemiku_core::analysis::memory_query::MemWritesInRangeQuery {
-                idx_lo,
-                idx_hi,
-                max,
-                with_external,
-                ..Default::default()
-            };
-            if let Some(addr_lo) = addr_lo {
-                params.addr_lo = Some(addr_lo);
-            }
-            if let Some(addr_hi) = addr_hi {
-                params.addr_hi = Some(addr_hi);
-            }
-            if let Some(src_byte) = src_byte {
-                params.src_byte = Some(src_byte);
-            }
-            query_json(trace_dir, Query::MemWritesInRange(params))
-        }
-        Some(Cmd::ByteWriterMap {
-            trace_dir,
-            addr,
-            size,
-            idx_lo,
-            idx_hi,
-            max,
-            vm_chain_steps,
-            vm_chain_runs,
-            vm_chain_lookback,
-            vm_chain_follow_frontier,
-            summary,
-            vm,
-        }) => {
-            let profile = if vm_chain_steps > 0 && vm_chain_runs > 0 {
-                vm.into_profile()?
-            } else {
-                VmProfile::disabled()
-            };
-            cmd_byte_writer_map(
-                trace_dir,
-                addr,
-                size,
-                idx_lo,
-                idx_hi,
-                max,
-                vm_chain_steps,
-                vm_chain_runs,
-                vm_chain_lookback,
-                vm_chain_follow_frontier,
-                summary,
-                profile,
-            )
-        }
-        Some(Cmd::FnSummary {
-            trace_dir,
-            fn_name,
-            top_blocks,
-        }) => {
-            let params = tracemiku_core::analysis::fn_summary::FnSummaryQuery {
-                fn_name,
-                top_blocks,
-            };
-            query_json(trace_dir, Query::FnSummary(params))
-        }
-        Some(Cmd::Crypto { trace_dir }) => query_json(trace_dir, Query::CryptoAnalysis),
-        Some(Cmd::MemWriteBursts {
-            trace_dir,
-            window,
-            min_size,
-            limit,
-            map_bytes,
-            map_candidates,
-            nonzero_only,
-            target_bytes,
-        }) => cmd_mem_write_bursts(
-            trace_dir,
-            window,
-            min_size,
-            limit,
-            map_bytes,
-            map_candidates,
-            nonzero_only,
-            target_bytes,
+                equals,
+            }),
         ),
-        Some(Cmd::HashInputSearch {
-            trace_dir,
-            target_bytes,
-            inputs,
-            keys,
-            algos,
-            combos,
-            prefix_bytes,
-            search_in_mem,
-        }) => {
-            let request = tracemiku_core::analysis::hash_input_search::HashInputSearchRequest {
-                target_bytes,
-                inputs: split_csv(&inputs),
-                keys: split_csv_allow_empty(&keys),
-                algos: split_csv(&algos),
-                combos: split_csv(&combos),
-                prefix_bytes,
-                search_in_mem,
-            };
-            query_json(trace_dir, Query::HashInputSearch(request))
-        }
+        Some(Cmd::Crypto { trace_dir }) => query_json(trace_dir, Query::CryptoAnalysis),
         Some(Cmd::JniCalls {
             trace_dir,
             in_fn,
-            max,
-        }) => {
-            let mut params = tracemiku_core::analysis::jni_calls::JniCallsQuery {
-                max,
-                ..Default::default()
-            };
-            if let Some(in_fn) = in_fn {
-                params.in_fn = Some(in_fn);
-            }
-            query_json(trace_dir, Query::JniCalls(params))
-        }
-        Some(Cmd::JniEvents {
-            trace_dir,
-            id,
-            idx_lo,
-            idx_hi,
+            name,
+            jobject,
+            start,
+            end,
+            cursor,
             limit,
-        }) => {
-            let mut params = tracemiku_core::analysis::jni_events::JniEventsQuery {
+            strings,
+            max_len,
+        }) => query_json(
+            trace_dir,
+            Query::JniInspect(tracemiku_core::analysis::jni_calls::JniInspectQuery {
+                in_fn,
+                name,
+                jobject,
+                start,
+                end,
+                cursor,
                 limit,
-                ..Default::default()
-            };
-            if let Some(id) = id {
-                params.id = Some(id);
-            }
-            if let Some(idx_lo) = idx_lo {
-                params.idx_lo = Some(idx_lo);
-            }
-            if let Some(idx_hi) = idx_hi {
-                params.idx_hi = Some(idx_hi);
-            }
-            query_json(trace_dir, Query::JniEvents(params))
-        }
+                strings,
+                max_len,
+            }),
+        ),
         Some(Cmd::OutputBacktrace {
             trace_dir,
             value,
@@ -908,20 +533,11 @@ pub fn run() -> anyhow::Result<()> {
             writes_per_hit,
             taint_seeds,
             taint_max_count,
-            vm_chain_steps,
-            vm_chain_runs,
-            vm_chain_lookback,
-            vm_chain_follow_frontier,
-            vm,
+
             skip_taint,
             no_url_decode,
             no_base64_decode,
         }) => {
-            let vm_profile = if vm_chain_steps > 0 && vm_chain_runs > 0 {
-                vm.into_profile()?
-            } else {
-                VmProfile::disabled()
-            };
             let opts = OutputBacktraceOpts {
                 value,
                 bytes_hex,
@@ -930,137 +546,12 @@ pub fn run() -> anyhow::Result<()> {
                 writes_per_hit,
                 taint_seeds,
                 taint_max_count,
-                vm_chain_steps,
-                vm_chain_runs,
-                vm_chain_lookback,
-                vm_chain_follow_frontier,
-                vm_profile,
+
                 skip_taint,
                 url_decode: !no_url_decode,
                 base64_decode: !no_base64_decode,
             };
             cmd_output_backtrace(trace_dir, opts)
-        }
-        Some(Cmd::OutputMap {
-            trace_dir,
-            value,
-            at_idx,
-            max_mem_hits,
-            hit_rank,
-            hit_order,
-            group_start,
-            groups,
-            semantic_offset,
-            semantic_count,
-            tree_depth,
-            tree_max_nodes,
-            index_tree_depth,
-            index_tree_max_nodes,
-            tree_frontier_with_next,
-            lookback,
-            no_url_decode,
-            base64_tail_start,
-            base64_tail_align_prefix,
-            base64_tail_drop,
-            semantic_writer_map,
-            semantic_writer_map_idx_hi,
-            semantic_writer_map_max,
-            semantic_writer_map_vm_chain_steps,
-            semantic_writer_map_vm_chain_runs,
-            semantic_writer_map_vm_chain_bytes,
-            semantic_writer_map_vm_chain_lookback,
-            semantic_writer_map_vm_chain_follow_frontier,
-            vm,
-            summary,
-        }) => {
-            let needs_vm_profile = tree_depth > 0
-                || index_tree_depth > 0
-                || (semantic_writer_map_vm_chain_steps > 0
-                    && semantic_writer_map_vm_chain_runs > 0);
-            let vm_profile = if needs_vm_profile {
-                vm.into_profile()?
-            } else {
-                VmProfile::disabled()
-            };
-            let opts = OutputMapOpts {
-                value,
-                at_idx,
-                max_mem_hits,
-                hit_rank,
-                hit_order: hit_order.into(),
-                group_start,
-                groups,
-                semantic_offset,
-                semantic_count,
-                tree_depth,
-                tree_max_nodes,
-                index_tree_depth,
-                index_tree_max_nodes,
-                tree_frontier_with_next,
-                lookback,
-                url_decode: !no_url_decode,
-                base64_tail_start,
-                base64_tail_align_prefix,
-                base64_tail_drop,
-                semantic_writer_map,
-                semantic_writer_map_idx_hi,
-                semantic_writer_map_max,
-                semantic_writer_map_vm_chain_steps,
-                semantic_writer_map_vm_chain_runs,
-                semantic_writer_map_vm_chain_bytes,
-                semantic_writer_map_vm_chain_lookback,
-                semantic_writer_map_vm_chain_follow_frontier,
-                vm_profile,
-                summary,
-            };
-            cmd_output_map(trace_dir, opts)
-        }
-        Some(Cmd::VmSlice {
-            trace_dir,
-            start,
-            end,
-            count,
-            regs,
-            only_vm,
-            vm,
-            base_ip,
-        }) => {
-            let profile = vm.into_profile()?;
-            cmd_vm_slice(
-                trace_dir, start, end, count, regs, only_vm, base_ip, profile,
-            )
-        }
-        Some(Cmd::VmOps {
-            trace_dir,
-            start,
-            end,
-            count,
-            regs,
-            vm,
-            base_ip,
-            max_ops,
-            chunk_size,
-            summary,
-            effects_only,
-            compact,
-            replay_plan,
-        }) => {
-            let profile = vm.into_profile()?;
-            cmd_vm_ops(
-                trace_dir,
-                start,
-                end,
-                count,
-                regs,
-                base_ip,
-                max_ops,
-                chunk_size,
-                summary,
-                effects_only,
-                compact,
-                replay_plan,
-                profile,
-            )
         }
         Some(Cmd::ByteLineage {
             trace_dir,
@@ -1078,105 +569,34 @@ pub fn run() -> anyhow::Result<()> {
             trace_dir, addr, before_idx, count, depth, context, lookback, max_writes, regs,
             summary, compact,
         ),
-        Some(Cmd::VmBackstep {
+        Some(Cmd::Finalize { path }) => cmd_finalize(&path),
+        Some(Cmd::Events {
             trace_dir,
-            idx,
-            reg,
-            context,
-            lookback,
-            max_writes,
-            regs,
-            vm,
-        }) => {
-            let profile = vm.into_profile()?;
-            cmd_vm_backstep(
-                trace_dir, idx, reg, context, lookback, max_writes, regs, profile,
-            )
-        }
-        Some(Cmd::VmBackchain {
-            trace_dir,
-            idx,
-            reg,
-            steps,
-            context,
-            lookback,
-            max_writes,
-            follow_frontier,
-            byte_lane,
-            summary,
-            regs,
-            vm,
-        }) => {
-            let profile = vm.into_profile()?;
-            cmd_vm_backchain(
-                trace_dir,
-                idx,
-                reg,
-                steps,
-                context,
-                lookback,
-                max_writes,
-                follow_frontier,
-                byte_lane,
-                regs,
-                summary,
-                profile,
-            )
-        }
-        Some(Cmd::VmBacktree {
-            trace_dir,
-            idx,
-            reg,
-            depth,
-            max_nodes,
-            context,
-            lookback,
-            max_writes,
-            frontier_with_next,
-            summary,
-            regs,
-            vm,
-        }) => {
-            let profile = vm.into_profile()?;
-            cmd_vm_backtree(
-                trace_dir,
-                idx,
-                reg,
-                depth,
-                max_nodes,
-                context,
-                lookback,
-                max_writes,
-                frontier_with_next,
-                summary,
-                regs,
-                profile,
-            )
-        }
-        Some(Cmd::JobjHistory {
-            trace_dir,
-            jobject,
+            source,
+            id,
+            status,
+            is_fork_like,
             start,
             end,
-            max,
+            cursor,
+            limit,
         }) => {
-            let params = tracemiku_core::analysis::jobj_history::JobjHistoryQuery {
-                jobject,
-                start,
-                end,
-                max,
-            };
-            query_json(trace_dir, Query::JobjHistory(params))
+            let result = tracemiku_core::analysis::events::read_events(
+                &trace_dir,
+                tracemiku_core::analysis::events::EventsQuery {
+                    source,
+                    id,
+                    status,
+                    is_fork_like,
+                    start,
+                    end,
+                    cursor,
+                    limit,
+                },
+            )?;
+            print_pretty(&serde_json::to_value(result)?)
         }
-        Some(Cmd::JniStrings {
-            trace_dir,
-            max,
-            max_len,
-        }) => {
-            let params = tracemiku_core::analysis::jni_strings::JniStringsQuery { max, max_len };
-            query_json(trace_dir, Query::JniStrings(params))
-        }
-        Some(Cmd::Finalize { path }) => cmd_finalize(&path),
+        Some(Cmd::Experimental { command }) => experimental::run(command),
         None => {
             eprintln!("run with --help to list Rust v2 CLI commands");
             Ok(())

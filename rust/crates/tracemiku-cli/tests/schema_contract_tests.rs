@@ -23,10 +23,9 @@ fn schema_dir() -> PathBuf {
     repo_root().join("docs").join("schema")
 }
 
-const EXPECTED_SCHEMAS: [&str; 7] = [
+const EXPECTED_SCHEMAS: [&str; 6] = [
     "replay-report.schema.json",
     "backtrace-report.schema.json",
-    "output-map-report.schema.json",
     "vm-slice-report.schema.json",
     "vm-ops-report.schema.json",
     "lineage-row.schema.json",

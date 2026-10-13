@@ -81,10 +81,11 @@ fn discovery_is_compact_unique_and_has_no_retired_commands() {
                 "schema_version": {"const": 2},
                 "tool": {"const": "tracemiku"},
                 "commands": {"type": "array", "items": {
-                    "type": "object", "required": ["name", "about", "implementation"],
+                    "type": "object", "required": ["name", "about", "implementation", "stability"],
                     "properties": {
                         "name": {"type": "string"}, "about": {"type": "string"},
-                        "implementation": {"enum": ["host", "rust"]}
+                        "implementation": {"enum": ["host", "rust"]},
+                        "stability": {"enum": ["stable", "experimental"]}
                     }
                 }}
             }
@@ -104,7 +105,7 @@ fn discovery_is_compact_unique_and_has_no_retired_commands() {
         "capabilities",
         "records",
         "resolve",
-        "vm-ops",
+        "experimental",
     ] {
         assert!(names.contains(name), "missing {name}");
     }
@@ -172,7 +173,7 @@ fn specialized_queries_and_metadata_use_the_same_rust_contract() {
     let run = cd.parent().unwrap().parent().unwrap().to_str().unwrap();
     for args in [
         vec!["records", call, "--count", "2", "--regs", "x0,sp"],
-        vec!["reg-value-at", call, "--idx", "0", "--reg", "x0"],
+        vec!["records", call, "--indices", "0", "--regs", "x0"],
         vec!["resolve", call, "--so", "libt.so", "--off", "0x100"],
         vec!["list", run, "--json"],
         vec!["info", call],
@@ -183,6 +184,34 @@ fn specialized_queries_and_metadata_use_the_same_rust_contract() {
 
 #[test]
 fn every_discoverable_command_and_argument_has_help() {
+    fn check(command: &Value, path: Vec<&str>) {
+        let name = path.join(" ");
+        assert!(
+            !command["about"].as_str().unwrap_or("").trim().is_empty(),
+            "{name}"
+        );
+        for arg in command["args"].as_array().unwrap() {
+            assert!(
+                !arg["help"].as_str().unwrap_or("").trim().is_empty(),
+                "{name}: missing help for {}",
+                arg["id"]
+            );
+        }
+        for flag in ["-h", "--help"] {
+            let mut args = path.clone();
+            args.push(flag);
+            let output = entry(&args);
+            assert!(output.status.success(), "{name} {flag}");
+            assert!(String::from_utf8_lossy(&output.stdout).contains(path.last().unwrap()));
+        }
+        for child in command["subcommands"].as_array().unwrap() {
+            let mut child_path = path.clone();
+            child_path.push(child["name"].as_str().unwrap());
+            let detail = entry_json(&["capabilities", "--command", &child_path.join(" ")]);
+            assert_eq!(detail["commands"][0]["stability"], "experimental");
+            check(child, child_path);
+        }
+    }
     let caps = entry_json(&["capabilities"]);
     for command in caps["commands"].as_array().unwrap() {
         let name = command["name"].as_str().unwrap();
@@ -191,19 +220,7 @@ fn every_discoverable_command_and_argument_has_help() {
             "{name}"
         );
         let detail = entry_json(&["capabilities", "--command", name]);
-        for arg in detail["commands"][0]["args"].as_array().unwrap() {
-            assert!(
-                !arg["help"].as_str().unwrap_or("").trim().is_empty(),
-                "{name}: missing help for {}",
-                arg["id"]
-            );
-        }
-        for flag in ["-h", "--help"] {
-            let output = entry(&[name, flag]);
-            assert!(output.status.success(), "{name} {flag}");
-            let help = String::from_utf8_lossy(&output.stdout);
-            assert!(help.contains(name), "{name} {flag}: missing command name");
-        }
+        check(&detail["commands"][0], vec![name]);
     }
 }
 

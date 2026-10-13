@@ -21,10 +21,6 @@ petgraph.workspace = true
 sha2.workspace = true
 
 regex.workspace = true
-sha1.workspace = true
-md-5.workspace = true
-hmac.workspace = true
-crc32fast.workspace = true
 base64.workspace = true
 
 [dev-dependencies]

@@ -69,7 +69,7 @@ fn idxs_for_block_response(
     let mut idxs = Vec::new();
     let mut pc = start;
     loop {
-        if let Some(hit_idxs) = inner.index.pc_to_idxs.get(&pc) {
+        if let Some(hit_idxs) = inner.index().pc_to_idxs.get(&pc) {
             idxs.extend(hit_idxs.iter().copied());
         }
         if end.saturating_sub(pc) < 4 {

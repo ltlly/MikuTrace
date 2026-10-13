@@ -1,8 +1,4 @@
-//! Boundary contract tests for mem-diff.
-//!
-//! Covers the mem_diff branches beyond `timeline_contract_tests`'s
-//! reg_timeline focus: size clamping, byte change detection across a trace
-//! idx boundary, invalid-addr fallback, and the no-change shape.
+//! 内存比较的时间边界、无效参数和未知证据契约。
 
 use super::analysis_support;
 use std::fs;
@@ -51,42 +47,44 @@ fn mem_diff_detects_byte_change_across_idx() {
     // idx 1: the store at idx 0 wrote 0x4142..; before_t = idx-1 = 0 includes
     // the idx-0 store, after_t = 1 is after it — both see 0x48 (first byte
     // of x0 in little-endian), so this range is unchanged across idx 1.
-    let (status, v) = get_json(cd, "mem-diff?idx=1&addr=0x7000&size=8");
+    let (status, v) = get_json(cd, "mem-dump?at=1&compare_at=0&addr=0x7000&count=8");
     assert_eq!(status, None);
-    assert_eq!(v["size"], 8);
+    assert_eq!(v["count"], 8);
     let bytes = v["bytes"].as_array().unwrap();
     assert_eq!(bytes.len(), 8);
     let first = &bytes[0];
-    assert_eq!(first["before"], 0x48, "idx-0 store visible before idx 1");
-    assert_eq!(first["after"], 0x48, "x0=0x4142.. writes 0x48 first");
-    assert_eq!(v["changed_count"], 0, "no change across idx 1");
+    assert_eq!(
+        first["comparison"]["byte"], 0x48,
+        "idx-0 store visible before idx 1"
+    );
+    assert_eq!(first["byte"], 0x48, "x0=0x4142.. writes 0x48 first");
+    assert!(bytes
+        .iter()
+        .all(|b| b["comparison"]["change"] == "unchanged"));
 }
 
 #[test]
-fn mem_diff_zero_size_clamps_to_one() {
+fn memory_comparison_rejects_zero_count() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-diff?idx=1&addr=0x7000&size=0");
-    assert_eq!(status, None);
-    assert_eq!(v["size"], 1, "size 0 clamped to 1");
+    let (status, _) = get_json(cd, "mem-dump?at=1&compare_at=0&addr=0x7000&count=0");
+    assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]
-fn mem_diff_invalid_addr_falls_back_to_zero() {
+fn memory_comparison_rejects_invalid_address() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-diff?idx=1&addr=zz&size=4");
-    assert_eq!(status, None);
-    // addr=0 (fallback); bytes still present with addresses starting 0x0.
-    let bytes = v["bytes"].as_array().unwrap();
-    assert_eq!(bytes.len(), 4);
-    assert_eq!(bytes[0]["addr"], "0x0");
+    let (status, _) = get_json(cd, "mem-dump?at=1&compare_at=0&addr=zz&count=4");
+    assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]
-fn mem_diff_unchanged_range_reports_zero_changed() {
+fn memory_comparison_marks_unobserved_range_unknown() {
     let (_tmp, cd) = synth_call_dir();
-    // Address 0x9000 was never written: before == after == null everywhere.
-    let (status, v) = get_json(cd, "mem-diff?idx=1&addr=0x9000&size=8");
+    let (status, v) = get_json(cd, "mem-dump?at=1&compare_at=0&addr=0x9000&count=8");
     assert_eq!(status, None);
-    assert_eq!(v["changed_count"], 0);
-    assert_eq!(v["status"], "ready");
+    assert!(v["bytes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|b| b["byte"].is_null() && b["comparison"]["change"] == "unknown"));
 }

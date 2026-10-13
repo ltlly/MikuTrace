@@ -6,7 +6,6 @@
 //! 截断元数据现状（字段名已被 contract_* 契约测试锁定，统一或改名需
 //! 全链路同步，故先在此登记）：
 //!
-//! - `byte-writer-map`：`truncated` + `complete` + `warning` 三字段组合；
 //! - `byte-lineage`（`--count > 1` 批量模式）：`status: "partial_error"` +
 //!   `error_count` 数量字段。
 //!
@@ -34,28 +33,3 @@ pub const BACKTRACE_NOTES: [&str; 2] = [
     "This report intentionally starts at the observed output and walks upward through memory writers and register taint.",
     "Continue with patterns[].hit_reports[].writer_seeds or taint.runs[].summary.function_counts to choose the next function to decompile.",
 ];
-
-/// base64-map top level: `output_base64_group_map` report (full mode).
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct OutputMapReport {
-    pub status: &'static str,
-    pub strategy: &'static str,
-    pub source: serde_json::Value,
-    pub text_len: usize,
-    pub base64_context: serde_json::Value,
-    pub group_total: usize,
-    pub selected_group_start: usize,
-    pub selected_group_end: usize,
-    pub selected_semantic_range: Option<serde_json::Value>,
-    pub selected_hit_order: String,
-    pub selected_hit_rank: usize,
-    pub tree_frontier_with_next: bool,
-    pub index_tree_depth: usize,
-    pub index_tree_max_nodes: usize,
-    pub hit_candidates: Vec<serde_json::Value>,
-    pub selected_hit: Option<serde_json::Value>,
-    pub selected_range: serde_json::Value,
-    pub find_mem_pattern: serde_json::Value,
-    pub semantic_writer_map: serde_json::Value,
-    pub groups: Vec<serde_json::Value>,
-}

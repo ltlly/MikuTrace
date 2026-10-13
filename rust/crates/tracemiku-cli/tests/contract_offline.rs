@@ -38,7 +38,6 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
     let (_tmp, cd) = synth_deep_dir();
     let context = AnalysisContext::load(cd.clone()).unwrap();
     let cases: Vec<(&str, Vec<&str>, Query)> = vec![
-        ("meta", vec![], Query::Meta),
         (
             "trace-replay",
             vec!["--start", "0", "--count", "9"],
@@ -49,9 +48,30 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             vec!["--start", "1", "--count", "3", "--regs", "x0,x1"],
             Query::Records(request(json!({"start":1,"count":3,"regs":"x0,x1"}))),
         ),
-        ("record", vec!["1"], Query::Record(1)),
-        ("cfg", vec![], Query::Cfg(request(json!({})))),
-        ("functions", vec![], Query::Functions),
+        (
+            "records",
+            vec!["--indices", "1", "--detail"],
+            Query::Records(request(json!({"indices":[1],"detail":true}))),
+        ),
+        (
+            "cfg",
+            vec![],
+            Query::CfgInspect(request(
+                json!({"fn_name":"","pc":null,"hits":false,"coverage":false,"cursor":0,"limit":100}),
+            )),
+        ),
+        (
+            "cfg",
+            vec!["--pc", "100000", "--coverage", "--hits"],
+            Query::CfgInspect(request(
+                json!({"fn_name":"","pc":"100000","hits":true,"coverage":true,"cursor":0,"limit":100}),
+            )),
+        ),
+        (
+            "functions",
+            vec!["--fn", "f_root"],
+            Query::FunctionsInspect(request(json!({"fn_name":"f_root"}))),
+        ),
         (
             "search",
             vec!["ret", "--max-results", "4", "--cursor", "4"],
@@ -59,18 +79,8 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
         ),
         (
             "backtrace",
-            vec!["--idx", "4", "--limit", "10"],
-            Query::Backtrace(request(json!({"idx":4,"limit":10}))),
-        ),
-        (
-            "block",
-            vec!["--pc", "0x100000"],
-            Query::Block(request(json!({"pc":"0x100000"}))),
-        ),
-        (
-            "block-hits",
-            vec!["--pc", "0x100000", "--max-count", "10", "--near", "4"],
-            Query::IdxsForBlock(request(json!({"pc":"0x100000","max_count":10,"near":4}))),
+            vec!["--idx", "4", "--limit", "10", "--lr-clues"],
+            Query::BacktraceInspect(request(json!({"idx":4,"limit":10,"lr_clues":true}))),
         ),
         (
             "strings",
@@ -78,33 +88,34 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             Query::Strings(request(json!({"min_len":4,"cursor":-1,"limit":20}))),
         ),
         (
-            "mem-byte-history",
-            vec!["--addr", "0x2000", "--length", "4"],
-            Query::StringProvenance(request(json!({"addr":"0x2000","length":4}))),
-        ),
-        (
             "mem-dump",
-            vec!["--addr", "0x2000", "--count", "8"],
-            Query::MemDump(request(json!({"addr":"0x2000","count":8}))),
+            vec![
+                "--addr",
+                "2000",
+                "--count",
+                "8",
+                "--at",
+                "7",
+                "--compare-at",
+                "1",
+            ],
+            Query::MemDump(request(
+                json!({"addr":"2000","count":8,"at":7,"compare_at":1}),
+            )),
         ),
         (
-            "mem-writes-in-range",
+            "mem-accesses",
             vec![
-                "--idx-lo",
-                "0",
-                "--idx-hi",
-                "9",
-                "--addr-lo",
-                "0x2000",
-                "--addr-hi",
-                "0x2008",
-                "--with-external",
-                "--max",
-                "5",
+                "--addr", "2000", "--size", "8", "--start", "1", "--end", "9", "--limit", "5",
             ],
-            Query::MemWritesInRange(request(
-                json!({"idx_lo":0,"idx_hi":9,"addr_lo":"0x2000","addr_hi":"0x2008","with_external":true,"max":5}),
+            Query::MemAccesses(request(
+                json!({"addr":"2000","size":8,"start":1,"end":9,"limit":5,"cursor":0,"kind":"all"}),
             )),
+        ),
+        (
+            "mem-provenance",
+            vec!["--addr", "2000", "--count", "4", "--at", "7"],
+            Query::MemProvenance(request(json!({"addr":"2000","count":4,"at":7}))),
         ),
         (
             "last-write-of-reg",
@@ -127,45 +138,31 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             )),
         ),
         (
-            "jni-events",
-            vec!["--limit", "10"],
-            Query::JniEvents(request(json!({"limit":10}))),
-        ),
-        (
             "resolve",
             vec!["--so", "libt.so", "--off", "0x0"],
             Query::Resolve(request(json!({"so":"libt.so","off":"0x0"}))),
         ),
-        (
-            "branch-coverage",
-            vec!["--addr", "0x100000"],
-            Query::Coverage(request(json!({"addr":"0x100000"}))),
-        ),
         ("loops", vec![], Query::Loops),
         (
-            "block",
-            vec!["--pc", "0x100000"],
-            Query::Block(request(json!({"pc":"0x100000"}))),
-        ),
-        (
             "reg-timeline",
-            vec!["--reg", "x0", "--start", "0", "--end", "9"],
-            Query::RegTimeline(request(json!({"reg":"x0","start":0,"end":9}))),
+            vec!["--reg", "x0", "--start", "0", "--end", "9", "--equals", "0"],
+            Query::RegInspect(request(
+                json!({"reg":"x0","start":0,"end":9,"max_points":1000,"equals":"0"}),
+            )),
         ),
         (
-            "mem-flow",
-            vec!["--addr", "0x2000", "--count", "4"],
-            Query::MemFlow(request(json!({"addr":"0x2000","count":4}))),
+            "bfs-slice",
+            vec!["--idx", "4", "--view", "graph", "--direction", "forward"],
+            Query::Dependencies(request(
+                json!({"seeds":{"idx":4,"mode":"union"},"view":"graph","direction":"forward","depth":null}),
+            )),
         ),
         (
-            "fn-summary",
-            vec!["--fn", "f_root"],
-            Query::FnSummary(request(json!({"fn":"f_root"}))),
-        ),
-        (
-            "mem-accesses",
-            vec!["--addr", "0x2000", "--with-bytes"],
-            Query::IdxsTouchingAddr(request(json!({"addr":"0x2000","with_bytes":true}))),
+            "jni-calls",
+            vec!["--strings", "--limit", "10"],
+            Query::JniInspect(request(
+                json!({"in_fn":null,"name":null,"jobject":null,"start":0,"end":null,"cursor":0,"limit":10,"strings":true,"max_len":256}),
+            )),
         ),
     ];
     for (name, flags, query) in cases {
@@ -188,7 +185,10 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
 fn core_query_failures_keep_machine_readable_limits() {
     let (_tmp, cd) = synth_deep_dir();
     for (args, code) in [
-        (vec!["record", cd.to_str().unwrap(), "9999"], "not_found"),
+        (
+            vec!["records", cd.to_str().unwrap(), "--indices", "9999"],
+            "not_found",
+        ),
         (
             vec!["mem-dump", cd.to_str().unwrap(), "--addr", "not-an-address"],
             "invalid_argument",
@@ -209,21 +209,21 @@ fn core_query_failures_keep_machine_readable_limits() {
 }
 
 #[test]
-fn writer_evidence_points_to_a_public_command() {
+fn writer_evidence_is_available_through_unified_provenance() {
     let (_tmp, cd) = synth_deep_dir();
     let out = entry(&[
-        "byte-writer-map",
+        "mem-provenance",
         cd.to_str().unwrap(),
         "--addr",
-        "0x2000",
-        "--size",
+        "2000",
+        "--count",
         "4",
     ]);
     assert!(out.status.success());
     let value: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["source"]["command"], "mem-writes-in-range");
-    assert!(value["source"].get("endpoint").is_none());
-    assert!(!value["bytes"].as_array().unwrap().is_empty());
+    assert_eq!(value["bytes"][0]["last_writer"]["idx"], 7);
+    assert_eq!(value["bytes"][0]["last_writer"]["source"], "trace");
+    assert_eq!(value["bytes"][0]["byte"], 33);
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn lazy_indexes_do_not_change_annotations_or_external_writes() {
     .unwrap();
     let queries: [fn() -> Query; 4] = [
         || Query::Record(1),
-        || Query::RegValueAt(request(json!({"idx":1,"reg":"x1"}))),
+        || Query::Records(request(json!({"indices":[1],"regs":"x1"}))),
         || Query::IdxsTouchingRange(request(json!({"addr":"0x2000","size":4}))),
         || Query::IdxsTouchingAddr(request(json!({"addr":"0x2000","with_bytes":true}))),
     ];

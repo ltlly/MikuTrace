@@ -133,13 +133,11 @@ fn bfs_slice_resolves_addr_seed() {
 }
 
 #[test]
-fn bfs_slice_missing_seed_returns_note() {
+fn bfs_slice_missing_seed_is_invalid() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(cd, "bfs-slice");
-    assert_eq!(status, None);
-    assert_eq!(v["seed"]["kind"], "none");
-    assert_eq!(v["slice_count"], 0);
-    assert!(v["seed"]["note"].as_str().unwrap().contains("provide"));
+    assert_eq!(status, Some("invalid_argument"));
+    assert!(v["error"].as_str().unwrap().contains("seeds"));
 }
 
 #[test]
@@ -238,11 +236,10 @@ fn bfs_slice_multi_seed_regs_resolves_each() {
 }
 
 #[test]
-fn bfs_slice_intersection_alias_accepted() {
+fn bfs_slice_rejects_unadvertised_mode() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "bfs-slice?idxs=3,4&mode=intersect");
-    assert_eq!(status, None);
-    assert_eq!(v["mode"], "intersection");
+    let (status, _) = get(cd, "bfs-slice?idxs=3,4&mode=intersect");
+    assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]
@@ -279,38 +276,25 @@ fn bfs_slice_all_seeds_outside_returns_empty_slice_with_notes() {
 }
 
 #[test]
-fn bfs_slice_intersection_with_partial_validity_collapses_to_valid_seed() {
+fn bfs_slice_intersection_with_invalid_seed_preserves_uncertainty() {
     let (_tmp, cd) = synth_call_dir();
-    // idx=4 is valid, idx=999 is past trace; intersection should keep only the
-    // valid seed's lineage and report the bad seed in `seeds[]`.
     let (status, v) = get(cd, "bfs-slice?idxs=4,999&mode=intersection");
     assert_eq!(status, None);
-    let seeds = v["seeds"].as_array().unwrap();
-    assert_eq!(seeds.len(), 2, "{seeds:?}");
-    assert!(seeds
-        .iter()
-        .any(|s| s["note"].as_str().unwrap_or("").contains("outside trace")));
-    let slice: Vec<u64> = v["slice"]
-        .as_array()
+    assert_eq!(v["seeds"].as_array().unwrap().len(), 2);
+    assert_eq!(v["slice"], serde_json::json!([]));
+    assert_eq!(v["truncated"], true);
+    assert!(v["seeds"][1]["note"]
+        .as_str()
         .unwrap()
-        .iter()
-        .map(|n| n.as_u64().unwrap())
-        .collect();
-    assert!(
-        slice.contains(&4),
-        "intersection should collapse to single valid seed: {slice:?}"
-    );
+        .contains("outside trace"));
 }
 
 #[test]
-fn bfs_slice_caps_seeds_at_16() {
+fn bfs_slice_rejects_more_than_16_seeds_instead_of_silently_dropping_them() {
     let (_tmp, cd) = synth_call_dir();
     let many = (0..20).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-    let uri = format!("bfs-slice?idxs={many}");
-    let (status, v) = get(cd, &uri);
-    assert_eq!(status, None);
-    let seeds = v["seeds"].as_array().unwrap();
-    assert_eq!(seeds.len(), 16, "max 16 seeds; got {}", seeds.len());
+    let (status, _) = get(cd, &format!("bfs-slice?idxs={many}"));
+    assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]

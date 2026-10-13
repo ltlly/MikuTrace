@@ -170,59 +170,73 @@ pub fn bfs_slice(
     seeds: &[usize],
     options: SliceOptions,
 ) -> SliceResult {
+    walk_slice(n_rows, seeds, options, None, |idx| {
+        deps.row(idx).iter().map(|e| (e.idx, e.kind))
+    })
+    .0
+}
+
+/// 双向查询共用遍历器；仅调用方决定邻接边的方向。
+pub(crate) fn walk_slice<F, I>(
+    n_rows: usize,
+    seeds: &[usize],
+    options: SliceOptions,
+    max_depth: Option<usize>,
+    mut neighbours: F,
+) -> (SliceResult, std::collections::HashMap<usize, usize>)
+where
+    F: FnMut(usize) -> I,
+    I: IntoIterator<Item = (usize, DepKind)>,
+{
     let mut marked = Bitset::with_len(n_rows);
-    let mut idxs: Vec<usize> = Vec::new();
-    let mut queue: VecDeque<usize> = VecDeque::new();
-    let cap = if options.max_nodes == 0 {
+    let mut idxs = Vec::new();
+    let mut depths = std::collections::HashMap::new();
+    let mut queue = VecDeque::new();
+    let limit = if options.max_nodes == 0 {
         usize::MAX
     } else {
         options.max_nodes
     };
     let mut truncated = false;
-
-    for &seed in seeds {
-        if seed >= n_rows {
+    for &idx in seeds {
+        if idx >= n_rows || marked.get(idx) {
             continue;
         }
-        if marked.set(seed) {
-            idxs.push(seed);
-            queue.push_back(seed);
-            if idxs.len() >= cap {
-                truncated = true;
-                break;
-            }
-        }
-    }
-
-    while let Some(idx) = queue.pop_front() {
-        if idxs.len() >= cap {
+        if idxs.len() == limit {
             truncated = true;
             break;
         }
-        for edge in deps.row(idx) {
-            if options.data_only && matches!(edge.kind, DepKind::Control) {
+        marked.set(idx);
+        idxs.push(idx);
+        depths.insert(idx, 0);
+        queue.push_back((idx, 0));
+    }
+    while let Some((idx, depth)) = queue.pop_front() {
+        for (target, kind) in neighbours(idx) {
+            if target >= n_rows
+                || marked.get(target)
+                || (options.data_only && kind == DepKind::Control)
+            {
                 continue;
             }
-            let target = edge.idx;
-            if target >= n_rows {
+            if max_depth.is_some_and(|max| depth >= max) || idxs.len() == limit {
+                truncated = true;
                 continue;
             }
-            if marked.set(target) {
-                idxs.push(target);
-                queue.push_back(target);
-                if idxs.len() >= cap {
-                    truncated = true;
-                    break;
-                }
-            }
+            marked.set(target);
+            idxs.push(target);
+            depths.insert(target, depth + 1);
+            queue.push_back((target, depth + 1));
         }
     }
-
-    SliceResult {
-        marked,
-        idxs,
-        truncated,
-    }
+    (
+        SliceResult {
+            marked,
+            idxs,
+            truncated,
+        },
+        depths,
+    )
 }
 
 /// Convenience: walk a single seed.

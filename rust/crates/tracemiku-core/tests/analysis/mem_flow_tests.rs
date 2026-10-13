@@ -84,48 +84,40 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 }
 
 #[test]
-fn mem_flow_returns_byte_event_history() {
+fn memory_accesses_returns_observed_byte_events() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "mem-flow?addr=0x7000&count=1");
+    let (status, v) = get(cd, "memory-accesses?addr=0x7000&size=1");
     assert_eq!(status, None);
-    assert_eq!(v["addr"], "0x7000");
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["bytes"][0]["total"], 2);
-    assert_eq!(v["bytes"][0]["events"][0]["idx"], 0);
-    assert_eq!(v["bytes"][0]["events"][0]["byte"], 65);
-    assert_eq!(v["bytes"][0]["events"][0]["kind"], "w");
-    assert_eq!(v["bytes"][0]["events"][0]["pc"], "0x100000");
-    assert_eq!(v["bytes"][0]["events"][0]["rel"], "0x0");
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["events"][0]["idx"], 0);
+    assert_eq!(v["events"][0]["bytes"], serde_json::json!([65]));
+    assert_eq!(v["events"][0]["kind"], "write");
+    assert_eq!(v["events"][0]["pc"], "0x100000");
 }
 
 #[test]
-fn mem_flow_filters_and_caps_newest_events() {
+fn memory_accesses_filters_time_and_write_kind() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(
         cd,
-        "mem-flow?addr=0x7000&count=1&idx_lo=0&idx_hi=2&writers_only=true&events_per_byte=1",
+        "memory-accesses?addr=0x7000&size=1&start=1&end=2&kind=write&limit=1",
     );
     assert_eq!(status, None);
-    assert_eq!(v["bytes"][0]["total"], 2);
-    assert_eq!(v["bytes"][0]["events"].as_array().unwrap().len(), 1);
-    assert_eq!(v["bytes"][0]["events"][0]["idx"], 1);
-    assert_eq!(v["bytes"][0]["events"][0]["byte"], 66);
+    assert_eq!(v["events"].as_array().unwrap().len(), 1);
+    assert_eq!(v["events"][0]["idx"], 1);
+    assert_eq!(v["events"][0]["bytes"], serde_json::json!([66]));
+    assert_eq!(v["truncated"], false);
 }
 
 #[test]
-fn mem_flow_caps_total_returned_events() {
+fn memory_accesses_caps_total_returned_events() {
     let (_tmp, cd) = synth_many_write_call_dir(10_080, 21);
-    let (status, v) = get(cd, "mem-flow?addr=0x7000&count=168&events_per_byte=500");
+    let (status, v) = get(cd, "memory-accesses?addr=0x7000&size=168&limit=999999");
     assert_eq!(status, None);
-    assert_eq!(v["events_returned"], 3_000);
+    assert_eq!(v["returned"], 5000);
+    assert_eq!(v["events"].as_array().unwrap().len(), 5000);
     assert_eq!(v["truncated"], true);
-    let returned: usize = v["bytes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|b| b["events"].as_array().unwrap().len())
-        .sum();
-    assert_eq!(returned, 3_000);
+    assert_eq!(v["next_cursor"], 5000);
 }
 
 #[test]
@@ -159,6 +151,6 @@ fn mem_writes_in_range_bad_filter_is_invalid_argument() {
 #[test]
 fn mem_flow_bad_addr_is_invalid_argument() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, _v) = get(cd, "mem-flow?addr=bogus");
+    let (status, _v) = get(cd, "memory-accesses?addr=bogus");
     assert_eq!(status, Some("invalid_argument"));
 }

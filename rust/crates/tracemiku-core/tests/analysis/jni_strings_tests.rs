@@ -72,36 +72,34 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn jni_strings_recovers_observed_input_buffer() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-strings?max=5&max_len=16");
+    let (status, v) = get(cd, "jni-calls?strings=true&limit=5&max_len=16");
     assert_eq!(status, None);
     assert_eq!(v["count"], 2);
     assert_eq!(v["returned"], 2);
     assert_eq!(v["truncated"], false);
-    assert_eq!(v["with_observed_string"], 2);
-    assert_eq!(v["without_observed_string"], 0);
-    assert_eq!(v["hits"][0]["idx"], 2);
-    assert_eq!(v["hits"][0]["jni_fn"], "ReleaseStringUTFChars");
-    assert_eq!(v["hits"][0]["arg_name"], "x2");
-    assert_eq!(v["hits"][0]["direction"], "in");
-    assert_eq!(v["hits"][0]["buffer_addr"], "0x7000");
-    assert_eq!(v["hits"][0]["observed_bytes"], 6);
-    assert_eq!(v["hits"][0]["string"], "hello");
+    assert_eq!(v["hits"][0]["string_preview"]["idx"], 2);
+    assert_eq!(
+        v["hits"][0]["string_preview"]["jni_fn"],
+        "ReleaseStringUTFChars"
+    );
+    assert_eq!(v["hits"][0]["string_preview"]["arg_name"], "x2");
+    assert_eq!(v["hits"][0]["string_preview"]["direction"], "in");
+    assert_eq!(v["hits"][0]["string_preview"]["buffer_addr"], "0x7000");
+    assert_eq!(v["hits"][0]["string_preview"]["observed_bytes"], 6);
+    assert_eq!(v["hits"][0]["string_preview"]["string"], "hello");
 }
 
 #[test]
-fn jni_strings_max_zero_returns_all_hits() {
+fn jni_string_preview_rejects_zero_limit() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-strings?max=0");
-    assert_eq!(status, None);
-    assert_eq!(v["count"], 2);
-    assert_eq!(v["returned"], 2);
-    assert_eq!(v["truncated"], false);
+    let (status, _) = get(cd, "jni-calls?strings=true&limit=0");
+    assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]
 fn jni_strings_reports_total_and_truncation() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-strings?max=1");
+    let (status, v) = get(cd, "jni-calls?strings=true&limit=1");
     assert_eq!(status, None);
     assert_eq!(v["count"], 2);
     assert_eq!(v["returned"], 1);
@@ -144,12 +142,12 @@ fn utf_buffer_call(slot: u32, bytes: [u8; 8], returned: bool) -> (tempfile::Temp
 #[test]
 fn new_string_utf_reads_input_instead_of_jobject_and_keeps_raw_encoding() {
     let (_tmp, cd) = utf_buffer_call(167, [0xc0, 0x80, b'a', 0, 0, 0, 0, 0], true);
-    let (status, value) = get(cd, "jni-strings");
+    let (status, value) = get(cd, "jni-calls?strings=true");
     assert_eq!(status, None);
-    assert_eq!(value["hits"][0]["direction"], "in");
-    assert_eq!(value["hits"][0]["buffer_addr"], "0x7000");
-    assert_eq!(value["hits"][0]["bytes_hex"], "c08061");
-    assert_eq!(value["hits"][0]["read_stop"], "nul");
+    assert_eq!(value["hits"][0]["string_preview"]["direction"], "in");
+    assert_eq!(value["hits"][0]["string_preview"]["buffer_addr"], "0x7000");
+    assert_eq!(value["hits"][0]["string_preview"]["bytes_hex"], "c08061");
+    assert_eq!(value["hits"][0]["string_preview"]["read_stop"], "nul");
     assert_eq!(value["encoding"], "modified_utf8");
     assert_eq!(value["display_encoding"], "utf8_lossy");
 }
@@ -158,9 +156,9 @@ fn new_string_utf_reads_input_instead_of_jobject_and_keeps_raw_encoding() {
 fn get_utf_chars_requires_an_observed_return_to_the_caller() {
     for returned in [true, false] {
         let (_tmp, cd) = utf_buffer_call(169, *b"hello\0\0\0", returned);
-        let (_, value) = get(cd, "jni-strings");
+        let (_, value) = get(cd, "jni-calls?strings=true");
         assert_eq!(value["count"], 1);
-        let hit = &value["hits"][0];
+        let hit = &value["hits"][0]["string_preview"];
         if returned {
             assert_eq!(hit["arg_name"], "x0");
             assert_eq!(hit["string"], "hello");
@@ -181,9 +179,9 @@ fn jni_preview_reports_empty_missing_and_capped_bytes() {
         (*b"abcdefgh", 3, "abc", "limit"),
     ] {
         let (_tmp, cd) = utf_buffer_call(167, bytes, true);
-        let (_, value) = get(cd, &format!("jni-strings?max_len={max_len}"));
-        assert_eq!(value["hits"][0]["string"], expected);
-        assert_eq!(value["hits"][0]["read_stop"], stop);
+        let (_, value) = get(cd, &format!("jni-calls?strings=true&max_len={max_len}"));
+        assert_eq!(value["hits"][0]["string_preview"]["string"], expected);
+        assert_eq!(value["hits"][0]["string_preview"]["read_stop"], stop);
     }
 }
 
@@ -191,7 +189,7 @@ fn jni_preview_reports_empty_missing_and_capped_bytes() {
 fn jni_preview_does_not_treat_utf16_or_string_handles_as_utf8() {
     for slot in [163, 164, 165, 166, 168] {
         let (_tmp, cd) = utf_buffer_call(slot, *b"hello\0\0\0", true);
-        let (_, value) = get(cd, "jni-strings");
+        let (_, value) = get(cd, "jni-calls?strings=true");
         assert_eq!(value["count"], 0, "JNI table slot {slot}");
     }
 }

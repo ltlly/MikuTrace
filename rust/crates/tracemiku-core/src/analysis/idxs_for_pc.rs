@@ -60,7 +60,7 @@ pub fn idxs_for_pc(
     let cursor = q.cursor.min(n);
     let all = state
         .inner
-        .index
+        .index()
         .pc_to_idxs
         .get(&target)
         .map(Vec::as_slice)

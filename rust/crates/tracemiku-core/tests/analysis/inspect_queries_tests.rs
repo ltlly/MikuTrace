@@ -80,29 +80,16 @@ fn so_stats_counts_modules_and_unknown_pcs() {
 }
 
 #[test]
-fn reg_value_at_accepts_aliases_and_reports_unknown() {
+fn records_reads_register_width_aliases_and_rejects_unknown_names() {
     let (_tmp, call_dir) = synth_call_dir();
-    let (status, v) = get_json(call_dir.clone(), "reg-value-at?idx=2&reg=x0");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["reg"], "x0");
-    assert_eq!(v["value"], "0xabc2");
-    assert_eq!(v["annotation"], "[SP+0x3bc2]");
-
-    let (status, v) = get_json(call_dir.clone(), "reg-value-at?idx=0&reg=w0");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["reg"], "x0");
-    assert_eq!(v["value"], "0xabc0");
-
-    let (status, v) = get_json(call_dir.clone(), "reg-value-at?idx=0&reg=nzcv");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["reg"], "nzcv");
-    assert_eq!(v["value"], "0x0");
-
-    let (status, v) = get_json(call_dir, "reg-value-at?idx=0&reg=bogus");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "error");
-    assert_eq!(v["value"], serde_json::Value::Null);
+    for (start, reg, expected) in [(2, "x0", "0xabc2"), (0, "w0", "0xabc0"), (0, "nzcv", "0x0")] {
+        let (status, v) = get_json(
+            call_dir.clone(),
+            &format!("records?start={start}&count=1&regs={reg}"),
+        );
+        assert_eq!(status, None);
+        assert_eq!(v["records"][0]["regs"][reg], expected);
+    }
+    let (status, _) = get_json(call_dir, "records?start=0&count=1&regs=bogus");
+    assert_eq!(status, Some("invalid_argument"));
 }

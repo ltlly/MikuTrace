@@ -65,12 +65,12 @@ fn block_detail_response(
     pc: u64,
 ) -> Option<BlockDetail> {
     let block = inner.cfg().block_containing(pc)?;
-    let (func_name, off_u64) = inner.symbols.lookup(block.start_pc);
+    let (func_name, off_u64) = inner.symbols().lookup(block.start_pc);
     let func = (!func_name.is_empty()).then_some(func_name);
     let off = func.as_ref().map(|_| format!("{off_u64:#x}"));
 
     let mut pcs = inner
-        .index
+        .index()
         .pc_to_idxs
         .keys()
         .copied()
@@ -84,7 +84,7 @@ fn block_detail_response(
         .take(MAX_BLOCK_INSNS)
         .map(|pc| {
             let inst = inner
-                .index
+                .index()
                 .pc_to_idxs
                 .get(&pc)
                 .and_then(|idxs| idxs.first())
@@ -279,13 +279,13 @@ fn call_chain_response(
     for depth in 0..max_depth {
         let record = inner.trace.record(cur_idx);
         let pc = record.pc;
-        let (func_name, off_u64) = inner.symbols.lookup(pc);
+        let (func_name, off_u64) = inner.symbols().lookup(pc);
         let func = (!func_name.is_empty()).then_some(func_name);
         let off = func.as_ref().map(|_| format!("{off_u64:#x}"));
         let lr = record.reg_by_name("lr").unwrap_or(0);
         let caller_pc = lr.saturating_sub(4);
         let (caller_name, caller_off_u64) = if caller_pc != 0 {
-            inner.symbols.lookup(caller_pc)
+            inner.symbols().lookup(caller_pc)
         } else {
             ("".to_string(), 0)
         };
@@ -384,7 +384,7 @@ fn backtrace_frame(
 ) -> BacktraceFrame {
     let callee = (call_site_idx + 1 < inner.trace.len()).then(|| inner.trace.pc(call_site_idx + 1));
     let fn_name = callee
-        .map(|pc| inner.symbols.lookup(pc).0)
+        .map(|pc| inner.symbols().lookup(pc).0)
         .filter(|name| !name.is_empty());
     BacktraceFrame {
         call_site_idx,
@@ -401,7 +401,7 @@ fn last_pc_before(
     pc: u64,
     before_idx: usize,
 ) -> Option<usize> {
-    let idxs = inner.index.pc_to_idxs.get(&pc)?;
+    let idxs = inner.index().pc_to_idxs.get(&pc)?;
     let pos = idxs.partition_point(|&i| i < before_idx);
     pos.checked_sub(1).map(|i| idxs[i])
 }
@@ -410,7 +410,7 @@ fn fmt_pc_inner(inner: &crate::analysis::context::AnalysisData, pc: u64) -> Stri
     let Some((_, rel)) = inner.modules.resolve_relative(pc) else {
         return format!("{pc:#x}");
     };
-    let (fn_name, off) = inner.symbols.lookup(pc);
+    let (fn_name, off) = inner.symbols().lookup(pc);
     if !fn_name.is_empty() {
         format!("{fn_name}+{off:#x}")
     } else {
@@ -446,4 +446,38 @@ impl Default for CallChainQuery {
             depth: default_call_chain_depth(),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BacktraceInspectQuery {
+    pub idx: usize,
+    pub limit: usize,
+    pub lr_clues: bool,
+}
+#[derive(Debug, Serialize)]
+pub struct BacktraceInspection {
+    #[serde(flatten)]
+    pub observed: BacktraceResponse,
+    pub lr_clues: Option<CallChainResponse>,
+}
+pub fn inspect_backtrace(
+    state: &AnalysisContext,
+    q: BacktraceInspectQuery,
+) -> Result<BacktraceInspection, AnalysisError> {
+    let limit = q.limit.clamp(1, MAX_CALL_CHAIN_DEPTH);
+    Ok(BacktraceInspection {
+        observed: backtrace(state, BacktraceQuery { idx: q.idx, limit })?,
+        lr_clues: q
+            .lr_clues
+            .then(|| {
+                call_chain(
+                    state,
+                    CallChainQuery {
+                        idx: q.idx,
+                        depth: limit,
+                    },
+                )
+            })
+            .transpose()?,
+    })
 }

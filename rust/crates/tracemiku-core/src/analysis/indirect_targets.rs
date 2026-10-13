@@ -69,7 +69,7 @@ pub fn indirect_targets(
 
 /// Mnemonic at a source PC (first observed execution), if decodable.
 fn mnemonic_at(inner: &crate::analysis::context::AnalysisData, pc: u64) -> Option<String> {
-    let idx = inner.index.pc_to_idxs.get(&pc).and_then(|v| v.first())?;
+    let idx = inner.index().pc_to_idxs.get(&pc).and_then(|v| v.first())?;
     let d = crate::disasm::decode(pc, inner.trace.inst(*idx));
     Some(d.mnemonic)
 }

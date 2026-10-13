@@ -54,67 +54,6 @@ fn output_backtrace_matches_schema() {
 }
 
 #[test]
-fn output_map_summary_matches_schema() {
-    let (_tmp, cd) = synth_deep_dir();
-    let value = run_json(&[
-        "base64-map",
-        cd.to_str().unwrap(),
-        "--value",
-        "qrvM3Q==",
-        "--summary",
-    ]);
-    assert_valid(
-        serde_json::json!({
-            "type": "object",
-            "required": ["status", "strategy", "source", "text_len", "base64_context", "group_total", "groups"],
-            "properties": {
-                "status": {"const": "ready"},
-                "strategy": {"const": "output_base64_group_map"},
-                "group_total": {"type": "integer"},
-                "groups": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["group", "offset", "end", "chars", "decoded", "decoded_hex"],
-                    },
-                },
-            },
-        }),
-        &value,
-    );
-    assert!(value["group_total"].as_u64().unwrap() > 0);
-}
-
-#[test]
-fn output_map_full_matches_schema() {
-    let (_tmp, cd) = synth_deep_dir();
-    let value = run_json(&[
-        "base64-map",
-        cd.to_str().unwrap(),
-        "--value",
-        "qrvM3Q==",
-        "--groups",
-        "1",
-    ]);
-    assert_valid(
-        serde_json::json!({
-            "type": "object",
-            "required": ["status", "groups", "selected_hit_order", "selected_hit_rank"],
-            "properties": {
-                "groups": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["group", "chars", "base64", "runs", "trees"],
-                    },
-                },
-            },
-        }),
-        &value,
-    );
-}
-
-#[test]
 fn byte_lineage_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[

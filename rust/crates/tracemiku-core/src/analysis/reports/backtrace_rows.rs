@@ -522,6 +522,7 @@ pub(super) fn gap_call_candidates_for_mismatch_on(
             start: cursor,
             count,
             regs: GAP_SCAN_REGS.to_string(),
+            ..Default::default()
         };
         let response = query_value_on(context, Query::Records(params))?;
         let records = response

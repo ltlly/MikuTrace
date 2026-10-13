@@ -11,8 +11,6 @@ mod contract_queries_1;
 mod coverage_contract_tests;
 #[path = "analysis/crypto_scan_tests.rs"]
 mod crypto_scan_tests;
-#[path = "analysis/data_chase_tests.rs"]
-mod data_chase_tests;
 #[path = "analysis/dep_graph_tests.rs"]
 mod dep_graph_tests;
 #[path = "analysis/fn_summary_tests.rs"]
@@ -23,8 +21,6 @@ mod fork_events_tests;
 mod forward_dep_tree_tests;
 #[path = "analysis/functions_tests.rs"]
 mod functions_tests;
-#[path = "analysis/hash_input_search_tests.rs"]
-mod hash_input_search_tests;
 #[path = "analysis/idxs_for_pc_tests.rs"]
 mod idxs_for_pc_tests;
 #[path = "analysis/index_tests.rs"]
@@ -47,8 +43,6 @@ mod mem_diff_boundary_tests;
 mod mem_dump_tests;
 #[path = "analysis/mem_flow_tests.rs"]
 mod mem_flow_tests;
-#[path = "analysis/mem_write_bursts_tests.rs"]
-mod mem_write_bursts_tests;
 #[path = "analysis/memory_query_tests.rs"]
 mod memory_query_tests;
 #[path = "analysis/meta_queries.rs"]

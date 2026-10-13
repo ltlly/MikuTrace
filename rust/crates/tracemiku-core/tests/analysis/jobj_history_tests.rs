@@ -53,10 +53,9 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, Option<serde_json
 #[test]
 fn jobj_history_filters_matching_jobject_args() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-object-history?jobject=0x2222&start=0&end=4&max=5");
+    let (status, v) = get(cd, "jni-inspect?jobject=0x2222&start=0&end=4&limit=5");
     let v = v.unwrap();
     assert_eq!(status, None);
-    assert_eq!(v["jobject"], "0x2222");
     assert_eq!(v["start"], 0);
     assert_eq!(v["end"], 4);
     assert_eq!(v["count"], 2);
@@ -65,14 +64,14 @@ fn jobj_history_filters_matching_jobject_args() {
     assert_eq!(v["hits"][0]["idx"], 1);
     assert_eq!(v["hits"][0]["jni_fn"], "FindClass");
     assert_eq!(v["hits"][0]["vtable_offset"], "0x30");
-    assert_eq!(v["hits"][0]["match_arg"], "x1");
+    assert_eq!(v["hits"][0]["match_args"], serde_json::json!(["x1"]));
     assert_eq!(v["hits"][0]["args"]["x2"], "0x3333");
 }
 
 #[test]
 fn jobj_history_returns_empty_when_object_is_absent() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-object-history?jobject=0x9999");
+    let (status, v) = get(cd, "jni-inspect?jobject=0x9999");
     let v = v.unwrap();
     assert_eq!(status, None);
     assert_eq!(v["count"], 0);
@@ -84,14 +83,14 @@ fn jobj_history_returns_empty_when_object_is_absent() {
 #[test]
 fn jobj_history_rejects_invalid_jobject() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, _) = get(cd, "jni-object-history?jobject=bogus");
+    let (status, _) = get(cd, "jni-inspect?jobject=bogus");
     assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]
 fn jobj_history_reports_total_and_truncation() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-object-history?jobject=0x2222&max=1");
+    let (status, v) = get(cd, "jni-inspect?jobject=0x2222&limit=1");
     let v = v.unwrap();
     assert_eq!(status, None);
     assert_eq!(v["count"], 2);

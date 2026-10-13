@@ -38,40 +38,39 @@ fn call_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
 }
 
 #[test]
-fn watchpoints_query_reports_register_changes() {
+fn register_timeline_reports_changes() {
     let dir = synth_trace();
-    let app = AnalysisContext::load(call_dir(&dir)).expect("analysis context loads");
-    let resp = analysis_support::query(&app, "watchpoints?kind=reg-change&reg=x0&limit=10", None);
+    let app = AnalysisContext::load(call_dir(&dir)).unwrap();
+    let resp = analysis_support::query(&app, "reg-inspect?reg=x0&max_points=10", None);
     assert_eq!(resp.error_code(), None);
-    let bytes = resp.bytes();
-    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["status"], "ready");
-    assert!(v["hits"].as_array().unwrap().iter().any(|hit| {
-        hit["idx"] == 1 && hit["kind"] == "reg_change" && hit["value"] == 7 && hit["previous"] == 0
-    }));
+    let v: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+    assert_eq!(v["mode"], "changes");
+    assert_eq!(
+        v["points"],
+        serde_json::json!([{"idx":0,"value":"0x0"},{"idx":1,"value":"0x7"}])
+    );
 }
 
 #[test]
-fn watchpoints_query_reports_register_equals_after_cursor() {
+fn register_equals_reports_each_match_after_start() {
     let dir = synth_trace();
-    let app = AnalysisContext::load(call_dir(&dir)).expect("analysis context loads");
+    let app = AnalysisContext::load(call_dir(&dir)).unwrap();
     let resp = analysis_support::query(
         &app,
-        "watchpoints?kind=reg-equals&reg=x0&value=7&cursor=2&limit=10",
+        "reg-inspect?reg=x0&equals=7&start=2&max_points=10",
         None,
     );
     assert_eq!(resp.error_code(), None);
-    let bytes = resp.bytes();
-    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["returned"], 1);
-    assert_eq!(v["hits"][0]["idx"], 2);
-    assert_eq!(v["hits"][0]["kind"], "reg_equals");
+    let v: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["points"][0]["idx"], 2);
+    assert_eq!(v["mode"], "equals");
 }
 
 #[test]
 fn watchpoints_query_rejects_missing_register() {
     let dir = synth_trace();
     let app = AnalysisContext::load(call_dir(&dir)).expect("analysis context loads");
-    let resp = analysis_support::query(&app, "watchpoints?kind=reg-change", None);
+    let resp = analysis_support::query(&app, "reg-inspect", None);
     assert_eq!(resp.error_code(), Some("invalid_argument"));
 }

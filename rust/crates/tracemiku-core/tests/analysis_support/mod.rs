@@ -21,7 +21,7 @@ impl QueryResult {
 pub fn query(
     context: &AnalysisContext,
     query: impl AsRef<str>,
-    payload: Option<Vec<u8>>,
+    _payload: Option<Vec<u8>>,
 ) -> QueryResult {
     let result = (|| {
         let (name, fields) = query
@@ -49,19 +49,36 @@ pub fn query(
                 "records" => Query::Records(args(fields)?),
                 "search" => Query::Search(args(fields)?),
                 "crypto-analysis" => Query::CryptoAnalysis,
-                "watchpoints" => Query::Watchpoints(args(fields)?),
-                "mem-write-bursts" => Query::MemWriteBursts(args(fields)?),
-                "hash-input-search" => Query::HashInputSearch(
-                    serde_json::from_slice(&payload.unwrap_or_default())
-                        .map_err(|e| AnalysisError::invalid(e.to_string()))?,
-                ),
-                "dep-graph" => Query::DepGraph(args(fields)?),
-                "forward-dep-graph" => Query::ForwardDepTree(args(fields)?),
-                "bfs-slice" => Query::BfsSlice(args(fields)?),
-                "jni-events" => Query::JniEvents(args(fields)?),
-                "jni-calls" => Query::JniCalls(args(fields)?),
-                "jni-object-history" => Query::JobjHistory(args(fields)?),
-                "jni-strings" => Query::JniStrings(args(fields)?),
+                "bfs-slice" => {
+                    let options: std::collections::HashMap<String, String> = args(fields)?;
+                    Query::Dependencies(analysis::dependency_query::DependencyQuery {
+                        seeds: args(fields)?,
+                        direction: options
+                            .get("direction")
+                            .cloned()
+                            .unwrap_or_else(|| "backward".into()),
+                        view: options
+                            .get("view")
+                            .cloned()
+                            .unwrap_or_else(|| "slice".into()),
+                        depth: options
+                            .get("depth")
+                            .map(|s| s.parse())
+                            .transpose()
+                            .map_err(|_| AnalysisError::invalid("invalid depth"))?,
+                    })
+                }
+                "events" => {
+                    return serde_json::to_value(analysis::events::read_events(
+                        &context.inner.trace_dir,
+                        args(fields)?,
+                    )?)
+                    .map_err(|e| AnalysisError::internal(e.to_string()))
+                }
+                "memory-accesses" => Query::MemAccesses(args(fields)?),
+                "jni-inspect" => Query::JniInspect(args(fields)?),
+                "reg-inspect" => Query::RegInspect(args(fields)?),
+                "jni-calls" => Query::JniInspect(args(fields)?),
                 "pc-hits" => Query::IdxsForPc(args(fields)?),
                 "block-hits" => Query::IdxsForBlock(args(fields)?),
                 "cfg" => Query::Cfg(args(fields)?),
@@ -72,20 +89,14 @@ pub fn query(
                 "call-tree" => Query::CallTree(args(fields)?),
                 "fn-summary" => Query::FnSummary(args(fields)?),
                 "functions" => Query::Functions,
-                "fork-events" => Query::ForkEvents(args(fields)?),
                 "last-write-of-reg" => Query::LastWriteOfReg(args(fields)?),
                 "next-use-of-reg" => Query::NextUseOfReg(args(fields)?),
-                "reg-value-at" => Query::RegValueAt(args(fields)?),
                 "forward-taint" => Query::ForwardTaint(args(fields)?),
                 "backward-taint" => Query::BackwardTaint(args(fields)?),
-                "reg-chase" => Query::DataChase(args(fields)?),
                 "reg-timeline" => Query::RegTimeline(args(fields)?),
-                "mem-diff" => Query::MemDiff(args(fields)?),
-                "mem-flow" => Query::MemFlow(args(fields)?),
                 "strings" => Query::Strings(args(fields)?),
                 "mem-byte-history" => Query::StringProvenance(args(fields)?),
                 "mem-dump" => Query::MemDump(args(fields)?),
-                "mem-export" => Query::MemExport(args(fields)?),
                 "last-write-of-addr" => Query::LastWriteOfAddr(args(fields)?),
                 "mem-writes-in-range" => Query::MemWritesInRange(args(fields)?),
                 "mem-range-accesses" => Query::IdxsTouchingRange(args(fields)?),

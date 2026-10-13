@@ -1,4 +1,4 @@
-//! 寄存器变化时间线和相邻记录间的内存差异。
+//! 有界寄存器变化与等值查询。
 
 use super::AnalysisError;
 use serde::{Deserialize, Serialize};
@@ -6,14 +6,12 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::analysis::context::AnalysisContext;
-use crate::analysis::parse;
 
 const REG_TIMELINE_PARALLEL_MIN_RECORDS: usize = 250_000;
 const REG_TIMELINE_MIN_CHUNK_RECORDS: usize = 200_000;
 const REG_TIMELINE_DIRECT_SCAN_RECORDS: usize = 250_000;
 const REG_TIMELINE_CACHE_MAX_POINTS: usize = 500_000;
 const MAX_REG_TIMELINE_POINTS: usize = 10_000;
-const MAX_MEM_DIFF_SIZE: usize = 4_096;
 
 pub(crate) fn reg_timeline_worker_count(records: usize) -> usize {
     crate::parallel::worker_count(
@@ -329,103 +327,15 @@ fn build_reg_timeline_range(
     Ok(points)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct MemDiffQuery {
-    pub idx: usize,
-    pub addr: String,
-    #[serde(default = "default_mem_diff_size")]
-    pub size: usize,
-}
-
-fn default_mem_diff_size() -> usize {
-    16
-}
-
-fn effective_mem_diff_size(raw: usize) -> usize {
-    raw.clamp(1, MAX_MEM_DIFF_SIZE)
-}
-
-#[derive(Debug, Serialize)]
-pub struct MemDiffByte {
-    pub addr: String,
-    pub before: Option<u8>,
-    pub after: Option<u8>,
-    pub changed: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MemDiffResponse {
-    pub status: &'static str,
-    pub idx: usize,
-    pub addr: String,
-    pub size: usize,
-    pub bytes: Vec<MemDiffByte>,
-    pub changed_count: usize,
-}
-
-pub fn mem_diff(
-    state: &AnalysisContext,
-    q: MemDiffQuery,
-) -> Result<MemDiffResponse, AnalysisError> {
-    let inner = state.inner.clone();
-    let response = mem_diff_response(&inner, q);
-    Ok(response)
-}
-
-fn mem_diff_response(
-    inner: &crate::analysis::context::AnalysisData,
-    q: MemDiffQuery,
-) -> MemDiffResponse {
-    let start = parse::parse_hex_u64(&q.addr).unwrap_or(0);
-    let size = effective_mem_diff_size(q.size);
-    let before_t = q.idx.saturating_sub(1) as u64;
-    let after_t = q.idx as u64;
-    let mut bytes = Vec::with_capacity(size);
-    let mut changed_count = 0usize;
-    let mem = inner.memshadow();
-    for offset in 0..size {
-        let addr = start + offset as u64;
-        let (before, _, _) = mem.byte_at(addr, before_t);
-        let (after, _, _) = mem.byte_at(addr, after_t);
-        let changed = before != after;
-        if changed {
-            changed_count += 1;
-        }
-        bytes.push(MemDiffByte {
-            addr: format!("{addr:#x}"),
-            before,
-            after,
-            changed,
-        });
-    }
-    MemDiffResponse {
-        status: "ready",
-        idx: q.idx,
-        addr: q.addr,
-        size,
-        bytes,
-        changed_count,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        effective_max_points, effective_mem_diff_size, MAX_MEM_DIFF_SIZE, MAX_REG_TIMELINE_POINTS,
-    };
+    use super::{effective_max_points, MAX_REG_TIMELINE_POINTS};
 
     #[test]
     fn effective_max_points_caps_extreme_requests() {
         assert_eq!(effective_max_points(0), 0);
         assert_eq!(effective_max_points(1000), 1000);
         assert_eq!(effective_max_points(usize::MAX), MAX_REG_TIMELINE_POINTS);
-    }
-
-    #[test]
-    fn effective_mem_diff_size_caps_extreme_requests() {
-        assert_eq!(effective_mem_diff_size(0), 1);
-        assert_eq!(effective_mem_diff_size(16), 16);
-        assert_eq!(effective_mem_diff_size(usize::MAX), MAX_MEM_DIFF_SIZE);
     }
 }
 
@@ -440,12 +350,115 @@ impl Default for RegTimelineQuery {
     }
 }
 
-impl Default for MemDiffQuery {
+/// 等值查询返回每次匹配的执行前状态，变化查询复用原时间线实现。
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct RegInspectQuery {
+    pub reg: String,
+    pub start: usize,
+    pub end: isize,
+    pub max_points: usize,
+    pub equals: Option<String>,
+}
+impl Default for RegInspectQuery {
     fn default() -> Self {
         Self {
-            idx: Default::default(),
-            addr: Default::default(),
-            size: default_mem_diff_size(),
+            reg: String::new(),
+            start: 0,
+            end: -1,
+            max_points: 1000,
+            equals: None,
         }
     }
+}
+#[derive(Debug, Serialize)]
+pub struct RegInspection {
+    #[serde(flatten)]
+    pub timeline: RegTimelineResponse,
+    pub mode: &'static str,
+    pub next_cursor: Option<usize>,
+}
+pub fn inspect_register(
+    state: &AnalysisContext,
+    q: RegInspectQuery,
+) -> Result<RegInspection, AnalysisError> {
+    let end = if q.end < 0 {
+        state.inner.trace.len()
+    } else {
+        (q.end as usize).min(state.inner.trace.len())
+    };
+    if q.max_points == 0 || q.start > end || !super::records::valid_register(&q.reg) {
+        return Err(AnalysisError::invalid(
+            "invalid register, window or zero limit",
+        ));
+    }
+    let Some(raw) = q.equals else {
+        let timeline = reg_timeline(
+            state,
+            RegTimelineQuery {
+                reg: q.reg,
+                start: q.start,
+                end: q.end,
+                max_points: q.max_points,
+            },
+        )?;
+        let next_cursor = timeline.truncated.then(|| {
+            timeline
+                .points
+                .last()
+                .map_or(q.start, |p| p.idx.saturating_add(1))
+        });
+        return Ok(RegInspection {
+            timeline,
+            mode: "changes",
+            next_cursor,
+        });
+    };
+    let target = crate::address_parse::parse_address(&raw)
+        .map_err(|e| AnalysisError::invalid(e.to_string()))?;
+    let end = if q.end < 0 {
+        state.inner.trace.len()
+    } else {
+        (q.end as usize).min(state.inner.trace.len())
+    };
+    if q.start > end || q.max_points == 0 {
+        return Err(AnalysisError::invalid(
+            "invalid register window or zero limit",
+        ));
+    }
+    let mut points = Vec::new();
+    let mut truncated = false;
+    let limit = q.max_points.min(MAX_REG_TIMELINE_POINTS);
+    for idx in q.start..end {
+        let value = state
+            .inner
+            .trace
+            .record(idx)
+            .reg_by_name(&q.reg)
+            .ok_or_else(|| AnalysisError::invalid("unknown register"))?;
+        if value != target {
+            continue;
+        }
+        if points.len() == limit {
+            truncated = true;
+            break;
+        }
+        points.push(RegTimelinePoint {
+            idx,
+            value: format!("{value:#x}"),
+        });
+    }
+    let next_cursor = truncated.then(|| points.last().unwrap().idx + 1);
+    Ok(RegInspection {
+        timeline: RegTimelineResponse {
+            reg: q.reg,
+            start: q.start,
+            end,
+            count: points.len(),
+            points,
+            truncated,
+        },
+        mode: "equals",
+        next_cursor,
+    })
 }

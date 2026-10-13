@@ -67,7 +67,7 @@ fn terminator_mnemonic(
     end_pc: u64,
 ) -> Option<String> {
     let idx = inner
-        .index
+        .index()
         .pc_to_idxs
         .get(&end_pc)
         .and_then(|v| v.first())?;
@@ -118,7 +118,7 @@ fn resolve_fn_name(
             "error": "provide addr=0x..., so=<name>&off=0x..., or fn=<name>",
         }));
     };
-    let (name, _off) = inner.symbols.lookup(pc);
+    let (name, _off) = inner.symbols().lookup(pc);
     if name.is_empty() {
         return Err(json!({
             "status": "miss",
@@ -149,7 +149,7 @@ fn coverage_response(inner: &crate::analysis::context::AnalysisData, q: Coverage
     let mut one_sided_count = 0usize;
 
     for b in cfg.blocks() {
-        let (name, _off) = inner.symbols.lookup(b.start_pc);
+        let (name, _off) = inner.symbols().lookup(b.start_pc);
         if name != fn_name {
             continue;
         }

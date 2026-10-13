@@ -101,40 +101,25 @@ fn indirect_targets_valid_off_returns_hit_shape() {
 }
 
 #[test]
-fn mem_export_without_len_returns_error_shape() {
+fn memory_dump_rejects_missing_address() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-export?addr=0x100000");
-    assert_eq!(status, None);
-    let errors = validate(
-        &serde_json::json!({
-            "type": "object",
-            "required": ["status", "error"],
-        }),
-        &v,
-    );
-    assert!(errors.is_empty(), "schema errors: {errors:?}");
+    let (status, _) = get_json(cd, "mem-dump?count=4");
+    assert_eq!(status, Some("invalid_argument"));
 }
 
 #[test]
-fn mem_export_with_len_returns_hex_and_metadata() {
+fn memory_dump_keeps_unknown_values_and_metadata() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-export?addr=0x100000&len=4");
+    let (status, v) = get_json(cd, "mem-dump?addr=0x100000&count=4");
     assert_eq!(status, None);
     let errors = validate(
         &serde_json::json!({
-            "type": "object",
-            "required": ["hex", "len", "requested_len", "completeness", "observed_count", "histogram", "provenance_runs", "start", "note"],
-            "properties": {
-                "hex": {"type": "string"},
-                "len": {"type": "integer"},
-                "completeness": {"type": "number"},
-                "histogram": {"type": "object"},
-                "provenance_runs": {"type": "array"},
-            },
+            "type":"object", "required":["status","addr","count","requested_count","truncated","completeness","observed_count","bytes"],
+            "properties":{"count":{"const":4},"completeness":{"const":0.0},"bytes":{"type":"array","minItems":4,"items":{"type":"object","required":["byte","kind","src_idx"],"properties":{"byte":{"type":"null"}}}}}
         }),
         &v,
     );
-    assert!(errors.is_empty(), "schema errors: {errors:?}");
+    assert!(errors.is_empty(), "{errors:?}");
 }
 
 #[test]

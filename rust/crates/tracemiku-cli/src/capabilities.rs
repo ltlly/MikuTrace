@@ -6,7 +6,7 @@ pub(super) fn capabilities_json() -> serde_json::Value {
     let command = Cli::command();
     let commands = command
         .get_subcommands()
-        .map(command_descriptor)
+        .map(|command| command_descriptor(command, false))
         .collect::<Vec<_>>();
 
     serde_json::json!({
@@ -38,7 +38,8 @@ pub(super) fn capabilities_json() -> serde_json::Value {
     })
 }
 
-fn command_descriptor(command: &Command) -> serde_json::Value {
+fn command_descriptor(command: &Command, experimental: bool) -> serde_json::Value {
+    let experimental = experimental || command.get_name() == "experimental";
     let args = command
         .get_arguments()
         .filter(|arg| !matches!(arg.get_id().as_str(), "help" | "version"))
@@ -46,11 +47,12 @@ fn command_descriptor(command: &Command) -> serde_json::Value {
         .collect::<Vec<_>>();
     let subcommands = command
         .get_subcommands()
-        .map(command_descriptor)
+        .map(|command| command_descriptor(command, experimental))
         .collect::<Vec<_>>();
 
     serde_json::json!({
         "name": command.get_name(),
+        "stability": if experimental { "experimental" } else { "stable" },
         "about": command.get_about().map(ToString::to_string),
         "args": args,
         "subcommands": subcommands,
@@ -90,7 +92,7 @@ mod tests {
         assert_eq!(value["output_contract"]["success_exit_code"], 0);
 
         let commands = value["commands"].as_array().expect("commands array");
-        for expected in ["records", "backtrace", "byte-lineage", "vm-ops"] {
+        for expected in ["records", "backtrace", "byte-lineage", "experimental"] {
             assert!(
                 commands.iter().any(|command| command["name"] == expected),
                 "missing {expected} from capabilities"

@@ -45,13 +45,12 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn jni_events_filters_by_id_and_idx_range() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-events?id=NewStringUTF&idx_lo=2&idx_hi=8");
+    let (status, v) = get(cd, "events?source=jni&id=NewStringUTF&start=2&end=8");
     assert_eq!(status, None);
-    assert_eq!(v["count"], 1);
     assert_eq!(v["returned"], 1);
     assert_eq!(v["truncated"], false);
-    assert_eq!(v["events"][0]["id"], "NewStringUTF");
-    assert_eq!(v["events"][0]["trace_idx"], 5);
+    assert_eq!(v["events"][0]["event"]["id"], "NewStringUTF");
+    assert_eq!(v["events"][0]["event"]["trace_idx"], 5);
 }
 
 #[test]
@@ -70,9 +69,8 @@ fn jni_events_missing_file_returns_empty() {
         r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
     )
     .unwrap();
-    let (status, v) = get(cd, "jni-events");
+    let (status, v) = get(cd, "events?source=jni");
     assert_eq!(status, None);
-    assert_eq!(v["count"], 0);
     assert_eq!(v["returned"], 0);
     assert_eq!(v["truncated"], false);
     assert!(v["events"].as_array().unwrap().is_empty());
@@ -81,9 +79,8 @@ fn jni_events_missing_file_returns_empty() {
 #[test]
 fn jni_events_limit_truncates_returned_events() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "jni-events?limit=1");
+    let (status, v) = get(cd, "events?source=jni&limit=1");
     assert_eq!(status, None);
-    assert_eq!(v["count"], 2);
     assert_eq!(v["returned"], 1);
     assert_eq!(v["truncated"], true);
     assert_eq!(v["events"].as_array().unwrap().len(), 1);

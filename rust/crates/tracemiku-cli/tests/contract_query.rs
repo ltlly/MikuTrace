@@ -8,30 +8,6 @@ mod common;
 use common::{assert_valid, run_json, synth_call_dir};
 
 #[test]
-fn hash_search_long_prefix_skips_short_digests_without_panicking() {
-    let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&[
-        "hash-input-search",
-        cd.to_str().unwrap(),
-        "--target-bytes",
-        &"ff".repeat(32),
-        "--inputs",
-        "abc",
-        "--algos",
-        "sha1,sha256",
-        "--combos",
-        "plain",
-        "--prefix-bytes",
-        "32",
-        "--search-in-mem",
-    ]);
-    assert_eq!(value["status"], "ready");
-    assert_eq!(value["tried_combos"], 2);
-    assert_eq!(value["found_count"], 0);
-    assert_eq!(value["found"], serde_json::json!([]));
-}
-
-#[test]
 fn records_matches_schema() {
     let (_tmp, cd) = synth_call_dir();
     let value = run_json(&["records", cd.to_str().unwrap()]);
@@ -145,14 +121,14 @@ fn functions_matches_schema() {
 #[test]
 fn coverage_matches_schema() {
     let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&["branch-coverage", cd.to_str().unwrap(), "--fn", "f"]);
+    let value = run_json(&["cfg", cd.to_str().unwrap(), "--coverage", "--fn", "f"]);
     assert_valid(
         serde_json::json!({
             "type": "object",
             "required": ["status", "function", "executed_blocks"],
             "properties": {"executed_blocks": {"type": "integer"}},
         }),
-        &value,
+        &value["coverage"],
     );
 }
 
@@ -224,7 +200,7 @@ fn jni_strings_preserves_buffer_bytes_and_preview_boundary() {
         row[268..272].copy_from_slice(&inst.to_le_bytes());
     }
     std::fs::write(cd.join("trace.bin"), trace).unwrap();
-    let value = run_json(&["jni-strings", cd.to_str().unwrap()]);
+    let value = run_json(&["jni-calls", "--strings", cd.to_str().unwrap()]);
     assert_valid(
         serde_json::json!({
             "type": "object",
@@ -236,11 +212,17 @@ fn jni_strings_preserves_buffer_bytes_and_preview_boundary() {
                     "type": "array", "minItems": 1,
                     "items": {
                         "type": "object",
-                        "required": ["buffer_addr", "observed_bytes", "bytes_hex", "string", "read_stop"],
+                        "required": ["string_preview"],
                         "properties": {
-                            "bytes_hex": {"type": ["string", "null"]},
-                            "string": {"type": ["string", "null"]},
-                            "read_stop": {"enum": ["nul", "missing", "limit", "null_pointer", "return_unobserved", "address_overflow"]}
+                            "string_preview": {
+                                "type": "object", "required": ["buffer_addr", "bytes_hex", "string", "read_stop"],
+                                "properties": {
+                                    "buffer_addr": {"type": ["string", "null"]},
+                                    "bytes_hex": {"type": ["string", "null"]},
+                                    "string": {"type": ["string", "null"]},
+                                    "read_stop": {"enum": ["nul", "missing", "limit", "null_pointer", "return_unobserved", "address_overflow"]}
+                                }
+                            }
                         }
                     }
                 }
@@ -249,11 +231,20 @@ fn jni_strings_preserves_buffer_bytes_and_preview_boundary() {
         &value,
     );
     assert_eq!(value["hits"][0]["jni_fn"], "NewStringUTF");
-    assert_eq!(value["hits"][0]["buffer_addr"], "0x7000");
-    assert_eq!(value["hits"][0]["bytes_hex"], "68656c6c6f");
-    assert_eq!(value["hits"][0]["string"], "hello");
-    assert_eq!(value["hits"][0]["read_stop"], "nul");
-    let limited = run_json(&["jni-strings", cd.to_str().unwrap(), "--max-len", "3"]);
-    assert_eq!(limited["hits"][0]["bytes_hex"], "68656c");
-    assert_eq!(limited["hits"][0]["read_stop"], "limit");
+    assert_eq!(value["hits"][0]["string_preview"]["buffer_addr"], "0x7000");
+    assert_eq!(
+        value["hits"][0]["string_preview"]["bytes_hex"],
+        "68656c6c6f"
+    );
+    assert_eq!(value["hits"][0]["string_preview"]["string"], "hello");
+    assert_eq!(value["hits"][0]["string_preview"]["read_stop"], "nul");
+    let limited = run_json(&[
+        "jni-calls",
+        "--strings",
+        cd.to_str().unwrap(),
+        "--max-len",
+        "3",
+    ]);
+    assert_eq!(limited["hits"][0]["string_preview"]["bytes_hex"], "68656c");
+    assert_eq!(limited["hits"][0]["string_preview"]["read_stop"], "limit");
 }

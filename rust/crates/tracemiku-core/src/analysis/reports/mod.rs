@@ -6,15 +6,10 @@ use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 mod output_provenance;
 use output_provenance::*;
-mod output_map;
-use output_map::*;
-mod output_equations;
-use output_equations::*;
-mod output_templates;
-use output_templates::*;
+mod output_backtrace;
+use output_backtrace::*;
 mod backtrace_patterns;
 use backtrace_patterns::*;
 mod backtrace_step;
@@ -54,25 +49,18 @@ pub use catalog::info;
 pub use catalog::list_calls;
 pub use catalog::list_runs;
 pub use catalog::parse_hex_bytes_cli;
-pub use catalog::resolve_elf_symbol;
 pub use catalog::resolve_map_addr;
 pub use catalog::split_csv;
-pub use catalog::split_csv_allow_empty;
-pub use evidence_queries::byte_writer_map;
-pub use evidence_queries::mem_provenance;
-pub use evidence_queries::mem_write_bursts;
 pub use evidence_queries::resolve_offset_to_idx;
 pub use lineage_batch::byte_lineage;
 pub use lineage_batch::vm_backstep;
 pub use lineage_chain::vm_backchain;
 pub use lineage_chain::vm_backtree;
+pub use output_backtrace::output_backtrace;
+pub use output_backtrace::OutputBacktraceOpts;
 use output_lineage::*;
-pub use output_map::output_backtrace;
-pub use output_map::output_map;
-pub use output_map::{HitOrder, OutputBacktraceOpts, OutputMapOpts};
 pub use vm_replay::vm_ops;
 pub use vm_replay::vm_slice;
-pub use writer_sources::mem_dump_summary;
 
 const GAP_SCAN_REGS: &str =
     "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp";
@@ -82,8 +70,6 @@ const GAP_SCAN_MAX_CANDIDATES: usize = 12;
 const GAP_ARG_STRUCT_SPAN: u64 = 0x400;
 const GAP_NEAR_REG_SPAN: u64 = 0x100;
 const GAP_SMALL_LEN_MAX: u64 = 0x4000;
-const BASE64_LOOKUP_TREE_DEPTH: usize = 8;
-const BASE64_LOOKUP_TREE_MAX_NODES: usize = 220;
 
 #[derive(Clone, Debug)]
 pub struct VmProfile {

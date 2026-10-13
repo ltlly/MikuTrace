@@ -112,7 +112,12 @@ fn reg_at_response(inner: &crate::analysis::context::AnalysisData, q: RegAtQuery
         canon
     };
 
-    let idxs = inner.index.pc_to_idxs.get(&pc).cloned().unwrap_or_default();
+    let idxs = inner
+        .index()
+        .pc_to_idxs
+        .get(&pc)
+        .cloned()
+        .unwrap_or_default();
     let rel = inner.modules.resolve_relative(pc);
     let source = json!({
         "pc": format!("{pc:#x}"),

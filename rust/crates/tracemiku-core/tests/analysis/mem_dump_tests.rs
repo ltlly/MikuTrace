@@ -51,7 +51,7 @@ fn mem_dump_returns_count_bytes() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["status"], "ready");
     assert_eq!(v["count"].as_u64().unwrap(), 8);
-    assert!(v["cursor"].is_null());
+    assert!(v["at"].is_null());
     let bs = v["bytes"].as_array().unwrap();
     assert_eq!(bs.len(), 8);
     assert_eq!(bs[0]["byte"].as_u64().unwrap(), b'h' as u64);
@@ -63,11 +63,11 @@ fn mem_dump_returns_count_bytes() {
 fn mem_dump_accepts_cursor() {
     let (_tmp, cd) = synth_call_dir_with_string();
     let app = AnalysisContext::load(cd).expect("load analysis context");
-    let resp = analysis_support::query(&app, "mem-dump?addr=0x7000&count=8&cursor=0", None);
+    let resp = analysis_support::query(&app, "mem-dump?addr=0x7000&count=8&at=0", None);
     assert_eq!(resp.error_code(), None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["cursor"].as_u64().unwrap(), 0);
+    assert_eq!(v["at"].as_u64().unwrap(), 0);
     assert_eq!(v["bytes"][0]["byte"].as_u64().unwrap(), b'h' as u64);
     assert_eq!(v["bytes"][0]["src_idx"].as_u64().unwrap(), 0);
 }

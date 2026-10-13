@@ -541,7 +541,12 @@ pub(super) fn load_vm_rows_on(
 ) -> anyhow::Result<(Vec<serde_json::Value>, usize, Option<u64>)> {
     let count = end.saturating_sub(start);
     let regs = regs_with_vm_profile(regs, profile);
-    let params = crate::analysis::records::RecordsQuery { start, count, regs };
+    let params = crate::analysis::records::RecordsQuery {
+        start,
+        count,
+        regs,
+        ..Default::default()
+    };
     let response = query_value_on(context, Query::Records(params))?;
     let records = response
         .get("records")

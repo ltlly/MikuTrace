@@ -7,12 +7,12 @@ import json
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="tracemiku", description="Android ARM64 trace 采集与离线分析",
-        epilog="分析命令: records / resolve / reg-at / mem-export / taint-bwd / vm-ops。"
+        epilog="分析命令: records / resolve / mem-dump / mem-accesses / taint-bwd / experimental。"
                "使用 capabilities 查看清单，capabilities --command <name> 查看完整参数。",
     )
     sp = ap.add_subparsers(dest="subcommand", required=True)
     p_caps = sp.add_parser("capabilities", help="发现采集与分析命令")
-    p_caps.add_argument("--command", help="仅返回指定命令的完整参数与默认值")
+    p_caps.add_argument("--command", help="仅返回指定命令的完整参数；子命令用空格连接，如 'experimental vm-ops'")
     # trace
     p_tr = sp.add_parser("trace", help="采集 trace")
     p_tr.add_argument("--pkg", required=False, help="目标 app 包名")
@@ -155,21 +155,38 @@ def capabilities_response(parser, rust_capabilities, selected=None):
     }
     for name, subparser in subparsers.choices.items():
         commands[name] = {
-            "name": name, "about": about[name], "implementation": "host",
+            "name": name, "about": about[name], "implementation": "host", "stability": "stable",
             "args": [_argument_descriptor(action) for action in subparser._actions
                      if action.dest != "help"],
             "subcommands": [],
         }
-    if selected is not None and selected not in commands:
-        return {"status": "error", "error": {
-            "code": "unknown_command", "message": f"未知命令: {selected[:256]}"
-        }}, 2
+    chosen = None
+    if selected is not None:
+        parts = selected.split()
+        chosen = commands.get(parts[0]) if parts else None
+        implementation = chosen.get("implementation") if chosen else None
+        for part in parts[1:]:
+            chosen = next((child for child in chosen.get("subcommands", [])
+                           if child["name"] == part), None) if chosen else None
+        if chosen is None:
+            return {"status": "error", "error": {
+                "code": "unknown_command", "message": f"未知命令: {selected[:256]}"
+            }}, 2
+        chosen = dict(chosen, implementation=implementation)
     if selected is None:
-        listing = [{"name": name, "about": (command.get("about") or "").split("\n", 1)[0][:256],
-                    "implementation": command["implementation"]}
-                   for name, command in sorted(commands.items())]
+        def summary(command, implementation):
+            result = {"name": command["name"],
+                      "about": (command.get("about") or "").split("\n", 1)[0][:256],
+                      "implementation": implementation,
+                      "stability": command.get("stability", "stable")}
+            if command.get("subcommands"):
+                result["subcommands"] = [summary(child, implementation)
+                                         for child in command["subcommands"]]
+            return result
+        listing = [summary(command, command["implementation"])
+                   for _, command in sorted(commands.items())]
     else:
-        listing = [commands[selected]]
+        listing = [chosen]
     result = dict(rust_capabilities, schema_version=2, tool="tracemiku", commands=listing)
     result["output_contract"] = dict(
         result["output_contract"],

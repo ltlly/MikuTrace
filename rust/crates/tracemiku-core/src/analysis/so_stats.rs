@@ -68,7 +68,7 @@ fn so_stats_response(
         })
         .collect();
 
-    for (&pc, idxs) in &inner.index.pc_to_idxs {
+    for (&pc, idxs) in &inner.index().pc_to_idxs {
         let records = idxs.len();
         if let Some((idx, _)) = ranges
             .iter()

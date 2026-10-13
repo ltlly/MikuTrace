@@ -59,7 +59,7 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn dep_graph_idx_seed_walks_mem_and_reg_dependencies() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "dep-graph?idx=2&depth=3&limit=16");
+    let (status, v) = get(cd, "bfs-slice?view=graph&idx=2&depth=3&limit=16");
     assert_eq!(status, None);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["seed"]["kind"], "idx");
@@ -118,7 +118,7 @@ fn dep_graph_self_loop_does_not_double_visit() {
     )
     .unwrap();
 
-    let (status, v) = get(cd, "dep-graph?idx=2&depth=4&limit=16");
+    let (status, v) = get(cd, "bfs-slice?view=graph&idx=2&depth=4&limit=16");
     assert_eq!(status, None);
     let nodes = v["graph"]["nodes"].as_array().unwrap();
     let mut idxs: Vec<u64> = nodes.iter().map(|n| n["idx"].as_u64().unwrap()).collect();
@@ -135,13 +135,13 @@ fn dep_graph_self_loop_does_not_double_visit() {
 #[test]
 fn dep_graph_resolves_reg_and_addr_seeds() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, reg) = get(cd.clone(), "dep-graph?reg=x1&before=3");
+    let (status, reg) = get(cd.clone(), "bfs-slice?view=graph&reg=x1&before=3");
     assert_eq!(status, None);
     assert_eq!(reg["seed"]["kind"], "reg");
     assert_eq!(reg["seed"]["idx"], 2);
     assert_eq!(reg["seed"]["reg"], "x1");
 
-    let (status, addr) = get(cd, "dep-graph?addr=0x7000&before=3");
+    let (status, addr) = get(cd, "bfs-slice?view=graph&addr=0x7000&before=3");
     assert_eq!(status, None);
     assert_eq!(addr["seed"]["kind"], "addr");
     assert_eq!(addr["seed"]["idx"], 1);

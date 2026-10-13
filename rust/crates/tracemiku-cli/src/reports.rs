@@ -1,11 +1,6 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Result<()> {
-    print_pretty(&core_reports::output_map(trace_dir, opts)?)
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_output_backtrace(
     trace_dir: PathBuf,
     opts: OutputBacktraceOpts,
@@ -158,77 +153,4 @@ pub(super) fn cmd_vm_slice(
     print_pretty(&core_reports::vm_slice(
         trace_dir, start, end, count, regs, only_vm, base_ip, profile,
     )?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_mem_write_bursts(
-    trace_dir: PathBuf,
-    window: usize,
-    min_size: u64,
-    limit: usize,
-    map_bytes: bool,
-    map_candidates: usize,
-    nonzero_only: bool,
-    target_bytes: Option<String>,
-) -> anyhow::Result<()> {
-    print_pretty(&core_reports::mem_write_bursts(
-        trace_dir,
-        window,
-        min_size,
-        limit,
-        map_bytes,
-        map_candidates,
-        nonzero_only,
-        target_bytes,
-    )?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_byte_writer_map(
-    trace_dir: PathBuf,
-    addr: String,
-    size: u64,
-    idx_lo: usize,
-    idx_hi: isize,
-    max: usize,
-    vm_chain_steps: usize,
-    vm_chain_runs: usize,
-    vm_chain_lookback: usize,
-    vm_chain_follow_frontier: bool,
-    summary: bool,
-    vm_profile: VmProfile,
-) -> anyhow::Result<()> {
-    print_pretty(&core_reports::byte_writer_map(
-        trace_dir,
-        addr,
-        size,
-        idx_lo,
-        idx_hi,
-        max,
-        vm_chain_steps,
-        vm_chain_runs,
-        vm_chain_lookback,
-        vm_chain_follow_frontier,
-        summary,
-        vm_profile,
-    )?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_mem_provenance(
-    trace_dir: PathBuf,
-    addr: String,
-    length: usize,
-) -> anyhow::Result<()> {
-    print_pretty(&core_reports::mem_provenance(trace_dir, addr, length)?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<()> {
-    print_pretty(&core_reports::resolve_elf_symbol(elf_file, offset)?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<()> {
-    print_pretty(&core_reports::resolve_map_addr(maps_file, addr)?)
 }

@@ -45,37 +45,36 @@ fn get_json(call_dir: PathBuf, uri: &str) -> serde_json::Value {
 #[test]
 fn fork_events_returns_all_events() {
     let (_tmp, call_dir) = synth_call_dir();
-    let v = get_json(call_dir, "fork-events");
-    assert_eq!(v["count"], 2);
+    let v = get_json(call_dir, "events?source=fork");
     assert_eq!(v["returned"], 2);
     assert_eq!(v["truncated"], false);
-    assert_eq!(v["events"][0]["child_pid"], 123);
-    assert_eq!(v["events"][1]["attach_status"], "failed_ptrace_conflict");
+    assert_eq!(v["events"][0]["event"]["child_pid"], 123);
+    assert_eq!(
+        v["events"][1]["event"]["attach_status"],
+        "failed_ptrace_conflict"
+    );
 }
 
 #[test]
 fn fork_events_filters_by_attach_status() {
     let (_tmp, call_dir) = synth_call_dir();
-    let v = get_json(call_dir, "fork-events?status=failed_ptrace_conflict");
-    assert_eq!(v["count"], 1);
+    let v = get_json(call_dir, "events?source=fork&status=failed_ptrace_conflict");
     assert_eq!(v["returned"], 1);
-    assert_eq!(v["events"][0]["child_pid"], 456);
+    assert_eq!(v["events"][0]["event"]["child_pid"], 456);
 }
 
 #[test]
 fn fork_events_filters_by_is_fork_like() {
     let (_tmp, call_dir) = synth_call_dir();
-    let v = get_json(call_dir, "fork-events?is_fork_like=true");
-    assert_eq!(v["count"], 1);
+    let v = get_json(call_dir, "events?source=fork&is_fork_like=true");
     assert_eq!(v["returned"], 1);
-    assert_eq!(v["events"][0]["child_pid"], 123);
+    assert_eq!(v["events"][0]["event"]["child_pid"], 123);
 }
 
 #[test]
 fn fork_events_limit_truncates_returned_events() {
     let (_tmp, call_dir) = synth_call_dir();
-    let v = get_json(call_dir, "fork-events?limit=1");
-    assert_eq!(v["count"], 2);
+    let v = get_json(call_dir, "events?source=fork&limit=1");
     assert_eq!(v["returned"], 1);
     assert_eq!(v["truncated"], true);
     assert_eq!(v["events"].as_array().unwrap().len(), 1);

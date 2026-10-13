@@ -106,7 +106,7 @@ fn reg_timeline_max_points_truncates() {
 #[test]
 fn mem_diff_returns_comparison_shape() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "mem-diff?idx=0&addr=0x2000&size=4");
+    let (status, v) = get_json(cd, "mem-dump?at=0&compare_at=1&addr=0x2000&count=4");
     assert_eq!(status, None);
     let errors = validate(
         &serde_json::json!({

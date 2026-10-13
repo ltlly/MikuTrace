@@ -91,7 +91,7 @@ fn last_write_of_addr_response(
     let mut writer_idx: Option<usize> = None;
     let mut writer_addr: Option<u64> = None;
     let mut writer_size: Option<u32> = None;
-    for write in &inner.index.mem_writes {
+    for write in &inner.index().mem_writes {
         if !touches_addr(write.addr, write.size, addr) {
             continue;
         }
@@ -118,7 +118,7 @@ fn last_write_of_addr_response(
     };
     let record = inner.trace.record(writer_idx);
     let decoded = decode(record.pc, record.inst);
-    let (func_name, _) = inner.symbols.lookup(record.pc);
+    let (func_name, _) = inner.symbols().lookup(record.pc);
     let func = (!func_name.is_empty()).then_some(func_name);
     let src_reg = source_reg_for_write_at(&decoded, &record, addr);
     let src_value = src_reg
@@ -185,7 +185,7 @@ fn last_write_of_addr_response_from_memshadow(
     };
     let record = inner.trace.record(write.idx);
     let decoded = decode(record.pc, record.inst);
-    let (func_name, _) = inner.symbols.lookup(record.pc);
+    let (func_name, _) = inner.symbols().lookup(record.pc);
     let func = (!func_name.is_empty()).then_some(func_name);
     let src_reg = (writer_kind != "x")
         .then(|| source_reg_for_write_at(&decoded, &record, addr))
@@ -308,9 +308,9 @@ fn mem_writes_in_range_response(
 
     let mut matched = 0usize;
     let mut rows = Vec::new();
-    let writes_start = inner.index.mem_writes.partition_point(|w| w.idx < lo);
-    let writes_end = inner.index.mem_writes.partition_point(|w| w.idx < hi);
-    for write in &inner.index.mem_writes[writes_start..writes_end] {
+    let writes_start = inner.index().mem_writes.partition_point(|w| w.idx < lo);
+    let writes_end = inner.index().mem_writes.partition_point(|w| w.idx < hi);
+    for write in &inner.index().mem_writes[writes_start..writes_end] {
         if !matches_addr_filter(write.addr, write.size, addr_lo, addr_hi) {
             continue;
         }
@@ -337,7 +337,7 @@ fn mem_writes_in_range_response(
             continue;
         }
 
-        let (func_name, _) = inner.symbols.lookup(record.pc);
+        let (func_name, _) = inner.symbols().lookup(record.pc);
         rows.push(MemWriteRow {
             idx: write.idx,
             write_kind: "w",
@@ -400,7 +400,7 @@ fn mem_writes_in_range_from_memshadow(
         let src_reg = (writer_kind != "x")
             .then(|| source_reg_for_write_at(&decoded, &record, write.addr))
             .flatten();
-        let (func_name, _) = inner.symbols.lookup(record.pc);
+        let (func_name, _) = inner.symbols().lookup(record.pc);
         rows.push(MemWriteRow {
             idx: write.idx,
             write_kind: writer_kind,

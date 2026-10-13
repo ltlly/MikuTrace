@@ -1,5 +1,5 @@
 //! Black-box contract tests for the simple CLI command family:
-//! capabilities / stats / meta / list / info.
+//! capabilities / list / info.
 
 mod common;
 
@@ -22,7 +22,8 @@ fn capabilities_matches_output_contract_schema() {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["name", "about", "args", "subcommands"],
+                    "required": ["name", "about", "args", "subcommands", "stability"],
+                    "properties": {"stability": {"enum": ["stable", "experimental"]}},
                 },
             },
             "capture_extensions": {
@@ -43,7 +44,7 @@ fn capabilities_matches_output_contract_schema() {
         .iter()
         .map(|c| c["name"].as_str().unwrap())
         .collect();
-    for expected in ["records", "backtrace", "vm-ops", "output-backtrace"] {
+    for expected in ["records", "backtrace", "experimental", "output-backtrace"] {
         assert!(names.contains(&expected), "missing {expected}");
     }
 }
@@ -51,7 +52,7 @@ fn capabilities_matches_output_contract_schema() {
 #[test]
 fn meta_matches_schema() {
     let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&["meta", cd.to_str().unwrap()]);
+    let value = run_json(&["info", cd.to_str().unwrap()]);
     assert_valid(
         serde_json::json!({
             "type": "object",

@@ -60,10 +60,10 @@ fn context_eagerly_loads_index_symbols_modules() {
     let (_tmp, call_dir) = synth_call_dir();
     let state = AnalysisContext::load(call_dir).expect("load context");
     // Index built — empty regs maps for an empty trace are OK.
-    let _ = &state.inner.index.reg_defs;
-    let _ = &state.inner.index.reg_uses;
+    let _ = &state.inner.index().reg_defs;
+    let _ = &state.inner.index().reg_uses;
     // SymbolMap built — empty for synth (no known_offsets in fixture).
-    assert_eq!(state.inner.symbols.len(), 0);
+    assert_eq!(state.inner.symbols().len(), 0);
     // ModuleResolver has libt.so.
     let m = state.inner.modules.resolve(0x100000);
     assert!(m.is_some(), "0x100000 should resolve to libt.so");
