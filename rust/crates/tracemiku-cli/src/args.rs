@@ -432,8 +432,7 @@ pub(super) enum Cmd {
         /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
-        /// Maximum hits returned; results are capped by the server (see
-        /// capabilities).
+        /// 结果条数上限，受 core 硬上限约束。
         #[arg(long)]
         max_count: Option<usize>,
         /// Follow stores/loads through MemShadow (memory taint propagation).
@@ -445,10 +444,8 @@ pub(super) enum Cmd {
         /// Allow taint to cross function-call boundaries.
         #[arg(long)]
         cross_fn_call: bool,
-        /// GumTrace-style watchdog: stop walk after N consecutive iterations
-        /// with zero new hits. Pass 0 to disable. Omit to use server default.
-        /// Response carries `stop_reason` (`completed` | `max_count` |
-        /// `scan_limit`) and the echoed `scan_limit_used`.
+        /// 连续 N 次无新增命中后停止；0 关闭，省略使用 core 默认值。
+        /// 返回 stop_reason 和 scan_limit_used。
         #[arg(long)]
         scan_limit: Option<usize>,
     },
@@ -476,8 +473,7 @@ pub(super) enum Cmd {
         /// Seed register name (e.g. x9, w9, sp).
         #[arg(long)]
         reg: String,
-        /// Maximum hits returned; results are capped by the server (see
-        /// capabilities).
+        /// 结果条数上限，受 core 硬上限约束。
         #[arg(long)]
         max_count: Option<usize>,
         /// Follow stores/loads through MemShadow (memory taint propagation).
@@ -489,10 +485,8 @@ pub(super) enum Cmd {
         /// Allow taint to cross function-call boundaries.
         #[arg(long)]
         cross_fn_call: bool,
-        /// GumTrace-style watchdog: stop walk after N consecutive iterations
-        /// with zero new hits. Pass 0 to disable. Omit to use server default.
-        /// Response carries `stop_reason` (`completed` | `max_count` |
-        /// `scan_limit`) and the echoed `scan_limit_used`.
+        /// 连续 N 次无新增命中后停止；0 关闭，省略使用 core 默认值。
+        /// 返回 stop_reason 和 scan_limit_used。
         #[arg(long)]
         scan_limit: Option<usize>,
     },
@@ -560,8 +554,7 @@ pub(super) enum Cmd {
         /// Drop control-flow edges. Default: include them.
         #[arg(long)]
         data_only: bool,
-        /// Maximum slice rows; results are capped by the server (see
-        /// capabilities).
+        /// 切片行数上限，受 core 硬上限约束。
         #[arg(long, default_value_t = 5_000)]
         limit: usize,
         /// `union` (default) or `intersection`. Multi-seed only —
@@ -599,8 +592,7 @@ pub(super) enum Cmd {
         /// Maximum BFS depth. depth=0 means seed only.
         #[arg(long, default_value_t = 8)]
         depth: usize,
-        /// Maximum nodes in returned graph; results are capped by the server
-        /// (see capabilities).
+        /// 返回节点数上限，受 core 硬上限约束。
         #[arg(long, default_value_t = 160)]
         limit: usize,
         /// Drop control-flow edges. Default: include them.

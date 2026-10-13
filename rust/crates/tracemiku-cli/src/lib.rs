@@ -627,8 +627,6 @@ pub fn run() -> anyhow::Result<()> {
             occurrence,
         }) => {
             let context = AnalysisContext::load(trace_dir)?;
-            // (SO,offset) seed resolves to a concrete idx, joining the existing
-            // idx/reg/addr seed family without touching the server route.
             let resolved_idx = match (so.as_ref(), off.as_ref()) {
                 (Some(so), Some(off)) => {
                     let (i, _pc) = resolve_offset_to_idx(&context, so, off, occurrence)?;
@@ -852,8 +850,6 @@ pub fn run() -> anyhow::Result<()> {
             query_json(trace_dir, Query::FnSummary(params))
         }
         Some(Cmd::CryptoScan { trace_dir }) => query_json(trace_dir, Query::CryptoScan),
-        // crypto 只输出 core 的分析响应；空结果的
-        // note 由 server 侧统一补充，CLI 不再修补分析结果。
         Some(Cmd::Crypto { trace_dir }) => query_json(trace_dir, Query::CryptoAnalysis),
         Some(Cmd::HashFinalizeDetect {
             trace_dir,

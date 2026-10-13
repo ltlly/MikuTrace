@@ -45,6 +45,6 @@ PY
   --out traces/<run> --duration 30 --max-records 24000
 ```
 
-该 app 会在被 Stalker 挂上后让 adbd 的 subprocess 路径失效，因此**必须用
-`--transport frida`**（host 驱动分块回传，全程不 fork）；详见
-`docs/TOOLING_GAPS.md` 第 8 条。
+该目标在 Android 16 / OPD2404 上曾于 Stalker 启动后阻塞 `adb shell/logcat`，
+而 Frida、adb 文件传输和设备侧独立 helper 仍可用；确切等待点未定位。采集使用
+`--transport frida`。

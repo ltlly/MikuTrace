@@ -1,6 +1,1 @@
-# Claude Code 仓库入口
-
-本仓库的唯一 AI 工程规范是 [AGENTS.md](AGENTS.md)。开始任何编码、审查或文档工作前，
-必须完整读取并遵守该文件，同时读取只包含未完成事项的 [TODO.md](TODO.md)。
-
-不要在本文件复制工程规则；规则只有一个事实源，避免不同智能体读取到互相冲突的版本。
+读取并遵守 [AGENTS.md](AGENTS.md)，同时读取 [TODO.md](TODO.md)。
