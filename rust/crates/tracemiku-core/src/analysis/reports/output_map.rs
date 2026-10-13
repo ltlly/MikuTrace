@@ -2,10 +2,9 @@ use super::*;
 
 #[derive(Debug)]
 pub struct OutputBacktraceOpts {
-    pub key: Option<String>,
     pub value: Option<String>,
     pub bytes_hex: Option<String>,
-    pub jni_limit: usize,
+    pub at_idx: Option<usize>,
     pub max_mem_hits: usize,
     pub writes_per_hit: usize,
     pub taint_seeds: usize,
@@ -22,9 +21,8 @@ pub struct OutputBacktraceOpts {
 
 #[derive(Debug)]
 pub struct OutputMapOpts {
-    pub key: Option<String>,
     pub value: Option<String>,
-    pub jni_limit: usize,
+    pub at_idx: Option<usize>,
     pub max_mem_hits: usize,
     pub hit_rank: usize,
     pub hit_order: HitOrder,
@@ -58,7 +56,7 @@ pub struct OutputMapOpts {
 pub enum HitOrder {
     /// Earliest first write of a full output buffer. Best for walking generation backward.
     Earliest,
-    /// Closest full output buffer to the JNI value trace index.
+    /// Closest full output buffer to the explicit observation index.
     Nearest,
     /// Latest first write of a full output buffer.
     Latest,
@@ -87,7 +85,7 @@ pub fn output_backtrace(
     opts: OutputBacktraceOpts,
 ) -> anyhow::Result<serde_json::Value> {
     let context = AnalysisContext::load(trace_dir)?;
-    let source = resolve_output_source(&context, &opts)?;
+    let source = resolve_output_source(&opts)?;
     let mut patterns: Vec<(&'static str, Vec<u8>)> =
         vec![("observed", source.primary_bytes.clone())];
     let mut text_for_decoders = source.text.clone();
@@ -116,21 +114,6 @@ pub fn output_backtrace(
     let mut pattern_reports = Vec::new();
     let mut taint_seed_seen = HashSet::new();
     let mut taint_seed_queue: Vec<serde_json::Value> = Vec::new();
-
-    if let Some(value_idx) = source.value_idx {
-        if value_idx > 0 {
-            push_taint_seed(
-                &mut taint_seed_seen,
-                &mut taint_seed_queue,
-                serde_json::json!({
-                    "kind": "jni_new_string_utf_callsite",
-                    "start": value_idx - 1,
-                    "reg": "x1",
-                    "reason": "NewStringUTF callsite; x1 normally points at the C string bytes on ARM64",
-                }),
-            );
-        }
-    }
 
     for (kind, bytes) in patterns {
         if bytes.is_empty() {
@@ -324,29 +307,25 @@ pub(super) fn output_map_group_vm_trees(
 
 pub fn output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Result<serde_json::Value> {
     let context = AnalysisContext::load(trace_dir)?;
-    let source = resolve_output_source(
-        &context,
-        &OutputBacktraceOpts {
-            key: opts.key.clone(),
-            value: opts.value.clone(),
-            bytes_hex: None,
-            jni_limit: opts.jni_limit,
-            max_mem_hits: opts.max_mem_hits,
-            writes_per_hit: 0,
-            taint_seeds: 0,
-            taint_max_count: 0,
-            vm_chain_steps: 0,
-            vm_chain_runs: 0,
-            vm_chain_lookback: opts.lookback,
-            vm_chain_follow_frontier: false,
-            vm_profile: opts.vm_profile.clone(),
-            skip_taint: true,
-            url_decode: opts.url_decode,
-            base64_decode: true,
-        },
-    )?;
+    let source = resolve_output_source(&OutputBacktraceOpts {
+        value: opts.value.clone(),
+        bytes_hex: None,
+        at_idx: opts.at_idx,
+        max_mem_hits: opts.max_mem_hits,
+        writes_per_hit: 0,
+        taint_seeds: 0,
+        taint_max_count: 0,
+        vm_chain_steps: 0,
+        vm_chain_runs: 0,
+        vm_chain_lookback: opts.lookback,
+        vm_chain_follow_frontier: false,
+        vm_profile: opts.vm_profile.clone(),
+        skip_taint: true,
+        url_decode: opts.url_decode,
+        base64_decode: true,
+    })?;
     let Some(source_text) = source.text.as_deref() else {
-        bail!("output-map requires textual --key or --value source");
+        bail!("base64-map requires a textual --value source");
     };
     let mapped_text = if opts.url_decode {
         let decoded = percent_decode_bytes(source_text.as_bytes());

@@ -49,7 +49,7 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn string_provenance_reports_writers_and_readers() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "string-provenance?addr=0x7000&length=2");
+    let (status, v) = get(cd, "mem-byte-history?addr=0x7000&length=2");
     assert_eq!(status, None);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["addr"], "0x7000");
@@ -68,6 +68,6 @@ fn string_provenance_reports_writers_and_readers() {
 #[test]
 fn string_provenance_bad_addr_is_invalid_argument() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, _v) = get(cd, "string-provenance?addr=bogus");
+    let (status, _v) = get(cd, "mem-byte-history?addr=bogus");
     assert_eq!(status, Some("invalid_argument"));
 }

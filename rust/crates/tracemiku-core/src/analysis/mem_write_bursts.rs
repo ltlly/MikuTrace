@@ -1,13 +1,13 @@
-//! 检测 hash finalize 写入模式。
+//! 查询按地址连续且首末记录落在指定时间窗内的写入区间。
 
 use super::AnalysisError;
-use crate::hashfin::HashFinalizeCandidate;
+use crate::write_bursts::WriteBurstCandidate;
 use serde::{Deserialize, Serialize};
 
 use crate::analysis::context::AnalysisContext;
 
 #[derive(Debug, Deserialize)]
-pub struct HashFinalizeQuery {
+pub struct WriteBurstsQuery {
     #[serde(default = "default_window")]
     pub window: usize,
     #[serde(default = "default_min_size")]
@@ -31,7 +31,7 @@ fn default_limit() -> usize {
 const MAX_LIMIT: usize = 5_000;
 
 #[derive(Debug, Serialize)]
-pub struct HashFinalizeResponse {
+pub struct WriteBurstsResponse {
     pub status: &'static str,
     pub window: usize,
     pub min_size: u64,
@@ -39,27 +39,27 @@ pub struct HashFinalizeResponse {
     pub count: usize,
     pub returned: usize,
     pub truncated: bool,
-    pub candidates: Vec<HashFinalizeCandidate>,
+    pub candidates: Vec<WriteBurstCandidate>,
 }
 
-pub fn hash_finalize_detect(
+pub fn mem_write_bursts(
     state: &AnalysisContext,
-    q: HashFinalizeQuery,
-) -> Result<HashFinalizeResponse, AnalysisError> {
+    q: WriteBurstsQuery,
+) -> Result<WriteBurstsResponse, AnalysisError> {
     let inner = state.inner.clone();
-    let response = hash_finalize_response(&inner, q);
+    let response = mem_write_bursts_response(&inner, q);
     Ok(response)
 }
 
-fn hash_finalize_response(
+fn mem_write_bursts_response(
     inner: &crate::analysis::context::AnalysisData,
-    q: HashFinalizeQuery,
-) -> HashFinalizeResponse {
+    q: WriteBurstsQuery,
+) -> WriteBurstsResponse {
     let limit = q.limit.min(MAX_LIMIT);
     let mem = inner.memshadow();
-    let (count, candidates) = inner.hash_finalize_candidates(mem, q.window, q.min_size, limit);
+    let (count, candidates) = inner.write_burst_candidates(mem, q.window, q.min_size, limit);
 
-    HashFinalizeResponse {
+    WriteBurstsResponse {
         status: "ready",
         window: q.window,
         min_size: q.min_size,
@@ -71,7 +71,7 @@ fn hash_finalize_response(
     }
 }
 
-impl Default for HashFinalizeQuery {
+impl Default for WriteBurstsQuery {
     fn default() -> Self {
         Self {
             window: default_window(),

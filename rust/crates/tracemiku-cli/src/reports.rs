@@ -1,31 +1,5 @@
 use super::*;
 
-pub(super) fn parse_vm_profile(
-    ip_reg: Option<String>,
-    state_reg: Option<String>,
-    dispatch_reg: Option<String>,
-    infra_regs: Option<String>,
-) -> anyhow::Result<VmProfile> {
-    let ip_reg = ip_reg.context(
-        "--vm-ip-reg is required (no target-specific default; pass the register \
-             holding the VM instruction pointer)",
-    )?;
-    let state_reg = state_reg.context(
-        "--vm-state-reg is required (no target-specific default; pass the register \
-             holding the VM state/virtual-register base)",
-    )?;
-    let dispatch_reg = dispatch_reg.context(
-        "--vm-dispatch-reg is required (no target-specific default; pass the register \
-             holding the dispatch table or lookup base)",
-    )?;
-    Ok(VmProfile::new(
-        ip_reg,
-        state_reg,
-        dispatch_reg,
-        infra_regs.unwrap_or_default(),
-    ))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_output_map(trace_dir: PathBuf, opts: OutputMapOpts) -> anyhow::Result<()> {
     print_pretty(&core_reports::output_map(trace_dir, opts)?)
@@ -187,50 +161,7 @@ pub(super) fn cmd_vm_slice(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_scan_jni_output_strings(
-    path: PathBuf,
-    key: Option<String>,
-    contains: Option<String>,
-    limit: usize,
-    decode_url: bool,
-    decode_base64: bool,
-    decode_base64_full: bool,
-    diff_base64: bool,
-    base64_tail_start: Option<usize>,
-    base64_tail_align_prefix: String,
-    base64_tail_drop: usize,
-    prior_inputs: usize,
-) -> anyhow::Result<()> {
-    print_pretty(&core_reports::scan_jni_output_strings(
-        path,
-        key,
-        contains,
-        limit,
-        decode_url,
-        decode_base64,
-        decode_base64_full,
-        diff_base64,
-        base64_tail_start,
-        base64_tail_align_prefix,
-        base64_tail_drop,
-        prior_inputs,
-    )?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_jni_output_strings(
-    trace_dir: PathBuf,
-    key: Option<String>,
-    contains: Option<String>,
-    limit: usize,
-) -> anyhow::Result<()> {
-    print_pretty(&core_reports::jni_output_strings(
-        trace_dir, key, contains, limit,
-    )?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_hash_finalize_detect(
+pub(super) fn cmd_mem_write_bursts(
     trace_dir: PathBuf,
     window: usize,
     min_size: u64,
@@ -240,7 +171,7 @@ pub(super) fn cmd_hash_finalize_detect(
     nonzero_only: bool,
     target_bytes: Option<String>,
 ) -> anyhow::Result<()> {
-    print_pretty(&core_reports::hash_finalize_detect(
+    print_pretty(&core_reports::mem_write_bursts(
         trace_dir,
         window,
         min_size,
@@ -284,27 +215,17 @@ pub(super) fn cmd_byte_writer_map(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_mem_tenet(trace_dir: PathBuf, addr: String, length: usize) -> anyhow::Result<()> {
-    print_pretty(&core_reports::mem_tenet(trace_dir, addr, length)?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_stats(
+pub(super) fn cmd_mem_provenance(
     trace_dir: PathBuf,
-    all_modules: bool,
-    top_modules: usize,
+    addr: String,
+    length: usize,
 ) -> anyhow::Result<()> {
-    print_pretty(&core_reports::stats(trace_dir, all_modules, top_modules)?)
+    print_pretty(&core_reports::mem_provenance(trace_dir, addr, length)?)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<()> {
     print_pretty(&core_reports::resolve_elf_symbol(elf_file, offset)?)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn cmd_resolve_trace_addr(trace_dir: PathBuf, addr: String) -> anyhow::Result<()> {
-    print_pretty(&core_reports::resolve_trace_addr(trace_dir, addr)?)
 }
 
 #[allow(clippy::too_many_arguments)]

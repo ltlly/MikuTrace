@@ -14,6 +14,8 @@ fn vm_slice_matches_schema() {
         "0",
         "--count",
         "12",
+        "--vm-slot-bytes",
+        "8",
         "--vm-ip-reg",
         "x9",
         "--vm-state-reg",
@@ -27,6 +29,8 @@ fn vm_slice_matches_schema() {
             "type": "object",
             "required": ["status", "start", "end", "returned", "records", "only_vm", "vm_profile"],
             "properties": {
+                "vm_profile": {"type": "object", "required": ["slot_bytes"],
+                    "properties": {"slot_bytes": {"type": "integer", "const": 8}}},
                 "records": {"type": "array"},
                 "only_vm": {"type": "boolean"},
             },
@@ -44,6 +48,8 @@ fn vm_ops_matches_schema() {
         "0",
         "--end",
         "12",
+        "--vm-slot-bytes",
+        "8",
         "--vm-ip-reg",
         "x9",
         "--vm-state-reg",
@@ -78,6 +84,8 @@ fn vm_backstep_matches_schema() {
         "vm-backstep",
         "--idx",
         "4",
+        "--vm-slot-bytes",
+        "8",
         "--vm-ip-reg",
         "x9",
         "--vm-state-reg",
@@ -106,6 +114,8 @@ fn vm_backchain_matches_schema() {
         "vm-backchain",
         "--idx",
         "4",
+        "--vm-slot-bytes",
+        "8",
         "--vm-ip-reg",
         "x9",
         "--vm-state-reg",
@@ -134,6 +144,8 @@ fn vm_backtree_matches_schema() {
         "vm-backtree",
         "--idx",
         "4",
+        "--vm-slot-bytes",
+        "8",
         "--vm-ip-reg",
         "x9",
         "--vm-state-reg",
@@ -154,4 +166,32 @@ fn vm_backtree_matches_schema() {
         }),
         &value,
     );
+}
+
+#[test]
+fn vm_profile_requires_an_explicit_slot_layout() {
+    let (_tmp, cd) = synth_deep_dir();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_tracemiku-cli"))
+        .args([
+            "vm-slice",
+            cd.to_str().unwrap(),
+            "--start",
+            "0",
+            "--count",
+            "1",
+            "--vm-ip-reg",
+            "x2",
+            "--vm-state-reg",
+            "x3",
+            "--vm-dispatch-reg",
+            "x4",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(error["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--vm-slot-bytes"));
 }

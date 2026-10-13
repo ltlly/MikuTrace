@@ -376,7 +376,7 @@ fn mem_diff_response(
     inner: &crate::analysis::context::AnalysisData,
     q: MemDiffQuery,
 ) -> MemDiffResponse {
-    let start = parse::parse_dec_u64(&q.addr).unwrap_or(0);
+    let start = parse::parse_hex_u64(&q.addr).unwrap_or(0);
     let size = effective_mem_diff_size(q.size);
     let before_t = q.idx.saturating_sub(1) as u64;
     let after_t = q.idx as u64;

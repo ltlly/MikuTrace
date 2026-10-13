@@ -144,7 +144,7 @@ impl Trace {
     }
 
     /// Fast PC-only path. Avoids constructing a full `Record`. Useful for
-    /// scans where only PC matters (e.g. `idxs-for-pc`).
+    /// scans where only PC matters (e.g. `pc-hits`).
     pub fn pc(&self, i: usize) -> u64 {
         let off = i * REC_SIZE;
         u64::from_le_bytes(self.raw()[off..off + 8].try_into().unwrap())

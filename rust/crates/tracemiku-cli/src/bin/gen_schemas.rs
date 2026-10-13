@@ -11,7 +11,7 @@ use schemars::schema_for;
 
 use tracemiku_core::analysis::reports::output_lineage::{LineageBatchReport, LineageRow};
 use tracemiku_core::analysis::reports::output_types::{
-    BacktraceReport, OutputMapReport, ReplayReport, StatsReport,
+    BacktraceReport, OutputMapReport, ReplayReport,
 };
 use tracemiku_core::analysis::reports::output_vm::{VmOpsReport, VmSliceReport};
 
@@ -44,10 +44,6 @@ fn main() -> std::io::Result<()> {
         (
             "output-map-report",
             serde_json::to_value(schema_for!(OutputMapReport)).unwrap(),
-        ),
-        (
-            "stats-report",
-            serde_json::to_value(schema_for!(StatsReport)).unwrap(),
         ),
         (
             "vm-slice-report",

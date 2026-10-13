@@ -132,3 +132,23 @@ fn hash_input_search_batches_memory_prefix_lookup() {
     assert_eq!(v["found"][0]["match_type"], "in_mem");
     assert_eq!(v["found"][0]["found_in_mem"][0]["addr"], "0x7000");
 }
+
+#[test]
+fn hash_input_search_keeps_requested_prefix_length_for_short_algorithms() {
+    let (_tmp, cd) = synth_store_call_dir(0x1dc6f4aa);
+    let (status, value) = post(
+        cd,
+        json!({
+            "target_bytes": "ff".repeat(32),
+            "inputs": ["hello"],
+            "algos": ["sha1", "sha256"],
+            "combos": ["plain"],
+            "prefix_bytes": 32,
+            "search_in_mem": true
+        }),
+    );
+    assert_eq!(status, None);
+    assert_eq!(value["tried_combos"], 2);
+    assert_eq!(value["target_prefix"], "ff".repeat(32));
+    assert_eq!(value["found_count"], 0);
+}

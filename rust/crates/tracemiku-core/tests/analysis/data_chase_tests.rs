@@ -94,7 +94,7 @@ fn get_json(call_dir: PathBuf, uri: &str) -> serde_json::Value {
 #[test]
 fn data_chase_follows_load_store_and_reg_source() {
     let (_tmp, cd) = synth_call_dir();
-    let v = get_json(cd, "data-chase?start=3&reg=x0&max_steps=10");
+    let v = get_json(cd, "reg-chase?start=3&reg=x0&max_steps=10");
     assert_eq!(v["from"], 3);
     assert_eq!(v["reg"], "x0");
     assert_eq!(v["steps"][0]["via"], "mem-load");
@@ -108,7 +108,7 @@ fn data_chase_follows_load_store_and_reg_source() {
 #[test]
 fn data_chase_pair_load_follows_matching_store_half() {
     let (_tmp, cd) = synth_pair_call_dir();
-    let v = get_json(cd, "data-chase?start=4&reg=x5&max_steps=10");
+    let v = get_json(cd, "reg-chase?start=4&reg=x5&max_steps=10");
     assert_eq!(v["from"], 4);
     assert_eq!(v["reg"], "x5");
     assert_eq!(v["steps"][0]["via"], "mem-load");

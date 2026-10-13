@@ -59,7 +59,7 @@ pub fn last_write_of_addr(
     state: &AnalysisContext,
     q: LastWriteOfAddrQuery,
 ) -> Result<LastWriteOfAddrResponse, AnalysisError> {
-    let Some(addr) = parse::parse_dec_u64(&q.addr) else {
+    let Some(addr) = parse::parse_hex_u64(&q.addr) else {
         return Ok(LastWriteOfAddrResponse::NotFound {
             status: "not-found",
             addr: q.addr,
@@ -488,7 +488,7 @@ fn idxs_touching_range_response(
     inner: &crate::analysis::context::AnalysisData,
     q: TouchingRangeQuery,
 ) -> TouchingRangeResponse {
-    let start = parse::parse_dec_u64(&q.addr).unwrap_or(0);
+    let start = parse::parse_hex_u64(&q.addr).unwrap_or(0);
     let size = q.size.max(1);
     let (writers, readers) = touching_range_idxs_from_memshadow(inner.memshadow(), start, size);
     let (writers_before, writers_after) = split_around_cursor(&writers, q.cursor, q.limit);
@@ -555,7 +555,7 @@ fn idxs_touching_addr_response(
     inner: &crate::analysis::context::AnalysisData,
     q: TouchingAddrQuery,
 ) -> TouchingAddrResponse {
-    let addr = parse::parse_dec_u64(&q.addr).unwrap_or(0);
+    let addr = parse::parse_hex_u64(&q.addr).unwrap_or(0);
     let mut entries = touching_addr_entries_from_memshadow(inner.memshadow(), addr, q.with_bytes);
     entries.sort_by_key(|e| e.idx);
     let cut = entries.partition_point(|e| e.idx < q.cursor);
@@ -721,8 +721,10 @@ fn parse_optional_int(name: &str, value: &Option<String>) -> Result<Option<u64>,
     let Some(raw) = value.as_deref() else {
         return Ok(None);
     };
-    parse::parse_dec_u64(raw).map(Some).ok_or_else(|| {
-        AnalysisError::invalid(format!("bad {name}, expected decimal or hex: {raw:?}"))
+    parse::parse_hex_u64(raw).map(Some).ok_or_else(|| {
+        AnalysisError::invalid(format!(
+            "bad {name}, expected hexadecimal or d-prefixed decimal: {raw:?}"
+        ))
     })
 }
 

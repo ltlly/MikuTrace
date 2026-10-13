@@ -72,7 +72,7 @@ def build_parser():
                       help="初始快照总字节预算（MiB），默认 512")
     p_tr.add_argument("--ring-recs", type=int, default=0,
                       help="ring 容量（条），默认按 --max-records 推导，上限 4194304")
-    p_tr.add_argument("--max-records", type=int, default=5000000)
+    p_tr.add_argument("--max-records", type=int, default=5000000, help="单次调用记录上限（条）；达到上限后标记截断")
     p_tr.add_argument("--pull-after-session-end", action="store_true",
                       help="会话结束后再拉取；默认每个 call 结束即拉取")
     p_tr.add_argument("--no-stop-after-trace", dest="stop_after_trace",
@@ -82,8 +82,7 @@ def build_parser():
                       help="跟踪新建 pthread worker，默认关闭")
     p_tr.add_argument("--max-worker-threads", type=int, default=4, dest="max_worker_threads",
                       help="worker 线程上限，默认 4，agent 上限 32")
-    p_tr.add_argument("--no-workers", action="store_true", help="(deprecated, 默认就是不跟)")
-    p_tr.add_argument("--duration", type=int, default=120)
+    p_tr.add_argument("--duration", type=int, default=120, help="等待采集的会话时长（秒），到时结束会话并回收结果")
     p_tr.add_argument("--out", required=True, help="输出目录")
     p_tr.add_argument("--remote", default=None,
                       help="frida-server TCP 地址 (如 127.0.0.1:6699). "

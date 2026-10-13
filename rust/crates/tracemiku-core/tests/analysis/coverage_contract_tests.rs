@@ -56,7 +56,7 @@ fn validate(schema: &serde_json::Value, value: &serde_json::Value) -> Vec<String
 #[test]
 fn coverage_known_fn_returns_ok_shape() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "coverage?so=libt.so&off=0x0");
+    let (status, v) = get_json(cd, "branch-coverage?so=libt.so&off=0x0");
     assert_eq!(status, None);
     let errors = validate(
         &serde_json::json!({
@@ -76,7 +76,7 @@ fn coverage_known_fn_returns_ok_shape() {
 #[test]
 fn coverage_unknown_pc_returns_miss() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "coverage?addr=0x999999");
+    let (status, v) = get_json(cd, "branch-coverage?addr=0x999999");
     assert_eq!(status, None);
     let errors = validate(
         &serde_json::json!({
@@ -92,7 +92,7 @@ fn coverage_unknown_pc_returns_miss() {
 #[test]
 fn coverage_missing_args_returns_error() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "coverage");
+    let (status, v) = get_json(cd, "branch-coverage");
     assert_eq!(status, None);
     assert_eq!(v["status"], "error");
 }
@@ -102,8 +102,8 @@ fn coverage_branches_are_deterministically_ordered() {
     // Regression for the parity bug: equal-total branches must be tie-broken
     // by block_offset, so two identical requests return byte-identical JSON.
     let (_tmp, cd) = synth_call_dir();
-    let (_, v1) = get_json(cd.clone(), "coverage?so=libt.so&off=0x0");
-    let (_, v2) = get_json(cd, "coverage?so=libt.so&off=0x0");
+    let (_, v1) = get_json(cd.clone(), "branch-coverage?so=libt.so&off=0x0");
+    let (_, v2) = get_json(cd, "branch-coverage?so=libt.so&off=0x0");
     assert_eq!(v1, v2, "coverage output must be deterministic");
     if let Some(branches) = v1.get("branches").and_then(|b| b.as_array()) {
         let offsets: Vec<&str> = branches

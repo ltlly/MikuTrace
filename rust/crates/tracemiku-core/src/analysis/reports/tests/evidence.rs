@@ -102,7 +102,7 @@ fn byte_lineage_compact_summary_reports_repeated_values() {
                         "idx": 189,
                         "asm": "ldr x1, [x25, #0xa0]",
                         "class": "vm-reg-load",
-                        "vm_slot": {"slot": 20}
+                        "vm_slot": {"slot_bytes": 8, "slot": 20}
                     },
                     "upstream": {"status": "ready", "addr": "0x7744599548"}
                 },
@@ -350,8 +350,10 @@ fn lineage_uses_byte_lane_when_following_shift_frontier() {
             "x9".to_string(),
             "x10".to_string(),
             "x11".to_string(),
+            8.try_into().unwrap(),
             "x12".to_string(),
-        ),
+        )
+        .unwrap(),
     );
     let seed = seed.unwrap().to_json();
     assert_eq!(decision["kind"], serde_json::json!("frontier_auto"));

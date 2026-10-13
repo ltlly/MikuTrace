@@ -5,7 +5,112 @@
 
 mod common;
 
-use common::{run_json, synth_call_dir};
+use common::{run_json, synth_call_dir, synth_deep_dir};
+
+#[test]
+fn documented_negative_sentinels_are_accepted_as_separate_arguments() {
+    let (_tmp, cd) = synth_deep_dir();
+    let call = cd.to_str().unwrap();
+    for args in [
+        vec!["block-hits", call, "--pc", "100000", "--near", "-1"],
+        vec!["strings", call, "--cursor", "-1"],
+        vec![
+            "last-write-of-addr",
+            call,
+            "--addr",
+            "2000",
+            "--before-idx",
+            "-1",
+        ],
+        vec![
+            "find-mem-pattern",
+            call,
+            "--bytes-hex",
+            "6170",
+            "--since",
+            "-1",
+        ],
+        vec!["reg-timeline", call, "--reg", "x0", "--end", "-1"],
+        vec![
+            "mem-writes-in-range",
+            call,
+            "--idx-lo",
+            "0",
+            "--idx-hi",
+            "-1",
+        ],
+        vec![
+            "byte-writer-map",
+            call,
+            "--addr",
+            "2000",
+            "--size",
+            "8",
+            "--idx-hi",
+            "-1",
+        ],
+        vec![
+            "jni-object-history",
+            call,
+            "--jobject",
+            "2222",
+            "--end",
+            "-1",
+        ],
+    ] {
+        let output = run_json(&args);
+        assert_ne!(output["status"], "error", "{args:?}");
+    }
+}
+
+#[test]
+fn addresses_share_hex_default_and_explicit_decimal_across_queries() {
+    let (_tmp, cd) = synth_deep_dir();
+    let call = cd.to_str().unwrap();
+    for variants in [
+        ["0x100000", "100000", "d1048576"],
+        ["0x2000", "2000", "d8192"],
+    ] {
+        let commands: Vec<Vec<&str>> = if variants[0] == "0x100000" {
+            vec![vec!["pc-hits", call], vec!["block", call, "--pc"]]
+        } else {
+            vec![
+                vec!["mem-accesses", call, "--addr"],
+                vec!["mem-range-accesses", call, "--addr"],
+                vec!["mem-dump", call, "--count", "8", "--addr"],
+                vec!["mem-byte-history", call, "--length", "8", "--addr"],
+                vec!["mem-provenance", call, "--length", "8", "--addr"],
+                vec!["mem-flow", call, "--addr"],
+                vec!["mem-diff", call, "--idx", "1", "--addr"],
+                vec!["last-write-of-addr", call, "--addr"],
+                vec!["dep-graph", call, "--addr"],
+            ]
+        };
+        for command in commands {
+            let mut outputs = Vec::new();
+            for raw in variants {
+                let mut args = command.clone();
+                args.push(raw);
+                let mut value = run_json(&args);
+                if let Some(object) = value.as_object_mut() {
+                    // Some commands intentionally echo the exact user input.
+                    object.remove("addr");
+                    object.remove("pc");
+                }
+                outputs.push(value);
+            }
+            assert_eq!(outputs[0], outputs[1], "{} bare hex", command[0]);
+            assert_eq!(outputs[0], outputs[2], "{} explicit decimal", command[0]);
+            if command[0] == "dep-graph" {
+                assert_eq!(outputs[0]["seed"]["idx"], 7);
+                assert!(outputs[0]["graph"]["node_count"].as_u64().unwrap() > 0);
+            }
+            if command[0] == "mem-range-accesses" {
+                assert!(outputs[0]["writers_total"].as_u64().unwrap() > 0);
+            }
+        }
+    }
+}
 
 #[test]
 fn records_count_matches_meta() {
@@ -56,15 +161,6 @@ fn resolve_off_maps_to_known_function() {
     assert_eq!(value["status"], "hit", "resolve must hit: {value:?}");
     assert_eq!(value["query"]["off"], "0x100");
     assert_eq!(value["query"]["so"], "libt.so");
-}
-
-#[test]
-fn stats_reports_known_module_and_records() {
-    let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&["stats", cd.to_str().unwrap()]);
-    assert_eq!(value["records"], 9);
-    assert_eq!(value["module"]["name"], "libt.so");
-    assert_eq!(value["module"]["base"], "0x100000");
 }
 
 #[test]

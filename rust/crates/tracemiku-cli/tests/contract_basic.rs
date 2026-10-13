@@ -49,24 +49,6 @@ fn capabilities_matches_output_contract_schema() {
 }
 
 #[test]
-fn stats_matches_schema() {
-    let (_tmp, cd) = synth_call_dir();
-    let value = run_json(&["stats", cd.to_str().unwrap()]);
-    assert_valid(
-        serde_json::json!({
-            "type": "object",
-            "required": ["path", "records", "module", "modules"],
-            "properties": {
-                "records": {"type": "integer", "const": 9},
-                "module": {"type": "object", "required": ["name", "base", "size"]},
-                "modules": {"type": "array"},
-            },
-        }),
-        &value,
-    );
-}
-
-#[test]
 fn meta_matches_schema() {
     let (_tmp, cd) = synth_call_dir();
     let value = run_json(&["meta", cd.to_str().unwrap()]);

@@ -138,7 +138,16 @@ pub(super) fn vm_slot_access_summaries(row: &serde_json::Value) -> Vec<serde_jso
         return Vec::new();
     };
     let class = row.get("class").and_then(|v| v.as_str()).unwrap_or("");
-    let base_slot = slot.get("slot").and_then(|v| v.as_u64()).unwrap_or(0);
+    let Some(base_slot) = slot.get("slot").and_then(|v| v.as_u64()) else {
+        return Vec::new();
+    };
+    let Some(slot_bytes) = slot
+        .get("slot_bytes")
+        .and_then(|v| v.as_u64())
+        .filter(|v| *v > 0)
+    else {
+        return Vec::new();
+    };
     let base_mem_addr = row
         .get("mem_addr")
         .and_then(|v| v.as_str())
@@ -156,16 +165,17 @@ pub(super) fn vm_slot_access_summaries(row: &serde_json::Value) -> Vec<serde_jso
                     .into_iter()
                     .collect()
             });
+        let mut byte_offset = 0u64;
         return defs
             .iter()
-            .enumerate()
-            .map(|(idx, def)| {
+            .map(|def| {
                 let def_mem_addr = def
                     .get("mem_addr")
                     .and_then(|v| v.as_str())
                     .and_then(parse_u64_str)
-                    .or_else(|| base_mem_addr.map(|addr| addr + (idx as u64) * 8));
-                let slot_idx = vm_slot_index_for_mem_addr(base_slot, base_mem_addr, def_mem_addr);
+                    .or_else(|| base_mem_addr.and_then(|addr| addr.checked_add(byte_offset)));
+                byte_offset = byte_offset.saturating_add(register_load_width(def.get("reg").and_then(|v| v.as_str()).unwrap_or("")));
+                let slot_idx = vm_slot_index_for_mem_addr(base_slot, slot_bytes, base_mem_addr, def_mem_addr);
                 serde_json::json!({
                     "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
                     "op": "load",
@@ -196,7 +206,7 @@ pub(super) fn vm_slot_access_summaries(row: &serde_json::Value) -> Vec<serde_jso
                     .to_string();
                 let width = register_load_width(&reg);
                 let mem_addr = base_mem_addr.map(|addr| addr + byte_offset);
-                let slot_idx = vm_slot_index_for_mem_addr(base_slot, base_mem_addr, mem_addr);
+                let slot_idx = vm_slot_index_for_mem_addr(base_slot, slot_bytes, base_mem_addr, mem_addr);
                 byte_offset = byte_offset.saturating_add(width);
                 serde_json::json!({
                     "idx": row.get("idx").cloned().unwrap_or(serde_json::Value::Null),
@@ -218,14 +228,17 @@ pub(super) fn vm_slot_access_summaries(row: &serde_json::Value) -> Vec<serde_jso
 
 pub(super) fn vm_slot_index_for_mem_addr(
     base_slot: u64,
+    slot_bytes: u64,
     base_mem_addr: Option<u64>,
     mem_addr: Option<u64>,
 ) -> serde_json::Value {
     base_mem_addr
         .zip(mem_addr)
         .and_then(|(base, addr)| addr.checked_sub(base))
-        .map(|offset| serde_json::json!(base_slot + offset / 8))
-        .unwrap_or_else(|| serde_json::json!(base_slot))
+        .filter(|offset| *offset % slot_bytes == 0)
+        .and_then(|offset| base_slot.checked_add(offset / slot_bytes))
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null)
 }
 
 pub(super) fn byte_load_summary(row: &serde_json::Value) -> Option<serde_json::Value> {

@@ -10,6 +10,27 @@ use common::{assert_valid, run_json, synth_call_dir};
 use serde_json::{json, Value};
 
 const RETIRED: &[&str] = &[
+    "jni-output-strings",
+    "scan-jni-output-strings",
+    "diff-traces",
+    "stats",
+    "resolve-trace-addr",
+    "crypto-scan",
+    "block-for-pc",
+    "auto-phase-detect",
+    "ollvm-detect-vm",
+    "idxs-for-pc",
+    "idxs-for-block",
+    "idxs-touching-addr",
+    "idxs-touching-range",
+    "mem-tenet",
+    "string-provenance",
+    "hash-finalize-detect",
+    "output-map",
+    "jobj-history",
+    "forward-dep-tree",
+    "coverage",
+    "data-chase",
     "web",
     "view",
     "api",
@@ -154,8 +175,43 @@ fn specialized_queries_and_metadata_use_the_same_rust_contract() {
         vec!["reg-value-at", call, "--idx", "0", "--reg", "x0"],
         vec!["resolve", call, "--so", "libt.so", "--off", "0x100"],
         vec!["list", run, "--json"],
-        vec!["info", call, "--json"],
+        vec!["info", call],
     ] {
         assert_eq!(entry_json(&args), run_json(&args), "{:?}", args);
+    }
+}
+
+#[test]
+fn every_discoverable_command_and_argument_has_help() {
+    let caps = entry_json(&["capabilities"]);
+    for command in caps["commands"].as_array().unwrap() {
+        let name = command["name"].as_str().unwrap();
+        assert!(
+            !command["about"].as_str().unwrap_or("").trim().is_empty(),
+            "{name}"
+        );
+        let detail = entry_json(&["capabilities", "--command", name]);
+        for arg in detail["commands"][0]["args"].as_array().unwrap() {
+            assert!(
+                !arg["help"].as_str().unwrap_or("").trim().is_empty(),
+                "{name}: missing help for {}",
+                arg["id"]
+            );
+        }
+        for flag in ["-h", "--help"] {
+            let output = entry(&[name, flag]);
+            assert!(output.status.success(), "{name} {flag}");
+            let help = String::from_utf8_lossy(&output.stdout);
+            assert!(help.contains(name), "{name} {flag}: missing command name");
+        }
+    }
+}
+
+#[test]
+fn target_protocol_options_are_rejected() {
+    let (_tmp, cd) = synth_call_dir();
+    for name in ["output-backtrace", "base64-map"] {
+        let result = entry(&[name, cd.to_str().unwrap(), "--key", "arbitrary"]);
+        assert_eq!(result.status.code(), Some(2));
     }
 }

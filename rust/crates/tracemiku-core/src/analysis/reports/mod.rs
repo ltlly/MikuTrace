@@ -56,16 +56,12 @@ pub use catalog::list_runs;
 pub use catalog::parse_hex_bytes_cli;
 pub use catalog::resolve_elf_symbol;
 pub use catalog::resolve_map_addr;
-pub use catalog::resolve_trace_addr;
 pub use catalog::split_csv;
 pub use catalog::split_csv_allow_empty;
 pub use evidence_queries::byte_writer_map;
-pub use evidence_queries::hash_finalize_detect;
-pub use evidence_queries::jni_output_strings;
-pub use evidence_queries::mem_tenet;
+pub use evidence_queries::mem_provenance;
+pub use evidence_queries::mem_write_bursts;
 pub use evidence_queries::resolve_offset_to_idx;
-pub use evidence_queries::scan_jni_output_strings;
-pub use evidence_queries::stats;
 pub use lineage_batch::byte_lineage;
 pub use lineage_batch::vm_backstep;
 pub use lineage_chain::vm_backchain;
@@ -94,6 +90,7 @@ pub struct VmProfile {
     ip_reg: String,
     state_reg: String,
     dispatch_reg: String,
+    slot_bytes: std::num::NonZeroU64,
     infra_regs: HashSet<String>,
 }
 
@@ -102,12 +99,13 @@ impl VmProfile {
         ip_reg: String,
         state_reg: String,
         dispatch_reg: String,
+        slot_bytes: std::num::NonZeroU64,
         infra_regs: String,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let ip_reg = register_value_key(&ip_reg);
         let state_reg = register_value_key(&state_reg);
         let dispatch_reg = register_value_key(&dispatch_reg);
-        let infra_regs = split_csv(&infra_regs)
+        let infra_regs: HashSet<String> = split_csv(&infra_regs)
             .into_iter()
             .map(|reg| register_value_key(&reg))
             .chain([
@@ -119,17 +117,39 @@ impl VmProfile {
                 dispatch_reg.clone(),
             ])
             .collect();
-        Self {
+        for reg in &infra_regs {
+            let valid = matches!(reg.as_str(), "sp" | "fp" | "lr")
+                || reg
+                    .strip_prefix('x')
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .is_some_and(|n| n <= 28);
+            if !valid {
+                bail!("invalid VM register: {reg}");
+            }
+        }
+        if ip_reg == state_reg || ip_reg == dispatch_reg || state_reg == dispatch_reg {
+            bail!("VM IP, state and dispatch registers must be distinct");
+        }
+        Ok(Self {
             ip_reg,
             state_reg,
             dispatch_reg,
+            slot_bytes,
             infra_regs,
-        }
+        })
     }
 
     /// Placeholder used when a command runs with every VM-analysis switch off.
     pub fn disabled() -> Self {
-        Self::new(String::new(), String::new(), String::new(), String::new())
+        Self {
+            ip_reg: String::new(),
+            state_reg: String::new(),
+            dispatch_reg: String::new(),
+            slot_bytes: std::num::NonZeroU64::MIN,
+            infra_regs: ["sp".into(), "fp".into(), "lr".into()]
+                .into_iter()
+                .collect(),
+        }
     }
 
     fn to_json(&self) -> serde_json::Value {
@@ -139,6 +159,7 @@ impl VmProfile {
             "ip_reg": self.ip_reg,
             "state_reg": self.state_reg,
             "dispatch_reg": self.dispatch_reg,
+            "slot_bytes": (!self.state_reg.is_empty()).then_some(self.slot_bytes.get()),
             "infra_regs": infra_regs,
         })
     }

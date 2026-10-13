@@ -15,13 +15,10 @@ pub enum Query {
     Records(records::RecordsQuery),
     Record(usize),
     Search(search::SearchQuery),
-    CryptoScan,
     CryptoAnalysis,
     Watchpoints(watchpoints::WatchpointsQuery),
-    HashFinalizeDetect(hash_finalize::HashFinalizeQuery),
+    MemWriteBursts(mem_write_bursts::WriteBurstsQuery),
     HashInputSearch(hash_input_search::HashInputSearchRequest),
-    DiffTraces(diff_traces::DiffTracesRequest),
-    AutoPhaseDetect(auto_phase::AutoPhaseQuery),
     DepGraph(dep_graph::DepGraphQuery),
     ForwardDepTree(forward_dep_tree::ForwardDepTreeQuery),
     BfsSlice(bfs_slice::BfsSliceQuery),
@@ -32,7 +29,6 @@ pub enum Query {
     IdxsForPc(idxs_for_pc::IdxsForPcQuery),
     IdxsForBlock(idxs_for_block::IdxsForBlockQuery),
     Cfg(cfg::CfgQuery),
-    BlockForPc(navigation::PcQuery),
     Block(navigation::PcQuery),
     Loops,
     Backtrace(navigation::BacktraceQuery),
@@ -41,7 +37,6 @@ pub enum Query {
     FnSummary(fn_summary::FnSummaryQuery),
     Functions,
     ForkEvents(fork_events::ForkEventsQuery),
-    OllvmDetectVm(ollvm_detect_vm::OllvmDetectVmQuery),
     LastWriteOfReg(last_write_of_reg::LastWriteQuery),
     NextUseOfReg(next_use_of_reg::NextUseQuery),
     RegValueAt(reg_value_at::RegValueAtQuery),
@@ -79,18 +74,13 @@ pub fn execute(context: &AnalysisContext, query: Query) -> Result<Value, Analysi
         Query::Records(args) => serde_json::to_value(records::records(context, args)?),
         Query::Record(args) => serde_json::to_value(record::record(context, args)?),
         Query::Search(args) => serde_json::to_value(search::search(context, args)?),
-        Query::CryptoScan => serde_json::to_value(crypto_scan::crypto_scan(context)?),
         Query::CryptoAnalysis => serde_json::to_value(crypto_analysis::crypto_analysis(context)?),
         Query::Watchpoints(args) => serde_json::to_value(watchpoints::watchpoints(context, args)?),
-        Query::HashFinalizeDetect(args) => {
-            serde_json::to_value(hash_finalize::hash_finalize_detect(context, args)?)
+        Query::MemWriteBursts(args) => {
+            serde_json::to_value(mem_write_bursts::mem_write_bursts(context, args)?)
         }
         Query::HashInputSearch(args) => {
             serde_json::to_value(hash_input_search::hash_input_search(context, args)?)
-        }
-        Query::DiffTraces(args) => serde_json::to_value(diff_traces::diff_traces(context, args)?),
-        Query::AutoPhaseDetect(args) => {
-            serde_json::to_value(auto_phase::auto_phase_detect(context, args)?)
         }
         Query::DepGraph(args) => serde_json::to_value(dep_graph::dep_graph(context, args)?),
         Query::ForwardDepTree(args) => {
@@ -108,7 +98,6 @@ pub fn execute(context: &AnalysisContext, query: Query) -> Result<Value, Analysi
             serde_json::to_value(idxs_for_block::idxs_for_block(context, args)?)
         }
         Query::Cfg(args) => serde_json::to_value(cfg::cfg(context, args)?),
-        Query::BlockForPc(args) => serde_json::to_value(navigation::block_for_pc(context, args)),
         Query::Block(args) => serde_json::to_value(navigation::block(context, args)?),
         Query::Loops => serde_json::to_value(navigation::loops(context)?),
         Query::Backtrace(args) => serde_json::to_value(navigation::backtrace(context, args)?),
@@ -117,9 +106,6 @@ pub fn execute(context: &AnalysisContext, query: Query) -> Result<Value, Analysi
         Query::FnSummary(args) => serde_json::to_value(fn_summary::fn_summary(context, args)?),
         Query::Functions => serde_json::to_value(functions::functions(context)?),
         Query::ForkEvents(args) => serde_json::to_value(fork_events::fork_events(context, args)),
-        Query::OllvmDetectVm(args) => {
-            serde_json::to_value(ollvm_detect_vm::ollvm_detect_vm(context, args)?)
-        }
         Query::LastWriteOfReg(args) => {
             serde_json::to_value(last_write_of_reg::last_write_of_reg(context, args))
         }

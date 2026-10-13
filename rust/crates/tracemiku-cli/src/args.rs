@@ -13,671 +13,764 @@ pub(super) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(super) enum Cmd {
-    /// Describe every CLI command and argument as machine-readable JSON.
+    /// 列出分析命令及参数的 JSON 清单；统一入口还包含采集命令。
     Capabilities,
-    /// Verify supported ARM64 instructions against captured pre/post states and report the first evidence frontier.
+    /// 逐条检查 ARM64 状态转移；在首个发散、证据缺口或不支持指令处停止。
     TraceReplay {
         #[command(flatten)]
         args: super::replay_command::ReplayArgs,
     },
-    /// Generate shell completion scripts for bash, zsh, fish, or powershell.
+    /// 输出指定 shell 的补全脚本。
     Completions {
-        /// Shell type: bash, zsh, fish, powershell.
+        /// shell 类型：bash、zsh、fish、powershell、elvish。
         shell: clap_complete::Shell,
     },
-    /// Print trace metadata as JSON.
-    Stats {
-        /// Per-call trace directory.
+    /// 读取单次采集元数据、格式版本及模块映射。
+    Meta {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Show ALL modules (overrides --top-modules).
-        #[arg(long)]
-        all_modules: bool,
-        /// Limit modules list to top-N by size. Default 10.
-        #[arg(long, default_value_t = 10)]
-        top_modules: usize,
     },
-    /// 单次 trace 的采集元数据与格式信息。
-    Meta { trace_dir: PathBuf },
-    /// List runs under a trace root or calls under one run.
+    /// 枚举 trace 根目录中的 run，或 run 下的 calls。
     List {
-        /// Trace root or run dir. Defaults to ./traces.
+        /// trace 根目录或 run 目录；省略使用 --dir。
         path: Option<PathBuf>,
-        /// Base trace dir when path is omitted.
+        /// 省略 path 时使用的 trace 根目录。
         #[arg(long, default_value = "traces")]
         dir: PathBuf,
-        /// Emit one JSON array instead of one JSON row per line.
+        /// 输出一个 JSON 数组；省略时每行一个 JSON 对象。
         #[arg(long)]
         json: bool,
     },
-    /// Inspect one run or per-call trace directory.
+    /// 查看 run/call 的记录数、结束状态及采集摘要。
     Info {
+        /// run 或单次 call 目录。
         path: PathBuf,
-        #[arg(long)]
-        json: bool,
     },
-    /// Resolve an address against a saved /proc/<pid>/maps file.
-    ResolveMapAddr { maps_file: PathBuf, addr: String },
-    /// Resolve an address against trace meta module ranges.
-    ResolveTraceAddr { trace_dir: PathBuf, addr: String },
-    /// Resolve an ELF/shared-library virtual offset to the nearest symbol.
-    ResolveElfSymbol { elf_file: PathBuf, offset: String },
-    /// 按区间导出指令记录，可选寄存器列。
+    /// 按保存的 /proc/<pid>/maps 解析运行时地址及文件偏移。
+    ResolveMapAddr {
+        /// 保存的 /proc/<pid>/maps 文本文件。
+        maps_file: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
+        addr: String,
+    },
+    /// 查询本地 ELF 偏移之前最近的符号；需要 llvm-nm 或 nm。
+    ResolveElfSymbol {
+        /// 本地 ELF/SO 文件。
+        elf_file: PathBuf,
+        /// ELF 虚拟偏移，默认十六进制；d16 表示十进制 16。
+        offset: String,
+    },
+    /// 批量读取执行记录及可选的指令前寄存器值。
     Records {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long, default_value_t = 0)]
         start: usize,
+        /// 请求记录数。
         #[arg(long, default_value_t = 100)]
         count: usize,
+        /// 逗号分隔的寄存器名。
         #[arg(long)]
         regs: Option<String>,
+        /// 逗号分隔的记录下标；逐条返回完整详情，覆盖 --start/--count/--regs。
         #[arg(long)]
         indices: Option<String>,
     },
-    /// 单条记录与寄存器注释详情。
-    Record { trace_dir: PathBuf, idx: usize },
-    /// 某 PC 被执行的 trace 下标集合。
-    IdxsForPc {
+    /// 读取单条指令、执行前寄存器及地址注释。
+    Record {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 记录下标，从 0 开始。
+        idx: usize,
+    },
+    /// 查询同一 PC 的所有执行位置，按游标前后分页。
+    #[command(name = "pc-hits")]
+    IdxsForPc {
+        /// 单次 call 目录，须包含 trace.bin。
+        trace_dir: PathBuf,
+        /// 运行时指令地址，默认十六进制；d16 表示十进制 16。
         pc: String,
+        /// 记录下标游标，区分游标前后的结果。
         #[arg(long, default_value_t = 0)]
         cursor: usize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 30)]
         limit: usize,
     },
-    /// 反汇编/操作数正则搜索。
+    /// 用正则表达式搜索反汇编指令和操作数。
     Search {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 匹配指令与操作数字符串的正则表达式。
         pattern: String,
+        /// 最多返回的匹配记录数，范围 1–5000。
         #[arg(long, default_value_t = 2000)]
         max_results: usize,
+        /// 从此记录起继续搜索；结果提供下一游标。
         #[arg(long)]
         cursor: Option<usize>,
     },
-    /// 各 SO 的 trace 统计。
+    /// 按 SO 统计观测到的指令执行次数。
     SoStats {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 按执行次数返回前 N 个 SO。
         #[arg(long, default_value_t = 50)]
         top: usize,
+        /// 返回所有 SO，覆盖 --top。
         #[arg(long)]
         all: bool,
     },
-    /// (SO,offset) ↔ 绝对 PC 双向解析，并返回执行事实。
-    ///
-    /// Forward:  --addr 0x... (absolute PC) -> module, offset, exec facts.
-    /// Reverse:  --so libfoo --off 0x...    (module+offset) -> absolute PC.
-    /// `--so` matches full path / basename / basename-prefix / substring, so
-    /// the stable name you read in IDA/BN/Ghidra resolves to the loaded .so.
-    /// Addresses/offsets are HEX by default (disassembler convention): `10`
-    /// means 0x10; prefix with `d` to force decimal (`d16` = 16).
+    /// 在运行时地址与 (SO, 偏移) 之间转换，并返回执行次数与位置。
     Resolve {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Absolute PC, hex by default (`d`-prefix for decimal). PC -> (SO, offset).
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
-        /// Module name / basename / prefix / substring. Use with --off.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative static offset, hex by default. Use with --so.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
     },
-    /// `br/blr` 的运行时真实跳转目标分布。
-    ///
-    /// Resolves the real target distribution + hit counts for an indirect
-    /// branch/call, keyed on (SO, offset) or absolute PC. With no source given,
-    /// lists every indirect-branch source in the trace, busiest first. The wall
-    /// static disassemblers (IDA/BN/Ghidra) hit on `br x8` — answered from the
-    /// trace. Addresses/offsets are HEX by default; `d`-prefix forces decimal.
+    /// 统计 br/blr 的实际目标；不指定源地址时列出所有间接跳转点。
     IndirectTargets {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Absolute PC of the br/blr source. PC form.
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
-        /// Module name / basename / prefix / substring. Use with --off.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset of the br/blr source. Use with --so.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Drop targets observed fewer than this many times (default 1).
+        /// 仅保留至少命中 N 次的跳转目标。
         #[arg(long)]
         min_count: Option<u64>,
     },
-    /// (SO,offset)/PC 处的寄存器值 + 跨执行去重分布。
-    ///
-    /// "At libfoo+0x1234, what was x0?" Reads the register at EVERY execution
-    /// of that PC and returns both the per-hit values and a distinct-value
-    /// distribution with counts — one static offset usually holds many values
-    /// across the run (loops/repeated calls), which static tools can't show.
-    /// Offsets/addr are HEX by default; `d`-prefix forces decimal.
+    /// 查询指定 PC 每次执行前的寄存器值及去重分布。
     RegAt {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Register name (x0-x30, sp, fp, lr, pc, nzcv, w0-w30).
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
-        /// Absolute PC. Or use --so + --off.
+        /// 查询该 PC 的执行；也可用 --so 与 --off。
         #[arg(long)]
         addr: Option<String>,
-        /// Module name / basename / prefix / substring. Use with --off.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset. Use with --so.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Max per-hit rows returned (distribution covers all hits regardless).
+        /// 最多返回的逐次执行值；去重分布仍统计全部命中。
         #[arg(long)]
         max: Option<usize>,
     },
-    /// 单次执行的寄存器值。
+    /// 查询单条记录执行前的一个寄存器值。
     RegValueAt {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
     },
-    /// 寄存器最近一次被写的位置。
+    /// 查找给定记录之前最后一次定义该寄存器的指令。
     LastWriteOfReg {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
+        /// 只查询此记录之前（不含）的定义；省略表示 trace 末尾。
         #[arg(long)]
         before: Option<usize>,
-        #[arg(long)]
-        cursor: Option<usize>,
     },
-    /// 寄存器下一次被读的位置。
+    /// 查找给定记录之后下一次读取该寄存器的指令。
     NextUseOfReg {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
+        /// 只查询此记录之后（不含）的使用；省略为 0。
         #[arg(long)]
         after: Option<usize>,
     },
-    /// 观察点扫描：`reg-change`/`reg-equals`/`mem-touch`。
+    /// 按寄存器变化、值相等或内存访问条件扫描记录。
     Watch {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        #[arg(long, default_value = "reg-change")]
+        /// 条件类型：reg-change、reg-equals、mem-touch。
+        #[arg(long, default_value = "reg-change", value_parser = ["reg-change", "reg-equals", "mem-touch"])]
         kind: String,
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
+        /// 比较值，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         value: Option<String>,
+        /// 内存范围长度（字节，十进制）。
         #[arg(long, default_value_t = 1)]
         size: u64,
+        /// 从此记录起扫描。
         #[arg(long, default_value_t = 0)]
         cursor: usize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
-    /// 列出函数（symbol 与 trace 来源）。
-    Functions { trace_dir: PathBuf },
-    /// fork 事件（反调试常用）。
-    ForkEvents {
+    /// 列出来自符号及实际调用的函数；--fn 筛选使用返回项的 name。
+    Functions {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+    },
+    /// 查询采集时记录的 fork/clone 事件；需启用 fork hook。
+    ForkEvents {
+        /// 单次 call 目录，须包含 trace.bin。
+        trace_dir: PathBuf,
+        /// 按 attach_status 原值筛选，如 attached、failed。
         #[arg(long)]
         status: Option<String>,
+        /// 按事件 is_fork_like 布尔值筛选（true/false）。
         #[arg(long)]
         is_fork_like: Option<bool>,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 1000)]
         limit: usize,
     },
-    /// 函数控制流图数据。
+    /// 返回观测到的函数基本块和控制流边。
     Cfg {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// functions 返回项的 name（符号名称）；省略表示全局 CFG。
         #[arg(long = "fn")]
         fn_name: Option<String>,
     },
-    /// 块命中次数与所属记录。
+    /// 查询包含给定 PC 的基本块所覆盖的记录下标。
+    #[command(name = "block-hits")]
     IdxsForBlock {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时指令地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         pc: String,
+        /// 请求返回记录数上限；受 core 硬上限约束。
         #[arg(long, default_value_t = 200)]
         max_count: usize,
-        #[arg(long, default_value_t = -1)]
+        /// 优先返回最靠近此记录的命中；-1 按记录顺序返回。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         near: isize,
     },
-    /// PC → 基本块。
-    BlockForPc {
-        trace_dir: PathBuf,
-        #[arg(long)]
-        pc: String,
-    },
-    /// 基本块详情。
+    /// 返回包含给定 PC 的基本块、指令和出口。
     Block {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时指令地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         pc: String,
     },
-    /// 循环检测结果。
-    Loops { trace_dir: PathBuf },
-    /// 函数执行路径与观测分支分布。
-    /// for the function at a (SO,offset)/PC, or by --fn name. For each branch:
-    /// which way it actually went and how often (static "both possible" ->
-    /// the real path). one_sided branches = static ambiguity collapsed.
-    Coverage {
+    /// 查询观测 CFG 中的循环强连通分量。
+    Loops {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Absolute PC inside the function. Or --so+--off, or --fn.
+    },
+    /// 统计函数内观测分支的方向和次数；不代表静态代码全覆盖率。
+    #[command(name = "branch-coverage")]
+    Coverage {
+        /// 单次 call 目录，须包含 trace.bin。
+        trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
-        /// Module name/basename/prefix/substring (with --off).
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset inside the function (with --so). HEX default.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Scope directly by function name (e.g. sub_7f10).
+        /// functions 返回项的 name（符号名称）。
         #[arg(long = "fn")]
         fn_name: Option<String>,
     },
-    /// 指定位置的调用回溯。
+    /// 重放调用边界，返回指定记录处的动态调用栈。
     Backtrace {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
+        /// 最多返回的栈帧数。
         #[arg(long, default_value_t = 256)]
         limit: usize,
     },
-    /// 调用树。
+    /// 汇总观测到的调用树及各节点执行次数。
     CallTree {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 调用树深度上限；省略使用 core 默认值。
         #[arg(long)]
         max_depth: Option<usize>,
     },
-    /// 命中函数之间的调用链。
+    /// 从指定记录的 LR 反查调用点链，作为调用栈的另一种证据。
     CallChain {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
+        /// 沿 LR 最多回查的调用点数（硬上限 256）。
         #[arg(long, default_value_t = 5)]
         depth: usize,
     },
-    /// 从 trace 观察到的字符串。
+    /// 提取已观测内存中的可打印字符串。
     Strings {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 最短字符串长度（字节）。
         #[arg(long, default_value_t = 4)]
         min_len: usize,
+        /// 字符串包含的文本；空值不筛选。
         #[arg(long, default_value = "")]
         q: String,
-        #[arg(long, default_value_t = -1)]
+        /// 仅显示每个字节都已在此记录前观测到的串；-1 不限制。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         cursor: i64,
+        /// 字符串数量上限；0 使用硬上限 5000。
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
-    /// 某字符串每个字节的来源。
+    /// 查询内存范围逐字节当前值及读写历史；每字节最多返回各 20 条记录。
+    #[command(name = "mem-byte-history")]
     StringProvenance {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 查询字节数，范围 1–4096。
         #[arg(long, default_value_t = 32)]
         length: usize,
     },
-    /// 内存范围 hex dump。
+    /// 查询指定时刻的内存字节；未观测字节保留未知。
     MemDump {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 读取字节数，范围 1–4096。
         #[arg(long, default_value_t = 256)]
         count: usize,
+        /// 内存观测时刻的记录下标（包含）；省略表示 trace 末尾。
         #[arg(long)]
         cursor: Option<u64>,
-        /// Emit compact hex/ascii fields instead of only per-byte entries.
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
-        /// Interpret the range as a NUL-terminated C string.
+        /// 按 NUL 终止的 C 字符串生成摘要。
         #[arg(long)]
         cstr: bool,
     },
-    /// Tenet-style export: per-byte provenance (writer idx / initial /
-    /// unknown) for a memory range, without fabricating missing memory.
+    /// 导出 trace 结束时逐字节值、来源类别和最近写入者。
+    #[command(name = "mem-provenance")]
     MemTenet {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 内存范围长度（字节，十进制）。
         #[arg(long, default_value_t = 64)]
         length: usize,
     },
-    /// 按 (SO,offset,len) 导出运行时解密字节。
-    ///
-    /// Reconstructs the real bytes the program saw (MemShadow w/x/i layers) for
-    /// a packed/VMP'd/self-decrypting region a static disassembler can't read.
-    /// Keyed on (SO,offset) or absolute PC. With --out, writes the raw decrypted
-    /// bytes to a file for IDA loadfile / BN / Ghidra import at the same offset;
-    /// otherwise prints the JSON (hex blob + provenance runs + completeness).
-    /// Offsets/len are HEX by default; `d`-prefix forces decimal.
+    /// 按地址或 (SO, 偏移) 导出运行时字节及完整度，不执行解密算法。
     MemExport {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Absolute PC of the range start. Or use --so + --off.
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
-        /// Module name / basename / prefix / substring. Use with --off.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset of the range start. Use with --so.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Number of bytes to export (hex by default).
+        /// 导出字节数，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         len: String,
-        /// Time point (record idx); default = end of trace.
+        /// 内存观测时刻的记录下标（包含）；省略表示 trace 末尾。
         #[arg(long)]
         cursor: Option<u64>,
-        /// Write raw decrypted bytes to this file (for disassembler loadfile).
+        /// 同时写出原始字节文件；JSON 保留来源与完整度，未知字节不会成为已知证据。
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// 某地址最后一次写入者。
+    /// 查找指定时刻之前覆盖该内存地址的最后一次写入。
     LastWriteOfAddr {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
-        #[arg(long, default_value_t = -1)]
+        /// 仅查询此前的写入；-1 表示 trace 末尾。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         before_idx: isize,
-        /// Include boundary-diff external writes from MemShadow.
+        /// 包含边界差分记录的外部写入。
         #[arg(long)]
         with_external: bool,
     },
-    /// 触碰某地址的全部记录。
+    /// 查询一个内存字节的读写记录，可附观测值。
+    #[command(name = "mem-accesses")]
     IdxsTouchingAddr {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 记录下标游标，区分游标前后的结果。
         #[arg(long, default_value_t = 0)]
         cursor: usize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 30)]
         limit: usize,
-        /// Include byte values from MemShadow, blocking to load/build it if needed.
+        /// 附每次访问的字节观测值及来源。
         #[arg(long)]
         with_bytes: bool,
     },
-    /// 触碰某范围的全部记录。
+    /// 查询与内存范围相交的读写记录，按游标前后分页。
+    #[command(name = "mem-range-accesses")]
     IdxsTouchingRange {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 内存范围长度（字节，十进制）。
         #[arg(long, default_value_t = 1)]
         size: u64,
+        /// 记录下标游标，区分游标前后的结果。
         #[arg(long, default_value_t = 0)]
         cursor: usize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// 在 trace 访问过的内存中找字节模式。
+    /// 在已观测内存中查找指定字节序列及首次观测位置。
     FindMemPattern {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 字节序列的十六进制文本，如 41424300。
         #[arg(long = "bytes-hex")]
         bytes_hex: String,
-        #[arg(long, default_value_t = -1)]
+        /// 首次观测下标下限；-1 不限制。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         since: isize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 100)]
         max: usize,
+        /// 记录范围起点（包含）；省略从 trace 开始。
         #[arg(long)]
         idx_lo: Option<usize>,
+        /// 记录范围终点（不包含）；省略或 -1 表示 trace 末尾。
         #[arg(long)]
         idx_hi: Option<usize>,
     },
-    /// 从 (start,reg) 正向逐指令传播。
-    /// (start, reg) following def/use through registers and (optionally)
-    /// memory. Use when you need per-instruction propagation steps with
-    /// parent_idxs / taint_depth; for "all rows that depend on this" use
-    /// `bfs-slice` (backward) or `forward-dep-tree` (downstream) instead.
+    /// 从寄存器种子逐指令向后传播影响，返回父节点与传播深度。
     TaintFwd {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Trace index where propagation starts.
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long)]
         start: usize,
-        /// Seed register name (e.g. x9, w9, sp).
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
-        /// 结果条数上限，受 core 硬上限约束。
+        /// 请求返回记录数上限；受 core 硬上限约束。
         #[arg(long)]
         max_count: Option<usize>,
-        /// Follow stores/loads through MemShadow (memory taint propagation).
+        /// 通过内存 load/store 传播数据依赖。
         #[arg(long)]
         through_mem: bool,
-        /// Drop control-flow / addressing-reg edges; only follow value flow.
+        /// 排除控制流和地址寄存器依赖，仅追踪值来源。
         #[arg(long)]
         data_only: bool,
-        /// Allow taint to cross function-call boundaries.
+        /// 允许跨越函数调用边界。
         #[arg(long)]
         cross_fn_call: bool,
-        /// 连续 N 次无新增命中后停止；0 关闭，省略使用 core 默认值。
-        /// 返回 stop_reason 和 scan_limit_used。
+        /// 连续 N 条无新增命中后停止；0 关闭该早停，省略使用 core 默认值。
         #[arg(long)]
         scan_limit: Option<usize>,
     },
-    /// 从 (start,reg) 反向追来源。
-    /// through register defs and (optionally) memory writes. Returns each
-    /// upstream row with parent_idxs, taint_depth, and edge_kind. For "what
-    /// rows did this seed depend on" without per-instruction modeling, use
-    /// `bfs-slice` instead (much faster).
+    /// 从寄存器种子逐指令反向追踪来源，可跨内存和调用边界。
     TaintBwd {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Trace index where the lineage chase starts (the sink). Optional if
-        /// you instead give --so/--off (a tool-neutral (SO,offset) coordinate).
+        /// 来源回溯的种子记录下标；或使用 --so/--off/--occurrence。
         #[arg(long)]
         start: Option<usize>,
-        /// Module name/basename/prefix/substring for the seed (with --off).
-        /// Resolves (SO,offset) -> PC -> the chosen execution's trace index.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset of the seed (with --so). HEX by default.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Which execution of that PC to seed from (0 = first). Default 0.
+        /// 选择该 PC 的第几次执行，从 0 开始。
         #[arg(long, default_value_t = 0)]
         occurrence: usize,
-        /// Seed register name (e.g. x9, w9, sp).
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
-        /// 结果条数上限，受 core 硬上限约束。
+        /// 请求返回记录数上限；受 core 硬上限约束。
         #[arg(long)]
         max_count: Option<usize>,
-        /// Follow stores/loads through MemShadow (memory taint propagation).
+        /// 通过内存 load/store 传播数据依赖。
         #[arg(long)]
         through_mem: bool,
-        /// Drop control-flow / addressing-reg edges; only follow value flow.
+        /// 排除控制流和地址寄存器依赖，仅追踪值来源。
         #[arg(long)]
         data_only: bool,
-        /// Allow taint to cross function-call boundaries.
+        /// 允许跨越函数调用边界。
         #[arg(long)]
         cross_fn_call: bool,
-        /// 连续 N 次无新增命中后停止；0 关闭，省略使用 core 默认值。
-        /// 返回 stop_reason 和 scan_limit_used。
+        /// 连续 N 条无新增命中后停止；0 关闭该早停，省略使用 core 默认值。
         #[arg(long)]
         scan_limit: Option<usize>,
     },
-    /// 沿寄存器数据流追踪，跳过 sp/fp/lr 噪声。
+    /// 沿单个寄存器的定义与使用链追踪，并排除指定寄存器。
+    #[command(name = "reg-chase")]
     DataChase {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long)]
         start: usize,
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
+        /// 最多追踪的步骤数。
         #[arg(long, default_value_t = 50)]
         max_steps: usize,
+        /// 排除的寄存器，逗号分隔。
         #[arg(long, default_value = "sp,fp,lr")]
         exclude_regs: String,
     },
-    /// 依赖图。
+    /// 返回种子记录、寄存器或内存值的有界后向依赖图。
     DepGraph {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Concrete trace record index to use as seed.
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: Option<usize>,
-        /// Resolve seed to the last definition of this register before --before.
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
-        /// Resolve seed to the last write touching this address before --before.
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
+        /// 只查询此记录之前（不含）的定义；省略表示 trace 末尾。
         #[arg(long)]
         before: Option<usize>,
+        /// 最多展开的依赖层数。
         #[arg(long, default_value_t = 8)]
         depth: usize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 160)]
         limit: usize,
     },
-    /// 后向 BFS 依赖切片，多种子并/交。
-    /// CSR, with multi-seed union/intersection. Use this when you want every
-    /// trace row a value transitively depends on, faster than taint and
-    /// without having to model propagation. Multi-seed `intersection` finds
-    /// the common ancestors of two operations.
+    /// 查询后向依赖记录集合；多种子可求并集或共同来源。
     BfsSlice {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Single seed by trace index.
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: Option<usize>,
-        /// Multi-seed by indices, comma-separated, e.g. "1234,5678". Up to
-        /// 16 seeds per query.
+        /// 多个种子记录下标，逗号分隔；最多 16 个种子。
         #[arg(long)]
         idxs: Option<String>,
-        /// Single seed by register (last def before --before).
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
-        /// Multi-seed by registers, comma-separated, e.g. "x9,x10".
+        /// 逗号分隔的寄存器名。
         #[arg(long)]
         regs: Option<String>,
-        /// Single seed by memory address (last write before --before).
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
-        /// Multi-seed by addresses, comma-separated.
+        /// 多个种子内存地址，逗号分隔；默认十六进制。
         #[arg(long)]
         addrs: Option<String>,
-        /// Lookup cutoff for `--reg` / `--regs` / `--addr` / `--addrs`.
-        /// Default = trace.len().
+        /// 只查询此记录之前（不含）的定义；省略表示 trace 末尾。
         #[arg(long)]
         before: Option<usize>,
-        /// Drop control-flow edges. Default: include them.
+        /// 排除控制流和地址寄存器依赖，仅追踪值来源。
         #[arg(long)]
         data_only: bool,
-        /// 切片行数上限，受 core 硬上限约束。
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 5_000)]
         limit: usize,
-        /// `union` (default) or `intersection`. Multi-seed only —
-        /// intersection across one seed equals the seed's slice.
-        #[arg(long, default_value = "union")]
+        /// 多种子组合：union 求并集，intersection 求共同依赖。
+        #[arg(long, default_value = "union", value_parser = ["union", "intersection"])]
         mode: String,
-        /// Module name/basename/prefix/substring for the seed (with --off).
-        /// Resolves (SO,offset) -> PC -> chosen execution's idx as the seed.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset of the seed (with --so). HEX by default.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Which execution of that PC to seed from (0 = first). Default 0.
+        /// 选择该 PC 的第几次执行，从 0 开始。
         #[arg(long, default_value_t = 0)]
         occurrence: usize,
     },
-    /// def→use DAG，某值被谁消费。
-    /// transitively consumed the seed's value. Inverse direction of
-    /// `dep-graph` / `bfs-slice`.
+    /// 返回种子值的有界前向 def→use 依赖图。
+    #[command(name = "forward-dep-graph")]
     ForwardDepTree {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Single seed by trace index.
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: Option<usize>,
-        /// Seed by register (last def before --before).
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
-        /// Seed by memory address (last write before --before).
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: Option<String>,
-        /// Lookup cutoff for `--reg` / `--addr` resolution. Default = trace.len().
+        /// 只查询此记录之前（不含）的定义；省略表示 trace 末尾。
         #[arg(long)]
         before: Option<usize>,
-        /// Maximum BFS depth. depth=0 means seed only.
+        /// 最多展开的依赖层数。
         #[arg(long, default_value_t = 8)]
         depth: usize,
-        /// 返回节点数上限，受 core 硬上限约束。
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 160)]
         limit: usize,
-        /// Drop control-flow edges. Default: include them.
+        /// 排除控制流和地址寄存器依赖，仅追踪值来源。
         #[arg(long)]
         data_only: bool,
-        /// Module name/basename/prefix/substring for the seed (with --off).
-        /// Resolves (SO,offset) -> PC -> chosen execution's idx as the seed.
+        /// 模块全名、basename、前缀或子串；与 --off 配合，歧义会返回候选。
         #[arg(long)]
         so: Option<String>,
-        /// Module-relative offset of the seed (with --so). HEX by default.
+        /// 模块内偏移，默认十六进制；与 --so 配合。
         #[arg(long)]
         off: Option<String>,
-        /// Which execution of that PC to seed from (0 = first). Default 0.
+        /// 选择该 PC 的第几次执行，从 0 开始。
         #[arg(long, default_value_t = 0)]
         occurrence: usize,
     },
-    /// 寄存器随 trace 区间变化的时间线。
+    /// 查询区间内寄存器的变化时间线。
     RegTimeline {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: String,
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long, default_value_t = 0)]
         start: usize,
-        #[arg(long, default_value_t = -1)]
+        /// 结束记录下标（不包含）；-1 表示 trace 末尾。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         end: isize,
+        /// 最多返回的时间线点数。
         #[arg(long, default_value_t = 1000)]
         max_points: usize,
     },
-    /// 两段内存差异。
+    /// 比较同一内存范围在 idx-1 与 idx 时刻的字节。
     MemDiff {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 内存范围长度（字节，十进制）。
         #[arg(long, default_value_t = 16)]
         size: usize,
     },
-    /// 内存写入流。
+    /// 查询内存范围逐字节的读写事件序列。
     MemFlow {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 查询字节数（十进制）。
         #[arg(long, default_value_t = 8)]
         count: usize,
+        /// 记录范围起点（包含）；省略从 trace 开始。
         #[arg(long)]
         idx_lo: Option<usize>,
+        /// 记录范围终点（不包含）；省略表示 trace 末尾。
         #[arg(long)]
         idx_hi: Option<usize>,
+        /// 每个字节最多返回的事件数。
         #[arg(long, default_value_t = 10)]
         events_per_byte: usize,
+        /// 仅返回写入事件。
         #[arg(long)]
         writers_only: bool,
+        /// 仅返回读取事件。
         #[arg(long)]
         readers_only: bool,
     },
-    /// 范围内的全部内存写。
+    /// 查询记录区间及可选地址范围内的内存写入。
     MemWritesInRange {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 记录范围起点（包含），必须提供。
         #[arg(long)]
         idx_lo: usize,
-        #[arg(long, default_value_t = -1)]
+        /// 记录范围终点（不包含）；省略或 -1 表示 trace 末尾。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         idx_hi: isize,
+        /// 地址范围起点（包含），默认十六进制。
         #[arg(long)]
         addr_lo: Option<String>,
+        /// 地址范围终点（不包含），默认十六进制。
         #[arg(long)]
         addr_hi: Option<String>,
+        /// 筛选写入中的目标字节值，默认十六进制，取最低 8 位。
         #[arg(long)]
         src_byte: Option<String>,
+        /// 包含边界差分记录的外部写入。
         #[arg(long)]
         with_external: bool,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
-    /// Expand memory writes into the latest writer for each byte in a buffer.
+    /// 按给定时间范围，为缓冲区每个字节定位最新写入者。
     ByteWriterMap {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
+        /// 内存范围长度（字节，十进制）。
         #[arg(long)]
         size: u64,
+        /// 记录范围起点（包含）；省略从 trace 开始。
         #[arg(long, default_value_t = 0)]
         idx_lo: usize,
-        #[arg(long, default_value_t = -1)]
+        /// 记录范围终点（不包含）；省略或 -1 表示 trace 末尾。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         idx_hi: isize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 5000)]
         max: usize,
         /// Attach VM backchains for this many steps per selected writer run. 0 disables.
@@ -692,192 +785,126 @@ pub(super) enum Cmd {
         /// Let attached VM chains continue through frontier source regs.
         #[arg(long)]
         vm_chain_follow_frontier: bool,
-        /// Emit a compact AI-readable summary instead of all byte and chain details.
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
     },
-    /// 检测 OLLVM 风格 VM。
-    OllvmDetectVm {
-        trace_dir: PathBuf,
-        #[arg(long, default_value_t = 10)]
-        min_entries: usize,
-        #[arg(long, default_value_t = 0.5)]
-        threshold: f64,
-    },
-    /// 函数命中频次与热门块。
+    /// 统计函数执行频次和最常命中的基本块。
     FnSummary {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// functions 返回项的 name（符号名称）。
         #[arg(long = "fn")]
         fn_name: String,
+        /// 返回最常命中的前 N 个基本块。
         #[arg(long, default_value_t = 5)]
         top_blocks: usize,
     },
-    /// 密码学常量指纹扫描。
-    CryptoScan { trace_dir: PathBuf },
-    /// Run combined crypto analysis (const scan + crypto instr detection).
+    /// 搜索密码常量和 ARM Crypto Extension 指令，输出候选证据。
     Crypto {
-        /// Per-call trace directory.
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
     },
-    /// 检测 hash finalize 模式。
-    HashFinalizeDetect {
+    /// 检索时间窗内地址连续的写入区间；不推断哈希算法或函数阶段。
+    #[command(name = "mem-write-bursts")]
+    MemWriteBursts {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 连续写入区间首末记录允许相差的最大条数。
         #[arg(long, default_value_t = 500)]
         window: usize,
+        /// 连续写入区间的最小字节数。
         #[arg(long, default_value_t = 16)]
         min_size: u64,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 500)]
         limit: usize,
-        /// Expand candidate output buffers with byte-writer-map evidence.
+        /// 附候选区间的逐字节写入者映射。
         #[arg(long)]
         map_bytes: bool,
-        /// Max candidates to expand when --map-bytes is enabled.
+        /// 最多展开的候选区间数。
         #[arg(long, default_value_t = 50)]
         map_candidates: usize,
-        /// Keep only mapped candidates whose bytes are not all zero.
+        /// 展开候选映射并仅保留非全零区间。
         #[arg(long)]
         nonzero_only: bool,
-        /// Optional target bytes as hex; mapped candidates report byte-offset hits.
+        /// 目标字节的十六进制文本。
         #[arg(long = "target-bytes")]
         target_bytes: Option<String>,
     },
-    /// 已知目标摘要反查输入（指定算法组合）。
+    /// 验证用户给定的摘要输入和密钥组合，可关联运行时内存证据。
     HashInputSearch {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 目标字节的十六进制文本。
         #[arg(long = "target-bytes")]
         target_bytes: String,
+        /// 候选输入文本，逗号分隔；按 UTF-8 字节计算。
         #[arg(long)]
         inputs: String,
+        /// 候选密钥文本，逗号分隔；空字符串也是候选。
         #[arg(long, default_value = "")]
         keys: String,
+        /// 候选算法，逗号分隔：sha1、md5、sha256、sha384、sha512、crc32、hmac-sha1、hmac-md5、hmac-sha256。
         #[arg(long, default_value = "sha1,md5,sha256,hmac-sha1,hmac-md5,hmac-sha256")]
         algos: String,
+        /// 输入组合，逗号分隔：plain=input；prefix_key=key||input；suffix_key=input||key；key_prefix_input=key||00||input；input_pipe_key=input|key；key_dot_input=key.input。
         #[arg(long, default_value = "plain,prefix_key,suffix_key,key_prefix_input")]
         combos: String,
+        /// 比较摘要前 N 字节；最少 4 字节，且不超过目标摘要长度。
         #[arg(long, default_value_t = 8)]
         prefix_bytes: usize,
+        /// 同时在观测内存中查找候选摘要前缀。
         #[arg(long, default_value_t = false)]
         search_in_mem: bool,
     },
-    /// 多条 trace 的稳定/变化字节对比。
-    DiffTraces {
-        traces: Vec<PathBuf>,
-        /// Output key to diff. Repeat to compare multiple keys. Defaults to all observed keys.
-        #[arg(long = "key")]
-        keys: Vec<String>,
-        #[arg(long, default_value_t = false)]
-        show_offsets: bool,
-        #[arg(long, default_value_t = false)]
-        show_per_byte: bool,
-    },
-    /// 自动检测执行阶段。
-    AutoPhaseDetect {
-        trace_dir: PathBuf,
-        #[arg(long, default_value_t = true)]
-        detect_byte_streams: bool,
-        #[arg(long, default_value_t = 2000)]
-        max_phases: usize,
-    },
-    /// JNI 调用列表。
+    /// 从调用指令及 JNI 表访问识别 JNI 调用；结果是观测候选。
     JniCalls {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 仅保留该函数内的 JNI 调用；使用 functions 返回项的 name。
         #[arg(long)]
         in_fn: Option<String>,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
-    /// JNI 事件（含参数/返回值）。
+    /// 读取 jni_hooks.jsonl 的参数和返回值；需采集时启用对应 JNI hook。
     JniEvents {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        #[arg(long, alias = "kind")]
+        /// JNI 事件 ID 精确匹配，如 NewStringUTF；省略返回所有事件。
+        #[arg(long)]
         id: Option<String>,
+        /// 记录范围起点（包含）；省略从 trace 开始。
         #[arg(long)]
         idx_lo: Option<usize>,
+        /// 记录范围终点（不包含）；省略不限制。
         #[arg(long)]
         idx_hi: Option<usize>,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 1000)]
         limit: usize,
     },
-    /// List NewStringUTF output key/value pairs.
-    JniOutputStrings {
-        trace_dir: PathBuf,
-        /// Keep only pairs with this output key, for example a header name.
-        #[arg(long)]
-        key: Option<String>,
-        /// Keep pairs whose key or value contains this text.
-        #[arg(long)]
-        contains: Option<String>,
-        #[arg(long, default_value_t = 2000)]
-        limit: usize,
-    },
-    /// Recursively scan jni_hooks.jsonl files for NewStringUTF key/value pairs.
-    ScanJniOutputStrings {
-        /// Trace root, run dir, or call dir. Defaults to ./traces.
-        #[arg(default_value = "traces")]
-        path: PathBuf,
-        /// Keep only pairs with this output key, for example a header name.
-        #[arg(long)]
-        key: Option<String>,
-        /// Keep pairs whose key or value contains this text.
-        #[arg(long)]
-        contains: Option<String>,
-        /// Stop after this many returned pairs. 0 means no cap.
-        #[arg(long, default_value_t = 200)]
-        limit: usize,
-        /// Include percent-decoded value fields when the value is URL-encoded.
-        #[arg(long)]
-        decode_url: bool,
-        /// Include best-effort base64 decoded length and prefix/suffix hex.
-        #[arg(long)]
-        decode_base64: bool,
-        /// Include full base64 decoded hex. Useful for small signature payload diffing.
-        #[arg(long)]
-        decode_base64_full: bool,
-        /// Include byte-level diff across decoded Base64 outputs.
-        #[arg(long)]
-        diff_base64: bool,
-        /// Analyze a Base64 tail beginning at this output character offset.
-        #[arg(long)]
-        base64_tail_start: Option<usize>,
-        /// Base64 characters to prepend before decoding the tail, for alignment.
-        #[arg(long, default_value = "")]
-        base64_tail_align_prefix: String,
-        /// Drop this many decoded bytes from the aligned tail before diffing.
-        #[arg(long, default_value_t = 0)]
-        base64_tail_drop: usize,
-        /// Include this many recent GetStringUTFChars strings before each output.
-        #[arg(long, default_value_t = 0)]
-        prior_inputs: usize,
-    },
-    /// Build an output-to-input backward trace report for a known output.
+    /// 从明确提供的字符串或字节回溯内存写入者和寄存器来源。
     OutputBacktrace {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Start from a JNI NewStringUTF key/value pair, for example a header name.
-        #[arg(long)]
-        key: Option<String>,
-        /// Start from an observed UTF-8 output string directly.
-        #[arg(long)]
+        /// 明确观测到的 UTF-8 输出字符串，与 --bytes-hex 二选一。
+        #[arg(
+            long,
+            required_unless_present = "bytes_hex",
+            conflicts_with = "bytes_hex"
+        )]
         value: Option<String>,
-        /// Start from raw bytes as hex instead of a UTF-8 string.
-        #[arg(long = "bytes-hex")]
+        /// 明确观测到的输出字节（十六进制），与 --value 二选一。
+        #[arg(long = "bytes-hex", required_unless_present = "value")]
         bytes_hex: Option<String>,
-        /// Max NewStringUTF events to scan when --key is used.
-        #[arg(long, default_value_t = 2000)]
-        jni_limit: usize,
+        /// 输出观测位置（记录下标），用于候选距离排序；省略不设时间锚点。
+        #[arg(long)]
+        at_idx: Option<usize>,
         /// Max memory locations to report for each byte pattern.
         #[arg(long, default_value_t = 20)]
         max_mem_hits: usize,
@@ -902,20 +929,8 @@ pub(super) enum Cmd {
         /// Let attached VM chains continue through frontier source regs when a table/ALU step has no upstream writer.
         #[arg(long)]
         vm_chain_follow_frontier: bool,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
         /// Skip backward-taint expansion and only report output/memory writers.
         #[arg(long)]
         skip_taint: bool,
@@ -926,18 +941,17 @@ pub(super) enum Cmd {
         #[arg(long = "no-base64-decode")]
         no_base64_decode: bool,
     },
-    /// Compact map from textual output/Base64 groups to writer runs.
+    /// 将明确提供的 Base64 文本分组，关联编码前字节与运行时写入者。
+    #[command(name = "base64-map")]
     OutputMap {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Start from a JNI NewStringUTF key/value pair, for example a header name.
-        #[arg(long)]
-        key: Option<String>,
-        /// Start from an observed UTF-8 output string directly.
-        #[arg(long)]
+        /// 明确观测到的 Base64 文本；部分尾串用 --base64-tail-start 配置。
+        #[arg(long, required = true)]
         value: Option<String>,
-        /// Max NewStringUTF events to scan when --key is used.
-        #[arg(long, default_value_t = 2000)]
-        jni_limit: usize,
+        /// 输出观测位置（记录下标），用于候选距离排序；省略不设时间锚点。
+        #[arg(long)]
+        at_idx: Option<usize>,
         /// Max memory locations to consider for the observed output bytes.
         #[arg(long, default_value_t = 8)]
         max_mem_hits: usize,
@@ -946,7 +960,7 @@ pub(super) enum Cmd {
         hit_rank: usize,
         /// Memory-hit ordering before applying --hit-rank.
         ///
-        /// earliest is best for reversing generation; nearest follows the final JNI handoff.
+        /// earliest/latest 按缓冲区首次写入记录排序；nearest 按 --at-idx 的距离排序。
         #[arg(long, value_enum, default_value_t = HitOrder::Earliest)]
         hit_order: HitOrder,
         /// First Base64 group offset to return.
@@ -968,7 +982,7 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 120)]
         tree_max_nodes: usize,
         /// Attach VM backtrees to matched Base64 alphabet index registers. If --tree-depth is 0,
-        /// output-map builds hidden lookup trees to find alphabet table lookups first.
+        /// base64-map builds hidden lookup trees to find alphabet table lookups first.
         #[arg(long, default_value_t = 0)]
         index_tree_depth: usize,
         /// Max nodes per attached Base64 index VM backtree.
@@ -1016,37 +1030,26 @@ pub(super) enum Cmd {
         /// Let semantic writer VM chains continue through frontier source regs.
         #[arg(long)]
         semantic_writer_map_vm_chain_follow_frontier: bool,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
-        /// Emit a compact AI-readable summary.
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
     },
-    /// Compact dynamic VM-oriented record slice.
+    /// 按显式 VM 寄存器角色标注记录；不解码目标的私有字节码。
     VmSlice {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// First trace index to include.
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long)]
         start: usize,
-        /// End trace index, exclusive. Overrides --count.
+        /// 结束记录下标（不包含），覆盖 --count。
         #[arg(long)]
         end: Option<usize>,
-        /// Number of records when --end is not set.
+        /// 请求记录数。
         #[arg(long, default_value_t = 300)]
         count: usize,
-        /// Comma-separated registers to include in the analysis.
+        /// 逗号分隔的寄存器名。
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
@@ -1055,56 +1058,33 @@ pub(super) enum Cmd {
         /// Drop records that do not look VM-related.
         #[arg(long)]
         only_vm: bool,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
         /// Base VM IP for vm_off. Defaults to the first row's --vm-ip-reg.
         #[arg(long)]
         base_ip: Option<String>,
     },
-    /// Group dynamic VM-oriented records into compact virtual instruction slices.
+    /// 按显式 VM IP 的变化聚合执行片段及状态槽效果。
     VmOps {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// First trace index to include.
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long)]
         start: usize,
-        /// End trace index, exclusive. Overrides --count.
+        /// 结束记录下标（不包含），覆盖 --count。
         #[arg(long)]
         end: Option<usize>,
-        /// Number of records when --end is not set.
+        /// 请求记录数。
         #[arg(long, default_value_t = 300)]
         count: usize,
-        /// Comma-separated registers to include in the analysis.
+        /// 逗号分隔的寄存器名。
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
         /// Base VM IP for vm_off. Defaults to the first row's --vm-ip-reg.
         #[arg(long)]
         base_ip: Option<String>,
@@ -1114,7 +1094,7 @@ pub(super) enum Cmd {
         /// Max records per analysis chunk; 0 requests the whole selected window.
         #[arg(long, default_value_t = 900)]
         chunk_size: usize,
-        /// Emit a compact AI-readable summary.
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
         /// With --summary, emit only top-level effects and state updates.
@@ -1127,19 +1107,20 @@ pub(super) enum Cmd {
         #[arg(long)]
         replay_plan: bool,
     },
-    /// Follow a single byte backward through memory writes and VM source registers.
+    /// 沿内存写入和源寄存器回溯一个或多个字节，不要求 VM 配置。
     ByteLineage {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Memory byte address to start from.
+        /// 运行时内存地址，默认十六进制；d16 表示十进制 16。
         #[arg(long)]
         addr: String,
-        /// Find the last write strictly before this trace index.
+        /// 仅查找此记录之前（不含）的内存写入。
         #[arg(long)]
         before_idx: usize,
-        /// Number of consecutive bytes to trace starting at --addr.
+        /// 从 --addr 起连续回溯的字节数。
         #[arg(long, default_value_t = 1)]
         count: usize,
-        /// Max lineage steps.
+        /// 每个字节最多回溯的步骤数。
         #[arg(long, default_value_t = 12)]
         depth: usize,
         /// Local records to inspect before each writer idx.
@@ -1151,26 +1132,27 @@ pub(super) enum Cmd {
         /// Max memory writes to collect while looking for the last one.
         #[arg(long, default_value_t = 5000)]
         max_writes: usize,
-        /// Comma-separated registers to include in the analysis.
+        /// 逗号分隔的寄存器名。
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
-        /// Emit a compact AI-readable summary instead of the full step payload.
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
         /// Emit a minimal path/frontier digest for AI agents.
         #[arg(long)]
         compact: bool,
     },
-    /// One backward step through a dynamic VM store/load chain.
+    /// 按显式 VM 配置回溯一步写入、读取或源寄存器关系。
     VmBackstep {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Writer/load trace index to explain.
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
-        /// Source register to chase. Defaults to the first store source reg.
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
         /// Local records to inspect before idx.
@@ -1182,34 +1164,23 @@ pub(super) enum Cmd {
         /// Max memory writes to collect while looking for the last one.
         #[arg(long, default_value_t = 5000)]
         max_writes: usize,
-        /// Comma-separated registers to include in the analysis.
+        /// 逗号分隔的寄存器名。
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
     },
-    /// Iterate vm-backstep and emit a compact backward chain.
+    /// 按显式 VM 配置迭代回溯单条来源链。
     VmBackchain {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Initial writer/load trace index.
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
-        /// Initial source register. Defaults to the first store source reg.
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
         /// Max backward steps.
@@ -1230,40 +1201,29 @@ pub(super) enum Cmd {
         /// Prefer upstream memory byte writers matching this little-endian source byte lane.
         #[arg(long)]
         byte_lane: Option<usize>,
-        /// Emit a compact AI-readable summary instead of the full step payload.
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
-        /// Comma-separated registers to include in the analysis.
+        /// 逗号分隔的寄存器名。
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
     },
-    /// Branching backward tree through dynamic VM upstream/frontier links.
+    /// 按显式 VM 配置展开多分支来源树及未知边界。
     VmBacktree {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// Initial writer/load trace index.
+        /// 记录下标，从 0 开始。
         #[arg(long)]
         idx: usize,
-        /// Initial source register. Defaults to the first store source reg.
+        /// 寄存器名，如 x0、w0、sp、fp、lr。
         #[arg(long)]
         reg: Option<String>,
-        /// Max tree depth.
+        /// 最多展开的依赖层数。
         #[arg(long, default_value_t = 6)]
         depth: usize,
         /// Max returned tree nodes.
@@ -1281,53 +1241,50 @@ pub(super) enum Cmd {
         /// Also enqueue frontier branches when upstream.next exists.
         #[arg(long)]
         frontier_with_next: bool,
-        /// Emit a compact AI-readable summary instead of the full node tree.
+        /// 仅输出摘要，省略完整明细。
         #[arg(long)]
         summary: bool,
-        /// Comma-separated registers to include in the analysis.
+        /// 逗号分隔的寄存器名。
         #[arg(
             long,
             default_value = "x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19,x20,x21,x22,x23,x24,x25,x26,x27,x28,sp,fp,lr"
         )]
         regs: String,
-        /// Register holding the VM instruction pointer in this trace/profile.
-        /// Required — traceMiku no longer assumes a target-specific default.
-        #[arg(long)]
-        vm_ip_reg: Option<String>,
-        /// Register holding the VM state/virtual-register base. Required.
-        #[arg(long)]
-        vm_state_reg: Option<String>,
-        /// Register holding the dispatch table base or dispatch lookup base. Required.
-        #[arg(long)]
-        vm_dispatch_reg: Option<String>,
-        /// Extra VM infrastructure registers to de-prioritize while following frontiers.
-        /// Optional; sp/fp/lr and the three core VM regs are always included.
-        #[arg(long)]
-        vm_infra_regs: Option<String>,
+        #[command(flatten)]
+        vm: super::vm_args::VmArgs,
     },
-    /// 指定 JNI jobject 的历史。
+    /// 查询 JNI jobject 在已识别调用参数中的出现记录。
+    #[command(name = "jni-object-history")]
     JobjHistory {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// JNI 对象句柄，默认十六进制。
         #[arg(long)]
         jobject: String,
+        /// 起始记录下标，从 0 开始（包含）。
         #[arg(long, default_value_t = 0)]
         start: usize,
-        #[arg(long, default_value_t = -1)]
+        /// 结束记录下标（不包含）；-1 表示 trace 末尾。
+        #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         end: isize,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 200)]
         max: usize,
     },
-    /// JNI NewStringUTF 输出串。
+    /// 预览 NewStringUTF、GetStringUTFChars、ReleaseStringUTFChars 的已观测字节缓冲区。
     JniStrings {
+        /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
+        /// 请求返回条数上限；实际数量及截断信息见结果。
         #[arg(long, default_value_t = 200)]
         max: usize,
+        /// 每个 JNI 字符串最多读取的字节数（硬上限 4096）。
         #[arg(long, default_value_t = 128)]
         max_len: usize,
     },
-    /// Repair per-call meta.json from trace.bin and normalize call directory names.
+    /// 依据本地 trace.bin 修复 pending/call 元数据并规范目录名。
     Finalize {
-        /// Run directory (contains calls/).
+        /// 待修复的 run 目录，须包含 calls/。
         path: PathBuf,
     },
 }

@@ -100,11 +100,7 @@ fn run_json(args: &[String]) -> serde_json::Value {
     serde_json::from_slice(&out.stdout).expect("stdout is json")
 }
 
-fn make_diff_trace(root: &std::path::Path, name: &str, x_sign: &[u8]) -> PathBuf {
-    make_diff_trace_value(root, name, &STANDARD.encode(x_sign))
-}
-
-fn make_diff_trace_value(root: &std::path::Path, name: &str, value: &str) -> PathBuf {
+fn make_output_trace(root: &std::path::Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
     let mut buf = vec![0u8; 272];
@@ -112,19 +108,6 @@ fn make_diff_trace_value(root: &std::path::Path, name: &str, value: &str) -> Pat
     buf[268..272].copy_from_slice(&0xd503201fu32.to_le_bytes());
     std::fs::write(dir.join("trace.bin"), &buf).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"records":1}"#).unwrap();
-    let events = [
-        serde_json::json!({"id":"NewStringUTF","trace_idx":1,"args":{"bytes":"x-request-id"}}),
-        serde_json::json!({"id":"NewStringUTF","trace_idx":2,"args":{"bytes":value}}),
-    ];
-    std::fs::write(
-        dir.join("jni_hooks.jsonl"),
-        events
-            .iter()
-            .map(serde_json::Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-    .unwrap();
     dir
 }
 
@@ -146,19 +129,6 @@ fn make_output_map_hit_order_trace(root: &std::path::Path, name: &str) -> PathBu
     }
     std::fs::write(dir.join("trace.bin"), &buf).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"records":2}"#).unwrap();
-    let events = [
-        serde_json::json!({"id":"NewStringUTF","trace_idx":9,"args":{"bytes":"x-request-id"}}),
-        serde_json::json!({"id":"NewStringUTF","trace_idx":10,"args":{"bytes":output}}),
-    ];
-    std::fs::write(
-        dir.join("jni_hooks.jsonl"),
-        events
-            .iter()
-            .map(serde_json::Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-    .unwrap();
     dir
 }
 
@@ -229,14 +199,14 @@ fn make_vm_ops_trace(root: &std::path::Path, name: &str) -> PathBuf {
 #[test]
 fn info_json_reports_call_shape() {
     let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&["info".into(), cd.display().to_string(), "--json".into()]);
+    let v = run_json(&["info".into(), cd.display().to_string()]);
     assert_eq!(v["records"], 4);
     assert_eq!(v["last_insn_is_ret"], true);
     assert_eq!(v["is_complete"], true);
 }
 
 #[test]
-fn records_wrapper_uses_server_wire_shape() {
+fn records_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "records".into(),
@@ -255,10 +225,10 @@ fn records_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn string_provenance_wrapper_uses_server_wire_shape() {
+fn string_provenance_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "string-provenance".into(),
+        "mem-byte-history".into(),
         cd.display().to_string(),
         "--addr".into(),
         "0x7000".into(),
@@ -283,7 +253,7 @@ fn functions_wrapper_lists_symbol_functions() {
 }
 
 #[test]
-fn fn_summary_wrapper_uses_server_wire_shape() {
+fn fn_summary_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "fn-summary".into(),
@@ -304,7 +274,7 @@ fn inspect_wrappers_use_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
 
     let v = run_json(&[
-        "idxs-for-pc".into(),
+        "pc-hits".into(),
         cd.display().to_string(),
         "0x100000".into(),
         "--cursor".into(),
@@ -406,7 +376,7 @@ fn memory_query_wrappers_use_server_wire_shape() {
     assert_eq!(v["src_value"], "0x58");
 
     let v = run_json(&[
-        "idxs-touching-addr".into(),
+        "mem-accesses".into(),
         cd.display().to_string(),
         "--addr".into(),
         "0x7002".into(),
@@ -439,7 +409,7 @@ fn memory_query_wrappers_use_server_wire_shape() {
         .any(|row| row["idx"] == 2 && row["write_kind"] == "x"));
 
     let v = run_json(&[
-        "idxs-touching-addr".into(),
+        "mem-accesses".into(),
         cd.display().to_string(),
         "--addr".into(),
         "0x7000".into(),
@@ -450,7 +420,7 @@ fn memory_query_wrappers_use_server_wire_shape() {
     assert_eq!(v["after"], serde_json::json!([{"idx":1,"kind":"r"}]));
 
     let v = run_json(&[
-        "idxs-touching-range".into(),
+        "mem-range-accesses".into(),
         cd.display().to_string(),
         "--addr".into(),
         "0x7004".into(),
@@ -477,7 +447,7 @@ fn memory_query_wrappers_use_server_wire_shape() {
 }
 
 #[test]
-fn call_chain_wrapper_uses_server_wire_shape() {
+fn call_chain_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "call-chain".into(),
@@ -493,10 +463,10 @@ fn call_chain_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn data_chase_wrapper_uses_server_wire_shape() {
+fn data_chase_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "data-chase".into(),
+        "reg-chase".into(),
         cd.display().to_string(),
         "--start".into(),
         "2".into(),
@@ -511,7 +481,7 @@ fn data_chase_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn dep_graph_wrapper_uses_server_wire_shape() {
+fn dep_graph_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "dep-graph".into(),
@@ -572,10 +542,10 @@ fn bfs_slice_intersection_combines_two_seeds() {
 }
 
 #[test]
-fn forward_dep_tree_wrapper_uses_server_wire_shape() {
+fn forward_dep_tree_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "forward-dep-tree".into(),
+        "forward-dep-graph".into(),
         cd.display().to_string(),
         "--idx".into(),
         "0".into(),
@@ -669,7 +639,7 @@ fn timeline_diff_wrappers_use_server_wire_shape() {
 }
 
 #[test]
-fn mem_flow_wrapper_uses_server_wire_shape() {
+fn mem_flow_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "mem-flow".into(),
@@ -689,9 +659,10 @@ fn mem_flow_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn crypto_scan_wrapper_uses_server_wire_shape() {
+fn crypto_includes_memory_fingerprints() {
     let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&["crypto-scan".into(), cd.display().to_string()]);
+    let v = run_json(&["crypto".into(), cd.display().to_string()]);
+    let v = &v["mem_scan"];
     assert!(v["scanned"].as_u64().unwrap() > 0);
     let primitives = v["primitives"].as_array().unwrap();
     assert!(
@@ -706,10 +677,10 @@ fn crypto_scan_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn hash_finalize_wrapper_uses_server_wire_shape() {
+fn mem_write_bursts_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "hash-finalize-detect".into(),
+        "mem-write-bursts".into(),
         cd.display().to_string(),
         "--window".into(),
         "500".into(),
@@ -722,7 +693,7 @@ fn hash_finalize_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn hash_input_search_wrapper_uses_server_wire_shape() {
+fn hash_input_search_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "hash-input-search".into(),
@@ -744,31 +715,7 @@ fn hash_input_search_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn diff_traces_wrapper_uses_server_wire_shape() {
-    let tmp = tempfile::tempdir().unwrap();
-    let run1 = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
-    let run2 = make_diff_trace(tmp.path(), "run2", &[0xaa, 0xee, 0xcc, 0xdd]);
-    let v = run_json(&[
-        "diff-traces".into(),
-        run1.display().to_string(),
-        run2.display().to_string(),
-        "--show-offsets".into(),
-    ]);
-    assert_eq!(v["n_traces"], 2);
-    assert_eq!(v["headers"]["x-request-id"]["stable_count"], 3);
-    assert_eq!(v["headers"]["x-request-id"]["variable_count"], 1);
-}
-
-#[test]
-fn auto_phase_wrapper_uses_server_wire_shape() {
-    let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&["auto-phase-detect".into(), cd.display().to_string()]);
-    assert_eq!(v["trace_records"], 4);
-    assert!(v["phases"].is_array());
-}
-
-#[test]
-fn jni_calls_wrapper_uses_server_wire_shape() {
+fn jni_calls_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "jni-calls".into(),
@@ -781,10 +728,10 @@ fn jni_calls_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn jobj_history_wrapper_uses_server_wire_shape() {
+fn jobj_history_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
-        "jobj-history".into(),
+        "jni-object-history".into(),
         cd.display().to_string(),
         "--jobject".into(),
         "0x2222".into(),
@@ -796,7 +743,7 @@ fn jobj_history_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn jni_strings_wrapper_uses_server_wire_shape() {
+fn jni_strings_wrapper_preserves_core_output() {
     let (_tmp, cd) = synth_call_dir();
     let v = run_json(&[
         "jni-strings".into(),
@@ -811,14 +758,14 @@ fn jni_strings_wrapper_uses_server_wire_shape() {
 }
 
 #[test]
-fn output_backtrace_starts_from_jni_output_pair() {
+fn output_backtrace_starts_from_explicit_output_value() {
     let tmp = tempfile::tempdir().unwrap();
-    let cd = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let cd = make_output_trace(tmp.path(), "run1");
     let v = run_json(&[
         "output-backtrace".into(),
         cd.display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
+        "--value".into(),
+        STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd]),
         "--max-mem-hits".into(),
         "1".into(),
         "--writes-per-hit".into(),
@@ -827,18 +774,14 @@ fn output_backtrace_starts_from_jni_output_pair() {
     ]);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["strategy"], "output_to_input_backward_trace");
-    assert_eq!(v["source"]["kind"], "jni_output_string_pair");
-    assert_eq!(v["source"]["pair"]["key"], "x-request-id");
+    assert_eq!(v["source"]["kind"], "value");
     assert_eq!(
-        v["source"]["pair"]["value"],
+        v["source"]["value"],
         STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
     );
     assert_eq!(v["patterns"][0]["kind"], "observed");
     assert_eq!(v["taint"]["skipped"], true);
-    assert_eq!(
-        v["taint"]["queued"][0]["kind"],
-        "jni_new_string_utf_callsite"
-    );
+    assert!(v["taint"]["queued"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -846,10 +789,10 @@ fn output_map_defaults_to_earliest_generation_hit() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_output_map_hit_order_trace(tmp.path(), "run1");
     let base_args = vec![
-        "output-map".into(),
+        "base64-map".into(),
         cd.display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
+        "--value".into(),
+        STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd]),
         "--max-mem-hits".into(),
         "2".into(),
         "--groups".into(),
@@ -874,6 +817,7 @@ fn output_map_defaults_to_earliest_generation_hit() {
     let mut nearest_args = base_args;
     nearest_args.push("--hit-order".into());
     nearest_args.push("nearest".into());
+    nearest_args.extend(["--at-idx".into(), "1".into()]);
     nearest_args.push("--tree-frontier-with-next".into());
     let v = run_json(&nearest_args);
     assert_eq!(v["selected_hit_order"], "nearest");
@@ -887,12 +831,12 @@ fn output_map_can_group_aligned_base64_tail() {
     let tmp = tempfile::tempdir().unwrap();
     let fixed = "azYBCM007xAA";
     let tail = &STANDARD.encode([0x00, 0x0a, 0x62, 0x61, 0x05])[2..];
-    let cd = make_diff_trace_value(tmp.path(), "run1", &format!("{fixed}{tail}"));
+    let cd = make_output_trace(tmp.path(), "run1");
     let v = run_json(&[
-        "output-map".into(),
+        "base64-map".into(),
         cd.display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
+        "--value".into(),
+        format!("{fixed}{tail}"),
         "--max-mem-hits".into(),
         "0".into(),
         "--base64-tail-start".into(),
@@ -924,10 +868,10 @@ fn output_map_can_group_aligned_base64_tail() {
     assert_eq!(v["groups"][1]["decoded_payload"][0]["value_hex"], "61");
 
     let v = run_json(&[
-        "output-map".into(),
+        "base64-map".into(),
         cd.display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
+        "--value".into(),
+        format!("{fixed}{tail}"),
         "--max-mem-hits".into(),
         "0".into(),
         "--base64-tail-start".into(),
@@ -966,6 +910,8 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
         "1".into(),
         "--max-nodes".into(),
         "8".into(),
+        "--vm-slot-bytes".into(),
+        "8".into(),
         "--vm-ip-reg".into(),
         "x9".into(),
         "--vm-state-reg".into(),
@@ -995,6 +941,8 @@ fn vm_backtree_branches_word_load_to_byte_writers() {
         "1".into(),
         "--max-nodes".into(),
         "8".into(),
+        "--vm-slot-bytes".into(),
+        "8".into(),
         "--vm-ip-reg".into(),
         "x9".into(),
         "--vm-state-reg".into(),
@@ -1020,6 +968,8 @@ fn vm_backstep_uses_target_row_when_it_defines_requested_reg() {
         "4".into(),
         "--reg".into(),
         "x2".into(),
+        "--vm-slot-bytes".into(),
+        "8".into(),
         "--vm-ip-reg".into(),
         "x9".into(),
         "--vm-state-reg".into(),
@@ -1183,6 +1133,8 @@ fn vm_ops_groups_rows_by_vm_ip() {
         "0".into(),
         "--end".into(),
         "5".into(),
+        "--vm-slot-bytes".into(),
+        "8".into(),
         "--vm-ip-reg".into(),
         "x21".into(),
         "--vm-state-reg".into(),
@@ -1213,6 +1165,8 @@ fn vm_ops_groups_rows_by_vm_ip() {
         "0".into(),
         "--end".into(),
         "5".into(),
+        "--vm-slot-bytes".into(),
+        "8".into(),
         "--vm-ip-reg".into(),
         "x21".into(),
         "--vm-state-reg".into(),
@@ -1229,174 +1183,4 @@ fn vm_ops_groups_rows_by_vm_ip() {
     assert_eq!(chunked["source_chunks"], 3);
     assert_eq!(chunked["vm_base_ip"], "0x5000");
     assert_eq!(chunked["ops_returned"], 1);
-}
-
-#[test]
-fn scan_jni_output_strings_reads_hooks_without_trace_load() {
-    let tmp = tempfile::tempdir().unwrap();
-    let _cd = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
-    let v = run_json(&[
-        "scan-jni-output-strings".into(),
-        tmp.path().display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
-        "--decode-base64".into(),
-        "--decode-base64-full".into(),
-    ]);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["pairs"][0]["key"], "x-request-id");
-    assert_eq!(
-        v["pairs"][0]["value"],
-        STANDARD.encode([0xaa, 0xbb, 0xcc, 0xdd])
-    );
-    assert_eq!(v["pairs"][0]["base64"]["decoded_len"], 4);
-    assert_eq!(v["pairs"][0]["base64"]["decoded_hex"], "aabbccdd");
-}
-
-#[test]
-fn scan_jni_output_strings_diffs_decoded_base64_outputs() {
-    let tmp = tempfile::tempdir().unwrap();
-    let _cd1 = make_diff_trace(tmp.path(), "run1", &[0xaa, 0xbb, 0xcc, 0xdd]);
-    let _cd2 = make_diff_trace(tmp.path(), "run2", &[0xaa, 0xbb, 0xee, 0xdd]);
-    let v = run_json(&[
-        "scan-jni-output-strings".into(),
-        tmp.path().display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
-        "--diff-base64".into(),
-    ]);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["count"], 2);
-    assert_eq!(v["base64_diff"]["status"], "ready");
-    assert_eq!(v["base64_diff"]["sample_count"], 2);
-    assert_eq!(v["base64_diff"]["compared_len"], 4);
-    assert_eq!(v["base64_diff"]["range_semantics"], "[start,end)");
-    assert_eq!(v["base64_diff"]["stable_count"], 3);
-    assert_eq!(v["base64_diff"]["variable_count"], 1);
-    assert_eq!(
-        v["base64_diff"]["stable_ranges"],
-        serde_json::json!([
-            {"start": 0, "end": 2, "length": 2, "hex": "aabb"},
-            {"start": 3, "end": 4, "length": 1, "hex": "dd"},
-        ])
-    );
-    assert_eq!(
-        v["base64_diff"]["variable_ranges"],
-        serde_json::json!([
-            {
-                "start": 2,
-                "end": 3,
-                "length": 1,
-                "base64_group_start": 0,
-                "base64_group_end": 1,
-                "base64_groups": 1,
-                "base64_char_start": 0,
-                "base64_char_end": 4,
-            },
-        ])
-    );
-    assert_eq!(
-        v["base64_diff"]["first_variable"],
-        serde_json::json!({
-            "off": 2,
-            "base64_group": 0,
-            "base64_char_start": 0,
-            "base64_char_end": 4,
-            "output_map_args": {
-                "group_start": 0,
-                "groups": 1,
-            },
-        })
-    );
-    assert_eq!(v["base64_diff"]["per_byte"][2]["kind"], "VARIABLE");
-    assert_eq!(
-        v["base64_diff"]["per_byte"][2]["values"],
-        serde_json::json!(["0xcc", "0xee"])
-    );
-    assert_eq!(v["pairs"][0]["base64"]["decoded_hex"], "aabbccdd");
-}
-
-#[test]
-fn scan_jni_output_strings_aligns_base64_tail_for_diffing() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fixed = "azYBCM007xAA";
-    let tail1 = &STANDARD.encode([0x00, 0x0a, 0x62, 0x61, 0x05])[2..];
-    let tail2 = &STANDARD.encode([0x00, 0x0a, 0x63, 0x61, 0x05])[2..];
-    let _cd1 = make_diff_trace_value(tmp.path(), "run1", &format!("{fixed}{tail1}"));
-    let _cd2 = make_diff_trace_value(tmp.path(), "run2", &format!("{fixed}{tail2}"));
-    let v = run_json(&[
-        "scan-jni-output-strings".into(),
-        tmp.path().display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
-        "--diff-base64".into(),
-        "--base64-tail-start".into(),
-        fixed.len().to_string(),
-        "--base64-tail-align-prefix".into(),
-        "AA".into(),
-        "--base64-tail-drop".into(),
-        "1".into(),
-    ]);
-    assert_eq!(v["status"], "ready");
-    assert_eq!(v["pairs"][0]["base64_tail"]["semantic_hex"], "0a626105");
-    assert_eq!(v["pairs"][1]["base64_tail"]["semantic_hex"], "0a636105");
-    assert_eq!(v["base64_tail_diff"]["status"], "ready");
-    assert_eq!(v["base64_tail_diff"]["source"], "base64_tail.semantic_hex");
-    assert_eq!(v["base64_tail_diff"]["stable_ranges"][0]["hex"], "0a");
-    assert_eq!(v["base64_tail_diff"]["per_byte"][1]["kind"], "VARIABLE");
-    assert_eq!(
-        v["base64_tail_diff"]["per_byte"][1]["values"],
-        serde_json::json!(["0x62", "0x63"])
-    );
-}
-
-#[test]
-fn scan_jni_output_strings_reports_tail_repeat_candidates() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fixed = "azYBCM007xAA";
-    let tail1 = &STANDARD.encode([0x00, 0x0a, 0xaa, 0xbb, 0xcc, 0xdd, 0xaa, 0xbb, 0xcc])[2..];
-    let tail2 = &STANDARD.encode([0x00, 0x0a, 0x11, 0x22, 0x33, 0x44, 0x11, 0x22, 0x33])[2..];
-    let _cd1 = make_diff_trace_value(tmp.path(), "run1", &format!("{fixed}{tail1}"));
-    let _cd2 = make_diff_trace_value(tmp.path(), "run2", &format!("{fixed}{tail2}"));
-    let v = run_json(&[
-        "scan-jni-output-strings".into(),
-        tmp.path().display().to_string(),
-        "--key".into(),
-        "x-request-id".into(),
-        "--diff-base64".into(),
-        "--base64-tail-start".into(),
-        fixed.len().to_string(),
-        "--base64-tail-align-prefix".into(),
-        "AA".into(),
-        "--base64-tail-drop".into(),
-        "1".into(),
-    ]);
-    let repeats = v["base64_tail_diff"]["repeated_ranges_all_samples"]
-        .as_array()
-        .unwrap();
-    assert!(repeats.iter().any(|row| {
-        row["src_start"] == 1
-            && row["src_end"] == 4
-            && row["dst_start"] == 5
-            && row["dst_end"] == 8
-            && row["length"] == 3
-    }));
-}
-
-#[test]
-fn ollvm_detect_vm_wrapper_uses_server_wire_shape() {
-    let (_tmp, cd) = synth_call_dir();
-    let v = run_json(&[
-        "ollvm-detect-vm".into(),
-        cd.display().to_string(),
-        "--min-entries".into(),
-        "1".into(),
-        "--threshold".into(),
-        "0.3".into(),
-    ]);
-    assert_eq!(v["min_entries"], 1);
-    assert_eq!(v["threshold"], 0.3);
-    assert!(v["count"].as_u64().unwrap() <= 1);
-    assert!(v["candidates"].is_array());
 }

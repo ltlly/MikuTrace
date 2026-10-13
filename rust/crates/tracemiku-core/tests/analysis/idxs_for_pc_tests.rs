@@ -1,4 +1,4 @@
-//! Black-box tests for GET idxs-for-pc.
+//! Black-box tests for GET pc-hits.
 
 use super::analysis_support;
 use std::fs;
@@ -55,7 +55,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
 fn idxs_for_pc_finds_duplicates() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-pc?pc=0x100000&cursor=3&limit=10", None);
+    let resp = analysis_support::query(&app, "pc-hits?pc=0x100000&cursor=3&limit=10", None);
     assert_eq!(resp.error_code(), None);
 
     let body = resp.bytes();
@@ -75,7 +75,7 @@ fn idxs_for_pc_finds_duplicates() {
 fn idxs_for_pc_no_match_empty() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-pc?pc=0xdeadbeef&cursor=0&limit=10", None);
+    let resp = analysis_support::query(&app, "pc-hits?pc=0xdeadbeef&cursor=0&limit=10", None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["before"], serde_json::json!([]));
@@ -88,11 +88,7 @@ fn idxs_for_pc_no_match_empty() {
 fn idxs_for_pc_rejects_invalid_pc_with_400() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(
-        &app,
-        "idxs-for-pc?pc=not-an-address&cursor=0&limit=10",
-        None,
-    );
+    let resp = analysis_support::query(&app, "pc-hits?pc=not-an-address&cursor=0&limit=10", None);
     // Invalid addresses surface as invalid_argument, never a silent 0 sentinel.
     assert_eq!(resp.error_code(), Some("invalid_argument"));
 }
@@ -101,7 +97,7 @@ fn idxs_for_pc_rejects_invalid_pc_with_400() {
 fn idxs_for_pc_limit_caps_results() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-pc?pc=0x100000&cursor=10&limit=0", None);
+    let resp = analysis_support::query(&app, "pc-hits?pc=0x100000&cursor=10&limit=0", None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["before"], serde_json::json!([]));
@@ -116,7 +112,7 @@ fn idxs_for_pc_limit_caps_results() {
 fn idxs_for_pc_default_cursor_zero() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-pc?pc=0x100000", None);
+    let resp = analysis_support::query(&app, "pc-hits?pc=0x100000", None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["after"], serde_json::json!([0, 5]));

@@ -254,11 +254,8 @@ fn last_write_of_reg_finds_last_def() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["idx"].as_u64().unwrap_or(99), 0);
 
-    // Python web compatibility: old UI sends cursor= instead of before=.
     let resp = analysis_support::query(&app, "last-write-of-reg?reg=x0&cursor=5", None);
-    let body = resp.bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["idx"].as_u64().unwrap_or(99), 1);
+    assert_eq!(resp.error_code(), Some("invalid_argument"));
 
     // x99 has no defs → null
     let resp = analysis_support::query(&app, "last-write-of-reg?reg=x99&before=5", None);

@@ -118,7 +118,7 @@ fn cfg_empty_trace_no_blocks() {
 fn idxs_for_block_returns_record_indices() {
     let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-block?pc=0x100000", None);
+    let resp = analysis_support::query(&app, "block-hits?pc=0x100000", None);
     assert_eq!(resp.error_code(), None);
 
     let body = resp.bytes();
@@ -136,7 +136,7 @@ fn idxs_for_block_returns_record_indices() {
 fn idxs_for_block_near_prioritizes_closest_record() {
     let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-block?pc=0x100000&max_count=1&near=1", None);
+    let resp = analysis_support::query(&app, "block-hits?pc=0x100000&max_count=1&near=1", None);
     assert_eq!(resp.error_code(), None);
 
     let body = resp.bytes();
@@ -155,6 +155,6 @@ fn idxs_for_block_near_prioritizes_closest_record() {
 fn idxs_for_block_unknown_pc_returns_not_found() {
     let (_tmp, call_dir) = synth_call_dir_with_known_offsets();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "idxs-for-block?pc=0xdeadbeef", None);
+    let resp = analysis_support::query(&app, "block-hits?pc=0xdeadbeef", None);
     assert_eq!(resp.error_code(), Some("not_found"));
 }

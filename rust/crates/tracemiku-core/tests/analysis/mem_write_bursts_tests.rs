@@ -42,9 +42,9 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 }
 
 #[test]
-fn hash_finalize_detects_contiguous_digest_region() {
+fn mem_write_bursts_finds_contiguous_write_region() {
     let (_tmp, cd) = synth_call_dir(8);
-    let (status, v) = get(cd, "hash-finalize-detect?window=10&min_size=16");
+    let (status, v) = get(cd, "mem-write-bursts?window=10&min_size=16");
     assert_eq!(status, None);
     assert_eq!(v["window"], 10);
     assert_eq!(v["min_size"], 16);
@@ -57,21 +57,21 @@ fn hash_finalize_detects_contiguous_digest_region() {
     assert_eq!(v["candidates"][0]["enter_idx"], 0);
     assert_eq!(v["candidates"][0]["exit_idx"], 3);
     assert_eq!(v["candidates"][0]["kind"], "mixed");
-    assert_eq!(v["candidates"][0]["guess"], "sha256");
+    assert!(v["candidates"][0].get("guess").is_none());
 }
 
 #[test]
-fn hash_finalize_ignores_non_contiguous_writes() {
+fn mem_write_bursts_ignores_non_contiguous_writes() {
     let (_tmp, cd) = synth_call_dir(16);
-    let (status, v) = get(cd, "hash-finalize-detect?window=10&min_size=16");
+    let (status, v) = get(cd, "mem-write-bursts?window=10&min_size=16");
     assert_eq!(status, None);
     assert_eq!(v["count"], 0);
 }
 
 #[test]
-fn hash_finalize_limits_returned_candidates_without_losing_total() {
+fn mem_write_bursts_limits_returned_candidates_without_losing_total() {
     let (_tmp, cd) = synth_call_dir(16);
-    let (status, v) = get(cd, "hash-finalize-detect?window=10&min_size=4&limit=2");
+    let (status, v) = get(cd, "mem-write-bursts?window=10&min_size=4&limit=2");
     assert_eq!(status, None);
     assert_eq!(v["count"], 4);
     assert_eq!(v["returned"], 2);

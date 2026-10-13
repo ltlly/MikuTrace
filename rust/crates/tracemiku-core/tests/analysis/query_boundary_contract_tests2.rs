@@ -1,4 +1,4 @@
-//! Boundary contract tests for auto-phase / fn-summary / hash-finalize /
+//! Boundary contract tests for fn-summary / memory write bursts /
 //! indirect-targets edge cases.
 
 use super::analysis_support;
@@ -51,43 +51,6 @@ fn validate(schema: &serde_json::Value, value: &serde_json::Value) -> Vec<String
 }
 
 #[test]
-fn auto_phase_returns_phase_list() {
-    let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "auto-phase-detect");
-    assert_eq!(status, None);
-    let errors = validate(
-        &serde_json::json!({
-            "type": "object",
-            "required": ["status", "trace_records", "total", "returned", "truncated"],
-            "properties": {
-                "status": {"const": "ready"},
-                "trace_records": {"const": 4},
-                "truncated": {"type": "boolean"},
-            },
-        }),
-        &v,
-    );
-    assert!(errors.is_empty(), "schema errors: {errors:?}");
-}
-
-#[test]
-fn auto_phase_max_phases_zero_uses_default() {
-    let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "auto-phase-detect?max_phases=0");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "ready");
-}
-
-#[test]
-fn auto_phase_limit_alias_works() {
-    let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "auto-phase-detect?limit=1");
-    assert_eq!(status, None);
-    assert_eq!(v["status"], "ready");
-    assert!(v["returned"].as_u64().unwrap() <= 1);
-}
-
-#[test]
 fn fn_summary_known_fn_returns_ready() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get_json(cd, "fn-summary?fn=f_root");
@@ -124,11 +87,9 @@ fn indirect_targets_no_dispatch_reports_miss() {
 }
 
 #[test]
-fn hash_finalize_requires_algorithm() {
+fn mem_write_bursts_without_writes_has_no_candidates() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get_json(cd, "hash-finalize-detect");
+    let (status, v) = get_json(cd, "mem-write-bursts");
     assert_eq!(status, None);
-    // Missing required args yields a structured error, never a 500.
-    assert_eq!(status, None);
-    assert!(v.is_object());
+    assert_eq!(v["candidates"], serde_json::json!([]));
 }

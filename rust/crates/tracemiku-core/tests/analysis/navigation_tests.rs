@@ -78,12 +78,11 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 }
 
 #[test]
-fn block_for_pc_finds_containing_block() {
+fn block_finds_containing_block() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "block-for-pc?pc=0x100100");
+    let (status, v) = get(cd, "block?pc=0x100104");
     assert_eq!(status, None);
-    assert_eq!(v["pc"], "0x100100");
-    assert_eq!(v["block"], "0x100100");
+    assert_eq!(v["start"], "0x100100");
 }
 
 #[test]

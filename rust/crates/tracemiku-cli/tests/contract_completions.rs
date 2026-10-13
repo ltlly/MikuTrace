@@ -23,7 +23,7 @@ fn run_completion(shell: &str) -> String {
 fn bash_completion_is_non_empty_and_mentions_subcommands() {
     let script = run_completion("bash");
     assert!(script.len() > 200, "bash script too short");
-    for sub in ["resolve", "records", "taint-bwd", "mem-tenet"] {
+    for sub in ["resolve", "records", "taint-bwd", "mem-provenance"] {
         assert!(script.contains(sub), "bash completion must reference {sub}");
     }
 }

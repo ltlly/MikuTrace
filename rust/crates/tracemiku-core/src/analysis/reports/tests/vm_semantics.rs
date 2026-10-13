@@ -90,8 +90,10 @@ fn classifies_vm_records_and_scaled_slots() {
         "x9".to_string(),
         "x25".to_string(),
         "x22".to_string(),
+        8.try_into().unwrap(),
         "x26".to_string(),
-    );
+    )
+    .unwrap();
     let record = serde_json::json!({
         "regs": {
             "x25": "0x1000",
@@ -139,7 +141,7 @@ fn vm_slot_access_expands_pair_state_stores() {
         "idx": 14017046,
         "class": "vm-reg-store",
         "asm": "stp x9, x10, [x25, #0x40]",
-        "vm_slot": {"slot": 8, "index_reg": null, "index_value": null},
+        "vm_slot": {"slot_bytes": 8, "slot": 8, "index_reg": null, "index_value": null},
         "mem_addr": "0x77445994e0",
         "store_src": [
             {"reg": "x9", "value": "0x90d2d669"},
@@ -162,8 +164,10 @@ fn vm_profile_allows_non_default_role_registers() {
         "x9".to_string(),
         "x20".to_string(),
         "x22".to_string(),
+        8.try_into().unwrap(),
         "x26".to_string(),
-    );
+    )
+    .unwrap();
     let record = serde_json::json!({
         "regs": {
             "x20": "0x4000",
@@ -956,8 +960,10 @@ fn frontier_auto_uses_byte_lane_for_or_merge_and_shifts() {
         "x9".to_string(),
         "x10".to_string(),
         "x11".to_string(),
+        8.try_into().unwrap(),
         "x12".to_string(),
-    );
+    )
+    .unwrap();
     let or_merge = serde_json::json!({
         "local_def": {
             "asm": "orr x4, x14, x17",
@@ -1093,4 +1099,59 @@ fn extracts_byte_lane_equation_from_word_load_chain() {
     assert_eq!(equation["source_byte_offset"], serde_json::json!(3));
     assert_eq!(equation["result"], serde_json::json!("0xa"));
     assert_eq!(equation["matches_first_byte"], serde_json::json!(true));
+}
+
+#[test]
+fn vm_slot_stride_is_explicit_and_unaligned_offsets_are_unknown() {
+    let record = serde_json::json!({"regs":{"x6":"0x4000","x3":"0x5"}});
+    for (stride, asm) in [
+        (4, "ldr w1, [x6, x3, lsl #2]"),
+        (16, "ldr x1, [x6, x3, lsl #4]"),
+    ] {
+        let profile = VmProfile::new(
+            "x5".into(),
+            "x6".into(),
+            "x7".into(),
+            stride.try_into().unwrap(),
+            String::new(),
+        )
+        .unwrap();
+        let slot = vm_slot_from_asm(asm, &record, &profile).unwrap();
+        assert_eq!(slot["slot"], 5);
+        assert_eq!(slot["slot_bytes"], stride);
+        assert!(vm_slot_from_asm("ldr w1, [x6, #1]", &record, &profile).is_none());
+    }
+}
+
+#[test]
+fn vm_pair_access_respects_four_byte_state_slots() {
+    let row = serde_json::json!({
+        "class":"vm-reg-store", "asm":"stp w1, w2, [x6, #0x14]", "mem_addr":"0x4014",
+        "vm_slot":{"slot":5,"slot_bytes":4},
+        "store_src":[{"reg":"w1","value":"0xaa"},{"reg":"w2","value":"0xbb"}]
+    });
+    let slots = vm_slot_access_summaries(&row);
+    assert_eq!(slots[0]["slot"], 5);
+    assert_eq!(slots[1]["slot"], 6);
+    assert_eq!(slots[1]["mem_addr"], "0x4018");
+}
+
+#[test]
+fn invalid_or_overlapping_vm_roles_are_rejected() {
+    assert!(VmProfile::new(
+        "x99".into(),
+        "x3".into(),
+        "x4".into(),
+        8.try_into().unwrap(),
+        String::new()
+    )
+    .is_err());
+    assert!(VmProfile::new(
+        "x3".into(),
+        "x3".into(),
+        "x4".into(),
+        8.try_into().unwrap(),
+        String::new()
+    )
+    .is_err());
 }

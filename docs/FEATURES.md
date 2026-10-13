@@ -3,6 +3,8 @@
 ## 约定
 
 - 统一入口 `./tracemiku`；`capabilities` 返回命令摘要（schema 2），`capabilities --command <name>` 返回参数；细节查 `<cmd> --help`。
+- 分析面向 Android ARM64 trace，不包含 APK 专用命令；各命令是否适用取决于已采集的指令、内存、符号和可选 sidecar。
+- `--fn` / `--in-fn` 使用 `functions` 返回项的 `name`（符号名称）。
 - 地址/偏移默认十六进制：`10` = `0x10`，`d16` = 十进制 16。分析命令通常接收 `<call_dir>`。
 - Rust 分析成功退出 0，输出 JSON；`list` 默认逐行 JSON，`--json` 返回数组；`completions` 输出 shell 源码。
 - Rust 执行错误退出 1，stdout 为 `{"status":"error","error":{"code":"…","message":"…"}}`（可带 `error.details`）；参数错误退出 2，诊断在 stderr。部分旧查询退出 0 但结果含 `status=error`，须同时检查；host 采集沿用自己的诊断和退出码。
@@ -17,7 +19,6 @@
 | `list` | 枚举 run/calls |
 | `info` | run/call 元信息与完成度 |
 | `meta` | 采集元数据与格式 |
-| `stats` | 记录数与有界模块映射摘要；执行频次用 `so-stats` |
 
 ## 地址与记录
 
@@ -25,25 +26,23 @@
 |---|---|
 | `resolve` | `(SO, offset)` ↔ PC，并查询执行情况 |
 | `resolve-map-addr` | 按保存的 `/proc/<pid>/maps` 解析地址 |
-| `resolve-trace-addr` | 按 trace 模块映射解析地址 |
 | `resolve-elf-symbol` | ELF 偏移对应的最近符号 |
 | `functions` | 符号与 trace 函数目录 |
 | `so-stats` | 各 SO 的执行统计 |
 | `records` | 批量指令与可选寄存器列 |
 | `record` | 单条记录与寄存器注释 |
-| `idxs-for-pc` | PC 的执行下标与分页 |
+| `pc-hits` | PC 的执行下标与分页 |
 | `search` | 反汇编/操作数正则搜索 |
 
 ## 控制流与调用
 
 | 命令 | 用途 |
 |---|---|
-| `cfg` | 函数 CFG |
-| `idxs-for-block` | 块命中次数与记录 |
-| `block-for-pc` | PC 所属基本块 |
-| `block` | 基本块详情 |
+| `cfg` | 观测到的全局或指定函数 CFG |
+| `block-hits` | 块命中次数与记录 |
+| `block` | 包含给定 PC 的基本块详情 |
 | `loops` | 循环检测 |
-| `coverage` | 函数执行路径与分支分布 |
+| `branch-coverage` | 函数执行路径与分支分布 |
 | `indirect-targets` | `br/blr` 的运行时目标分布 |
 | `backtrace` | 指定记录的调用回溯 |
 | `call-tree` | 调用树 |
@@ -65,15 +64,17 @@
 |---|---|
 | `mem-dump` | 指定时刻的 hex dump |
 | `mem-export` | 按模块偏移导出运行时字节及完整度 |
-| `mem-tenet` | 逐字节来源与 writer idx |
+| `mem-provenance` | 逐字节来源与 writer idx |
 | `mem-diff` | 相邻记录间的内存差异 |
 | `mem-flow` | 内存写入流 |
 | `last-write-of-addr` | 单地址最近写入者 |
-| `idxs-touching-addr` | 单地址的访问记录 |
-| `idxs-touching-range` | 范围内的访问记录 |
+| `mem-accesses` | 单地址的访问记录 |
+| `mem-range-accesses` | 范围内的访问记录 |
 | `find-mem-pattern` | 在已访问内存中找字节模式 |
 | `mem-writes-in-range` | 范围内的写入记录 |
 | `byte-writer-map` | 缓冲区逐字节最新写入者 |
+| `mem-byte-history` | 给定范围内每个字节的读写历史 |
+| `mem-write-bursts` | 时间窗内地址连续的写入区间，不推断算法 |
 
 ## 数据依赖
 
@@ -81,10 +82,10 @@
 |---|---|
 | `taint-fwd` | 正向逐指令传播，包含 parent/深度 |
 | `taint-bwd` | 反向逐指令来源，可穿过内存/函数边界 |
-| `data-chase` | 沿寄存器数据流追踪，可排除 sp/fp/lr |
+| `reg-chase` | 沿寄存器数据流追踪，可排除 sp/fp/lr |
 | `dep-graph` | 限深依赖图 |
 | `bfs-slice` | 后向依赖行集合，多种子并/交 |
-| `forward-dep-tree` | def→use DAG，查询下游消费 |
+| `forward-dep-graph` | def→use DAG，查询下游消费 |
 | `byte-lineage` | 单字节沿内存写与源寄存器回追 |
 
 ## 字符串与 JNI
@@ -92,40 +93,39 @@
 | 命令 | 用途 |
 |---|---|
 | `strings` | trace 中观测到的字符串 |
-| `string-provenance` | 字符串逐字节来源 |
-| `jni-strings` | JNI NewStringUTF 输出串 |
+| `jni-strings` | 三类 JNI UTF-8 缓冲区的已观测字节预览 |
 | `jni-calls` | JNI 调用列表 |
 | `jni-events` | JNI 参数/返回值事件 |
-| `jobj-history` | 指定 jobject 历史 |
-| `jni-output-strings` | NewStringUTF key/value 配对 |
-| `scan-jni-output-strings` | 递归扫描 run 的 `jni_hooks.jsonl` |
+| `jni-object-history` | 指定 jobject 历史 |
+
+`jni-strings` 仅预览 NewStringUTF 输入、GetStringUTFChars 已观测返回和
+ReleaseStringUTFChars 输入；`bytes_hex` 保存原始 modified UTF-8，`string` 是 UTF-8
+有损显示，`read_stop` 区分 NUL、证据缺失与读取上限，不保证完整字符串。
+JNI 调用识别依赖观测到的调用表访问；`jni-events` 另需采集对应 hook sidecar。
 
 ## 输出与密码特征
 
 | 命令 | 用途 |
 |---|---|
 | `output-backtrace` | 已知输出字符串/字节的来源报告 |
-| `output-map` | 文本/Base64 分组到 writer runs 与字节偏移 |
+| `base64-map` | 用户提供的 Base64 文本、解码字节与内存写入者之间的映射 |
 | `crypto` | 常量指纹与 ARM CE 指令组合分析 |
-| `crypto-scan` | 密码常量指纹 |
-| `hash-finalize-detect` | hash finalize 模式 |
 | `hash-input-search` | 按指定算法组合反查目标摘要输入 |
-| `diff-traces` | 多 trace 的稳定/变化字节 |
 
 ## VM
 
 | 命令 | 用途 |
 |---|---|
-| `ollvm-detect-vm` | OLLVM 风格 VM 初筛 |
 | `vm-slice` | VM 记录切片 |
-| `vm-ops` | 将动态记录聚合为虚拟指令 |
+| `vm-ops` | 按显式 VM 角色将动态记录聚合为候选虚拟指令 |
 | `vm-backstep` | VM store/load 链单步回溯 |
 | `vm-backchain` | 迭代回链 |
 | `vm-backtree` | 分支回溯树 |
-| `auto-phase-detect` | 执行阶段与可选字节流检测 |
 
-`vm-*` 命令须指定 `--vm-ip-reg`、`--vm-state-reg`、`--vm-dispatch-reg`。
-`byte-writer-map`、`output-map`、`output-backtrace` 仅开启 VM 链分析时需要这些角色。
+`vm-*` 命令须指定 `--vm-ip-reg`、`--vm-state-reg`、`--vm-dispatch-reg` 与
+`--vm-slot-bytes`；适用于使用这些寄存器角色和等宽状态槽的解释器。未知或不对齐的槽位
+保留为未知，不自动识别私有字节码。`byte-writer-map`、`base64-map`、`output-backtrace`
+仅开启 VM 链分析时需要这些参数。
 
 ## 验证与观察
 
@@ -193,8 +193,8 @@ unload 前；上下文含 `args/config`，后两者还有 `script/session/pid`�
 ./tracemiku reg-at <call_dir> --reg x0 --so libfoo.so --off 0x1234
 ./tracemiku mem-export <call_dir> --so libfoo.so --off 0x2000 --len 0x100 --out /tmp/dec.bin
 ./tracemiku bfs-slice <call_dir> --idx 1000
-./tracemiku output-backtrace <call_dir> --key authorization
-./tracemiku vm-ops <call_dir> --vm-ip-reg x9 --vm-state-reg x10 --vm-dispatch-reg x11
+./tracemiku output-backtrace <call_dir> --bytes-hex aabbccdd
+./tracemiku vm-ops <call_dir> --start 0 --vm-ip-reg x9 --vm-state-reg x10 --vm-dispatch-reg x11 --vm-slot-bytes 8
 ./tracemiku trace-replay <call_dir> --start 100 --count 200
 ```
 

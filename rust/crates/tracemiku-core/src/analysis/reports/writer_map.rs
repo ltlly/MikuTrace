@@ -1227,37 +1227,24 @@ pub(super) fn vm_slot_from_asm(
     record: &serde_json::Value,
     profile: &VmProfile,
 ) -> Option<serde_json::Value> {
-    let lower = asm.to_ascii_lowercase();
-    let regs = bracket_registers(&lower)?;
+    let regs = bracket_registers(&asm.to_ascii_lowercase())?;
     if regs.first().map(String::as_str) != Some(profile.state_reg.as_str()) {
         return None;
-    }
-    if let Some(idx_reg) = regs.get(1) {
-        let idx_val = record_reg_u64(record, idx_reg)?;
-        let slot = if lower.contains("lsl #3") {
-            idx_val
-        } else {
-            idx_val / 8
-        };
-        return Some(serde_json::json!({
-            "index_reg": idx_reg,
-            "index_value": format!("{idx_val:#x}"),
-            "slot": slot,
-        }));
     }
     let state_base = record_reg_u64(record, &profile.state_reg)?;
     let mem_addr = mem_addr_from_asm(asm, record)?;
     let offset = mem_addr.checked_sub(state_base)?;
-    let slot = if offset % 8 == 0 {
-        offset / 8
-    } else {
+    let stride = profile.slot_bytes.get();
+    if !offset.is_multiple_of(stride) {
         return None;
-    };
+    }
+    let index_reg = regs.get(1);
     Some(serde_json::json!({
-        "index_reg": serde_json::Value::Null,
-        "index_value": serde_json::Value::Null,
+        "index_reg": index_reg,
+        "index_value": index_reg.and_then(|reg| record_reg_u64(record, reg)).map(|v| format!("{v:#x}")),
         "offset": format!("{offset:#x}"),
-        "slot": slot,
+        "slot": offset / stride,
+        "slot_bytes": stride,
     }))
 }
 

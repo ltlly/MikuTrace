@@ -6,22 +6,14 @@
 //!   decimal. Used by resolve/coverage/cfg and friends — matches the CLI
 //!   guidance "地址和偏移默认按十六进制解析".
 //! - **decimal-first** (`parse_dec_u64`): bare tokens are decimal; `0x`
-//!   prefix opts into hex. Used by index-style queries (bfs-slice, dep-graph,
-//!   seed-resolver) where values are counts/indices.
+//!   prefix opts into hex. Used for stored metadata and numeric values; address parameters use hex-first.
 //!
 //! Both used to be defined as `parse_u64` in multiple query modules with
 //! silently different semantics; the explicit names prevent that confusion.
 
 /// Hex-first parse: `0x`/bare → hex, `d`/`D` prefix → decimal.
 pub(crate) fn parse_hex_u64(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else if let Some(dec) = s.strip_prefix('d').or_else(|| s.strip_prefix('D')) {
-        dec.parse::<u64>().ok()
-    } else {
-        u64::from_str_radix(s, 16).ok()
-    }
+    crate::address_parse::parse_address(raw).ok()
 }
 
 /// Decimal-first parse: bare → decimal, `0x` prefix → hex.

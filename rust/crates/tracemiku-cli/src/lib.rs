@@ -18,6 +18,7 @@ mod args;
 use args::*;
 mod query;
 mod replay_command;
+mod vm_args;
 use query::*;
 
 pub fn run() -> anyhow::Result<()> {
@@ -32,16 +33,10 @@ pub fn run() -> anyhow::Result<()> {
             clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
             Ok(())
         }
-        Some(Cmd::Stats {
-            trace_dir,
-            all_modules,
-            top_modules,
-        }) => cmd_stats(trace_dir, all_modules, top_modules),
         Some(Cmd::Meta { trace_dir }) => query_json(trace_dir, Query::Meta),
         Some(Cmd::List { path, dir, json }) => cmd_list(path, dir, json),
-        Some(Cmd::Info { path, json }) => cmd_info(path, json),
+        Some(Cmd::Info { path }) => cmd_info(path),
         Some(Cmd::ResolveMapAddr { maps_file, addr }) => cmd_resolve_map_addr(maps_file, addr),
-        Some(Cmd::ResolveTraceAddr { trace_dir, addr }) => cmd_resolve_trace_addr(trace_dir, addr),
         Some(Cmd::ResolveElfSymbol { elf_file, offset }) => {
             cmd_resolve_elf_symbol(elf_file, offset)
         }
@@ -201,7 +196,6 @@ pub fn run() -> anyhow::Result<()> {
             trace_dir,
             reg,
             before,
-            cursor,
         }) => {
             let mut params = tracemiku_core::analysis::last_write_of_reg::LastWriteQuery {
                 reg,
@@ -209,9 +203,6 @@ pub fn run() -> anyhow::Result<()> {
             };
             if let Some(before) = before {
                 params.before = Some(before);
-            }
-            if let Some(cursor) = cursor {
-                params.cursor = Some(cursor);
             }
             query_json(trace_dir, Query::LastWriteOfReg(params))
         }
@@ -298,10 +289,6 @@ pub fn run() -> anyhow::Result<()> {
             };
             query_json(trace_dir, Query::IdxsForBlock(params))
         }
-        Some(Cmd::BlockForPc { trace_dir, pc }) => query_json(
-            trace_dir,
-            Query::BlockForPc(tracemiku_core::analysis::navigation::PcQuery { pc }),
-        ),
         Some(Cmd::Block { trace_dir, pc }) => query_json(
             trace_dir,
             Query::Block(tracemiku_core::analysis::navigation::PcQuery { pc }),
@@ -411,7 +398,7 @@ pub fn run() -> anyhow::Result<()> {
             trace_dir,
             addr,
             length,
-        }) => cmd_mem_tenet(trace_dir, addr, length),
+        }) => cmd_mem_provenance(trace_dir, addr, length),
         Some(Cmd::MemExport {
             trace_dir,
             addr,
@@ -687,7 +674,7 @@ pub fn run() -> anyhow::Result<()> {
                     Some(i)
                 }
                 (Some(_), None) | (None, Some(_)) => {
-                    bail!("forward-dep-tree --so and --off must be given together")
+                    bail!("forward-dep-graph --so and --off must be given together")
                 }
                 (None, None) => None,
             };
@@ -802,13 +789,10 @@ pub fn run() -> anyhow::Result<()> {
             vm_chain_lookback,
             vm_chain_follow_frontier,
             summary,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
         }) => {
             let profile = if vm_chain_steps > 0 && vm_chain_runs > 0 {
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?
+                vm.into_profile()?
             } else {
                 VmProfile::disabled()
             };
@@ -827,17 +811,6 @@ pub fn run() -> anyhow::Result<()> {
                 profile,
             )
         }
-        Some(Cmd::OllvmDetectVm {
-            trace_dir,
-            min_entries,
-            threshold,
-        }) => {
-            let params = tracemiku_core::analysis::ollvm_detect_vm::OllvmDetectVmQuery {
-                min_entries,
-                threshold,
-            };
-            query_json(trace_dir, Query::OllvmDetectVm(params))
-        }
         Some(Cmd::FnSummary {
             trace_dir,
             fn_name,
@@ -849,9 +822,8 @@ pub fn run() -> anyhow::Result<()> {
             };
             query_json(trace_dir, Query::FnSummary(params))
         }
-        Some(Cmd::CryptoScan { trace_dir }) => query_json(trace_dir, Query::CryptoScan),
         Some(Cmd::Crypto { trace_dir }) => query_json(trace_dir, Query::CryptoAnalysis),
-        Some(Cmd::HashFinalizeDetect {
+        Some(Cmd::MemWriteBursts {
             trace_dir,
             window,
             min_size,
@@ -860,7 +832,7 @@ pub fn run() -> anyhow::Result<()> {
             map_candidates,
             nonzero_only,
             target_bytes,
-        }) => cmd_hash_finalize_detect(
+        }) => cmd_mem_write_bursts(
             trace_dir,
             window,
             min_size,
@@ -890,38 +862,6 @@ pub fn run() -> anyhow::Result<()> {
                 search_in_mem,
             };
             query_json(trace_dir, Query::HashInputSearch(request))
-        }
-        Some(Cmd::DiffTraces {
-            traces,
-            keys,
-            show_offsets,
-            show_per_byte,
-        }) => {
-            if traces.len() < 2 {
-                bail!("need >= 2 traces for diff");
-            }
-            let trace_dir = traces[0].clone();
-            let request = tracemiku_core::analysis::diff_traces::DiffTracesRequest {
-                traces: traces
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>(),
-                keys,
-                show_offsets,
-                show_per_byte,
-            };
-            query_json(trace_dir, Query::DiffTraces(request))
-        }
-        Some(Cmd::AutoPhaseDetect {
-            trace_dir,
-            detect_byte_streams,
-            max_phases,
-        }) => {
-            let params = tracemiku_core::analysis::auto_phase::AutoPhaseQuery {
-                detect_byte_streams,
-                max_phases,
-            };
-            query_json(trace_dir, Query::AutoPhaseDetect(params))
         }
         Some(Cmd::JniCalls {
             trace_dir,
@@ -959,45 +899,11 @@ pub fn run() -> anyhow::Result<()> {
             }
             query_json(trace_dir, Query::JniEvents(params))
         }
-        Some(Cmd::JniOutputStrings {
-            trace_dir,
-            key,
-            contains,
-            limit,
-        }) => cmd_jni_output_strings(trace_dir, key, contains, limit),
-        Some(Cmd::ScanJniOutputStrings {
-            path,
-            key,
-            contains,
-            limit,
-            decode_url,
-            decode_base64,
-            decode_base64_full,
-            diff_base64,
-            base64_tail_start,
-            base64_tail_align_prefix,
-            base64_tail_drop,
-            prior_inputs,
-        }) => cmd_scan_jni_output_strings(
-            path,
-            key,
-            contains,
-            limit,
-            decode_url,
-            decode_base64,
-            decode_base64_full,
-            diff_base64,
-            base64_tail_start,
-            base64_tail_align_prefix,
-            base64_tail_drop,
-            prior_inputs,
-        ),
         Some(Cmd::OutputBacktrace {
             trace_dir,
-            key,
             value,
             bytes_hex,
-            jni_limit,
+            at_idx,
             max_mem_hits,
             writes_per_hit,
             taint_seeds,
@@ -1006,24 +912,20 @@ pub fn run() -> anyhow::Result<()> {
             vm_chain_runs,
             vm_chain_lookback,
             vm_chain_follow_frontier,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
             skip_taint,
             no_url_decode,
             no_base64_decode,
         }) => {
             let vm_profile = if vm_chain_steps > 0 && vm_chain_runs > 0 {
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?
+                vm.into_profile()?
             } else {
                 VmProfile::disabled()
             };
             let opts = OutputBacktraceOpts {
-                key,
                 value,
                 bytes_hex,
-                jni_limit,
+                at_idx,
                 max_mem_hits,
                 writes_per_hit,
                 taint_seeds,
@@ -1041,9 +943,8 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Cmd::OutputMap {
             trace_dir,
-            key,
             value,
-            jni_limit,
+            at_idx,
             max_mem_hits,
             hit_rank,
             hit_order,
@@ -1069,10 +970,7 @@ pub fn run() -> anyhow::Result<()> {
             semantic_writer_map_vm_chain_bytes,
             semantic_writer_map_vm_chain_lookback,
             semantic_writer_map_vm_chain_follow_frontier,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
             summary,
         }) => {
             let needs_vm_profile = tree_depth > 0
@@ -1080,14 +978,13 @@ pub fn run() -> anyhow::Result<()> {
                 || (semantic_writer_map_vm_chain_steps > 0
                     && semantic_writer_map_vm_chain_runs > 0);
             let vm_profile = if needs_vm_profile {
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?
+                vm.into_profile()?
             } else {
                 VmProfile::disabled()
             };
             let opts = OutputMapOpts {
-                key,
                 value,
-                jni_limit,
+                at_idx,
                 max_mem_hits,
                 hit_rank,
                 hit_order: hit_order.into(),
@@ -1125,14 +1022,10 @@ pub fn run() -> anyhow::Result<()> {
             count,
             regs,
             only_vm,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
             base_ip,
         }) => {
-            let profile =
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
+            let profile = vm.into_profile()?;
             cmd_vm_slice(
                 trace_dir, start, end, count, regs, only_vm, base_ip, profile,
             )
@@ -1143,10 +1036,7 @@ pub fn run() -> anyhow::Result<()> {
             end,
             count,
             regs,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
             base_ip,
             max_ops,
             chunk_size,
@@ -1155,8 +1045,7 @@ pub fn run() -> anyhow::Result<()> {
             compact,
             replay_plan,
         }) => {
-            let profile =
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
+            let profile = vm.into_profile()?;
             cmd_vm_ops(
                 trace_dir,
                 start,
@@ -1197,13 +1086,9 @@ pub fn run() -> anyhow::Result<()> {
             lookback,
             max_writes,
             regs,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
         }) => {
-            let profile =
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
+            let profile = vm.into_profile()?;
             cmd_vm_backstep(
                 trace_dir, idx, reg, context, lookback, max_writes, regs, profile,
             )
@@ -1220,13 +1105,9 @@ pub fn run() -> anyhow::Result<()> {
             byte_lane,
             summary,
             regs,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
         }) => {
-            let profile =
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
+            let profile = vm.into_profile()?;
             cmd_vm_backchain(
                 trace_dir,
                 idx,
@@ -1254,13 +1135,9 @@ pub fn run() -> anyhow::Result<()> {
             frontier_with_next,
             summary,
             regs,
-            vm_ip_reg,
-            vm_state_reg,
-            vm_dispatch_reg,
-            vm_infra_regs,
+            vm,
         }) => {
-            let profile =
-                parse_vm_profile(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_infra_regs)?;
+            let profile = vm.into_profile()?;
             cmd_vm_backtree(
                 trace_dir,
                 idx,

@@ -21,18 +21,6 @@ pub struct PcQuery {
 }
 
 #[derive(Debug, Serialize)]
-pub struct BlockForPcResponse {
-    pub pc: String,
-    pub block: Option<String>,
-}
-
-pub fn block_for_pc(state: &AnalysisContext, q: PcQuery) -> BlockForPcResponse {
-    let pc = parse::parse_dec_u64(&q.pc).unwrap_or(0);
-    let block = find_block_for_pc(state, pc).map(|b| format!("{:#x}", b.start_pc));
-    BlockForPcResponse { pc: q.pc, block }
-}
-
-#[derive(Debug, Serialize)]
 pub struct BlockInsn {
     pub pc: String,
     pub rel: Option<String>,
@@ -65,7 +53,7 @@ pub struct BlockDetail {
 }
 
 pub fn block(state: &AnalysisContext, q: PcQuery) -> Result<BlockDetail, AnalysisError> {
-    let pc = parse::parse_dec_u64(&q.pc).ok_or(AnalysisError::invalid("invalid query"))?;
+    let pc = parse::parse_hex_u64(&q.pc).ok_or(AnalysisError::invalid("invalid query"))?;
     let inner = state.inner.clone();
     let detail = (block_detail_response(&inner, pc))
         .ok_or(AnalysisError::not_found("trace record or value not found"))?;
@@ -406,10 +394,6 @@ fn backtrace_frame(
         callee_pc_fmt: callee.map(|pc| fmt_pc_inner(inner, pc)),
         fn_name,
     }
-}
-
-fn find_block_for_pc(state: &AnalysisContext, pc: u64) -> Option<&crate::cfg::Block> {
-    state.inner.cfg().block_containing(pc)
 }
 
 fn last_pc_before(

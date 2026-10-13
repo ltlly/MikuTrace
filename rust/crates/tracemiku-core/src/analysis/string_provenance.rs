@@ -56,7 +56,7 @@ fn string_provenance_response(
     inner: &crate::analysis::context::AnalysisData,
     q: StringProvenanceQuery,
 ) -> Result<StringProvenanceResponse, AnalysisError> {
-    let start = parse::parse_dec_u64(&q.addr).ok_or(AnalysisError::invalid("invalid query"))?;
+    let start = parse::parse_hex_u64(&q.addr).ok_or(AnalysisError::invalid("invalid query"))?;
     let length = q.length.clamp(1, MAX_LENGTH);
     let memshadow = inner.memshadow();
     let (mut writers, mut writers_total) =

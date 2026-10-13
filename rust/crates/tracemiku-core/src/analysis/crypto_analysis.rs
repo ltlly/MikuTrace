@@ -21,7 +21,7 @@ pub struct CryptoAnalysisResponse {
     pub note: Option<&'static str>,
 }
 
-const EMPTY_RESULT_NOTE: &str = "no crypto indicators found (mem bytes, constants, and crypto instructions all empty); next steps: widen the traced range, verify the target actually runs a crypto routine, or try hash-finalize-detect / hash-input-search for hashing implemented outside ARM Crypto Extension instructions";
+const EMPTY_RESULT_NOTE: &str = "no crypto indicators found (mem bytes, constants, and crypto instructions all empty); next steps: widen the traced range, verify the target actually runs a crypto routine, or try mem-write-bursts / hash-input-search for hashing implemented outside ARM Crypto Extension instructions";
 
 pub fn crypto_analysis(state: &AnalysisContext) -> Result<CryptoAnalysisResponse, AnalysisError> {
     let inner = state.inner.clone();

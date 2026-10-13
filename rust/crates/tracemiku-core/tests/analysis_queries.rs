@@ -1,8 +1,6 @@
 //! 离线核心查询的合成 trace 与边界契约。
 mod analysis_support;
 
-#[path = "analysis/auto_phase_tests.rs"]
-mod auto_phase_tests;
 #[path = "analysis/bfs_slice_tests.rs"]
 mod bfs_slice_tests;
 #[path = "analysis/cfg_queries_tests.rs"]
@@ -17,8 +15,6 @@ mod crypto_scan_tests;
 mod data_chase_tests;
 #[path = "analysis/dep_graph_tests.rs"]
 mod dep_graph_tests;
-#[path = "analysis/diff_traces_tests.rs"]
-mod diff_traces_tests;
 #[path = "analysis/fn_summary_tests.rs"]
 mod fn_summary_tests;
 #[path = "analysis/fork_events_tests.rs"]
@@ -27,8 +23,6 @@ mod fork_events_tests;
 mod forward_dep_tree_tests;
 #[path = "analysis/functions_tests.rs"]
 mod functions_tests;
-#[path = "analysis/hash_finalize_tests.rs"]
-mod hash_finalize_tests;
 #[path = "analysis/hash_input_search_tests.rs"]
 mod hash_input_search_tests;
 #[path = "analysis/idxs_for_pc_tests.rs"]
@@ -53,14 +47,14 @@ mod mem_diff_boundary_tests;
 mod mem_dump_tests;
 #[path = "analysis/mem_flow_tests.rs"]
 mod mem_flow_tests;
+#[path = "analysis/mem_write_bursts_tests.rs"]
+mod mem_write_bursts_tests;
 #[path = "analysis/memory_query_tests.rs"]
 mod memory_query_tests;
 #[path = "analysis/meta_queries.rs"]
 mod meta_queries;
 #[path = "analysis/navigation_tests.rs"]
 mod navigation_tests;
-#[path = "analysis/ollvm_detect_vm_tests.rs"]
-mod ollvm_detect_vm_tests;
 #[path = "analysis/query_boundary_contract_tests.rs"]
 mod query_boundary_contract_tests;
 #[path = "analysis/query_boundary_contract_tests2.rs"]

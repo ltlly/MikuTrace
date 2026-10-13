@@ -416,7 +416,7 @@ pub(super) fn mem_dump_known_le_words(
         .collect()
 }
 
-pub(super) fn hash_candidate_byte_map(
+pub(super) fn burst_candidate_byte_map(
     context: &AnalysisContext,
     candidate: &serde_json::Value,
     target_hex: Option<&str>,

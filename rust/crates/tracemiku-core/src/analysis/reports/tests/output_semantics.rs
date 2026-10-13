@@ -703,8 +703,10 @@ fn lineage_prefers_matching_byte_lane_from_upstream_writers() {
             "x9".to_string(),
             "x10".to_string(),
             "x11".to_string(),
+            8.try_into().unwrap(),
             "x12".to_string(),
-        ),
+        )
+        .unwrap(),
     );
     let seed = seed.unwrap().to_json();
     assert_eq!(decision["kind"], serde_json::json!("upstream_byte_lane"));
@@ -775,8 +777,10 @@ fn lineage_stops_at_observed_memory_boundary_before_frontier() {
             "x9".to_string(),
             "x10".to_string(),
             "x11".to_string(),
+            8.try_into().unwrap(),
             "x12".to_string(),
-        ),
+        )
+        .unwrap(),
     );
     assert!(seed.is_none());
     assert_eq!(
@@ -832,8 +836,10 @@ fn lineage_stops_at_missing_memory_writer_before_frontier() {
             "x9".to_string(),
             "x10".to_string(),
             "x11".to_string(),
+            8.try_into().unwrap(),
             "x12".to_string(),
-        ),
+        )
+        .unwrap(),
     );
     assert!(seed.is_none());
     assert_eq!(

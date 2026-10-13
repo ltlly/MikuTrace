@@ -278,71 +278,35 @@ pub(super) fn output_runs_overlapping(
     Ok(out)
 }
 
-pub(super) fn resolve_output_source(
-    context: &AnalysisContext,
-    opts: &OutputBacktraceOpts,
-) -> anyhow::Result<OutputSource> {
-    let source_count = opts.key.is_some() as usize
-        + opts.value.is_some() as usize
-        + opts.bytes_hex.is_some() as usize;
-    if source_count != 1 {
-        bail!("choose exactly one of --key, --value, or --bytes-hex");
+pub(super) fn resolve_output_source(opts: &OutputBacktraceOpts) -> anyhow::Result<OutputSource> {
+    if opts.value.is_some() == opts.bytes_hex.is_some() {
+        bail!("choose exactly one of --value or --bytes-hex");
     }
-
-    if let Some(raw) = opts.bytes_hex.as_deref() {
+    let (bytes, text, mut source) = if let Some(raw) = opts.bytes_hex.as_deref() {
         let bytes = parse_hex_bytes_cli(raw)?;
-        return Ok(OutputSource {
-            json: serde_json::json!({
-                "kind": "bytes_hex",
-                "bytes_hex": bytes_to_hex(&bytes),
-                "length": bytes.len(),
-            }),
-            primary_bytes: bytes,
-            text: None,
-            value_idx: None,
+        let source = serde_json::json!({
+            "kind": "bytes_hex", "bytes_hex": bytes_to_hex(&bytes), "length": bytes.len(),
         });
-    }
-
-    if let Some(value) = opts.value.as_deref() {
-        return Ok(OutputSource {
-            json: serde_json::json!({
-                "kind": "value",
-                "value": value,
-                "value_len": value.len(),
+        (bytes, None, source)
+    } else {
+        let value = opts.value.as_ref().unwrap();
+        if value.is_empty() {
+            bail!("--value must not be empty");
+        }
+        (
+            value.as_bytes().to_vec(),
+            Some(value.clone()),
+            serde_json::json!({
+                "kind": "value", "value": value, "value_len": value.len(),
             }),
-            primary_bytes: value.as_bytes().to_vec(),
-            text: Some(value.to_string()),
-            value_idx: None,
-        });
-    }
-
-    let key = opts.key.as_deref().unwrap_or_default();
-    let pairs = jni_output_string_pairs_on(context, Some(key.to_string()), None, opts.jni_limit)?;
-    let pair = pairs
-        .get("pairs")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .cloned()
-        .with_context(|| format!("no NewStringUTF key/value pair matched key {key:?}"))?;
-    let value = pair
-        .get("value")
-        .and_then(|v| v.as_str())
-        .context("matched pair missing value")?;
-    let value_idx = pair
-        .get("value_idx")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
+        )
+    };
+    source["at_idx"] = serde_json::json!(opts.at_idx);
     Ok(OutputSource {
-        json: serde_json::json!({
-            "kind": "jni_output_string_pair",
-            "key": key,
-            "pair": pair,
-            "source_events": pairs.get("source_events").cloned().unwrap_or(serde_json::Value::Null),
-            "source_truncated": pairs.get("source_truncated").cloned().unwrap_or(serde_json::Value::Null),
-        }),
-        primary_bytes: value.as_bytes().to_vec(),
-        text: Some(value.to_string()),
-        value_idx,
+        json: source,
+        primary_bytes: bytes,
+        text,
+        value_idx: opts.at_idx,
     })
 }
 

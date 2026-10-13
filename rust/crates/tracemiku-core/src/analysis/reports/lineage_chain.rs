@@ -335,8 +335,10 @@ pub(super) fn choose_frontier_next(step: &serde_json::Value) -> Option<serde_jso
         "x9".to_string(),
         "x10".to_string(),
         "x11".to_string(),
+        8.try_into().unwrap(),
         "x12".to_string(),
-    );
+    )
+    .unwrap();
     choose_frontier_next_for_lane(step, None, &profile)
 }
 

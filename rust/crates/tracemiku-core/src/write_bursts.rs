@@ -1,17 +1,16 @@
-//! Hash finalize output-region heuristics.
+//! 按地址连续性与记录时间窗检索内存写入区间。
 
 use serde::Serialize;
 
 use crate::memshadow::MemShadow;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HashFinalizeCandidate {
+pub struct WriteBurstCandidate {
     pub addr: String,
     pub size: u64,
     pub enter_idx: usize,
     pub exit_idx: usize,
     pub kind: &'static str,
-    pub guess: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -22,21 +21,20 @@ struct WriteRunEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HashFinalizeIndex {
-    runs: Vec<HashFinalizeRun>,
+pub struct WriteBurstIndex {
+    runs: Vec<WriteBurstRun>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HashFinalizeRun {
+struct WriteBurstRun {
     addr: u64,
     size: u64,
     enter_idx: usize,
     exit_idx: usize,
     kind: &'static str,
-    guess: Option<&'static str>,
 }
 
-impl HashFinalizeIndex {
+impl WriteBurstIndex {
     pub fn build(memshadow: &MemShadow) -> Self {
         let mut writes = memshadow
             .writes
@@ -67,20 +65,19 @@ impl HashFinalizeIndex {
                 j += 1;
             }
             let run_size = run_end.saturating_sub(run_start);
-            let kind = if uniform_size && first_size == 4 && run_size >= 20 {
-                "u32x5"
+            let kind = if uniform_size && first_size == 4 {
+                "u32_seq"
             } else if uniform_size && first_size == 1 {
                 "byte_seq"
             } else {
                 "mixed"
             };
-            runs.push(HashFinalizeRun {
+            runs.push(WriteBurstRun {
                 addr: run_start,
                 size: run_size,
                 enter_idx: run_min_idx,
                 exit_idx: run_max_idx,
                 kind,
-                guess: digest_size_to_guess(run_size),
             });
             i = j;
         }
@@ -88,7 +85,7 @@ impl HashFinalizeIndex {
         Self { runs }
     }
 
-    pub fn detect(&self, window: usize, min_size: u64) -> Vec<HashFinalizeCandidate> {
+    pub fn detect(&self, window: usize, min_size: u64) -> Vec<WriteBurstCandidate> {
         self.detect_limited(window, min_size, usize::MAX).1
     }
 
@@ -97,54 +94,42 @@ impl HashFinalizeIndex {
         window: usize,
         min_size: u64,
         limit: usize,
-    ) -> (usize, Vec<HashFinalizeCandidate>) {
+    ) -> (usize, Vec<WriteBurstCandidate>) {
         let mut count = 0usize;
         let mut candidates = Vec::with_capacity(limit.min(1024));
         for run in self
             .runs
             .iter()
-            .filter(|run| hash_run_matches(run, window, min_size))
+            .filter(|run| write_run_matches(run, window, min_size))
         {
             count += 1;
             if candidates.len() < limit {
-                candidates.push(hash_run_to_candidate(run));
+                candidates.push(write_run_to_candidate(run));
             }
         }
         (count, candidates)
     }
 }
 
-pub fn hash_finalize_detect(
+pub fn mem_write_bursts(
     memshadow: &MemShadow,
     window: usize,
     min_size: u64,
-) -> Vec<HashFinalizeCandidate> {
-    HashFinalizeIndex::build(memshadow).detect(window, min_size)
+) -> Vec<WriteBurstCandidate> {
+    WriteBurstIndex::build(memshadow).detect(window, min_size)
 }
 
-fn digest_size_to_guess(size: u64) -> Option<&'static str> {
-    match size {
-        16 => Some("md5"),
-        20 => Some("sha1"),
-        28 => Some("sha224"),
-        32 => Some("sha256"),
-        64 => Some("sha512"),
-        _ => None,
-    }
-}
-
-fn hash_run_matches(run: &HashFinalizeRun, window: usize, min_size: u64) -> bool {
+fn write_run_matches(run: &WriteBurstRun, window: usize, min_size: u64) -> bool {
     run.size >= min_size && run.exit_idx.saturating_sub(run.enter_idx) <= window
 }
 
-fn hash_run_to_candidate(run: &HashFinalizeRun) -> HashFinalizeCandidate {
-    HashFinalizeCandidate {
+fn write_run_to_candidate(run: &WriteBurstRun) -> WriteBurstCandidate {
+    WriteBurstCandidate {
         addr: format!("{:#x}", run.addr),
         size: run.size,
         enter_idx: run.enter_idx,
         exit_idx: run.exit_idx,
         kind: run.kind,
-        guess: run.guess,
     }
 }
 
@@ -171,37 +156,36 @@ mod tests {
     }
 
     #[test]
-    fn hash_finalize_index_matches_direct_detect() {
+    fn write_burst_index_matches_direct_detect() {
         let mem = memshadow_with_writes(8);
-        let direct = hash_finalize_detect(&mem, 10, 16);
-        let indexed = HashFinalizeIndex::build(&mem).detect(10, 16);
+        let direct = mem_write_bursts(&mem, 10, 16);
+        let indexed = WriteBurstIndex::build(&mem).detect(10, 16);
         assert_eq!(direct, indexed);
         assert_eq!(indexed.len(), 1);
         assert_eq!(indexed[0].addr, "0x7000");
         assert_eq!(indexed[0].size, 32);
-        assert_eq!(indexed[0].guess, Some("sha256"));
     }
 
     #[test]
-    fn hash_finalize_index_reuses_runs_for_different_params() {
+    fn write_burst_index_reuses_runs_for_different_params() {
         let mem = memshadow_with_writes(8);
-        let index = HashFinalizeIndex::build(&mem);
+        let index = WriteBurstIndex::build(&mem);
         assert_eq!(index.detect(10, 16).len(), 1);
         assert_eq!(index.detect(2, 16).len(), 0);
         assert_eq!(index.detect(10, 64).len(), 0);
     }
 
     #[test]
-    fn hash_finalize_detect_limited_counts_all_matches() {
+    fn mem_write_bursts_limited_counts_all_matches() {
         let mem = memshadow_with_writes(16);
-        let index = HashFinalizeIndex::build(&mem);
+        let index = WriteBurstIndex::build(&mem);
         let (count, candidates) = index.detect_limited(10, 4, 2);
         assert_eq!(count, 4);
         assert_eq!(candidates.len(), 2);
     }
 
     #[test]
-    fn hash_finalize_index_preserves_same_addr_trace_order() {
+    fn write_burst_index_preserves_same_addr_trace_order() {
         let mem = MemShadow {
             writes: vec![
                 MemRec {
@@ -233,7 +217,7 @@ mod tests {
             bytes: BTreeMap::new(),
             snapshot: None,
         };
-        let candidates = HashFinalizeIndex::build(&mem).detect(10, 8);
+        let candidates = WriteBurstIndex::build(&mem).detect(10, 8);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].addr, "0x1000");
         assert_eq!(candidates[0].size, 12);

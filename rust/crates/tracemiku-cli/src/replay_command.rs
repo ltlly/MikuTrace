@@ -2,10 +2,12 @@
 use std::path::PathBuf;
 #[derive(Debug, clap::Args)]
 pub(super) struct ReplayArgs {
+    /// 单次 call 目录，须包含 trace.bin。
     pub trace_dir: PathBuf,
+    /// 起始记录下标，从 0 开始。
     #[arg(long, default_value_t = 0)]
     pub start: usize,
-    /// Requested transitions (hard cap 10000); output explains the first stop.
+    /// 请求验证的状态转移数，硬上限 10000；结果解释首次停止原因。
     #[arg(long, default_value_t = 100)]
     pub count: usize,
 }

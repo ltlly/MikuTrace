@@ -56,12 +56,6 @@ pub(super) fn cmd_list(path: Option<PathBuf>, dir: PathBuf, json: bool) -> anyho
     }
 }
 
-pub(super) fn cmd_info(path: PathBuf, json: bool) -> anyhow::Result<()> {
-    let value = core_reports::info(path)?;
-    if json {
-        print_pretty(&value)
-    } else {
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        Ok(())
-    }
+pub(super) fn cmd_info(path: PathBuf) -> anyhow::Result<()> {
+    print_pretty(&core_reports::info(path)?)
 }

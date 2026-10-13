@@ -184,10 +184,7 @@ fn last_write_of_addr_can_include_external_writes() {
 #[test]
 fn touching_addr_splits_reads_and_writes_around_cursor() {
     let (_tmp, cd) = synth_call_dir();
-    let v = get_json(
-        cd.clone(),
-        "idxs-touching-addr?addr=0x7000&cursor=1&limit=10",
-    );
+    let v = get_json(cd.clone(), "mem-accesses?addr=0x7000&cursor=1&limit=10");
     assert_eq!(v["status"], "ready");
     assert_eq!(v["before"], serde_json::json!([{"idx":0,"kind":"w"}]));
     assert_eq!(v["after"], serde_json::json!([{"idx":1,"kind":"r"}]));
@@ -196,7 +193,7 @@ fn touching_addr_splits_reads_and_writes_around_cursor() {
 
     let v = get_json(
         cd,
-        "idxs-touching-addr?addr=0x7000&cursor=1&limit=10&with_bytes=true",
+        "mem-accesses?addr=0x7000&cursor=1&limit=10&with_bytes=true",
     );
     assert_eq!(v["status"], "ready");
     assert_eq!(
@@ -217,7 +214,7 @@ fn touching_addr_with_bytes_preserves_external_write_kind() {
     append_external_write(&cd, 2, 0x7002, b'X');
     let v = get_json(
         cd,
-        "idxs-touching-addr?addr=0x7002&cursor=3&limit=10&with_bytes=true",
+        "mem-accesses?addr=0x7002&cursor=3&limit=10&with_bytes=true",
     );
     assert_eq!(v["status"], "ready");
     assert_eq!(
@@ -231,7 +228,7 @@ fn touching_range_counts_overlapping_reads_and_writes() {
     let (_tmp, cd) = synth_call_dir();
     let v = get_json(
         cd,
-        "idxs-touching-range?addr=0x7004&size=4&cursor=1&limit=10",
+        "mem-range-accesses?addr=0x7004&size=4&cursor=1&limit=10",
     );
     assert_eq!(v["status"], "ready");
     assert_eq!(v["writers_before"], serde_json::json!([0]));
@@ -246,7 +243,7 @@ fn touching_sparse_address_space_preserves_external_writes_and_limits() {
     append_external_write(&cd, 2, 0x1_0000_0000, b'X');
     let v = get_json(
         cd,
-        "idxs-touching-range?addr=0x0&size=18446744073709551615&cursor=1&limit=1",
+        "mem-range-accesses?addr=0x0&size=18446744073709551615&cursor=1&limit=1",
     );
     assert_eq!(v["writers_total"], 2);
     assert_eq!(v["readers_total"], 1);

@@ -87,7 +87,7 @@ fn mem_flow_response(
     inner: &crate::analysis::context::AnalysisData,
     q: MemFlowQuery,
 ) -> Result<MemFlowResponse, AnalysisError> {
-    let start = parse::parse_dec_u64(&q.addr).ok_or(AnalysisError::invalid("invalid query"))?;
+    let start = parse::parse_hex_u64(&q.addr).ok_or(AnalysisError::invalid("invalid query"))?;
     let count = effective_count(q.count);
     let cap = effective_events_per_byte(q.events_per_byte);
     let kind_filter = if q.writers_only {

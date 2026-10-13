@@ -61,7 +61,7 @@ def print_json(value: Any) -> None:
 
 def info(path: Path) -> None:
     """Trace metadata and completeness."""
-    print_json(run_json("info", str(path), "--json"))
+    print_json(run_json("info", str(path)))
 
 
 def first_records(path: Path) -> None:
@@ -147,14 +147,14 @@ def taint_fwd(path: Path) -> None:
 
 def taint_bwd(path: Path) -> None:
     """Backward taint for x0 near the middle of the trace."""
-    meta = run_json("info", str(path), "--json")
+    meta = run_json("info", str(path))
     start = max(0, int(meta.get("records") or 0) // 2)
     print_json(run_json("taint-bwd", str(path), "--start", str(start), "--reg", "x0", "--max-count", "20"))
 
 
 def overview(path: Path) -> None:
     """One compact context bundle for an LLM agent."""
-    meta = run_json("info", str(path), "--json")
+    meta = run_json("info", str(path))
     recs = run_json("records", str(path), "--start", "0", "--count", "8")
     cfg = run_json("cfg", str(path))
     funcs = run_json("functions", str(path))

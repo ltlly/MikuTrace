@@ -24,9 +24,9 @@ fn schema_dir() -> PathBuf {
 }
 
 const EXPECTED_SCHEMAS: [&str; 7] = [
+    "replay-report.schema.json",
     "backtrace-report.schema.json",
     "output-map-report.schema.json",
-    "stats-report.schema.json",
     "vm-slice-report.schema.json",
     "vm-ops-report.schema.json",
     "lineage-row.schema.json",

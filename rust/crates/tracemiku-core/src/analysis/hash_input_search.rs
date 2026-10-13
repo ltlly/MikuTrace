@@ -185,6 +185,10 @@ fn hash_input_search_response(
                         continue;
                     }
                     if mem.is_some() {
+                        let Some(prefix) = hash.get(..prefix_n) else {
+                            // 摘要短于请求的比较长度，不能匹配，也不能缩短语义后继续搜索。
+                            continue;
+                        };
                         pending_mem.push(PendingMemSearch {
                             algo: algo.clone(),
                             input: input.clone(),
@@ -192,7 +196,7 @@ fn hash_input_search_response(
                             combo: combo.clone(),
                             msg_hex: preview_hex(&msg),
                             hash_full: hex_encode(&hash),
-                            prefix: hash[..prefix_n].to_vec(),
+                            prefix: prefix.to_vec(),
                         });
                     }
                 }

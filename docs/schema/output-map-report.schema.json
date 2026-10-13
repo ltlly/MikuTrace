@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "output-map top level: `output_base64_group_map` report (full mode).",
+  "description": "base64-map top level: `output_base64_group_map` report (full mode).",
   "properties": {
     "base64_context": true,
     "find_mem_pattern": true,

@@ -94,28 +94,6 @@ pub fn resolve_map_addr(maps_file: PathBuf, addr: String) -> anyhow::Result<serd
     Ok(out)
 }
 
-pub fn resolve_trace_addr(trace_dir: PathBuf, addr: String) -> anyhow::Result<serde_json::Value> {
-    let addr = parse_addr_str(&addr).with_context(|| format!("invalid address: {addr}"))?;
-    let meta = enriched_trace_meta(&trace_dir);
-    let module = module_for_addr(&meta, addr);
-    if module.is_null() {
-        Ok(serde_json::json!({
-            "status": "miss",
-            "addr": format!("{addr:#x}"),
-            "trace_dir": trace_dir.display().to_string(),
-            "modules": meta.get("modules").and_then(|v| v.as_array()).map(|m| m.len()).unwrap_or(0),
-        }))
-    } else {
-        Ok(serde_json::json!({
-            "status": "hit",
-            "addr": format!("{addr:#x}"),
-            "trace_dir": trace_dir.display().to_string(),
-            "module": module,
-            "primary_module": meta.get("module").cloned().unwrap_or(serde_json::Value::Null),
-        }))
-    }
-}
-
 pub fn resolve_elf_symbol(elf_file: PathBuf, offset: String) -> anyhow::Result<serde_json::Value> {
     let offset = parse_addr_str(&offset).with_context(|| format!("invalid offset: {offset}"))?;
     let (tool, symbols) = elf_symbols_from_nm(&elf_file)
@@ -458,14 +436,7 @@ pub(super) fn json_u64(value: &serde_json::Value) -> Option<u64> {
 /// Use ONLY for address-typed args; size/count/idx keep `parse_u64_str`
 /// (decimal-default, so `--size 256` stays 256).
 pub(super) fn parse_addr_str(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else if let Some(dec) = s.strip_prefix('d').or_else(|| s.strip_prefix('D')) {
-        dec.parse::<u64>().ok()
-    } else {
-        u64::from_str_radix(s, 16).ok()
-    }
+    crate::address_parse::parse_address(raw).ok()
 }
 
 pub(super) fn percent_decode_bytes(input: &[u8]) -> Vec<u8> {

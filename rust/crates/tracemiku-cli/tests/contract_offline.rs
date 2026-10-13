@@ -63,12 +63,12 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             Query::Backtrace(request(json!({"idx":4,"limit":10}))),
         ),
         (
-            "block-for-pc",
+            "block",
             vec!["--pc", "0x100000"],
-            Query::BlockForPc(request(json!({"pc":"0x100000"}))),
+            Query::Block(request(json!({"pc":"0x100000"}))),
         ),
         (
-            "idxs-for-block",
+            "block-hits",
             vec!["--pc", "0x100000", "--max-count", "10", "--near", "4"],
             Query::IdxsForBlock(request(json!({"pc":"0x100000","max_count":10,"near":4}))),
         ),
@@ -78,7 +78,7 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             Query::Strings(request(json!({"min_len":4,"cursor":-1,"limit":20}))),
         ),
         (
-            "string-provenance",
+            "mem-byte-history",
             vec!["--addr", "0x2000", "--length", "4"],
             Query::StringProvenance(request(json!({"addr":"0x2000","length":4}))),
         ),
@@ -137,7 +137,7 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             Query::Resolve(request(json!({"so":"libt.so","off":"0x0"}))),
         ),
         (
-            "coverage",
+            "branch-coverage",
             vec!["--addr", "0x100000"],
             Query::Coverage(request(json!({"addr":"0x100000"}))),
         ),
@@ -163,7 +163,7 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             Query::FnSummary(request(json!({"fn":"f_root"}))),
         ),
         (
-            "idxs-touching-addr",
+            "mem-accesses",
             vec!["--addr", "0x2000", "--with-bytes"],
             Query::IdxsTouchingAddr(request(json!({"addr":"0x2000","with_bytes":true}))),
         ),
@@ -193,10 +193,6 @@ fn core_query_failures_keep_machine_readable_limits() {
             vec!["mem-dump", cd.to_str().unwrap(), "--addr", "not-an-address"],
             "invalid_argument",
         ),
-        (
-            [vec!["diff-traces"], vec![cd.to_str().unwrap(); 9]].concat(),
-            "limit_exceeded",
-        ),
     ] {
         let out = entry(&args);
         assert_eq!(out.status.code(), Some(1));
@@ -209,10 +205,6 @@ fn core_query_failures_keep_machine_readable_limits() {
             }}),
             &value,
         );
-        if code == "limit_exceeded" {
-            assert_eq!(value["error"]["details"]["limit"], 8);
-            assert_eq!(value["error"]["details"]["requested"], 9);
-        }
     }
 }
 

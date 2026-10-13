@@ -1,7 +1,7 @@
 //! Black-box contract tests for the output command family:
-//! output-backtrace / output-map / byte-lineage.
+//! output-backtrace / base64-map / byte-lineage.
 //!
-//! These commands run on the deep synth trace (JNI NewStringUTF pairs +
+//! These commands run on the deep synth trace (explicit output values +
 //! memory stores). Schemas lock top-level structure and key nested shapes;
 //! volatile values stay loose.
 
@@ -15,8 +15,8 @@ fn output_backtrace_matches_schema() {
     let value = run_json(&[
         "output-backtrace",
         cd.to_str().unwrap(),
-        "--key",
-        "apro.oghvalue!",
+        "--value",
+        "qrvM3Q==",
         "--max-mem-hits",
         "3",
         "--writes-per-hit",
@@ -31,8 +31,8 @@ fn output_backtrace_matches_schema() {
                 "strategy": {"const": "output_to_input_backward_trace"},
                 "source": {
                     "type": "object",
-                    "required": ["kind", "key", "pair"],
-                    "properties": {"kind": {"const": "jni_output_string_pair"}},
+                    "required": ["kind", "value", "value_len"],
+                    "properties": {"kind": {"const": "value"}},
                 },
                 "patterns": {
                     "type": "array",
@@ -57,10 +57,10 @@ fn output_backtrace_matches_schema() {
 fn output_map_summary_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
-        "output-map",
+        "base64-map",
         cd.to_str().unwrap(),
-        "--key",
-        "apro.oghvalue!",
+        "--value",
+        "qrvM3Q==",
         "--summary",
     ]);
     assert_valid(
@@ -89,10 +89,10 @@ fn output_map_summary_matches_schema() {
 fn output_map_full_matches_schema() {
     let (_tmp, cd) = synth_deep_dir();
     let value = run_json(&[
-        "output-map",
+        "base64-map",
         cd.to_str().unwrap(),
-        "--key",
-        "apro.oghvalue!",
+        "--value",
+        "qrvM3Q==",
         "--groups",
         "1",
     ]);

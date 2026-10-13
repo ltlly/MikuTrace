@@ -1,19 +1,12 @@
 //! Typed output models for CLI analysis commands.
 //!
-//! Each command's stdout JSON is built from a typed struct here instead of
-//! ad-hoc `serde_json::json!`. Serialization via `serde_json::to_value` is
-//! byte-identical to the previous hand-built maps (field names and types are
-//! the committed AI-facing contract — see contract_* tests), so AI consumers
-//! see no change. `schemars` derives let us generate JSON Schema for the
-//! surfaces later without touching output code.
+//! 组合报告的顶层模型与 JSON Schema。嵌套证据由相应 core 查询生成，
+//! 字段形状及含义由 contract_* 测试约束。
 //!
 //! 截断元数据现状（字段名已被 contract_* 契约测试锁定，统一或改名需
 //! 全链路同步，故先在此登记）：
 //!
-//! - `stats`：`modules_truncated: bool`（配 `modules_total` 数量字段）；
 //! - `byte-writer-map`：`truncated` + `complete` + `warning` 三字段组合；
-//! - `jni-output-strings`（output-backtrace 的 source 段沿用同名字段）：
-//!   `source_truncated: bool`；
 //! - `byte-lineage`（`--count > 1` 批量模式）：`status: "partial_error"` +
 //!   `error_count` 数量字段。
 //!
@@ -37,13 +30,12 @@ pub struct BacktraceReport {
 }
 
 /// Shared explanatory notes for the output-backtrace report.
-pub const BACKTRACE_NOTES: [&str; 3] = [
+pub const BACKTRACE_NOTES: [&str; 2] = [
     "This report intentionally starts at the observed output and walks upward through memory writers and register taint.",
-    "For JNI NewStringUTF outputs, the hooked bytes are treated as ground truth; memory dumps can show object/runtime layout noise.",
     "Continue with patterns[].hit_reports[].writer_seeds or taint.runs[].summary.function_counts to choose the next function to decompile.",
 ];
 
-/// output-map top level: `output_base64_group_map` report (full mode).
+/// base64-map top level: `output_base64_group_map` report (full mode).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OutputMapReport {
     pub status: &'static str,
@@ -66,18 +58,4 @@ pub struct OutputMapReport {
     pub find_mem_pattern: serde_json::Value,
     pub semantic_writer_map: serde_json::Value,
     pub groups: Vec<serde_json::Value>,
-}
-
-/// stats command top level.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct StatsReport {
-    pub path: String,
-    pub records: usize,
-    pub method: String,
-    pub cmd: Option<i64>,
-    pub fn_addr: Option<String>,
-    pub module: Option<crate::prelude::ModuleInfo>,
-    pub modules: Vec<crate::prelude::ModuleInfo>,
-    pub modules_total: usize,
-    pub modules_truncated: bool,
 }

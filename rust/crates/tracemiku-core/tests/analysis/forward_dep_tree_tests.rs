@@ -1,4 +1,4 @@
-//! Integration tests for `forward-dep-tree`.
+//! Integration tests for `forward-dep-graph`.
 
 use super::analysis_support;
 use std::fs;
@@ -8,7 +8,7 @@ use tracemiku_core::analysis::AnalysisContext;
 
 fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     // Same shape as dep_graph_tests.rs but with one more later use of x1 so
-    // forward-dep-tree from idx=0 can show x0 fanning out to multiple users.
+    // forward-dep-graph from idx=0 can show x0 fanning out to multiple users.
     let tmp = tempfile::tempdir().unwrap();
     let run = tmp.path().join("run");
     let cd = run.join("calls").join("call_001_tid100_5r_2ms");
@@ -66,7 +66,7 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn forward_dep_tree_walks_def_to_use_direction() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-tree?idx=0&depth=4&limit=32");
+    let (status, v) = get(cd, "forward-dep-graph?idx=0&depth=4&limit=32");
     assert_eq!(status, None);
     assert_eq!(v["status"], "ready");
     assert_eq!(v["seed"]["kind"], "idx");
@@ -91,9 +91,9 @@ fn forward_dep_tree_walks_def_to_use_direction() {
 #[test]
 fn forward_dep_tree_data_only_drops_control_users() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, loose) = get(cd.clone(), "forward-dep-tree?idx=0&depth=8");
+    let (status, loose) = get(cd.clone(), "forward-dep-graph?idx=0&depth=8");
     assert_eq!(status, None);
-    let (status, strict) = get(cd, "forward-dep-tree?idx=0&depth=8&data_only=true");
+    let (status, strict) = get(cd, "forward-dep-graph?idx=0&depth=8&data_only=true");
     assert_eq!(status, None);
     let loose_nodes = loose["graph"]["nodes"].as_array().unwrap().len();
     let strict_nodes = strict["graph"]["nodes"].as_array().unwrap().len();
@@ -104,7 +104,7 @@ fn forward_dep_tree_data_only_drops_control_users() {
 #[test]
 fn forward_dep_tree_seed_outside_trace_returns_note() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-tree?idx=999");
+    let (status, v) = get(cd, "forward-dep-graph?idx=999");
     assert_eq!(status, None);
     assert_eq!(v["graph"]["nodes"].as_array().unwrap().len(), 0);
     assert!(v["seed"]["note"]
@@ -116,7 +116,7 @@ fn forward_dep_tree_seed_outside_trace_returns_note() {
 #[test]
 fn forward_dep_tree_resolves_reg_seed() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-tree?reg=x0&before=3");
+    let (status, v) = get(cd, "forward-dep-graph?reg=x0&before=3");
     assert_eq!(status, None);
     assert_eq!(v["seed"]["kind"], "reg");
     assert_eq!(v["seed"]["reg"], "x0");
@@ -127,7 +127,7 @@ fn forward_dep_tree_resolves_reg_seed() {
 #[test]
 fn forward_dep_tree_truncates_at_node_limit() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-tree?idx=0&limit=1");
+    let (status, v) = get(cd, "forward-dep-graph?idx=0&limit=1");
     assert_eq!(status, None);
     assert_eq!(v["graph"]["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(v["graph"]["truncated"], true);
@@ -136,7 +136,7 @@ fn forward_dep_tree_truncates_at_node_limit() {
 #[test]
 fn forward_dep_tree_invalid_addr_literal_reports_note() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-tree?addr=bogus");
+    let (status, v) = get(cd, "forward-dep-graph?addr=bogus");
     assert_eq!(status, None);
     assert_eq!(v["seed"]["kind"], "addr");
     assert!(v["seed"]["note"]
@@ -150,7 +150,7 @@ fn forward_dep_tree_addr_seed_resolves_to_writer() {
     let (_tmp, cd) = synth_call_dir();
     // The synthetic call dir stores x0 to [sp]=0x7000 at idx=1. addr seed
     // should resolve to that writer.
-    let (status, v) = get(cd, "forward-dep-tree?addr=0x7000&before=5");
+    let (status, v) = get(cd, "forward-dep-graph?addr=0x7000&before=5");
     assert_eq!(status, None);
     assert_eq!(v["seed"]["kind"], "addr");
     assert_eq!(v["seed"]["addr"], "0x7000");
@@ -160,7 +160,7 @@ fn forward_dep_tree_addr_seed_resolves_to_writer() {
 #[test]
 fn forward_dep_tree_truncation_reports_hidden_edges() {
     let (_tmp, cd) = synth_call_dir();
-    let (status, v) = get(cd, "forward-dep-tree?idx=0&limit=1");
+    let (status, v) = get(cd, "forward-dep-graph?idx=0&limit=1");
     assert_eq!(status, None);
     assert_eq!(v["graph"]["truncated"], true);
     let hidden = v["graph"]["hidden_edges"].as_u64().unwrap_or(0);
@@ -171,7 +171,7 @@ fn forward_dep_tree_truncation_reports_hidden_edges() {
 fn forward_dep_tree_depth_zero_returns_seed_only() {
     let (_tmp, cd) = synth_call_dir();
     // Audit P0-1: depth=0 must mean "seed only", not silently rewritten to 1.
-    let (status, v) = get(cd, "forward-dep-tree?idx=0&depth=0");
+    let (status, v) = get(cd, "forward-dep-graph?idx=0&depth=0");
     assert_eq!(status, None);
     let nodes = v["graph"]["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 1, "depth=0 must emit only the seed: {nodes:?}");

@@ -57,7 +57,7 @@ pub fn jobj_history(
     state: &AnalysisContext,
     q: JobjHistoryQuery,
 ) -> Result<JobjHistoryResponse, AnalysisError> {
-    let target = parse::parse_dec_u64(&q.jobject).ok_or(AnalysisError::invalid("invalid query"))?;
+    let target = parse::parse_hex_u64(&q.jobject).ok_or(AnalysisError::invalid("invalid query"))?;
     let end = if q.end >= 0 {
         (q.end as usize).min(state.inner.trace.len())
     } else {

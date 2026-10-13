@@ -61,7 +61,7 @@ fn parse_spec(q: &WatchpointsQuery) -> Result<WatchpointSpec, AnalysisError> {
             let value = q
                 .value
                 .as_deref()
-                .and_then(parse::parse_dec_u64)
+                .and_then(parse::parse_hex_u64)
                 .ok_or_else(|| bad_request("value is required"))?;
             Ok(WatchpointSpec::RegEquals { reg, value })
         }
@@ -69,7 +69,7 @@ fn parse_spec(q: &WatchpointsQuery) -> Result<WatchpointSpec, AnalysisError> {
             let addr = q
                 .addr
                 .as_deref()
-                .and_then(parse::parse_dec_u64)
+                .and_then(parse::parse_hex_u64)
                 .ok_or_else(|| bad_request("addr is required"))?;
             Ok(WatchpointSpec::MemTouch {
                 addr,

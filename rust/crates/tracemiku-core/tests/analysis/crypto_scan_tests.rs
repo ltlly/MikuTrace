@@ -38,7 +38,8 @@ fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value
 #[test]
 fn crypto_scan_finds_sha1_md5_iv_bytes() {
     let (_tmp, cd) = synth_call_dir(0x67452301);
-    let (status, v) = get(cd, "crypto-scan");
+    let (status, v) = get(cd, "crypto-analysis");
+    let v = &v["mem_scan"];
     assert_eq!(status, None);
     assert!(v["scanned"].as_u64().unwrap() > 0);
     assert_eq!(v["any_hit"], true);
@@ -56,7 +57,8 @@ fn crypto_scan_finds_sha1_md5_iv_bytes() {
 #[test]
 fn crypto_scan_finds_round_constants() {
     let (_tmp, cd) = synth_call_dir(0xd76aa478);
-    let (status, v) = get(cd, "crypto-scan");
+    let (status, v) = get(cd, "crypto-analysis");
+    let v = &v["mem_scan"];
     assert_eq!(status, None);
     assert_eq!(v["any_hit"], true);
     let primitives = v["primitives"].as_array().unwrap();
@@ -69,7 +71,8 @@ fn crypto_scan_finds_round_constants() {
 #[test]
 fn crypto_scan_finds_hash_table_constants() {
     let (_tmp, cd) = synth_call_dir(0x82f63b78);
-    let (status, v) = get(cd, "crypto-scan");
+    let (status, v) = get(cd, "crypto-analysis");
+    let v = &v["mem_scan"];
     assert_eq!(status, None);
     assert_eq!(v["any_hit"], true);
     let primitives = v["primitives"].as_array().unwrap();
@@ -85,7 +88,8 @@ fn crypto_scan_finds_hash_table_constants() {
 #[test]
 fn crypto_scan_reports_zero_hits_for_non_crypto_bytes() {
     let (_tmp, cd) = synth_call_dir(0x11111111);
-    let (status, v) = get(cd, "crypto-scan");
+    let (status, v) = get(cd, "crypto-analysis");
+    let v = &v["mem_scan"];
     assert_eq!(status, None);
     assert_eq!(v["any_hit"], false);
 }

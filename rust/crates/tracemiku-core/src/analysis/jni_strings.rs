@@ -1,4 +1,4 @@
-//! 采集到的 JNI 字符串。
+//! 已识别 JNI UTF-8 缓冲区的有界字节预览，不读取 jobject 内部布局。
 
 use super::AnalysisError;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,9 @@ pub struct JniStringHit {
     pub x2: String,
     pub buffer_addr: Option<String>,
     pub observed_bytes: Option<usize>,
+    pub bytes_hex: Option<String>,
     pub string: Option<String>,
+    pub read_stop: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +55,8 @@ pub struct JniStringsResponse {
     pub truncated: bool,
     pub with_observed_string: usize,
     pub without_observed_string: usize,
+    pub encoding: &'static str,
+    pub display_encoding: &'static str,
     pub note: &'static str,
     pub hits: Vec<JniStringHit>,
 }
@@ -80,19 +84,27 @@ fn jni_strings_response(state: &AnalysisContext, q: JniStringsQuery) -> JniStrin
             continue;
         }
         let (buffer_addr, cursor) = match direction {
-            "out_x0" if call.idx + 1 < state.inner.trace.len() => (
-                state.inner.trace.record(call.idx + 1).reg_by_name("x0"),
-                call.idx + 1,
-            ),
-            "out_x4" => (call.arg("x4"), call.idx),
+            "out_x0"
+                if call.idx + 1 < state.inner.trace.len()
+                    && call.pc.checked_add(4) == Some(state.inner.trace.pc(call.idx + 1)) =>
+            {
+                (
+                    state.inner.trace.record(call.idx + 1).reg_by_name("x0"),
+                    call.idx + 1,
+                )
+            }
             "in" => (call.arg(arg_name), call.idx),
             _ => (None, call.idx),
         };
-        let (observed_bytes, string) = if let Some(addr) = buffer_addr {
-            let (s, seen) = read_string(mem, addr, cursor, effective_max_len(q.max_len));
-            (Some(seen), s)
+        let (observed_bytes, bytes_hex, string, read_stop) = if let Some(addr) = buffer_addr {
+            let (bytes, seen, stop) = read_string(mem, addr, cursor, effective_max_len(q.max_len));
+            let string = bytes
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).into_owned());
+            let hex = bytes.map(|b| b.iter().map(|byte| format!("{byte:02x}")).collect());
+            (Some(seen), hex, string, stop)
         } else {
-            (None, None)
+            (None, None, None, "return_unobserved")
         };
         hits.push(JniStringHit {
             idx: call.idx,
@@ -106,7 +118,9 @@ fn jni_strings_response(state: &AnalysisContext, q: JniStringsQuery) -> JniStrin
             x2: format!("{:#x}", call.arg("x2").unwrap_or(0)),
             buffer_addr: buffer_addr.map(|addr| format!("{addr:#x}")),
             observed_bytes,
+            bytes_hex,
             string,
+            read_stop,
         });
     }
     let with_observed_string = hits.iter().filter(|hit| hit.string.is_some()).count();
@@ -118,7 +132,9 @@ fn jni_strings_response(state: &AnalysisContext, q: JniStringsQuery) -> JniStrin
         truncated: returned < count,
         with_observed_string,
         without_observed_string: returned - with_observed_string,
-        note: "buffers in libart heap are Stalker-excluded; agent-side hook on GetStringUTFChars needed for content",
+        encoding: "modified_utf8",
+        display_encoding: "utf8_lossy",
+        note: "仅预览 NewStringUTF 输入、GetStringUTFChars 已观测返回、ReleaseStringUTFChars 输入；字节来自 MemShadow。string 是 UTF-8 有损显示，精确内容见 bytes_hex；返回缓冲区长度未知，遇 NUL 或上限不代表已证明完整字符串。",
         hits,
     }
 }
@@ -133,18 +149,9 @@ fn effective_max(raw: usize) -> usize {
 
 fn jni_string_op(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
-        "NewString" => Some(("x1", "out_x0")),
-        "NewStringUTF" => Some(("x1", "out_x0")),
-        "GetStringChars" => Some(("x1", "out_x0")),
-        "GetStringUTFChars" => Some(("x1", "out_x0")),
-        "ReleaseStringChars" => Some(("x2", "in")),
+        "NewStringUTF" => Some(("x1", "in")),
+        "GetStringUTFChars" => Some(("x0", "out_x0")),
         "ReleaseStringUTFChars" => Some(("x2", "in")),
-        "GetStringRegion" => Some(("x4", "out_x4")),
-        "GetStringUTFRegion" => Some(("x4", "out_x4")),
-        "GetStringLength" => Some(("x1", "in")),
-        "GetStringUTFLength" => Some(("x1", "in")),
-        "GetStringCritical" => Some(("x1", "out_x0")),
-        "ReleaseStringCritical" => Some(("x2", "in")),
         _ => None,
     }
 }
@@ -154,30 +161,31 @@ fn read_string(
     addr: u64,
     cursor: usize,
     max_len: usize,
-) -> (Option<String>, usize) {
+) -> (Option<Vec<u8>>, usize, &'static str) {
     if addr == 0 {
-        return (None, 0);
+        return (None, 0, "null_pointer");
     }
     let mut bytes = Vec::new();
     let mut seen = 0;
+    let mut stop = "limit";
     for offset in 0..max_len {
-        let (byte, _, _) = mem.byte_at(addr + offset as u64, cursor as u64);
+        let Some(byte_addr) = addr.checked_add(offset as u64) else {
+            stop = "address_overflow";
+            break;
+        };
+        let (byte, _, _) = mem.byte_at(byte_addr, cursor as u64);
         let Some(byte) = byte else {
-            if seen == 0 {
-                return (None, 0);
-            }
+            stop = "missing";
             break;
         };
         seen += 1;
         if byte == 0 {
+            stop = "nul";
             break;
         }
         bytes.push(byte);
     }
-    if bytes.is_empty() {
-        return (None, seen);
-    }
-    (Some(String::from_utf8_lossy(&bytes).into_owned()), seen)
+    ((seen > 0).then_some(bytes), seen, stop)
 }
 
 #[cfg(test)]

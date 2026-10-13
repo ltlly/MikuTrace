@@ -92,7 +92,7 @@ pub fn resolve_reg(state: &AnalysisContext, reg: &str, before: usize) -> Resolve
 }
 
 pub fn resolve_addr(state: &AnalysisContext, addr_raw: &str, before: usize) -> ResolvedSeed {
-    let Some(addr) = parse::parse_dec_u64(addr_raw) else {
+    let Some(addr) = parse::parse_hex_u64(addr_raw) else {
         return ResolvedSeed {
             kind: "addr",
             idx: None,
@@ -198,7 +198,7 @@ pub fn node_id(idx: usize) -> String {
     format!("idx:{idx}")
 }
 
-/// Common per-row payload reused by `dep-graph`, `forward-dep-tree`
+/// Common per-row payload reused by `dep-graph`, `forward-dep-graph`
 /// and the enriched `bfs-slice` rows.
 #[derive(Debug, Clone, Serialize)]
 pub struct DepNode {

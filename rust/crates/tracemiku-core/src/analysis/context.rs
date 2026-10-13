@@ -1,24 +1,19 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use crate::cfg::build_cfg;
 use crate::disasm::decode;
 use crate::forward_dep_tree::DependencyUsers;
-use crate::hashfin::{HashFinalizeCandidate, HashFinalizeIndex};
-use crate::ollvmdet::{ollvm_detect_vm_indexed, OllvmFinding};
 use crate::prelude::{
     build_call_tree_indexed, build_frame_depth_map, build_function_index, AnalysisIndex, CallNode,
     FunctionIndex, Index, MemShadow, ModuleResolver, SymbolMap, Trace, TraceMeta, CFG,
 };
 use crate::symbols::auto_known_symbols_with_modules;
+use crate::write_bursts::{WriteBurstCandidate, WriteBurstIndex};
 
 use crate::analysis::jni_scan::{scan_jni_calls, JniCallScan};
 use crate::analysis::parse::parse_dec_u64;
-use crate::analysis::phase_scan::{build_auto_phases, PhaseEntry};
-
-/// ollvm_cache 写入侧上限：不同 (min_entries, threshold) 组合的缓存条数。
-const OLLVM_CACHE_MAX_ENTRIES: usize = 16;
 
 /// Cached register timelines: reg name → ordered (record_idx, value) pairs.
 pub(crate) type RegTimelineCache = HashMap<String, Arc<Vec<(usize, u64)>>>;
@@ -47,50 +42,14 @@ pub struct AnalysisData {
     asm_groups: OnceLock<Vec<AsmSearchGroup>>,
     jni_calls: OnceLock<JniCallScan>,
     pub(crate) crypto_analysis: OnceLock<crate::analysis::crypto_analysis::CryptoAnalysisResponse>,
-    hash_finalize_index: OnceLock<HashFinalizeIndex>,
-    ollvm_cache: Mutex<OllvmCache>,
-    auto_phase_cache: Mutex<HashMap<bool, Vec<PhaseEntry>>>,
+    write_burst_index: OnceLock<WriteBurstIndex>,
     pub(crate) reg_timeline_cache: Mutex<RegTimelineCache>,
-}
-
-/// ollvm 检测结果缓存：threshold 量化入 key + FIFO 条目上限。
-#[derive(Debug, Default)]
-struct OllvmCache {
-    entries: HashMap<OllvmCacheKey, Vec<OllvmFinding>>,
-    order: VecDeque<OllvmCacheKey>,
-}
-
-impl OllvmCache {
-    fn get(&self, key: &OllvmCacheKey) -> Option<&Vec<OllvmFinding>> {
-        self.entries.get(key)
-    }
-
-    fn insert(&mut self, key: OllvmCacheKey, findings: Vec<OllvmFinding>) {
-        if !self.entries.contains_key(&key) {
-            self.order.push_back(key);
-        }
-        self.entries.insert(key, findings);
-        while self.order.len() > OLLVM_CACHE_MAX_ENTRIES {
-            match self.order.pop_front() {
-                Some(oldest) => {
-                    self.entries.remove(&oldest);
-                }
-                None => break,
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BacktraceEvent {
     pub idx: usize,
     pub is_call: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct OllvmCacheKey {
-    min_entries: usize,
-    threshold_bits: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -190,9 +149,7 @@ impl AnalysisContext {
             asm_groups: OnceLock::new(),
             jni_calls: OnceLock::new(),
             crypto_analysis: OnceLock::new(),
-            hash_finalize_index: OnceLock::new(),
-            ollvm_cache: Mutex::new(OllvmCache::default()),
-            auto_phase_cache: Mutex::new(HashMap::new()),
+            write_burst_index: OnceLock::new(),
             reg_timeline_cache: Mutex::new(HashMap::new()),
         });
 
@@ -241,7 +198,7 @@ impl AnalysisData {
 
     /// Lazily compute the inverted dependency CSR (def→use direction).
     ///
-    /// This is what powers `forward-dep-tree`. Cost is O(edges) the first
+    /// This is what powers `forward-dep-graph`. Cost is O(edges) the first
     /// time and O(1) after; for a 24M-row trace the build is roughly the same
     /// order as one analysis-index sidecar pass over edges.
     pub fn dep_users(&self) -> &DependencyUsers {
@@ -330,55 +287,16 @@ impl AnalysisData {
         })
     }
 
-    pub fn ollvm_findings(&self, min_entries: usize, threshold: f64) -> Vec<OllvmFinding> {
-        let key = OllvmCacheKey {
-            min_entries,
-            threshold_bits: quantize_ollvm_threshold(threshold).to_bits(),
-        };
-        if let Some(findings) = lock_or_recover(&self.ollvm_cache).get(&key).cloned() {
-            return findings;
-        }
-
-        let findings = ollvm_detect_vm_indexed(&self.trace, &self.index, min_entries, threshold);
-        lock_or_recover(&self.ollvm_cache).insert(key, findings.clone());
-        findings
-    }
-
-    pub fn hash_finalize_candidates(
+    pub fn write_burst_candidates(
         &self,
         mem: &MemShadow,
         window: usize,
         min_size: u64,
         limit: usize,
-    ) -> (usize, Vec<HashFinalizeCandidate>) {
-        self.hash_finalize_index
-            .get_or_init(|| HashFinalizeIndex::build(mem))
+    ) -> (usize, Vec<WriteBurstCandidate>) {
+        self.write_burst_index
+            .get_or_init(|| WriteBurstIndex::build(mem))
             .detect_limited(window, min_size, limit)
-    }
-
-    pub fn auto_phases(&self, mem: &MemShadow, detect_byte_streams: bool) -> Vec<PhaseEntry> {
-        if let Ok(cache) = self.auto_phase_cache.lock() {
-            if let Some(phases) = cache.get(&detect_byte_streams) {
-                return phases.clone();
-            }
-            if !detect_byte_streams {
-                if let Some(full_phases) = cache.get(&true) {
-                    return full_phases
-                        .iter()
-                        .filter(|phase| phase.phase != "byte_stream_write")
-                        .cloned()
-                        .collect();
-                }
-            }
-        }
-
-        let phases = build_auto_phases(&self.trace_dir, mem, detect_byte_streams);
-        if let Ok(mut cache) = self.auto_phase_cache.lock() {
-            cache
-                .entry(detect_byte_streams)
-                .or_insert_with(|| phases.clone());
-        }
-        phases
     }
 }
 
@@ -388,12 +306,6 @@ fn primary_base(inner: &AnalysisData) -> Option<u64> {
         .module
         .as_ref()
         .and_then(|m| parse_dec_u64(&m.base))
-}
-
-/// 连续 threshold 参数直接入 key 会产生无限多个缓存条目；按 1e-9 量化后，
-/// 语义上等价的参数共享同一条缓存。
-fn quantize_ollvm_threshold(threshold: f64) -> f64 {
-    (threshold * 1e9).round() / 1e9
 }
 
 /// Read `<call_dir>/meta.json::known_offsets` and parse into hex-keyed map.
@@ -449,25 +361,4 @@ fn find_repo_root(call_dir: &std::path::Path) -> Option<std::path::PathBuf> {
         cur = parent.to_path_buf();
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{quantize_ollvm_threshold, OLLVM_CACHE_MAX_ENTRIES};
-
-    #[test]
-    fn ollvm_threshold_quantization_collapses_nearby_values() {
-        let a = quantize_ollvm_threshold(0.5);
-        let b = quantize_ollvm_threshold(0.5 + 1e-12);
-        assert_eq!(a.to_bits(), b.to_bits());
-        assert_eq!(
-            quantize_ollvm_threshold(0.1234567891).to_bits(),
-            quantize_ollvm_threshold(0.1234567894).to_bits()
-        );
-    }
-
-    #[test]
-    fn cache_caps_are_bounded() {
-        assert_eq!(OLLVM_CACHE_MAX_ENTRIES, 16);
-    }
 }

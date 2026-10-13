@@ -1,4 +1,4 @@
-//! Black-box contract tests for the `mem-tenet` CLI command.
+//! Black-box contract tests for the `mem-provenance` CLI command.
 //!
 //! Tenet export reports per-byte provenance without fabricating missing
 //! memory. Uses the shared synthetic fixture (synth_deep_dir writes bytes
@@ -9,10 +9,10 @@ mod common;
 use common::{run_json, synth_deep_dir};
 
 #[test]
-fn mem_tenet_returns_structured_provenance() {
+fn mem_provenance_returns_structured_provenance() {
     let (_tmp, cd) = synth_deep_dir();
     let v = run_json(&[
-        "mem-tenet",
+        "mem-provenance",
         cd.to_str().unwrap(),
         "--addr",
         "0x2000",
@@ -32,12 +32,12 @@ fn mem_tenet_returns_structured_provenance() {
 }
 
 #[test]
-fn mem_tenet_zero_length_is_error() {
+fn mem_provenance_zero_length_is_error() {
     use std::process::Command;
     let (_tmp, cd) = synth_deep_dir();
     let out = Command::new(env!("CARGO_BIN_EXE_tracemiku-cli"))
         .args([
-            "mem-tenet",
+            "mem-provenance",
             cd.to_str().unwrap(),
             "--addr",
             "0x2000",

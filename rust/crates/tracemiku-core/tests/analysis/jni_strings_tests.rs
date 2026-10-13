@@ -108,3 +108,90 @@ fn jni_strings_reports_total_and_truncation() {
     assert_eq!(v["truncated"], true);
     assert_eq!(v["hits"].as_array().unwrap().len(), 1);
 }
+
+fn utf_buffer_call(slot: u32, bytes: [u8; 8], returned: bool) -> (tempfile::TempDir, PathBuf) {
+    let (tmp, cd) = synth_call_dir();
+    let mut trace = vec![0u8; 272 * 4];
+    let insts = [
+        0xf9000043,
+        0xf9400009 | (slot << 10),
+        0xd63f0120,
+        0xd503201f,
+    ];
+    for (idx, inst) in insts.into_iter().enumerate() {
+        let row = &mut trace[idx * 272..(idx + 1) * 272];
+        let pc = if idx == 3 && !returned {
+            0x100100
+        } else {
+            0x100000 + idx as u64 * 4
+        };
+        row[..8].copy_from_slice(&pc.to_le_bytes());
+        let x0 = if idx == 3 && slot == 169 {
+            0x7000u64
+        } else {
+            0xdead
+        };
+        row[8..16].copy_from_slice(&x0.to_le_bytes());
+        row[16..24].copy_from_slice(&0x7000u64.to_le_bytes());
+        row[24..32].copy_from_slice(&0x7000u64.to_le_bytes());
+        row[32..40].copy_from_slice(&bytes);
+        row[268..272].copy_from_slice(&inst.to_le_bytes());
+    }
+    fs::write(cd.join("trace.bin"), trace).unwrap();
+    (tmp, cd)
+}
+
+#[test]
+fn new_string_utf_reads_input_instead_of_jobject_and_keeps_raw_encoding() {
+    let (_tmp, cd) = utf_buffer_call(167, [0xc0, 0x80, b'a', 0, 0, 0, 0, 0], true);
+    let (status, value) = get(cd, "jni-strings");
+    assert_eq!(status, None);
+    assert_eq!(value["hits"][0]["direction"], "in");
+    assert_eq!(value["hits"][0]["buffer_addr"], "0x7000");
+    assert_eq!(value["hits"][0]["bytes_hex"], "c08061");
+    assert_eq!(value["hits"][0]["read_stop"], "nul");
+    assert_eq!(value["encoding"], "modified_utf8");
+    assert_eq!(value["display_encoding"], "utf8_lossy");
+}
+
+#[test]
+fn get_utf_chars_requires_an_observed_return_to_the_caller() {
+    for returned in [true, false] {
+        let (_tmp, cd) = utf_buffer_call(169, *b"hello\0\0\0", returned);
+        let (_, value) = get(cd, "jni-strings");
+        assert_eq!(value["count"], 1);
+        let hit = &value["hits"][0];
+        if returned {
+            assert_eq!(hit["arg_name"], "x0");
+            assert_eq!(hit["string"], "hello");
+            assert_eq!(hit["read_stop"], "nul");
+        } else {
+            assert!(hit["buffer_addr"].is_null());
+            assert!(hit["string"].is_null());
+            assert_eq!(hit["read_stop"], "return_unobserved");
+        }
+    }
+}
+
+#[test]
+fn jni_preview_reports_empty_missing_and_capped_bytes() {
+    for (bytes, max_len, expected, stop) in [
+        ([0; 8], 16, "", "nul"),
+        (*b"abcdefgh", 16, "abcdefgh", "missing"),
+        (*b"abcdefgh", 3, "abc", "limit"),
+    ] {
+        let (_tmp, cd) = utf_buffer_call(167, bytes, true);
+        let (_, value) = get(cd, &format!("jni-strings?max_len={max_len}"));
+        assert_eq!(value["hits"][0]["string"], expected);
+        assert_eq!(value["hits"][0]["read_stop"], stop);
+    }
+}
+
+#[test]
+fn jni_preview_does_not_treat_utf16_or_string_handles_as_utf8() {
+    for slot in [163, 164, 165, 166, 168] {
+        let (_tmp, cd) = utf_buffer_call(slot, *b"hello\0\0\0", true);
+        let (_, value) = get(cd, "jni-strings");
+        assert_eq!(value["count"], 0, "JNI table slot {slot}");
+    }
+}

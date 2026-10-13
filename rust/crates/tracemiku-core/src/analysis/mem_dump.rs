@@ -57,9 +57,8 @@ fn mem_dump_response(
     inner: &crate::analysis::context::AnalysisData,
     q: MemDumpQuery,
 ) -> Result<MemDumpResponse, AnalysisError> {
-    let stripped = q.addr.trim_start_matches("0x").trim_start_matches("0X");
-    let start =
-        u64::from_str_radix(stripped, 16).map_err(|_| AnalysisError::invalid("invalid query"))?;
+    let start = crate::address_parse::parse_address(&q.addr)
+        .map_err(|err| AnalysisError::invalid(err.to_string()))?;
     let count = effective_count(q.count);
     let mem = inner.memshadow();
     let mut bytes = Vec::with_capacity(count);
