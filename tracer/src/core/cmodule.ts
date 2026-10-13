@@ -12,6 +12,7 @@ extern unsigned char ring[];
 extern unsigned long long ring_recs;
 extern volatile unsigned long long head;
 extern volatile unsigned long long tail;
+extern unsigned long long first_pc;
 extern int trace_io[];
 extern int active;
 extern int mutex[];
@@ -83,18 +84,21 @@ void on_insn(GumCpuContext *ctx, void *user_data) {
     unsigned long long h = head;
     unsigned char *p = ring + (h % ring_recs) * REC;
     unsigned long long *cu = (unsigned long long *)ctx;
-    *(unsigned long long *)(p + 0) = cu[0];
+    unsigned long long pc = user_data != 0 ? *(unsigned long long *)user_data : cu[0];
+    if (h == 0) first_pc = pc;
+    *(unsigned long long *)(p + 0) = pc;
     memcpy(p + 8, &cu[3], 31 * 8);
     *(unsigned long long *)(p + 256) = cu[1];
     *(unsigned int *)(p + 264) = (unsigned int)cu[2];
-    unsigned int inst = *(unsigned int *)cu[0];
+    unsigned int inst = user_data != 0
+        ? *(unsigned int *)((unsigned char *)user_data + 8) : *(unsigned int *)cu[0];
     *(unsigned int *)(p + 268) = inst;
     ${simd ? "write_simd(ctx, h);" : ""}
     head = h + 1;
     if (head - tail == ring_recs) drain_trace();
     unlock(mutex);
     ${semantic ? `if ((inst & 0xffe0001fU) == 0xd4000001U)
-        on_svc_event(h, cu[0], cu[11], cu[3], cu[4], cu[5], cu[6], cu[7], cu[8]);` : ""}
+        on_svc_event(h, pc, cu[11], cu[3], cu[4], cu[5], cu[6], cu[7], cu[8]);` : ""}
 }
 `;
 }
@@ -106,6 +110,7 @@ function compile(ring: TraceRingState, simd = false, semantic = false): CModule 
         head: ring.headBuf, tail: ring.tailBuf, trace_io: ring.ioState,
         active: ring.active, mutex: Memory.alloc(64), lock: getExport("pthread_mutex_lock")!,
         unlock: getExport("pthread_mutex_unlock")!,
+        first_pc: Memory.alloc(8),
     };
     if (simd) Object.assign(symbols, {
         simd_ring: STATE.simdRingBuf, simd_ring_recs: STATE.simdRingRecsBuf,
@@ -116,6 +121,7 @@ function compile(ring: TraceRingState, simd = false, semantic = false): CModule 
     const cm = new CModule(source(simd, semantic), symbols);
     // extern 数据的 JS 句柄与 writer 同寿命，特别是没有其他 STATE 引用的 mutex。
     (cm as any).keepAlive = symbols;
+    (cm as any).firstCapturedPc = symbols.first_pc;
     ring.flushNative = new NativeFunction((cm as any).flush_trace, "void", []);
     return cm;
 }

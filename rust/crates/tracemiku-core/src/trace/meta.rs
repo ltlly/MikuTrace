@@ -76,6 +76,45 @@ impl ModuleInfo {
     }
 }
 
+/// 实际采集范围及入口/返回证据；旧 manifest 缺少的证据保持未知。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CaptureScope {
+    pub primary_tid: Option<u64>,
+    pub include_ranges: Vec<CaptureRange>,
+    pub entry_boundary: Option<String>,
+    pub exit_boundary: Option<String>,
+    pub expected_entry_pc: Option<String>,
+    pub first_pc: Option<String>,
+    pub entry_complete: Option<bool>,
+    pub return_observed: Option<bool>,
+    pub simd_sample_stride: Option<u64>,
+    pub coverage_gaps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CaptureRange {
+    pub name: String,
+    pub base: String,
+    pub end: String,
+}
+
+impl CaptureScope {
+    /// 对照真实首条记录，不仅信任 manifest 中的完成标志。
+    pub fn boundaries_verified(&self, first_pc: Option<u64>, fn_addr: Option<&str>) -> bool {
+        let address =
+            |value: Option<&str>| value.and_then(|s| parse_hex(s, "capture_scope.pc").ok());
+        let expected = address(self.expected_entry_pc.as_deref());
+        self.entry_complete == Some(true)
+            && self.return_observed == Some(true)
+            && self.coverage_gaps == Some(0)
+            && expected.is_some()
+            && expected == first_pc
+            && expected == address(self.first_pc.as_deref())
+            && fn_addr.is_none_or(|s| expected == address(Some(s)))
+    }
+}
+
 /// Per-call meta.json fields we consume.
 #[derive(Debug, Clone, Deserialize)]
 struct PerCallMetaRaw {
@@ -101,6 +140,8 @@ struct PerCallMetaRaw {
     /// 缺失/显式 `null` 都归一为「未知」，不参与 bool 反序列化。
     #[serde(default)]
     pub last_insn_is_ret: Option<bool>,
+    #[serde(default)]
+    pub capture_scope: Option<CaptureScope>,
     #[serde(default)]
     pub fork_events: Vec<serde_json::Value>,
 }
@@ -168,6 +209,7 @@ pub struct TraceMeta {
     /// 三值语义：`Some(false)` 末指令不是 ret，`Some(true)` 是 ret，
     /// `None` 未知（缺失或显式 null）。未知不得折叠成 false。
     pub last_insn_is_ret: Option<bool>,
+    pub capture_scope: Option<CaptureScope>,
     pub fork_events: Vec<serde_json::Value>,
 }
 
@@ -256,6 +298,7 @@ impl TraceMeta {
             regs: REG_NAMES,
             truncated: per_call.truncated,
             last_insn_is_ret: per_call.last_insn_is_ret,
+            capture_scope: per_call.capture_scope,
             fork_events: per_call.fork_events,
         })
     }
@@ -272,4 +315,42 @@ fn read_to_string(p: &Path) -> Result<String, MetaError> {
 fn parse_hex(s: &str, field: &'static str) -> Result<u64, MetaError> {
     let t = s.trim_start_matches("0x").trim_start_matches("0X");
     u64::from_str_radix(t, 16).map_err(|_| MetaError::BadHex(s.to_string(), field))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_boundary_evidence_matches_actual_record_and_function() {
+        let mut scope = CaptureScope {
+            expected_entry_pc: Some("0xAbCd".into()),
+            first_pc: Some("0XABCD".into()),
+            entry_complete: Some(true),
+            return_observed: Some(true),
+            coverage_gaps: Some(0),
+            ..Default::default()
+        };
+        assert!(scope.boundaries_verified(Some(0xabcd), Some("abcd")));
+        assert!(!scope.boundaries_verified(None, None));
+        assert!(!scope.boundaries_verified(Some(0xabce), None));
+        assert!(!scope.boundaries_verified(Some(0xabcd), Some("0x1000")));
+        assert!(!scope.boundaries_verified(Some(0xabcd), Some("invalid")));
+        scope.coverage_gaps = Some(1);
+        assert!(!scope.boundaries_verified(Some(0xabcd), None));
+    }
+
+    #[test]
+    fn legacy_scope_remains_readable_but_unknown_boundaries_are_incomplete() {
+        let scope: CaptureScope = serde_json::from_str(
+            r#"{
+            "primary_tid":42,"entry_boundary":"interceptor-onenter",
+            "exit_boundary":"interceptor-onleave","coverage_gaps":0
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(scope.entry_complete, None);
+        assert_eq!(scope.return_observed, None);
+        assert!(!scope.boundaries_verified(Some(0x1000), Some("0x1000")));
+    }
 }

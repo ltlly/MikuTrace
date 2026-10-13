@@ -68,15 +68,30 @@ trace 重算摘要，重新完整校验使用恢复流程。旧 trace 缺少这�
 ## 范围与失败事实
 
 “不丢记录”指已插桩范围内的生产/落盘/回传不主动丢弃。范围由模块、线程、边界和
-sidecar 配置决定：入口使用 Interceptor onEnter 后启动 Stalker，入口被 Frida 搬移的
-prologue 不保证可见；ART/linker 排除和未跟踪线程也不在记录承诺内。显式 SIMD
-采样步长大于 1 表示用户选择采样。`capture_scope` 保存模块范围和边界类型。
+sidecar 配置决定；ART/linker 排除和未跟踪线程不在记录承诺内。显式 SIMD
+采样步长大于 1 表示用户选择采样。
 
-Stalker exclusive-monitor 区间和插桩异常保存到 `coverage_gaps.jsonl`，快照不可读区域
+入口用对齐的单条 ARM64 `B` 接入附近的桥，在桥上执行 Interceptor 回调后才执行
+搬移的原始首指令。桥保存并恢复 `x16/x17`，原始寄存器上下文进入 native writer；
+首指令记录使用原 PC/opcode，后续指令直接回到原函数。只改写 4 字节，支持短函数。
+无法安全准备入口、附近分配失败、敏感 LR/独占访问 prologue 或入口被其他 hook
+改写且被检查发现时明确失败。恢复时也检查 opcode，发现第三方修改则拒绝覆盖。
+
+`capture_scope` 保存 `primary_tid`、`include_ranges`、`entry_boundary`、`exit_boundary`、
+`expected_entry_pc`、`first_pc`、`entry_complete`、`return_observed`、`simd_sample_stride`
+和 `coverage_gaps`；`info.metadata.capture_scope` 以同一类型输出，缺失证据保持 `null`。
+有 scope 的 trace 只有首条真实 PC、声明首 PC 和目标入口一致、观察到返回且无缺口
+才可报告完整。末条 `ret` 不能代替这些证据；尾调用正常返回也不要求范围内末条是 `ret`。
+早期 scope 缺少入口/返回验证字段时判为不完整；没有 scope 的旧 trace 保留旧读取判定。
+
+Stalker 将含 exclusive-monitor 指令的整个翻译块标为不可插入内存 callout，相关
+翻译缺口和插桩异常保存到 `coverage_gaps.jsonl`，快照不可读区域
 保存到 `snapshot_errors.jsonl`，这些缺口使 `truncated=true`，不能冒充完整覆盖。
 磁盘一直不可写会使目标持续等待；SIGKILL、目标崩溃、强制重启或掉电可能丢失未同步
 的内存尾批。未封口 session 保持 `pending`，文件存在或末尾是 ret 均不能替代封口证据。
+关闭文件或排空 sidecar 失败时 session 进入 `FAILED`，不会发布成功的调用封口。
 
-封口后卸载 hook、回收 Stalker/CModule 及大缓冲。Frida eternalize 的最小 JS 运行时
+封口后恢复原入口、卸载 hook、回收 Stalker/CModule 及大缓冲。小型入口桥保留到进程
+退出，避免其他线程仍在桥上执行时被释放。Frida eternalize 的最小 JS 运行时
 保留到目标退出；重复采集建议使用新的目标进程。worker 跟踪仍为可选的启发式能力，
 不能把它当作所有线程的完整覆盖。

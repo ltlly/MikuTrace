@@ -1,0 +1,10 @@
+{
+  "cc": ["aarch64-linux-musl-gcc"],
+  "fixture_cflags": [
+    "-O0", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+    "-Wl,--export-dynamic-symbol=__errno", "-Wl,--export-dynamic-symbol=pwrite64"
+  ],
+  "fixture_ldflags": ["-ldl", "-lpthread", "-lm"],
+  "library_flags": [],
+  "qemu": ["qemu-aarch64", "-L", "/opt/aarch64-linux-musl"]
+}

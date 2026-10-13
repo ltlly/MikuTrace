@@ -191,6 +191,24 @@ host 的 `prepare` 在 attach 前，`on_ready` 在 init/resume 后，`finish` �
 插件执行任意可信代码，无沙箱。单文件限 1MiB，config/host 返回值限 64KiB；agent
 事件限 200 条、`detail` JSON 文本限 16384 个 UTF-16 码元。Python 生命周期等待 30 秒后失败，不能强杀线程；JS 卡死无法抢占。
 
+### 采集器离线验证
+
+`make test-offline-arm64` 使用 QEMU、ARM64 musl GumJS devkit 和生产 agent/native writer，
+从原始 ELF 核对每条 PC/opcode、GPR 路径、SIMD 哨兵与索引，再经统一 CLI 判断完整性。
+需预先准备与设备 Frida 同版的 devkit、musl 交叉工具链和 QEMU；不会自动安装依赖。
+按[工具链示例](../tracer/tests/arm64_toolchain.example.json)配置编译器、链接参数及 QEMU
+加载器路径，所有字段均为 argv 数组，不经 shell 展开。
+
+```bash
+make test-offline-arm64 OFFLINE_ARGS='--devkit /path/to/gumjs-devkit --toolchain /path/to/toolchain.json'
+make test-disk-full
+```
+
+后者要求 Linux 允许用户/挂载命名空间，在私有 1MiB tmpfs 中触发真实 `ENOSPC`，
+验证生产线程阻塞、释放空间后续写及逐条 GPR/SIMD 一致性。两者均保留或输出失败
+证据；ARM64 测试结果保存在输出目录，磁盘测试临时卷自动卸载。离线测试不替代 Android
+真机、物理 USB、目标崩溃及实际存储介质验证。
+
 ## 分析示例
 
 ```bash

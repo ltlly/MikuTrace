@@ -8,6 +8,7 @@ import {
     STALKER_EXCLUDE_PATTERNS, IncludeRange, ART_EXCL,
 } from "./state";
 import { log } from "./utils";
+import { entryInstruction, isEntryRedirect } from "./entry";
 import { collectBoundaryDiffSymbols, installBoundaryDiffHooksOnce } from "../hooks/boundary_diff";
 
 /** Default boundary-diff patterns (empty — opt-in via --boundary-diff-patterns) */
@@ -35,10 +36,8 @@ export function applyExcludesOnce(): void {
     // Module-level exclude only TRACE_ALL_KEEP_EXCL: the structural linker set
     // (recursion) + the ART apex family (self-modifying & stripped, see note in
     // state.ts). Every other module — target SO, vendor/app SOs, libc, libm — is
-    // fully instrumented. The LDXR/STXR atomic deadlock is no longer a reason to
-    // exclude anything (the per-instruction iter.memoryAccess guard in the
-    // transform handles it), so libc/libm atomics ARE traced — that recovers the
-    // stat()/time() boundary-write gaps that the old whitelist lost. We do NOT
+    // instrumented except blocks marked exclusive by Stalker. Those blocks
+    // remain runnable but unrecorded, with explicit coverage gaps. We do NOT
     // enumerateSymbols here: it is useless on stripped libart and hangs the
     // traced thread when looped over every module.
     if (traceAll) {
@@ -51,7 +50,7 @@ export function applyExcludesOnce(): void {
             }
         }
         log(`[+] TRACE-ALL: instrumenting ${instrumented} modules; module-excluded=${kept} ` +
-            `(${TRACE_ALL_KEEP_EXCL.join(",")}); per-insn exclusive-monitor guard active. ` +
+            `(${TRACE_ALL_KEEP_EXCL.join(",")}); exclusive-block coverage gaps reported. ` +
             `NOTE: live ART interpreter/JIT/GC not traceable (Frida limitation).`);
         STATE.excluded = true;
         return;
@@ -182,11 +181,13 @@ export function createTransform(
 
             while ((ins = iter.next()) !== null) {
                 const a = ins.address;
+                const relocated = entryInstruction(a);
+                const original = relocated?.pc || a;
 
                 // Fast path: target SO range
                 let inRange = false;
                 if (targetBase && targetEnd) {
-                    if (a.compare(targetBase) >= 0 && a.compare(targetEnd) < 0) {
+                    if (original.compare(targetBase) >= 0 && original.compare(targetEnd) < 0) {
                         inRange = true;
                     }
                 }
@@ -195,21 +196,21 @@ export function createTransform(
                 if (!inRange && ranges.length > 0) {
                     for (let i = 0; i < ranges.length; i++) {
                         const r = ranges[i];
-                        if (a.compare(r.base) >= 0 && a.compare(r.end) < 0) {
+                        if (original.compare(r.base) >= 0 && original.compare(r.end) < 0) {
                             inRange = true;
                             break;
                         }
                     }
                 }
 
-                if (inRange) {
-                    // Frida 不能在 exclusive-monitor 区间插入有内存访问的 callout。
-                    // 将无法插桩的事实持久化，不能声称这类窗口具有完整指令覆盖。
+                if (inRange && !isEntryRedirect(a)) {
+                    // memoryAccess 描述整个翻译块；含独占访问的块不能插入读写
+                    // 内存的 callout。记录翻译缺口，不能当作完整运行时覆盖。
                     if (iter.memoryAccess === "exclusive") {
                         persistEvents("coverage_gaps.jsonl", [{ pc: a.toString(),
                             reason: "exclusive-monitor", evidence: "translation", instruction: ins.toString() }]);
                     } else {
-                        try { iter.putCallout(onInsn); }
+                        try { iter.putCallout(onInsn, relocated?.data || NULL); }
                         catch (error) {
                             persistEvents("coverage_gaps.jsonl", [{ pc: a.toString(),
                                 reason: "callout-failed", evidence: "translation", error: String(error) }]);

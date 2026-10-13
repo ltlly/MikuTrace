@@ -55,6 +55,8 @@ fresh.exports.ensureTraceDir();
 assert.ok(fresh.state.traceDir?.startsWith(fresh.app + "/files/.miku/session_123_"));
 assert.ok(fresh.mkdirCalls.indexOf(fresh.app + "/files") < fresh.mkdirCalls.indexOf(fresh.app + "/files/.miku"));
 assert.equal(fresh.files.size, 0, "写入回读后的 probe 必须清理");
+(fresh.state as any).traceFile = { close() { throw new Error("close failure"); } };
+assert.throws(() => fresh.exports.closeTraceFile(), /close failure/, "关闭失败必须传给封口层");
 
 const blocked = fixture("/blocked/explicit");
 assert.throws(() => blocked.exports.ensureTraceDir(), /not writable/);
@@ -70,6 +72,7 @@ const manifestModules: any = {
         primaryTid: 42, started: 1000, includeRanges: [],
     }, REC_SIZE: 272 },
     "../core/utils": { getExport: () => "rename" },
+    "../core/entry": { entryAddress: () => ({ toString: () => "0x1000" }) },
     "../core/external_writes": {},
     "../target_plugins": { drainTargetPluginEvents() {
         const events = pluginEvents; pluginEvents = []; return events;
@@ -100,7 +103,7 @@ vm.runInNewContext(ts.transpileModule(readFileSync(
 manifestExports.prepareManifest("a".repeat(32));
 manifestExports.beginManifest();
 pluginEvents.push({ phase: "beforeTrace", status: "ok" });
-manifestExports.sealManifest({ total: 3, truncated: false }, true);
+manifestExports.sealManifest({ total: 3, truncated: false, firstPc: "0x1000", returnObserved: true }, true);
 const sealed = JSON.parse(artifactFiles.get("/spool/call_1.json")!);
 const eventsArtifact = sealed.files.find((file: any) => file.name === "target_plugin_events.jsonl");
 assert.equal(eventsArtifact.records, 2);
@@ -109,5 +112,15 @@ assert.deepEqual(artifactFiles.get(eventsArtifact.device_path)!.trim().split("\n
     { phase: "install", status: "ok" }, { phase: "beforeTrace", status: "ok" },
 ]);
 assert.equal(sealed.meta.event_counts["target_plugin_events.jsonl"], 2);
+assert.equal(sealed.meta.capture_scope.entry_complete, true);
+assert.equal(sealed.meta.capture_scope.return_observed, true);
 assert.equal(JSON.parse(artifactFiles.get("/spool/session.json")!).state, "SEALED");
+manifestModules["../core/state"].STATE.callIdx = 2;
+manifestExports.beginManifest();
+manifestExports.sealManifest({ total: 3, truncated: false, firstPc: "0x1004", returnObserved: true }, true);
+const missingEntry = JSON.parse(artifactFiles.get("/spool/call_2.json")!);
+assert.equal(missingEntry.meta.capture_scope.entry_complete, false);
+assert.equal(missingEntry.meta.capture_scope.coverage_gaps, 1);
+assert.equal(missingEntry.meta.truncated, true);
+assert.equal(JSON.parse(artifactFiles.get("/spool/call2_coverage_gaps.jsonl")!).reason, "entry-not-observed");
 console.log("device spool: fresh app directory + actual UID + write/read probe + fail closed: PASS");

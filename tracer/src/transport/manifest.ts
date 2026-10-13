@@ -3,6 +3,7 @@ import { encodeExtWriteEvent, EXT_WRITE_RECORD_SIZE } from "../core/external_wri
 import { STATE, REC_SIZE, SIMD_REC_SIZE } from "../core/state";
 import { getExport } from "../core/utils";
 import { NativeFile, syncDirectory } from "../core/native_io";
+import { entryAddress } from "../core/entry";
 import { drainTargetPluginEvents } from "../target_plugins";
 
 type Artifact = { name: string; device_path: string; bytes?: number; record_size?: number; records?: number };
@@ -93,6 +94,12 @@ export function registerSnapshot(info: any): void {
 }
 
 export function sealManifest(end: any, sessionComplete: boolean): string {
+    const expected = entryAddress()?.toString() || null;
+    const entryComplete = expected !== null && end.firstPc === expected;
+    if (!entryComplete) persistEvents("coverage_gaps.jsonl", [{
+        reason: "entry-not-observed", evidence: "runtime", expected_pc: expected,
+        first_pc: end.firstPc ?? null,
+    }]);
     persistEvents("target_plugin_events.jsonl", drainTargetPluginEvents());
     for (const [name, stream] of Object.entries(streams)) {
         stream.close();
@@ -118,7 +125,9 @@ export function sealManifest(end: any, sessionComplete: boolean): string {
         capture_scope: {
             primary_tid: STATE.primaryTid, include_ranges: STATE.includeRanges.map(range => ({
                 name: range.name, base: range.base.toString(), end: range.end.toString(),
-            })), entry_boundary: "interceptor-onenter", exit_boundary: "interceptor-onleave",
+            })), entry_boundary: "relocated-instruction", exit_boundary: "interceptor-onleave",
+            expected_entry_pc: expected, first_pc: end.firstPc ?? null, entry_complete: entryComplete,
+            return_observed: end.returnObserved === true,
             simd_sample_stride: STATE.simdSidecar ? STATE.simdSampleStride : null,
             coverage_gaps: counts["coverage_gaps.jsonl"] || 0,
         },

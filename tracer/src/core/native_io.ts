@@ -163,7 +163,9 @@ export class NativeFile {
 
 export function syncDirectory(path: string): void {
     nativeIoSymbols();
-    const result = internal(() => openFd(Memory.allocUtf8String(path), 0x10000 | 0x80000, 0));
+    // Linux/Android AArch64 的 O_DIRECTORY=040000；0x10000 是 O_DIRECT，
+    // 在不同文件系统上可能返回 EINVAL，不能沿用 x86 的常量。
+    const result = internal(() => openFd(Memory.allocUtf8String(path), 0x4000 | 0x80000, 0));
     if (result.value < 0) throw new Error(`open directory ${path}: errno=${result.errno}`);
     const state = ioState();
     state.writeS32(result.value);

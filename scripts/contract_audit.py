@@ -34,7 +34,7 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "finalize": ["contract_basic"],
     "completions": ["contract_completions"],
     "list": ["contract_basic"],
-    "info": ["contract_consolidated", "contract_basic"],
+    "info": ["contract_consolidated", "contract_basic", "contract_capture"],
     "records": ["contract_consolidated", "contract_query"],
     "resolve": ["contract_consolidated", "contract_query"],
     "search": ["contract_query"],

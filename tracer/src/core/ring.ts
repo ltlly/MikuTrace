@@ -26,7 +26,7 @@ export function closeWorkerTraceFiles(): void {
     for (const key of Object.keys(STATE.workerTraces || {})) {
         const worker = STATE.workerTraces[key];
         if (worker.file) {
-            try { worker.file.close(); } catch (_) {}
+            worker.file.close();
             worker.file = null;
         }
     }
@@ -162,14 +162,14 @@ export function openTraceFile(callIdx: number, tid: number): void {
 
 export function closeTraceFile(): void {
     if (STATE.traceFile) {
-        try { STATE.traceFile.close(); } catch (_) {}
+        STATE.traceFile.close();
         STATE.traceFile = null;
     }
 }
 
 export function closeSimdTraceFile(): void {
     if (STATE.simdTraceFile) {
-        try { STATE.simdTraceFile.close(); } catch (_) {}
+        STATE.simdTraceFile.close();
         STATE.simdTraceFile = null;
     }
 }

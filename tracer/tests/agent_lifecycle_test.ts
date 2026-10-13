@@ -12,34 +12,45 @@ const compiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 
-for (const total of [0, 2000, 5_000_001, 50_000_001]) {
+for (const [total, fault] of [[0, ""], [2000, ""], [5_000_001, ""], [50_000_001, ""],
+    [3, "close"], [3, "jni"], [3, "seal"]] as const) {
     const order: string[] = [];
     const events: any[] = [];
+    let failure: string | undefined;
+    const step = (name: string) => {
+        order.push(name);
+        if (fault === name) throw new Error(`fixture ${name} failure`);
+    };
     const state: any = {
         callIdx: 1, callFinalized: false, fnEntered: true, started: Date.now(),
         headBuf: { readU64: () => ({ toNumber: () => total }) },
         tailBuf: { readU64: () => ({ toNumber: () => total }) },
         droppedBuf: { readU64: () => ({ toNumber: () => 0 }) },
         simdSidecar: false, traceFilePath: "/spool/trace.bin",
+        cm: { firstCapturedPc: { readPointer: () => ({ toString: () => "0x1000" }) } },
     };
     let callbacks: any;
     const modules: Record<string, any> = {
         "./core/state": { STATE: state, SIMD_REC_SIZE: 520 },
+        "./core/entry": { attachEntryHook: (_fp: any, handlers: any) => { callbacks = handlers; }, releaseEntryHook: noop },
         "./core/utils": { log: noop }, "./core/cmodule": {}, "./core/native_io": { ioHealth: () => [] },
         "./core/ring": {
             unfollowWorkerThreads: noop, flushRingToDisk: () => order.push("flush"),
-            flushWorkerTraceRings: noop, closeTraceFile: () => order.push("close"),
+            flushWorkerTraceRings: noop, closeTraceFile: () => step("close"),
             closeWorkerTraceFiles: noop, closeSimdTraceFile: noop, workerTraceSummaries: () => [],
         },
         "./core/stalker": {}, "./sidecar/simd": { flushSimdRingToDisk: noop },
         "./sidecar/mem_snapshot": {}, "./sidecar/semantic": { flushSemanticEvents: noop },
-        "./hooks/jni_vtable": { flushJniHookEvents: () => order.push("jni") },
+        "./hooks/jni_vtable": { flushJniHookEvents: () => step("jni") },
         "./hooks/fork_monitor": { flushForkEvents: noop },
         "./hooks/pthread_follow": { flushWorkerEvents: noop },
         "./hooks/boundary_diff": { flushExtWriteEvents: noop },
         "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: noop },
         "./transport/control": { controlAddress: noop },
-        "./transport/manifest": { sealManifest: () => { order.push("seal"); return "/spool/call_1.json"; } },
+        "./transport/manifest": {
+            sealManifest: () => { step("seal"); return "/spool/call_1.json"; },
+            sealSession: (error: string) => { failure = error; },
+        },
     };
     const exports: any = {};
     const rpc: any = {};
@@ -57,9 +68,20 @@ for (const total of [0, 2000, 5_000_001, 50_000_001]) {
     assert.equal(events.length, 0);
     const context = { _tid: 42, _callIdx: 1 };
     callbacks.onLeave.call(context, { toString: () => "0x42" });
+    if (fault) {
+        assert.match(failure!, new RegExp(`fixture ${fault} failure`));
+        assert.equal(rpc.exports.stats().error, failure);
+        assert.equal(rpc.exports.stats().completedCalls, 0);
+        assert.equal(events.length, 0, "封口失败不能通知 trace-end");
+        assert.equal(state.fnEntered, false);
+        callbacks.onLeave.call(context, { toString: () => "0x42" });
+        assert.equal(events.length, 0);
+        continue;
+    }
     assert.equal(events.length, 1);
     assert.equal(events[0].total, total);
     assert.equal(events[0].truncated, false);
+    assert.equal(events[0].returnObserved, true);
     assert.deepEqual(order, ["flush", "close", "jni", "seal", "notify"]);
     assert.equal(rpc.exports.stats().completedCalls, 1);
     assert.equal(state.fnEntered, false);

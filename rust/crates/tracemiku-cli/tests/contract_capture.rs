@@ -225,6 +225,82 @@ fn info_never_marks_an_unverified_transfer_complete() {
 }
 
 #[test]
+fn info_requires_runtime_entry_and_return_evidence_for_scoped_capture() {
+    let (_tmp, call) = common::synth_call_dir();
+    let path = call.join("meta.json");
+    let mut meta: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let original = common::run_json(&["info", call.to_str().unwrap()]);
+    assert!(original["metadata"]["capture_scope"].is_null());
+    let entry = original["first_pc"].clone();
+    let scope = json!({
+        "primary_tid":100, "include_ranges":[{"name":"fixture", "base":"0x1000", "end":"0x2000"}],
+        "entry_boundary":"relocated-instruction", "exit_boundary":"interceptor-onleave",
+        "expected_entry_pc":entry, "first_pc":entry, "entry_complete":true,
+        "return_observed":true, "simd_sample_stride":null, "coverage_gaps":0
+    });
+    meta["fn_addr"] = entry.clone();
+    meta["capture_scope"] = scope.clone();
+    std::fs::write(&path, meta.to_string()).unwrap();
+    let result = common::run_json(&["info", call.to_str().unwrap()]);
+    assert_valid(
+        json!({
+            "type":"object", "required":["metadata", "is_complete"],
+            "properties":{"metadata":{"type":"object", "required":["capture_scope"],
+                "properties":{"capture_scope":{
+                    "type":"object", "additionalProperties":false,
+                    "required":["primary_tid","include_ranges","entry_boundary","exit_boundary",
+                        "expected_entry_pc","first_pc","entry_complete","return_observed",
+                        "simd_sample_stride","coverage_gaps"],
+                    "properties":{
+                        "primary_tid":{"type":["integer","null"]},
+                        "include_ranges":{"type":"array", "items":{"type":"object",
+                            "required":["name","base","end"], "properties":{
+                                "name":{"type":"string"},"base":{"type":"string"},"end":{"type":"string"}}}},
+                        "entry_boundary":{"type":["string","null"]}, "exit_boundary":{"type":["string","null"]},
+                        "expected_entry_pc":{"type":["string","null"]}, "first_pc":{"type":["string","null"]},
+                        "entry_complete":{"type":["boolean","null"]}, "return_observed":{"type":["boolean","null"]},
+                        "simd_sample_stride":{"type":["integer","null"]}, "coverage_gaps":{"type":["integer","null"]}
+                    }
+                }}}
+            }
+        }),
+        &result,
+    );
+    assert_eq!(result["metadata"]["capture_scope"], scope);
+    assert_eq!(result["is_complete"], true);
+
+    // 即使文件末尾碰巧是 ret，也不能弥补缺失或互相矛盾的运行时证据。
+    for (key, value) in [
+        ("entry_complete", Value::Null),
+        ("return_observed", Value::Null),
+        ("coverage_gaps", json!(1)),
+        ("coverage_gaps", Value::Null),
+        ("first_pc", json!("0xffff")),
+        ("expected_entry_pc", json!("0xffff")),
+    ] {
+        meta["capture_scope"] = scope.clone();
+        meta["capture_scope"][key] = value;
+        std::fs::write(&path, meta.to_string()).unwrap();
+        assert_eq!(
+            common::run_json(&["info", call.to_str().unwrap()])["is_complete"],
+            false,
+            "{key}"
+        );
+    }
+    // 尾调用进入范围外函数后正常返回：末条可以是 b，onLeave 才是返回证据。
+    let trace_path = call.join("trace.bin");
+    let mut bytes = std::fs::read(&trace_path).unwrap();
+    let end = bytes.len();
+    bytes[end - 4..].copy_from_slice(&0x14000000u32.to_le_bytes());
+    std::fs::write(trace_path, bytes).unwrap();
+    meta["capture_scope"] = scope;
+    std::fs::write(&path, meta.to_string()).unwrap();
+    let result = common::run_json(&["info", call.to_str().unwrap()]);
+    assert_eq!(result["last_insn_is_ret"], false);
+    assert_eq!(result["is_complete"], true);
+}
+
+#[test]
 fn persisted_fork_jsonl_uses_bounded_cursor_and_preserves_legacy_meta_support() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
