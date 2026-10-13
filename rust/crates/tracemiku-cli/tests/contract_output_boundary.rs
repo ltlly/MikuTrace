@@ -22,13 +22,16 @@ fn output_map_missing_key_fails_with_explanation() {
         ])
         .output()
         .expect("run tracemiku-cli");
-    // Contract: an unknown output key is a hard failure with a stderr
-    // explanation — never a fabricated empty report.
+    // 未知输出 key 必须以结构化错误退出，不能伪造空报告。
     assert!(!out.status.success(), "missing key must fail");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1));
+    let failure: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(failure["status"], "error");
+    assert_eq!(failure["error"]["code"], "command_failed");
+    let message = failure["error"]["message"].as_str().unwrap();
     assert!(
-        stderr.contains("no NewStringUTF key/value pair matched"),
-        "stderr explains the miss: {stderr}"
+        message.contains("no NewStringUTF key/value pair matched"),
+        "error.message explains the miss: {message}"
     );
 }
 

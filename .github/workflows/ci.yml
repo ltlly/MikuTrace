@@ -11,12 +11,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# NOTE: clippy runs with `-D warnings` on library code only (--lib). The
-# decompiler pipeline (decompiler/llil/mlil/hlil) is a separate product area
-# and is excluded from the strict baseline via module-level allows in
-# tracemiku-core/src/lib.rs; its tests/examples still emit style warnings.
-# Keep this in sync with the `clippy` step in `make test-contract`.
-
 jobs:
   rust:
     name: rust (fmt + clippy + tests)
@@ -38,26 +32,10 @@ jobs:
         run: cargo clippy --workspace --lib -- -D warnings
       - name: test core
         run: cargo test -p tracemiku-core
-      - name: test server
-        run: cargo test -p tracemiku-server
       - name: test cli
         run: cargo test -p tracemiku-cli
-
-  frontend:
-    name: frontend (build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run build
+      - name: command coverage
+        run: cargo build -p tracemiku-cli --bin tracemiku-cli && python3 ../scripts/contract_audit.py
 
   tracer:
     name: tracer (typecheck)
@@ -74,3 +52,15 @@ jobs:
           cache-dependency-path: tracer/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: node --experimental-strip-types tests/record_contract_test.ts
+      - run: node --experimental-strip-types tests/external_writes_contract_test.ts
+      - run: node --experimental-strip-types tests/plugins_transport_test.ts
+
+  host:
+    name: host (offline capture flow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra test
+      - run: make py-compile host-tests

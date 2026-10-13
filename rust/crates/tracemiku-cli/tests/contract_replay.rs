@@ -6,7 +6,7 @@ fn trace_replay_matches_typed_schema_and_checks_only_contiguous_transitions() {
     let out = run_json(&["trace-replay", cd.to_str().unwrap(), "--count", "9"]);
     assert_valid(
         serde_json::to_value(schemars::schema_for!(
-            tracemiku_cli::output_types::ReplayReport
+            tracemiku_core::analysis::reports::output_types::ReplayReport
         ))
         .unwrap(),
         &out,
@@ -64,7 +64,7 @@ fn replay_after_syscall_does_not_certify_stale_memory() {
     ]);
     assert_valid(
         serde_json::to_value(schemars::schema_for!(
-            tracemiku_cli::output_types::ReplayReport
+            tracemiku_core::analysis::reports::output_types::ReplayReport
         ))
         .unwrap(),
         &out,

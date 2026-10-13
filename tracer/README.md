@@ -44,5 +44,5 @@ npm --prefix tracer run build
 make test-device
 ```
 
-格式或 sidecar 变化还需验证 host 拉取、`meta.json`、Rust core、server 和显示。真机不可用
+格式或 sidecar 变化还需验证 host 拉取、`meta.json`、Rust core 和 CLI。真机不可用
 时不能宣称链路已完整验证。

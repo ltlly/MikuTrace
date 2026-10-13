@@ -4,7 +4,6 @@
 - 设备只在非默认 adb server 上可见时, 各调用点必须带上 -P / -s
 - Stalker 满载时 root 探测会超时, 不得让整条拉取链失败, 且结论只探测一次
 """
-import importlib.util
 import pathlib
 import subprocess
 import sys

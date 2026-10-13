@@ -47,9 +47,13 @@ fn mem_tenet_zero_length_is_error() {
         .output()
         .expect("run tracemiku-cli");
     assert!(!out.status.success(), "len 0 must fail");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1));
+    let failure: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(failure["status"], "error");
+    assert_eq!(failure["error"]["code"], "command_failed");
+    let message = failure["error"]["message"].as_str().unwrap();
     assert!(
-        stderr.contains("out of range"),
-        "stderr explains the failure: {stderr}"
+        message.contains("out of range"),
+        "error.message explains the failure: {message}"
     );
 }

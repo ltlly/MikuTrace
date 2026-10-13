@@ -1,6 +1,6 @@
 """Contract-test coverage guard.
 
-Every CLI command family and every server route that should have a contract
+Every CLI command family and every core query that should have a contract
 test must be covered by a black-box test file that contains test functions.
 Exit 0 = complete; exit 1 = gaps (listed as JSON on stdout).
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CLI = REPO / "rust" / "crates" / "tracemiku-cli" / "tests"
-SVR = REPO / "rust" / "crates" / "tracemiku-server" / "tests"
+CORE = REPO / "rust" / "crates" / "tracemiku-core" / "tests"
 
 # CLI command families -> contract test file that must exist and contain tests.
 # Keys are public commands from ./tracemiku; values are test files (no suffix).
@@ -33,7 +33,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "record": ["contract_query"],
     "resolve": ["contract_query"],
     "search": ["contract_query"],
-    "search-pc": ["contract_query"],
     "reg-at": ["contract_query"],
     "reg-value-at": ["contract_query"],
     "last-write-of-reg": ["contract_query"],
@@ -44,7 +43,7 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "string-provenance": ["contract_query"],
     "mem-dump": ["contract_query"],
     "mem-export": ["contract_query"],
-    "mem-tenet": ["contract_tenet"],
+    "mem-tenet": ["contract_tenet", "contract_offline"],
     "find-mem-pattern": ["contract_query"],
     "taint-bwd": ["contract_query"],
     "taint-fwd": ["contract_query"],
@@ -64,7 +63,6 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "hash-finalize-detect": ["contract_query"],
     "hash-input-search": ["contract_query"],
     "diff-traces": ["contract_query"],
-    "asm-tokens-for-pcs": ["contract_query"],
     "auto-phase-detect": ["contract_query"],
     "jni-calls": ["contract_query"],
     "jni-events": ["contract_query"],
@@ -84,7 +82,7 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "call-chain": ["contract_query"],
     "watch": ["contract_query"],
     "output-backtrace": ["contract_output"],
-    "output-map": ["contract_output"],
+    "output-map": ["contract_output", "contract_output_boundary"],
     "byte-lineage": ["contract_output"],
     "vm-slice": ["contract_vm"],
     "vm-ops": ["contract_vm"],
@@ -102,63 +100,56 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "resolve-trace-addr": ["contract_basic"],
 }
 
-# Server routes -> contract test files that cover them. Values are existing or
-# new test files. Routes without dedicated behavior tests land in the new
-# contract_routes_1/2 files.
-ROUTE_COVERAGE: dict[str, list[str]] = {
-    "analysis_index": ["contract_routes_1"],
-    "asm_tokens": ["asm_tokens_tests"],
-    "auto_phase": ["auto_phase_tests"],
-    "backward_taint": ["test_taint_routes"],
-    "bfs_slice": ["bfs_slice_tests"],
-    "bn_hlil": ["bn_sidecar_tests"],
-    "call_tree": ["test_call_tree_route"],
-    "cfg": ["cfg_endpoint_tests"],
-    "cfg_svg": ["cfg_endpoint_tests"],
-    "coverage": ["coverage_contract_tests"],
-    "crypto_analysis": ["crypto_scan_tests"],
-    "crypto_scan": ["crypto_scan_tests"],
-    "data_chase": ["data_chase_tests"],
-    "dep_graph": ["dep_graph_tests"],
-    "diff_traces": ["diff_traces_tests"],
-    "fn_summary": ["fn_summary_tests"],
-    "fork_events": ["fork_events_tests"],
-    "forward_dep_tree": ["forward_dep_tree_tests"],
-    "forward_taint": ["test_taint_routes"],
-    "functions": ["functions_tests"],
-    "hash_finalize": ["hash_finalize_tests"],
-    "hash_input_search": ["hash_input_search_tests"],
-    "idxs_for_block": ["cfg_endpoint_tests"],
-    "idxs_for_pc": ["idxs_for_pc_tests"],
-    "indirect_targets": ["contract_routes_1", "indirect_targets_boundary_tests"],
-    "jni_calls": ["jni_calls_tests"],
-    "jni_events": ["jni_events_tests"],
-    "jni_strings": ["jni_strings_tests"],
-    "jobj_history": ["jobj_history_tests"],
-    "last_write_of_reg": ["functions_tests"],
-    "trace_replay": ["trace_replay_tests"],
-    "mem_dump": ["mem_dump_tests"],
-    "mem_export": ["contract_routes_1"],
-    "mem_flow": ["mem_flow_tests"],
-    "memory_query": ["memory_query_tests"],
-    "meta": ["meta_endpoint"],
-    "navigation": ["navigation_tests"],
-    "next_use_of_reg": ["functions_tests"],
-    "ollvm_detect_vm": ["ollvm_detect_vm_tests"],
-    "query": ["query_tests"],
-    "record": ["records_endpoint"],
-    "records": ["records_endpoint"],
-    "reg_at": ["contract_routes_1"],
-    "reg_value_at": ["inspect_endpoint_tests"],
-    "resolve": ["records_endpoint", "dep_graph_tests"],
-    "search": ["search_tests"],
-    "search_pc": ["search_pc_tests"],
-    "seed_resolver": ["dep_graph_tests", "bfs_slice_tests", "forward_dep_tree_tests"],
-    "so_stats": ["inspect_endpoint_tests"],
-    "string_provenance": ["string_provenance_tests"],
-    "strings": ["strings_tests"],
-    "timeline_diff": ["timeline_diff_tests"],
-    "watchpoints": ["watchpoints_tests"],
+# 核心查询与其独立 fixture 断言；不依赖 HTTP 或浏览器。
+QUERY_COVERAGE: dict[str, list[str]] = {
+    "analysis_index": ["analysis/contract_queries_1"],
+    "auto_phase": ["analysis/auto_phase_tests"],
+    "backward_taint": ["analysis/test_taint_queries"],
+    "bfs_slice": ["analysis/bfs_slice_tests"],
+    "call_tree": ["analysis/test_call_tree_query"],
+    "cfg": ["analysis/cfg_queries_tests"],
+    "coverage": ["analysis/coverage_contract_tests"],
+    "crypto_analysis": ["analysis/crypto_scan_tests"],
+    "crypto_scan": ["analysis/crypto_scan_tests"],
+    "data_chase": ["analysis/data_chase_tests"],
+    "dep_graph": ["analysis/dep_graph_tests"],
+    "diff_traces": ["analysis/diff_traces_tests"],
+    "fn_summary": ["analysis/fn_summary_tests"],
+    "fork_events": ["analysis/fork_events_tests"],
+    "forward_dep_tree": ["analysis/forward_dep_tree_tests"],
+    "forward_taint": ["analysis/test_taint_queries"],
+    "functions": ["analysis/functions_tests"],
+    "hash_finalize": ["analysis/hash_finalize_tests"],
+    "hash_input_search": ["analysis/hash_input_search_tests"],
+    "idxs_for_block": ["analysis/cfg_queries_tests"],
+    "idxs_for_pc": ["analysis/idxs_for_pc_tests"],
+    "indirect_targets": ["analysis/contract_queries_1", "analysis/indirect_targets_boundary_tests"],
+    "jni_calls": ["analysis/jni_calls_tests"],
+    "jni_events": ["analysis/jni_events_tests"],
+    "jni_strings": ["analysis/jni_strings_tests"],
+    "jobj_history": ["analysis/jobj_history_tests"],
+    "last_write_of_reg": ["analysis/functions_tests"],
+    "trace_replay": ["analysis/trace_replay_tests"],
+    "mem_dump": ["analysis/mem_dump_tests"],
+    "mem_export": ["analysis/contract_queries_1"],
+    "mem_flow": ["analysis/mem_flow_tests"],
+    "memory_query": ["analysis/memory_query_tests"],
+    "meta": ["analysis/meta_queries"],
+    "navigation": ["analysis/navigation_tests"],
+    "next_use_of_reg": ["analysis/functions_tests"],
+    "ollvm_detect_vm": ["analysis/ollvm_detect_vm_tests"],
+    "record": ["analysis/records_queries"],
+    "records": ["analysis/records_queries"],
+    "reg_at": ["analysis/contract_queries_1"],
+    "reg_value_at": ["analysis/inspect_queries_tests"],
+    "resolve": ["analysis/records_queries", "analysis/dep_graph_tests"],
+    "search": ["analysis/search_tests"],
+    "seed_resolver": ["analysis/dep_graph_tests", "analysis/bfs_slice_tests", "analysis/forward_dep_tree_tests"],
+    "so_stats": ["analysis/inspect_queries_tests"],
+    "string_provenance": ["analysis/string_provenance_tests"],
+    "strings": ["analysis/strings_tests"],
+    "timeline_diff": ["analysis/timeline_diff_tests"],
+    "watchpoints": ["analysis/watchpoints_tests"],
 }
 
 
@@ -167,7 +158,7 @@ def file_has_tests(root: Path, name: str) -> bool:
     if not path.exists():
         return False
     text = path.read_text()
-    return "#[test]" in text or "#[tokio::test]" in text
+    return "#[test]" in text
 
 
 def check_coverage(mapping: dict[str, list[str]], root: Path) -> list[str]:
@@ -200,7 +191,9 @@ def live_cli_commands() -> list[str]:
 
 def main() -> int:
     cli_gaps = check_coverage(CLI_COVERAGE, CLI)
-    route_gaps = check_coverage(ROUTE_COVERAGE, SVR)
+    query_gaps = check_coverage(QUERY_COVERAGE, CORE)
+    invariant_gaps = [name for name in ("contract_entrypoint", "contract_offline")
+                      if not file_has_tests(CLI, name)]
     # Cross-check the declared command mapping against the real binary so a
     # renamed/removed command cannot silently leave a stale audit entry.
     try:
@@ -214,16 +207,17 @@ def main() -> int:
     report = {
         "cli_commands_covered": len(CLI_COVERAGE) - len(cli_gaps),
         "cli_commands_total": len(CLI_COVERAGE),
-        "server_routes_covered": len(ROUTE_COVERAGE) - len(route_gaps),
-        "server_routes_total": len(ROUTE_COVERAGE),
+        "core_queries_covered": len(QUERY_COVERAGE) - len(query_gaps),
+        "core_queries_total": len(QUERY_COVERAGE),
         "cli_gaps": cli_gaps,
-        "route_gaps": route_gaps,
+        "query_gaps": query_gaps,
+        "invariant_gaps": invariant_gaps,
         "cli_mapping_stale": stale,
         "cli_mapping_missing": missing,
     }
     print(json.dumps(report, indent=2, sort_keys=True))
     stale_ok = not stale and not missing
-    return 0 if not cli_gaps and not route_gaps and stale_ok else 1
+    return 0 if not cli_gaps and not query_gaps and not invariant_gaps and stale_ok else 1
 
 
 if __name__ == "__main__":

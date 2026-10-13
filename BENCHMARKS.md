@@ -9,7 +9,7 @@
 |---|---:|
 | 9.2 万条记录解析 | 约 2.35 秒 |
 
-这些数字不是 CI 硬阈值，因为真实 trace、CPU 和 Binary Ninja 环境不同。任何性能改动
+这些数字不是 CI 硬阈值，因为真实 trace、CPU 和缓存状态不同。任何性能改动
 至少应报告同机修改前后结果、输入记录数、是否命中 sidecar 缓存和输出是否截断。
 
 ## 验证命令
@@ -17,8 +17,7 @@
 ```bash
 make test-fast
 make test-v2
-make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces --timeout 300'
-uv run python scripts/web_api_perf_probe.py http://127.0.0.1:18900 --visible-ui-only
+make test-contract
 cd rust && cargo test --workspace -- --list
 ```
 

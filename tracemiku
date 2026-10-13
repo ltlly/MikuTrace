@@ -782,7 +782,7 @@ def cmd_trace(args):
                     elif t == "fork-events":
                         # P1-C M1: agent 端 fork/clone hook 抓到的 fork-event Tier 1.
                         # 写入 per-call meta.json `fork_events` 数组, Rust API 通过
-                        # /api/fork-events + CLI wrapper 暴露.
+                        # fork-events 分析命令暴露.
                         ci = p.get("callIdx") or 0
                         if ci not in sess_files:
                             open_call(ci, p.get("tid", 0), pid)

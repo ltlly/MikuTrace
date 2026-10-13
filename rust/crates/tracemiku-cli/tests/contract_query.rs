@@ -110,6 +110,12 @@ fn functions_matches_schema() {
         }),
         &value,
     );
+    assert!(value["counts"].get("bn").is_none());
+    for function in value["functions"].as_array().unwrap() {
+        assert!(function.get("bn_start").is_none());
+        assert!(function.get("can_bn_hlil").is_none());
+        assert_eq!(function["source"], "symbol");
+    }
 }
 
 #[test]

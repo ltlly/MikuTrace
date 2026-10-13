@@ -1,19 +1,15 @@
 # traceMiku 路线图
 
 本文件只记录尚未完成且已确认属于产品方向的工作。维护范围为 trace 采集与离线分析
-CLI；需求、当前依赖及裁剪验收见 [采集与 CLI 设计](docs/CLI_FIRST_DESIGN.md)。
+CLI；需求、当前依赖及验证边界见 [采集与 CLI 设计](docs/CLI_FIRST_DESIGN.md)。
 完成历史由 Git 保存，不在此堆积。
 
-## P0 分析 CLI 独立运行
+## P0 CLI 契约与资源
 
-- [ ] 将保留查询所需的 trace、索引、符号与按需缓存从 server AppState 解耦；
-  CLI 直接调用 core，依赖树不再包含 server、Axum 或 Tower。
-- [ ] 将保留的 route 分析语义以及 CLI 中 VM/lineage 的计算语义迁入 core；保留
-  对应边界测试，迁移期间锁定现有 JSON 字段与含义。超长源文件先按职责拆分。
-- [ ] 在保留能力通过离线验收后裁剪 frontend、HTTP/OpenAPI、Web 状态与 SVG 设施；
-  移除内部 BN 桥接，同步收敛 Makefile、CI、依赖、文档和契约覆盖声明。
-- [ ] 统一保留分析命令的错误/退出语义，补齐可增长输出的截断与继续查询信息；
-  按真实查询任务继续评估语义重叠，命令变更只在 FEATURES 汇总维护。
+- [ ] 进一步细分组合报告的 `command_failed` 错误码，并统一 host、Rust 执行失败与
+  旧查询结果内 `status=error` 的退出语义；保留参数错误与正常未命中的区别。
+- [ ] 补齐仍可增长输出的预算、截断与继续查询信息，评估目录枚举、组合报告与全量索引的资源
+  上限；按真实 AI 查询任务继续识别语义重复。
 
 ## P1 采集可靠性
 

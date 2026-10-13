@@ -84,13 +84,6 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = 30)]
         limit: usize,
     },
-    /// 按 PC 搜。
-    SearchPc {
-        trace_dir: PathBuf,
-        pc: String,
-        #[arg(long, default_value_t = 0)]
-        limit: usize,
-    },
     /// 反汇编/操作数正则搜索。
     Search {
         trace_dir: PathBuf,
@@ -799,13 +792,6 @@ pub(super) enum Cmd {
         #[arg(long, default_value_t = false)]
         show_per_byte: bool,
     },
-    /// 批量 PC 的汇编 token。
-    AsmTokensForPcs {
-        trace_dir: PathBuf,
-        /// Comma-separated PCs.
-        #[arg(long)]
-        pcs: String,
-    },
     /// 自动检测执行阶段。
     AutoPhaseDetect {
         trace_dir: PathBuf,
@@ -1352,4 +1338,20 @@ pub(super) enum Cmd {
         /// Run directory (contains calls/).
         path: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(super) enum HitOrder {
+    Earliest,
+    Nearest,
+    Latest,
+}
+impl From<HitOrder> for core_reports::HitOrder {
+    fn from(value: HitOrder) -> Self {
+        match value {
+            HitOrder::Earliest => Self::Earliest,
+            HitOrder::Nearest => Self::Nearest,
+            HitOrder::Latest => Self::Latest,
+        }
+    }
 }

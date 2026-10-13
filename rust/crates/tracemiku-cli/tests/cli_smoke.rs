@@ -304,17 +304,6 @@ fn inspect_wrappers_use_server_wire_shape() {
     let (_tmp, cd) = synth_call_dir();
 
     let v = run_json(&[
-        "search-pc".into(),
-        cd.display().to_string(),
-        "0x100000".into(),
-        "--limit".into(),
-        "1".into(),
-    ]);
-    assert_eq!(v["pc"], "0x100000");
-    assert_eq!(v["count"], 1);
-    assert_eq!(v["idxs"], serde_json::json!([0]));
-
-    let v = run_json(&[
         "idxs-for-pc".into(),
         cd.display().to_string(),
         "0x100000".into(),
@@ -1074,7 +1063,7 @@ fn byte_lineage_origin_classifies_sources() {
     let tmp = tempfile::tempdir().unwrap();
     let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
 
-    // ExternalWrite 种子先注入：确保任何 router 构建（含 sidecar 缓存）都包含它
+    // ExternalWrite 种子先注入：确保任何分析上下文加载（含 sidecar 缓存）都包含它
     append_external_write(&cd, 5, 0x7001, b'X');
 
     // Register: 0x7000 的链 = last_write(strb w0, kind=w, src_reg=w0) -> reg_source(w0)

@@ -47,11 +47,8 @@ dist/
 !/tools/native_sign_hooks_v4.js
 !/tools/vm_replay_plan_eval.py
 
-# v2 Rust + frontend (added 2026-05-03)
+# Rust build output
 rust/target/
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
 uv.lock
 # Tracer (frida-compile)
 tracer/node_modules/

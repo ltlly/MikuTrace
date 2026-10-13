@@ -1,0 +1,81 @@
+use super::analysis_support;
+use std::fs;
+use std::path::PathBuf;
+use tracemiku_core::analysis::AnalysisContext;
+
+fn synth_call_dir(spacing: u64) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_4r_1ms");
+    fs::create_dir_all(&cd).unwrap();
+    let mut buf = vec![0u8; 272 * 4];
+    for i in 0..4 {
+        let off = i * 272;
+        let pc = 0x100000u64 + i as u64 * 4;
+        let x1 = 0x7000u64 + i as u64 * spacing;
+        buf[off..off + 8].copy_from_slice(&pc.to_le_bytes());
+        buf[off + 8..off + 16].copy_from_slice(&(0x41424344u64 + i as u64).to_le_bytes());
+        buf[off + 16..off + 24].copy_from_slice(&x1.to_le_bytes());
+        buf[off + 256..off + 264].copy_from_slice(&0x8000u64.to_le_bytes());
+        buf[off + 268..off + 272].copy_from_slice(&0xf9000020u32.to_le_bytes());
+        // str x0,[x1]
+    }
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+
+fn get(call_dir: PathBuf, uri: &str) -> (Option<&'static str>, serde_json::Value) {
+    let app = AnalysisContext::load(call_dir).expect("load analysis context");
+    let resp = analysis_support::query(&app, uri, None);
+    let status = resp.error_code();
+    let body = resp.bytes();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+#[test]
+fn hash_finalize_detects_contiguous_digest_region() {
+    let (_tmp, cd) = synth_call_dir(8);
+    let (status, v) = get(cd, "hash-finalize-detect?window=10&min_size=16");
+    assert_eq!(status, None);
+    assert_eq!(v["window"], 10);
+    assert_eq!(v["min_size"], 16);
+    assert_eq!(v["limit"], 500);
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["truncated"], false);
+    assert_eq!(v["candidates"][0]["addr"], "0x7000");
+    assert_eq!(v["candidates"][0]["size"], 32);
+    assert_eq!(v["candidates"][0]["enter_idx"], 0);
+    assert_eq!(v["candidates"][0]["exit_idx"], 3);
+    assert_eq!(v["candidates"][0]["kind"], "mixed");
+    assert_eq!(v["candidates"][0]["guess"], "sha256");
+}
+
+#[test]
+fn hash_finalize_ignores_non_contiguous_writes() {
+    let (_tmp, cd) = synth_call_dir(16);
+    let (status, v) = get(cd, "hash-finalize-detect?window=10&min_size=16");
+    assert_eq!(status, None);
+    assert_eq!(v["count"], 0);
+}
+
+#[test]
+fn hash_finalize_limits_returned_candidates_without_losing_total() {
+    let (_tmp, cd) = synth_call_dir(16);
+    let (status, v) = get(cd, "hash-finalize-detect?window=10&min_size=4&limit=2");
+    assert_eq!(status, None);
+    assert_eq!(v["count"], 4);
+    assert_eq!(v["returned"], 2);
+    assert_eq!(v["limit"], 2);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["candidates"].as_array().unwrap().len(), 2);
+}

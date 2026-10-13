@@ -1,4 +1,4 @@
-"""Build a persistent synth trace for browser smoke test and contract tests.
+"""Build a persistent synth trace for offline CLI smoke and contract tests.
 
 Creates /tmp/tracemiku_smoke/run/calls/call_001_tid100_9r_2ms/ with the
 trace_root_two_callees fixture shape: f_root calls f_alpha then f_beta.

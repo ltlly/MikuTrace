@@ -1,7 +1,7 @@
 //! meta 三值语义 + finalize 恢复的唯一验证点。
 //!
 //! 覆盖 2026-10 真机上确认的阻塞点：拉取失败写出的 `last_insn_is_ret: null`
-//! 曾让所有 AppState 消费方报 `invalid type: null, expected a boolean`，
+//! 曾让所有 trace 元数据消费方报 `invalid type: null, expected a boolean`，
 //! 数据在盘上却整条分析链不可用。
 
 use std::fs;

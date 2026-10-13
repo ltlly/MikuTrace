@@ -1,11 +1,4 @@
-//! Unified FunctionIndex consumed by the SPA Functions panel and CLI.
-//!
-//! Stable id format:
-//!   - `symaddr:<hex_addr>` for symbol/module functions
-//!   - `bn:<hex_addr>`
-//!
-//! Legacy aliases the parser still accepts:
-//!   - `cfg:<name>` → ("sym", "<name>")
+//! 运行时符号与 CFG 的函数索引。标识支持 sym:<name> 和 symaddr:<hex_addr>。
 
 use std::collections::BTreeMap;
 
@@ -13,8 +6,6 @@ use serde::Serialize;
 
 const SYM_PREFIX: &str = "sym:";
 const SYMADDR_PREFIX: &str = "symaddr:";
-const BN_PREFIX: &str = "bn:";
-const LEGACY_CFG_PREFIX: &str = "cfg:";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -22,8 +13,6 @@ pub enum ParseError {
     Empty,
     #[error("empty {0} payload: {1:?}")]
     EmptyPayload(&'static str, String),
-    #[error("bn payload is not valid hex: {0:?}")]
-    BnNotHex(String),
     #[error("symaddr payload is not valid hex: {0:?}")]
     SymAddrNotHex(String),
     #[error("unrecognized fn_id: {0:?}")]
@@ -49,20 +38,7 @@ pub fn parse_id(fn_id: &str) -> Result<(String, String), ParseError> {
             .map_err(|_| ParseError::SymAddrNotHex(fn_id.to_string()))?;
         return Ok(("symaddr".to_string(), payload.to_string()));
     }
-    if let Some(payload) = fn_id.strip_prefix(BN_PREFIX) {
-        if payload.is_empty() {
-            return Err(ParseError::EmptyPayload("bn", fn_id.to_string()));
-        }
-        let hex_part = payload.trim_start_matches("0x").trim_start_matches("0X");
-        u64::from_str_radix(hex_part, 16).map_err(|_| ParseError::BnNotHex(fn_id.to_string()))?;
-        return Ok(("bn".to_string(), payload.to_string()));
-    }
-    if let Some(payload) = fn_id.strip_prefix(LEGACY_CFG_PREFIX) {
-        if payload.is_empty() {
-            return Err(ParseError::EmptyPayload("cfg", fn_id.to_string()));
-        }
-        return Ok(("sym".to_string(), payload.to_string()));
-    }
+
     Err(ParseError::Unrecognized(fn_id.to_string()))
 }
 
@@ -72,10 +48,6 @@ pub fn make_sym_id(name: &str) -> String {
 
 pub fn make_sym_addr_id(addr: u64) -> String {
     format!("{SYMADDR_PREFIX}{addr:#x}")
-}
-
-pub fn make_bn_id(addr: u64) -> String {
-    format!("{BN_PREFIX}{addr:#x}")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,8 +60,6 @@ pub struct FunctionEntry {
     pub records: u64,
     pub module: Option<String>,
     pub entry_rel: Option<u64>,
-    pub bn_start: Option<u64>,
-    pub can_bn_hlil: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -123,16 +93,7 @@ impl FunctionIndex {
                     .iter()
                     .find(|e| e.source == "symbol" && e.entry_pc == Some(addr))
             }
-            "bn" => {
-                let addr = u64::from_str_radix(
-                    payload.trim_start_matches("0x").trim_start_matches("0X"),
-                    16,
-                )
-                .ok()?;
-                self.entries
-                    .iter()
-                    .find(|e| e.source == "bn" && e.bn_start == Some(addr))
-            }
+
             _ => None,
         }
     }
@@ -183,8 +144,6 @@ pub fn build_from_symbols(
             records,
             module,
             entry_rel,
-            bn_start: None,
-            can_bn_hlil: false,
         });
     }
     FunctionIndex { entries }

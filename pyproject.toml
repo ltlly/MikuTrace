@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tracemiku"
 version = "0.3.0"
-description = "ARM64 JNI trace pipeline (Frida agent + Rust analysis server + Solid Web UI) for Android RE/security research."
+description = "Android ARM64 runtime tracing and offline analysis CLI."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "ltlly" }]
@@ -20,11 +20,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 仓库自带检查工具的依赖（make lint / host pytest / make smoke-ui）。
+# 仓库自带检查工具的依赖（make lint / host pytest）。
 # ruff 锁 minor 版本：lint 规则集跟随 ruff 默认 select，跨 minor 升级可能
 # 改变判定结果，升级需 deliberate 并修复新告警。
 test = [
-    "playwright>=1.40",
     "pytest>=8",
     "ruff>=0.16,<0.17",
 ]
@@ -55,7 +54,7 @@ Homepage = "https://github.com/ltlly/traceMiku"
 
 [tool.setuptools]
 # This Python project is dependency/runtime glue for the top-level wrapper.
-# Runtime analysis and the web UI live in Rust crates plus frontend/.
+# Runtime analysis lives in tracemiku-core and is exposed by the CLI.
 py-modules = []
 
 # pytest config lives in pytest.ini (pytest reads that first; pyproject.toml

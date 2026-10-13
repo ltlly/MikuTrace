@@ -1,0 +1,94 @@
+use super::analysis_support;
+use tracemiku_core::analysis::AnalysisContext;
+use tracemiku_core::trace::Record;
+fn fixture(inst: u32, observed_x0: u64) -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp.path().join("run/calls/call_001_tid1_2r_1ms");
+    std::fs::create_dir_all(&cd).unwrap();
+    let mut before = Record::zero(0x1000);
+    before.inst = inst;
+    let mut after = Record::zero(0x1004);
+    after.inst = 0xd503201f;
+    after.regs[0] = observed_x0;
+    let mut raw = Vec::new();
+    for r in [before, after] {
+        raw.extend(r.pc.to_le_bytes());
+        for v in r.regs {
+            raw.extend(v.to_le_bytes());
+        }
+        raw.extend(r.sp.to_le_bytes());
+        raw.extend(r.nzcv.to_le_bytes());
+        raw.extend(r.inst.to_le_bytes());
+    }
+    std::fs::write(cd.join("trace.bin"), raw).unwrap();
+    std::fs::write(cd.join("meta.json"), r#"{"records":2}"#).unwrap();
+    std::fs::write(
+        tmp.path().join("run/meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x1000","size":4096}}"#,
+    )
+    .unwrap();
+    (tmp, cd)
+}
+#[test]
+fn replay_success_and_divergence_are_distinct() {
+    for (observed, status) in [(1, "matched"), (2, "diverged")] {
+        let (_tmp, cd) = fixture(0xd2800020, observed);
+        let app = AnalysisContext::load(cd).unwrap();
+        let response = analysis_support::query(&app, "trace-replay?count=1", None);
+        assert_eq!(response.error_code(), None);
+        let body = response.bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], status);
+        assert_eq!(json["checked"], if observed == 1 { 1 } else { 0 });
+        if observed != 1 {
+            assert_eq!(json["stop"]["reason"], "register_mismatch");
+        }
+    }
+}
+#[test]
+fn replay_rejects_empty_and_out_of_range_queries() {
+    for query in ["count=0", "start=2", "start=-1"] {
+        let (_tmp, cd) = fixture(0xd503201f, 0);
+        let app = AnalysisContext::load(cd).unwrap();
+        let response = analysis_support::query(&app, format!("trace-replay?{query}"), None);
+        assert_eq!(response.error_code(), Some("invalid_argument"));
+    }
+}
+
+#[test]
+fn replay_reports_stale_memory_after_syscall_as_missing_evidence() {
+    let (_tmp, cd) = fixture(0xd4000001, 65);
+    let mut records = Vec::new();
+    for (idx, inst) in [0xf9000020, 0xd4000001, 0xf9400020, 0xd503201f]
+        .into_iter()
+        .enumerate()
+    {
+        let mut rec = Record::zero(0x1000 + idx as u64 * 4);
+        rec.inst = inst;
+        rec.regs[0] = 65;
+        rec.regs[1] = 0x7000;
+        records.push(rec);
+    }
+    let mut raw = Vec::new();
+    for rec in records {
+        raw.extend(rec.pc.to_le_bytes());
+        for value in rec.regs {
+            raw.extend(value.to_le_bytes());
+        }
+        raw.extend(rec.sp.to_le_bytes());
+        raw.extend(rec.nzcv.to_le_bytes());
+        raw.extend(rec.inst.to_le_bytes());
+    }
+    std::fs::write(cd.join("trace.bin"), raw).unwrap();
+    std::fs::write(cd.join("meta.json"), r#"{"records":4}"#).unwrap();
+    let context = AnalysisContext::load(cd).unwrap();
+    let response = analysis_support::query(&context, "trace-replay?start=2&count=1", None);
+    assert_eq!(response.error_code(), None);
+    let body = response.bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "stopped");
+    assert_eq!(json["checked"], 0);
+    assert_eq!(json["stop"]["reason"], "unknown_memory");
+    assert_eq!(json["stop"]["next_capture"]["addr"], 0x7000);
+    assert_eq!(json["stop"]["next_capture"]["size"], 8);
+}

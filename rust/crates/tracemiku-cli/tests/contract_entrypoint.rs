@@ -15,6 +15,8 @@ const RETIRED: &[&str] = &[
     "api",
     "query",
     "search-asm",
+    "search-pc",
+    "asm-tokens-for-pcs",
     "reg-at-idx",
     "bg-status",
     "decomp-status",

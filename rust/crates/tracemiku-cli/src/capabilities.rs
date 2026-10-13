@@ -17,6 +17,8 @@ pub(super) fn capabilities_json() -> serde_json::Value {
             "stdout": "one JSON document for analysis commands; list requires --json; completions emits shell source",
             "stderr": "diagnostics only",
             "success_exit_code": 0,
+            "analysis_error": {"exit_code": 1, "stdout": "{status: error, error: {code, message, details?}}"},
+            "usage_error": {"exit_code": 2, "stderr": "argument parser diagnostic"},
             "address_default": "hexadecimal; use the command help for explicit decimal syntax",
             "preferred_interface": "specialized commands through ./tracemiku"
         },

@@ -20,8 +20,8 @@ pub use crate::forward_dep_tree::{
     UserEdge,
 };
 pub use crate::function_index::{
-    build_from_symbols as build_function_index, make_bn_id, make_sym_addr_id, make_sym_id,
-    parse_id, FunctionEntry, FunctionIndex,
+    build_from_symbols as build_function_index, make_sym_addr_id, make_sym_id, parse_id,
+    FunctionEntry, FunctionIndex,
 };
 pub use crate::hashfin::{hash_finalize_detect, HashFinalizeCandidate};
 pub use crate::index::{Index, MemRec};

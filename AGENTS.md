@@ -11,32 +11,26 @@ traceMiku 是 Android 真机 ARM64 指令级动态追踪与分析工具。核心
 调用边界。项目通过 `(SO, 静态偏移)` 与 IDA、Ghidra、Binary Ninja 等静态工具协作，
 不绑定其中任何一家。
 
-维护方向收敛为 trace 采集与离线分析 CLI，需求与裁剪边界见
-`docs/CLI_FIRST_DESIGN.md`，未完成工作只记录在 `TODO.md`。以下描述现存实现；
-server 与 frontend 属于待裁剪范围。迁移前仍需遵守它们的安全与验证约束，新增
-分析不得继续增加对 server 的依赖。
+维护范围为 trace 采集与离线分析 CLI，设计契约见 `docs/CLI_FIRST_DESIGN.md`，
+未完成工作只记录在 `TODO.md`。
 
-当前运行架构（尚未完成 CLI 解耦）：
+当前运行架构：
 
 - `tracer/`：Frida 设备端采集器。入口是由 TypeScript 编译生成的 `_agent.js`。
 - `rust/crates/tracemiku-core/`：Trace 解析、反汇编、索引、CFG、污点和 MemShadow
   分析的唯一实现源。
 - `rust/crates/tracemiku-cli/`：面向 AI 和脚本的结构化 JSON 命令。
-- `rust/crates/tracemiku-server/`：Axum API、任务调度、静态前端和 BN sidecar 桥接。
-- `frontend/`：Solid + Vite Web UI，现为待裁剪的历史展示层。
 - `tracemiku`：统一入口；不要要求用户直接调用内部 Rust 二进制。
 
 ## 不可破坏的边界
 
-- 不恢复已删除的 Python viewer、FastAPI WebUI 或终端 UI。
-- 不增加项目专用 MCP server。AI 入口是统一 CLI 的 JSON；现有 REST/OpenAPI 随
-  Web 裁剪，迁移前继续锁定其契约。
+- 不恢复 Web UI、HTTP/OpenAPI、反编译桥接或终端 UI。
+- 不增加项目专用 MCP server。AI 入口是统一 CLI 的结构化输出。
 - 不把淘宝、xsign、`libsgmainso`、固定偏移等目标知识写进 core；目标配置只能放在
   `tools/hooks/` 或 `examples/<target>/`。
 - `trace.bin` 单条记录固定为 272 字节。格式变化必须增加版本、迁移路径和兼容测试。
 - 每次调用目录固定为 `calls/call_<序号>_tid<线程>_<记录数>r_<耗时>ms/`。
-- Web 异步结果必须防止旧请求覆盖新选择；大响应必须有上限和截断元数据。
-- CPU 密集型路由必须进入有界阻塞线程池，不能阻塞 Tokio reactor。
+- 分析查询必须有资源上限；大输出必须有截断元数据，未知证据不能补造。
 - 设备端采集必须有明确内存上限、记录上限和失败降级路径。
 
 ## 架构规则
@@ -47,15 +41,11 @@ server 与 frontend 属于待裁剪范围。迁移前仍需遵守它们的安全
 设备事件/trace 格式 -> tracemiku-core -> CLI
 ```
 
-现有 server/frontend 是迁移期间的消费者，不再要求新增 CLI 分析同时建设 Web
-入口。迁移现有查询时，先提取分析语义并保留契约，再删除对应 Web 设施。
+分析语义必须先进入 core。CLI 只做参数解析、编排和序列化，不能独立修补结果。
+跨层改动必须验证 agent、host、`meta.json`、core 和统一 CLI 链路。
 
-分析语义必须先进入 core。CLI 和 API 只做参数解析、编排和序列化，不能各自修补结果。
-前端只负责交互和显示，不能重新实现分析算法。跨层改动必须验证 agent、host、
-`meta.json`、core、CLI，以及改动仍涉及的 server 和显示链路。
-
-反编译由外部静态工具提供，本仓库不维护本地反编译管线。旧 BN sidecar 与 Web
-实现是待裁剪的内部依赖，不能重新暴露成公开 CLI 命令。LLM 调用必须可选，本地分析不能依赖 LLM。
+反编译由外部静态工具独立提供。本仓库不维护本地反编译管线，也不通过 CLI 接入
+或管理反编译器；协作使用模块偏移、符号与运行时证据。LLM 调用必须可选。
 
 ## AI 开发纪律
 
@@ -84,19 +74,15 @@ make test-fast
 make test-contract
 make test-v2
 npm --prefix tracer run typecheck
-make smoke-web RUN=<call_dir> SMOKE_ARGS='--all-surfaces --timeout 300'
-make smoke-ui BASE=http://127.0.0.1:18900
 make test-device
 ```
 
 - core 语义变化：相关单测 + `cargo test -p tracemiku-core`。
 - CLI 输出变化：输出字段名/类型/结构是 AI 消费契约，必须先更新
   `contract_*` 契约测试与 `scripts/contract_audit.py` 声明，再跑
-  `make test-contract` 全链路（含 CLI/server parity）。
-- API 变化：core 测试 + 对应 route 测试 + OpenAPI 覆盖测试。
-- 前端变化：类型检查、构建；交互变化还需浏览器 smoke。
+  `make test-contract` 全链路（含统一入口与 core 一致性）。
 - agent/格式变化：TypeScript 检查、设备测试和完整链路验证。
-- 无法运行真机、BN 或浏览器测试时，交付说明必须明确剩余风险。
+- 无法运行真机测试时，交付说明必须明确剩余采集风险。
 
 ## CLI 使用准则
 
@@ -115,9 +101,8 @@ make test-device
 地址和偏移默认按十六进制解析，
 需要十进制时使用命令帮助所示的显式格式。
 
-CLI 输出是 AI 消费方的稳定契约：部分报告由
-`rust/crates/tracemiku-cli/src/output_types*.rs` 的类型化模型定义，其余仍来自 server
-响应类型或 JSON 构造。迁移时必须将这些契约一同保留，并由
+CLI 输出是 AI 消费方的稳定契约：基础查询响应类型位于 core 的 `analysis/`，
+部分报告模型位于 `analysis/reports/output_*.rs`，其余动态 JSON 也必须由
 `rust/crates/tracemiku-cli/tests/contract_*.rs` 的 schema 校验与语义断言锁定。
 修改任何命令输出必须同步更新契约测试并跑通 `make test-contract`。
 

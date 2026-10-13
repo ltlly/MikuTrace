@@ -1,6 +1,5 @@
 """traceMiku Rust v2 CLI cookbook for LLM/tooling agents.
 
-The old Python `viewer` SDK was removed during the Rust/Solid v2 cutover.
 These examples use specialized commands through the top-level JSON CLI.
 
 Usage:

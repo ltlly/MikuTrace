@@ -1,7 +1,7 @@
 # Trace 数据契约
 
 本文件定义设备采集、主机拉取和 Rust 解析共同依赖的稳定格式。修改这里的任何字段都
-必须同步修改 agent、host、core、server、测试和迁移逻辑。
+必须同步修改 agent、host、core、CLI、测试和迁移逻辑。
 
 ## 目录结构
 

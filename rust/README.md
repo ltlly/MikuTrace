@@ -1,36 +1,32 @@
 # Rust 工作区
 
-Rust 是 traceMiku 分析语义的唯一实现源。
+Rust 是 traceMiku 分析语义的唯一实现源，工作区仅包含两个 crate：
 
-## Crate
+- `tracemiku-core`：trace、索引、CFG、污点、MemShadow、replay，以及 `analysis/`
+  中的同步查询和 `analysis/reports/` 中的 VM、lineage、输出来源报告。
+- `tracemiku-cli`：clap 参数、core 调用、JSON 序列化与文件输出。
 
-- `tracemiku-core`：trace、反汇编、索引、CFG、污点、MemShadow、符号和 Trace 锚定验证。
-- `tracemiku-cli`：结构化命令与高层分析编排。
-- `tracemiku-server`：Axum API、后台任务、前端静态文件和 BN sidecar。
+依赖方向是 `CLI → core`。两者均不启动 Web 服务或反编译器。采集与离线分析的边界
+见 [设计契约](../docs/CLI_FIRST_DESIGN.md)。统一用户入口位于仓库根目录 `tracemiku`。
 
-目前 CLI 还依赖 server 的 AppState 和路由，部分命令通过进程内 Router 调用分析。
-目标是 `core <- cli`；需求和边界见 [采集与 CLI 设计](../docs/CLI_FIRST_DESIGN.md)。
-core 不依赖 Web、CLI 参数或目标专用配置；迁移时将 route 中的分析语义归入 core。
-
-## 构建与测试
+## 构建与验证
 
 ```bash
 cd rust
 cargo fmt --check
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --lib -- -D warnings
 cargo test --workspace
-../tracemiku capabilities
 ```
 
-从仓库根目录运行 `make test-v2` 可同时验证 Python 入口、Rust、前端和 CLI/API 一致性。
+仓库根目录的 `make test-contract` 验证命令发现、core 查询、统一入口一致性、输出
+schema、host 与采集格式；`make test-v2` 另含 agent 类型检查。它们都不需要真机。
 
 ## 开发约束
 
-- CPU 密集任务使用有界 `spawn_blocking` 路径。
-- API 响应必须有类型化状态、资源上限和截断信息。
-- sidecar 缓存必须使用 trace 内容指纹失效。
-- 新分析先进入 core 并有单测，再接 CLI 和 server。
-- `tracemiku-cli/src/main.rs` 只保留入口；命令定义在 `args.rs`，编排与命令实现
-  按领域拆分到 `lib.rs` 与 `vm_*`、`output_*` 等模块。
-- 新增/删除/改名命令必须同步更新 `docs/FEATURES.md`；参数与默认值随 clap 定义
-  自动进入 `./tracemiku capabilities`。
+- 新分析先进入 core 并有语义测试；CLI 只处理参数、编排与输出。
+- 查询同步执行且保留资源上限、截断元数据和错误详情；不能引入服务或轮询状态。
+- `AnalysisContext` 按需构建重索引，组合查询复用同一个上下文。
+- 持久缓存使用 trace 内容指纹失效；缓存状态不能改变分析结果。
+- 输出模型在 core；CLI 契约测试与 schema 生成器直接引用这些模型。
+- 命令增删或改名同步更新 `docs/FEATURES.md` 和 `scripts/contract_audit.py`；参数和
+  默认值随 clap 定义自动进入统一入口的能力清单。

@@ -2,16 +2,18 @@
 //!
 //! Writes one `.schema.json` per model into `docs/schema/` (repo root). The
 //! schemas are a committed AI-facing contract: consumers can validate CLI
-//! stdout against them. Run via `cargo run -p tracemiku-cli --bin gen-schemas`.
+//! stdout against them. Run via `cargo run -p tracemiku-cli --bin gen_schemas`.
 
 use std::fs;
 use std::path::PathBuf;
 
 use schemars::schema_for;
 
-use tracemiku_cli::output_lineage::{LineageBatchReport, LineageRow};
-use tracemiku_cli::output_types::{BacktraceReport, OutputMapReport, ReplayReport, StatsReport};
-use tracemiku_cli::output_vm::{VmOpsReport, VmSliceReport};
+use tracemiku_core::analysis::reports::output_lineage::{LineageBatchReport, LineageRow};
+use tracemiku_core::analysis::reports::output_types::{
+    BacktraceReport, OutputMapReport, ReplayReport, StatsReport,
+};
+use tracemiku_core::analysis::reports::output_vm::{VmOpsReport, VmSliceReport};
 
 fn emit(dir: &PathBuf, name: &str, schema: &serde_json::Value) -> std::io::Result<()> {
     let path = dir.join(format!("{name}.schema.json"));

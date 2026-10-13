@@ -15,14 +15,17 @@
   `schema_version=2`，采集参数来自 argparse，分析参数来自 Rust clap。
 - 参数事实源：本文件不复制参数细节；以 `./tracemiku <cmd> --help` 为准。
 - 地址与偏移默认十六进制（`10` = `0x10`），十进制用 `d` 前缀（`d16` = 16）。
-- 使用专用命令；统一入口不再提供 Web、BN 展示、通用 route 包装和旧别名。
+- 使用专用命令；统一入口不再提供 Web、BN 展示、通用查询包装和旧别名。
 - 输出契约：字段名、类型和嵌套结构是 AI 消费方的稳定契约。
-  部分报告定义在 `rust/crates/tracemiku-cli/src/output_types*.rs`，其余仍由 server
-  响应类型或 JSON 构造定义，并由 `contract_*` 测试锁定。已生成的部分报告 schema
-  在 `docs/schema/`。
+  基础响应类型位于 `rust/crates/tracemiku-core/src/analysis/`，组合报告类型位于
+  `analysis/reports/output_*.rs`，动态 JSON 同样由 `contract_*` 测试锁定。
+  已生成的部分报告 schema 在 `docs/schema/`。
+- Rust 执行层失败退出码为 1，stdout 是 `status=error` 与 `error.code/message/details`
+  的 JSON（details 可省略）；参数解析错误退出码为 2，诊断写到 stderr。部分旧查询
+  仍用结果内 `status=error` 表达失败，消费方还需检查结果状态。
 
-Web 与 BN 实现仍是待拆除的内部依赖，已退出公开命令；目标维护范围和裁剪边界见
-[采集与 CLI 设计](CLI_FIRST_DESIGN.md)。本目录在实际删除或改名命令时同步调整。
+CLI 直接调用 core；静态工具独立使用，通过模块偏移与证据对齐。
+架构与边界见 [采集与 CLI 设计](CLI_FIRST_DESIGN.md)。
 
 ## 1. 元数据与入口
 
@@ -52,7 +55,7 @@ Web 与 BN 实现仍是待拆除的内部依赖，已退出公开命令；目标
 | `resolve-map-addr` | 对保存的 `/proc/<pid>/maps` 文件解析地址 | |
 | `resolve-trace-addr` | 按 trace meta 的模块区间解析地址 | |
 | `resolve-elf-symbol` | ELF 虚拟偏移 → 最近符号 | 静态侧辅助 |
-| `functions` | 列出函数（symbol 与 trace 来源） | |
+| `functions` | 列出函数（symbol 与 trace 来源） | 无反编译可用性字段，不接受 `bn:`/`cfg:` ID |
 | `so-stats` | 各 SO 的 trace 统计 | |
 
 ```bash
@@ -68,9 +71,7 @@ Web 与 BN 实现仍是待拆除的内部依赖，已退出公开命令；目标
 | `records` | 按区间导出指令记录，可选寄存器列 | `--start/--count/--regs/--indices` |
 | `record` | 单条记录与寄存器注释详情 | 批量导出用 `records` |
 | `idxs-for-pc` | 某 PC 被执行的 trace 下标集合 | |
-| `search-pc` | 按 PC 搜 | |
 | `search` | 反汇编/操作数正则搜索 | |
-| `asm-tokens-for-pcs` | 批量 PC 的汇编 token | |
 
 ```bash
 ./tracemiku records <call_dir> --start 0 --count 50 --regs x0,x1,sp
@@ -117,7 +118,7 @@ Web 与 BN 实现仍是待拆除的内部依赖，已退出公开命令；目标
 ```bash
 ./tracemiku reg-at <call_dir> --reg x0 --so libfoo.so --off 0x1234
 ./tracemiku reg-value-at <call_dir> --idx 1000 --reg x0
-./tracemiku last-write-of-reg <call_dir> --idx 1000 --reg x0
+./tracemiku last-write-of-reg <call_dir> --before 1000 --reg x0
 ```
 
 ## 7. 内存：解密后字节与写入来源
@@ -127,7 +128,7 @@ Web 与 BN 实现仍是待拆除的内部依赖，已退出公开命令；目标
 | `mem-dump` | 内存范围 hex dump | 查看当前值 |
 | `mem-export` | 按 (SO,offset,len) 导出运行时解密字节 | `--out` 可直接写文件给 IDA/BN/Ghidra loadfile |
 | `mem-tenet` | 每个字节的来源（writer idx/初始快照/未知） | 不虚构缺失内存 |
-| `mem-diff` | 两段内存差异 | |
+| `mem-diff` | 相邻 trace 记录间的内存差异 | |
 | `mem-flow` | 内存写入流 | |
 | `last-write-of-addr` | 某地址最后一次写入者 | |
 | `idxs-touching-addr` | 触碰某地址的全部记录 | |
@@ -241,7 +242,7 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 
 ### Trace 锚定验证与证据来源
 
-`trace-replay` 可直接运行，无需启动 Binary Ninja sidecar。
+`trace-replay` 直接使用已有 trace，所需内存索引按需构建。
 
 ```bash
 ./tracemiku trace-replay <call_dir> --start 100 --count 200
@@ -251,8 +252,7 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 前状态，推演已支持的 ARM64 指令，并比较直接后状态。硬上限 10000 条；`checked` 只统计已匹配的
 转移。`matched` 表示请求窗口内匹配，`diverged` 表示寄存器/PC 不匹配，`stopped` 表示
 缺少证据、语义不支持或达到上限。`stop` 包含 idx、PC、原因、预期/实际值和
-`next_capture`。参数无效返回错误，不默默换窗口。Web 使用 `GET /api/trace-replay`；
-内存索引仍在后台构建时返回 503，可在其就绪后重试。
+`next_capture`。参数无效返回错误，不默默换窗口。
 
 支持范围：NOP、MOVN/MOVZ/MOVK、ADD/SUB（立即数与移位寄存器，含 NZCV）、移位
 逻辑运算、ADR/ADRP、普通分支及整数 LDR/STR（无符号偏移、非缩放及 pre/post 写回）。
@@ -311,6 +311,8 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 | 已移除入口 | 替代选择或去向 |
 |---|---|
 | `search-asm` | `search` |
+| `search-pc` | `idxs-for-pc`，返回执行下标及分页信息 |
+| `asm-tokens-for-pcs` | 展示 token 随 BN 桥接移除；执行指令用 `records`/`record` |
 | `reg-at-idx` | `reg-value-at`；按 PC 的多次执行分布用 `reg-at` |
 | `api`、`query` | 使用本目录中的专用记录、寄存器、内存、JNI 或污点命令 |
 | `web`、`view` | Web 交互退出维护范围 |
@@ -394,7 +396,7 @@ VM profile 参数：`--vm-ip-reg`（指令指针）、`--vm-state-reg`（状态/
 | `docs/FEATURES.md`（本文件） | 全量功能目录与命令选择，唯一命令用法汇总 |
 | `AGENTS.md` | 工程规则与不可破坏边界（唯一规范） |
 | `TODO.md` | 未完成路线图（唯一 backlog） |
-| `docs/CLI_FIRST_DESIGN.md` | 采集与 CLI 的需求、当前依赖及目标维护边界 |
+| `docs/CLI_FIRST_DESIGN.md` | 采集与 CLI 的需求、当前架构及验证边界 |
 | `docs/PER_CALL_TRACE_DESIGN.md` | trace.bin/meta.json 数据契约 |
 | `docs/memory-completeness-design.md` | MemShadow 来源模型与消费者规则 |
 | `docs/anti-detection-catalog.md` | 设备采集反检测层次与故障分类 |

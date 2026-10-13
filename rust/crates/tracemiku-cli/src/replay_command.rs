@@ -9,13 +9,12 @@ pub(super) struct ReplayArgs {
     #[arg(long, default_value_t = 100)]
     pub count: usize,
 }
-pub(super) async fn run(args: ReplayArgs) -> anyhow::Result<()> {
-    super::route_get_json(
+pub(super) fn run(args: ReplayArgs) -> anyhow::Result<()> {
+    super::query_json(
         args.trace_dir,
-        format!(
-            "/api/trace-replay?start={}&count={}",
-            args.start, args.count
-        ),
+        super::Query::TraceReplay(tracemiku_core::analysis::trace_replay::ReplayQuery {
+            start: args.start,
+            count: args.count,
+        }),
     )
-    .await
 }

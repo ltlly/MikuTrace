@@ -49,7 +49,7 @@ pub struct Index {
     /// All memory-read entries in trace order.
     pub mem_reads: Vec<MemRec>,
     /// `pc → sorted record indices`. Used by hot UI navigation paths such as
-    /// CFG/HLIL clicks, hash deep-links, and Trace-for-PC.
+    /// CFG queries, hash evidence, and PC execution lookup.
     pub pc_to_idxs: HashMap<u64, Vec<usize>>,
     /// `addr → trace indices of writes whose byte range covers addr`. Fast
     /// "who wrote here?" lookup for backward taint and the

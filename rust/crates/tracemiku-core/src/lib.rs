@@ -1,8 +1,7 @@
 //! traceMiku v2 — analysis core.
 //!
 //! 架构说明见仓库根目录 `AGENTS.md`。This crate contains all trace-side
-//! analysis; the HTTP server lives in `tracemiku-server`, the CLI in
-//! `tracemiku-cli`.
+//! analysis. `tracemiku-cli` parses arguments and serializes these results.
 //!
 //! Public surface is re-exported from [`prelude`].
 
@@ -10,6 +9,7 @@
 #![warn(clippy::all)]
 
 pub mod address_parse;
+pub mod analysis;
 pub mod analysis_index;
 pub mod bfs_slice;
 pub mod calltree;

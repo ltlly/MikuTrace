@@ -13,21 +13,10 @@
 traceMiku 采用真实设备采集、主机离线分析，不追踪隐式流。内存采用 byte overlap 和
 MemShadow，并显式区分已观测与未知字节。
 
-## SSA、类型与结构化
-
-- Cytron 等：SSA 与 Phi 放置。
-- Cooper-Harvey-Kennedy：支配树计算。
-- retypd、TIE：二进制类型恢复。
-- Phoenix、DREAM、SAILR：控制流结构化与减少 goto。
-- Cifuentes：跳转表与高级控制流恢复。
-
 ## 去混淆
 
-- Binary Ninja HLIL/IL：sidecar 集成与 IL 表达能力的参考。
 - Syntia、Xyntia、QSynth：基于 I/O 的表达式综合。
 - Yadegari 等：trace + taint 去混淆。
-- LLM4Decompile、SLaDe、DIRTY、ReSym：模型辅助反编译、改名和类型恢复；只能作为可选
-  增强，不能成为本地分析依赖。
 
 ## 同类 trace 工具
 

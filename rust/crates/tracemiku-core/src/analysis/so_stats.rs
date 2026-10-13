@@ -1,0 +1,129 @@
+//! 按模块汇总执行记录。
+
+use super::AnalysisError;
+use serde::{Deserialize, Serialize};
+
+use crate::analysis::context::AnalysisContext;
+
+#[derive(Debug, Deserialize)]
+pub struct SoStatsQuery {
+    #[serde(default = "default_top")]
+    pub top: usize,
+    #[serde(default)]
+    pub all: bool,
+}
+
+fn default_top() -> usize {
+    50
+}
+
+#[derive(Debug, Serialize)]
+pub struct SoStatsModule {
+    pub name: String,
+    pub base: String,
+    pub end: String,
+    pub size: u64,
+    pub records: usize,
+    pub percent: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SoStatsResponse {
+    pub records: usize,
+    pub modules_total: usize,
+    pub unknown_records: usize,
+    pub unknown_percent: f64,
+    pub modules: Vec<SoStatsModule>,
+}
+
+pub fn so_stats(
+    state: &AnalysisContext,
+    q: SoStatsQuery,
+) -> Result<SoStatsResponse, AnalysisError> {
+    let inner = state.inner.clone();
+    let response = so_stats_response(&inner, q);
+    Ok(response)
+}
+
+fn so_stats_response(
+    inner: &crate::analysis::context::AnalysisData,
+    q: SoStatsQuery,
+) -> SoStatsResponse {
+    let total = inner.trace.len();
+    let mut counts = vec![0usize; inner.meta.modules.len()];
+    let mut unknown_records = 0usize;
+
+    let ranges: Vec<(u64, u64)> = inner
+        .meta
+        .modules
+        .iter()
+        .filter_map(|m| {
+            // Parse via the shared core parser; a malformed module base/end
+            // must not silently collapse to 0 and corrupt per-module stats
+            // (audit P0-1).
+            let base = crate::prelude::parse_address_opt(&m.base)?;
+            let end = crate::prelude::parse_address_opt(&m.end)
+                .unwrap_or_else(|| base.saturating_add(m.size));
+            Some((base, end))
+        })
+        .collect();
+
+    for (&pc, idxs) in &inner.index.pc_to_idxs {
+        let records = idxs.len();
+        if let Some((idx, _)) = ranges
+            .iter()
+            .enumerate()
+            .find(|(_, (base, end))| pc >= *base && pc < *end)
+        {
+            counts[idx] += records;
+        } else {
+            unknown_records += records;
+        }
+    }
+
+    let mut modules: Vec<SoStatsModule> = inner
+        .meta
+        .modules
+        .iter()
+        .cloned()
+        .zip(counts)
+        .filter(|(_, records)| q.all || *records > 0)
+        .map(|(m, records)| SoStatsModule {
+            name: m.name,
+            base: m.base,
+            end: m.end,
+            size: m.size,
+            records,
+            percent: percent(records, total),
+        })
+        .collect();
+    modules.sort_by(|a, b| b.records.cmp(&a.records).then_with(|| a.name.cmp(&b.name)));
+    if !q.all && q.top > 0 {
+        modules.truncate(q.top);
+    }
+
+    SoStatsResponse {
+        records: total,
+        modules_total: inner.meta.modules.len(),
+        unknown_records,
+        unknown_percent: percent(unknown_records, total),
+        modules,
+    }
+}
+
+fn percent(part: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (part as f64) * 100.0 / (total as f64)
+    }
+}
+
+impl Default for SoStatsQuery {
+    fn default() -> Self {
+        Self {
+            top: default_top(),
+            all: Default::default(),
+        }
+    }
+}
