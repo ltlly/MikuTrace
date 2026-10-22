@@ -1,0 +1,984 @@
+{
+ "note": "从 avmp/jit.bin 离线解析出的 canary stub 自解密公式(中间产物)。page_off 是 canary 全局页相对 JIT 区的偏移(跨运行恒定)；但 canary 的**值**每次运行随机，必须与 JIT 区同一次运行读取，否则解出的 br 目标是错的。",
+ "solved": 21,
+ "total": 40,
+ "page_offsets": [
+  -1255856,
+  398928,
+  1332816,
+  1336912,
+  1570384
+ ],
+ "stubs": [
+  {
+   "stub": 501462961704,
+   "stub_off": 1144,
+   "stk": 64,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    7
+   ]
+  },
+  {
+   "stub": 501462962064,
+   "stub_off": 1504,
+   "stk": 160,
+   "page_off": 1332816,
+   "canary_off": 104,
+   "imm": null,
+   "udf": 501462962168,
+   "udf_val": 61,
+   "self": 501462962136,
+   "chain": [
+    [
+     "add",
+     "x5, x5, #0xac"
+    ],
+    [
+     "mvn",
+     "x5, x5"
+    ],
+    [
+     "add",
+     "x5, x5, x16"
+    ],
+    [
+     "add",
+     "x10, x10, x5"
+    ]
+   ],
+   "br_reg": "x10",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    209
+   ],
+   "canary_rd": 21
+  },
+  {
+   "stub": 501462962432,
+   "stub_off": 1872,
+   "stk": 144,
+   "page_off": 1332816,
+   "canary_off": 104,
+   "imm": null,
+   "udf": 501462962556,
+   "udf_val": 344,
+   "self": 501462962508,
+   "chain": [
+    [
+     "eor",
+     "x6, x6, x26"
+    ],
+    [
+     "sub",
+     "x6, x6, #0xf3"
+    ],
+    [
+     "eor",
+     "x6, x6, x12"
+    ],
+    [
+     "eor",
+     "x6, x6, x2"
+    ],
+    [
+     "add",
+     "x10, x10, x6"
+    ]
+   ],
+   "br_reg": "x10",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    82,
+    56
+   ],
+   "canary_rd": 22
+  },
+  {
+   "stub": 501462962980,
+   "stub_off": 2420,
+   "stk": 224,
+   "page_off": 1332816,
+   "canary_off": 104,
+   "imm": null,
+   "udf": 501462963076,
+   "udf_val": 144,
+   "self": 501462963052,
+   "chain": [
+    [
+     "eor",
+     "x24, x24, x12"
+    ],
+    [
+     "add",
+     "x14, x14, x24"
+    ]
+   ],
+   "br_reg": "x14",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    111
+   ],
+   "canary_rd": 20
+  },
+  {
+   "stub": 501462963784,
+   "stub_off": 3224,
+   "stk": 240,
+   "page_off": 1332816,
+   "canary_off": 104,
+   "imm": null,
+   "udf": 501462963884,
+   "udf_val": 132,
+   "self": 501462963860,
+   "chain": [
+    [
+     "sub",
+     "x22, x22, x28"
+    ],
+    [
+     "add",
+     "x9, x9, x22"
+    ]
+   ],
+   "br_reg": "x9",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    7
+   ],
+   "canary_rd": 23
+  },
+  {
+   "stub": 501462964412,
+   "stub_off": 3852,
+   "stk": 384,
+   "page_off": 1332816,
+   "canary_off": 104,
+   "imm": null,
+   "udf": 501462964512,
+   "udf_val": 200,
+   "self": 501462964488,
+   "chain": [
+    [
+     "eor",
+     "x6, x6, x14"
+    ],
+    [
+     "add",
+     "x5, x5, x6"
+    ]
+   ],
+   "br_reg": "x5",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    171
+   ],
+   "canary_rd": 19
+  },
+  {
+   "stub": 501462965540,
+   "stub_off": 4980,
+   "stk": 160,
+   "page_off": 1332816,
+   "canary_off": 104,
+   "imm": null,
+   "udf": 501462965648,
+   "udf_val": 4294967229,
+   "self": 501462965616,
+   "chain": [
+    [
+     "add",
+     "x9, x9, #0xb4"
+    ],
+    [
+     "mvn",
+     "x9, x9"
+    ],
+    [
+     "add",
+     "x9, x9, x2"
+    ],
+    [
+     "add",
+     "x24, x24, x9"
+    ]
+   ],
+   "br_reg": "x24",
+   "page": 501464293376,
+   "page_rd": 10,
+   "imms": [
+    89
+   ],
+   "canary_rd": 20
+  },
+  {
+   "stub": 501462968748,
+   "stub_off": 8188,
+   "stk": 192,
+   "page_off": 1570384,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462968884,
+   "udf_val": 377,
+   "self": 501462968836,
+   "chain": [
+    [
+     "eor",
+     "x6, x6, x15"
+    ],
+    [
+     "sub",
+     "x6, x6, #0xff"
+    ],
+    [
+     "eor",
+     "x6, x6, x7"
+    ],
+    [
+     "sub",
+     "x6, x6, x3"
+    ],
+    [
+     "add",
+     "x10, x10, x6"
+    ]
+   ],
+   "br_reg": null,
+   "page": 501464530944,
+   "page_rd": 9,
+   "imms": [
+    158,
+    4
+   ]
+  },
+  {
+   "stub": 501462969564,
+   "stub_off": 9004,
+   "stk": 1232,
+   "page_off": 398928,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462969648,
+   "udf_val": 290,
+   "self": 501462969624,
+   "chain": [
+    [
+     "sub",
+     "x13, x13, x15"
+    ],
+    [
+     "add",
+     "x22, x22, x13"
+    ]
+   ],
+   "br_reg": "x22",
+   "imms": [
+    203
+   ],
+   "page": 501463359488,
+   "page_rd": 10
+  },
+  {
+   "stub": 501462970716,
+   "stub_off": 10156,
+   "stk": 128,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462970800,
+   "udf_val": 308,
+   "self": 501462970776,
+   "chain": [
+    [
+     "sub",
+     "x7, x7, x5"
+    ],
+    [
+     "add",
+     "x13, x13, x7"
+    ]
+   ],
+   "br_reg": "x13",
+   "imms": [
+    235
+   ]
+  },
+  {
+   "stub": 501462971272,
+   "stub_off": 10712,
+   "stk": 80,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462971368,
+   "udf_val": 61,
+   "self": 501462971336,
+   "chain": [
+    [
+     "add",
+     "x5, x5, #0xac"
+    ],
+    [
+     "mvn",
+     "x5, x5"
+    ],
+    [
+     "add",
+     "x5, x5, x16"
+    ],
+    [
+     "add",
+     "x10, x10, x5"
+    ]
+   ],
+   "br_reg": "x10",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    209
+   ]
+  },
+  {
+   "stub": 501462974976,
+   "stub_off": 14416,
+   "stk": 1504,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462975080,
+   "udf_val": 4294967180,
+   "self": 501462975056,
+   "chain": [
+    [
+     "add",
+     "x9, x9, x21"
+    ],
+    [
+     "add",
+     "x22, x22, x9"
+    ]
+   ],
+   "br_reg": "x22",
+   "page": 501464293376,
+   "page_rd": 23,
+   "imms": [
+    83,
+    80
+   ]
+  },
+  {
+   "stub": 501462984436,
+   "stub_off": 23876,
+   "stk": 1184,
+   "page_off": -1255856,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "page": 501461704704,
+   "page_rd": 8
+  },
+  {
+   "stub": 501462985016,
+   "stub_off": 24456,
+   "stk": 688,
+   "page_off": 1570384,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462985128,
+   "udf_val": 328,
+   "self": 501462985080,
+   "chain": [
+    [
+     "eor",
+     "x27, x27, x4"
+    ],
+    [
+     "sub",
+     "x27, x27, #0xc3"
+    ],
+    [
+     "eor",
+     "x27, x27, x22"
+    ],
+    [
+     "eor",
+     "x27, x27, x15"
+    ],
+    [
+     "add",
+     "x14, x14, x27"
+    ]
+   ],
+   "br_reg": "x14",
+   "page": 501464530944,
+   "page_rd": 10,
+   "imms": [
+    34,
+    8
+   ]
+  },
+  {
+   "stub": 501462986076,
+   "stub_off": 25516,
+   "stk": 1040,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462986204,
+   "udf_val": 100,
+   "self": 501462986172,
+   "chain": [
+    [
+     "sub",
+     "x16, x16, #0x2b"
+    ],
+    [
+     "eor",
+     "x16, x16, x14"
+    ],
+    [
+     "add",
+     "x21, x21, x16"
+    ]
+   ],
+   "br_reg": "x21",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    64,
+    5,
+    20,
+    196
+   ]
+  },
+  {
+   "stub": 501462989640,
+   "stub_off": 29080,
+   "stk": 592,
+   "page_off": 1570384,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462989720,
+   "udf_val": 4294966864,
+   "self": 501462989696,
+   "chain": [
+    [
+     "add",
+     "x1, x1, x25"
+    ],
+    [
+     "add",
+     "x17, x17, x1"
+    ]
+   ],
+   "br_reg": "x17",
+   "page": 501464530944,
+   "page_rd": 10,
+   "imms": [
+    231
+   ]
+  },
+  {
+   "stub": 501462994540,
+   "stub_off": 33980,
+   "stk": 1504,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501462994652,
+   "udf_val": 364,
+   "self": 501462994628,
+   "chain": [
+    [
+     "eor",
+     "x12, x12, x24"
+    ],
+    [
+     "add",
+     "x1, x1, x12"
+    ]
+   ],
+   "br_reg": "x1",
+   "page": 501464293376,
+   "page_rd": 26,
+   "imms": [
+    243,
+    80
+   ]
+  },
+  {
+   "stub": 501463004028,
+   "stub_off": 43468,
+   "stk": 1056,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501463004172,
+   "udf_val": 4294967246,
+   "self": 501463004140,
+   "chain": [
+    [
+     "sub",
+     "x6, x6, #0xb"
+    ],
+    [
+     "add",
+     "x6, x6, x11"
+    ]
+   ],
+   "br_reg": null,
+   "page": 501464293376,
+   "page_rd": 22,
+   "imms": [
+    32,
+    5,
+    140,
+    20,
+    191
+   ]
+  },
+  {
+   "stub": 501463013736,
+   "stub_off": 53176,
+   "stk": 112,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501463013884,
+   "udf_val": 498,
+   "self": 501463013836,
+   "chain": [
+    [
+     "eor",
+     "x17, x17, x2"
+    ],
+    [
+     "sub",
+     "x17, x17, #0xcf"
+    ],
+    [
+     "eor",
+     "x17, x17, x16"
+    ]
+   ],
+   "br_reg": null,
+   "imms": [
+    110
+   ]
+  },
+  {
+   "stub": 501463014104,
+   "stub_off": 53544,
+   "stk": 784,
+   "page_off": -1255856,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501463014224,
+   "udf_val": 4294967172,
+   "self": 501463014176,
+   "chain": [
+    [
+     "eor",
+     "x21, x21, x25"
+    ],
+    [
+     "sub",
+     "x21, x21, #7"
+    ],
+    [
+     "eor",
+     "x21, x21, x6"
+    ],
+    [
+     "add",
+     "x21, x21, x27"
+    ],
+    [
+     "add",
+     "x14, x14, x21"
+    ]
+   ],
+   "br_reg": "x14",
+   "page": 501461704704,
+   "page_rd": 12,
+   "imms": [
+    38,
+    140
+   ]
+  },
+  {
+   "stub": 501463016736,
+   "stub_off": 56176,
+   "stk": 96,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501463016828,
+   "udf_val": 312,
+   "self": 501463016804,
+   "chain": [
+    [
+     "eor",
+     "x20, x20, x25"
+    ],
+    [
+     "add",
+     "x4, x4, x20"
+    ]
+   ],
+   "br_reg": "x4",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    187
+   ]
+  },
+  {
+   "stub": 501463016940,
+   "stub_off": 56380,
+   "stk": 96,
+   "page_off": 1332816,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501463017044,
+   "udf_val": 4294967200,
+   "self": 501463017020,
+   "chain": [
+    [
+     "add",
+     "x13, x13, x11"
+    ],
+    [
+     "add",
+     "x17, x17, x13"
+    ]
+   ],
+   "br_reg": "x17",
+   "page": 501464293376,
+   "page_rd": 9,
+   "imms": [
+    67
+   ]
+  },
+  {
+   "stub": 501463017940,
+   "stub_off": 57380,
+   "stk": 576,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    26
+   ]
+  },
+  {
+   "stub": 501463018324,
+   "stub_off": 57764,
+   "stk": 48,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    7,
+    -1
+   ]
+  },
+  {
+   "stub": 501463022292,
+   "stub_off": 61732,
+   "stk": 64,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    8,
+    8
+   ]
+  },
+  {
+   "stub": 501463023380,
+   "stub_off": 62820,
+   "stk": 32,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    7,
+    55,
+    7
+   ]
+  },
+  {
+   "stub": 501463045096,
+   "stub_off": 84536,
+   "stk": 96,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    7
+   ]
+  },
+  {
+   "stub": 501463155844,
+   "stub_off": 195284,
+   "stk": 1440,
+   "page_off": 1336912,
+   "canary_off": null,
+   "imm": null,
+   "udf": 501463155936,
+   "udf_val": 288,
+   "self": 501463155912,
+   "chain": [
+    [
+     "eor",
+     "x3, x3, x11"
+    ],
+    [
+     "add",
+     "x26, x26, x3"
+    ]
+   ],
+   "br_reg": "x26",
+   "page": 501464297472,
+   "page_rd": 9,
+   "imms": [
+    191,
+    608
+   ]
+  },
+  {
+   "stub": 501463244800,
+   "stub_off": 284240,
+   "stk": 1072,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1
+   ]
+  },
+  {
+   "stub": 501463245436,
+   "stub_off": 284876,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1
+   ]
+  },
+  {
+   "stub": 501463246224,
+   "stub_off": 285664,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1
+   ]
+  },
+  {
+   "stub": 501463249116,
+   "stub_off": 288556,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1
+   ]
+  },
+  {
+   "stub": 501463249412,
+   "stub_off": 288852,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null
+  },
+  {
+   "stub": 501463249768,
+   "stub_off": 289208,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1
+   ]
+  },
+  {
+   "stub": 501463250048,
+   "stub_off": 289488,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1,
+    2
+   ]
+  },
+  {
+   "stub": 501463250540,
+   "stub_off": 289980,
+   "stk": 16,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    1
+   ]
+  },
+  {
+   "stub": 501463250992,
+   "stub_off": 290432,
+   "stk": 96,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    8,
+    1
+   ]
+  },
+  {
+   "stub": 501463255412,
+   "stub_off": 294852,
+   "stk": 2128,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    -1,
+    -1
+   ]
+  },
+  {
+   "stub": 501463256108,
+   "stub_off": 295548,
+   "stk": 1104,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    2
+   ]
+  },
+  {
+   "stub": 501463256792,
+   "stub_off": 296232,
+   "stk": 1104,
+   "page_off": null,
+   "canary_off": null,
+   "imm": null,
+   "udf": null,
+   "udf_val": null,
+   "self": null,
+   "chain": [],
+   "br_reg": null,
+   "imms": [
+    3
+   ]
+  }
+ ]
+}

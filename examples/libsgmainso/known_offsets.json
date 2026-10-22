@@ -510,7 +510,17 @@
    540
   ],
   "artifacts": "examples/libsgmainso/avmp/{arm64.py,vm.py,README.md,jit.bin,handlers_map.txt,frames.txt,regs.txt,vmops.txt}",
-  "remaining": "(1) frames.txt 读起点 lo 会落到零页, 需用 SEQ 已知帧地址定位; (2) x23 表需与帧数组同一次运行落盘(xtab.bin 目前跨运行); (3) 4 个 native helper 尚未还原, nonce 混合很可能在其中"
+  "remaining": "(1) frames.txt 读起点 lo 会落到零页, 需用 SEQ 已知帧地址定位; (2) x23 表需与帧数组同一次运行落盘(xtab.bin 目前跨运行); (3) 4 个 native helper 尚未还原, nonce 混合很可能在其中",
+  "frame_coverage": "NF=17838 帧(全部约 1900 个簇); 执行序列 42879 步",
+  "frame_id_validation": "新 dump 上 frame_id() 与设备执行记录 20/20 一致",
+  "execution": "9/10 入口可连跑 2000 步; follow_flow=True 时能进 native helper(300 步 native_calls=288)",
+  "helper_entry": "+0x30000 是会走到 bl 的入口",
+  "added_instruction_semantics": "mrs tpidr_el0(合成基址)/blr/dmb/isb/pacia/bti/xzr/wzr/sp/wsp/ldp-stp 后索引与负偏移/lsl #4 移位操作数",
+  "jit_dump": "35MB, 含 1127 个 canary stub(全部 native helper)",
+  "helper_offsets": "不硬编码: locate_helpers() 按指令模式定位 sbox_xor_16 / mem_rw",
+  "entries": "follow_flow=False 下候选入口 6/10 可跑满 2000 步; 撞 bl 的入口显式报不支持",
+  "helper_calls": "follow_flow=True 下多入口 300 步内进入 native helper 约 290 次",
+  "dump_pitfalls": "JS 48 位地址位运算截断 / 范围不能取全局 min-max / 整页读跨界失败 / JIT 代码页调用后被解映射 / frida 会重复执行脚本"
  },
  "xsign_randomness": {
   "verdict": "nonce 不是请求内容的纯函数 —— 每次调用都含新的随机/时间相关量",
@@ -539,6 +549,71 @@
    ],
    "obstruction": "helper 入口用 canary + udf 里的密钥算出 br 目标(自解密/加固 JIT), 真实函数体不在 so 也不在已 dump 的静态 JIT 区内, 需在设备上跟随该 br",
    "next_step": "设备上 Interceptor.attach 这两个 helper 入口, 在 br 执行前读 x5/x24 得到真实目标并 dump"
+  },
+  "source_located": {
+   "verdict": "随机源已定位到 VM 状态缓冲, 不是 RNG 而是每次调用被重写的状态区",
+   "hot_helper": "JIT+0x2ed08: mov x0,x26; mov x1,x27; ldr x2,[x21,#8]; bl <mem_rw>; ldrb w16,[x21,#7]; str x0,[x25,x16,lsl#3] —— 把结果存回 VM 寄存器",
+   "callee": "JIT+0x2b368 = mem_rw: ldr x8,[x1,#0x240]; ldr x8,[x8,#0x1a0]; add x0,x8,x2; ret",
+   "semantics": "返回 *( *(ctx+0x240) + 0x1a0 ) + off 的**地址**; 调用方再从该地址取值",
+   "call_count": "一次 70102 离线执行里被调 118~398 次(入口不同而异), 是全程序最热的 helper",
+   "why_nonce_changes": "ctx+0x240 指向的 VM 状态结构里 +0x1a0 起的区域每次调用被重写, 读出的值逐次不同 -> nonce 逐次变化",
+   "implication": "要离线复现必须复现「谁写这块状态、写的值从哪来」; 该写入者本身还要继续逆",
+   "canary_prereq": "helper 入口用 canary 全局自解密 br; 缺 canary 页时 br 目标算错。已按需 dump 27 个 canary 页(canary_pages.txt)并装载, 6 个入口 500 步全跑通",
+   "open_issue": {
+    "symptom": "on_call 抓到 298 次 bl mem_rw，但回调里读到 x1(ctx)=0、x2(off)=0x16000000001a",
+    "meaning": "热 helper 是 `mov x1,x27` / `ldr x2,[x21,#8]` 取参，说明执行时 x27 或当前帧不对；要么入口 0x100 不是真入口，要么 x27 的语义我按 SAVE_AREA 建模有误(设备上 x27 是 VM 上下文指针)",
+    "blocks": "在 ctx 正确解析前，无法确定随机缓冲的真实地址，也就无法追到写入者",
+    "next": "确认 x27 的真实语义；找到本次调用的真实入口帧"
+   },
+   "interpreter_bug_fixed": {
+    "bug": "寄存器形式的 mov(`mov x1, x27`, 汇编为 ORR rd, xzr, rs)被当成立即数 mov 处理, 一律置 0",
+    "impact": "helper 取 ctx 时恒为 0, 随机缓冲算出来是空地址 0x1600000001ba —— 不抛任何异常, 只是安静地算出错误结果",
+    "fix": "_exec 的 mov 分支先判是否 `#imm`; 寄存器形式按宽度复制(shr for w)",
+    "regression_test": "TestRegisterMoves: 用 JIT 里真实的 `mov xD,xS` 走 exec_one 断言复制生效; 并锁定 mem_rw 调用点前那条 `mov .., x27`",
+    "still_open": "修好后 ctx=0x400000000 正确, 但 *[ctx+0x240]=0 —— 合成 SAVE_AREA 里没有设备态的 VM 上下文结构; 且入口 0x100 执行会原地打转(帧立即数 0x16000000001a 异常)。结论: 离线 VM 还缺『真实入口帧 + x21/x23/x27 寄存器初值』的 dump, 不能靠合成常量跑完整程序。"
+   },
+   "vminit_dumped": {
+    "files": "examples/libsgmainso/avmp/{vminit.txt,vmframes2.txt,vmregs3.txt}",
+    "entry": "x21=0x7433fb1930(第 8 次 dispatcher 命中), x23=0x754b08b400, x25=0x75394d62a0, x27=0x75394d6260",
+    "ctx_chain": "ctx=x27 -> *(ctx+0x240)=0x754b127000 -> *(*+0x1a0)=0x7433f95ffc(落在 JIT/帧区)",
+    "progress": "装载后帧推进生效(entry 0x0 -> 0x10)",
+    "blocker": "帧数组是**静态** dump, 分支偏移字段 frame[0xc] 为 0, 导致 id=367 的 add x21,x21,x8<<4 原地不动。分支偏移由 handler 在运行时算回写, 静态快照拿不到。",
+    "next": "设备侧 hook 所有写 x21 附近内存的指令, 按执行序列落盘每帧真实内容"
+   },
+   "interpreter_bugs_fixed": [
+    {
+     "bug": "b.cond 的 #imm 已是 capstone 解析后的绝对地址, 实现又加了一次 ins.address",
+     "fix": "直接用 op_str 的绝对地址; 不成立时 pc = ins.address+4"
+    },
+    {
+     "bug": "dispatch 的控制转移只认 br/b/bl, 漏掉 b.cond/cbz/cbnz/tbz/tbnz",
+     "fix": "控制转移判定覆盖全部条件跳转并置 _ctrl"
+    },
+    {
+     "effect": "帧推进从「停在 0xa0」变为正常穿出循环 (0x0->0x10->...->0xa0->0xc0)"
+    }
+   ],
+   "same_source_dump": {
+    "script": "/tmp/opencode/vmonce.js 一次运行导出六件",
+    "files": [
+     "jit.bin(34MB)",
+     "vmxtab.txt(827/1024 有效)",
+     "vmframes2.txt(24576 帧)",
+     "vminit.txt",
+     "vmregs3.txt",
+     "canary_pages.txt(65 页/44 非空)"
+    ],
+    "cross_check": "所有文件头带 X23/JITLO, 必须一致; new_vm() 会自检并报错",
+    "seq_note": "seq.txt 仍属另一次采集, 相关用例显式 skip"
+   },
+   "jni_callback_found": {
+    "finding": "canary stub 解出的真实函数体是 JNI 反射调用",
+    "code": "stur x8,[x29,#-0x20]; blr x9; stur x0,[x29,#-0x88]; cbz x0; ldrb w8,[x8,#0x1b]; strb w8,[x9,#0x1b]; ... bl <native>",
+    "args": "调用时 x1=0x7422455e60(稳定的 VM 上下文指针), x0=x2=0",
+    "implication": "VM 不是内部算 nonce, 而是通过 JNI 回调宿主、读宿主对象字段(+0x1b/+0x18)。离线复现必须把这个 JNI 回调替换成等价实现。",
+    "evidence": "canary 页与 JIT 区同源后, 一次执行 500000 步触发 999998 次 native 调用, 循环内 60/60 次都是这个 stub"
+   },
+   "canary_is_fallthrough": "canary 链算出的是 udf 之后那一条(函数体本身), 是 fall-through 跳板而非间接跳转; 缺 canary 页时 br 落到 udf -> NotImplementedError: insn udf #0"
   }
  }
 }

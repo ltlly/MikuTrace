@@ -70,11 +70,57 @@ def mem_rw(ctx, off):
     return ptr2 + off
 
 
-#: 已知 helper 在 JIT 区内的相对偏移（由 avmp/jit.bin 扫出的 canary stub 确认）
-HELPER_OFFSETS = {
-    "sbox_xor_16": 0xF124,   # out[i] = in[i] ^ S[(&out[i]) & 0xff]；canary stub
-    "mem_rw": 0xE9B8,        # *( *(ctx+0x240) + 0x1a0 ) + off；inline 小函数
-}
+def locate_helpers(jit_base, jit_data):
+    """按**指令模式**在 JIT 区里定位已知 helper 的偏移。
+
+    不能硬编码偏移：JIT 每次运行的布局/基址都不同（同一份 so 在不同
+    进程里编出来的 handler 地址完全不一样）。所以这里用特征定位：
+
+    * ``sbox_xor_16`` —— 读 ``[ctx+0x1e0]`` 取 S 盒且有 >=2 个 ``strb``
+    * ``mem_rw``      —— 连续 ``ldr [xN,#0x240]`` / ``ldr [xN,#0x1a0]``
+    """
+    from .arm64 import MD
+
+    def body(addr, size=0x400):
+        off = addr - jit_base
+        if off < 0 or off + size > len(jit_data):
+            return []
+        return list(MD.disasm(jit_data[off:off + size], addr))
+
+    out = {}
+    for addr, _ in find_canary_stubs(jit_base, jit_data):
+        ins = body(addr)
+        if not ins:
+            continue
+        if any("#0x1e0" in i.op_str for i in ins[:60]) and \
+                sum(1 for i in ins[:60] if i.mnemonic == "strb") >= 2:
+            out.setdefault("sbox_xor_16", addr - jit_base)
+        for k, i in enumerate(ins):
+            if k + 1 < len(ins) and i.mnemonic == "ldr" and "#0x240" in i.op_str \
+                    and ins[k + 1].mnemonic == "ldr" and "#0x1a0" in ins[k + 1].op_str:
+                out.setdefault("mem_rw", addr - jit_base)
+                break
+    # mem_rw 是 inline 小函数（不是 canary stub），全 JIT 区按指令模式找:
+    #   ldr xN, [x1, #0x240] ... ldr xM, [xN, #0x1a0] ; add x0, xM, x2
+    if "mem_rw" not in out:
+        dec = {}
+        for off in range(0, len(jit_data) - 0x30, 4):
+            ins = next(MD.disasm(jit_data[off:off + 4], jit_base + off), None)
+            if ins is not None:
+                dec[off] = (ins.mnemonic, ins.op_str)
+        offs = sorted(dec)
+        for k, off in enumerate(offs):
+            m, o = dec[off]
+            if m != "ldr" or "#0x240" not in o:
+                continue
+            for j in range(k + 1, min(k + 6, len(offs))):
+                m2, o2 = dec[offs[j]]
+                if m2 == "ldr" and "#0x1a0" in o2:
+                    out["mem_rw"] = off
+                    break
+            if "mem_rw" in out:
+                break
+    return out
 
 
 def find_inline_helpers(jit_base, jit_data):

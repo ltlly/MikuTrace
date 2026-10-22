@@ -18,6 +18,24 @@ MASK64 = (1 << 64) - 1
 MD = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
 MD.detail = False
 
+#: JIT 区内容在一个进程生命周期内固定, 反汇编结果可缓存。
+#: 缓存前每跳都要重扫 0x100 字节, 病态路径下会把解释器拖到分钟级。
+_DISASM_CACHE = {}
+_DISASM_CACHE_MAX = 1 << 16
+
+
+def disasm_at(mem, addr, size):
+    """反汇编 addr 处的指令, 带缓存。key=(addr, 内容的廉价指纹)。"""
+    key = (addr, size)
+    hit = _DISASM_CACHE.get(key)
+    if hit is not None:
+        return hit
+    ins = list(MD.disasm(mem.snapshot(addr, size), addr))
+    if len(_DISASM_CACHE) >= _DISASM_CACHE_MAX:
+        _DISASM_CACHE.clear()
+    _DISASM_CACHE[key] = ins
+    return ins
+
 
 def _sx(v, bits):
     v &= (1 << bits) - 1
@@ -37,6 +55,10 @@ class Memory:
 
     def __init__(self):
         self.pages = {}
+        #: 所有写入的观测钩子: on_write(addr, size, value)。
+        #: 挂在 Memory 层而不是解释器层, 才能覆盖
+        #: 普通访存 / x25 寄存器文件 / x21 帧 / x27 帧指针 等全部写入路径。
+        self.on_write = None
 
     def _pg(self, addr, create):
         key = addr >> 12
@@ -49,18 +71,32 @@ class Memory:
         return pg
 
     def read(self, addr, size):
+        """读 size 字节(小端)。先试整块切片, 跨页/未映射再退回逐字节。"""
+        pg = self.pages.get(addr >> 12)
+        off = addr & 0xFFF
+        if pg is not None and off + size <= 0x1000:
+            return int.from_bytes(pg[off:off + size], "little")
         out = 0
         for i in range(size):
-            pg = self._pg(addr + i, False)
-            if pg is not None:
-                out |= pg[(addr + i) & 0xFFF] << (8 * i)
+            p = self._pg(addr + i, False)
+            if p is not None:
+                out |= p[(addr + i) & 0xFFF] << (8 * i)
         return out
 
     def write(self, addr, size, value):
+        if self.on_write is not None:
+            self.on_write(addr, size, value & ((1 << (size * 8)) - 1))
+        pg = self.pages.get(addr >> 12)
+        off = addr & 0xFFF
+        if pg is not None and off + size <= 0x1000:
+            pg[off:off + size] = (value & ((1 << (size * 8)) - 1)).to_bytes(
+                size, "little"
+            )
+            return
         value &= (1 << (size * 8)) - 1
         for i in range(size):
-            pg = self._pg(addr + i, True)
-            pg[(addr + i) & 0xFFF] = (value >> (8 * i)) & 0xFF
+            p = self._pg(addr + i, True)
+            p[(addr + i) & 0xFFF] = (value >> (8 * i)) & 0xFF
 
     def read_cstr(self, addr, limit=8192):
         out = bytearray()
@@ -75,8 +111,50 @@ class Memory:
         for i, b in enumerate(data):
             self.write(addr + i, 1, b)
 
+    def quiet(self):
+        """上下文管理器: 装载镜像期间不触发 on_write。"""
+        return _Quiet(self)
+
     def snapshot(self, addr, size):
         return bytes(self.read(addr + i, 1) for i in range(size))
+
+
+def _memop_ldp_stp(parts):
+    """`ldp x29, x30, [sp], #0x20` / `stp x29, x30, [sp, #0x60]`。
+
+    capstone 把基址方括号和偏移分成独立的逗号段, 直接按逗号切会把
+    ``[sp, #0x60]`` 切碎, 所以先整体抠出方括号里的内容再交给 _memop。
+    """
+    rest = ",".join(parts).strip()
+    m = _BRACKET.search(rest)
+    if not m:
+        raise ValueError("ldp/stp 缺基址: %r" % rest)
+    rn, off = _memop(m.group(0))
+    tail = rest[m.end():].strip()
+    if tail.startswith(","):
+        tail = tail[1:].strip()
+    if tail.startswith("#"):
+        imm = int(tail[1:].split(",")[0].strip(), 0)
+        if off[0] == "imm":
+            off = ("imm", off[1] + imm)
+        else:
+            off = ("imm", imm)
+    return rn, off
+
+
+class _Quiet:
+    def __init__(self, mem):
+        self.mem = mem
+        self.prev = None
+
+    def __enter__(self):
+        self.prev = self.mem.on_write
+        self.mem.on_write = None
+        return self.mem
+
+    def __exit__(self, *exc):
+        self.mem.on_write = self.prev
+        return False
 
 
 class Cpu:
@@ -92,15 +170,36 @@ class Cpu:
         self.c = 0
         self.v = 0
         self.steps = 0
+        self._frame_saved = False
+        self._ctrl = False
+        self.call_depth = 0
+        #: 设备侧导出的真实 x23/x25/x27 指针。为 None 时退回到合成的
+        #: XTAB_AREA / REGS_AREA / SAVE_AREA(只够跑单条 handler)。
+        self.reg_x23 = None
+        self.reg_x25 = None
+        self.reg_x27 = None
+        self.max_call_depth = 8
+        self.max_hops = 512
+        self.max_insns_per_step = 20000
+        # 跟随 JIT 区内控制流(进 helper)会执行上万条指令/步, 默认关闭:
+        # 纯帧语义验证只需单条 handler, 快 ~250 倍。
+        self.follow_flow = False
+        # 可执行代码范围(JIT 区); dispatch 只在其内跟随控制流
+        self.code_lo = 0
+        self.code_hi = 0
         self.max_steps = 50_000_000
         self.halted = False
         self.callbacks = {}
 
     def g(self, n):
+        if n == ZR:
+            return 0
         return self.sp if n == 31 else self.x[n]
 
     def s(self, n, v):
         v &= MASK64
+        if n == ZR:
+            return                      # 写零寄存器被丢弃
         if n == 31:
             self.sp = v
         else:
@@ -147,24 +246,40 @@ class Cpu:
 
 
 _RN = re.compile(r"^(?:x|w)(\d+)$")
+_BRACKET = re.compile(r"\[[^\]]*\]")
+
+#: 零寄存器的虚拟编号: 读恒 0, 写丢弃。
+ZR = 32
 _RM = re.compile(r"^(?:x|w)(\d+)$")
 
 
 def _reg(tok):
+    """'x5'/'w5' -> (5, 'x'/'w')；'sp'/'wsp' -> (31, ...)。
+
+    x31 与 sp 在 AArch64 上是同一个寄存器，capstone 会按语义打印其中之一。
+    """
+    tok = tok.strip()
+    if tok in ("sp", "wsp"):
+        return 31, "w" if tok == "wsp" else "x"
+    if tok in ("xzr", "wzr"):
+        return ZR, "w" if tok == "wzr" else "x"
     m = _RN.match(tok)
     if not m:
         raise ValueError("not a register: %r" % tok)
-    n = int(m.group(1))
-    if n == 31 and tok[0] == "w":
-        n = 31
-    return n, tok[0]
-
+    return int(m.group(1)), tok[0]
 
 def _memop(op_str):
-    """`[xN, #imm]` / `[xN]` / `[xN, xM]` / `[xN, wM, sxtw #k]` -> (rn, offset_expr)"""
+    """解析 capstone 的访存操作数。
+
+    支持 `[xN]` / `[xN, #imm]`(imm 可负) / `[xN, xM]` /
+    `[xN, wM, sxtw #k]` / `[xN, xM, lsl #k]` / 后索引 `]!`。
+    返回 (基址寄存器号, ('imm'|'reg'|'sxtw', 值))。
+    """
     body = op_str.strip()
-    if body.endswith("]!"):
-        body = body[:-1]          # 后索引寻址
+    if body.endswith("]!"):        # 后索引寻址
+        body = body[:-1]
+    elif body.endswith("] !"):
+        body = body[:-2]
     body = body[1:-1]
     parts = [p.strip() for p in body.split(",")]
     rn, _ = _reg(parts[0])
@@ -175,13 +290,10 @@ def _memop(op_str):
             return rn, ("imm", int(parts[1][1:], 0))
         m, _w = _reg(parts[1])
         return rn, ("reg", m)
-    if len(parts) == 3 and "lsl" in parts[2]:
+    if len(parts) == 3:
         m, _w = _reg(parts[1])
-        k = int(parts[2].split("#")[1], 0)
-        return rn, ("sxtw", (m, k))
-    if len(parts) == 3 and parts[2].startswith("sxtw"):
-        m, _w = _reg(parts[1])
-        k = int(parts[2].split("#")[1], 0)
+        shift = parts[2].split("#")
+        k = int(shift[1], 0) if len(shift) > 1 and shift[1] else 0
         return rn, ("sxtw", (m, k))
     raise ValueError("unsupported memop %r" % op_str)
 
@@ -200,49 +312,113 @@ class AvmpVm:
         self.xtab_area = None
         self.regs = [0] * 256
         self.native_hook = native_hook or (lambda addr, cpu: 0)
+        self.native_hook_addr = dict(native_hook or {})
         self.steps = 0
         self.next_handler = None
         self.max_steps = 5_000_000
         self.trace = []
         self.halted = False
+        self._frame_saved = False
+        self._ctrl = False
+        self._cur_fid = 0
+        self.saved_frame = None
+        self.call_depth = 0
+        #: 设备侧导出的真实 x23/x25/x27 指针。为 None 时退回到合成的
+        #: XTAB_AREA / REGS_AREA / SAVE_AREA(只够跑单条 handler)。
+        self.reg_x23 = None
+        self.reg_x25 = None
+        self.reg_x27 = None
+        self.max_call_depth = 8
+        self.native_calls = 0          # 累计进入 native helper 的次数
+        self._cur_pc = 0
+        #: 写内存观测钩子: on_store(pc, addr, size, value)。用于定位
+        #: 「谁在写 VM 状态缓冲」这类数据流问题。
+        self.on_store = None
+        self.last_cpu = None
+        #: bl/blr 观测钩子: on_call(ins_addr, target, cpu)。
+        #: 内联小函数(如 mem_rw)不走 dispatch, 只能在这里挂。
+        self.on_call = None
+        self.tls_base = 0x7F0000000000  # mrs x?, tpidr_el0 的合成基址
+        self.max_hops = 512
+        self.max_insns_per_step = 20000
+        # 跟随 JIT 区内控制流(进 helper)会执行上万条指令/步, 默认关闭:
+        # 纯帧语义验证只需单条 handler, 快 ~250 倍。
+        self.follow_flow = False
+        # 可执行代码范围(JIT 区); dispatch 只在其内跟随控制流
+        self.code_lo = 0
+        self.code_hi = 0
 
     # ---- 帧与寄存器 -------------------------------------------------
     def dispatch(self, addr):
-        """执行一条 JIT handler：从真实地址反汇编，遇到 br/ret 即止。"""
+        """从 addr 开始解释执行, 跟随 JIT 区内的控制流。
+
+        两种 br 语义要区分:
+          * 写了 [x27+8] 之后 br -> 帧切换(由 VM 主循环用 x23 表取下一条)
+          * 没写 [x27+8] 就 br   -> 函数内跳转(canary stub 的自解密 br)
+        bl 则压返回地址继续执行 helper。ret 回到 x30。
+        """
         cpu = Cpu(self.mem)
         addr &= MASK64
         cpu.s(30, addr)
         cpu.s(21, self.frame_area + self.frame)
-        cpu.s(25, REGS_AREA)
-        cpu.s(27, SAVE_AREA)
-        if self.xtab_area is not None:
+        cpu.s(25, self.reg_x25 if self.reg_x25 is not None else REGS_AREA)
+        cpu.s(27, self.reg_x27 if self.reg_x27 is not None else SAVE_AREA)
+        if self.reg_x23 is not None:
+            cpu.s(23, self.reg_x23)
+        elif self.xtab_area is not None:
             cpu.s(23, self.xtab_area)
+        self.call_depth = 0
         cpu.pc = addr
-        # 跳板（id=2 之类）用 `br` 跳到 JIT 流里紧邻的下一个内联 handler，
-        # 只有写了 [x27+8]（保存帧指针）才代表本帧结束、要换帧。
-        for _ in range(64):
+        self.last_cpu = cpu          # 便于外部观测寄存器(定位 ctx/缓冲区)
+        lo, hi = self.code_lo, self.code_hi
+        budget = self.max_insns_per_step
+        hops = self.max_hops if self.follow_flow else 1
+        for _hop in range(hops):
+            if not (lo <= cpu.pc < hi):
+                # 跳出 JIT 区(进了 libc/模块外), 交给上层
+                break
             moved = False
-            for ins in MD.disasm(self.mem.snapshot(cpu.pc, HANDLER_MAX), cpu.pc):
-                self._frame_saved = False
+            # _frame_saved 由 `str x21,[x27,#8]` 置位, 要一直保持到下一条 br
+            # 消费它; 每条指令都重置会把帧切换误判成函数内跳转。
+            self._frame_saved = False
+            for ins in disasm_at(self.mem, cpu.pc, HANDLER_MAX):
+                budget -= 1
+                if budget <= 0:
+                    raise RuntimeError(
+                        "单步指令数超预算 (frame=0x%x pc=0x%x)" % (self.frame, cpu.pc)
+                    )
+                self._ctrl = False
                 self.exec_one(cpu, ins)
                 if cpu.halted:
                     break
-                if ins.mnemonic == "br":
-                    if self._frame_saved:
+                # 控制转移: br / b / b.cond / cbz / tbz / bl
+                if (ins.mnemonic.startswith("b") or
+                        ins.mnemonic in ("cbz", "cbnz", "tbz", "tbnz")):
+                    if ins.mnemonic == "br" and self._frame_saved:
+                        # 帧切换: 主循环负责取下一条 handler
                         self._frame_saved = False
+                        cpu.halted = True
                         break
+                    if self._ctrl:
+                        moved = True
+                        break
+                if ins.mnemonic == "ret":
+                    ret = cpu.g(30)
+                    if ret == addr or ret == 0 or not self.follow_flow:
+                        cpu.halted = True
+                        break
+                    cpu.pc = ret
+                    if self.call_depth:
+                        self.call_depth -= 1
                     moved = True
-                    break
-                if ins.mnemonic in ("ret", "eret"):
-                    cpu.halted = True
                     break
             if cpu.halted or not moved:
                 break
         # handler 对 x21 的写回即 VM 的帧推进
         self.frame = (cpu.g(21) - self.frame_area) & MASK64
 
-
     def run(self, max_steps=None):
+        """VM 主循环: 逐帧执行, 直到步数上限或 VM 停机。"""
         limit = max_steps or self.max_steps
         while self.steps < limit and not self.halted:
             self.step()
@@ -251,9 +427,9 @@ class AvmpVm:
     def step(self, handler=None):
         """执行当前帧的 handler。
 
-        VM 的 handler 选择规则：帧 F 自己开头 2 字节就是 **F 的 handler id**
-        （前一帧末尾的 `ldrh w?, [x21,#0x10]!` 读的正是下一帧 F 的 id，
-        再经 x23 表取出并 `br` 过去）。所以 handler(F) = x23[id_at(F)]。
+        handler 选择规则: `handler(F) = x23[ u16_at(F + 0x10) ]`
+        —— 帧内 +0x10 的 2 字节是本帧的 handler id(已用设备侧执行序列
+        107/107 核对; 帧首与 +0x2..0xe 均不匹配)。
         """
         if handler is None:
             handler = self.handlers.get(self.frame_id())
@@ -291,6 +467,7 @@ class AvmpVm:
     def exec_one(self, cpu, ins):
         m = ins.mnemonic
         o = ins.op_str
+        self._cur_pc = ins.address
         try:
             self._exec(cpu, m, o, ins)
         except NotImplementedError:
@@ -307,19 +484,53 @@ class AvmpVm:
         m0 = m
 
         # ---- 分支 / 调用 ----
-        if m == "b" and ins.op_str.startswith("#"):
-            cpu.pc = (ins.address + int(ins.op_str[1:], 0)) & MASK64
+        if m == "b" and o.startswith("#"):
+            cpu.pc = int(o[1:], 0) & MASK64
+            self._ctrl = True
             return
         if m == "br":
             cpu.pc = cpu.g(int(o.split(",")[0][1:] if o[0] == "x" else 0))
+            self._ctrl = True
             return
         if m == "bl" and o.startswith("#"):
-            target = (ins.address + int(o[1:], 0)) & MASK64
+            target = int(o[1:], 0) & MASK64
+            if self.on_call is not None:
+                self.on_call(ins.address, target, cpu)
             if target in self.native_hook_addr:
                 r = self.native_hook_addr[target](cpu)
                 cpu.s(0, r & MASK64)
                 return
-            raise NotImplementedError("bl to 0x%x" % target)
+            if not self.follow_flow:
+                raise NotImplementedError(
+                    "bl 到 native helper 0x%x (需 AvmpVm.follow_flow=True)" % target
+                )
+            # 真正的调用: 压返回地址, 在 JIT 区内的 helper 继续解释执行
+            if self.call_depth >= self.max_call_depth:
+                raise RuntimeError("native 调用深度超限 (0x%x)" % target)
+            self.call_depth += 1
+            self.native_calls += 1
+            cpu.s(30, (ins.address + 4) & MASK64)
+            cpu.pc = target
+            self._ctrl = True
+            return
+        if m == "blr":
+            target = cpu.g(int(o.split(",")[0][1:]))
+            if self.on_call is not None:
+                self.on_call(ins.address, target, cpu)
+            if target in self.native_hook_addr:
+                r = self.native_hook_addr[target](cpu)
+                cpu.s(0, r & MASK64)
+                return
+            if not self.follow_flow:
+                raise NotImplementedError("blr 到 0x%x" % target)
+            if self.call_depth >= self.max_call_depth:
+                raise RuntimeError("间接调用深度超限 (0x%x)" % target)
+            self.call_depth += 1
+            self.native_calls += 1
+            cpu.s(30, (ins.address + 4) & MASK64)
+            cpu.pc = target
+            self._ctrl = True
+            return
         if m0 == "bl":
             parts = o.split(",")
             cpu.s(int(parts[0][1:]), (ins.address + 4) & MASK64)
@@ -329,17 +540,23 @@ class AvmpVm:
             num = {"eq": 0, "ne": 1, "hs": 2, "lo": 3, "mi": 4, "pl": 5,
                    "vs": 6, "vc": 7, "hi": 8, "ls": 9, "ge": 10, "lt": 11,
                    "gt": 12, "le": 13, "al": 14, "nv": 15}[cc]
+            # capstone 的 `#imm` 已经是解析后的**绝对地址**, 不能再加 ins.address
             if o.startswith("#"):
                 if cpu.cond(num):
-                    cpu.pc = (ins.address + int(o[1:], 0)) & MASK64
+                    cpu.pc = int(o[1:], 0) & MASK64
+                    self._ctrl = True
+                else:
+                    cpu.pc = (ins.address + 4) & MASK64
                 return
             return
         if m in ("cbz", "cbnz"):
             rn, w32 = _reg(o.split(",")[0])
             val = cpu.w(rn) if w32 == "w" else cpu.g(rn)
             zero = val == 0
+            # 条件不成立时是**顺序执行**(pc+4), 不是跳到 ins.address+4
             if (m == "cbz") == zero:
                 cpu.pc = (ins.address + 4) & MASK64
+                self._ctrl = True
             return
         if m in ("tbz", "tbnz"):
             parts = o.split(",")
@@ -352,7 +569,30 @@ class AvmpVm:
         if m in ("ret", "eret"):
             cpu.halted = True
             return
-        if m == "nop":
+        if m in ("nop", "isb", "dsb", "dmb", "hint", "paciasp", "autiasp",
+                 "pacibsp", "autibsp", "csdb"):
+            return
+        if m in ("pacia", "pacib", "autia", "autib"):
+            parts = [q.strip() for q in o.split(",")]
+            if len(parts) >= 2 and _RN.match(parts[1]):
+                cpu.s(_RN.match(parts[1]).__getitem__(1) and
+                      int(_RN.match(parts[1]).group(1)), cpu.g(parts[0]))
+            return
+        if m in ("bti", "bti_c"):
+            return
+        if m == "mrs":
+            # AVMP 的 canary 前缀会读线程指针(tpidr_el0)做栈保护检查。
+            # 离线解释不需要真的 TLS，给一个稳定的合成值即可：
+            # canary = imm + *(TLS_BASE + 0x68) 之类，只要跨调用一致。
+            parts = [q.strip() for q in o.split(",")]
+            rd, _w = _reg(parts[0])
+            sysreg = parts[1] if len(parts) > 1 else ""
+            if sysreg.startswith("tpidr"):
+                cpu.s(rd, self.tls_base)
+            elif sysreg.startswith("sp_el"):
+                cpu.s(rd, cpu.sp)
+            else:
+                cpu.s(rd, 0)
             return
 
         # ---- 访存 ----
@@ -385,11 +625,20 @@ class AvmpVm:
         # ---- 立即数运算 ----
         if m in ("mov", "movz"):
             parts = [p.strip() for p in o.split(",")]
-            rd, _ = _reg(parts[0])
-            imm = int(parts[1][1:], 0) if parts[1].startswith("#") else 0
+            rd, rdw = _reg(parts[0])
+            # 寄存器形式: `mov x1, x27` 是**寄存器间移动**(汇编成 ORR x1, xzr, x27)。
+            # 之前这里只认立即数, 遇到寄存器形式一律置 0, 导致 x27 被读成 0。
+            if not parts[1].startswith("#"):
+                rs, rsw = _reg(parts[1])
+                if rsw == "w":
+                    cpu.sw(rd, cpu.w(rs))
+                else:
+                    self._wd(cpu, rd, "w" if rdw == "w" else "x", cpu.g(rs))
+                return
+            imm = int(parts[1][1:], 0)
             if m == "movz" and len(parts) > 2:
-                imm << int(parts[2][1:], 0)
-            cpu.s(rd, imm & (MASK64 if parts[0][0] == "x" else 0xFFFFFFFF))
+                imm <<= int(parts[2][1:], 0)
+            self._wd(cpu, rd, "w" if rdw == "w" else "x", imm)
             return
         if m in ("movn",):
             parts = [p.strip() for p in o.split(",")]
@@ -412,12 +661,10 @@ class AvmpVm:
             cpu.s(rd, ~cpu.g(rn) & MASK64)
             return
         if m in ("adrp", "adr"):
+            # capstone 的 `#imm` 已经是解析后的绝对地址(adrp 给页基址)
             parts = [p.strip() for p in o.split(",")]
             rd, _ = _reg(parts[0])
-            imm = int(parts[1][1:], 0)
-            if m == "adrp":
-                imm <<= 12
-            cpu.s(rd, ((ins.address & ~0xFFF) + imm) & MASK64)
+            cpu.s(rd, int(parts[1][1:], 0) & MASK64)
             return
         if m in ("add", "adds", "sub", "subs", "cmp", "cmn", "neg", "negs"):
             return self._alu(cpu, m, o)
@@ -452,8 +699,7 @@ class AvmpVm:
         if m == "ldp":
             parts = [p.strip() for p in o.split(",")]
             a, b = parts[0], parts[1]
-            rest = ",".join(parts[2:]).strip()[1:-1]
-            rn, off = _memop("[" + rest + "]")
+            rn, off = _memop_ldp_stp(parts[2:])
             base = cpu.g(rn) + self._off(cpu, off)
             rt1, _ = _reg(a)
             rt2, _ = _reg(b)
@@ -493,8 +739,7 @@ class AvmpVm:
             parts = [p.strip() for p in o.split(",")]
             rt1, _ = _reg(parts[0])
             rt2, _ = _reg(parts[1])
-            rest = ",".join(parts[2:]).strip()[1:-1]
-            rn, off = _memop("[" + rest + "]")
+            rn, off = _memop_ldp_stp(parts[2:])
             base = cpu.g(rn) + self._off(cpu, off)
             self.mem.write(base & MASK64, 8, cpu.g(rt1))
             self.mem.write((base + 8) & MASK64, 8, cpu.g(rt2))
@@ -511,6 +756,9 @@ class AvmpVm:
         size = {"b": 1, "h": 2, "w": 4, "": 8}[_sizeletter(m)]
         val = cpu.g(rt) if (wide == "x" and size == 8) else cpu.w(rt)
         self.mem.write(base & MASK64, size, val)
+        if self.on_store is not None:
+            self.on_store(self._cur_pc, base & MASK64, size,
+                          val & ((1 << (size * 8)) - 1))
         if post:
             cpu.s(rn, (cpu.g(rn) + self._off(cpu, off)) & MASK64)
         return
@@ -528,8 +776,10 @@ class AvmpVm:
                                                     self.mem.read(base & MASK64, size)))
             return True
         if rn == 25:
+            # 槽索引可能来自设备指针(任意 64 位), 必须走 _get_reg 而不是
+            # 直接下标 —— 越界会 IndexError。
             idx = off[1] // 8 if off[0] == "imm" else self._off(cpu, off) // 8
-            self._wd(cpu, rt, wide, self._load_val(m, size, self.regs[idx]))
+            self._wd(cpu, rt, wide, self._load_val(m, size, self._get_reg(idx)))
             return True
         if rn == 27:
             self._wd(cpu, rt, wide, self._load_val(
@@ -560,9 +810,15 @@ class AvmpVm:
             self.mem.write(target & MASK64, 8, cpu.g(rt))
             return True
         if rn == 25:
+            if self.reg_x25 is not None:
+                addr = (self.reg_x25 + (off[1] if off[0] == "imm"
+                                        else self._off(cpu, off))) & MASK64
+                self.mem.write(addr, size_is_known(m), cpu.g(rt))
+                return True
             idx = off[1] // 8 if off[0] == "imm" else self._off(cpu, off) // 8
             self._set_reg(idx, cpu.g(rt))
             return True
+
         if rn == 27:
             if self._off(cpu, off) == 8:
                 self.saved_frame = self.frame
@@ -571,20 +827,25 @@ class AvmpVm:
             return True
         return False
 
-    def _get_reg(self, idx):
-        """槽索引可能来自设备指针(任意 64 位); 越界视为未初始化的空槽。"""
+    def _get_reg(self, idx):  # noqa: D401
+        """槽索引可能来自设备指针(任意 64 位)。
+
+        负索引与超大索引都视为未初始化的空槽(读 0); 读侧不扩容,
+        写侧 `_set_reg` 才扩容, 保证读写语义一致。
+        """
         if 0 <= idx < len(self.regs):
             return self.regs[idx]
-        if idx < 0:
-            return 0
         return 0
 
+    #: 槽索引上限。设备指针算出的索引可达 2^33, 但那基本是野值;
+    #: 超过这个上限按野值处理(丢弃), 免得为一个异常索引分配几百 MB。
+    MAX_SLOT = 1 << 20
+
     def _set_reg(self, idx, v):
-        if idx < 0:
+        if idx < 0 or idx > self.MAX_SLOT:
             return
         if idx >= len(self.regs):
-            grow = min(idx + 1, len(self.regs) * 4)
-            self.regs.extend([0] * (grow - len(self.regs)))
+            self.regs.extend([0] * (idx + 1 - len(self.regs)))
         self.regs[idx] = v & MASK64
 
     def _wd(self, cpu, rt, wide, v):
@@ -651,10 +912,28 @@ class AvmpVm:
         raise ValueError(parts)
 
     def _shifted(self, cpu, rb, shift_tok, wb):
-        toks = [t.strip() for t in shift_tok.split()]
-        amt = cpu.g(int(toks[0][1:])) if toks[0][0] == "x" else cpu.w(int(toks[0][1:]))
-        typ = toks[1] if len(toks) > 1 else "lsl"
-        return self._do_shift(cpu.g(rb) if wb == "x" else cpu.w(rb), typ, amt)
+        """`lsl #4` / `lsr w3` / `asr x5`。
+
+        移位量要么是立即数(``#4``)要么是寄存器; 不能把它当寄存器号硬转 int
+        (先前把 "lsl" 当成寄存器号, 直接 ValueError)。
+        """
+        typ = "lsl"
+        amt_tok = None
+        for t in shift_tok.split():
+            t = t.strip()
+            if t in ("lsl", "lsr", "asr", "ror", "msl"):
+                typ = t
+            elif t.startswith("#"):
+                amt_tok = int(t[1:], 0)
+        if amt_tok is None and shift_tok.strip():
+            cand = shift_tok.strip()
+            if _RN.match(cand):
+                n, w32 = _reg(cand)
+                amt_tok = cpu.w(n) if w32 == "w" else cpu.g(n)
+        if amt_tok is None:
+            amt_tok = 0
+        base = cpu.g(rb) if wb == "x" else cpu.w(rb)
+        return self._do_shift(base, typ, amt_tok)
 
     def _do_shift(self, v, typ, amt):
         if typ == "lsl":
@@ -831,6 +1110,11 @@ class AvmpVm:
         return
 
     native_hook_addr = {}
+
+
+def size_is_known(m):
+    """store 类指令的写宽度(字节)。"""
+    return {"b": 1, "h": 2, "w": 4, "": 8}[_sizeletter(m)]
 
 
 def _sizeletter(m):
