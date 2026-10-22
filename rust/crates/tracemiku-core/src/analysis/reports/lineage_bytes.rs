@@ -145,7 +145,11 @@ pub(super) fn byte_lineage_value_on(
     let mut steps = Vec::new();
     let mut seen = HashSet::new();
     let mut stop_reason = serde_json::json!({"kind": "depth_limit"});
-    for step_idx in 0..depth {
+    let mut logical_depth = 0usize;
+    let mut raw_steps = 0usize;
+    let max_raw_steps = depth.saturating_mul(8).max(depth);
+    while logical_depth < depth && raw_steps < max_raw_steps {
+        let step_idx = raw_steps;
         let seed_json = seed.to_json();
         let key = seed_json.to_string();
         if !seen.insert(key) {
@@ -168,15 +172,52 @@ pub(super) fn byte_lineage_value_on(
                         reg: reg.to_string(),
                         byte_lane: source_byte_offset.map(|lane| lane as usize),
                     });
+                let state_base = (!profile.state_reg.is_empty())
+                    .then(|| {
+                        write
+                            .get("writer_idx")
+                            .and_then(|v| v.as_u64())
+                            .map(|idx| analysis.inner.trace.record(idx as usize))
+                            .and_then(|rec| rec.reg_by_name(&profile.state_reg))
+                    })
+                    .flatten();
+                let vm_slot_offset = profile
+                    .matches_regfile_addr(addr, state_base)
+                    .map(|off| format!("{off:#x}"));
+                let is_vm_reg_slot = vm_slot_offset.is_some();
+                let unlogged_write_gap = write
+                    .get("unlogged_write_gap")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 let next_json = next_seed.as_ref().map(LineageSeed::to_json);
-                steps.push(serde_json::json!({
+                let mut step_obj = serde_json::json!({
                     "step": step_idx,
+                    "logical_depth": logical_depth,
                     "seed": seed_json,
                     "kind": "last_write",
                     "source_byte_offset": source_byte_offset,
                     "write": write,
                     "next": next_json,
-                }));
+                });
+                if !unlogged_write_gap.is_null() {
+                    if let Some(obj) = step_obj.as_object_mut() {
+                        obj.insert("unlogged_write_gap".to_string(), unlogged_write_gap);
+                    }
+                }
+                if is_vm_reg_slot {
+                    if let Some(obj) = step_obj.as_object_mut() {
+                        obj.insert("is_vm_reg_slot".to_string(), serde_json::json!(true));
+                        obj.insert(
+                            "vm_slot_offset".to_string(),
+                            serde_json::json!(vm_slot_offset),
+                        );
+                    }
+                }
+                steps.push(step_obj);
+                raw_steps += 1;
+                if !is_vm_reg_slot {
+                    logical_depth += 1;
+                }
                 if let Some(next) = next_seed {
                     seed = next;
                 } else {
@@ -204,15 +245,60 @@ pub(super) fn byte_lineage_value_on(
                 let (next_seed, decision) =
                     lineage_next_from_backstep(&backstep, byte_lane, profile);
                 let next_json = next_seed.as_ref().map(LineageSeed::to_json);
-                steps.push(serde_json::json!({
+                let local_def = backstep.get("local_def");
+                let vm_slot_offset = local_def
+                    .and_then(|ld| ld.pointer("/vm_slot/offset"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        let mem_addr = local_def
+                            .and_then(|ld| ld.get("mem_addr"))
+                            .and_then(|v| v.as_str())
+                            .and_then(parse_u64_str)?;
+                        let state_base = (!profile.state_reg.is_empty())
+                            .then(|| {
+                                local_def
+                                    .and_then(|ld| record_reg_u64(ld, &profile.state_reg))
+                                    .or_else(|| {
+                                        backstep
+                                            .get("target")
+                                            .and_then(|t| record_reg_u64(t, &profile.state_reg))
+                                    })
+                            })
+                            .flatten();
+                        profile
+                            .matches_regfile_addr(mem_addr, state_base)
+                            .map(|off| format!("{off:#x}"))
+                    });
+                let is_vm_reg_slot = local_def
+                    .and_then(|ld| ld.get("class"))
+                    .and_then(|v| v.as_str())
+                    == Some("vm-reg-load")
+                    || vm_slot_offset.is_some();
+                let mut step_obj = serde_json::json!({
                     "step": step_idx,
+                    "logical_depth": logical_depth,
                     "seed": seed_json,
                     "byte_lane": byte_lane,
                     "kind": "reg_source",
                     "backstep": compact_lineage_backstep(&backstep),
                     "decision": decision,
                     "next": next_json,
-                }));
+                });
+                if is_vm_reg_slot {
+                    if let Some(obj) = step_obj.as_object_mut() {
+                        obj.insert("is_vm_reg_slot".to_string(), serde_json::json!(true));
+                        obj.insert(
+                            "vm_slot_offset".to_string(),
+                            serde_json::json!(vm_slot_offset),
+                        );
+                    }
+                }
+                steps.push(step_obj);
+                raw_steps += 1;
+                if !is_vm_reg_slot {
+                    logical_depth += 1;
+                }
                 if let Some(next) = next_seed {
                     seed = next;
                 } else {
@@ -232,6 +318,7 @@ pub(super) fn byte_lineage_value_on(
             "before_idx": before_idx,
         },
         "depth_requested": depth,
+        "logical_depth_reached": logical_depth,
         "steps_returned": steps.len(),
         "stop_reason": stop_reason,
         "origin": derive_byte_origin(&steps, &stop_reason),
@@ -248,6 +335,7 @@ pub(super) fn last_write_of_addr_on(
         addr: format!("{addr:#x}"),
         before_idx: isize::try_from(before_idx)?,
         with_external: true,
+        size: None,
     };
     query_value_on(analysis, Query::LastWriteOfAddr(params))
 }
@@ -328,6 +416,7 @@ pub(super) fn lineage_next_from_backstep(
                     "observed_bytes_hex": backstep.pointer("/upstream/observed_bytes_hex").cloned().unwrap_or(serde_json::Value::Null),
                     "returned": backstep.pointer("/upstream/returned").cloned().unwrap_or(serde_json::Value::Null),
                     "maybe_truncated": backstep.pointer("/upstream/maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+                    "unlogged_write_gap": backstep.pointer("/upstream/unlogged_write_gap").cloned().unwrap_or(serde_json::Value::Null),
                 },
             }),
         );
@@ -344,6 +433,7 @@ pub(super) fn lineage_next_from_backstep(
                     "observed_mismatches": backstep.pointer("/upstream/observed_mismatches").cloned().unwrap_or_else(|| serde_json::json!([])),
                     "last_write": backstep.pointer("/upstream/last_write").cloned().unwrap_or(serde_json::Value::Null),
                     "gap_call_candidates": compact_gap_call_candidates(backstep.pointer("/upstream/gap_call_candidates")),
+                    "unlogged_write_gap": backstep.pointer("/upstream/unlogged_write_gap").cloned().unwrap_or(serde_json::Value::Null),
                 },
             }),
         );
@@ -411,6 +501,7 @@ pub(super) fn compact_lineage_backstep(backstep: &serde_json::Value) -> serde_js
             "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
             "byte_nexts": upstream.get("byte_nexts").cloned().unwrap_or_else(|| serde_json::json!([])),
             "gap_call_candidates": compact_gap_call_candidates(upstream.get("gap_call_candidates")),
+            "unlogged_write_gap": upstream.get("unlogged_write_gap").cloned().unwrap_or(serde_json::Value::Null),
         },
         "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
     })
@@ -442,6 +533,20 @@ pub(super) fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::V
     let memory_boundaries = chain
         .iter()
         .filter_map(|step| {
+            if step.get("kind").and_then(|v| v.as_str()) == Some("last_write") {
+                let gap = step.get("unlogged_write_gap").filter(|v| !v.is_null())?;
+                return Some(serde_json::json!({
+                    "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                    "idx": step.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+                    "reg": step.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+                    "value": step.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                    "kind": "observed_read_without_matching_traced_write",
+                    "upstream": {
+                        "addr": step.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                        "unlogged_write_gap": gap.clone(),
+                    },
+                }));
+            }
             let decision = step.get("decision")?;
             let kind = decision.get("kind").and_then(|v| v.as_str());
             if !matches!(
@@ -464,6 +569,7 @@ pub(super) fn byte_lineage_summary(lineage: &serde_json::Value) -> serde_json::V
         "status": lineage.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": lineage.get("start").cloned().unwrap_or(serde_json::Value::Null),
         "depth_requested": lineage.get("depth_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "logical_depth_reached": lineage.get("logical_depth_reached").cloned().unwrap_or(serde_json::Value::Null),
         "steps_returned": lineage.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
         "stop_reason": compact_lineage_stop_reason(lineage.get("stop_reason")),
         "recognized_semantics": recognized_semantics,

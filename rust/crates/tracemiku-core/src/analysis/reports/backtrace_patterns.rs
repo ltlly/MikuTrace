@@ -287,7 +287,7 @@ pub(super) fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_js
     match step.get("kind").and_then(|v| v.as_str()) {
         Some("last_write") => {
             let write = step.get("write").unwrap_or(&serde_json::Value::Null);
-            serde_json::json!({
+            let mut out = serde_json::json!({
                 "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
                 "seed": step.get("seed").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": "last_write",
@@ -299,12 +299,28 @@ pub(super) fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_js
                 "src_reg": write.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
                 "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
                 "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
-            })
+            });
+            if let Some(obj) = out.as_object_mut() {
+                if let Some(gap) = step
+                    .get("unlogged_write_gap")
+                    .or_else(|| write.get("unlogged_write_gap"))
+                    .filter(|v| !v.is_null())
+                {
+                    obj.insert("unlogged_write_gap".to_string(), gap.clone());
+                }
+                if let Some(is_slot) = step.get("is_vm_reg_slot").filter(|v| !v.is_null()) {
+                    obj.insert("is_vm_reg_slot".to_string(), is_slot.clone());
+                }
+                if let Some(slot_off) = step.get("vm_slot_offset").filter(|v| !v.is_null()) {
+                    obj.insert("vm_slot_offset".to_string(), slot_off.clone());
+                }
+            }
+            out
         }
         Some("reg_source") => {
             let backstep = step.get("backstep").unwrap_or(&serde_json::Value::Null);
             let upstream = backstep.get("upstream").unwrap_or(&serde_json::Value::Null);
-            serde_json::json!({
+            let mut out = serde_json::json!({
                     "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
                     "seed": step.get("seed").cloned().unwrap_or(serde_json::Value::Null),
                     "byte_lane": step.get("byte_lane").cloned().unwrap_or(serde_json::Value::Null),
@@ -329,11 +345,21 @@ pub(super) fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_js
                 "last_write": compact_lineage_last_write(upstream.get("last_write")),
                 "byte_nexts": compact_lineage_byte_nexts(upstream.get("byte_nexts")),
                 "gap_call_candidates": compact_gap_call_candidates(upstream.get("gap_call_candidates")),
+                "unlogged_write_gap": upstream.get("unlogged_write_gap").cloned().unwrap_or(serde_json::Value::Null),
             },
                     "frontier": backstep.get("frontier").cloned().unwrap_or_else(|| serde_json::json!([])),
                     "decision": step.get("decision").cloned().unwrap_or(serde_json::Value::Null),
                     "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
-                })
+                });
+            if let Some(obj) = out.as_object_mut() {
+                if let Some(is_slot) = step.get("is_vm_reg_slot").filter(|v| !v.is_null()) {
+                    obj.insert("is_vm_reg_slot".to_string(), is_slot.clone());
+                }
+                if let Some(slot_off) = step.get("vm_slot_offset").filter(|v| !v.is_null()) {
+                    obj.insert("vm_slot_offset".to_string(), slot_off.clone());
+                }
+            }
+            out
         }
         _ => step.clone(),
     }

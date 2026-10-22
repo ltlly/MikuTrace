@@ -67,7 +67,7 @@ void FUN_00254ee4(byte *out, int len, byte *key, long keylen, uint drop)
 
 **逆向路线因此调整为**：不要试图静态还原 VM 解释器，而是
 (a) 找到 VM 的入口（`avg_getSecurityFactors` 字符串的解出者 `sub_54b70` 附近）与
-(b) 在设备上对 VM dispatch 循环做 trace，`coverage` 拿到 VM 解释器的执行块集合，
+(b) 在设备上对 VM dispatch 循环做 trace，`cfg --coverage` 拿到 VM 解释器的执行块集合，
 (c) 对解释器做 taint，从「请求缓冲」追到「输出缓冲」——**解释器是通用的，
 数据流依然成立**，只是多了一层调度。
 
@@ -182,7 +182,7 @@ first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整�
 这与 §1.5 的 AVMP 假设完全一致，并给出了确凿证据链。
 
 需采集 70102 一次自然返回的完整调用，使真实 handler 落在窗口内；然后
-`resolve` 出 `[x0+0x10]` 的目标、`coverage` 拿其块集合、对它做 `taint-bwd`。
+`resolve` 出 `[x0+0x10]` 的目标、`cfg --coverage` 拿其块集合、对它做 `taint-bwd`。
 
 ## 2.7 五个输出参数的生成器地址（逐一对应）
 
@@ -227,7 +227,7 @@ first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整�
 `w2` 只取 {8, 31, 32} 三种取值，疑似输出类别/长度类别；`w3` 取 {2,3,9,12,15}，
 每个生成器一个稳定值，可作为离线对齐的指纹。
 
-**下一步（设备）**：对 5 个生成器分别 `coverage` + `mem-dump`，把输出缓冲与
+**下一步（设备）**：对 5 个生成器分别 `cfg --coverage` + `mem-dump`，把输出缓冲与
 `x-sign`/`wua` 等键名对应起来（生成器返回的 HashMap 条目），再对命中者做 `taint-bwd`。
 
 ## 2.8 窗口边界与「结果组装」的位置（离线分析的终点）
@@ -292,7 +292,7 @@ first_idx=2630 / last_idx=5581，与 4 次调用一一对应；它同时是整�
 
 1. 采集一次 70102 自然返回的完整调用，检查封口和缺口元数据。
 2. 用执行偏移集合与 `find calls FUN_00254ee4` 的 14 个调用者取交集 → 定位 RC4 使用点。
-3. 对命中的调用者做 `coverage` + `call-tree`，找写 76 字节缓冲的循环（`w1=0x4c`）。
+3. 对命中的调用者做 `cfg --coverage` + `call-tree`，找写 76 字节缓冲的循环（`w1=0x4c`）。
 4. `taint-bwd` 从该循环回溯，判断 nonce 是否 = `RC4(key, H(请求))` 之类。
 
 ## 6. 本阶段对目标的净进展
@@ -343,7 +343,7 @@ last_asm = ret     last_insn_is_ret = true     is_complete = true     truncated 
   大量出现，说明装配确实在调用末尾——现在有完整数据可继续回溯。
 
 剩余工作（用这份完整 trace 即可完成，不再需要重新采集）：
-1. 用 `coverage` / `call-tree` 覆盖 0x1b1870–0x1b193c 的装配循环；
+1. 用 `cfg --coverage` / `call-tree` 覆盖 0x1b1870–0x1b193c 的装配循环；
 2. 找出「值」侧：x-sign 对应的 base64 字符串缓冲地址（`--snapshot-mem` 或在装配点对寄存器
    指向的堆区做 `mem-dump`）；
 3. 沿 `x-sign` 的值反向 `taint-bwd` 回溯到请求缓冲，判定 10 字节 nonce 是

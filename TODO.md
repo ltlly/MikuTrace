@@ -14,5 +14,5 @@
 
 ## 分析证据
 
-- [ ] 为 VM token 增加寄存器、内存、外部写、常量及未知来源的结构化 provenance。
+- [ ] 将 `byte-lineage` 已具备的结构化 provenance、`unlogged_write_gap` 与 VM 寄存器槽折叠扩展到试验性 `experimental vm-*` token 分析。
 - [ ] 用代表性大 trace 和固定 AI 查询任务评估按需加载、重复查询成本、输出预算及命令冗余，建立可复现基线。

@@ -325,3 +325,67 @@ fn find_mem_pattern_finds_latest_bytes() {
     assert_eq!(v["hits"][0]["addr"], "0x7000");
     assert_eq!(v["hits"][0]["first_idx"], 1);
 }
+
+#[test]
+fn find_mem_pattern_detects_transient_overwritten_pattern() {
+    let (_tmp, cd) = synth_call_dir();
+    append_external_write(&cd, 2, 0x7000, b'X');
+    let v = get_json(cd, "find-mem-pattern?bytes_hex=68656c6c6f&max=5");
+    assert_eq!(v["count"], 1);
+    assert_eq!(v["hits"][0]["addr"], "0x7000");
+    assert_eq!(v["hits"][0]["first_idx"], 0);
+    assert_eq!(v["hits"][0]["overwritten_at_idx"], 2);
+}
+
+#[test]
+fn last_write_of_addr_detects_unlogged_write_gap_and_size() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_3r_1ms");
+    std::fs::create_dir_all(&cd).unwrap();
+    // idx 0: str x0, [x1] (x0 = 0, x1 = 0x7000) -> writes 0x00 to 0x7000..0x7008
+    // idx 1: ldr x2, [x1] (post-state at idx 2 has x2 = 0x216da98b) -> reads 8b a9 6d 21
+    // idx 2: ret
+    let insts: [u32; 3] = [0xf9000020, 0xf9400022, 0xd65f03c0];
+    let mut buf = vec![0u8; 272 * 3];
+    for (i, inst) in insts.iter().enumerate() {
+        let off = i * 272;
+        buf[off..off + 8].copy_from_slice(&(0x100000u64 + i as u64 * 4).to_le_bytes());
+        buf[off + 16..off + 24].copy_from_slice(&0x7000u64.to_le_bytes());
+        if i == 2 {
+            buf[off + 24..off + 32].copy_from_slice(&0x216da98bu64.to_le_bytes());
+        }
+        buf[off + 268..off + 272].copy_from_slice(&inst.to_le_bytes());
+    }
+    std::fs::File::create(cd.join("trace.bin"))
+        .unwrap()
+        .write_all(&buf)
+        .unwrap();
+    std::fs::write(
+        cd.join("meta.json"),
+        r#"{"records":3,"tid":100,"ms":1,"truncated":false}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let v = get_json(cd, "last-write-of-addr?addr=0x7000&before_idx=3&size=4");
+    assert_eq!(v["status"], "found");
+    assert_eq!(v["writer_idx"], 0);
+    assert_eq!(v["unlogged_write_gap"]["prev_write_idx"], 0);
+    assert_eq!(v["unlogged_write_gap"]["prev_write_byte"], 0);
+    assert_eq!(v["unlogged_write_gap"]["first_observing_read_idx"], 1);
+    assert_eq!(v["unlogged_write_gap"]["observed_byte"], 0x8b);
+    let hist = v["byte_history"].as_array().unwrap();
+    assert_eq!(hist.len(), 4);
+    assert_eq!(hist[0]["observed_byte"], 0x8b);
+    assert_eq!(hist[1]["observed_byte"], 0xa9);
+    assert_eq!(hist[2]["observed_byte"], 0x6d);
+    assert_eq!(hist[3]["observed_byte"], 0x21);
+}

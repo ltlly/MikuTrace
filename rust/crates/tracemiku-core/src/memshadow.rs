@@ -28,8 +28,16 @@ use crate::sidecar_io::{
     write_u64,
 };
 use crate::trace::Trace;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnloggedWriteGap {
+    pub prev_write_idx: Option<usize>,
+    pub prev_write_byte: Option<u8>,
+    pub first_observing_read_idx: usize,
+    pub observed_byte: u8,
+}
 
 /// Errors surfaced when MemShadow is not ready to serve a query.
 ///
@@ -439,6 +447,64 @@ impl MemShadow {
         None
     }
 
+    /// Detect when a load (`"r"`) at `byte_addr` strictly before `before_idx`
+    /// observed a byte value that disagrees with the latest preceding store /
+    /// external write (`"w"` / `"x"`), or when a load was observed with no
+    /// preceding store (or disagrees with the initial snapshot byte).
+    pub fn unlogged_write_gap_before(
+        &self,
+        byte_addr: u64,
+        before_idx: usize,
+    ) -> Option<UnloggedWriteGap> {
+        let evs = self.bytes.get(&byte_addr)?;
+        let pos = evs.partition_point(|ev| ev.idx < before_idx);
+        let mut last_w: Option<(usize, &ByteEvent)> = None;
+        for (j, ev) in evs[..pos].iter().enumerate().rev() {
+            if ev.kind == "w" || ev.kind == "x" {
+                last_w = Some((j, ev));
+                break;
+            }
+        }
+        if let Some((w_pos, w_ev)) = last_w {
+            for r_ev in &evs[w_pos + 1..pos] {
+                if r_ev.kind == "r" && r_ev.byte != w_ev.byte {
+                    return Some(UnloggedWriteGap {
+                        prev_write_idx: Some(w_ev.idx),
+                        prev_write_byte: Some(w_ev.byte),
+                        first_observing_read_idx: r_ev.idx,
+                        observed_byte: r_ev.byte,
+                    });
+                }
+            }
+            None
+        } else {
+            let snap_byte = self.snapshot.as_ref().and_then(|s| s.byte_at(byte_addr));
+            for r_ev in &evs[..pos] {
+                if r_ev.kind != "r" {
+                    continue;
+                }
+                if let Some(sb) = snap_byte {
+                    if r_ev.byte != sb {
+                        return Some(UnloggedWriteGap {
+                            prev_write_idx: Some(0),
+                            prev_write_byte: Some(sb),
+                            first_observing_read_idx: r_ev.idx,
+                            observed_byte: r_ev.byte,
+                        });
+                    }
+                } else {
+                    return Some(UnloggedWriteGap {
+                        prev_write_idx: None,
+                        prev_write_byte: None,
+                        first_observing_read_idx: r_ev.idx,
+                        observed_byte: r_ev.byte,
+                    });
+                }
+            }
+            None
+        }
+    }
+
     /// Independent input oracle for replay within `[evidence_start, before_idx)`.
     /// Only preceding stores/external writes count. The initial snapshot is
     /// usable only when evidence_start is zero; load outputs never validate inputs.
@@ -680,7 +746,12 @@ fn splat_bytes(
 /// storing record's pre-state. For stp/ldp pair-split entries, capstone fills
 /// `op.src_reg` directly; otherwise fall back to the first non-base/non-idx
 /// reg in `regs_use`.
-fn value_of_write(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) -> Option<u64> {
+pub(crate) fn value_of_write(
+    trace: &Trace,
+    i: usize,
+    op: &MemOp,
+    decoded: &DecodedInsn,
+) -> Option<u64> {
     // An exclusive store is only an observed write when its captured status
     // confirms success. Pre-state source bytes alone do not prove a write.
     if matches!(
@@ -708,7 +779,12 @@ fn value_of_write(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) ->
 /// Pick the dest register that received a load's bytes, taken from the NEXT
 /// record's post-state. For ldp pair-split entries, capstone fills
 /// `op.src_reg`; otherwise fall back to `regs_def[0]`.
-fn value_of_read(trace: &Trace, i: usize, op: &MemOp, decoded: &DecodedInsn) -> Option<u64> {
+pub(crate) fn value_of_read(
+    trace: &Trace,
+    i: usize,
+    op: &MemOp,
+    decoded: &DecodedInsn,
+) -> Option<u64> {
     let post = trace.post_record(i)?;
     let dest = if !op.src_reg.is_empty() {
         op.src_reg.clone()

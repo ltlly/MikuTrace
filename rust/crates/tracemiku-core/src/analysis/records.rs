@@ -1,5 +1,7 @@
 //! 有界记录读取：默认只解码选中记录，详情才加载符号、CFG 和内存注释。
 use super::{AnalysisContext, AnalysisError};
+use crate::disasm::addr_of;
+use crate::memshadow::{value_of_read, value_of_write};
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -11,6 +13,7 @@ const MAX_RECORD_COUNT: usize = 1_000;
 pub struct RecordsQuery {
     pub start: usize,
     pub count: usize,
+    pub end: Option<usize>,
     pub regs: String,
     pub indices: Option<Vec<usize>>,
     pub detail: bool,
@@ -20,12 +23,29 @@ impl Default for RecordsQuery {
         Self {
             start: 0,
             count: 100,
+            end: None,
             regs: String::new(),
             indices: None,
             detail: false,
         }
     }
 }
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RegWriteEffect {
+    pub reg: String,
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MemAccessEffect {
+    pub kind: &'static str,
+    pub ea: String,
+    pub size: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub val: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RecordRow {
     pub idx: usize,
@@ -40,6 +60,10 @@ pub struct RecordRow {
     pub is_branch: bool,
     pub is_call: bool,
     pub is_ret: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writes_reg: Vec<RegWriteEffect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_access: Option<MemAccessEffect>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub regs: Option<BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,7 +97,10 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
             return Err(AnalysisError::invalid(format!("unknown register: {name}")));
         }
     }
-    let requested_count = q.indices.as_ref().map_or(q.count, Vec::len);
+    let window_count = q
+        .end
+        .map_or(q.count, |end_idx| end_idx.saturating_sub(q.start));
+    let requested_count = q.indices.as_ref().map_or(window_count, Vec::len);
     let limit = requested_count.min(MAX_RECORD_COUNT);
     let selected_indices = q.indices.is_some();
     let indices = if let Some(indices) = q.indices {
@@ -90,6 +117,45 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
     for i in indices {
         let r = inner.trace.record(i);
         let d = decode(r.pc, r.inst);
+        let writes_reg = if i + 1 < n {
+            let r_next = inner.trace.record(i + 1);
+            let mut writes = Vec::new();
+            for reg_idx in 0..31 {
+                if r.regs[reg_idx] != r_next.regs[reg_idx] {
+                    writes.push(RegWriteEffect {
+                        reg: format!("x{reg_idx}"),
+                        before: format!("{:#x}", r.regs[reg_idx]),
+                        after: format!("{:#x}", r_next.regs[reg_idx]),
+                    });
+                }
+            }
+            if r.sp != r_next.sp {
+                writes.push(RegWriteEffect {
+                    reg: "sp".to_string(),
+                    before: format!("{:#x}", r.sp),
+                    after: format!("{:#x}", r_next.sp),
+                });
+            }
+            writes
+        } else {
+            Vec::new()
+        };
+        let mem_access = d.mem_op.iter().find(|op| !op.base.is_empty()).map(|op| {
+            let ea = addr_of(&r, op);
+            let kind = if op.is_write { "w" } else { "r" };
+            let val = if op.is_write {
+                value_of_write(&inner.trace, i, op, &d)
+            } else {
+                value_of_read(&inner.trace, i, op, &d)
+            }
+            .map(|v| format!("{v:#x}"));
+            MemAccessEffect {
+                kind,
+                ea: format!("{ea:#x}"),
+                size: op.size,
+                val,
+            }
+        });
         let detail = q
             .detail
             .then(|| super::record::record(state, i))
@@ -119,6 +185,8 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
             is_branch: d.is_branch,
             is_call: d.is_call,
             is_ret: d.is_ret,
+            writes_reg,
+            mem_access,
             regs: (!names.is_empty()).then(|| {
                 names
                     .iter()

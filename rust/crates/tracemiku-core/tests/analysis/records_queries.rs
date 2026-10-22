@@ -314,3 +314,84 @@ fn record_detail_with_symbols_populates_func_off() {
     assert_eq!(v["block_pc"], "0x100100");
     assert_eq!(v["cfg_status"], "ready");
 }
+
+#[test]
+fn records_emits_writes_reg_mem_access_and_supports_end() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = tmp
+        .path()
+        .join("run")
+        .join("calls")
+        .join("call_001_tid100_3r_1ms");
+    fs::create_dir_all(&cd).unwrap();
+
+    // 3 records:
+    // 0: ldrb w3, [x4, x20] (0x38746883)
+    // 1: str x0, [x1, #16]  (0xf9000820)
+    // 2: nop                (0xd503201f)
+    let mut buf = vec![0u8; 272 * 3];
+
+    // Record 0: pc=0x100000, x3=0, x4=0x6fc704ab00, x20=0xbf, sp=0x7000
+    let off0 = 0;
+    buf[off0..off0 + 8].copy_from_slice(&0x100000u64.to_le_bytes());
+    buf[off0 + 8 + 4 * 8..off0 + 8 + 5 * 8].copy_from_slice(&0x6fc704ab00u64.to_le_bytes()); // x4
+    buf[off0 + 8 + 20 * 8..off0 + 8 + 21 * 8].copy_from_slice(&0xbfu64.to_le_bytes()); // x20
+    buf[off0 + 256..off0 + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+    buf[off0 + 268..off0 + 272].copy_from_slice(&0x38746883u32.to_le_bytes());
+
+    // Record 1: pc=0x100004, x0=0xdeadbeef, x1=0x8000, x3=0x35 (result of ldrb at 0), sp=0x7000
+    let off1 = 272;
+    buf[off1..off1 + 8].copy_from_slice(&0x100004u64.to_le_bytes());
+    buf[off1 + 8..off1 + 16].copy_from_slice(&0xdeadbeefu64.to_le_bytes()); // x0
+    buf[off1 + 8 + 8..off1 + 8 + 16].copy_from_slice(&0x8000u64.to_le_bytes()); // x1
+    buf[off1 + 8 + 3 * 8..off1 + 8 + 4 * 8].copy_from_slice(&0x35u64.to_le_bytes()); // x3
+    buf[off1 + 256..off1 + 264].copy_from_slice(&0x7000u64.to_le_bytes());
+    buf[off1 + 268..off1 + 272].copy_from_slice(&0xf9000820u32.to_le_bytes());
+
+    // Record 2: pc=0x100008, same regs except sp=0x6ff0
+    let off2 = 272 * 2;
+    buf[off2..off2 + 8].copy_from_slice(&0x100008u64.to_le_bytes());
+    buf[off2 + 8..off2 + 16].copy_from_slice(&0xdeadbeefu64.to_le_bytes()); // x0
+    buf[off2 + 8 + 8..off2 + 8 + 16].copy_from_slice(&0x8000u64.to_le_bytes()); // x1
+    buf[off2 + 8 + 3 * 8..off2 + 8 + 4 * 8].copy_from_slice(&0x35u64.to_le_bytes()); // x3
+    buf[off2 + 256..off2 + 264].copy_from_slice(&0x6ff0u64.to_le_bytes());
+    buf[off2 + 268..off2 + 272].copy_from_slice(&0xd503201fu32.to_le_bytes());
+
+    fs::write(cd.join("trace.bin"), &buf).unwrap();
+    fs::write(cd.join("meta.json"), r#"{"records":3}"#).unwrap();
+    fs::write(
+        tmp.path().join("run").join("meta.json"),
+        r#"{"module":{"name":"libt.so","base":"0x100000","size":65536}}"#,
+    )
+    .unwrap();
+
+    let app = AnalysisContext::load(cd).expect("load analysis context");
+    let resp = analysis_support::query(&app, "records?start=0&end=2", None);
+    assert_eq!(resp.error_code(), None);
+    let v: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+    assert_eq!(v["start"], 0);
+    assert_eq!(v["end"], 2);
+    assert_eq!(v["count"], 2);
+
+    let r0 = &v["records"][0];
+    assert_eq!(r0["idx"], 0);
+    assert_eq!(r0["mem_access"]["kind"], "r");
+    assert_eq!(r0["mem_access"]["ea"], "0x6fc704abbf");
+    assert_eq!(r0["mem_access"]["size"], 1);
+    assert_eq!(r0["mem_access"]["val"], "0x35");
+    let writes0 = r0["writes_reg"].as_array().expect("writes_reg on r0");
+    assert!(writes0
+        .iter()
+        .any(|w| w["reg"] == "x3" && w["before"] == "0x0" && w["after"] == "0x35"));
+
+    let r1 = &v["records"][1];
+    assert_eq!(r1["idx"], 1);
+    assert_eq!(r1["mem_access"]["kind"], "w");
+    assert_eq!(r1["mem_access"]["ea"], "0x8010");
+    assert_eq!(r1["mem_access"]["size"], 8);
+    assert_eq!(r1["mem_access"]["val"], "0xdeadbeef");
+    let writes1 = r1["writes_reg"].as_array().expect("writes_reg on r1");
+    assert!(writes1
+        .iter()
+        .any(|w| w["reg"] == "sp" && w["before"] == "0x7000" && w["after"] == "0x6ff0"));
+}

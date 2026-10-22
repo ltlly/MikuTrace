@@ -41,6 +41,7 @@ pub(super) fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde
         "status": summary.get("status").cloned().unwrap_or(serde_json::Value::Null),
         "start": summary.get("start").cloned().unwrap_or(serde_json::Value::Null),
         "depth_requested": summary.get("depth_requested").cloned().unwrap_or(serde_json::Value::Null),
+        "logical_depth_reached": summary.get("logical_depth_reached").cloned().unwrap_or(serde_json::Value::Null),
         "steps_returned": summary.get("steps_returned").cloned().unwrap_or(serde_json::Value::Null),
         "terminal": terminal,
         "recognized_semantics": semantics,
@@ -55,16 +56,30 @@ pub(super) fn byte_lineage_compact_summary(lineage: &serde_json::Value) -> serde
 
 pub(super) fn compact_lineage_path_step(step: &serde_json::Value) -> serde_json::Value {
     match step.get("kind").and_then(|v| v.as_str()) {
-        Some("last_write") => serde_json::json!({
-            "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
-            "kind": "last_write",
-            "addr": step.get("addr").cloned().unwrap_or(serde_json::Value::Null),
-            "writer_idx": step.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
-            "asm": step.get("asm").cloned().unwrap_or(serde_json::Value::Null),
-            "src_reg": step.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
-            "src_value": step.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
-            "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
-        }),
+        Some("last_write") => {
+            let mut out = serde_json::json!({
+                "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "kind": "last_write",
+                "addr": step.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+                "writer_idx": step.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+                "asm": step.get("asm").cloned().unwrap_or(serde_json::Value::Null),
+                "src_reg": step.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+                "src_value": step.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
+            });
+            if let Some(obj) = out.as_object_mut() {
+                if let Some(gap) = step.get("unlogged_write_gap").filter(|v| !v.is_null()) {
+                    obj.insert("unlogged_write_gap".to_string(), gap.clone());
+                }
+                if let Some(is_slot) = step.get("is_vm_reg_slot").filter(|v| !v.is_null()) {
+                    obj.insert("is_vm_reg_slot".to_string(), is_slot.clone());
+                }
+                if let Some(slot_off) = step.get("vm_slot_offset").filter(|v| !v.is_null()) {
+                    obj.insert("vm_slot_offset".to_string(), slot_off.clone());
+                }
+            }
+            out
+        }
         Some("reg_source") => {
             let local_def = step.get("local_def").unwrap_or(&serde_json::Value::Null);
             let upstream = step.get("upstream").unwrap_or(&serde_json::Value::Null);
@@ -72,7 +87,7 @@ pub(super) fn compact_lineage_path_step(step: &serde_json::Value) -> serde_json:
                 .pointer("/decision/kind")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
-            serde_json::json!({
+            let mut out = serde_json::json!({
                 "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
                 "kind": "reg_source",
                 "idx": step.get("idx").cloned().unwrap_or(serde_json::Value::Null),
@@ -97,10 +112,20 @@ pub(super) fn compact_lineage_path_step(step: &serde_json::Value) -> serde_json:
                     "maybe_truncated": upstream.get("maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
                     "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
                     "gap_call_count_total": upstream.pointer("/gap_call_candidates/candidate_count_total").cloned().unwrap_or(serde_json::Value::Null),
+                    "unlogged_write_gap": upstream.get("unlogged_write_gap").cloned().unwrap_or(serde_json::Value::Null),
                 },
                 "decision_kind": decision_kind,
                 "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
-            })
+            });
+            if let Some(obj) = out.as_object_mut() {
+                if let Some(is_slot) = step.get("is_vm_reg_slot").filter(|v| !v.is_null()) {
+                    obj.insert("is_vm_reg_slot".to_string(), is_slot.clone());
+                }
+                if let Some(slot_off) = step.get("vm_slot_offset").filter(|v| !v.is_null()) {
+                    obj.insert("vm_slot_offset".to_string(), slot_off.clone());
+                }
+            }
+            out
         }
         _ => serde_json::json!({
             "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
@@ -269,6 +294,18 @@ pub(super) fn compact_lineage_syscall_return(
 pub(super) fn compact_lineage_memory_boundary(
     step: &serde_json::Value,
 ) -> Option<serde_json::Value> {
+    if step.get("kind").and_then(|v| v.as_str()) == Some("last_write") {
+        let gap = step.get("unlogged_write_gap").filter(|v| !v.is_null())?;
+        return Some(serde_json::json!({
+            "step": step.get("step").cloned().unwrap_or(serde_json::Value::Null),
+            "kind": "observed_read_without_matching_traced_write",
+            "idx": step.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
+            "reg": step.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
+            "value": step.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+            "addr": step.get("addr").cloned().unwrap_or(serde_json::Value::Null),
+            "unlogged_write_gap": gap.clone(),
+        }));
+    }
     let decision_kind = step.pointer("/decision/kind").and_then(|v| v.as_str())?;
     if !matches!(
         decision_kind,
@@ -289,6 +326,7 @@ pub(super) fn compact_lineage_memory_boundary(
         "last_write": upstream.get("last_write").cloned().unwrap_or(serde_json::Value::Null),
         "gap_call_count_total": upstream.pointer("/gap_call_candidates/candidate_count_total").cloned().unwrap_or(serde_json::Value::Null),
         "maybe_truncated": upstream.get("maybe_truncated").cloned().unwrap_or(serde_json::Value::Null),
+        "unlogged_write_gap": upstream.get("unlogged_write_gap").cloned().unwrap_or(serde_json::Value::Null),
         "mem_dump_command": mem_dump_command,
     }))
 }

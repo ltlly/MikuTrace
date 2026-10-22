@@ -31,6 +31,7 @@ pub fn byte_lineage(
     regs: String,
     summary: bool,
     compact: bool,
+    profile: VmProfile,
 ) -> anyhow::Result<serde_json::Value> {
     let addr = parse_addr_str(&addr).with_context(|| format!("parse addr {addr}"))?;
     if count == 0 {
@@ -57,7 +58,7 @@ pub fn byte_lineage(
                 lookback,
                 max_writes,
                 regs.clone(),
-                &VmProfile::disabled(),
+                &profile,
             ) {
                 Ok(value) => {
                     let origin = derive_byte_origin_from_value(&value);
@@ -158,15 +159,7 @@ pub fn byte_lineage(
         })?);
     }
     let value = byte_lineage_value_on(
-        &analysis,
-        addr,
-        before_idx,
-        depth,
-        context,
-        lookback,
-        max_writes,
-        regs,
-        &VmProfile::disabled(),
+        &analysis, addr, before_idx, depth, context, lookback, max_writes, regs, &profile,
     )?;
     if compact {
         Ok(byte_lineage_compact_summary(&value))

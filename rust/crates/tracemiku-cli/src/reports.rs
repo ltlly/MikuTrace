@@ -83,10 +83,11 @@ pub(super) fn cmd_byte_lineage(
     regs: String,
     summary: bool,
     compact: bool,
+    profile: VmProfile,
 ) -> anyhow::Result<()> {
     print_pretty(&core_reports::byte_lineage(
         trace_dir, addr, before_idx, count, depth, context, lookback, max_writes, regs, summary,
-        compact,
+        compact, profile,
     )?)
 }
 

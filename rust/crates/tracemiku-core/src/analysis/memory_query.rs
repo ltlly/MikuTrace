@@ -20,6 +20,7 @@ pub struct LastWriteOfAddrQuery {
     pub before_idx: isize,
     #[serde(default)]
     pub with_external: bool,
+    pub size: Option<u32>,
 }
 
 fn default_before_idx() -> isize {
@@ -46,12 +47,20 @@ pub enum LastWriteOfAddrResponse {
         src_value: Option<String>,
         writes_before: usize,
         writes_after: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unlogged_write_gap: Option<crate::memshadow::UnloggedWriteGap>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        byte_history: Vec<serde_json::Value>,
     },
     NotFound {
         status: &'static str,
         addr: String,
         before_idx: usize,
         writes_total: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unlogged_write_gap: Option<crate::memshadow::UnloggedWriteGap>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        byte_history: Vec<serde_json::Value>,
     },
 }
 
@@ -65,11 +74,58 @@ pub fn last_write_of_addr(
             addr: q.addr,
             before_idx: 0,
             writes_total: 0,
+            unlogged_write_gap: None,
+            byte_history: Vec::new(),
         });
     };
     let inner = state.inner.clone();
     let response = last_write_of_addr_response(&inner, q, addr);
     Ok(response)
+}
+
+fn build_byte_history(
+    mem: &crate::prelude::MemShadow,
+    addr: u64,
+    query_size: u32,
+    before: usize,
+) -> (
+    Option<crate::memshadow::UnloggedWriteGap>,
+    Vec<serde_json::Value>,
+) {
+    let mut primary_gap = mem.unlogged_write_gap_before(addr, before);
+    let mut byte_history = Vec::new();
+    if query_size > 1 {
+        let clamped_size = query_size.min(4096);
+        for offset in 0..clamped_size {
+            let b_addr = addr.saturating_add(offset as u64);
+            let gap = mem.unlogged_write_gap_before(b_addr, before);
+            if primary_gap.is_none() && gap.is_some() {
+                primary_gap = gap.clone();
+            }
+            let mut last_write_idx = None;
+            let mut last_write_byte = None;
+            if let Some(evs) = mem.bytes.get(&b_addr) {
+                let pos = evs.partition_point(|ev| ev.idx < before);
+                for ev in evs[..pos].iter().rev() {
+                    if ev.kind == "w" || ev.kind == "x" {
+                        last_write_idx = Some(ev.idx);
+                        last_write_byte = Some(ev.byte);
+                        break;
+                    }
+                }
+            }
+            let (obs_byte, _, _) = mem.byte_at(b_addr, before.saturating_sub(1) as u64);
+            byte_history.push(serde_json::json!({
+                "offset": offset,
+                "addr": format!("{b_addr:#x}"),
+                "last_write_idx": last_write_idx,
+                "last_write_byte": last_write_byte,
+                "observed_byte": obs_byte,
+                "unlogged_write_gap": gap,
+            }));
+        }
+    }
+    (primary_gap, byte_history)
 }
 
 fn last_write_of_addr_response(
@@ -82,9 +138,12 @@ fn last_write_of_addr_response(
     } else {
         inner.trace.len()
     };
+    let query_size = q.size.unwrap_or(1).max(1);
     if q.with_external {
-        return last_write_of_addr_response_from_memshadow(inner, q, addr, before);
+        return last_write_of_addr_response_from_memshadow(inner, q, addr, before, query_size);
     }
+    let mem = inner.memshadow();
+    let (unlogged_write_gap, byte_history) = build_byte_history(mem, addr, query_size, before);
     let mut last_seen_idx: Option<usize> = None;
     let mut writes_before = 0usize;
     let mut writes_after = 0usize;
@@ -92,7 +151,12 @@ fn last_write_of_addr_response(
     let mut writer_addr: Option<u64> = None;
     let mut writer_size: Option<u32> = None;
     for write in &inner.index().mem_writes {
-        if !touches_addr(write.addr, write.size, addr) {
+        let touches = if query_size == 1 {
+            touches_addr(write.addr, write.size, addr)
+        } else {
+            overlaps(write.addr, write.size, addr, u64::from(query_size))
+        };
+        if !touches {
             continue;
         }
         if last_seen_idx == Some(write.idx) {
@@ -114,6 +178,8 @@ fn last_write_of_addr_response(
             addr: q.addr,
             before_idx: before,
             writes_total: writes_before + writes_after,
+            unlogged_write_gap,
+            byte_history,
         };
     };
     let record = inner.trace.record(writer_idx);
@@ -149,6 +215,8 @@ fn last_write_of_addr_response(
         src_value,
         writes_before,
         writes_after,
+        unlogged_write_gap,
+        byte_history,
     }
 }
 
@@ -157,20 +225,27 @@ fn last_write_of_addr_response_from_memshadow(
     q: LastWriteOfAddrQuery,
     addr: u64,
     before: usize,
+    query_size: u32,
 ) -> LastWriteOfAddrResponse {
     let mem = inner.memshadow();
+    let (unlogged_write_gap, byte_history) = build_byte_history(mem, addr, query_size, before);
     let mut writes_before = 0usize;
     let mut writes_after = 0usize;
     let mut writer: Option<&crate::prelude::ShadowMemRec> = None;
     let mut writer_kind = "w";
     for write in &mem.writes {
-        if !touches_addr(write.addr, write.size, addr) {
+        let touches = if query_size == 1 {
+            touches_addr(write.addr, write.size, addr)
+        } else {
+            overlaps(write.addr, write.size, addr, u64::from(query_size))
+        };
+        if !touches {
             continue;
         }
         if write.idx < before {
             writes_before += 1;
             writer = Some(write);
-            writer_kind = mem_write_kind_at(mem, addr, write.idx).unwrap_or("w");
+            writer_kind = mem_write_kind_at(mem, addr.max(write.addr), write.idx).unwrap_or("w");
         } else {
             writes_after += 1;
         }
@@ -181,6 +256,8 @@ fn last_write_of_addr_response_from_memshadow(
             addr: q.addr,
             before_idx: before,
             writes_total: writes_before + writes_after,
+            unlogged_write_gap,
+            byte_history,
         };
     };
     let record = inner.trace.record(write.idx);
@@ -216,6 +293,8 @@ fn last_write_of_addr_response_from_memshadow(
         src_value: Some(format!("{src_value:#x}")),
         writes_before,
         writes_after,
+        unlogged_write_gap,
+        byte_history,
     }
 }
 
@@ -625,6 +704,8 @@ fn default_pattern_max() -> usize {
 pub struct MemPatternHit {
     pub addr: String,
     pub first_idx: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overwritten_at_idx: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -647,53 +728,200 @@ pub fn find_mem_pattern(
     Ok(response)
 }
 
+fn byte_ever_matches(mem: &crate::memshadow::MemShadow, addr: u64, want: u8) -> bool {
+    if let Some(evs) = mem.bytes.get(&addr) {
+        if evs.iter().any(|ev| ev.byte == want) {
+            return true;
+        }
+    }
+    mem.snapshot
+        .as_ref()
+        .and_then(|s| s.byte_at(addr))
+        .is_some_and(|b| b == want)
+}
+
+fn byte_validity_intervals(
+    mem: &crate::memshadow::MemShadow,
+    addr: u64,
+    want: u8,
+) -> Vec<(usize, usize)> {
+    let mut intervals = Vec::new();
+    let mut current_start: Option<usize> = None;
+    if mem
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.byte_at(addr))
+        .is_some_and(|b| b == want)
+    {
+        current_start = Some(0);
+    }
+    if let Some(evs) = mem.bytes.get(&addr) {
+        for ev in evs {
+            if ev.byte == want {
+                if current_start.is_none() {
+                    current_start = Some(ev.idx);
+                }
+            } else if let Some(start) = current_start.take() {
+                if start < ev.idx {
+                    intervals.push((start, ev.idx));
+                }
+            }
+        }
+    }
+    if let Some(start) = current_start {
+        intervals.push((start, usize::MAX));
+    }
+    intervals
+}
+
+fn intersect_intervals(a: &[(usize, usize)], b: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < a.len() && j < b.len() {
+        let start = a[i].0.max(b[j].0);
+        let end = a[i].1.min(b[j].1);
+        if start < end {
+            out.push((start, end));
+        }
+        if a[i].1 < b[j].1 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+fn overwritten_after(
+    mem: &crate::memshadow::MemShadow,
+    addr: u64,
+    pattern: &[u8],
+    after_idx: u64,
+) -> Option<usize> {
+    let mut earliest: Option<usize> = None;
+    for (offset, &want) in pattern.iter().enumerate() {
+        let b_addr = addr.saturating_add(offset as u64);
+        if let Some(evs) = mem.bytes.get(&b_addr) {
+            let pos = evs.partition_point(|ev| (ev.idx as u64) <= after_idx);
+            if let Some(change_ev) = evs[pos..].iter().find(|ev| ev.byte != want) {
+                earliest = Some(earliest.map_or(change_ev.idx, |old| old.min(change_ev.idx)));
+            }
+        }
+    }
+    earliest
+}
+
 fn find_mem_pattern_response(
     inner: &crate::analysis::context::AnalysisData,
     q: FindMemPatternQuery,
 ) -> FindMemPatternResponse {
     let pattern = parse_hex_bytes(&q.bytes_hex).unwrap_or_default();
-    let cursor = if q.since >= 0 {
-        q.since as u64
-    } else {
-        u64::MAX
-    };
     let max = effective_pattern_max(q.max);
     let mut count = 0usize;
     let mut hits = Vec::new();
     if !pattern.is_empty() {
         let mem = inner.memshadow();
-        for &addr in mem.bytes.keys() {
-            let mut first_idx: Option<usize> = None;
-            let mut matched = true;
-            for (offset, want) in pattern.iter().enumerate() {
-                let (byte, _kind, idx) = mem.byte_at(addr + offset as u64, cursor);
-                if byte != Some(*want) {
-                    matched = false;
-                    break;
+        if q.since >= 0 {
+            let cursor = q.since as u64;
+            for &addr in mem.bytes.keys() {
+                let mut first_idx: Option<usize> = None;
+                let mut matched = true;
+                for (offset, want) in pattern.iter().enumerate() {
+                    let (byte, _kind, idx) = mem.byte_at(addr + offset as u64, cursor);
+                    if byte != Some(*want) {
+                        matched = false;
+                        break;
+                    }
+                    if let Some(idx) = idx {
+                        first_idx = Some(first_idx.map_or(idx, |old| old.min(idx)));
+                    }
                 }
-                if let Some(idx) = idx {
-                    first_idx = Some(first_idx.map_or(idx, |old| old.min(idx)));
+                if !matched {
+                    continue;
+                }
+                if q.idx_lo
+                    .is_some_and(|lo| first_idx.is_none_or(|idx| idx < lo))
+                {
+                    continue;
+                }
+                if q.idx_hi
+                    .is_some_and(|hi| first_idx.is_none_or(|idx| idx >= hi))
+                {
+                    continue;
+                }
+                count += 1;
+                if hits.len() < max {
+                    hits.push(MemPatternHit {
+                        addr: format!("{addr:#x}"),
+                        first_idx,
+                        overwritten_at_idx: overwritten_after(mem, addr, &pattern, cursor),
+                    });
                 }
             }
-            if !matched {
-                continue;
-            }
-            if q.idx_lo
-                .is_some_and(|lo| first_idx.is_none_or(|idx| idx < lo))
-            {
-                continue;
-            }
-            if q.idx_hi
-                .is_some_and(|hi| first_idx.is_none_or(|idx| idx >= hi))
-            {
-                continue;
-            }
-            count += 1;
-            if hits.len() < max {
-                hits.push(MemPatternHit {
-                    addr: format!("{addr:#x}"),
-                    first_idx,
+        } else {
+            for &addr in mem.bytes.keys() {
+                let mut all_ever_match = true;
+                for (offset, &want) in pattern.iter().enumerate() {
+                    if !byte_ever_matches(mem, addr.saturating_add(offset as u64), want) {
+                        all_ever_match = false;
+                        break;
+                    }
+                }
+                if !all_ever_match {
+                    continue;
+                }
+                // End-of-trace fast check to preserve min-first_idx when still present at u64::MAX
+                let mut end_matched = true;
+                let mut end_first_idx: Option<usize> = None;
+                for (offset, want) in pattern.iter().enumerate() {
+                    let (byte, _kind, idx) =
+                        mem.byte_at(addr.saturating_add(offset as u64), u64::MAX);
+                    if byte != Some(*want) {
+                        end_matched = false;
+                        break;
+                    }
+                    if let Some(idx) = idx {
+                        end_first_idx = Some(end_first_idx.map_or(idx, |old| old.min(idx)));
+                    }
+                }
+                let mut windows = byte_validity_intervals(mem, addr, pattern[0]);
+                for (offset, &want) in pattern.iter().enumerate().skip(1) {
+                    if windows.is_empty() {
+                        break;
+                    }
+                    let next_iv =
+                        byte_validity_intervals(mem, addr.saturating_add(offset as u64), want);
+                    windows = intersect_intervals(&windows, &next_iv);
+                }
+                let matched_window = windows.into_iter().find(|&(enter_idx, _)| {
+                    let candidate_idx = if end_matched {
+                        end_first_idx.unwrap_or(enter_idx)
+                    } else {
+                        enter_idx
+                    };
+                    q.idx_lo
+                        .is_none_or(|lo| candidate_idx >= lo || enter_idx >= lo)
+                        && q.idx_hi
+                            .is_none_or(|hi| candidate_idx < hi || enter_idx < hi)
                 });
+                let Some((enter_idx, overwrite_idx)) = matched_window else {
+                    continue;
+                };
+                let first_idx = if end_matched && overwrite_idx == usize::MAX {
+                    end_first_idx.or(Some(enter_idx))
+                } else {
+                    Some(enter_idx)
+                };
+                let overwritten_at_idx = (overwrite_idx != usize::MAX).then_some(overwrite_idx);
+                count += 1;
+                if hits.len() < max {
+                    hits.push(MemPatternHit {
+                        addr: format!("{addr:#x}"),
+                        first_idx,
+                        overwritten_at_idx,
+                    });
+                }
             }
         }
     }
@@ -835,6 +1063,7 @@ impl Default for LastWriteOfAddrQuery {
             addr: Default::default(),
             before_idx: default_before_idx(),
             with_external: Default::default(),
+            size: None,
         }
     }
 }

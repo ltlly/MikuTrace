@@ -578,7 +578,7 @@ pub(super) fn regs_with_vm_profile(regs: String, profile: &VmProfile) -> String 
         .map(|reg| register_value_key(reg))
         .collect::<HashSet<_>>();
     for reg in [&profile.ip_reg, &profile.state_reg, &profile.dispatch_reg] {
-        if seen.insert(reg.clone()) {
+        if !reg.is_empty() && seen.insert(reg.clone()) {
             items.push(reg.clone());
         }
     }

@@ -985,3 +985,46 @@ fn vm_ops_groups_rows_by_vm_ip() {
     assert_eq!(chunked["vm_base_ip"], "0x5000");
     assert_eq!(chunked["ops_returned"], 1);
 }
+
+#[test]
+fn find_mem_pattern_accepts_ascii_and_limit_alias() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_word_load_byte_branch_trace(tmp.path(), "run1");
+    let v = run_json(&[
+        "find-mem-pattern".into(),
+        cd.display().to_string(),
+        "--ascii".into(),
+        "ABCD".into(),
+        "--limit".into(),
+        "1".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["pattern"], "41424344");
+    assert_eq!(v["count"], 2);
+    assert_eq!(v["returned"], 1);
+    assert_eq!(v["hits"][0]["addr"], "0x7000");
+}
+
+#[test]
+fn byte_lineage_folds_vm_state_reg_slots_at_zero_logical_depth() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cd = make_vm_ops_trace(tmp.path(), "run1");
+    // In make_vm_ops_trace, idx 3 is `str x1, [x25, x5]` where x25 = 0x7000, x5 = 0x18 -> addr = 0x7018
+    let v = run_json(&[
+        "byte-lineage".into(),
+        cd.display().to_string(),
+        "--addr".into(),
+        "0x7018".into(),
+        "--before-idx".into(),
+        "5".into(),
+        "--depth".into(),
+        "1".into(),
+        "--vm-state-reg".into(),
+        "x25".into(),
+    ]);
+    assert_eq!(v["status"], "ready");
+    assert_eq!(v["steps"][0]["is_vm_reg_slot"], true);
+    assert_eq!(v["steps"][0]["vm_slot_offset"], "0x18");
+    // Since step 0 is a VM reg slot (logical depth 0), depth=1 continues to step 1!
+    assert!(v["steps_returned"].as_u64().unwrap() >= 2);
+}

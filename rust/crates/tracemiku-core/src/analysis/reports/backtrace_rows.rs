@@ -352,7 +352,7 @@ pub(super) fn upstream_writer_for_def_on(
             .get("mem_addr")
             .and_then(|v| v.as_str())
             .and_then(parse_u64_str);
-        size = 8;
+        size = memory_access_width(def_row.get("asm").and_then(|v| v.as_str()).unwrap_or(""));
     } else if matches!(class, "mem-load" | "byte-load") {
         kind = Some("memory_last_write");
         addr = def_row
@@ -373,6 +373,12 @@ pub(super) fn upstream_writer_for_def_on(
             "kind": kind,
         }));
     };
+    let unlogged_write_gap = (0..size).find_map(|off| {
+        context
+            .inner
+            .memshadow()
+            .unlogged_write_gap_before(addr.saturating_add(off), idx.saturating_add(1))
+    });
     let idx_lo = idx.saturating_sub(lookback);
     let idx_hi = idx;
     let addr_hi = addr.saturating_add(size);
@@ -461,6 +467,7 @@ pub(super) fn upstream_writer_for_def_on(
         "byte_writers": byte_writers,
         "byte_nexts": byte_nexts,
         "gap_call_candidates": gap_call_candidates,
+        "unlogged_write_gap": unlogged_write_gap,
         "next": matches_observed.then(|| last_write.as_ref().and_then(|write| {
             Some(serde_json::json!({
                 "idx": write.get("idx")?,

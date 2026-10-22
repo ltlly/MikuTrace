@@ -51,6 +51,9 @@ pub(super) enum Cmd {
         /// 请求条数；最多 1000 条。
         #[arg(long, default_value_t = 100, conflicts_with = "indices")]
         count: usize,
+        /// 结束记录（不包含）；若指定则覆盖 --count。
+        #[arg(long, conflicts_with = "indices")]
+        end: Option<usize>,
         /// 逗号分隔的寄存器名；按输入顺序返回所选记录。
         #[arg(long, default_value = "")]
         regs: String,
@@ -305,6 +308,9 @@ pub(super) enum Cmd {
         /// 包含边界差分记录的外部写入。
         #[arg(long)]
         with_external: bool,
+        /// 连续字节范围宽度（十进制）；大于 1 时附加逐字节历史。
+        #[arg(long, default_value_t = 1)]
+        size: u32,
     },
     /// 查询地址范围的读写事件、字节值及来源；按时间分页。
     #[command(name = "mem-accesses")]
@@ -337,14 +343,25 @@ pub(super) enum Cmd {
     FindMemPattern {
         /// 单次 call 目录，须包含 trace.bin。
         trace_dir: PathBuf,
-        /// 字节序列的十六进制文本，如 41424300。
-        #[arg(long = "bytes-hex")]
-        bytes_hex: String,
-        /// 首次观测下标下限；-1 不限制。
+        /// 字节序列的十六进制文本，如 41424300；与 --ascii 二选一。
+        #[arg(
+            long = "bytes-hex",
+            required_unless_present = "ascii",
+            conflicts_with = "ascii"
+        )]
+        bytes_hex: Option<String>,
+        /// UTF-8 字符串模式；与 --bytes-hex 二选一。
+        #[arg(
+            long,
+            required_unless_present = "bytes_hex",
+            conflicts_with = "bytes_hex"
+        )]
+        ascii: Option<String>,
+        /// 首次观测下标下限；-1 不限制（搜索全时段及瞬态窗口）。
         #[arg(long, default_value_t = -1, allow_negative_numbers = true)]
         since: isize,
         /// 请求返回条数上限；实际数量及截断信息见结果。
-        #[arg(long, default_value_t = 100)]
+        #[arg(long, visible_alias = "limit", default_value_t = 100)]
         max: usize,
         /// 记录范围起点（包含）；省略从 trace 开始。
         #[arg(long)]
@@ -600,6 +617,18 @@ pub(super) enum Cmd {
         /// Emit a minimal path/frontier digest for AI agents.
         #[arg(long)]
         compact: bool,
+        /// 可选 VM 指令指针寄存器（如 x21）。
+        #[arg(long)]
+        vm_ip_reg: Option<String>,
+        /// 可选 VM 状态区基址寄存器（如 x25），用于零深度开销折叠虚拟寄存器槽。
+        #[arg(long)]
+        vm_state_reg: Option<String>,
+        /// 可选 VM 派发表基址寄存器（如 x23）。
+        #[arg(long)]
+        vm_dispatch_reg: Option<String>,
+        /// 可选 VM 寄存器槽地址范围，格式 <BASE_HEX:SIZE_HEX>。
+        #[arg(long)]
+        vm_regfile: Option<String>,
     },
     /// 依据本地 trace.bin 修复 pending/call 元数据并规范目录名。
     Finalize {

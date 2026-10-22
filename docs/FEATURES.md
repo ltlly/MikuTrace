@@ -26,12 +26,14 @@
 | `resolve` | `(SO, offset)` ↔ PC、执行情况；也可直接查询保存的 maps |
 | `functions` | 函数目录；选定函数时附执行频次与热点摘要 |
 | `so-stats` | 各 SO 的执行统计 |
-| `records` | 按区间或下标批量读取指令前状态与所选寄存器；可附完整详情 |
+| `records` | 按区间（`--start` + `--count`/`--end`）或下标批量读取指令前状态、所选寄存器及执行后效果（`writes_reg`、`mem_access`）；可附完整详情 |
 | `pc-hits` | PC 的执行下标与分页 |
 | `search` | 反汇编/操作数正则搜索 |
 
 `records` 默认只读取所选记录，不构建索引、符号、CFG 或 MemShadow；`--detail`
-才加载注释所需的分析。单条和多条查询共享 `records` 数组、返回数与截断字段。
+才加载注释所需的分析。当下一条记录存在时，每条记录内联输出执行后寄存器变更
+`writes_reg`（含 `reg`/`before`/`after`）和内存访问 `mem_access`（含 `r`/`w`、`ea`、`size`、`val`）。
+单条和多条查询共享 `records` 数组、返回数与截断字段。
 运行 `python3 scripts/benchmark_records.py` 可复测合成 trace 上的单条读取成本，
 对照任务是 Python 直接定位读取原始值；此基准不代表完整分析任务。
 
@@ -61,12 +63,15 @@
 | `mem-dump` | 指定时刻的字节值、完整度；可比较另一时刻或导出文件 |
 | `mem-provenance` | 逐字节值来源、最后已观测写入者及连续 writer 区间 |
 | `mem-accesses` | 地址范围内的读写历史；统一时间窗口、读写筛选和分页 |
-| `last-write-of-addr` | 单地址最近已观测写入者 |
-| `find-mem-pattern` | 在已观测内存中找字节模式 |
+| `last-write-of-addr` | 单地址或多字节（`--size`）最近已观测写入者及 `unlogged_write_gap` 检测 |
+| `find-mem-pattern` | 在已观测内存中找字节模式（支持 `--bytes-hex` / `--ascii <STR>`、`--limit` 及瞬态窗口匹配） |
 
 内存快照时刻包含该记录的写入。访问窗口为 `[start,end)`；`mem-accesses` 的
 `next_cursor` 是匹配事件序号，续页须保持其他筛选条件一致。外部写入保留独立来源，
-无法确定的字节为 `null`。`mem-dump` 比较中任一时刻缺值时标为 `unknown`，导出遇到
+无法确定的字节为 `null`。当后续读取（`r`）观测到的字节与最近一次已记录写入（`w`/`x`）不一致时，
+`last-write-of-addr` 报告 `unlogged_write_gap`（`prev_write_idx` 到 `first_observing_read_idx` 窗口）。
+`find-mem-pattern` 在未固定时刻（`since < 0`）时搜索全时段有效窗口，返回 `first_idx` 与 `overwritten_at_idx`。
+`mem-dump` 比较中任一时刻缺值时标为 `unknown`，导出遇到
 未知字节或截断时失败，不写入填充值。逐字节区间最多 4096 字节。
 
 ## 数据依赖
@@ -76,10 +81,12 @@
 | `taint-fwd` | 正向逐指令传播，包含 parent/深度 |
 | `taint-bwd` | 反向逐指令来源，可穿过内存/函数边界 |
 | `bfs-slice` | 多种子依赖集合或图；统一前向/后向、深度与并/交筛选 |
-| `byte-lineage` | 单字节沿内存写与源寄存器回追 |
+| `byte-lineage` | 单字节沿内存写与源寄存器回追；支持可选 VM 寄存器槽折叠与 `unlogged_write_gap` 边界 |
 
-依赖图箭头始终表示定义→使用，遍历方向不改变边的含义。无效种子、深度或节点
-预算导致的不完整结果显式标记；图最多 2000 个节点和 10000 条边。
+依赖图箭头始终表示定义→使用，遍历方向不改变边的含义。`byte-lineage` 可选指定
+`--vm-ip-reg`、`--vm-state-reg`、`--vm-dispatch-reg`、`--vm-regfile`，标记 `is_vm_reg_slot` / `vm_slot_offset`
+并以零逻辑深度开销折叠 VM 寄存器槽传递；遇到未记录外部写入时在 `memory_boundaries` 中报告 `unlogged_write_gap`。
+无效种子、深度或节点预算导致的不完整结果显式标记；图最多 2000 个节点和 10000 条边。
 
 ## 字符串、JNI 与采集事件
 
@@ -104,8 +111,10 @@ modified UTF-8，`string` 是 UTF-8 有损显示，`read_stop` 区分 NUL、证�
 | 命令 | 用途 |
 |---|---|
 | `output-backtrace` | 显式提供输出字符串/字节，定位内存与写入来源，可展开污点 |
-| `crypto` | 通用常量指纹与 ARM CE 指令特征；输出候选证据 |
+| `crypto` | 通用常量指纹、ARM CE 指令特征及 `MemShadow` 状态上下文（`detected_contexts`）；输出候选证据 |
 
+`crypto` 对 64 位寄存器高低 32 位按值跳变去重，并在 `MemShadow` 中扫描有状态的
+`MD5`、`SHA-1`、`SHA-256`、`SM3`、`ChaCha20` 上下文初始化与最终摘要更新（输出 `detected_contexts`）。
 格式转换、摘要验证、静态 ELF 符号查询及一次性报告组合使用现有工具或脚本；
 CLI 维护运行时证据与分析语义。
 

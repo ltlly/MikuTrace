@@ -40,19 +40,24 @@ pub fn run() -> anyhow::Result<()> {
             trace_dir,
             start,
             count,
+            end,
             regs,
             indices,
             detail,
-        }) => query_json(
-            trace_dir,
-            Query::Records(tracemiku_core::analysis::records::RecordsQuery {
-                start,
-                count,
-                regs,
-                indices,
-                detail,
-            }),
-        ),
+        }) => {
+            let count = end.map_or(count, |end_idx| end_idx.saturating_sub(start));
+            query_json(
+                trace_dir,
+                Query::Records(tracemiku_core::analysis::records::RecordsQuery {
+                    start,
+                    count,
+                    end,
+                    regs,
+                    indices,
+                    detail,
+                }),
+            )
+        }
         Some(Cmd::IdxsForPc {
             trace_dir,
             pc,
@@ -303,11 +308,13 @@ pub fn run() -> anyhow::Result<()> {
             addr,
             before_idx,
             with_external,
+            size,
         }) => {
             let params = tracemiku_core::analysis::memory_query::LastWriteOfAddrQuery {
                 addr,
                 before_idx,
                 with_external,
+                size: (size > 1).then_some(size),
             };
             query_json(trace_dir, Query::LastWriteOfAddr(params))
         }
@@ -335,11 +342,21 @@ pub fn run() -> anyhow::Result<()> {
         Some(Cmd::FindMemPattern {
             trace_dir,
             bytes_hex,
+            ascii,
             since,
             max,
             idx_lo,
             idx_hi,
         }) => {
+            let bytes_hex = match (bytes_hex, ascii) {
+                (Some(hex), None) => hex,
+                (None, Some(text)) => text
+                    .as_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+                _ => bail!("choose exactly one of --bytes-hex or --ascii"),
+            };
             let mut params = tracemiku_core::analysis::memory_query::FindMemPatternQuery {
                 bytes_hex,
                 since,
@@ -565,10 +582,18 @@ pub fn run() -> anyhow::Result<()> {
             regs,
             summary,
             compact,
-        }) => cmd_byte_lineage(
-            trace_dir, addr, before_idx, count, depth, context, lookback, max_writes, regs,
-            summary, compact,
-        ),
+            vm_ip_reg,
+            vm_state_reg,
+            vm_dispatch_reg,
+            vm_regfile,
+        }) => {
+            let profile =
+                VmProfile::for_lineage(vm_ip_reg, vm_state_reg, vm_dispatch_reg, vm_regfile)?;
+            cmd_byte_lineage(
+                trace_dir, addr, before_idx, count, depth, context, lookback, max_writes, regs,
+                summary, compact, profile,
+            )
+        }
         Some(Cmd::Finalize { path }) => cmd_finalize(&path),
         Some(Cmd::Events {
             trace_dir,

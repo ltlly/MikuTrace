@@ -40,6 +40,8 @@ pub struct MemoryAccess {
     pub bytes: Vec<Option<u8>>,
     pub pc: Option<String>,
     pub asm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlogged_write_gap: Option<crate::memshadow::UnloggedWriteGap>,
 }
 #[derive(Debug, Serialize)]
 pub struct MemAccessesResponse {
@@ -161,6 +163,12 @@ pub fn mem_accesses(
             let r = state.inner.trace.record(idx);
             (format!("{:#x}", r.pc), crate::disasm::decode(r.pc, r.inst))
         });
+        let unlogged_write_gap = (kind == 0)
+            .then(|| {
+                (begin..=finish)
+                    .find_map(|a| mem.unlogged_write_gap_before(a, idx.saturating_add(1)))
+            })
+            .flatten();
         events.push(MemoryAccess {
             idx,
             kind: if kind == 0 { "read" } else { "write" },
@@ -174,6 +182,7 @@ pub fn mem_accesses(
             asm: instruction
                 .as_ref()
                 .map(|(_, d)| format!("{} {}", d.mnemonic, d.op_str).trim().to_string()),
+            unlogged_write_gap,
         });
     }
     Ok(MemAccessesResponse {

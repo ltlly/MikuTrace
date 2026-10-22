@@ -78,6 +78,7 @@ pub struct VmProfile {
     dispatch_reg: String,
     slot_bytes: std::num::NonZeroU64,
     infra_regs: HashSet<String>,
+    regfile_range: Option<(u64, u64)>,
 }
 
 impl VmProfile {
@@ -122,6 +123,66 @@ impl VmProfile {
             dispatch_reg,
             slot_bytes,
             infra_regs,
+            regfile_range: None,
+        })
+    }
+
+    pub fn for_lineage(
+        ip_reg: Option<String>,
+        state_reg: Option<String>,
+        dispatch_reg: Option<String>,
+        regfile: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let ip_reg = ip_reg
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| register_value_key(&s))
+            .unwrap_or_default();
+        let state_reg = state_reg
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| register_value_key(&s))
+            .unwrap_or_default();
+        let dispatch_reg = dispatch_reg
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| register_value_key(&s))
+            .unwrap_or_default();
+        let mut infra_regs: HashSet<String> =
+            ["sp".to_string(), "fp".to_string(), "lr".to_string()]
+                .into_iter()
+                .collect();
+        for reg in [&ip_reg, &state_reg, &dispatch_reg] {
+            if reg.is_empty() {
+                continue;
+            }
+            let valid = matches!(reg.as_str(), "sp" | "fp" | "lr")
+                || reg
+                    .strip_prefix('x')
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .is_some_and(|n| n <= 28);
+            if !valid {
+                bail!("invalid VM register: {reg}");
+            }
+            infra_regs.insert(reg.clone());
+        }
+        let regfile_range = if let Some(raw) = regfile.filter(|s| !s.trim().is_empty()) {
+            let (base_raw, size_raw) = raw
+                .split_once(':')
+                .with_context(|| format!("--vm-regfile must be <BASE_HEX:SIZE_HEX>, got {raw}"))?;
+            let base = parse_addr_str(base_raw)
+                .with_context(|| format!("invalid --vm-regfile base: {base_raw}"))?;
+            let size = parse_addr_str(size_raw)
+                .or_else(|| parse_u64_str(size_raw))
+                .with_context(|| format!("invalid --vm-regfile size: {size_raw}"))?;
+            Some((base, base.saturating_add(size)))
+        } else {
+            None
+        };
+        Ok(Self {
+            ip_reg,
+            state_reg,
+            dispatch_reg,
+            slot_bytes: std::num::NonZeroU64::new(8).unwrap(),
+            infra_regs,
+            regfile_range,
         })
     }
 
@@ -135,7 +196,22 @@ impl VmProfile {
             infra_regs: ["sp".into(), "fp".into(), "lr".into()]
                 .into_iter()
                 .collect(),
+            regfile_range: None,
         }
+    }
+
+    pub(super) fn matches_regfile_addr(&self, addr: u64, state_base: Option<u64>) -> Option<u64> {
+        if let Some((lo, hi)) = self.regfile_range {
+            if addr >= lo && addr < hi {
+                return Some(addr - lo);
+            }
+        }
+        if let Some(base) = state_base {
+            if addr >= base && addr < base.saturating_add(0x400) {
+                return Some(addr - base);
+            }
+        }
+        None
     }
 
     fn to_json(&self) -> serde_json::Value {

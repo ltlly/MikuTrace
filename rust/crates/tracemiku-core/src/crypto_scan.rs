@@ -701,13 +701,18 @@ pub fn scan_combined(trace: &Trace) -> (ConstScanResult, CryptoInstrResult) {
     let alu_set: HashSet<&str> = ALU_MNEMS.iter().copied().collect();
     let crypto_mnem_set: HashSet<&str> = CRYPTO_INSTRS.iter().map(|&(m, _)| m).collect();
 
+    let mut prev_regs: Option<[u64; 31]> = None;
+
     for i in 0..trace.len() {
         let rec = trace.record(i);
         let inst = rec.inst;
 
         let (mnem, op_str) = match decode_inst(inst) {
             Some(d) => d,
-            None => continue,
+            None => {
+                prev_regs = Some(rec.regs);
+                continue;
+            }
         };
 
         let is_alu = alu_set.contains(mnem.as_str());
@@ -753,6 +758,7 @@ pub fn scan_combined(trace: &Trace) -> (ConstScanResult, CryptoInstrResult) {
                         };
                         fp_hits.entry(name.to_string()).or_default().push(i);
                         const_hits.push(hit);
+                        prev_regs = Some(rec.regs);
                         continue;
                     }
                 }
@@ -793,28 +799,36 @@ pub fn scan_combined(trace: &Trace) -> (ConstScanResult, CryptoInstrResult) {
         // --- Register value const scan ---
         if !is_alu {
             for reg_idx in 0..31 {
-                let val = rec.regs[reg_idx] as u32;
-                if val == 0 {
+                if !prev_regs.is_none_or(|prev| prev[reg_idx] != rec.regs[reg_idx]) {
                     continue;
                 }
-                for fp in &fingerprints {
-                    if (val & fp.mask) == fp.value {
-                        let hit = ConstHit {
-                            fingerprint: fp.name.clone(),
-                            category: fp.category,
-                            alg: fp.alg.clone(),
-                            idx: i,
-                            pc: rec.pc,
-                            source: ConstHitSource::Reg,
-                            verdict: Verdict::Real,
-                            sample_value: val,
-                        };
-                        fp_hits.entry(fp.name.clone()).or_default().push(i);
-                        const_hits.push(hit);
+                let lo = rec.regs[reg_idx] as u32;
+                let hi = (rec.regs[reg_idx] >> 32) as u32;
+                for val in [(lo != 0).then_some(lo), (hi != 0 && hi != lo).then_some(hi)]
+                    .into_iter()
+                    .flatten()
+                {
+                    for fp in &fingerprints {
+                        if (val & fp.mask) == fp.value {
+                            let hit = ConstHit {
+                                fingerprint: fp.name.clone(),
+                                category: fp.category,
+                                alg: fp.alg.clone(),
+                                idx: i,
+                                pc: rec.pc,
+                                source: ConstHitSource::Reg,
+                                verdict: Verdict::Real,
+                                sample_value: val,
+                            };
+                            fp_hits.entry(fp.name.clone()).or_default().push(i);
+                            const_hits.push(hit);
+                        }
                     }
                 }
             }
         }
+
+        prev_regs = Some(rec.regs);
     }
 
     // Build const scan summaries
