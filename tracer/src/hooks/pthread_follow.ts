@@ -53,8 +53,44 @@ function openWorkerTrace(tid: number, pthread: string, start: NativePointer): Wo
     return worker;
 }
 
+export function followResidentWorkerThreads(): void {
+    if (!STATE.followWorkers || !STATE.traceDir) return;
+    try {
+        const tids = Process.enumerateThreads().map(t => t.id);
+        for (const tid of tids) {
+            const key = String(tid);
+            if (tid === STATE.primaryTid || STATE.followedWorkerTids[key]) continue;
+            if (Object.keys(STATE.followedWorkerTids).length >= STATE.maxWorkerThreads) {
+                rememberWorkerEvent({ status: "skipped_cap", start: "resident", tid });
+                break;
+            }
+            STATE.followedWorkerTids[key] = true;
+            const worker = openWorkerTrace(tid, "resident", NULL);
+            const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
+            Stalker.follow(tid, {
+                events: { call: false, ret: false, exec: false, block: false, compile: false },
+                transform: createTransform(worker.onInsnPtr, ranges),
+            });
+            rememberWorkerEvent({
+                status: "followed",
+                tid,
+                pthread: "resident",
+                start: "0x0",
+                devicePath: worker.filePath,
+                recordSize: REC_SIZE,
+            });
+            log(`[pthread-follow] Stalker.follow resident tid=${tid}`);
+        }
+    } catch (e) {
+        rememberWorkerEvent({ status: "failed", error: String(e), pthread: "resident", start: "0x0" });
+        log(`[pthread-follow][!] resident follow failed: ${e}`);
+    }
+}
+
 export function installPthreadFollowOnce(): void {
-    if (!STATE.followWorkers || STATE.pthreadHooksInstalled) return;
+    if (!STATE.followWorkers) return;
+    followResidentWorkerThreads();
+    if (STATE.pthreadHooksInstalled) return;
     STATE.pthreadHooksInstalled = true;
 
     const pthreadCreate = findExport("pthread_create");
@@ -69,7 +105,7 @@ export function installPthreadFollowOnce(): void {
             (this as any)._start = args[2];
         },
         onLeave(rv) {
-            if (!STATE.fnEntered || !STATE.followWorkers || !STATE.traceDir) return;
+            if ((!STATE.fnEntered && !STATE.preEntryActive) || !STATE.followWorkers || !STATE.traceDir) return;
             if (rv.toInt32() !== 0) return;
             const followedCount = Object.keys(STATE.followedWorkerTids).length;
             if (followedCount >= STATE.maxWorkerThreads) {
@@ -83,7 +119,7 @@ export function installPthreadFollowOnce(): void {
             const callIdx = STATE.callIdx;
 
             setTimeout(() => {
-                if (!STATE.fnEntered || STATE.callFinalized || STATE.callIdx !== callIdx) return;
+                if ((!STATE.fnEntered && !STATE.preEntryActive) || STATE.callFinalized || STATE.callIdx !== callIdx) return;
                 try {
                     const tids = Process.enumerateThreads().map(t => t.id);
                     for (const tid of tids) {

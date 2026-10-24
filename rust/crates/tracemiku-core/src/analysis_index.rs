@@ -345,14 +345,20 @@ impl AnalysisIndex {
                     continue;
                 }
                 let addr = addr_of(&rec, op);
-                let value = store_source_value(&rec, decoded, op.src_reg.as_str());
-                for offset in 0..op.size as u64 {
-                    let byte = if offset < 8 {
-                        ((value >> (offset * 8)) & 0xff) as u8
-                    } else {
-                        0
-                    };
-                    mem_last.insert(addr.wrapping_add(offset), (i, byte));
+                if let Some(raw_bytes) = crate::memshadow::bytes_of_write(trace, i, op, decoded) {
+                    for (offset, &byte) in raw_bytes.iter().enumerate() {
+                        mem_last.insert(addr.wrapping_add(offset as u64), (i, byte));
+                    }
+                } else {
+                    let value = store_source_value(&rec, decoded, op.src_reg.as_str());
+                    for offset in 0..op.size as u64 {
+                        let byte = if offset < 8 {
+                            ((value >> (offset * 8)) & 0xff) as u8
+                        } else {
+                            0
+                        };
+                        mem_last.insert(addr.wrapping_add(offset), (i, byte));
+                    }
                 }
             }
 

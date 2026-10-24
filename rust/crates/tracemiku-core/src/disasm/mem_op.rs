@@ -39,11 +39,30 @@ pub struct MemOp {
 
 const STORE_BASES: &[&str] = &[
     "str", "strb", "strh", "stur", "sturb", "sturh", "stp", "stnp", "stxr", "stxrb", "stxrh",
-    "stxp", "stlr", "stlrb", "stlrh", "stlxr", "stlxrb", "stlxrh", "stlxp",
+    "stxp", "stlr", "stlrb", "stlrh", "stlxr", "stlxrb", "stlxrh", "stlxp", "st1", "st2", "st3",
+    "st4",
 ];
 
 fn is_store(mnem_base: &str) -> bool {
     STORE_BASES.contains(&mnem_base)
+}
+
+fn is_vector_structure_ls(mnem_base: &str) -> bool {
+    matches!(
+        mnem_base,
+        "st1"
+            | "st2"
+            | "st3"
+            | "st4"
+            | "ld1"
+            | "ld2"
+            | "ld3"
+            | "ld4"
+            | "ld1r"
+            | "ld2r"
+            | "ld3r"
+            | "ld4r"
+    )
 }
 
 fn is_exclusive_store_style(mnem: &str) -> bool {
@@ -55,14 +74,29 @@ fn is_exclusive_store_style(mnem: &str) -> bool {
 }
 
 /// 数据寄存器按寄存器类给出的访问宽度（真实 ISA 宽度）：
-/// `x`/`sp`/`xzr` → 8，`w`/`wsp`/`wzr` → 4，`q` → 16，`d` → 8，
+/// `x`/`sp`/`xzr` → 8，`w`/`wsp`/`wzr` → 4，`q`/`v` → 16，`d` → 8，
 /// `s` → 4，`h` → 2，`b` → 1。
 fn reg_access_size(name: &str) -> u32 {
     if name == "sp" {
         return 8;
     }
-    match name.as_bytes().first().copied().unwrap_or(b'x') {
-        b'q' => 16,
+    let clean = name
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .to_ascii_lowercase();
+    if let Some((_, suffix)) = clean.split_once('.') {
+        return match suffix {
+            "8b" | "4h" | "2s" | "1d" => 8,
+            "b" => 1,
+            "h" => 2,
+            "s" => 4,
+            "d" => 8,
+            _ => 16,
+        };
+    }
+    match clean.as_bytes().first().copied().unwrap_or(b'x') {
+        b'q' | b'v' => 16,
         b'd' => 8,
         b's' => 4,
         b'h' => 2,
@@ -70,6 +104,52 @@ fn reg_access_size(name: &str) -> u32 {
         b'w' => 4,
         _ => 8,
     }
+}
+
+/// 从 `st1/ld1 { v0.16b, v1.16b }, [x0]` 的 `op_str` 中提取大括号内的向量寄存器列表及单寄存器宽度。
+pub(crate) fn parse_vector_list_from_op_str(op_str: &str) -> Option<(Vec<String>, u32)> {
+    let open = op_str.find('{')?;
+    let close = op_str[open..].find('}')? + open;
+    let body = &op_str[open + 1..close];
+    let mut regs = Vec::new();
+    let mut elem_size = 16u32;
+    for part in body.split(',') {
+        let token = part.trim().to_ascii_lowercase();
+        if token.is_empty() {
+            continue;
+        }
+        // Check for range syntax like `v0.16b - v3.16b`
+        if let Some((start_tok, end_tok)) = token.split_once('-') {
+            let start_tok = start_tok.trim();
+            let end_tok = end_tok.trim();
+            elem_size = reg_access_size(start_tok);
+            let s_norm = normalize_disasm_reg(start_tok);
+            let e_norm = normalize_disasm_reg(end_tok);
+            if let (Some(s_idx), Some(e_idx)) = (
+                s_norm.strip_prefix('q').and_then(|s| s.parse::<u8>().ok()),
+                e_norm.strip_prefix('q').and_then(|s| s.parse::<u8>().ok()),
+            ) {
+                let mut cur = s_idx;
+                loop {
+                    regs.push(format!("q{cur}"));
+                    if cur == e_idx {
+                        break;
+                    }
+                    cur = (cur + 1) % 32;
+                    if regs.len() >= 4 {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+        elem_size = reg_access_size(&token);
+        let norm = normalize_disasm_reg(&token);
+        if !norm.is_empty() {
+            regs.push(norm);
+        }
+    }
+    (!regs.is_empty()).then_some((regs, elem_size))
 }
 
 /// Determine the access size in bytes from the mnemonic and the first
@@ -233,6 +313,38 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
             ..base_op
         });
     }
+    // Vector structure load/store (ld1..ld4 / st1..st4 / ld1r..ld4r):
+    // capstone reports 1 mem_op (base Only, post-index register is an extra Reg operand
+    // outside `{ ... }`). Expand multi-register vector lists into contiguous MemOps.
+    if is_vector_structure_ls(mnem_base) && out.len() == 1 {
+        let op_str = ins.op_str().unwrap_or("");
+        if let Some((vec_regs, vec_sz)) = parse_vector_list_from_op_str(op_str) {
+            let base_op = out.remove(0);
+            if mnem_base == "st1" || mnem_base == "ld1" {
+                for (k, r) in vec_regs.into_iter().enumerate() {
+                    out.push(MemOp {
+                        disp: base_op.disp + (k as i64) * (vec_sz as i64),
+                        size: vec_sz,
+                        src_reg: r,
+                        ..base_op.clone()
+                    });
+                }
+            } else {
+                // Interleaved st2..st4 / ld2..ld4 / ld1r..ld4r: total memory footprint is
+                // `vec_regs.len() * vec_sz` (or element width for ldNr), starting at base.
+                let total_sz = if mnem_base.ends_with('r') {
+                    vec_sz
+                } else {
+                    (vec_regs.len() as u32) * vec_sz
+                };
+                out.push(MemOp {
+                    size: total_sz,
+                    src_reg: vec_regs.into_iter().next().unwrap_or_default(),
+                    ..base_op
+                });
+            }
+        }
+    }
     // Normal stores also have a data source in the first register operand.
     // Fill it so taint can distinguish address-only uses from stored data
     // even for forms like `str x0, [x0]` where source and base are identical.
@@ -242,6 +354,12 @@ pub fn extract(cs: &Capstone, ins: &capstone::Insn, mnem: &str) -> Vec<MemOp> {
         && out[0].src_reg.is_empty()
         && !reg_operand_names.is_empty()
     {
+        out[0].src_reg = normalize_disasm_reg(&reg_operand_names[0]);
+    }
+    // Single-register loads (`ldr q0, [x0]`, `ldr x0, [x1]`, etc.): populate `src_reg`
+    // with the destination register so SIMD/scalar load reconstruction can directly
+    // identify the loaded register operand.
+    if !is_w && out.len() == 1 && out[0].src_reg.is_empty() && !reg_operand_names.is_empty() {
         out[0].src_reg = normalize_disasm_reg(&reg_operand_names[0]);
     }
     out

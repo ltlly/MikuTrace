@@ -13,7 +13,7 @@ pub(super) fn source_byte_offset_for_write_at(
         return None;
     }
     let offset = byte_addr - start;
-    (offset < 8).then_some(offset)
+    (offset < 16).then_some(offset)
 }
 
 pub(super) fn source_byte_for_write_at(write: &serde_json::Value, byte_addr: u64) -> Option<u8> {

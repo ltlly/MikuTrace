@@ -9,10 +9,12 @@ pub mod evidence;
 pub mod finalize;
 pub mod meta;
 pub mod record;
+pub mod simd;
 #[allow(clippy::module_inception)]
 pub mod trace;
 
 pub use finalize::{finalize_run, CallRepair, FinalizeError, RunRepair};
 pub use meta::{CallInfo, MetaError, ModuleInfo, TraceMeta};
 pub use record::{Record, FORMAT_VERSION, REC_NUM_REGS, REC_SIZE};
+pub use simd::{parse_simd_reg_name, SimdTrace, SIMD_NUM_REGS, SIMD_REC_SIZE};
 pub use trace::Trace;

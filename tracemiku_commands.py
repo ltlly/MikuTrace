@@ -61,9 +61,11 @@ def build_parser():
     p_tr.add_argument("--ring-recs", type=int, default=0,
                       help="native 写盘缓冲容量（条），默认 4096；与采集条数无关，上限 4194304")
     p_tr.add_argument("--follow-workers", action="store_true",
-                      help="跟踪新建 pthread worker，默认关闭")
+                      help="跟踪已驻留及新建 pthread worker，默认关闭")
     p_tr.add_argument("--max-worker-threads", type=int, default=4, dest="max_worker_threads",
                       help="worker 线程上限，默认 4，agent 上限 32")
+    p_tr.add_argument("--trace-init", action="store_true", dest="trace_init",
+                      help="包含目标入口调用前的模块加载期与初始化窗口（dlopen/.init_array/JNI_OnLoad）")
     p_tr.add_argument("--device-dir", help="设备上目标进程可写的新建目录；使用前验证目标写入和 root 回读")
     p_tr.add_argument("--out", required=True, help="新采集输出目录；已有结果使用 recover")
     p_tr.add_argument("--remote", default=None,

@@ -166,6 +166,7 @@ export interface InitOptions {
     enableForkHook?: boolean;
     followWorkers?: boolean;
     maxWorkerThreads?: number;
+    traceInit?: boolean;
     // Sidecars
     simdSidecar?: boolean;
     simdSampleStride?: number;
@@ -190,6 +191,8 @@ export interface AgentState {
     fnHooked: boolean;
     excluded: boolean;
     fnEntered: boolean;
+    traceInit: boolean;
+    preEntryActive: boolean;
     /** 本次调用只允许封口一次。 */
     callFinalized: boolean;
 
@@ -274,7 +277,8 @@ export function createInitialState(): AgentState {
     return {
         soPattern: null, exportName: null, methodName: null,
         fnOffset: null, cmdValue: null, cmdArg: null, pkg: null, execOnly: false,
-        target: null, fnHooked: false, excluded: false, fnEntered: false, callFinalized: false,
+        target: null, fnHooked: false, excluded: false, fnEntered: false,
+        traceInit: false, preEntryActive: false, callFinalized: false,
 
         includeSoPatterns: [], includeRanges: [],
         deepTrace: false, traceAll: false, stalkerExcludePatterns: null, boundaryDiffPatterns: null,

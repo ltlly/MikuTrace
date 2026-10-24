@@ -134,11 +134,104 @@ function hookRegisterNatives(onResolved: (fp: NativePointer) => void): boolean {
 
 // ─────────── Main hook installation ─────────────────────────────────────────
 
+function beginCaptureSession(tid: number, onInsn: NativePointer, isPreEntry = false): void {
+    STATE.callFinalized = false;
+    STATE.callIdx++;
+    STATE.primaryTid = tid;
+    STATE.started = Date.now();
+    STATE.preEntryActive = isPreEntry;
+    STATE.fnEntered = !isPreEntry;
+
+    // Reset SPSC counters (per-call)
+    STATE.headBuf!.writeU64(0);
+    STATE.tailBuf!.writeU64(0);
+    STATE.droppedBuf!.writeU64(0);
+    if (STATE.simdSidecar) {
+        STATE.simdHeadBuf!.writeU64(0);
+        STATE.simdTailBuf!.writeU64(0);
+        STATE.simdDroppedBuf!.writeU64(0);
+    }
+    if (STATE.semanticEvents) {
+        STATE.semanticEventBuf = [];
+    }
+    STATE.workerEvents = [];
+    STATE.followedWorkerTids = {};
+    // 上一 call 的 worker CModule 必须显式 unload: 下一 call 复用同 tid 时
+    // 旧实例的 native 内存 (ring + 编译产物) 不释放会持续泄漏
+    releaseWorkerTraces();
+    STATE.workerTraces = {};
+    STATE.batchSeq = 0;
+
+    openTraceFile(STATE.callIdx, tid);
+    beginManifest();
+    log(`[>] call #${STATE.callIdx} tid=${tid}${isPreEntry ? " (pre-entry init window)" : ""}`);
+    send({
+        type: "trace-begin", callIdx: STATE.callIdx,
+        tid, ts: STATE.started,
+        devicePath: STATE.traceFilePath,
+        simdDevicePath: STATE.simdTraceFilePath,
+        simdRecordSize: SIMD_REC_SIZE,
+        simdSampleStride: STATE.simdSampleStride,
+        preEntry: isPreEntry,
+    });
+    ensureFlushTimer();
+
+    // Anti-detect (installed before Stalker.follow creates RWX pages)
+    if (STATE.hideRwxMaps) {
+        try {
+            const { plugin } = require("./anti_detect/hide_rwx_maps");
+            plugin.install();
+        } catch (e) { log(`[hide-rwx-maps][!] ${e}`); }
+    }
+    if (STATE.patchSuicide) {
+        try {
+            const { plugin } = require("./anti_detect/patch_suicide");
+            plugin.install({ spec: STATE.suicidePatchSpec });
+        } catch (e) { log(`[patch-suicide][!] ${e}`); }
+    }
+    if (STATE.blockSelfKill) {
+        try {
+            const { plugin } = require("./anti_detect/block_self_kill");
+            plugin.install();
+        } catch (e) { log(`[block-self-kill][!] ${e}`); }
+    }
+
+    applyExcludesOnce();
+
+    if (STATE.deepTrace || (STATE.diffSyms && STATE.diffSyms.length > 0)) {
+        refreshWritableRanges();
+    }
+
+    installJniHooksOnce();
+    installSemanticHooksOnce();
+    if (STATE.enableForkHook) {
+        installForkHooksOnce();
+    }
+
+    buildIncludeRanges();
+    const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
+
+    // Initial memory snapshot (t=0 ground truth for pre-trace data).
+    // Captured here, after excludes/ranges are set but before Stalker
+    // starts, so the bytecode tables / .rodata are in their decrypted
+    // initial state. Best-effort; never throws into the trace path.
+    try { captureMemorySnapshot(STATE.callIdx); }
+    catch (e) { persistEvents("snapshot_errors.jsonl", [{ reason: "snapshot-failed", error: String(e) }]); }
+
+    Stalker.follow(tid, {
+        events: { call: false, ret: false, exec: false, block: false, compile: false },
+        transform: createTransform(onInsn, ranges),
+    });
+    installPthreadFollowOnce();
+    log(`[+] Stalker.follow tid=${tid} (native writer, device-spool)`);
+    send({ type: "follow", tid });
+}
+
 function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
     if (STATE.target) STATE.fnOffset = fp.sub(STATE.target.base).toUInt32();
     attachEntryHook(fp, {
         onEnter(args) {
-            if (!acceptingCalls || STATE.callIdx >= maxCalls) {
+            if (!acceptingCalls || (STATE.callIdx >= maxCalls && !STATE.preEntryActive)) {
                 (this as any)._skip = true;
                 return;
             }
@@ -156,96 +249,28 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                     retireCapture();
                     return;
                 }
-                STATE.fnEntered = true;
-                STATE.callFinalized = false;
+                if (STATE.preEntryActive) {
+                    STATE.fnEntered = true;
+                    STATE.callFinalized = false;
+                    (this as any)._tid = this.threadId;
+                    (this as any)._callIdx = STATE.callIdx;
+                    (this as any)._preEntry = true;
+                    if (this.threadId !== STATE.primaryTid) {
+                        try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
+                        STATE.primaryTid = this.threadId;
+                        buildIncludeRanges();
+                        const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
+                        Stalker.follow(this.threadId, {
+                            events: { call: false, ret: false, exec: false, block: false, compile: false },
+                            transform: createTransform(onInsn, ranges),
+                        });
+                    }
+                    installPthreadFollowOnce();
+                    return;
+                }
                 (this as any)._tid = this.threadId;
-                STATE.callIdx++;
+                beginCaptureSession(this.threadId, onInsn, false);
                 (this as any)._callIdx = STATE.callIdx;
-                STATE.primaryTid = (this as any)._tid;
-                STATE.started = Date.now();
-
-                // Reset SPSC counters (per-call)
-                STATE.headBuf!.writeU64(0);
-                STATE.tailBuf!.writeU64(0);
-                STATE.droppedBuf!.writeU64(0);
-                if (STATE.simdSidecar) {
-                    STATE.simdHeadBuf!.writeU64(0);
-                    STATE.simdTailBuf!.writeU64(0);
-                    STATE.simdDroppedBuf!.writeU64(0);
-                }
-                if (STATE.semanticEvents) {
-                    STATE.semanticEventBuf = [];
-                }
-                STATE.workerEvents = [];
-                STATE.followedWorkerTids = {};
-                // 上一 call 的 worker CModule 必须显式 unload: 下一 call 复用同 tid 时
-                // 旧实例的 native 内存 (ring + 编译产物) 不释放会持续泄漏
-                releaseWorkerTraces();
-                STATE.workerTraces = {};
-                STATE.batchSeq = 0;
-
-                openTraceFile((this as any)._callIdx, (this as any)._tid);
-                beginManifest();
-                log(`[>] call #${(this as any)._callIdx} tid=${(this as any)._tid}`);
-                send({
-                    type: "trace-begin", callIdx: (this as any)._callIdx,
-                    tid: (this as any)._tid, ts: STATE.started,
-                    devicePath: STATE.traceFilePath,
-                    simdDevicePath: STATE.simdTraceFilePath,
-                    simdRecordSize: SIMD_REC_SIZE,
-                    simdSampleStride: STATE.simdSampleStride
-                });
-                ensureFlushTimer();
-
-                // Anti-detect (installed before Stalker.follow creates RWX pages)
-                if (STATE.hideRwxMaps) {
-                    try {
-                        const { plugin } = require("./anti_detect/hide_rwx_maps");
-                        plugin.install();
-                    } catch (e) { log(`[hide-rwx-maps][!] ${e}`); }
-                }
-                if (STATE.patchSuicide) {
-                    try {
-                        const { plugin } = require("./anti_detect/patch_suicide");
-                        plugin.install({ spec: STATE.suicidePatchSpec });
-                    } catch (e) { log(`[patch-suicide][!] ${e}`); }
-                }
-                if (STATE.blockSelfKill) {
-                    try {
-                        const { plugin } = require("./anti_detect/block_self_kill");
-                        plugin.install();
-                    } catch (e) { log(`[block-self-kill][!] ${e}`); }
-                }
-
-                applyExcludesOnce();
-
-                if (STATE.deepTrace || (STATE.diffSyms && STATE.diffSyms.length > 0)) {
-                    refreshWritableRanges();
-                }
-
-                installJniHooksOnce();
-                installSemanticHooksOnce();
-                if (STATE.enableForkHook) {
-                    installForkHooksOnce();
-                }
-
-                buildIncludeRanges();
-                const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
-
-                // Initial memory snapshot (t=0 ground truth for pre-trace data).
-                // Captured here, after excludes/ranges are set but before Stalker
-                // starts, so the bytecode tables / .rodata are in their decrypted
-                // initial state. Best-effort; never throws into the trace path.
-                try { captureMemorySnapshot((this as any)._callIdx); }
-                catch (e) { persistEvents("snapshot_errors.jsonl", [{ reason: "snapshot-failed", error: String(e) }]); }
-
-                Stalker.follow((this as any)._tid, {
-                    events: { call: false, ret: false, exec: false, block: false, compile: false },
-                    transform: createTransform(onInsn, ranges),
-                });
-                installPthreadFollowOnce();
-                log(`[+] Stalker.follow tid=${(this as any)._tid} (native writer, device-spool)`);
-                send({ type: "follow", tid: (this as any)._tid });
             } catch (error) {
                 (this as any)._skip = true;
                 failCapture(error);
@@ -290,6 +315,8 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                     tid: (this as any)._tid, retval: retv.toString(),
                     ms: elapsed, total, dropped,
                     firstPc: total > 0 ? STATE.cm.firstCapturedPc.readPointer().toString() : null,
+                    entryBoundary: (this as any)._preEntry ? "module-init-and-entry" : "relocated-instruction",
+                    entryObserved: true,
                     truncated: dropped > 0 || simdDropped > 0,
                     returnObserved: true,
                     devicePath: STATE.traceFilePath,
@@ -308,6 +335,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 clearInterval(STATE.hbTimer); STATE.hbTimer = null;
 
                 STATE.fnEntered = false;
+                STATE.preEntryActive = false;
             } catch (error) { failCapture(error); }
         }
     });
@@ -383,7 +411,15 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
     }
 
     installFnHook(fp, onInsn);
+    STATE.fnHooked = true;
+    buildIncludeRanges();
     log(`[+] hook ${label} @ ${fp} (offset 0x${STATE.fnOffset!.toString(16)})`);
+    if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+        const initTid = typeof Process.getCurrentThreadId === "function"
+            ? Process.getCurrentThreadId()
+            : (Process.enumerateThreads()[0]?.id || Process.id);
+        beginCaptureSession(initTid, onInsn, true);
+    }
 }
 
 // ─────────── RPC exports ────────────────────────────────────────────────────
@@ -392,7 +428,14 @@ rpc.exports = {
     controlAddress,
     startCapture() {
         if (retired) throw new Error("capture session already sealed");
-        acceptingCalls = true; return "ok";
+        acceptingCalls = true;
+        if (STATE.traceInit && STATE.target && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+            const initTid = typeof Process.getCurrentThreadId === "function"
+                ? Process.getCurrentThreadId()
+                : (Process.enumerateThreads()[0]?.id || Process.id);
+            beginCaptureSession(initTid, STATE.onInsnPtr!, true);
+        }
+        return "ok";
     },
     prepareSpool(opts: { sessionId: string; pkg?: string; traceDir?: string }) {
         STATE.pkg = opts.pkg || null;
@@ -460,6 +503,7 @@ rpc.exports = {
 
         // Fork hook
         STATE.enableForkHook = !!opts.enableForkHook;
+        STATE.traceInit = !!(opts as any).traceInit;
         STATE.followWorkers = !!(opts as any).followWorkers;
         const workerCap = parseInt(String((opts as any).maxWorkerThreads || 4));
         STATE.maxWorkerThreads = Number.isFinite(workerCap) && workerCap > 0 ? Math.min(workerCap, 32) : 4;
@@ -523,10 +567,17 @@ rpc.exports = {
             const dlopen = getExport("android_dlopen_ext") || getExport("dlopen");
             if (!dlopen) { log("[!!] dlopen sym not found"); return "no-dlopen"; }
             Interceptor.attach(dlopen, {
-                onEnter(a) { try { (this as any)._p = a[0].readCString(); } catch (_) {} },
+                onEnter(a) {
+                    try { (this as any)._p = a[0].readCString(); } catch (_) {}
+                    if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered &&
+                        STATE.callIdx === 0 && (this as any)._p && (this as any)._p.indexOf(STATE.soPattern!) >= 0) {
+                        try { beginCaptureSession(this.threadId, onInsn, true); }
+                        catch (error) { failCapture(error); }
+                    }
+                },
                 onLeave(_rv) {
                     if (!(this as any)._p || (this as any)._p.indexOf(STATE.soPattern!) < 0) return;
-                    if (STATE.target) return;
+                    if (STATE.fnHooked) return;
                     const m2 = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern!) !== -1);
                     if (m2) {
                         try { armWithModule(m2, onInsn); }

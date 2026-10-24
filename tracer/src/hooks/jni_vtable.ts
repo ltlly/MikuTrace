@@ -72,7 +72,7 @@ function _readArgVal(arg: NativePointer, spec: any): any {
 function _makeJsonHookHandler(spec: any) {
     return {
         onEnter(this: InvocationContext, args: InvocationArguments) {
-            if (!STATE.fnEntered || this.threadId !== STATE.primaryTid) {
+            if ((!STATE.fnEntered && !STATE.preEntryActive) || this.threadId !== STATE.primaryTid) {
                 (this as any)._skip = true;
                 return;
             }

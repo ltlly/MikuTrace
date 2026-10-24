@@ -11,7 +11,7 @@ MAX_PLUGINS = 8
 MAX_CONFIG_BYTES = 64 * 1024
 TARGET_FIELDS = {"pkg", "so", "method", "export", "fn_offset", "cmd", "cmd_arg"}
 CAPTURE_FIELDS = {
-    "max_calls", "jni_hooks", "follow_workers", "max_worker_threads",
+    "max_calls", "jni_hooks", "follow_workers", "max_worker_threads", "trace_init",
     "hide_rwx_maps", "block_self_kill", "trace_deep", "trace_all", "include_so",
     "semantic_events", "snapshot_mem", "simd_sidecar",
 }

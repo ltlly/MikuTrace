@@ -7,6 +7,8 @@
   meta.json
   external_writes.bin    # 可选
   memory_snapshot.bin    # 可选
+  simd_trace.bin         # 可选
+  worker_trace_tid*.bin  # 可选
 ```
 
 分析命令通常接收单次调用目录。采集中使用 `_pending_call_*`；回传失败保留 pending
@@ -33,6 +35,7 @@ sidecar 描述。地址用 `0x` 字符串，计数与长度用整数。旧字段
 已验证完整；格式变更须版本化并测试迁移。
 
 `external_writes.bin` 每条为 `idx:u64 + addr:u64 + byte:u8`，小端 17 字节。
+`simd_trace.bin` 每条为 `idx:u64 + v[32]:512B`，小端 520 字节，`MemShadow` 自动接入以重建 NEON/SIMD 访存字节。
 初始快照布局及来源归因见 [内存契约](memory-completeness-design.md)。
 采集 sidecar 与可重建的分析缓存不同；后者必须校验输入长度和内容指纹。
 
@@ -80,7 +83,7 @@ sidecar 配置决定；ART/linker 排除和未跟踪线程不在记录承诺内�
 `capture_scope` 保存 `primary_tid`、`include_ranges`、`entry_boundary`、`exit_boundary`、
 `expected_entry_pc`、`first_pc`、`entry_complete`、`return_observed`、`simd_sample_stride`
 和 `coverage_gaps`；`info.metadata.capture_scope` 以同一类型输出，缺失证据保持 `null`。
-有 scope 的 trace 只有首条真实 PC、声明首 PC 和目标入口一致、观察到返回且无缺口
+有 scope 的 trace 只有首条真实 PC、声明首 PC 和目标入口一致（或启用 `--trace-init` 即 `entry_boundary="module-init-and-entry"` 时观测到模块初始化及目标入口返回）、观察到返回且无缺口
 才可报告完整。末条 `ret` 不能代替这些证据；尾调用正常返回也不要求范围内末条是 `ret`。
 早期 scope 缺少入口/返回验证字段时判为不完整；没有 scope 的旧 trace 保留旧读取判定。
 

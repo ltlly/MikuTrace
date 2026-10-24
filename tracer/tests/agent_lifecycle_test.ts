@@ -6,7 +6,7 @@ import ts from "typescript";
 
 const noop = () => {};
 const source = readFileSync(new URL("../src/agent.ts", import.meta.url), "utf8") +
-    "\nexport { installFnHook, armWithModule };\n" +
+    "\nexport { installFnHook, armWithModule, beginCaptureSession };\n" +
     "export function acceptCallsForTest() { acceptingCalls = true; }\n";
 const compiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -165,4 +165,72 @@ for (const active of [true, false]) {
 }
 assert.equal(jniState.jniHookEvents.length, 1, "调用结束后的 JNI 事件不能混入已封口的 trace");
 assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
+
+// Pre-entry initialization window (--trace-init) and resident worker follow contracts.
+{
+    const preEvents: any[] = [];
+    const preState: any = {
+        callIdx: 0, callFinalized: false, fnEntered: false, preEntryActive: false, traceInit: true,
+        started: 0, primaryTid: 0, simdSidecar: false, traceFilePath: "/spool/trace.bin",
+        headBuf: { writeU64: noop, readU64: () => ({ toNumber: () => 12 }) },
+        tailBuf: { writeU64: noop, readU64: () => ({ toNumber: () => 12 }) },
+        droppedBuf: { writeU64: noop, readU64: () => ({ toNumber: () => 0 }) },
+        includeRanges: [], workerTraces: {}, followedWorkerTids: {}, workerEvents: [],
+        cm: { firstCapturedPc: { readPointer: () => ({ toString: () => "0x800" }) } },
+    };
+    let hookCallbacks: any;
+    let sealedMeta: any;
+    const preModules: Record<string, any> = {
+        "./core/state": { STATE: preState, SIMD_REC_SIZE: 520 },
+        "./core/entry": { attachEntryHook: (_fp: any, handlers: any) => { hookCallbacks = handlers; }, releaseEntryHook: noop },
+        "./core/utils": { log: noop }, "./core/cmodule": {}, "./core/native_io": { ioHealth: () => [] },
+        "./core/ring": {
+            openTraceFile: noop, ensureFlushTimer: noop, releaseWorkerTraces: noop,
+            unfollowWorkerThreads: noop, flushRingToDisk: noop, flushWorkerTraceRings: noop,
+            closeTraceFile: noop, closeWorkerTraceFiles: noop, closeSimdTraceFile: noop,
+            workerTraceSummaries: () => [],
+        },
+        "./core/stalker": { applyExcludesOnce: noop, buildIncludeRanges: noop, createTransform: () => noop },
+        "./sidecar/simd": { flushSimdRingToDisk: noop },
+        "./sidecar/mem_snapshot": { captureMemorySnapshot: noop },
+        "./sidecar/semantic": { installSemanticHooksOnce: noop, flushSemanticEvents: noop },
+        "./hooks/jni_vtable": { installJniHooksOnce: noop, flushJniHookEvents: noop },
+        "./hooks/fork_monitor": { installForkHooksOnce: noop, flushForkEvents: noop },
+        "./hooks/pthread_follow": { installPthreadFollowOnce: noop, flushWorkerEvents: noop },
+        "./hooks/boundary_diff": { refreshWritableRanges: noop, flushExtWriteEvents: noop },
+        "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: noop },
+        "./transport/control": { controlAddress: noop },
+        "./transport/manifest": {
+            beginManifest: noop,
+            sealManifest: (end: any) => { sealedMeta = end; return "/spool/call_1.json"; },
+            sealSession: noop,
+            persistEvents: noop,
+        },
+    };
+    const preExports: any = {};
+    const preRpc: any = {};
+    runInNewContext(compiled, {
+        exports: preExports, rpc: preRpc, send: (ev: any) => preEvents.push(ev),
+        Stalker: { follow: noop, unfollow: noop, flush: noop }, clearInterval: noop, setImmediate: noop,
+        Process: { id: 1, enumerateModules: () => [], getCurrentThreadId: () => 42 },
+        Interceptor: { attach: (_fp: any, handlers: any) => { hookCallbacks = handlers; } },
+        require: (name: string) => preModules[name],
+    });
+    preExports.acceptCallsForTest();
+    preExports.beginCaptureSession(42, {}, true);
+    assert.equal(preState.preEntryActive, true);
+    assert.equal(preState.fnEntered, false);
+    assert.equal(preState.callIdx, 1);
+
+    preExports.installFnHook({}, {});
+    const ctx: any = { threadId: 42 };
+    hookCallbacks.onEnter.call(ctx, []);
+    assert.equal(preState.fnEntered, true);
+    assert.equal(ctx._callIdx, 1);
+    assert.equal(ctx._preEntry, true);
+    hookCallbacks.onLeave.call(ctx, { toString: () => "0x0" });
+    assert.equal(sealedMeta.entryBoundary, "module-init-and-entry");
+    assert.equal(sealedMeta.entryObserved, true);
+    assert.equal(sealedMeta.firstPc, "0x800");
+}
 console.log("agent lifecycle/JNI contracts hold");

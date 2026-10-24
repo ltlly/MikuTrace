@@ -212,6 +212,44 @@ fn ldp_d_pair_splits_into_two_8_byte_halves() {
 }
 
 #[test]
+fn vector_structure_st1_ld1_st2_expand_mem_ops_and_register_classes() {
+    // st1 { v0.16b, v1.16b }, [x0] = 0x4c00a000
+    let st1_pair = decode(0x100000, 0x4c00a000);
+    assert_eq!(st1_pair.mnemonic, "st1");
+    assert_eq!(st1_pair.mem_op.len(), 2);
+    assert!(st1_pair.mem_op[0].is_write);
+    assert!(st1_pair.mem_op[1].is_write);
+    assert_eq!(st1_pair.mem_op[0].size, 16);
+    assert_eq!(st1_pair.mem_op[1].size, 16);
+    assert_eq!(st1_pair.mem_op[0].disp, 0);
+    assert_eq!(st1_pair.mem_op[1].disp, 16);
+    assert_eq!(st1_pair.mem_op[0].src_reg, "q0");
+    assert_eq!(st1_pair.mem_op[1].src_reg, "q1");
+    assert!(st1_pair.regs_use.contains(&"q0".to_string()));
+    assert!(st1_pair.regs_use.contains(&"q1".to_string()));
+
+    // ld1 { v2.16b, v3.16b }, [x1] = 0x4c40a022
+    let ld1_pair = decode(0x100004, 0x4c40a022);
+    assert_eq!(ld1_pair.mnemonic, "ld1");
+    assert_eq!(ld1_pair.mem_op.len(), 2);
+    assert!(!ld1_pair.mem_op[0].is_write);
+    assert_eq!(ld1_pair.mem_op[0].size, 16);
+    assert_eq!(ld1_pair.mem_op[1].size, 16);
+    assert_eq!(ld1_pair.mem_op[0].src_reg, "q2");
+    assert_eq!(ld1_pair.mem_op[1].src_reg, "q3");
+    assert!(ld1_pair.regs_def.contains(&"q2".to_string()));
+    assert!(ld1_pair.regs_def.contains(&"q3".to_string()));
+
+    // st2 { v0.16b, v1.16b }, [x0] = 0x4c008000 (interleaved 32-byte store)
+    let st2 = decode(0x100008, 0x4c008000);
+    assert_eq!(st2.mnemonic, "st2");
+    assert_eq!(st2.mem_op.len(), 1);
+    assert!(st2.mem_op[0].is_write);
+    assert_eq!(st2.mem_op[0].size, 32);
+    assert_eq!(st2.mem_op[0].src_reg, "q0");
+}
+
+#[test]
 fn nop_has_no_mem_op() {
     // nop = 0xd503201f
     let d = decode(0x100000, 0xd503201f);

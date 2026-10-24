@@ -12,7 +12,7 @@ import { log, getExport, ptrToStringMaybe, syscallName, currentTraceIdx, u64Dec,
 
 /** Push a semantic event to buffer. Auto-flushes at 128 events. */
 export function pushSemanticEvent(ev: Record<string, any>): void {
-    if (!STATE.semanticEvents || !STATE.fnEntered) return;
+    if (!STATE.semanticEvents || (!STATE.fnEntered && !STATE.preEntryActive)) return;
     if (!STATE.semanticEventBuf) STATE.semanticEventBuf = [];
 
     const out = ev || {};
@@ -70,7 +70,7 @@ export function installSemanticHooksOnce(): void {
         try {
             Interceptor.attach(fp, {
                 onEnter(args) {
-                    if (!STATE.fnEntered || this.threadId !== STATE.primaryTid || internalIoActive(this.threadId) ||
+                    if ((!STATE.fnEntered && !STATE.preEntryActive) || this.threadId !== STATE.primaryTid || internalIoActive(this.threadId) ||
                         (["write", "pwrite64"].includes(spec.name) && internalFds.has(args[0].toInt32()))) {
                         (this as any)._skip = true;
                         return;

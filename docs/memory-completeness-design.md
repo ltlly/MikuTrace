@@ -4,15 +4,15 @@
 
 | 标记 | 来源 |
 |---|---|
-| `w` | trace store 的寄存器值 |
-| `r` | trace load 的后续寄存器状态 |
-| `x` | 捕获边界的外部写事件 |
+| `w` | trace store 的寄存器值（含 `simd_trace.bin` 重建的 NEON/SIMD store） |
+| `r` | trace load 的后续寄存器状态（含 `simd_trace.bin` 重建的 NEON/SIMD load） |
+| `x` | 捕获边界的外部写事件或合并的 worker 线程写入 |
 | `i` | 调用开始时的初始快照 |
 | `??` | 未观测 |
 
 写入者查询忽略 `r`；replay 只用指令之前的 `w/x/i`，不以 load 输出验证自身输入。
 未追踪线程的后续写不会自动使旧字节失效。导出（`mem-dump --out`）遇到未知字节或截断时直接失败，不进行填零。
-缓存指纹须包含 trace、快照和外部写输入。
+缓存指纹须包含 trace、SIMD sidecar、worker trace、快照和外部写输入。
 
 ## 初始快照
 

@@ -105,13 +105,21 @@ impl CaptureScope {
         let address =
             |value: Option<&str>| value.and_then(|s| parse_hex(s, "capture_scope.pc").ok());
         let expected = address(self.expected_entry_pc.as_deref());
+        let pc_matches = if self.entry_boundary.as_deref() == Some("module-init-and-entry") {
+            first_pc.is_some()
+                && expected.is_some()
+                && first_pc == address(self.first_pc.as_deref())
+                && fn_addr.is_none_or(|s| expected == address(Some(s)))
+        } else {
+            expected.is_some()
+                && expected == first_pc
+                && expected == address(self.first_pc.as_deref())
+                && fn_addr.is_none_or(|s| expected == address(Some(s)))
+        };
         self.entry_complete == Some(true)
             && self.return_observed == Some(true)
             && self.coverage_gaps == Some(0)
-            && expected.is_some()
-            && expected == first_pc
-            && expected == address(self.first_pc.as_deref())
-            && fn_addr.is_none_or(|s| expected == address(Some(s)))
+            && pc_matches
     }
 }
 

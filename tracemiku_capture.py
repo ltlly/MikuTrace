@@ -59,6 +59,7 @@ def _agent_options(args, root, profile):
         "maxCalls": args.max_calls,
         "targetPlugins": profile["agent_plugins"] if profile else [],
         "followWorkers": args.follow_workers, "maxWorkerThreads": args.max_worker_threads,
+        "traceInit": getattr(args, "trace_init", False),
         "pkg": args.pkg, "includeSoPatterns": patterns(args.include_so),
         "deepTrace": args.trace_deep, "execOnly": args.trace_exec, "traceAll": args.trace_all,
         "stalkerExcludePatterns": patterns(args.stalker_exclude_patterns),

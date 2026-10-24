@@ -95,7 +95,10 @@ export function registerSnapshot(info: any): void {
 
 export function sealManifest(end: any, sessionComplete: boolean): string {
     const expected = entryAddress()?.toString() || null;
-    const entryComplete = expected !== null && end.firstPc === expected;
+    const isInitWindow = end.entryBoundary === "module-init-and-entry";
+    const entryComplete = isInitWindow
+        ? (expected !== null && end.entryObserved === true && end.firstPc !== null)
+        : (expected !== null && end.firstPc === expected);
     if (!entryComplete) persistEvents("coverage_gaps.jsonl", [{
         reason: "entry-not-observed", evidence: "runtime", expected_pc: expected,
         first_pc: end.firstPc ?? null,
@@ -117,7 +120,19 @@ export function sealManifest(end: any, sessionComplete: boolean): string {
         name: `worker_trace_tid${worker.tid}.bin`, device_path: worker.devicePath,
         bytes: worker.records * REC_SIZE, records: worker.records, record_size: REC_SIZE,
     });
+    const fnAddr = expected || (STATE.target && STATE.fnOffset != null
+        ? STATE.target.base.add(STATE.fnOffset).toString() : manifest.meta.fn_addr);
+    const modInfo = STATE.target ? {
+        name: STATE.target.name,
+        base: STATE.target.base.toString(),
+        size: STATE.target.end.sub(STATE.target.base).toUInt32(),
+    } : manifest.meta.module;
     Object.assign(manifest.meta, end, {
+        fn_addr: fnAddr,
+        module: modInfo,
+        modules: Process.enumerateModules().map(m => ({
+            name: m.name, base: m.base.toString(), size: m.size, path: m.path,
+        })),
         records: end.total, device_records: end.total, bytes: end.total * REC_SIZE,
         closed_at: Date.now() / 1000, event_counts: counts,
         truncated: end.truncated || (counts["snapshot_errors.jsonl"] || 0) > 0 ||
@@ -125,7 +140,9 @@ export function sealManifest(end: any, sessionComplete: boolean): string {
         capture_scope: {
             primary_tid: STATE.primaryTid, include_ranges: STATE.includeRanges.map(range => ({
                 name: range.name, base: range.base.toString(), end: range.end.toString(),
-            })), entry_boundary: "relocated-instruction", exit_boundary: "interceptor-onleave",
+            })),
+            entry_boundary: isInitWindow ? "module-init-and-entry" : "relocated-instruction",
+            exit_boundary: "interceptor-onleave",
             expected_entry_pc: expected, first_pc: end.firstPc ?? null, entry_complete: entryComplete,
             return_observed: end.returnObserved === true,
             simd_sample_stride: STATE.simdSidecar ? STATE.simdSampleStride : null,

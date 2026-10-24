@@ -156,7 +156,7 @@ CLI 维护运行时证据与分析语义。
 | `finalize` | 离线回填派生元数据；未完成回传的目录仍保持 pending |
 
 默认 attach；`--spawn` 在挂起进程中 attach/init 后 resume，`--launch` 则先启动再 attach。
-入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--cmd` 过滤须同时给
+入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--trace-init` 可将模块加载期（`dlopen`/`.init_array`/`JNI_OnLoad`）及调用前初始化窗口一并纳入采集；`--follow-workers` 同时跟踪已驻留及新创建的 worker 线程并合并其内存写入；`--cmd` 过滤须同时给
 `--cmd-arg`。反检测插件默认关闭，patch 需目标 spec。
 
 ```bash

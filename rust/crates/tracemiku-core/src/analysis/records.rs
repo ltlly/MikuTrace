@@ -1,7 +1,6 @@
 //! 有界记录读取：默认只解码选中记录，详情才加载符号、CFG 和内存注释。
 use super::{AnalysisContext, AnalysisError};
 use crate::disasm::addr_of;
-use crate::memshadow::{value_of_read, value_of_write};
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -144,11 +143,11 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
             let ea = addr_of(&r, op);
             let kind = if op.is_write { "w" } else { "r" };
             let val = if op.is_write {
-                value_of_write(&inner.trace, i, op, &d)
+                crate::memshadow::bytes_of_write(&inner.trace, i, op, &d)
             } else {
-                value_of_read(&inner.trace, i, op, &d)
+                crate::memshadow::bytes_of_read(&inner.trace, i, op, &d)
             }
-            .map(|v| format!("{v:#x}"));
+            .map(|raw| format_mem_bytes_hex(&raw));
             MemAccessEffect {
                 kind,
                 ea: format!("{ea:#x}"),
@@ -190,7 +189,17 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
             regs: (!names.is_empty()).then(|| {
                 names
                     .iter()
-                    .filter_map(|name| r.reg(name).map(|v| (name.to_string(), format!("{v:#x}"))))
+                    .filter_map(|name| {
+                        r.reg(name)
+                            .map(|v| (name.to_string(), format!("{v:#x}")))
+                            .or_else(|| {
+                                inner
+                                    .trace
+                                    .simd()
+                                    .and_then(|s| s.reg_bytes_by_name(i, name))
+                                    .map(|bytes| (name.to_string(), format_mem_bytes_hex(&bytes)))
+                            })
+                    })
                     .collect()
             }),
             detail,
@@ -212,6 +221,27 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
         records: rows,
     })
 }
+
+fn format_mem_bytes_hex(raw: &[u8]) -> String {
+    if raw.len() <= 8 {
+        let mut buf = [0u8; 8];
+        buf[..raw.len()].copy_from_slice(raw);
+        format!("{:#x}", u64::from_le_bytes(buf))
+    } else if raw.len() <= 16 {
+        let mut buf = [0u8; 16];
+        buf[..raw.len()].copy_from_slice(raw);
+        format!("{:#x}", u128::from_le_bytes(buf))
+    } else {
+        let mut s = String::with_capacity(2 + raw.len() * 2);
+        s.push_str("0x");
+        for &b in raw.iter().rev() {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    }
+}
+
 pub(crate) fn valid_register(name: &str) -> bool {
     matches!(name, "sp" | "fp" | "lr" | "pc" | "nzcv" | "xzr" | "wzr")
         || name
@@ -219,4 +249,5 @@ pub(crate) fn valid_register(name: &str) -> bool {
             .or_else(|| name.strip_prefix('w'))
             .and_then(|s| s.parse::<u8>().ok())
             .is_some_and(|n| n <= 30)
+        || crate::trace::parse_simd_reg_name(name).is_some()
 }

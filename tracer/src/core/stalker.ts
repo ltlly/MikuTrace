@@ -172,12 +172,14 @@ export function createTransform(
     onInsn: NativePointer,
     ranges: Array<{ base: NativePointer; end: NativePointer }>
 ): (iter: StalkerArm64Iterator) => void {
-    const targetBase = STATE.target ? STATE.target.base : null;
-    const targetEnd = STATE.target ? STATE.target.end : null;
-
     return function transform(iter: StalkerArm64Iterator) {
         try {
             let ins: Arm64Instruction | null;
+            const targetBase = STATE.target ? STATE.target.base : null;
+            const targetEnd = STATE.target ? STATE.target.end : null;
+            const activeRanges = STATE.includeRanges && STATE.includeRanges.length > 0
+                ? STATE.includeRanges
+                : ranges;
 
             while ((ins = iter.next()) !== null) {
                 const a = ins.address;
@@ -193,14 +195,23 @@ export function createTransform(
                 }
 
                 // Multi-SO: also check include ranges
-                if (!inRange && ranges.length > 0) {
-                    for (let i = 0; i < ranges.length; i++) {
-                        const r = ranges[i];
+                if (!inRange && activeRanges.length > 0) {
+                    for (let i = 0; i < activeRanges.length; i++) {
+                        const r = activeRanges[i];
                         if (original.compare(r.base) >= 0 && original.compare(r.end) < 0) {
                             inRange = true;
                             break;
                         }
                     }
+                }
+                if (!inRange && !targetBase && STATE.preEntryActive && STATE.soPattern) {
+                    try {
+                        const mod = Process.findModuleByAddress(original);
+                        if (mod && mod.name.indexOf(STATE.soPattern) !== -1) {
+                            STATE.target = { name: mod.name, base: mod.base, end: mod.base.add(mod.size) };
+                            inRange = true;
+                        }
+                    } catch (_) {}
                 }
 
                 if (inRange && !isEntryRedirect(a)) {

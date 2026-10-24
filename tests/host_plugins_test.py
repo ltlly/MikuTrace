@@ -18,15 +18,16 @@ def profile(tmp_path, **overrides):
 
 def test_profile_relative_plugins_and_explicit_precedence(tmp_path):
     (tmp_path / "agent.js").write_text("module.exports = {apiVersion: 1};")
-    path = profile(tmp_path, capture={"max_calls": 42}, agent_plugins=[{
+    path = profile(tmp_path, capture={"max_calls": 42, "trace_init": True}, agent_plugins=[{
         "id": "demo", "path": "agent.js", "config": {"a": 1},
     }])
     doc = load_target(path)
-    args = types.SimpleNamespace(so="override", export=None, max_calls=100)
+    args = types.SimpleNamespace(so="override", export=None, max_calls=100, trace_init=False)
     apply_target(args, doc, {"so"})
     assert args.so == "override"
     assert args.export == "entry"
     assert args.max_calls == 42
+    assert args.trace_init is True
     assert not hasattr(args, "transport")
     assert doc["agent_plugins"][0]["source"].startswith("module.exports")
 

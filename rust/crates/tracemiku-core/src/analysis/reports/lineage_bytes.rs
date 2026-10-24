@@ -167,6 +167,7 @@ pub(super) fn byte_lineage_value_on(
                     .get("writer_idx")
                     .and_then(|v| v.as_u64())
                     .zip(write.get("src_reg").and_then(|v| v.as_str()))
+                    .filter(|(_, reg)| is_gp_register_token(reg))
                     .map(|(idx, reg)| LineageSeed::RegAt {
                         idx: idx as usize,
                         reg: reg.to_string(),

@@ -7,6 +7,7 @@
 //! mmap slice without any allocation.
 
 use super::evidence::{expected_next_pc, CaptureQuality};
+use super::simd::SimdTrace;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,7 @@ pub struct Trace {
     n: usize,
     quality: CaptureQuality,
     digest: OnceLock<[u8; 32]>,
+    simd: OnceLock<Option<SimdTrace>>,
 }
 
 impl Trace {
@@ -60,6 +62,7 @@ impl Trace {
                 n: 0,
                 quality,
                 digest: OnceLock::new(),
+                simd: OnceLock::new(),
             });
         }
 
@@ -76,7 +79,21 @@ impl Trace {
             mmap: Some(mmap),
             quality,
             digest: OnceLock::new(),
+            simd: OnceLock::new(),
         })
+    }
+
+    /// Lazily open and return the optional `<call_dir>/simd_trace.bin` sidecar.
+    pub fn simd(&self) -> Option<&SimdTrace> {
+        self.simd
+            .get_or_init(|| SimdTrace::load_opt(&self.call_dir))
+            .as_ref()
+    }
+
+    /// Look up the post-execution trace record index `idx + 1` when immediate
+    /// execution continuity holds (`post_record(idx).is_some()`).
+    pub fn post_trace_idx(&self, idx: usize) -> Option<usize> {
+        self.post_record(idx).map(|_| idx + 1)
     }
 
     /// Number of records in the trace.

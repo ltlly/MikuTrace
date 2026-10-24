@@ -11,15 +11,21 @@
 /// - `x30` → `lr` (link register alias)
 /// - `wsp` → `sp` (stack pointer 32-bit alias)
 /// - `xzr` / `wzr` → `xzr` (zero register)
+/// - `v0..v31` / `q0..q31` / `d0..d31` / `s0..s31` / `h0..h31` / `b0..b31` → `q0..q31`
 /// - empty input → empty output
 pub fn normalize_disasm_reg(name: &str) -> String {
     if name.is_empty() {
         return String::new();
     }
-    let n = name.to_ascii_lowercase();
+    let n = name
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .to_ascii_lowercase();
+    let head = n.split('.').next().unwrap_or(&n);
 
     // w0..w30 → x0..x30, then canonicalize frame/link aliases.
-    if let Some(rest) = n.strip_prefix('w') {
+    if let Some(rest) = head.strip_prefix('w') {
         if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
             return match rest {
                 "29" => "fp".to_string(),
@@ -29,17 +35,29 @@ pub fn normalize_disasm_reg(name: &str) -> String {
         }
     }
 
+    // SIMD/FP registers: v0..v31, q0..q31, d0..d31, s0..s31, h0..h31, b0..b31 -> q0..q31
+    if let Some(first) = head.as_bytes().first().copied() {
+        if matches!(first, b'v' | b'q' | b'd' | b's' | b'h' | b'b') {
+            let rest = &head[1..];
+            if let Ok(idx) = rest.parse::<u8>() {
+                if idx <= 31 {
+                    return format!("q{idx}");
+                }
+            }
+        }
+    }
+
     // Zero registers
-    if n == "xzr" || n == "wzr" {
+    if head == "xzr" || head == "wzr" {
         return "xzr".to_string();
     }
 
     // Aliases
-    match n.as_str() {
+    match head {
         "x29" => "fp".to_string(),
         "x30" => "lr".to_string(),
         "wsp" => "sp".to_string(),
-        _ => n,
+        _ => head.to_string(),
     }
 }
 

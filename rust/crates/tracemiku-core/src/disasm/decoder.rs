@@ -94,6 +94,18 @@ fn is_store_style(mnem: &str) -> bool {
             | "stlxr"
             | "stlxrb"
             | "stlxrh"
+            | "st1"
+            | "st2"
+            | "st3"
+            | "st4"
+    )
+}
+
+fn is_vector_load_style(mnem: &str) -> bool {
+    let base = mnem.split('.').next().unwrap_or(mnem);
+    matches!(
+        base,
+        "ld1" | "ld2" | "ld3" | "ld4" | "ld1r" | "ld2r" | "ld3r" | "ld4r"
     )
 }
 
@@ -154,6 +166,7 @@ fn build_reg_accesses(
     if let Some(arm64_det) = arch_det.arm64() {
         let store = is_store_style(mnem);
         let load_pair = is_load_pair_style(mnem);
+        let vec_load = is_vector_load_style(mnem);
         // Pre/post-indexed addressing modes (e.g. `ldr x0, [x1, #8]!` or
         // `ldr x0, [x1], #8`) writeback the computed address to the base
         // reg — so the base reg is BOTH a read AND a write. Capstone-rs
@@ -186,6 +199,7 @@ fn build_reg_accesses(
                     // are special: operand 0 is the status destination, while
                     // later register operands are store sources.
                     if (load_pair && reg_op_index < 2)
+                        || (vec_load && normalized.starts_with('q'))
                         || (reg_op_index == 0 && (!store || is_exclusive_store_style(mnem)))
                     {
                         if !regs_def.contains(&normalized) {

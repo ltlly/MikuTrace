@@ -74,7 +74,7 @@ function makeBoundaryDiffHook(symName: string) {
     return {
         onEnter(this: InvocationContext, args: InvocationArguments) {
             if (this.threadId !== STATE.primaryTid) { (this as any)._skip = true; return; }
-            if (!STATE.fnEntered) { (this as any)._skip = true; return; }
+            if (!STATE.fnEntered && !STATE.preEntryActive) { (this as any)._skip = true; return; }
             (this as any)._sym = symName;
             (this as any)._enterIdx = STATE.headBuf!.readU64().toNumber();
             const snap: Array<{ addr: NativePointer; before: Uint8Array }> = [];

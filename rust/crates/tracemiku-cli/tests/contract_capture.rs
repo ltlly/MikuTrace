@@ -76,6 +76,8 @@ fn trace_defaults_to_one_complete_call_without_record_or_time_caps() {
         assert!(!args.iter().any(|a| a["id"] == removed), "{removed}");
     }
     assert!(args.iter().any(|a| a["id"] == "device_dir"));
+    assert!(args.iter().any(|a| a["id"] == "trace_init"));
+    assert!(args.iter().any(|a| a["id"] == "simd_sidecar"));
 }
 
 #[test]
@@ -293,11 +295,21 @@ fn info_requires_runtime_entry_and_return_evidence_for_scoped_capture() {
     let end = bytes.len();
     bytes[end - 4..].copy_from_slice(&0x14000000u32.to_le_bytes());
     std::fs::write(trace_path, bytes).unwrap();
-    meta["capture_scope"] = scope;
+    meta["capture_scope"] = scope.clone();
     std::fs::write(&path, meta.to_string()).unwrap();
     let result = common::run_json(&["info", call.to_str().unwrap()]);
     assert_eq!(result["last_insn_is_ret"], false);
     assert_eq!(result["is_complete"], true);
+
+    // 模块初始化窗口 (--trace-init) 允许 first_pc 为初始化指令，同时验证 expected_entry_pc 与返回观察。
+    let mut init_scope = scope;
+    init_scope["entry_boundary"] = json!("module-init-and-entry");
+    init_scope["expected_entry_pc"] = json!("0x100200");
+    meta["fn_addr"] = json!("0x100200");
+    meta["capture_scope"] = init_scope;
+    std::fs::write(&path, meta.to_string()).unwrap();
+    let init_result = common::run_json(&["info", call.to_str().unwrap()]);
+    assert_eq!(init_result["is_complete"], true);
 }
 
 #[test]

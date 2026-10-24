@@ -270,6 +270,7 @@ impl MemShadow {
 
             merge_partials(partials)
         };
+        merge_worker_traces(trace, &mut mem);
         merge_external_writes(trace, &mut mem);
         mem
     }
@@ -627,23 +628,25 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
             }
             let addr = addr_of(&rec, op);
             if op.is_write {
-                if let Some(v) = value_of_write(trace, i, op, &d) {
+                if let Some(raw_bytes) = bytes_of_write(trace, i, op, &d) {
+                    let v = low_u64_from_le(&raw_bytes);
                     writes.push(MemRec {
                         idx: i,
                         addr,
                         size: op.size,
                         value: v,
                     });
-                    splat_bytes(&mut bytes, addr, op.size, v, i, "w");
+                    splat_byte_slice(&mut bytes, addr, &raw_bytes, i, "w");
                 }
-            } else if let Some(v) = value_of_read(trace, i, op, &d) {
+            } else if let Some(raw_bytes) = bytes_of_read(trace, i, op, &d) {
+                let v = low_u64_from_le(&raw_bytes);
                 reads.push(MemRec {
                     idx: i,
                     addr,
                     size: op.size,
                     value: v,
                 });
-                splat_bytes(&mut bytes, addr, op.size, v, i, "r");
+                splat_byte_slice(&mut bytes, addr, &raw_bytes, i, "r");
             }
         }
     }
@@ -670,6 +673,98 @@ fn merge_partials(partials: Vec<MemShadow>) -> MemShadow {
         }
     }
     out
+}
+
+fn worker_trace_files(call_dir: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(call_dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("worker_trace_tid") && n.ends_with(".bin"))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+fn merge_worker_traces(trace: &Trace, mem: &mut MemShadow) {
+    let files = worker_trace_files(trace.call_dir());
+    if files.is_empty() {
+        return;
+    }
+    let anchor_idx = trace.len().saturating_sub(1);
+    let mut added = false;
+    for path in files {
+        let Ok(raw) = std::fs::read(&path) else {
+            continue;
+        };
+        let n = raw.len() / crate::trace::REC_SIZE;
+        for i in 0..n {
+            let off = i * crate::trace::REC_SIZE;
+            let rec = *bytemuck::from_bytes::<crate::trace::Record>(
+                &raw[off..off + crate::trace::REC_SIZE],
+            );
+            let d = decode(rec.pc, rec.inst);
+            for op in &d.mem_op {
+                if op.base.is_empty() || !op.is_write {
+                    continue;
+                }
+                if matches!(
+                    d.mnemonic.as_str(),
+                    "stxr" | "stxrb" | "stxrh" | "stxp" | "stlxr" | "stlxrb" | "stlxrh" | "stlxp"
+                ) {
+                    if i + 1 >= n {
+                        continue;
+                    }
+                    let next_off = (i + 1) * crate::trace::REC_SIZE;
+                    let next_rec = *bytemuck::from_bytes::<crate::trace::Record>(
+                        &raw[next_off..next_off + crate::trace::REC_SIZE],
+                    );
+                    let Some(status) = d.op_str.split(',').next().map(str::trim) else {
+                        continue;
+                    };
+                    if next_rec.reg_by_name(status) != Some(0) {
+                        continue;
+                    }
+                }
+                let src = if !op.src_reg.is_empty() {
+                    op.src_reg.clone()
+                } else {
+                    let Some(s) = d.regs_use.iter().find(|r| **r != op.base && **r != op.idx)
+                    else {
+                        continue;
+                    };
+                    s.clone()
+                };
+                let Some(v) = rec.reg_by_name(&src) else {
+                    continue;
+                };
+                let addr = addr_of(&rec, op);
+                let sz = (op.size as usize).min(8);
+                let raw_bytes = &v.to_le_bytes()[..sz];
+                mem.writes.push(MemRec {
+                    idx: anchor_idx,
+                    addr,
+                    size: op.size,
+                    value: v,
+                });
+                splat_byte_slice(&mut mem.bytes, addr, raw_bytes, anchor_idx, "x");
+                added = true;
+            }
+        }
+    }
+    if added {
+        mem.writes.sort_by_key(|rec| (rec.idx, rec.addr));
+        for events in mem.bytes.values_mut() {
+            events.sort_by_key(|ev| ev.idx);
+        }
+    }
 }
 
 fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
@@ -723,37 +818,109 @@ fn flush_run(
     run_chars.clear();
 }
 
-/// Splat the LE bytes of `value` (size `size` bytes) into the per-addr event
-/// map starting at `addr`.
-fn splat_bytes(
+/// Splat a slice of LE bytes into the per-addr event map starting at `addr`.
+fn splat_byte_slice(
     bytes: &mut BTreeMap<u64, Vec<ByteEvent>>,
     addr: u64,
-    size: u32,
-    value: u64,
+    raw: &[u8],
     idx: usize,
     kind: &'static str,
 ) {
-    for o in 0..size as u64 {
-        let b = ((value >> (o * 8)) & 0xff) as u8;
+    for (o, &b) in raw.iter().enumerate() {
         bytes
-            .entry(addr + o)
+            .entry(addr.wrapping_add(o as u64))
             .or_default()
             .push(ByteEvent { idx, byte: b, kind });
     }
 }
 
-/// Pick the source register that supplied a store's bytes, taken from the
-/// storing record's pre-state. For stp/ldp pair-split entries, capstone fills
-/// `op.src_reg` directly; otherwise fall back to the first non-base/non-idx
-/// reg in `regs_use`.
-pub(crate) fn value_of_write(
+fn low_u64_from_le(raw: &[u8]) -> u64 {
+    let mut buf = [0u8; 8];
+    let take = raw.len().min(8);
+    buf[..take].copy_from_slice(&raw[..take]);
+    u64::from_le_bytes(buf)
+}
+
+fn element_width_from_arrangement(token: &str) -> usize {
+    if let Some((_, suffix)) = token.split_once('.') {
+        let base = suffix.split('[').next().unwrap_or(suffix);
+        return match base {
+            "16b" | "8b" | "b" => 1,
+            "8h" | "4h" | "h" => 2,
+            "4s" | "2s" | "s" => 4,
+            "2d" | "1d" | "d" => 8,
+            _ => 1,
+        };
+    }
+    1
+}
+
+/// Reconstruct interleaved or multi-register vector structure bytes at `simd_idx`.
+fn vector_structure_bytes(
+    trace: &Trace,
+    simd_idx: usize,
+    decoded: &DecodedInsn,
+    expected_size: usize,
+) -> Option<Vec<u8>> {
+    let simd = trace.simd()?;
+    let mnem_base = decoded
+        .mnemonic
+        .split('.')
+        .next()
+        .unwrap_or(&decoded.mnemonic);
+    let (vec_regs, vec_sz) = crate::disasm::mem_op::parse_vector_list_from_op_str(&decoded.op_str)?;
+    let n_regs = vec_regs.len();
+    if n_regs == 0 {
+        return None;
+    }
+    // Extract raw bytes for each vector register in the list.
+    let mut reg_bufs = Vec::with_capacity(n_regs);
+    for r in &vec_regs {
+        let (reg_idx, _) = crate::trace::parse_simd_reg_name(r)?;
+        let q = simd.q_bytes(simd_idx, reg_idx)?;
+        reg_bufs.push(q[..(vec_sz as usize).min(16)].to_vec());
+    }
+    if matches!(mnem_base, "ld1r" | "st1" | "ld1") {
+        let mut out = Vec::with_capacity(expected_size);
+        for buf in &reg_bufs {
+            out.extend_from_slice(buf);
+        }
+        out.truncate(expected_size);
+        return Some(out);
+    }
+    // Interleaved st2..st4 / ld2..ld4: interleave elements of width `elem_bytes` across `n_regs`.
+    let first_tok = decoded
+        .op_str
+        .find('{')
+        .and_then(|open| {
+            let close = decoded.op_str[open..].find('}')? + open;
+            decoded.op_str[open + 1..close].split(',').next()
+        })
+        .unwrap_or("");
+    let elem_bytes = element_width_from_arrangement(first_tok.trim()).max(1);
+    let lane_count = (vec_sz as usize) / elem_bytes;
+    let mut out = Vec::with_capacity(n_regs * (vec_sz as usize));
+    for lane in 0..lane_count {
+        let start = lane * elem_bytes;
+        let end = start + elem_bytes;
+        for buf in &reg_bufs {
+            if end <= buf.len() {
+                out.extend_from_slice(&buf[start..end]);
+            }
+        }
+    }
+    out.truncate(expected_size);
+    (out.len() == expected_size).then_some(out)
+}
+
+/// Extract exact little-endian bytes written by a store operation at record `i`.
+/// Supports scalar GPRs (`trace.bin`) and NEON/SIMD registers (`simd_trace.bin`).
+pub(crate) fn bytes_of_write(
     trace: &Trace,
     i: usize,
     op: &MemOp,
     decoded: &DecodedInsn,
-) -> Option<u64> {
-    // An exclusive store is only an observed write when its captured status
-    // confirms success. Pre-state source bytes alone do not prove a write.
+) -> Option<Vec<u8>> {
     if matches!(
         decoded.mnemonic.as_str(),
         "stxr" | "stxrb" | "stxrh" | "stxp" | "stlxr" | "stlxrb" | "stlxrh" | "stlxp"
@@ -762,6 +929,14 @@ pub(crate) fn value_of_write(
         if trace.post_record(i)?.reg_by_name(status)? != 0 {
             return None;
         }
+    }
+    let mnem_base = decoded
+        .mnemonic
+        .split('.')
+        .next()
+        .unwrap_or(&decoded.mnemonic);
+    if matches!(mnem_base, "st2" | "st3" | "st4") {
+        return vector_structure_bytes(trace, i, decoded, op.size as usize);
     }
     let src = if !op.src_reg.is_empty() {
         op.src_reg.clone()
@@ -773,25 +948,67 @@ pub(crate) fn value_of_write(
             .cloned()?
     };
     let rec = trace.record(i);
-    rec.reg_by_name(&src)
+    if let Some(v) = rec.reg_by_name(&src) {
+        let sz = (op.size as usize).min(8);
+        return Some(v.to_le_bytes()[..sz].to_vec());
+    }
+    if let Some((reg_idx, _)) = crate::trace::parse_simd_reg_name(&src) {
+        let q = trace.simd()?.q_bytes(i, reg_idx)?;
+        let sz = (op.size as usize).min(16);
+        return Some(q[..sz].to_vec());
+    }
+    None
 }
 
-/// Pick the dest register that received a load's bytes, taken from the NEXT
-/// record's post-state. For ldp pair-split entries, capstone fills
-/// `op.src_reg`; otherwise fall back to `regs_def[0]`.
-pub(crate) fn value_of_read(
+/// Extract exact little-endian bytes loaded by a load operation at record `i`,
+/// taken from the next record's post-state (`trace.bin` or `simd_trace.bin`).
+pub(crate) fn bytes_of_read(
     trace: &Trace,
     i: usize,
     op: &MemOp,
     decoded: &DecodedInsn,
-) -> Option<u64> {
+) -> Option<Vec<u8>> {
     let post = trace.post_record(i)?;
+    let post_idx = i + 1;
+    let mnem_base = decoded
+        .mnemonic
+        .split('.')
+        .next()
+        .unwrap_or(&decoded.mnemonic);
+    if matches!(
+        mnem_base,
+        "ld2" | "ld3" | "ld4" | "ld1r" | "ld2r" | "ld3r" | "ld4r"
+    ) {
+        return vector_structure_bytes(trace, post_idx, decoded, op.size as usize);
+    }
     let dest = if !op.src_reg.is_empty() {
         op.src_reg.clone()
     } else {
         decoded.regs_def.first().cloned()?
     };
-    post.reg_by_name(&dest)
+    if let Some(v) = post.reg_by_name(&dest) {
+        let sz = (op.size as usize).min(8);
+        return Some(v.to_le_bytes()[..sz].to_vec());
+    }
+    if let Some((reg_idx, _)) = crate::trace::parse_simd_reg_name(&dest) {
+        let q = trace.simd()?.q_bytes(post_idx, reg_idx)?;
+        let sz = (op.size as usize).min(16);
+        return Some(q[..sz].to_vec());
+    }
+    None
+}
+
+/// Pick the source register that supplied a store's bytes, taken from the
+/// storing record's pre-state. For stp/ldp pair-split entries, capstone fills
+/// `op.src_reg` directly; otherwise fall back to the first non-base/non-idx
+/// reg in `regs_use`. For 16-byte SIMD writes, returns the low 64 bits.
+pub(crate) fn value_of_write(
+    trace: &Trace,
+    i: usize,
+    op: &MemOp,
+    decoded: &DecodedInsn,
+) -> Option<u64> {
+    bytes_of_write(trace, i, op, decoded).map(|b| low_u64_from_le(&b))
 }
 
 /// Bind reconstructed events to all inputs that affect them. Snapshots are
@@ -805,7 +1022,7 @@ fn memory_input_digest(trace: &Trace) -> std::io::Result<[u8; 32]> {
         trace.quality().metadata_valid as u8,
         trace.quality().metadata_present as u8,
     ]);
-    for name in [EXTERNAL_WRITES_FILE, "meta.json"] {
+    for name in [EXTERNAL_WRITES_FILE, "simd_trace.bin", "meta.json"] {
         hash.update(name.as_bytes());
         match std::fs::File::open(trace.call_dir().join(name)) {
             Ok(mut file) => {
@@ -821,6 +1038,22 @@ fn memory_input_digest(trace: &Trace) -> std::io::Result<[u8; 32]> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => hash.update([0]),
             Err(e) => return Err(e),
+        }
+    }
+    for worker_path in worker_trace_files(trace.call_dir()) {
+        if let Some(name) = worker_path.file_name().and_then(|n| n.to_str()) {
+            hash.update(name.as_bytes());
+        }
+        if let Ok(mut file) = std::fs::File::open(&worker_path) {
+            hash.update([1]);
+            let mut buf = [0; 64 * 1024];
+            loop {
+                let n = file.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                hash.update(&buf[..n]);
+            }
         }
     }
     Ok(hash.finalize().into())

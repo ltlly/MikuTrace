@@ -190,6 +190,23 @@ fn last_write_of_addr_response(
     let src_value = src_reg
         .as_deref()
         .and_then(|reg| record.reg_by_name(reg))
+        .or_else(|| {
+            let mut val = 0u64;
+            let mut any = false;
+            let base = writer_addr.unwrap_or(addr);
+            let limit = writer_size.unwrap_or(1).min(8) as u64;
+            for o in 0..limit {
+                if let Some(ev) = mem.bytes.get(&base.saturating_add(o)).and_then(|evs| {
+                    evs.iter()
+                        .rev()
+                        .find(|e| e.idx == writer_idx && e.kind == "w")
+                }) {
+                    val |= u64::from(ev.byte) << (o * 8);
+                    any = true;
+                }
+            }
+            any.then_some(val)
+        })
         .map(|v| format!("{v:#x}"));
 
     LastWriteOfAddrResponse::Found {
@@ -405,6 +422,14 @@ fn mem_writes_in_range_response(
         let src_value = src_reg
             .as_deref()
             .and_then(|reg| record.reg_by_name(reg))
+            .or_else(|| {
+                let op = decoded
+                    .mem_op
+                    .iter()
+                    .find(|op| op.is_write && addr_of(&record, op) == write.addr)
+                    .or_else(|| decoded.mem_op.iter().find(|op| op.is_write))?;
+                crate::memshadow::value_of_write(&inner.trace, write.idx, op, &decoded)
+            })
             .unwrap_or(0);
         if src_byte.is_some_and(|b| (src_value & 0xff) as u8 != b) {
             continue;
