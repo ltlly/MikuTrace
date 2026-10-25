@@ -1,16 +1,15 @@
-#!/usr/bin/env python3
 """用固定字段读取任务比较统一入口与 Python seek/read；不是完整分析能力基准。"""
 
 import argparse
 import json
 import os
-from pathlib import Path
 import statistics
 import struct
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RECORD_SIZE = 272
