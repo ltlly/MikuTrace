@@ -26,15 +26,15 @@ export const SIMD_RING_BYTES = SIMD_REC_SIZE * SIMD_RING_RECS;
 export const EXEC_HARD_EXCL = [
     "libc.so", "libm.so", "libdl.so", "libpthread.so"
 ];
-export const ART_EXCL = ["libart.so", "libartbase.so", "libartpalette.so"];
+export const ART_EXCL = ["libart.so", "libartbase.so", "libartpalette.so", "libnativeloader.so"];
 
 export const HARD_EXCL = [
     "libc.so", "libm.so", "libdl.so", "libpthread.so", "libart.so",
-    "libartbase.so", "libartpalette.so", "linker", "linker64"
+    "libartbase.so", "libartpalette.so", "libnativeloader.so", "linker", "linker64"
 ];
 
 // In deep mode, modules that we still exclude entirely
-export const DEEP_KEEP_EXCL = ["linker", "linker64", "libdl.so"];
+export const DEEP_KEEP_EXCL = ["linker", "linker64", "libdl.so", "libnativeloader.so"];
 
 // TRACE_ALL_KEEP_EXCL: even in --trace-all (capture everything) mode, these
 // stay fully Stalker-excluded at MODULE level. Two distinct reasons:
@@ -57,7 +57,7 @@ export const DEEP_KEEP_EXCL = ["linker", "linker64", "libdl.so"];
 //    interpreter/JIT/GC is a hard Frida-Stalker limitation; it needs hardware
 //    trace (CoreSight ETM), not a software instrumenter.
 export const TRACE_ALL_KEEP_EXCL = [
-    "linker", "linker64", "libdl.so",
+    "linker", "linker64", "libdl.so", "libnativeloader.so",
     "libart.so", "libartbase.so", "libartpalette.so",
 ];
 

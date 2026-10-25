@@ -240,11 +240,15 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
 {
     const dlopenEvents: any[] = [];
     const followedTids: number[] = [];
+    const unfollowedTids: number[] = [];
     let pthreadInstalledCount = 0;
     let dlopenHandlers: any = null;
+    let jniOnLoadHandlers: any = null;
     let fnHookHandlers: any = null;
     let sealedMeta: any = null;
     let loadedModules: any[] = [];
+    const dlopenAddr = { name: "dlopen" };
+    const jniOnLoadAddr = { isNull: () => false, toString: () => "0x70000400" };
     const spawnState: any = {
         callIdx: 0, callFinalized: false, fnEntered: false, preEntryActive: false, traceInit: true,
         fnHooked: false, target: null, soPattern: null, fnOffset: null, exportName: null, methodName: null,
@@ -265,7 +269,7 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
             attachEntryHook: (_fp: any, handlers: any) => { fnHookHandlers = handlers; },
             releaseEntryHook: noop,
         },
-        "./core/utils": { log: noop, getExport: (name: string) => name === "android_dlopen_ext" ? {} : null },
+        "./core/utils": { log: noop, getExport: (name: string) => name === "android_dlopen_ext" ? dlopenAddr : null },
         "./core/cmodule": { buildCModule: () => { spawnState.onInsnPtr = { toString: () => "0x9999" }; } },
         "./core/native_io": { ioState: () => ({}), ioHealth: () => [] },
         "./core/ring": {
@@ -312,10 +316,21 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
         exports: spawnExports, rpc: spawnRpc, send: (ev: any) => dlopenEvents.push(ev),
         Frida: { version: "17.0.0" },
         Memory: { alloc: () => ({ writeU64: noop, readU64: () => ({ toNumber: () => 25 }), writeS32: noop }) },
-        Stalker: { follow: (tid: number) => followedTids.push(tid), unfollow: noop, flush: noop, garbageCollect: noop },
+        Stalker: {
+            follow: (tid: number) => followedTids.push(tid),
+            unfollow: (tid: number) => unfollowedTids.push(tid),
+            flush: noop,
+            garbageCollect: noop,
+        },
         clearInterval: noop, setImmediate: noop,
         Process: { id: 100, enumerateModules: () => loadedModules, getCurrentThreadId: () => 77 },
-        Interceptor: { attach: (_fp: any, handlers: any) => { dlopenHandlers = handlers; }, detachAll: noop },
+        Interceptor: {
+            attach: (fp: any, handlers: any) => {
+                if (fp === dlopenAddr) dlopenHandlers = handlers;
+                else if (fp === jniOnLoadAddr) jniOnLoadHandlers = handlers;
+            },
+            detachAll: noop,
+        },
         require: (name: string) => spawnModules[name],
     });
 
@@ -337,7 +352,7 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
     assert.equal(followedTids.length, 0, "dlopen.onEnter 内绝不能启动 Stalker 或进入 preEntryActive");
     assert.equal(spawnState.preEntryActive, false);
 
-    // 3. 目标 SO 映射完成，进入 dlopen.onLeave
+    // 3. 目标 SO 映射完成，进入 dlopen.onLeave（挂接 JNI_OnLoad 与目标入口，不在 libnativeloader 内直接 follow）
     const baseAddr: any = {
         add: (off: number) => ({
             sub: () => ({ toUInt32: () => off }),
@@ -345,21 +360,35 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
         }),
         toString: () => "0x70000000",
     };
-    loadedModules = [{ name: "libtarget.so", base: baseAddr, size: 0x10000 }];
+    loadedModules = [{
+        name: "libtarget.so",
+        base: baseAddr,
+        size: 0x10000,
+        findExportByName: (name: string) => name === "JNI_OnLoad" ? jniOnLoadAddr : null,
+    }];
     dlopenHandlers.onLeave.call(targetDlopenCtx, {});
 
     assert.equal(spawnState.fnHooked, true, "dlopen.onLeave 应完成目标入口 hook 安装");
-    assert.equal(spawnState.preEntryActive, true, "dlopen.onLeave 应启动目标入口前的初始化窗口采集");
+    assert.ok(jniOnLoadHandlers, "dlopen.onLeave 应挂接 JNI_OnLoad 钩子");
+    assert.equal(followedTids.length, 0, "dlopen.onLeave 返回 libnativeloader 栈帧期间不启动 Stalker");
+
+    // 4. JNI_OnLoad 执行期间采集初始化窗口，返回时 unfollow 避免回退到系统栈帧
+    const jniCtx: any = { threadId: 88 };
+    jniOnLoadHandlers.onEnter.call(jniCtx, []);
+    assert.equal(spawnState.preEntryActive, true, "JNI_OnLoad.onEnter 应启动目标入口前的初始化窗口采集");
     assert.equal(spawnState.fnEntered, false);
-    assert.deepEqual(followedTids, [88], "应在 dlopen 所在线程启动 Stalker");
+    assert.deepEqual(followedTids, [88]);
     assert.equal(pthreadInstalledCount, 0, "pre-entry 阶段不枚举全局后台线程，防止跟着系统线程崩溃");
     assert.equal(spawnRpc.exports.stopCapture(), "capturing", "preEntryActive 期间 stopCapture 不能提前封口");
+    jniOnLoadHandlers.onLeave.call(jniCtx, {});
+    assert.deepEqual(unfollowedTids, [88], "JNI_OnLoad.onLeave 应暂停 Stalker，避免跟入 libart/libbinder 间隙");
 
-    // 4. 随后目标入口被调用并自然返回
+    // 5. 随后目标入口被调用并自然返回，合并封口为同一个 call
     spawnExports.acceptCallsForTest();
-    const fnCtx: any = { threadId: 88 };
+    const fnCtx: any = { threadId: 99 };
     fnHookHandlers.onEnter.call(fnCtx, []);
     assert.equal(spawnState.fnEntered, true);
+    assert.deepEqual(followedTids, [88, 99], "进入目标函数时重新对调用线程启动 Stalker");
     assert.equal(pthreadInstalledCount, 1, "正式进入目标函数后启用 pthread_follow");
     fnHookHandlers.onLeave.call(fnCtx, { toString: () => "0x1" });
     assert.equal(sealedMeta.entryBoundary, "module-init-and-entry");

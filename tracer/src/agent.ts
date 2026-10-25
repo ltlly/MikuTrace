@@ -259,14 +259,14 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                     (this as any)._preEntry = true;
                     if (this.threadId !== STATE.primaryTid) {
                         try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
-                        STATE.primaryTid = this.threadId;
-                        buildIncludeRanges();
-                        const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
-                        Stalker.follow(this.threadId, {
-                            events: { call: false, ret: false, exec: false, block: false, compile: false },
-                            transform: createTransform(onInsn, ranges),
-                        });
                     }
+                    STATE.primaryTid = this.threadId;
+                    buildIncludeRanges();
+                    const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
+                    Stalker.follow(this.threadId, {
+                        events: { call: false, ret: false, exec: false, block: false, compile: false },
+                        transform: createTransform(onInsn, ranges),
+                    });
                     installPthreadFollowOnce();
                     return;
                 }
@@ -351,6 +351,53 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
  * 绝不在 `linker64` 或 `dlopen.onEnter` 内安装 hook、枚举模块或启动 Stalker，
  * 避免重入动态链接器导致死锁或进程崩溃（`script has been destroyed`）。
  */
+function installPreEntryInitHook(m: Module, onInsn: NativePointer, triggerTid?: number): void {
+    let jniOnLoad: NativePointer | null = null;
+    try {
+        if (typeof m.findExportByName === "function") {
+            jniOnLoad = m.findExportByName("JNI_OnLoad");
+        }
+        if (!jniOnLoad && typeof (m as any).getExportByName === "function") {
+            try { jniOnLoad = (m as any).getExportByName("JNI_OnLoad"); } catch (_) {}
+        }
+        if (!jniOnLoad) {
+            const exps = m.enumerateExports();
+            const e = exps.find(x => x.name === "JNI_OnLoad");
+            if (e) jniOnLoad = e.address;
+        }
+    } catch (_) {}
+
+    if (jniOnLoad && !jniOnLoad.isNull()) {
+        log(`[+] hooking ${m.name}!JNI_OnLoad @ ${jniOnLoad} for --trace-init`);
+        Interceptor.attach(jniOnLoad, {
+            onEnter() {
+                if (!acceptingCalls || STATE.preEntryActive || STATE.fnEntered || STATE.callIdx > 0) return;
+                try {
+                    (this as any)._preEntryTid = this.threadId;
+                    beginCaptureSession(this.threadId, onInsn, true);
+                } catch (error) { failCapture(error); }
+            },
+            onLeave() {
+                const tid = (this as any)._preEntryTid;
+                if (tid && STATE.preEntryActive && !STATE.fnEntered && STATE.primaryTid === tid) {
+                    try {
+                        Stalker.unfollow(tid);
+                        Stalker.flush();
+                    } catch (_) {}
+                }
+            }
+        });
+        return;
+    }
+
+    if (acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+        const initTid = triggerTid ?? (typeof Process.getCurrentThreadId === "function"
+            ? Process.getCurrentThreadId()
+            : (Process.enumerateThreads()[0]?.id || Process.id));
+        beginCaptureSession(initTid, onInsn, true);
+    }
+}
+
 function armWithModule(m: Module, onInsn: NativePointer, triggerTid?: number): void {
     runTargetPlugins("onModule", { module: m });
     STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
@@ -415,11 +462,8 @@ function armWithModule(m: Module, onInsn: NativePointer, triggerTid?: number): v
         if (!ok) {
             throw new Error("RegisterNatives hook unavailable; use a resolved export or offset");
         }
-        if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
-            const initTid = triggerTid ?? (typeof Process.getCurrentThreadId === "function"
-                ? Process.getCurrentThreadId()
-                : (Process.enumerateThreads()[0]?.id || Process.id));
-            beginCaptureSession(initTid, onInsn, true);
+        if (STATE.traceInit && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+            installPreEntryInitHook(m, onInsn, triggerTid);
         }
         return;
     } else {
@@ -431,11 +475,8 @@ function armWithModule(m: Module, onInsn: NativePointer, triggerTid?: number): v
     STATE.fnHooked = true;
     buildIncludeRanges();
     log(`[+] hook ${label} @ ${fp} (offset 0x${STATE.fnOffset!.toString(16)})`);
-    if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
-        const initTid = triggerTid ?? (typeof Process.getCurrentThreadId === "function"
-            ? Process.getCurrentThreadId()
-            : (Process.enumerateThreads()[0]?.id || Process.id));
-        beginCaptureSession(initTid, onInsn, true);
+    if (STATE.traceInit && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+        installPreEntryInitHook(m, onInsn, triggerTid);
     }
 }
 

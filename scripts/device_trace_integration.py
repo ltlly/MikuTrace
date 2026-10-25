@@ -37,11 +37,10 @@ from tracemiku_spool import AdbSpool, file_hash
 # ─────────────────────────── NDK detection ───────────────────────────
 
 
-def find_ndk_clang() -> str:
-    """Find aarch64-linux-android<api>-clang in NDK."""
+def find_ndk_clang() -> str | None:
+    """Find aarch64-linux-android<api>-clang in NDK if installed."""
     ndk_home = os.environ.get("ANDROID_NDK_HOME")
     if not ndk_home:
-        # Try common locations
         candidates = [
             Path.home() / "Library/Android/sdk/ndk",
             Path("/opt/android-ndk"),
@@ -49,37 +48,73 @@ def find_ndk_clang() -> str:
         ]
         for c in candidates:
             if c.exists():
-                # Pick newest NDK
                 ndks = sorted(c.iterdir(), reverse=True)
                 if ndks:
                     ndk_home = str(ndks[0])
                     break
     if not ndk_home:
-        raise RuntimeError("Cannot find NDK. Set ANDROID_NDK_HOME.")
+        return None
 
-    # Find clang binary
     prebuilt = Path(ndk_home) / "toolchains/llvm/prebuilt"
     if not prebuilt.exists():
-        raise RuntimeError(f"NDK prebuilt dir not found: {prebuilt}")
+        return None
     hosts = list(prebuilt.iterdir())
     if not hosts:
-        raise RuntimeError(f"No host toolchain in {prebuilt}")
+        return None
     bin_dir = hosts[0] / "bin"
-    # Prefer API 28+
     for api in range(33, 20, -1):
         cc = bin_dir / f"aarch64-linux-android{api}-clang"
         if cc.exists():
             return str(cc)
-    raise RuntimeError(f"No aarch64-linux-android*-clang found in {bin_dir}")
+    return None
+
+
+def compile_test_binary(tmp: Path, src: Path, binary: Path) -> str:
+    """Cross-compile ARM64 test binary with NDK clang or system clang + device libc.so."""
+    cc = find_ndk_clang()
+    if cc:
+        subprocess.run([cc, "-O1", "-fPIE", "-pie", "-o", str(binary), str(src)], check=True, timeout=30)
+        return str(Path(cc).parent / "llvm-nm")
+    clang = shutil.which("clang")
+    nm = shutil.which("llvm-nm") or shutil.which("nm")
+    if not clang or not nm:
+        raise RuntimeError("Cannot find NDK or system clang/llvm-nm. Set ANDROID_NDK_HOME.")
+    device_libc = tmp / "libc.so"
+    adb("pull", "/apex/com.android.runtime/lib64/bionic/libc.so", str(device_libc))
+    subprocess.run([
+        clang, "--target=aarch64-linux-android30", "-fuse-ld=lld",
+        "-Wl,--dynamic-linker,/system/bin/linker64,-z,max-page-size=4096", "-nostdlib",
+        "-DTRACEMIKU_NOSTDLIB=1", "-O1", "-fPIE", "-pie",
+        "-o", str(binary), str(src), str(device_libc),
+    ], check=True, timeout=30)
+    return nm
 
 
 # ─────────────────────────── Test target source ───────────────────────────
 
 TEST_C_SOURCE = r"""
+#ifdef TRACEMIKU_NOSTDLIB
+typedef unsigned long long uint64_t;
+#define F_OK 0
+extern int access(const char *, int);
+extern int usleep(unsigned int);
+extern unsigned int sleep(unsigned int);
+extern int printf(const char *, ...);
+extern int fflush(void *);
+extern uint64_t strtoull(const char *, char **, int);
+extern int atoi(const char *);
+extern void exit(int);
+__asm__(
+".text\n.global _start\n.type _start,%function\n"
+"_start:\n"
+"ldr x0,[sp]\nadd x1,sp,#8\nbl main\nbl exit\n"
+);
+#else
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#endif
 
 extern uint64_t tracemiku_test_entry(uint64_t count, unsigned delay);
 // 已知执行次数与逐条 x0 值，验证连续性而非只比较同源计数。
@@ -99,7 +134,7 @@ int main(int argc, char **argv) {
     while (access(argv[1], F_OK) != 0) usleep(10000);
     uint64_t result = tracemiku_test_entry(strtoull(argv[2], 0, 10), atoi(argv[3]));
     printf("TRACEMIKU_TEST_DONE result=%llu\n", (unsigned long long) result);
-    fflush(stdout);
+    fflush(0);
     sleep(atoi(argv[4]));
     return 0;
 }
@@ -245,7 +280,6 @@ def main():
     ap.add_argument("--semantic-events", action="store_true")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
-    cc = find_ndk_clang()
     devices = usable_devices(adb("devices").stdout, os.environ.get("ANDROID_SERIAL"))
     if len(devices) != 1:
         raise RuntimeError("需要唯一 ADB 真机；使用 ANDROID_SERIAL 选择")
@@ -253,8 +287,8 @@ def main():
     tmp = Path(tempfile.mkdtemp(prefix="tracemiku_devtest_"))
     src, binary = tmp / "target.c", tmp / "tracemiku_devtest"
     src.write_text(TEST_C_SOURCE)
-    subprocess.run([cc, "-O1", "-fPIE", "-pie", "-o", str(binary), str(src)], check=True, timeout=30)
-    symbols = subprocess.check_output([str(Path(cc).parent / "llvm-nm"), str(binary)], text=True)
+    nm_bin = compile_test_binary(tmp, src, binary)
+    symbols = subprocess.check_output([nm_bin, str(binary)], text=True)
     marker = next(int(line.split()[0], 16) for line in symbols.splitlines()
                   if line.endswith(" tracemiku_test_marker"))
     remote = f"/data/local/tmp/{tmp.name}"
