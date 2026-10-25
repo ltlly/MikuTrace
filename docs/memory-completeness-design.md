@@ -6,7 +6,7 @@
 |---|---|
 | `w` | trace store 的寄存器值（含 `simd_trace.bin` 重建的 NEON/SIMD store） |
 | `r` | trace load 的后续寄存器状态（含 `simd_trace.bin` 重建的 NEON/SIMD load） |
-| `x` | 捕获边界的外部写事件或合并的 worker 线程写入 |
+| `x` | 捕获边界的外部写事件、经后续读取验证的外部内存拷贝/填充（`memcpy`/`memmove`/`memset`，附 `copy_from` 溯源）或按 `[spawnedAtIdx, endedAtIdx]` 窗口合并的 worker 线程写入 |
 | `i` | 调用开始时的初始快照 |
 | `??` | 未观测 |
 

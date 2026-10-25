@@ -45,6 +45,8 @@ pub enum LastWriteOfAddrResponse {
         size: u32,
         src_reg: Option<String>,
         src_value: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        copy_from: Option<String>,
         writes_before: usize,
         writes_after: usize,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +232,7 @@ fn last_write_of_addr_response(
         size: writer_size.unwrap_or(1),
         src_reg,
         src_value,
+        copy_from: None,
         writes_before,
         writes_after,
         unlogged_write_gap,
@@ -288,6 +291,9 @@ fn last_write_of_addr_response_from_memshadow(
         .as_deref()
         .and_then(|reg| record.reg_by_name(reg))
         .unwrap_or(write.value);
+    let copy_from = mem
+        .copy_source_at(addr.max(write.addr), write.idx)
+        .map(|src| format!("{src:#x}"));
 
     LastWriteOfAddrResponse::Found {
         status: "found",
@@ -308,6 +314,7 @@ fn last_write_of_addr_response_from_memshadow(
         size: write.size,
         src_reg,
         src_value: Some(format!("{src_value:#x}")),
+        copy_from,
         writes_before,
         writes_after,
         unlogged_write_gap,
@@ -362,6 +369,8 @@ pub struct MemWriteRow {
     pub src_reg: Option<String>,
     pub src_value: String,
     pub byte0: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_from: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -459,6 +468,7 @@ fn mem_writes_in_range_response(
             src_reg,
             src_value: format!("{src_value:#x}"),
             byte0: (src_value & 0xff) as u8,
+            copy_from: None,
         });
     }
 
@@ -522,6 +532,9 @@ fn mem_writes_in_range_from_memshadow(
             src_reg,
             src_value: format!("{:#x}", write.value),
             byte0: (write.value & 0xff) as u8,
+            copy_from: memshadow
+                .copy_source_at(write.addr, write.idx)
+                .map(|src| format!("{src:#x}")),
         });
     }
 

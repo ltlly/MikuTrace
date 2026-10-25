@@ -9,12 +9,25 @@ pub(super) fn byte_writer_entry(
         .as_ref()
         .and_then(|write| source_byte_offset_for_write_at(write, byte_addr));
     let next = last_write.as_ref().and_then(|write| {
+        let idx = write.get("idx")?;
+        if let Some(reg) = write.get("src_reg").filter(|v| !v.is_null()) {
+            return Some(serde_json::json!({
+                "idx": idx,
+                "reg": reg,
+                "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "source_byte_offset": source_byte_offset,
+                "reason": "memory_load_byte",
+                "offset": offset,
+                "addr": format!("{byte_addr:#x}"),
+            }));
+        }
+        let copy_from = write.get("copy_from")?.as_str()?;
         Some(serde_json::json!({
-            "idx": write.get("idx")?,
-            "reg": write.get("src_reg")?,
+            "idx": idx,
+            "copy_from": copy_from,
             "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
             "source_byte_offset": source_byte_offset,
-            "reason": "memory_load_byte",
+            "reason": "memcpy_from",
             "offset": offset,
             "addr": format!("{byte_addr:#x}"),
         }))
@@ -38,9 +51,11 @@ pub(super) fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde
         let Some(idx) = next.get("idx").and_then(|v| v.as_u64()) else {
             continue;
         };
-        let Some(reg) = next.get("reg").and_then(|v| v.as_str()) else {
+        let reg_opt = next.get("reg").and_then(|v| v.as_str());
+        let copy_from_opt = next.get("copy_from").and_then(|v| v.as_str());
+        if reg_opt.is_none() && copy_from_opt.is_none() {
             continue;
-        };
+        }
         let offset = writer
             .get("offset")
             .cloned()
@@ -53,9 +68,33 @@ pub(super) fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde
             .get("source_byte_offset")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        if let Some(existing) = out.iter_mut().find(|item| {
+        let copy_from_val = next
+            .get("copy_from")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        if let Some(reg) = reg_opt {
+            if let Some(existing) = out.iter_mut().find(|item| {
+                item.get("idx").and_then(|v| v.as_u64()) == Some(idx)
+                    && item.get("reg").and_then(|v| v.as_str()) == Some(reg)
+            }) {
+                if let Some(offsets) = existing.get_mut("offsets").and_then(|v| v.as_array_mut()) {
+                    offsets.push(offset);
+                }
+                if let Some(addrs) = existing.get_mut("addrs").and_then(|v| v.as_array_mut()) {
+                    addrs.push(addr);
+                }
+                if let Some(source_byte_offsets) = existing
+                    .get_mut("source_byte_offsets")
+                    .and_then(|v| v.as_array_mut())
+                {
+                    source_byte_offsets.push(source_byte_offset);
+                }
+                continue;
+            }
+        } else if let Some(existing) = out.iter_mut().find(|item| {
             item.get("idx").and_then(|v| v.as_u64()) == Some(idx)
-                && item.get("reg").and_then(|v| v.as_str()) == Some(reg)
+                && item.get("reg").is_none()
+                && item.get("copy_from").is_some()
         }) {
             if let Some(offsets) = existing.get_mut("offsets").and_then(|v| v.as_array_mut()) {
                 offsets.push(offset);
@@ -69,6 +108,12 @@ pub(super) fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde
             {
                 source_byte_offsets.push(source_byte_offset);
             }
+            if let Some(copy_froms) = existing
+                .get_mut("copy_froms")
+                .and_then(|v| v.as_array_mut())
+            {
+                copy_froms.push(copy_from_val);
+            }
             continue;
         }
         let mut item = next.clone();
@@ -79,6 +124,9 @@ pub(super) fn dedupe_byte_nexts(byte_writers: &[serde_json::Value]) -> Vec<serde
                 "source_byte_offsets".to_string(),
                 serde_json::json!([source_byte_offset]),
             );
+            if copy_from_opt.is_some() {
+                obj.insert("copy_froms".to_string(), serde_json::json!([copy_from_val]));
+            }
         }
         out.push(item);
     }

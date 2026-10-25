@@ -45,6 +45,9 @@ export function beginManifest(): void {
         name: "simd_trace.bin", device_path: STATE.simdTraceFilePath!, record_size: SIMD_REC_SIZE,
     });
     const path = `${STATE.traceDir}/call_${STATE.callIdx}.json`;
+    const modulesList = Process.enumerateModules().map(m => ({
+        name: m.name, base: m.base.toString(), size: m.size, path: m.path,
+    }));
     manifest = {
         schema_version: 1, session_id: sessionId, state: "CAPTURING", files,
         meta: {
@@ -55,9 +58,7 @@ export function beginManifest(): void {
             fn_addr: STATE.target && STATE.fnOffset != null ? STATE.target.base.add(STATE.fnOffset).toString() : null,
             module: STATE.target ? { name: STATE.target.name, base: STATE.target.base.toString(),
                 size: STATE.target.end.sub(STATE.target.base).toUInt32() } : null,
-            modules: Process.enumerateModules().map(m => ({
-                name: m.name, base: m.base.toString(), size: m.size, path: m.path,
-            })),
+            modules: modulesList,
         },
     };
     atomicJson(path, manifest);

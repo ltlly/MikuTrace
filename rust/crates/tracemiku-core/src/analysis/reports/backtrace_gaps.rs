@@ -402,11 +402,12 @@ pub(super) fn exact_byte_writers_for_load_on(
         let params = crate::analysis::memory_query::LastWriteOfAddrQuery {
             addr: format!("{byte_addr:#x}"),
             before_idx: isize::try_from(before_idx)?,
+            with_external: true,
             ..Default::default()
         };
         let response = query_value_on(context, Query::LastWriteOfAddr(params))?;
         let last_write = if response.get("status").and_then(|v| v.as_str()) == Some("found") {
-            Some(serde_json::json!({
+            let mut lw = serde_json::json!({
                 "idx": response.get("writer_idx").cloned().unwrap_or(serde_json::Value::Null),
                 "pc": response.get("writer_pc").cloned().unwrap_or(serde_json::Value::Null),
                 "rel": response.get("rel").cloned().unwrap_or(serde_json::Value::Null),
@@ -422,7 +423,13 @@ pub(super) fn exact_byte_writers_for_load_on(
                     .unwrap_or_else(|| serde_json::json!(1)),
                 "src_reg": response.get("src_reg").cloned().unwrap_or(serde_json::Value::Null),
                 "src_value": response.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
-            }))
+            });
+            if let Some(copy_from) = response.get("copy_from").filter(|v| !v.is_null()) {
+                if let Some(obj) = lw.as_object_mut() {
+                    obj.insert("copy_from".to_string(), copy_from.clone());
+                }
+            }
+            Some(lw)
         } else {
             None
         };

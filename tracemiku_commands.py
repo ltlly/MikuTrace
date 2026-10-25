@@ -63,7 +63,7 @@ def build_parser():
     p_tr.add_argument("--max-worker-threads", type=int, default=4, dest="max_worker_threads",
                       help="worker 线程上限，默认 4，agent 上限 32")
     p_tr.add_argument("--trace-init", action="store_true", dest="trace_init",
-                      help="包含目标入口调用前的模块加载期与初始化窗口（dlopen/.init_array/JNI_OnLoad）")
+                      help="包含目标入口调用前的模块初始化窗口（dlopen 后 JNI_OnLoad 至目标入口）")
     p_tr.add_argument("--device-dir", help="设备上目标进程可写的新建目录；使用前验证目标写入和 root 回读")
     p_tr.add_argument("--out", required=True, help="新采集输出目录；已有结果使用 recover")
     p_tr.add_argument("--remote", default=None,

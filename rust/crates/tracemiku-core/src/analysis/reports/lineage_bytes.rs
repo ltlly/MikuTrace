@@ -66,10 +66,18 @@ pub(super) fn derive_byte_origin(
             .and_then(|v| v.as_str())
         {
             Some("x") => {
+                if step.get("memcpy_from").filter(|v| !v.is_null()).is_some()
+                    || write
+                        .and_then(|w| w.get("copy_from"))
+                        .filter(|v| !v.is_null())
+                        .is_some()
+                {
+                    continue;
+                }
                 return ByteOrigin::ExternalWrite {
                     addr: addr.unwrap_or(0),
                     idx,
-                }
+                };
             }
             Some("w") => {
                 return match write
@@ -163,22 +171,37 @@ pub(super) fn byte_lineage_value_on(
             LineageSeed::AddrBefore { addr, before_idx } => {
                 let write = last_write_of_addr_on(analysis, addr, before_idx)?;
                 let source_byte_offset = source_byte_offset_for_write_at(&write, addr);
-                let next_seed = write
+                let writer_idx = write
                     .get("writer_idx")
                     .and_then(|v| v.as_u64())
-                    .zip(write.get("src_reg").and_then(|v| v.as_str()))
-                    .filter(|(_, reg)| is_gp_register_token(reg))
-                    .map(|(idx, reg)| LineageSeed::RegAt {
-                        idx: idx as usize,
-                        reg: reg.to_string(),
-                        byte_lane: source_byte_offset.map(|lane| lane as usize),
+                    .map(|idx| idx as usize);
+                let memcpy_src_addr = writer_idx
+                    .and_then(|idx| analysis.inner.memshadow().copy_source_at(addr, idx))
+                    .or_else(|| {
+                        write
+                            .get("copy_from")
+                            .and_then(|v| v.as_str())
+                            .and_then(parse_u64_str)
                     });
+                let next_seed = if let (Some(idx), Some(src_addr)) = (writer_idx, memcpy_src_addr) {
+                    Some(LineageSeed::AddrBefore {
+                        addr: src_addr,
+                        before_idx: idx,
+                    })
+                } else {
+                    writer_idx
+                        .zip(write.get("src_reg").and_then(|v| v.as_str()))
+                        .filter(|(_, reg)| is_gp_register_token(reg))
+                        .map(|(idx, reg)| LineageSeed::RegAt {
+                            idx,
+                            reg: reg.to_string(),
+                            byte_lane: source_byte_offset.map(|lane| lane as usize),
+                        })
+                };
                 let state_base = (!profile.state_reg.is_empty())
                     .then(|| {
-                        write
-                            .get("writer_idx")
-                            .and_then(|v| v.as_u64())
-                            .map(|idx| analysis.inner.trace.record(idx as usize))
+                        writer_idx
+                            .map(|idx| analysis.inner.trace.record(idx))
                             .and_then(|rec| rec.reg_by_name(&profile.state_reg))
                     })
                     .flatten();
@@ -200,6 +223,16 @@ pub(super) fn byte_lineage_value_on(
                     "write": write,
                     "next": next_json,
                 });
+                if let Some(src_addr) = memcpy_src_addr {
+                    if let Some(obj) = step_obj.as_object_mut() {
+                        let formatted = format!("{src_addr:#x}");
+                        obj.insert(
+                            "memcpy_from".to_string(),
+                            serde_json::json!(formatted.clone()),
+                        );
+                        obj.insert("copy_from".to_string(), serde_json::json!(formatted));
+                    }
+                }
                 if !unlogged_write_gap.is_null() {
                     if let Some(obj) = step_obj.as_object_mut() {
                         obj.insert("unlogged_write_gap".to_string(), unlogged_write_gap);
@@ -216,7 +249,7 @@ pub(super) fn byte_lineage_value_on(
                 }
                 steps.push(step_obj);
                 raw_steps += 1;
-                if !is_vm_reg_slot {
+                if !is_vm_reg_slot && memcpy_src_addr.is_none() {
                     logical_depth += 1;
                 }
                 if let Some(next) = next_seed {
@@ -464,16 +497,23 @@ pub(super) fn lineage_seed_from_next(
     fallback_byte_lane: Option<usize>,
 ) -> Option<LineageSeed> {
     let idx = next.get("idx")?.as_u64()? as usize;
-    let reg = next.get("reg")?.as_str()?.to_string();
-    let byte_lane = next
-        .get("source_byte_offset")
-        .and_then(|v| v.as_u64())
-        .map(|lane| lane as usize)
-        .or(fallback_byte_lane);
-    Some(LineageSeed::RegAt {
-        idx,
-        reg,
-        byte_lane,
+    if let Some(reg) = next.get("reg").and_then(|v| v.as_str()) {
+        let byte_lane = next
+            .get("source_byte_offset")
+            .and_then(|v| v.as_u64())
+            .map(|lane| lane as usize)
+            .or(fallback_byte_lane);
+        return Some(LineageSeed::RegAt {
+            idx,
+            reg: reg.to_string(),
+            byte_lane,
+        });
+    }
+    let copy_from = next.get("copy_from")?.as_str()?;
+    let src_addr = parse_u64_str(copy_from)?;
+    Some(LineageSeed::AddrBefore {
+        addr: src_addr,
+        before_idx: idx,
     })
 }
 

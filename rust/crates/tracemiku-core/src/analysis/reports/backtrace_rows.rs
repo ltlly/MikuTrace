@@ -385,6 +385,7 @@ pub(super) fn upstream_writer_for_def_on(
     let params = crate::analysis::memory_query::MemWritesInRangeQuery {
         idx_lo,
         idx_hi: isize::try_from(idx_hi)?,
+        with_external: true,
         addr_lo: Some(format!("{addr:#x}")),
         addr_hi: Some(format!("{addr_hi:#x}")),
         max: max_writes,
@@ -469,10 +470,20 @@ pub(super) fn upstream_writer_for_def_on(
         "gap_call_candidates": gap_call_candidates,
         "unlogged_write_gap": unlogged_write_gap,
         "next": matches_observed.then(|| last_write.as_ref().and_then(|write| {
+            let idx = write.get("idx")?;
+            if let Some(reg) = write.get("src_reg").filter(|v| !v.is_null()) {
+                return Some(serde_json::json!({
+                    "idx": idx,
+                    "reg": reg,
+                    "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                }));
+            }
+            let copy_from = write.get("copy_from")?.as_str()?;
             Some(serde_json::json!({
-                "idx": write.get("idx")?,
-                "reg": write.get("src_reg")?,
+                "idx": idx,
+                "copy_from": copy_from,
                 "src_value": write.get("src_value").cloned().unwrap_or(serde_json::Value::Null),
+                "reason": "memcpy_from",
             }))
         })).flatten(),
     }))

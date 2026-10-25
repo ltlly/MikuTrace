@@ -288,6 +288,14 @@ pub(super) fn next_with_selected_byte_lane(
             {
                 obj.insert("addr".to_string(), addr);
             }
+            if let Some(copy_from) = obj
+                .get("copy_froms")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.get(idx))
+                .cloned()
+            {
+                obj.insert("copy_from".to_string(), copy_from);
+            }
         }
     }
     next

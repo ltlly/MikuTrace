@@ -77,7 +77,12 @@ function failCapture(error: unknown): void {
     STATE.active?.writeS32(0);
     try { Stalker.unfollow(STATE.primaryTid!); } catch (_) {}
     unfollowWorkerThreads();
+    try { Stalker.flush(); } catch (_) {}
+    try { closeTraceFile(); } catch (_) {}
+    try { closeWorkerTraceFiles(); } catch (_) {}
+    try { closeSimdTraceFile(); } catch (_) {}
     STATE.fnEntered = false;
+    STATE.preEntryActive = false;
     try { sealSession(fatalError); }
     catch (manifestError) { fatalError += `; failed to publish failure: ${manifestError}`; }
     retireCapture();
@@ -251,9 +256,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                     });
                 } catch (e) {
                     (this as any)._skip = true;
-                    fatalError = `target plugin refused capture: ${e}`;
-                    sealSession(fatalError);
-                    retireCapture();
+                    failCapture(`target plugin refused capture: ${e}`);
                     return;
                 }
                 if (!allowed) {
@@ -270,6 +273,15 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                         try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
                     }
                     STATE.primaryTid = this.threadId;
+                    applyExcludesOnce();
+                    if (STATE.deepTrace || (STATE.diffSyms && STATE.diffSyms.length > 0)) {
+                        refreshWritableRanges();
+                    }
+                    installJniHooksOnce();
+                    installSemanticHooksOnce();
+                    if (STATE.enableForkHook) {
+                        installForkHooksOnce();
+                    }
                     buildIncludeRanges();
                     const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
                     Stalker.follow(this.threadId, {
@@ -367,9 +379,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
 
 /**
  * 在 `dlopen.onLeave`（动态链接器已释放 `g_dl_mutex`、`JNI_OnLoad` 与目标函数尚未调用）
- * 或 attach 时（若目标 SO 已加载）启动目标入口前的初始化窗口采集。
- * 绝不在 `linker64` 或 `dlopen.onEnter` 内安装 hook、枚举模块或启动 Stalker，
- * 避免重入动态链接器导致死锁或进程崩溃（`script has been destroyed`）。
+ * 或 attach 时（若目标 SO 已加载）安装 `JNI_OnLoad` Scoped 采集钩子。
  */
 function installPreEntryInitHook(m: Module, onInsn: NativePointer, triggerTid?: number): void {
     let jniOnLoad: NativePointer | null = null;
@@ -391,10 +401,28 @@ function installPreEntryInitHook(m: Module, onInsn: NativePointer, triggerTid?: 
         log(`[+] hooking ${m.name}!JNI_OnLoad @ ${jniOnLoad} for --trace-init`);
         Interceptor.attach(jniOnLoad, {
             onEnter() {
-                if (!acceptingCalls || STATE.preEntryActive || STATE.fnEntered || STATE.callIdx > 0) return;
+                if (!acceptingCalls || STATE.fnEntered) return;
+                if (STATE.callIdx > 0 && !STATE.preEntryActive) return;
                 try {
                     (this as any)._preEntryTid = this.threadId;
-                    beginCaptureSession(this.threadId, onInsn, true);
+                    if (!STATE.preEntryActive) {
+                        beginCaptureSession(this.threadId, onInsn, true);
+                    } else {
+                        if (this.threadId !== STATE.primaryTid) {
+                            try { Stalker.unfollow(STATE.primaryTid); } catch (_) {}
+                            STATE.primaryTid = this.threadId;
+                        }
+                        applyExcludesOnce();
+                        installJniHooksOnce();
+                        installSemanticHooksOnce();
+                        if (STATE.enableForkHook) installForkHooksOnce();
+                        buildIncludeRanges();
+                        const ranges = STATE.includeRanges.map(r => ({ base: r.base, end: r.end }));
+                        Stalker.follow(this.threadId, {
+                            events: { call: false, ret: false, exec: false, block: false, compile: false },
+                            transform: createTransform(onInsn, ranges),
+                        });
+                    }
                 } catch (error) { failCapture(error); }
             },
             onLeave() {
@@ -410,11 +438,8 @@ function installPreEntryInitHook(m: Module, onInsn: NativePointer, triggerTid?: 
         return;
     }
 
-    if (acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
-        const initTid = triggerTid ?? (typeof Process.getCurrentThreadId === "function"
-            ? Process.getCurrentThreadId()
-            : (Process.enumerateThreads()[0]?.id || Process.id));
-        beginCaptureSession(initTid, onInsn, true);
+    if (triggerTid !== undefined && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+        beginCaptureSession(triggerTid, onInsn, true);
     }
 }
 
@@ -482,7 +507,7 @@ function armWithModule(m: Module, onInsn: NativePointer, triggerTid?: number): v
         if (!ok) {
             throw new Error("RegisterNatives hook unavailable; use a resolved export or offset");
         }
-        if (STATE.traceInit && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+        if (STATE.traceInit && !STATE.fnEntered && (STATE.callIdx === 0 || STATE.preEntryActive)) {
             installPreEntryInitHook(m, onInsn, triggerTid);
         }
         return;
@@ -495,7 +520,7 @@ function armWithModule(m: Module, onInsn: NativePointer, triggerTid?: number): v
     STATE.fnHooked = true;
     buildIncludeRanges();
     log(`[+] hook ${label} @ ${fp} (offset 0x${STATE.fnOffset!.toString(16)})`);
-    if (STATE.traceInit && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+    if (STATE.traceInit && !STATE.fnEntered && (STATE.callIdx === 0 || STATE.preEntryActive)) {
         installPreEntryInitHook(m, onInsn, triggerTid);
     }
 }
@@ -507,12 +532,6 @@ rpc.exports = {
     startCapture() {
         if (retired) throw new Error("capture session already sealed");
         acceptingCalls = true;
-        if (STATE.traceInit && STATE.target && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
-            const initTid = typeof Process.getCurrentThreadId === "function"
-                ? Process.getCurrentThreadId()
-                : (Process.enumerateThreads()[0]?.id || Process.id);
-            beginCaptureSession(initTid, STATE.onInsnPtr!, true);
-        }
         return "ok";
     },
     prepareSpool(opts: { sessionId: string; pkg?: string; traceDir?: string }) {
@@ -667,9 +686,61 @@ rpc.exports = {
     disposePlugins() { runTargetPlugins("dispose"); return "ok"; },
     stopCapture() {
         acceptingCalls = false;
-        const active = STATE.fnEntered || STATE.preEntryActive;
-        if (!active) { sealSession(); retireCapture(); }
-        return active ? "capturing" : "stopped";
+        if (!STATE.fnEntered) {
+            if (STATE.preEntryActive && !STATE.callFinalized) {
+                STATE.callFinalized = true;
+                try {
+                    try { Stalker.unfollow(STATE.primaryTid!); } catch (_) {}
+                    unfollowWorkerThreads();
+                    try { Stalker.flush(); } catch (_) {}
+                    flushRingToDisk("stop");
+                    flushWorkerTraceRings("stop");
+                    flushSimdRingToDisk("stop");
+                    closeTraceFile();
+                    closeWorkerTraceFiles();
+                    closeSimdTraceFile();
+
+                    const elapsed = Date.now() - STATE.started;
+                    const total = STATE.headBuf ? STATE.headBuf.readU64().toNumber() : 0;
+                    const dropped = STATE.droppedBuf ? STATE.droppedBuf.readU64().toNumber() : 0;
+                    const simdTotal = STATE.simdSidecar && STATE.simdHeadBuf ? STATE.simdHeadBuf.readU64().toNumber() : 0;
+                    const simdDropped = STATE.simdSidecar && STATE.simdDroppedBuf ? STATE.simdDroppedBuf.readU64().toNumber() : 0;
+                    const workerTraces = workerTraceSummaries();
+
+                    flushJniHookEvents(STATE.callIdx);
+                    flushSemanticEvents(STATE.callIdx);
+                    flushExtWriteEvents();
+                    flushForkEvents(STATE.callIdx);
+                    flushWorkerEvents(STATE.callIdx);
+
+                    const end = {
+                        type: "trace-end", callIdx: STATE.callIdx,
+                        tid: STATE.primaryTid, retval: "0x0",
+                        ms: elapsed, total, dropped,
+                        firstPc: total > 0 && STATE.cm?.firstCapturedPc ? STATE.cm.firstCapturedPc.readPointer().toString() : null,
+                        entryBoundary: "module-init-and-entry",
+                        entryObserved: false,
+                        truncated: true,
+                        returnObserved: false,
+                        devicePath: STATE.traceFilePath,
+                        simdDevicePath: STATE.simdTraceFilePath,
+                        simdRecords: simdTotal, simdDropped,
+                        simdRecordSize: SIMD_REC_SIZE,
+                        simdSampleStride: STATE.simdSampleStride,
+                        workerTraces,
+                    };
+                    endedManifest = sealManifest(end, true);
+                    lastHead = total; lastTail = total;
+                } catch (error) {
+                    failCapture(error);
+                    return "stopped";
+                }
+                STATE.preEntryActive = false;
+            }
+            sealSession();
+            retireCapture();
+        }
+        return STATE.fnEntered ? "capturing" : "stopped";
     },
 
     stats() {

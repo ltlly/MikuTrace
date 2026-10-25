@@ -301,6 +301,15 @@ pub(super) fn compact_lineage_summary_step(step: &serde_json::Value) -> serde_js
                 "next": step.get("next").cloned().unwrap_or(serde_json::Value::Null),
             });
             if let Some(obj) = out.as_object_mut() {
+                if let Some(memcpy_from) = step
+                    .get("memcpy_from")
+                    .or_else(|| step.get("copy_from"))
+                    .or_else(|| write.get("copy_from"))
+                    .filter(|v| !v.is_null())
+                {
+                    obj.insert("memcpy_from".to_string(), memcpy_from.clone());
+                    obj.insert("copy_from".to_string(), memcpy_from.clone());
+                }
                 if let Some(gap) = step
                     .get("unlogged_write_gap")
                     .or_else(|| write.get("unlogged_write_gap"))

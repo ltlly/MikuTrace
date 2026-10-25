@@ -97,8 +97,16 @@ export function applyExcludesOnce(): void {
             }
             try { Stalker.exclude({ base: m.base, size: m.size }); nMod++; hard++; } catch (_) {}
         } else if (isSoft) {
-            if (matchesUser(m.name)) { user_kept++; continue; }
+            if ((STATE.target && m.name === STATE.target.name) || matchesUser(m.name)) { user_kept++; continue; }
             try { Stalker.exclude({ base: m.base, size: m.size }); nMod++; soft++; } catch (_) {}
+        } else if (!deep && !execOnly && !traceAll) {
+            // 默认聚焦模式下，非目标且不在 --include-so 中的其他已加载系统/框架模块
+            // 一律执行 Stalker.exclude，避免编译无关模块代码或触发 Android 16 BTI/PAC 异常。
+            if ((STATE.target && m.name === STATE.target.name) || matchesUser(m.name)) { user_kept++; continue; }
+            const p = m.path || "";
+            if (p.startsWith("/system/") || p.startsWith("/apex/") || p.startsWith("/vendor/") || p.startsWith("/product/") || p.startsWith("/system_ext/")) {
+                try { Stalker.exclude({ base: m.base, size: m.size }); nMod++; soft++; } catch (_) {}
+            }
         }
     }
 

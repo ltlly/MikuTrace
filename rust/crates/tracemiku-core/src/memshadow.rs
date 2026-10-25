@@ -1,7 +1,7 @@
 //! Sparse byte-level memory shadow built from a trace.
 //!
-//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v6 binary
-//! sidecar for fast reloads on large traces.
+//! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v7 binary
+//! sidecar (`TMMSV7`) for fast reloads on large traces.
 //!
 //! Each instruction has full register state captured BEFORE its execution.
 //! Memory state is reconstructed by walking through stores (the source register
@@ -17,7 +17,7 @@
 //! source_idx)` returns the latest event with `idx <= t`, or `(None, "??",
 //! None)` if no event yet.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::thread;
@@ -93,9 +93,9 @@ pub struct MemRec {
     pub value: u64,
 }
 
-const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV6\0\0";
-const SIDECAR_VERSION: u32 = 6;
-pub const SIDECAR_SUFFIX: &str = ".memshadow.v6.bin";
+const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV7\0\0";
+const SIDECAR_VERSION: u32 = 7;
+pub const SIDECAR_SUFFIX: &str = ".memshadow.v7.bin";
 const EXTERNAL_WRITES_FILE: &str = "external_writes.bin";
 const EXTERNAL_WRITE_RECORD_SIZE: usize = 17;
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -205,18 +205,27 @@ pub struct MemShadow {
     pub writes: Vec<MemRec>,
     pub reads: Vec<MemRec>,
     pub bytes: BTreeMap<u64, Vec<ByteEvent>>,
+    /// Mapping `(dst_addr, write_idx) -> src_addr` for uninstrumented external
+    /// memory copy boundaries (`memcpy` / `memmove`).
+    pub copy_sources: HashMap<(u64, usize), u64>,
     /// Initial-memory-snapshot fallback layer (kind `i`). `None` when no
     /// `memory_snapshot.bin` was captured for this trace.
     pub snapshot: Option<MemSnapshot>,
 }
 
 impl MemShadow {
-    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v6.bin`.
+    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v7.bin`.
     pub fn sidecar_path(trace: &Trace) -> PathBuf {
         trace.call_dir().join(format!("trace.bin{SIDECAR_SUFFIX}"))
     }
 
-    /// Load from a valid v6 sidecar when possible; otherwise cold-build and
+    /// Return the source byte address if `(addr, idx)` was synthesized from an
+    /// uninstrumented `memcpy` / `memmove` call boundary.
+    pub fn copy_source_at(&self, addr: u64, idx: usize) -> Option<u64> {
+        self.copy_sources.get(&(addr, idx)).copied()
+    }
+
+    /// Load from a valid v7 sidecar when possible; otherwise cold-build and
     /// best-effort save. Corrupt/stale sidecars are ignored.
     pub fn load_or_build(trace: &Trace) -> Self {
         if let Some(mut mem) = Self::try_load_sidecar(trace) {
@@ -237,7 +246,8 @@ impl MemShadow {
     /// Walk every record once; for each store, record the source-reg pre-state
     /// bytes; for each load, record the dest-reg post-state (next record's
     /// value) bytes. Also merges boundary-diff events from
-    /// `<call_dir>/external_writes.bin` as kind `"x"` writes.
+    /// `<call_dir>/external_writes.bin` as kind `"x"` writes and reconstructs
+    /// uninstrumented external `memcpy`/`memmove`/`memset` boundaries.
     pub fn build_from_trace(trace: &Trace) -> Self {
         let n = trace.len();
         let workers = memshadow_worker_count(n);
@@ -272,10 +282,12 @@ impl MemShadow {
         };
         merge_worker_traces(trace, &mut mem);
         merge_external_writes(trace, &mut mem);
+        let snap = MemSnapshot::load(trace);
+        crate::memshadow_ext::merge_uninstrumented_mem_calls(trace, &mut mem, snap.as_ref());
         mem
     }
 
-    /// Try to load `<call_dir>/trace.bin.memshadow.v6.bin`.
+    /// Try to load `<call_dir>/trace.bin.memshadow.v7.bin`.
     ///
     /// Returns `None` for miss, stale trace size, schema mismatch, or corrupt
     /// content. Callers that want a ready MemShadow should use
@@ -284,12 +296,12 @@ impl MemShadow {
         Self::read_sidecar(trace).ok()
     }
 
-    /// Save this shadow as v6 binary sidecar. Writes to a temp file in the
+    /// Save this shadow as v7 binary sidecar. Writes to a temp file in the
     /// call directory and then atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
         write_atomic(
             &Self::sidecar_path(trace),
-            "trace.bin.memshadow.v6.bin",
+            "trace.bin.memshadow.v7.bin",
             |f| {
                 f.write_all(SIDECAR_MAGIC)?;
                 write_u32(f, SIDECAR_VERSION)?;
@@ -312,6 +324,13 @@ impl MemShadow {
                         write_u64(f, ev.idx as u64)?;
                         f.write_all(&[ev.byte, kind_to_code(ev.kind)?])?;
                     }
+                }
+                let copy_items = crate::memshadow_ext::sorted_copy_sources(&self.copy_sources);
+                write_u64(f, copy_items.len() as u64)?;
+                for (dst, idx, src) in copy_items {
+                    write_u64(f, dst)?;
+                    write_u64(f, idx as u64)?;
+                    write_u64(f, src)?;
                 }
                 Ok(())
             },
@@ -351,13 +370,22 @@ impl MemShadow {
         // （idx 8 + byte/kind 2）；写入端不会序列化空事件表。
         let addr_len = read_len_capped(&mut f, elem_cap(file_len, 26))?;
 
+        let n_records = trace.len();
         let mut writes = Vec::with_capacity(writes_len);
         for _ in 0..writes_len {
-            writes.push(read_memrec(&mut f)?);
+            let rec = read_memrec(&mut f)?;
+            if rec.idx >= n_records {
+                return Err(invalid_data("memshadow sidecar write idx out of range"));
+            }
+            writes.push(rec);
         }
         let mut reads = Vec::with_capacity(reads_len);
         for _ in 0..reads_len {
-            reads.push(read_memrec(&mut f)?);
+            let rec = read_memrec(&mut f)?;
+            if rec.idx >= n_records {
+                return Err(invalid_data("memshadow sidecar read idx out of range"));
+            }
+            reads.push(rec);
         }
         let mut bytes = BTreeMap::new();
         for _ in 0..addr_len {
@@ -367,6 +395,11 @@ impl MemShadow {
             let mut evs = Vec::with_capacity(event_len);
             for _ in 0..event_len {
                 let idx = read_len(&mut f)?;
+                if idx >= n_records {
+                    return Err(invalid_data(
+                        "memshadow sidecar byte event idx out of range",
+                    ));
+                }
                 let mut bb = [0u8; 2];
                 f.read_exact(&mut bb)?;
                 let kind = code_to_kind(bb[1])?;
@@ -379,10 +412,28 @@ impl MemShadow {
             evs.sort_by_key(|ev| ev.idx);
             bytes.insert(addr, evs);
         }
+        let copy_len = read_len_capped(&mut f, elem_cap(file_len, 24))?;
+        let mut copy_sources = HashMap::with_capacity(copy_len);
+        for _ in 0..copy_len {
+            let dst = read_u64(&mut f)?;
+            let idx = read_len(&mut f)?;
+            let src = read_u64(&mut f)?;
+            if idx >= n_records {
+                return Err(invalid_data(
+                    "memshadow sidecar copy_source idx out of range",
+                ));
+            }
+            copy_sources.insert((dst, idx), src);
+        }
+        let mut trailing = [0u8; 1];
+        if f.read(&mut trailing)? != 0 {
+            return Err(invalid_data("trailing bytes in memshadow sidecar"));
+        }
         Ok(Self {
             writes,
             reads,
             bytes,
+            copy_sources,
             snapshot: None,
         })
     }
@@ -654,6 +705,7 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
         writes,
         reads,
         bytes,
+        copy_sources: HashMap::new(),
         snapshot: None,
     }
 }
@@ -663,6 +715,7 @@ fn merge_partials(partials: Vec<MemShadow>) -> MemShadow {
         writes: Vec::new(),
         reads: Vec::new(),
         bytes: BTreeMap::new(),
+        copy_sources: HashMap::new(),
         snapshot: None,
     };
     for mut partial in partials {
@@ -698,14 +751,22 @@ fn merge_worker_traces(trace: &Trace, mem: &mut MemShadow) {
     if files.is_empty() {
         return;
     }
-    let anchor_idx = trace.len().saturating_sub(1);
+    let default_anchor = trace.len().saturating_sub(1);
     let mut added = false;
     for path in files {
         let Ok(raw) = std::fs::read(&path) else {
             continue;
         };
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let n = raw.len() / crate::trace::REC_SIZE;
         for i in 0..n {
+            let anchor_idx = crate::memshadow_ext::worker_record_anchor_idx(
+                trace.call_dir(),
+                file_name,
+                i,
+                n,
+                default_anchor,
+            );
             let off = i * crate::trace::REC_SIZE;
             let rec = *bytemuck::from_bytes::<crate::trace::Record>(
                 &raw[off..off + crate::trace::REC_SIZE],
@@ -1022,7 +1083,12 @@ fn memory_input_digest(trace: &Trace) -> std::io::Result<[u8; 32]> {
         trace.quality().metadata_valid as u8,
         trace.quality().metadata_present as u8,
     ]);
-    for name in [EXTERNAL_WRITES_FILE, "simd_trace.bin", "meta.json"] {
+    for name in [
+        EXTERNAL_WRITES_FILE,
+        "simd_trace.bin",
+        "meta.json",
+        SNAPSHOT_FILE,
+    ] {
         hash.update(name.as_bytes());
         match std::fs::File::open(trace.call_dir().join(name)) {
             Ok(mut file) => {
@@ -1185,6 +1251,7 @@ mod tests {
                     kind: "w",
                 }],
             )]),
+            copy_sources: HashMap::new(),
             snapshot: None,
         };
         let partial_b = MemShadow {
@@ -1203,6 +1270,7 @@ mod tests {
                     kind: "w",
                 }],
             )]),
+            copy_sources: HashMap::new(),
             snapshot: None,
         };
 
@@ -1273,6 +1341,7 @@ mod tests {
             writes: Vec::new(),
             reads: Vec::new(),
             bytes,
+            copy_sources: HashMap::new(),
             snapshot: Some(snap),
         };
 
@@ -1290,6 +1359,7 @@ mod tests {
             writes: Vec::new(),
             reads: Vec::new(),
             bytes: BTreeMap::new(),
+            copy_sources: HashMap::new(),
             snapshot: None,
         };
         assert_eq!(mem.byte_at(0x1000, 10), (None, "??", None));

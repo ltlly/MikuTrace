@@ -34,16 +34,23 @@ export function closeWorkerTraceFiles(): void {
 
 export function workerTraceSummaries(): any[] {
     const out: any[] = [];
+    const currentHead = STATE.headBuf ? STATE.headBuf.readU64().toNumber() : 0;
     for (const key of Object.keys(STATE.workerTraces || {})) {
         const worker = STATE.workerTraces[key] as WorkerTraceState;
+        const spawnedAtIdx = typeof worker.spawnedAtIdx === "number" ? worker.spawnedAtIdx : 0;
+        const endedAtIdx = typeof worker.endedAtIdx === "number" ? worker.endedAtIdx : currentHead;
         out.push({
             tid: worker.tid,
+            file: `worker_trace_tid${worker.tid}.bin`,
             pthread: worker.pthread,
             start: worker.start,
             devicePath: worker.filePath,
             records: worker.headBuf.readU64().toNumber(),
             dropped: worker.droppedBuf.readU64().toNumber(),
             recordSize: REC_SIZE,
+            spawnedAtIdx,
+            endedAtIdx,
+            anchorHeadIdx: spawnedAtIdx,
             // pthread_create 返回后 1ms 取第一个新 tid 是启发式归因, 消费方须知
             tid_attribution: "heuristic",
         });
@@ -52,8 +59,13 @@ export function workerTraceSummaries(): any[] {
 }
 
 export function unfollowWorkerThreads(): void {
+    const endedIdx = STATE.headBuf ? STATE.headBuf.readU64().toNumber() : 0;
     for (const key of Object.keys(STATE.workerTraces || {})) {
-        try { Stalker.unfollow(STATE.workerTraces[key].tid); } catch (_) {}
+        const worker = STATE.workerTraces[key];
+        if (worker.endedAtIdx === null || worker.endedAtIdx === undefined) {
+            worker.endedAtIdx = endedIdx;
+        }
+        try { Stalker.unfollow(worker.tid); } catch (_) {}
     }
 }
 

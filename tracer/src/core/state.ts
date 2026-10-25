@@ -138,6 +138,8 @@ export interface WorkerTraceState extends TraceRingState {
     tid: number;
     pthread: string;
     start: string;
+    spawnedAtIdx: number;
+    endedAtIdx: number | null;
     cm: any;
     onInsnPtr: NativePointer;
 }

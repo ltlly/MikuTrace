@@ -20,6 +20,7 @@ pub mod forward_dep_tree;
 pub mod function_index;
 pub mod index;
 pub mod memshadow;
+mod memshadow_ext;
 pub mod parallel;
 pub mod prelude;
 pub mod replay;

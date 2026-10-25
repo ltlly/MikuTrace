@@ -156,7 +156,7 @@ CLI 维护运行时证据与分析语义。
 | `finalize` | 离线回填派生元数据；未完成回传的目录仍保持 pending |
 
 默认 attach；`--spawn` 在挂起进程中 attach/init 后 resume，`--launch` 则先启动再 attach。
-入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--trace-init` 可将模块加载期（`dlopen`/`.init_array`/`JNI_OnLoad`）及调用前初始化窗口一并纳入采集；`--follow-workers` 同时跟踪已驻留及新创建的 worker 线程并合并其内存写入；参数或寄存器条件过滤由 `agent_plugins` 的 `beforeTrace` 实现。反检测插件默认关闭，patch 需目标 spec。
+入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--trace-init` 将目标模块 `dlopen` 后的初始化窗口（`JNI_OnLoad`）与首次目标入口调用合并采集（`JNI_OnLoad` 返回至目标入口之间暂停 Stalker 以避免跟入系统库）；`--follow-workers` 同时跟踪目标模块内已驻留及新创建的 worker 线程并按 `[spawnedAtIdx, endedAtIdx]` 窗口合并其内存写入；参数或寄存器条件过滤由 `agent_plugins` 的 `beforeTrace` 实现。反检测插件默认关闭，patch 需目标 spec。
 
 ```bash
 ./tracemiku trace --pkg com.example.app --so libfoo.so --export sign --out traces/run1
