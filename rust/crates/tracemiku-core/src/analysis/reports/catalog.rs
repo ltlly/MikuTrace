@@ -32,7 +32,6 @@ pub fn list_runs(base: &Path) -> anyhow::Result<Vec<serde_json::Value>> {
             rows.push(serde_json::json!({
                 "name": entry.file_name().to_string_lossy(),
                 "method": top.get("method").cloned().unwrap_or(serde_json::Value::Null),
-                "cmd": top.get("cmd").cloned().unwrap_or(serde_json::Value::Null),
                 "calls": calls.len(),
                 "records": records,
                 "max_records": max_records,
@@ -199,7 +198,6 @@ pub(super) fn enriched_trace_meta(path: &Path) -> serde_json::Value {
             merge_missing_meta_field(&mut meta, &parent, "pkg");
             merge_missing_meta_field(&mut meta, &parent, "so");
             merge_missing_meta_field(&mut meta, &parent, "method");
-            merge_missing_meta_field(&mut meta, &parent, "cmd");
         }
     }
     meta
@@ -367,7 +365,6 @@ pub fn info(path: PathBuf) -> anyhow::Result<serde_json::Value> {
             "pkg": top.get("pkg").cloned().unwrap_or(serde_json::Value::Null),
             "so": top.get("so").cloned().unwrap_or(serde_json::Value::Null),
             "method": top.get("method").cloned().unwrap_or(serde_json::Value::Null),
-            "cmd": top.get("cmd").cloned().unwrap_or(serde_json::Value::Null),
             "fn_offset": top.get("fn_offset").cloned().unwrap_or(serde_json::Value::Null),
             "fn_addr": top.get("fn_addr").cloned().unwrap_or(serde_json::Value::Null),
             "module": top.get("module").cloned().unwrap_or(serde_json::Value::Null),

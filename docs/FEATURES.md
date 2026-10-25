@@ -156,8 +156,7 @@ CLI 维护运行时证据与分析语义。
 | `finalize` | 离线回填派生元数据；未完成回传的目录仍保持 pending |
 
 默认 attach；`--spawn` 在挂起进程中 attach/init 后 resume，`--launch` 则先启动再 attach。
-入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--trace-init` 可将模块加载期（`dlopen`/`.init_array`/`JNI_OnLoad`）及调用前初始化窗口一并纳入采集；`--follow-workers` 同时跟踪已驻留及新创建的 worker 线程并合并其内存写入；`--cmd` 过滤须同时给
-`--cmd-arg`。反检测插件默认关闭，patch 需目标 spec。
+入口由 `--so` 与 `--fn-offset/--export/--method` 三选一指定；`--trace-init` 可将模块加载期（`dlopen`/`.init_array`/`JNI_OnLoad`）及调用前初始化窗口一并纳入采集；`--follow-workers` 同时跟踪已驻留及新创建的 worker 线程并合并其内存写入；参数或寄存器条件过滤由 `agent_plugins` 的 `beforeTrace` 实现。反检测插件默认关闭，patch 需目标 spec。
 
 ```bash
 ./tracemiku trace --pkg com.example.app --so libfoo.so --export sign --out traces/run1
@@ -186,10 +185,10 @@ Ctrl+C 结束 host 等待并停止接受新调用，已开始的调用继续在�
 
 | 插件 | 接口 |
 |---|---|
-| `agent_plugins` | 最多 8 个 `{id,path,config}`；普通 JS `module.exports` 声明 `apiVersion: 1`，同步 `install/onModule/beforeTrace/dispose`，可选 `invoke` |
+| `agent_plugins` | 最多 8 个 `{id,path,config}`；普通 JS `module.exports` 声明 `apiVersion: 1`，同步 `install/onModule/beforeTrace/afterTrace/dispose`，可选 `invoke` |
 | `host_plugin` | 一个 `{path,config}`；Python `API_VERSION = 1`，`prepare/on_ready/finish`；返回值写 run meta |
 
-agent 上下文含 `config/emit`；`onModule` 含 `module`，`beforeTrace` 含 `args/tid/address`。
+agent 上下文含 `config/emit`；`onModule` 含 `module`；`beforeTrace` 含 `args/context/tid/address/module/callIdx`（返回 `false` 或 `{ skip: true, reason }` 跳过本次调用并继续等待下一次调用，抛异常则作为致命错误终止采集）；`afterTrace` 含 `retval/context/tid/address/module/callIdx/records/dropped/ms`。
 采集前与采集中产生的 agent 生命周期事件保存在调用目录的 `target_plugin_events.jsonl`。
 host 可调用 `script.exports_sync.plugin_call(id,payload)`；Java bridge 不自动注入。
 host 的 `prepare` 在 attach 前，`on_ready` 在 init/resume 后，`finish` 在退出采集等待后、

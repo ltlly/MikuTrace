@@ -1,6 +1,6 @@
 /** 可信用户 JS 模块；无需重新编译 agent。插件不是安全沙箱。 */
 export interface TargetPluginSpec { id: string; source: string; config: any; }
-type Phase = "install" | "onModule" | "beforeTrace" | "dispose";
+type Phase = "install" | "onModule" | "beforeTrace" | "afterTrace" | "dispose";
 let plugins: { id: string; api: any; config: any }[] = [];
 let eventCount = 0;
 const MAX_EVENTS = 200;
@@ -28,7 +28,12 @@ function emit(id: string, phase: string, status: string, detail?: any): void {
     send(event);
 }
 
-export function runTargetPlugins(phase: Phase, context: any = {}): void {
+/**
+ * 执行指定生命周期钩子。
+ * 在 `beforeTrace` 阶段，若任意插件返回 `false` 或 `{ skip: true }`，返回 `false`
+ * 表示跳过本次调用并继续等待下一次调用；抛出异常表示致命拒绝。
+ */
+export function runTargetPlugins(phase: Phase, context: any = {}): boolean {
     for (const plugin of plugins) {
         try {
             const fn = plugin.api[phase];
@@ -37,6 +42,11 @@ export function runTargetPlugins(phase: Phase, context: any = {}): void {
                 const result = fn({ ...context, config: plugin.config,
                     emit: (detail: any) => emit(plugin.id, phase, "event", detail) });
                 if (result?.then) throw new Error("lifecycle handlers must be synchronous");
+                if (phase === "beforeTrace" && (result === false || (result && typeof result === "object" && result.skip === true))) {
+                    const reason = result && typeof result === "object" && result.reason !== undefined ? result.reason : null;
+                    emit(plugin.id, phase, "skipped", reason);
+                    return false;
+                }
             }
             emit(plugin.id, phase, "ok");
         } catch (e) {
@@ -44,6 +54,7 @@ export function runTargetPlugins(phase: Phase, context: any = {}): void {
             throw new Error(`target plugin ${plugin.id}/${phase}: ${e}`);
         }
     }
+    return true;
 }
 
 export function installTargetPlugins(specs: TargetPluginSpec[]): void {

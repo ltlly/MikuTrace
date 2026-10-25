@@ -51,7 +51,7 @@ export function beginManifest(): void {
             callIdx: STATE.callIdx, pid: Process.id, tid: STATE.primaryTid,
             format_version: 1, record_size: REC_SIZE, started_at: STATE.started / 1000,
             devicePath: STATE.traceFilePath, truncated: true, records: null, bytes: null,
-            method: STATE.methodName || STATE.exportName, cmd: STATE.cmdValue,
+            method: STATE.methodName || STATE.exportName,
             fn_addr: STATE.target && STATE.fnOffset != null ? STATE.target.base.add(STATE.fnOffset).toString() : null,
             module: STATE.target ? { name: STATE.target.name, base: STATE.target.base.toString(),
                 size: STATE.target.end.sub(STATE.target.base).toUInt32() } : null,

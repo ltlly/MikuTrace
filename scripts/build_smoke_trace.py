@@ -90,7 +90,6 @@ with open(run / "meta.json", "w") as mf:
             "pkg": "tst",
             "so": "libt",
             "method": "f",
-            "cmd": 1,
             "module": {"name": "libt.so", "base": hex(base), "size": 0x10000},
             "fn_addr": hex(base),
         },

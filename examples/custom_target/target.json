@@ -10,7 +10,16 @@
     "jni_hooks": "none"
   },
   "agent_plugins": [
-    {"id": "demo", "path": "agent.js", "config": {"enabled": true}}
+    {
+      "id": "demo",
+      "path": "agent.js",
+      "config": {
+        "enabled": true,
+        "argIndex": 0,
+        "expectInt": 70102
+      }
+    }
   ],
   "host_plugin": {"path": "host.py", "config": {"message": "demo-ready"}}
 }
+

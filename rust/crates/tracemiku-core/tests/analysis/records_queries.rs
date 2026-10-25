@@ -48,7 +48,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("meta.json"),
               r#"{"callIdx":1,"tid":100,"records":9,"ms":2,"retval":"0x0","truncated":false,"last_insn_is_ret":true}"#).unwrap();
     fs::write(tmp.path().join("run").join("meta.json"),
-              r#"{"pkg":"tst","so":"libt","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
+              r#"{"pkg":"tst","so":"libt","method":"f","module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
     let cd_owned = cd.clone();
     (tmp, cd_owned)
 }
@@ -268,7 +268,7 @@ fn synth_call_dir_with_symbols() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("meta.json"),
               r#"{"records":9,"tid":100,"ms":2,"truncated":false,"known_offsets":{"0x0":"f_root","0x100":"f_alpha","0x200":"f_beta"}}"#).unwrap();
     fs::write(tmp.path().join("run").join("meta.json"),
-              r#"{"pkg":"tst","so":"libt","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
+              r#"{"pkg":"tst","so":"libt","method":"f","module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
     (tmp, cd)
 }
 

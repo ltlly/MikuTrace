@@ -11,7 +11,6 @@ fn loads_synth_meta() {
     assert_eq!(meta.format_version, FORMAT_VERSION);
     assert_eq!(meta.record_size, REC_SIZE);
     assert_eq!(meta.method, "f");
-    assert_eq!(meta.cmd, Some(1));
     assert_eq!(meta.fn_addr, Some("0x100000".to_string()));
 
     let m = meta.module.as_ref().expect("primary module");

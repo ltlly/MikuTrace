@@ -7,19 +7,28 @@ import {
 let responses: any[] = [];
 (globalThis as any).send = (p: any) => { responses.push(p); };
 
-installTargetPlugins([{ id: "demo", config: { v: 7 }, source: `module.exports = {
+installTargetPlugins([{ id: "demo", config: { v: 7, expectArg: 70102 }, source: `module.exports = {
     apiVersion: 1,
     install(ctx) { ctx.emit({v: ctx.config.v}); },
     onModule(ctx) { ctx.emit({name: ctx.module.name}); },
     beforeTrace(ctx) {
         if (ctx.marker) ctx.emit({marker: ctx.marker});
         if (ctx.fail) throw new Error('refused');
+        if (ctx.arg0 !== undefined && ctx.arg0 !== ctx.config.expectArg) {
+            return { skip: true, reason: 'arg0-mismatch' };
+        }
+    },
+    afterTrace(ctx) {
+        ctx.emit({after: ctx.records});
     },
     invoke(ctx) { return ctx.payload; }
 };` }]);
 assert.ok(responses.some(p => p.type === "target-plugin" && p.phase === "install" && p.status === "ok"));
 runTargetPlugins("onModule", { module: { name: "demo" } });
-runTargetPlugins("beforeTrace", {});
+assert.equal(runTargetPlugins("beforeTrace", {}), true);
+assert.equal(runTargetPlugins("beforeTrace", { arg0: 10601 }), false, "返回 {skip: true} 应跳过本次调用");
+assert.equal(runTargetPlugins("beforeTrace", { arg0: 70102 }), true, "匹配参数应放行采集");
+runTargetPlugins("afterTrace", { records: 42 });
 assert.deepEqual(invokeTargetPlugin("demo", { hello: true }), { hello: true });
 assert.throws(() => invokeTargetPlugin("missing", {}), /unavailable/);
 assert.throws(() => invokeTargetPlugin("demo", "a".repeat(65537)), /exceeds/);

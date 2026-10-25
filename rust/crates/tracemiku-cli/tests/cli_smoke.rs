@@ -39,7 +39,7 @@ fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     .unwrap();
     std::fs::write(
         tmp.path().join("run").join("meta.json"),
-        r#"{"method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
+        r#"{"method":"f","module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
     )
     .unwrap();
     (tmp, cd)

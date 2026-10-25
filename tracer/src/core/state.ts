@@ -147,8 +147,6 @@ export interface InitOptions {
     exportName?: string | null;
     methodName?: string | null;
     fnOffset?: number | null;
-    cmdValue?: number | null;
-    cmdArg?: number | null;
     pkg?: string | null;
     /** 只放开 libc/libm/libdl/libpthread, 继续排除 libart/linker (比 --trace-deep 安全) */
     execOnly?: boolean | null;
@@ -182,8 +180,6 @@ export interface AgentState {
     exportName: string | null;
     methodName: string | null;
     fnOffset: number | null;
-    cmdValue: number | null;
-    cmdArg: number | null;
     pkg: string | null;
     /** --trace-exec: 放开 exec 类模块, 但继续排除 ART apex */
     execOnly: boolean;
@@ -276,7 +272,7 @@ export interface AgentState {
 export function createInitialState(): AgentState {
     return {
         soPattern: null, exportName: null, methodName: null,
-        fnOffset: null, cmdValue: null, cmdArg: null, pkg: null, execOnly: false,
+        fnOffset: null, pkg: null, execOnly: false,
         target: null, fnHooked: false, excluded: false, fnEntered: false,
         traceInit: false, preEntryActive: false, callFinalized: false,
 

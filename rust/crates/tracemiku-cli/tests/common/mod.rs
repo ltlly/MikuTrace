@@ -61,7 +61,7 @@ pub fn synth_call_dir() -> (tempfile::TempDir, PathBuf) {
     .unwrap();
     std::fs::write(
         run.join("meta.json"),
-        r#"{"pkg":"tst","so":"libt","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
+        r#"{"pkg":"tst","so":"libt","method":"f","module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
     )
     .unwrap();
     (tmp, cd)
@@ -100,7 +100,7 @@ pub fn synth_deep_dir() -> (tempfile::TempDir, PathBuf) {
     .unwrap();
     std::fs::write(
         run.join("meta.json"),
-        r#"{"pkg":"tst","so":"libt","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
+        r#"{"pkg":"tst","so":"libt","method":"f","module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#,
     )
     .unwrap();
     let jni = [

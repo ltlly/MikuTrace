@@ -54,7 +54,6 @@ def _agent_options(args, root, profile):
     return {
         "soPattern": args.so, "methodName": args.method, "exportName": args.export,
         "fnOffset": int(args.fn_offset, 16) if args.fn_offset else None,
-        "cmdArg": args.cmd_arg, "cmdValue": args.cmd,
         "ringRecs": args.ring_recs,
         "maxCalls": args.max_calls,
         "targetPlugins": profile["agent_plugins"] if profile else [],
@@ -93,8 +92,6 @@ def capture(args, root, rust_json, log):
         raise ValueError("--spawn/--launch/--attach-pid 互斥")
     if (args.spawn or args.launch) and not args.pkg:
         raise ValueError("--spawn/--launch 需要 --pkg")
-    if args.cmd is not None and args.cmd_arg is None:
-        raise ValueError("--cmd 需要 --cmd-arg")
     if not 1 <= args.max_calls <= 2**53 - 1:
         raise ValueError("--max-calls 必须是正整数")
     if args.simd_sample_stride < 1:

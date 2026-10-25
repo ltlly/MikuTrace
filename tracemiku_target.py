@@ -9,7 +9,7 @@ import uuid
 MAX_FILE_BYTES = 1024 * 1024
 MAX_PLUGINS = 8
 MAX_CONFIG_BYTES = 64 * 1024
-TARGET_FIELDS = {"pkg", "so", "method", "export", "fn_offset", "cmd", "cmd_arg"}
+TARGET_FIELDS = {"pkg", "so", "method", "export", "fn_offset"}
 CAPTURE_FIELDS = {
     "max_calls", "jni_hooks", "follow_workers", "max_worker_threads", "trace_init",
     "hide_rwx_maps", "block_self_kill", "trace_deep", "trace_all", "include_so",
@@ -42,7 +42,7 @@ def load_target(path):
     _keys(target, TARGET_FIELDS, "target")
     _keys(capture, CAPTURE_FIELDS, "capture")
     for key, value in {**target, **capture}.items():
-        if key in {"cmd", "cmd_arg", "max_calls", "max_worker_threads"}:
+        if key in {"max_calls", "max_worker_threads"}:
             if type(value) is not int:
                 raise ValueError(f"{key} 必须是整数")
         elif key in {"pkg", "so", "method", "export", "fn_offset", "jni_hooks", "include_so"}:

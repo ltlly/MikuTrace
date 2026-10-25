@@ -38,7 +38,7 @@ pub fn synth_meta_only_dir() -> SynthFixture {
     .unwrap();
 
     let run_meta = serde_json::json!({
-        "pkg": "tst", "so": "libt", "method": "f", "cmd": 1,
+        "pkg": "tst", "so": "libt", "method": "f",
         "module": {"name": "libt.so", "base": "0x100000", "size": 0x10000},
         "fn_addr": "0x100000"
     });
@@ -96,7 +96,7 @@ pub fn synth_trace_dir(num_records: usize) -> SynthFixture {
     .unwrap();
 
     let run_meta = serde_json::json!({
-        "pkg": "tst", "so": "libt", "method": "f", "cmd": 1,
+        "pkg": "tst", "so": "libt", "method": "f",
         "module": {"name": "libt.so", "base": "0x100000", "size": 0x10000},
         "fn_addr": "0x100000"
     });

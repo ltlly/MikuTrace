@@ -133,8 +133,6 @@ struct PerCallMetaRaw {
     #[serde(default)]
     pub method: Option<String>,
     #[serde(default)]
-    pub cmd: Option<i64>,
-    #[serde(default)]
     pub fn_addr: Option<String>,
     /// `null` 表示 host 侧尚未落定（例如拉取失败），不是 0。
     /// 缺 `records` 时给出可读恢复提示，而不是 serde 类型错误。
@@ -158,7 +156,6 @@ struct PerCallMetaRaw {
 #[derive(Debug, Clone, Deserialize)]
 struct RunMetaRaw {
     pub method: Option<String>,
-    pub cmd: Option<i64>,
     pub module: Option<ModuleInfoRaw>,
     pub modules: Option<Vec<ModuleInfoRaw>>,
     pub fn_addr: Option<String>,
@@ -210,7 +207,6 @@ pub struct TraceMeta {
     pub module: Option<ModuleInfo>,
     pub modules: Vec<ModuleInfo>,
     pub method: String,
-    pub cmd: Option<i64>,
     pub fn_addr: Option<String>,
     pub regs: &'static [&'static str],
     pub truncated: bool,
@@ -266,7 +262,6 @@ impl TraceMeta {
             // Acceptable: per-call traces are loadable without a run wrapper.
             RunMetaRaw {
                 method: None,
-                cmd: None,
                 module: None,
                 modules: None,
                 fn_addr: None,
@@ -301,7 +296,6 @@ impl TraceMeta {
             module,
             modules,
             method: per_call.method.or(run.method).unwrap_or_default(),
-            cmd: per_call.cmd.or(run.cmd),
             fn_addr: per_call.fn_addr.or(run.fn_addr),
             regs: REG_NAMES,
             truncated: per_call.truncated,

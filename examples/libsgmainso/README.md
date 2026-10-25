@@ -37,7 +37,7 @@ PY
 
 ## 采集目标
 
-入口为 `doCommandNative`，按参数下标 2 的值 70102 过滤。当前采集默认等待一次调用
+入口为 `doCommandNative`，可通过 `--target-profile` 的 `agent_plugins`（`beforeTrace` 检查 `ctx.args[2].toInt32() === 70102`）过滤目标调用。当前采集默认等待一次调用
 自然返回，封口后使用 gzip + ADB 回传；通用用法见[命令目录](../../docs/FEATURES.md#采集与恢复)。
 历史上该设备出现过 adb shell 阻塞；全局 spawn gating 会拦截 ADB 启动的进程，当前
 spawn 流程仅挂起目标进程，不启用全局 gating。目标其他反检测行为须单独核对。

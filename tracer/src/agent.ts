@@ -237,18 +237,27 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 (this as any)._skip = true;
                 return;
             }
-            if (STATE.cmdValue != null && STATE.cmdArg != null) {
-                const c = args[STATE.cmdArg!].toInt32();
-                if (c !== STATE.cmdValue) { (this as any)._skip = true; return; }
-            }
             if (STATE.fnEntered) { (this as any)._skip = true; return; }
             try {
-                try { runTargetPlugins("beforeTrace", { args, tid: this.threadId, address: fp }); }
-                catch (e) {
+                let allowed = true;
+                try {
+                    allowed = runTargetPlugins("beforeTrace", {
+                        args,
+                        context: this.context,
+                        tid: this.threadId,
+                        address: fp,
+                        module: STATE.target,
+                        callIdx: STATE.preEntryActive ? STATE.callIdx : STATE.callIdx + 1,
+                    });
+                } catch (e) {
                     (this as any)._skip = true;
                     fatalError = `target plugin refused capture: ${e}`;
                     sealSession(fatalError);
                     retireCapture();
+                    return;
+                }
+                if (!allowed) {
+                    (this as any)._skip = true;
                     return;
                 }
                 if (STATE.preEntryActive) {
@@ -312,6 +321,17 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 flushWorkerEvents((this as any)._callIdx);
 
                 log(`[<] call #${(this as any)._callIdx} ret=${retv} recs=${total} dropped=${dropped} ms=${elapsed} (${rate} rec/s) → ${STATE.traceFilePath}`);
+                runTargetPlugins("afterTrace", {
+                    retval: retv,
+                    context: this.context,
+                    tid: (this as any)._tid,
+                    address: fp,
+                    module: STATE.target,
+                    callIdx: (this as any)._callIdx,
+                    records: total,
+                    dropped,
+                    ms: elapsed,
+                });
                 const end = {
                     type: "trace-end", callIdx: (this as any)._callIdx,
                     tid: (this as any)._tid, retval: retv.toString(),
@@ -525,8 +545,6 @@ rpc.exports = {
         STATE.hideRwxMaps = !!(opts as any).hideRwxMaps;
         STATE.blockSelfKill = !!(opts as any).blockSelfKill;
 
-        if (opts.cmdValue !== undefined) STATE.cmdValue = opts.cmdValue!;
-        if (opts.cmdArg !== undefined) STATE.cmdArg = opts.cmdArg!;
         STATE.pkg = opts.pkg || null;
         // host 预建的 trace 目录: 优先于 app 私有 cache (后者随 app 退出被清理)
         if (opts.traceDir) STATE.traceDir = opts.traceDir;

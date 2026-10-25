@@ -23,8 +23,6 @@ def build_parser():
     p_tr.add_argument("--method", help="JNI 注册方法名 (动态注册)")
     p_tr.add_argument("--export", help="SO 导出函数名 (静态导出)")
     p_tr.add_argument("--fn-offset", help="SO 内函数偏移 (16进制如 0x1234)")
-    p_tr.add_argument("--cmd", type=int, help="JNI 入口整数参数过滤值，须同时指定 --cmd-arg")
-    p_tr.add_argument("--cmd-arg", type=int, default=None, help="过滤参数下标（从 0 开始），无目标默认值")
     p_tr.add_argument("--include-so", default="", dest="include_so",
                       help="额外采集的 SO 名子串，逗号分隔；不能覆盖硬排除")
     p_tr.add_argument("--trace-deep", action="store_true", dest="trace_deep",

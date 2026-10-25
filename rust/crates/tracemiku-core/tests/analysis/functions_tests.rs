@@ -41,7 +41,7 @@ fn synth_call_dir_with_known_offsets() -> (tempfile::TempDir, PathBuf) {
     fs::write(cd.join("meta.json"),
               r#"{"records":9,"truncated":false,"known_offsets":{"0x0":"f_root","0x100":"f_alpha","0x200":"f_beta"}}"#).unwrap();
     fs::write(tmp.path().join("run").join("meta.json"),
-              r#"{"pkg":"tst","method":"f","cmd":1,"module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
+              r#"{"pkg":"tst","method":"f","module":{"name":"libt.so","base":"0x100000","size":65536},"fn_addr":"0x100000"}"#).unwrap();
     (tmp, cd)
 }
 
@@ -77,7 +77,6 @@ fn synth_multi_so_cross_call_dir() -> (tempfile::TempDir, PathBuf) {
         r#"{
             "pkg":"tst",
             "method":"f",
-            "cmd":1,
             "module":{"name":"libmain.so","base":"0x100000","size":4096,"end":"0x101000"},
             "modules":[
                 {"name":"libmain.so","base":"0x100000","size":4096,"end":"0x101000"},

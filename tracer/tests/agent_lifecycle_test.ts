@@ -45,7 +45,7 @@ for (const [total, fault] of [[0, ""], [2000, ""], [5_000_001, ""], [50_000_001,
         "./hooks/fork_monitor": { flushForkEvents: noop },
         "./hooks/pthread_follow": { flushWorkerEvents: noop },
         "./hooks/boundary_diff": { flushExtWriteEvents: noop },
-        "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: noop },
+        "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: () => true },
         "./transport/control": { controlAddress: noop },
         "./transport/manifest": {
             sealManifest: () => { step("seal"); return "/spool/call_1.json"; },
@@ -98,10 +98,20 @@ for (const [total, fault] of [[0, ""], [2000, ""], [5_000_001, ""], [50_000_001,
         modules["./transport/manifest"].sealSession = (error: string) => { failure = error; };
         modules["./target_plugins"].runTargetPlugins = (phase: string) => {
             assert.equal(phase, "beforeTrace");
-            throw new Error("fixture refusal");
+            return false;
         };
         state.callIdx = 0;
         exports.acceptCallsForTest();
+        const skippedEntry: any = { threadId: 42 };
+        callbacks.onEnter.call(skippedEntry, []);
+        assert.equal(skippedEntry._skip, true, "beforeTrace 返回 false 应跳过当前调用");
+        assert.equal(failure, undefined, "跳过调用不应终止采集会话");
+        assert.equal(state.fnEntered, false);
+
+        modules["./target_plugins"].runTargetPlugins = (phase: string) => {
+            assert.equal(phase, "beforeTrace");
+            throw new Error("fixture refusal");
+        };
         const entry: any = { threadId: 42 };
         callbacks.onEnter.call(entry, []);
         assert.equal(entry._skip, true);
@@ -198,7 +208,7 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
         "./hooks/fork_monitor": { installForkHooksOnce: noop, flushForkEvents: noop },
         "./hooks/pthread_follow": { installPthreadFollowOnce: noop, flushWorkerEvents: noop },
         "./hooks/boundary_diff": { refreshWritableRanges: noop, flushExtWriteEvents: noop },
-        "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: noop },
+        "./anti_detect/plugin_interface": {}, "./target_plugins": { runTargetPlugins: () => true },
         "./transport/control": { controlAddress: noop },
         "./transport/manifest": {
             beginManifest: noop,
@@ -300,7 +310,7 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
         },
         "./hooks/boundary_diff": { refreshWritableRanges: noop, flushExtWriteEvents: noop },
         "./anti_detect/plugin_interface": { BUILTIN_PLUGINS: {} },
-        "./target_plugins": { installTargetPlugins: noop, runTargetPlugins: noop, invokeTargetPlugin: noop },
+        "./target_plugins": { installTargetPlugins: noop, runTargetPlugins: () => true, invokeTargetPlugin: noop },
         "./transport/control": { controlAddress: noop },
         "./transport/manifest": {
             prepareManifest: noop,

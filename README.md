@@ -22,6 +22,18 @@ uv sync
 make agent
 ./tracemiku doctor --pkg com.example.app
 ./tracemiku trace --pkg com.example.app --so libtarget.so --export sign --out traces/run1
+./tracemiku trace --target-profile examples/custom_target/target.json --out traces/run2
+```
+
+当需要按调用参数、寄存器或目标协议过滤采集（例如仅当第 1 个参数 `args[0]` 为 `70102` 时才采集）时，通过 `--target-profile` 挂载 `agent_plugins` 编写 `beforeTrace` 钩子（返回 `false` 或 `{ skip: true }` 跳过当前调用，完整示例见 [examples/custom_target/agent.js](examples/custom_target/agent.js)）：
+
+```javascript
+module.exports = {
+  apiVersion: 1,
+  beforeTrace(ctx) {
+    if (ctx.args[0].toInt32() !== 70102) return false;
+  },
+};
 ```
 
 ## 文档
