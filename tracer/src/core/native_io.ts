@@ -120,7 +120,7 @@ export class NativeFile {
         // O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC：绝不覆盖恢复源。
         const result = internal(() => openFd(Memory.allocUtf8String(path), 1 | 64 | 128 | 0x80000, 0o600));
         if (result.value < 0) {
-            if (!STATE.fnEntered) {
+            if (!STATE.fnEntered && !STATE.preEntryActive) {
                 activeFiles.delete(this.state);
                 throw new Error(`open ${path}: errno=${result.errno}`);
             }

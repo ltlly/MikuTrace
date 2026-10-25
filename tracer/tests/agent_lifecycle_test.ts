@@ -233,4 +233,136 @@ assert.equal(jniState.jniHookEvents[0].trace_idx, 7);
     assert.equal(sealedMeta.entryObserved, true);
     assert.equal(sealedMeta.firstPc, "0x800");
 }
+
+// --spawn + --trace-init during dlopen waiting period:
+// Must NOT start Stalker or call beginCaptureSession in dlopen.onEnter (while target SO is unmapped
+// and linker holds g_dl_mutex), and MUST start pre-entry capture in dlopen.onLeave once mapped.
+{
+    const dlopenEvents: any[] = [];
+    const followedTids: number[] = [];
+    let pthreadInstalledCount = 0;
+    let dlopenHandlers: any = null;
+    let fnHookHandlers: any = null;
+    let sealedMeta: any = null;
+    let loadedModules: any[] = [];
+    const spawnState: any = {
+        callIdx: 0, callFinalized: false, fnEntered: false, preEntryActive: false, traceInit: true,
+        fnHooked: false, target: null, soPattern: null, fnOffset: null, exportName: null, methodName: null,
+        started: 0, primaryTid: 0, simdSidecar: false, traceFilePath: "/spool/trace.bin",
+        onInsnPtr: { toString: () => "0x9999" },
+        headBuf: { writeU64: noop, readU64: () => ({ toNumber: () => 25 }) },
+        tailBuf: { writeU64: noop, readU64: () => ({ toNumber: () => 25 }) },
+        droppedBuf: { writeU64: noop, readU64: () => ({ toNumber: () => 0 }) },
+        includeRanges: [], workerTraces: {}, followedWorkerTids: {}, workerEvents: [],
+        cm: { firstCapturedPc: { readPointer: () => ({ toString: () => "0x1040" }) } },
+    };
+    const spawnModules: Record<string, any> = {
+        "./core/state": {
+            STATE: spawnState, RING_RECS: 4096, ringBytes: () => 4096 * 272,
+            setRingRecs: (n: number) => n, SIMD_RING_BYTES: 0, SIMD_RING_RECS: 0, SIMD_REC_SIZE: 520,
+        },
+        "./core/entry": {
+            attachEntryHook: (_fp: any, handlers: any) => { fnHookHandlers = handlers; },
+            releaseEntryHook: noop,
+        },
+        "./core/utils": { log: noop, getExport: (name: string) => name === "android_dlopen_ext" ? {} : null },
+        "./core/cmodule": { buildCModule: () => { spawnState.onInsnPtr = { toString: () => "0x9999" }; } },
+        "./core/native_io": { ioState: () => ({}), ioHealth: () => [] },
+        "./core/ring": {
+            openTraceFile: noop, ensureFlushTimer: noop, releaseWorkerTraces: noop,
+            unfollowWorkerThreads: noop, flushRingToDisk: noop, flushWorkerTraceRings: noop,
+            closeTraceFile: noop, closeWorkerTraceFiles: noop, closeSimdTraceFile: noop,
+            workerTraceSummaries: () => [], ensureTraceDir: noop,
+        },
+        "./core/stalker": {
+            applyExcludesOnce: noop,
+            buildIncludeRanges: () => {
+                if (spawnState.target) {
+                    spawnState.includeRanges = [{
+                        base: spawnState.target.base, end: spawnState.target.end, name: spawnState.target.name,
+                    }];
+                }
+            },
+            createTransform: () => noop,
+        },
+        "./sidecar/simd": { flushSimdRingToDisk: noop },
+        "./sidecar/mem_snapshot": { captureMemorySnapshot: noop },
+        "./sidecar/semantic": { createSvcEventCallback: noop, installSemanticHooksOnce: noop, flushSemanticEvents: noop },
+        "./hooks/jni_vtable": { installJniHooksOnce: noop, flushJniHookEvents: noop },
+        "./hooks/fork_monitor": { installForkHooksOnce: noop, flushForkEvents: noop },
+        "./hooks/pthread_follow": {
+            installPthreadFollowOnce: () => { pthreadInstalledCount++; },
+            flushWorkerEvents: noop,
+        },
+        "./hooks/boundary_diff": { refreshWritableRanges: noop, flushExtWriteEvents: noop },
+        "./anti_detect/plugin_interface": { BUILTIN_PLUGINS: {} },
+        "./target_plugins": { installTargetPlugins: noop, runTargetPlugins: noop, invokeTargetPlugin: noop },
+        "./transport/control": { controlAddress: noop },
+        "./transport/manifest": {
+            prepareManifest: noop,
+            beginManifest: noop,
+            sealManifest: (end: any) => { sealedMeta = end; return "/spool/call_1.json"; },
+            sealSession: noop,
+            persistEvents: noop,
+        },
+    };
+    const spawnExports: any = {};
+    const spawnRpc: any = {};
+    runInNewContext(compiled, {
+        exports: spawnExports, rpc: spawnRpc, send: (ev: any) => dlopenEvents.push(ev),
+        Frida: { version: "17.0.0" },
+        Memory: { alloc: () => ({ writeU64: noop, readU64: () => ({ toNumber: () => 25 }), writeS32: noop }) },
+        Stalker: { follow: (tid: number) => followedTids.push(tid), unfollow: noop, flush: noop, garbageCollect: noop },
+        clearInterval: noop, setImmediate: noop,
+        Process: { id: 100, enumerateModules: () => loadedModules, getCurrentThreadId: () => 77 },
+        Interceptor: { attach: (_fp: any, handlers: any) => { dlopenHandlers = handlers; }, detachAll: noop },
+        require: (name: string) => spawnModules[name],
+    });
+
+    const initRes = spawnRpc.exports.init({ soPattern: "libtarget.so", fnOffset: 0x1200, traceInit: true });
+    assert.equal(initRes, "waiting-dlopen");
+    spawnRpc.exports.startCapture();
+    assert.equal(followedTids.length, 0, "waiting-dlopen 阶段不得提前启动 Stalker");
+
+    // 1. 其他无关 SO 的 dlopen
+    const otherDlopenCtx: any = { threadId: 77 };
+    dlopenHandlers.onEnter.call(otherDlopenCtx, [{ readCString: () => "/system/lib64/lib unrelated.so" }]);
+    assert.equal(followedTids.length, 0);
+    dlopenHandlers.onLeave.call(otherDlopenCtx, {});
+    assert.equal(followedTids.length, 0);
+
+    // 2. 目标 SO 的 dlopen.onEnter（此时尚未映射，linker 持锁）
+    const targetDlopenCtx: any = { threadId: 88 };
+    dlopenHandlers.onEnter.call(targetDlopenCtx, [{ readCString: () => "/data/app/lib/arm64/libtarget.so" }]);
+    assert.equal(followedTids.length, 0, "dlopen.onEnter 内绝不能启动 Stalker 或进入 preEntryActive");
+    assert.equal(spawnState.preEntryActive, false);
+
+    // 3. 目标 SO 映射完成，进入 dlopen.onLeave
+    const baseAddr: any = {
+        add: (off: number) => ({
+            sub: () => ({ toUInt32: () => off }),
+            toString: () => `0x${(0x70000000 + off).toString(16)}`,
+        }),
+        toString: () => "0x70000000",
+    };
+    loadedModules = [{ name: "libtarget.so", base: baseAddr, size: 0x10000 }];
+    dlopenHandlers.onLeave.call(targetDlopenCtx, {});
+
+    assert.equal(spawnState.fnHooked, true, "dlopen.onLeave 应完成目标入口 hook 安装");
+    assert.equal(spawnState.preEntryActive, true, "dlopen.onLeave 应启动目标入口前的初始化窗口采集");
+    assert.equal(spawnState.fnEntered, false);
+    assert.deepEqual(followedTids, [88], "应在 dlopen 所在线程启动 Stalker");
+    assert.equal(pthreadInstalledCount, 0, "pre-entry 阶段不枚举全局后台线程，防止跟着系统线程崩溃");
+    assert.equal(spawnRpc.exports.stopCapture(), "capturing", "preEntryActive 期间 stopCapture 不能提前封口");
+
+    // 4. 随后目标入口被调用并自然返回
+    spawnExports.acceptCallsForTest();
+    const fnCtx: any = { threadId: 88 };
+    fnHookHandlers.onEnter.call(fnCtx, []);
+    assert.equal(spawnState.fnEntered, true);
+    assert.equal(pthreadInstalledCount, 1, "正式进入目标函数后启用 pthread_follow");
+    fnHookHandlers.onLeave.call(fnCtx, { toString: () => "0x1" });
+    assert.equal(sealedMeta.entryBoundary, "module-init-and-entry");
+    assert.equal(sealedMeta.total, 25);
+}
 console.log("agent lifecycle/JNI contracts hold");

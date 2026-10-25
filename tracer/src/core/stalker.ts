@@ -204,15 +204,6 @@ export function createTransform(
                         }
                     }
                 }
-                if (!inRange && !targetBase && STATE.preEntryActive && STATE.soPattern) {
-                    try {
-                        const mod = Process.findModuleByAddress(original);
-                        if (mod && mod.name.indexOf(STATE.soPattern) !== -1) {
-                            STATE.target = { name: mod.name, base: mod.base, end: mod.base.add(mod.size) };
-                            inRange = true;
-                        }
-                    } catch (_) {}
-                }
 
                 if (inRange && !isEntryRedirect(a)) {
                     // memoryAccess 描述整个翻译块；含独占访问的块不能插入读写

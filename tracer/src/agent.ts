@@ -222,7 +222,9 @@ function beginCaptureSession(tid: number, onInsn: NativePointer, isPreEntry = fa
         events: { call: false, ret: false, exec: false, block: false, compile: false },
         transform: createTransform(onInsn, ranges),
     });
-    installPthreadFollowOnce();
+    if (!isPreEntry || STATE.fnEntered) {
+        installPthreadFollowOnce();
+    }
     log(`[+] Stalker.follow tid=${tid} (native writer, device-spool)`);
     send({ type: "follow", tid });
 }
@@ -343,7 +345,13 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
 
 // ─────────── Target resolution and arming ───────────────────────────────────
 
-function armWithModule(m: Module, onInsn: NativePointer): void {
+/**
+ * 在 `dlopen.onLeave`（动态链接器已释放 `g_dl_mutex`、`JNI_OnLoad` 与目标函数尚未调用）
+ * 或 attach 时（若目标 SO 已加载）启动目标入口前的初始化窗口采集。
+ * 绝不在 `linker64` 或 `dlopen.onEnter` 内安装 hook、枚举模块或启动 Stalker，
+ * 避免重入动态链接器导致死锁或进程崩溃（`script has been destroyed`）。
+ */
+function armWithModule(m: Module, onInsn: NativePointer, triggerTid?: number): void {
     runTargetPlugins("onModule", { module: m });
     STATE.target = { name: m.name, base: m.base, end: m.base.add(m.size) };
     log(`[+] target ${m.name} base=${m.base} end=${m.base.add(m.size)}`);
@@ -393,16 +401,25 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
         STATE.fnOffset = fp.sub(m.base).toInt32();
         label = `${STATE.soPattern}!${STATE.exportName}`;
     } else if (STATE.methodName) {
+        buildIncludeRanges();
         // RegisterNatives fallback: wait for JNI registration
         log(`[*] waiting for RegisterNatives("${STATE.methodName}")...`);
         const ok = hookRegisterNatives((resolvedFp) => {
             try {
                 installFnHook(resolvedFp, onInsn);
+                STATE.fnHooked = true;
+                buildIncludeRanges();
                 log(`[+] hook ${STATE.methodName} @ ${resolvedFp} via RegisterNatives`);
             } catch (error) { failCapture(error); }
         });
         if (!ok) {
             throw new Error("RegisterNatives hook unavailable; use a resolved export or offset");
+        }
+        if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
+            const initTid = triggerTid ?? (typeof Process.getCurrentThreadId === "function"
+                ? Process.getCurrentThreadId()
+                : (Process.enumerateThreads()[0]?.id || Process.id));
+            beginCaptureSession(initTid, onInsn, true);
         }
         return;
     } else {
@@ -415,9 +432,9 @@ function armWithModule(m: Module, onInsn: NativePointer): void {
     buildIncludeRanges();
     log(`[+] hook ${label} @ ${fp} (offset 0x${STATE.fnOffset!.toString(16)})`);
     if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered && STATE.callIdx === 0) {
-        const initTid = typeof Process.getCurrentThreadId === "function"
+        const initTid = triggerTid ?? (typeof Process.getCurrentThreadId === "function"
             ? Process.getCurrentThreadId()
-            : (Process.enumerateThreads()[0]?.id || Process.id);
+            : (Process.enumerateThreads()[0]?.id || Process.id));
         beginCaptureSession(initTid, onInsn, true);
     }
 }
@@ -569,18 +586,13 @@ rpc.exports = {
             Interceptor.attach(dlopen, {
                 onEnter(a) {
                     try { (this as any)._p = a[0].readCString(); } catch (_) {}
-                    if (STATE.traceInit && acceptingCalls && !STATE.preEntryActive && !STATE.fnEntered &&
-                        STATE.callIdx === 0 && (this as any)._p && (this as any)._p.indexOf(STATE.soPattern!) >= 0) {
-                        try { beginCaptureSession(this.threadId, onInsn, true); }
-                        catch (error) { failCapture(error); }
-                    }
                 },
                 onLeave(_rv) {
                     if (!(this as any)._p || (this as any)._p.indexOf(STATE.soPattern!) < 0) return;
                     if (STATE.fnHooked) return;
                     const m2 = Process.enumerateModules().find(x => x.name.indexOf(STATE.soPattern!) !== -1);
                     if (m2) {
-                        try { armWithModule(m2, onInsn); }
+                        try { armWithModule(m2, onInsn, this.threadId); }
                         catch (error) { failCapture(error); }
                     }
                 }
@@ -596,8 +608,9 @@ rpc.exports = {
     disposePlugins() { runTargetPlugins("dispose"); return "ok"; },
     stopCapture() {
         acceptingCalls = false;
-        if (!STATE.fnEntered) { sealSession(); retireCapture(); }
-        return STATE.fnEntered ? "capturing" : "stopped";
+        const active = STATE.fnEntered || STATE.preEntryActive;
+        if (!active) { sealSession(); retireCapture(); }
+        return active ? "capturing" : "stopped";
     },
 
     stats() {
