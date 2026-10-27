@@ -185,6 +185,33 @@ impl CFG {
     }
 }
 
+const CFG_BUILD_OVERHEAD_BYTES: usize = 64 * 1024;
+const CFG_ESTIMATED_BYTES_PER_RECORD: usize = 512;
+
+pub fn build_cfg_with_budget(
+    trace: &crate::trace::Trace,
+    budget_bytes: usize,
+) -> Result<CFG, crate::parallel::BuildLimit> {
+    if trace.is_empty() {
+        return Ok(CFG::new());
+    }
+    let estimated = trace
+        .len()
+        .saturating_mul(CFG_ESTIMATED_BYTES_PER_RECORD)
+        .saturating_add(CFG_BUILD_OVERHEAD_BYTES);
+    crate::parallel::check_memory_budget("cfg", estimated, budget_bytes)?;
+    Ok(build_cfg(trace))
+}
+
+type EdgeAccumulator = HashMap<(u64, u64), EdgeMeta>;
+
+fn add_observed_edge(edges: &mut EdgeAccumulator, from: u64, to: u64, kind: EdgeKind) {
+    edges
+        .entry((from, to))
+        .and_modify(|meta| meta.count = meta.count.saturating_add(1))
+        .or_insert_with(|| EdgeMeta { kind, count: 1 });
+}
+
 /// Build a block-level CFG over the trace.
 ///
 /// Algorithm:
@@ -217,7 +244,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     // Pass 2: walk records, build block_meta (start_pc → end_pc).
     // Executions are counted in a separate post-pass.
     let mut block_meta: HashMap<u64, u64> = HashMap::new(); // start_pc → end_pc
-    let mut edges: Vec<(u64, u64, EdgeMeta)> = Vec::new();
+    let mut edges = EdgeAccumulator::new();
 
     let mut current_start: Option<u64> = None;
     let mut current_end: u64 = 0;
@@ -238,14 +265,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
             // edge from the previous block-start to this PC.
             if let (Some(prev), Some(s)) = (prev_pc, current_start) {
                 if !prev_was_branch && prev + 4 == pc {
-                    edges.push((
-                        s,
-                        pc,
-                        EdgeMeta {
-                            kind: EdgeKind::Fall,
-                            count: 1,
-                        },
-                    ));
+                    add_observed_edge(&mut edges, s, pc, EdgeKind::Fall);
                 }
             }
             // Finalize previous in-flight block (if any).
@@ -277,14 +297,12 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
                 } else if flags & RET_FLAG != 0 {
                     if let Some(caller) = call_stack.pop() {
                         if i + 1 < n {
-                            edges.push((
+                            add_observed_edge(
+                                &mut edges,
                                 caller,
                                 trace.pc(i + 1),
-                                EdgeMeta {
-                                    kind: EdgeKind::CallReturn,
-                                    count: 1,
-                                },
-                            ));
+                                EdgeKind::CallReturn,
+                            );
                         }
                     }
                 }
@@ -300,7 +318,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
                     } else {
                         EdgeKind::Direct(mnem)
                     };
-                    edges.push((s, trace.pc(i + 1), EdgeMeta { kind, count: 1 }));
+                    add_observed_edge(&mut edges, s, trace.pc(i + 1), kind);
                 }
                 // Save end_pc and reset current_start.
                 block_meta
@@ -342,7 +360,7 @@ pub fn build_cfg(trace: &crate::trace::Trace) -> CFG {
     // first-write-wins (matching Python's
     // `setdefault({"kind":k,"count":0})["count"] += 1`).
     let mut edge_index: HashMap<(u64, u64), petgraph::graph::EdgeIndex> = HashMap::new();
-    for (from, to, meta) in edges {
+    for ((from, to), meta) in edges {
         let (Some(&fn_), Some(&tn)) = (cfg.by_pc.get(&from), cfg.by_pc.get(&to)) else {
             continue;
         };
@@ -792,5 +810,50 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn repeated_edges_aggregate_without_capacity_growth() {
+        let mut edges = EdgeAccumulator::new();
+        for _ in 0..1_000 {
+            add_observed_edge(&mut edges, 0x1000, 0x2000, EdgeKind::Ret);
+        }
+        let capacity = edges.capacity();
+        for _ in 0..100_000 {
+            add_observed_edge(&mut edges, 0x1000, 0x2000, EdgeKind::Ret);
+        }
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges.capacity(), capacity);
+        assert_eq!(edges[&(0x1000, 0x2000)].count, 101_000);
+    }
+
+    #[test]
+    fn repeated_dynamic_branches_keep_counts_scc_and_memory_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let cd = dir.path().join("run").join("calls").join("c");
+        std::fs::create_dir_all(&cd).unwrap();
+        let records = 4_096usize;
+        let mut buf = vec![0u8; REC_SIZE * records];
+        for i in 0..records {
+            let off = i * REC_SIZE;
+            buf[off..off + 8].copy_from_slice(&0x1000u64.to_le_bytes());
+            buf[off + 268..off + 272].copy_from_slice(&0x14000000u32.to_le_bytes());
+        }
+        std::fs::write(cd.join("trace.bin"), &buf).unwrap();
+        std::fs::write(cd.join("meta.json"), format!(r#"{{"records":{records}}}"#)).unwrap();
+        let trace = Trace::load(&cd).unwrap();
+        let cfg = build_cfg(&trace);
+        assert_eq!(cfg.block_count(), 1);
+        assert_eq!(cfg.edge_count(), 1);
+        assert_eq!(cfg.block(0x1000).unwrap().executions, records as u64);
+        let edges = cfg.edges_from(0x1000);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].0, 0x1000);
+        assert_eq!(edges[0].1.count, (records - 1) as u64);
+        assert_eq!(cfg.block(0x1000).unwrap().scc_id, 0);
+
+        let error = build_cfg_with_budget(&trace, CFG_BUILD_OVERHEAD_BYTES).unwrap_err();
+        assert_eq!(error.component, "cfg");
+        assert!(error.estimated_bytes > error.budget_bytes);
     }
 }

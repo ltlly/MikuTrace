@@ -1,4 +1,4 @@
-//! 有界记录读取：默认只解码选中记录，详情才加载符号、CFG 和内存注释。
+//! 有界记录读取：默认只解码选中记录；三类重分析由详情选项分别显式开启。
 use super::{AnalysisContext, AnalysisError};
 use crate::disasm::addr_of;
 use crate::prelude::*;
@@ -16,6 +16,9 @@ pub struct RecordsQuery {
     pub regs: String,
     pub indices: Option<Vec<usize>>,
     pub detail: bool,
+    pub detail_pointers: bool,
+    pub detail_memory: bool,
+    pub detail_cfg: bool,
 }
 impl Default for RecordsQuery {
     fn default() -> Self {
@@ -26,6 +29,9 @@ impl Default for RecordsQuery {
             regs: String::new(),
             indices: None,
             detail: false,
+            detail_pointers: false,
+            detail_memory: false,
+            detail_cfg: false,
         }
     }
 }
@@ -82,8 +88,18 @@ pub struct RecordsResponse {
 }
 
 pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsResponse, AnalysisError> {
+    if !q.detail && (q.detail_pointers || q.detail_memory || q.detail_cfg) {
+        return Err(AnalysisError::invalid(
+            "detail_pointers, detail_memory and detail_cfg require detail",
+        ));
+    }
     let inner = &state.inner;
     let n = inner.trace.len();
+    let detail_options = super::record::RecordDetailOptions {
+        pointers: q.detail_pointers,
+        memory: q.detail_memory,
+        cfg: q.detail_cfg,
+    };
     let names: Vec<&str> = q
         .regs
         .split(',')
@@ -157,7 +173,7 @@ pub fn records(state: &AnalysisContext, q: RecordsQuery) -> Result<RecordsRespon
         });
         let detail = q
             .detail
-            .then(|| super::record::record(state, i))
+            .then(|| super::record::record_with_options(state, i, detail_options))
             .transpose()?;
         let (func, off, exec_count) = detail.as_ref().map_or((None, None, None), |d| {
             (d.func.clone(), d.off.clone(), d.exec_count)

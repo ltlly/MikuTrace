@@ -3,7 +3,68 @@
 //! `str x0, [x1]` stores it. Trace has extra records after so `value_of_write`
 //! has clean state.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+static ALLOCATION_MEASUREMENT_LOCK: Mutex<()> = Mutex::new(());
+
+struct AllocationTracker;
+
+static MAX_TRACKED_ALLOCATION: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static TRACK_ALLOCATION: Cell<bool> = const { Cell::new(false) };
+}
+
+unsafe impl GlobalAlloc for AllocationTracker {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        self.track(layout.size());
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        self.track(layout.size());
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        self.track(new_size);
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+impl AllocationTracker {
+    fn track(&self, size: usize) {
+        if TRACK_ALLOCATION
+            .try_with(|active| active.get())
+            .unwrap_or(false)
+        {
+            MAX_TRACKED_ALLOCATION.fetch_max(size, Ordering::Relaxed);
+        }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: AllocationTracker = AllocationTracker;
+
+fn largest_allocation_during<T>(body: impl FnOnce() -> T) -> (T, usize) {
+    let _guard = ALLOCATION_MEASUREMENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    TRACK_ALLOCATION.with(|active| {
+        MAX_TRACKED_ALLOCATION.store(0, Ordering::Relaxed);
+        active.set(true);
+        let result = body();
+        active.set(false);
+        (result, MAX_TRACKED_ALLOCATION.load(Ordering::Relaxed))
+    })
+}
 
 fn synth_string_trace_dir() -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
@@ -176,7 +237,7 @@ fn memshadow_loads_external_writes_as_x_events() {
 }
 
 #[test]
-fn memshadow_v6_sidecar_roundtrip_preserves_shadow() {
+fn memshadow_v8_sidecar_roundtrip_preserves_shadow() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -193,7 +254,7 @@ fn memshadow_v6_sidecar_roundtrip_preserves_shadow() {
 }
 
 #[test]
-fn memshadow_v6_sidecar_stale_trace_size_rebuilds() {
+fn memshadow_v8_sidecar_stale_trace_size_rebuilds() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -213,7 +274,7 @@ fn memshadow_v6_sidecar_stale_trace_size_rebuilds() {
 }
 
 #[test]
-fn memshadow_v6_corrupt_sidecar_is_ignored() {
+fn memshadow_v8_corrupt_sidecar_is_ignored() {
     use tracemiku_core::memshadow::MemShadow;
     use tracemiku_core::prelude::Trace;
     let (_tmp, cd) = synth_string_trace_dir();
@@ -435,6 +496,8 @@ fn memshadow_and_byte_lineage_bridge_uninstrumented_memcpy_and_memset() {
 
     // Sidecar roundtrip preserves copy_sources
     let mem_reloaded = MemShadow::try_load_sidecar(&trace).expect("sidecar loads");
+    assert!(mem_reloaded.copy_sources.is_mapped());
+    assert_eq!(mem.copy_sources, mem_reloaded.copy_sources);
     assert_eq!(mem_reloaded.copy_source_at(0x8001, 2), Some(0x7001));
 
     // Uninstrumented memset at idx=4 is also synthesized
@@ -590,4 +653,205 @@ fn memshadow_rejects_unverified_call_returning_first_arg() {
         "must not synthesize memcpy without post-call read verification"
     );
     assert!(mem.copy_sources.is_empty());
+}
+
+#[test]
+fn compact_byte_event_is_8_bytes_and_checks_record_index_boundaries() {
+    use tracemiku_core::memshadow::{ByteEvent, ByteEventKind};
+
+    assert_eq!(std::mem::size_of::<ByteEvent>(), 8);
+    assert_eq!(std::mem::size_of::<ByteEventKind>(), 1);
+    let last = ByteEvent::try_new(u32::MAX as usize, 0x5a, ByteEventKind::Write).unwrap();
+    assert_eq!(last.idx(), u32::MAX as usize);
+    assert_eq!(last.byte, 0x5a);
+    assert_eq!(last.kind.as_str(), "w");
+    if usize::BITS > 32 {
+        assert!(ByteEvent::try_new(u32::MAX as usize + 1, 0, ByteEventKind::Read).is_none());
+    }
+}
+
+#[test]
+fn mmap_sidecar_matches_cold_build_without_file_sized_heap_allocation() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+
+    let (_tmp, cd) = synth_string_trace_dir();
+    for i in 0..96u64 {
+        append_store_record(&cd, 0x10000c + i * 4, 0x8000 + i * 8, 0x414200 + i);
+    }
+    std::fs::write(cd.join("meta.json"), r#"{"records":99,"tid":100,"ms":1}"#).unwrap();
+    let trace = Trace::load(&cd).unwrap();
+    let cold = MemShadow::load_or_build(&trace);
+    let sidecar = MemShadow::sidecar_path(&trace);
+    let sidecar_len = sidecar.metadata().unwrap().len() as usize;
+    assert!(sidecar_len > 4 * 1024);
+
+    let (hot, largest_allocation) =
+        largest_allocation_during(|| MemShadow::try_load_sidecar(&trace).expect("mmap sidecar"));
+    assert!(
+        largest_allocation < sidecar_len,
+        "largest heap allocation {largest_allocation} approached sidecar size {sidecar_len}"
+    );
+    assert!(hot.bytes.is_mapped());
+    assert!(hot.writes.is_mapped());
+    assert!(hot.reads.is_mapped());
+    assert!(hot.copy_sources.is_mapped());
+    assert_eq!(hot.bytes.heap_event_bytes(), 0);
+    assert_eq!(hot.bytes.mapped_bytes(), sidecar_len);
+    assert_eq!(cold.writes, hot.writes);
+    assert_eq!(cold.reads, hot.reads);
+    assert_eq!(cold.bytes, hot.bytes);
+    for i in 0..96u64 {
+        let addr = 0x8000 + i * 8;
+        assert_eq!(cold.byte_at(addr, 50), hot.byte_at(addr, 50));
+        assert_eq!(cold.byte_at(addr, u64::MAX), hot.byte_at(addr, u64::MAX));
+    }
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            handles.push(scope.spawn(|| {
+                let trace = Trace::load(&cd).unwrap();
+                let concurrent = MemShadow::try_load_sidecar(&trace).expect("concurrent mmap");
+                assert_eq!(concurrent.bytes, cold.bytes);
+                assert_eq!(concurrent.byte_at(0x8000, 50), cold.byte_at(0x8000, 50));
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    });
+}
+
+#[test]
+fn invalid_event_kind_is_rejected_and_rebuilt() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+
+    let (_tmp, cd) = synth_string_trace_dir();
+    let trace = Trace::load(&cd).unwrap();
+    let _ = MemShadow::load_or_build(&trace);
+    let sidecar = MemShadow::sidecar_path(&trace);
+    let mut blob = std::fs::read(&sidecar).unwrap();
+    let events_offset = u64::from_le_bytes(blob[120..128].try_into().unwrap()) as usize;
+    blob[events_offset + 5] = 0xff;
+    std::fs::write(&sidecar, blob).unwrap();
+    assert!(MemShadow::try_load_sidecar(&trace).is_none());
+    let rebuilt = MemShadow::load_or_build(&trace);
+    assert_eq!(rebuilt.byte_at(0x7000, u64::MAX).0, Some(b'h'));
+    assert!(MemShadow::try_load_sidecar(&trace).is_some());
+}
+
+#[test]
+fn large_worker_mmap_preserves_boundary_tail_conditional_and_anchor_semantics() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+
+    let (_tmp, cd) = synth_string_trace_dir();
+    std::fs::write(
+        cd.join("meta.json"),
+        r#"{"records":3,"tid":100,"ms":1,"workerTraces":[{"file":"worker_trace_tid200.bin","spawnedAtIdx":0,"endedAtIdx":2}]}"#,
+    )
+    .unwrap();
+    let records = 400usize;
+    let mut worker = vec![0u8; records * 272];
+    for i in 0..records {
+        let off = i * 272;
+        worker[off..off + 8].copy_from_slice(&(0x200000u64 + i as u64 * 4).to_le_bytes());
+        worker[off + 268..off + 272].copy_from_slice(&0xd503201fu32.to_le_bytes());
+    }
+    let set_reg = |buf: &mut [u8], idx: usize, reg: usize, value: u64| {
+        let off = idx * 272 + 8 + reg * 8;
+        buf[off..off + 8].copy_from_slice(&value.to_le_bytes());
+    };
+    let set_inst = |buf: &mut [u8], idx: usize, inst: u32| {
+        let off = idx * 272 + 268;
+        buf[off..off + 4].copy_from_slice(&inst.to_le_bytes());
+    };
+    // Record 240 crosses a 64 KiB streaming-buffer boundary.
+    assert!(240 * 272 < 64 * 1024 && 241 * 272 > 64 * 1024);
+    set_inst(&mut worker, 240, 0xf9000020);
+    set_reg(&mut worker, 240, 0, 0x1122334455667788);
+    set_reg(&mut worker, 240, 1, 0x9300);
+    // stxr w0,x2,[x1]: failed because the next pre-state has w0=1.
+    set_inst(&mut worker, 241, 0xc8007c22);
+    set_reg(&mut worker, 241, 1, 0x9400);
+    set_reg(&mut worker, 241, 2, 0xdeadbeef);
+    // A successful conditional write followed by w0=0 must remain visible.
+    set_inst(&mut worker, 242, 0xc8007c22);
+    set_reg(&mut worker, 242, 0, 1);
+    set_reg(&mut worker, 242, 1, 0x9500);
+    set_reg(&mut worker, 242, 2, 0xfeedface);
+    set_reg(&mut worker, 243, 0, 0);
+    worker.extend_from_slice(b"partial-worker-tail");
+    let worker_path = cd.join("worker_trace_tid200.bin");
+    std::fs::write(&worker_path, &worker).unwrap();
+
+    // Initialize Capstone outside the measurement so the assertion targets
+    // worker I/O rather than the process-wide disassembler's one-time tables.
+    let _ = tracemiku_core::disasm::decode(0x100000, 0xd503201f);
+    let (mem, largest_allocation) = largest_allocation_during(|| {
+        let trace = Trace::load(&cd).unwrap();
+        MemShadow::build_from_trace(&trace)
+    });
+    assert!(
+        largest_allocation < worker.len(),
+        "worker file was copied to the heap: allocation={largest_allocation}, file={}",
+        worker.len()
+    );
+    let anchor = 240 * 2 / (records - 1);
+    assert_eq!(anchor, 1);
+    assert_eq!(mem.byte_at(0x9300, 0), (None, "??", None));
+    assert_eq!(mem.byte_at(0x9300, 1), (Some(0x88), "x", Some(anchor)));
+    assert_eq!(mem.byte_at(0x9307, 2), (Some(0x11), "x", Some(anchor)));
+    assert_eq!(mem.byte_at(0x9400, u64::MAX), (None, "??", None));
+    assert_eq!(mem.byte_at(0x9500, u64::MAX), (Some(0xce), "x", Some(1)));
+    assert!(mem
+        .writes
+        .windows(2)
+        .all(|pair| (pair[0].idx, pair[0].addr) <= (pair[1].idx, pair[1].addr)));
+}
+
+#[test]
+fn same_length_worker_rewrite_invalidates_sidecar() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+
+    let (_tmp, cd) = synth_string_trace_dir();
+    let mut worker = vec![0u8; 272];
+    worker[0..8].copy_from_slice(&0x100100u64.to_le_bytes());
+    worker[8..16].copy_from_slice(&0x11223344u64.to_le_bytes());
+    worker[16..24].copy_from_slice(&0x9300u64.to_le_bytes());
+    worker[268..272].copy_from_slice(&0xb9000020u32.to_le_bytes());
+    let worker_path = cd.join("worker_trace_tid200.bin");
+    std::fs::write(&worker_path, &worker).unwrap();
+    let trace = Trace::load(&cd).unwrap();
+    let cold = MemShadow::load_or_build(&trace);
+    assert_eq!(cold.byte_at(0x9300, 10).0, Some(0x44));
+
+    worker[8..16].copy_from_slice(&0x55667788u64.to_le_bytes());
+    std::fs::write(&worker_path, &worker).unwrap();
+    let rebuilt = MemShadow::load_or_build(&trace);
+    assert_eq!(rebuilt.byte_at(0x9300, 10).0, Some(0x88));
+    let hot = MemShadow::try_load_sidecar(&trace).expect("rebuilt sidecar");
+    assert_eq!(hot.byte_at(0x9300, 10).0, Some(0x88));
+}
+
+#[test]
+fn old_version_sidecar_is_rebuilt_instead_of_deserialized() {
+    use tracemiku_core::memshadow::MemShadow;
+    use tracemiku_core::prelude::Trace;
+
+    let (_tmp, cd) = synth_string_trace_dir();
+    let trace = Trace::load(&cd).unwrap();
+    let _ = MemShadow::load_or_build(&trace);
+    let sidecar = MemShadow::sidecar_path(&trace);
+    let mut blob = std::fs::read(&sidecar).unwrap();
+    blob[..8].copy_from_slice(b"TMMSV7\0\0");
+    blob[8..12].copy_from_slice(&7u32.to_le_bytes());
+    std::fs::write(&sidecar, blob).unwrap();
+    assert!(MemShadow::try_load_sidecar(&trace).is_none());
+    let rebuilt = MemShadow::load_or_build(&trace);
+    assert_eq!(rebuilt.byte_at(0x7000, u64::MAX).0, Some(b'h'));
+    assert!(MemShadow::try_load_sidecar(&trace).is_some());
 }

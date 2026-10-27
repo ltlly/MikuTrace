@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
-use crate::cfg::build_cfg;
+use crate::cfg::build_cfg_with_budget;
 use crate::disasm::decode;
 use crate::forward_dep_tree::DependencyUsers;
 use crate::prelude::{
@@ -17,6 +19,54 @@ use crate::analysis::parse::parse_dec_u64;
 /// Cached register timelines: reg name → ordered (record_idx, value) pairs.
 pub(crate) type RegTimelineCache = HashMap<String, Arc<Vec<(usize, u64)>>>;
 
+#[derive(Debug, Clone, Copy)]
+pub struct AnalysisResources {
+    pub memory_budget_bytes: usize,
+    pub build_concurrency: usize,
+    pub build_wait: Duration,
+}
+
+impl AnalysisResources {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let memory_mb = env_usize("TRACEMIKU_MEMORY_BUDGET_MB", 1024, true)?;
+        let build_concurrency = env_usize("TRACEMIKU_BUILD_CONCURRENCY", 1, false)?;
+        let wait_ms = env_usize("TRACEMIKU_BUILD_WAIT_MS", 30_000, true)?;
+        Ok(Self {
+            memory_budget_bytes: memory_mb
+                .checked_mul(1024 * 1024)
+                .ok_or_else(|| anyhow::anyhow!("TRACEMIKU_MEMORY_BUDGET_MB is too large"))?,
+            build_concurrency,
+            build_wait: Duration::from_millis(wait_ms as u64),
+        })
+    }
+}
+
+fn env_usize(name: &str, default: usize, allow_zero: bool) -> anyhow::Result<usize> {
+    let Ok(raw) = std::env::var(name) else {
+        return Ok(default);
+    };
+    let value = raw
+        .parse::<usize>()
+        .ok()
+        .filter(|value| allow_zero || *value > 0)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{name} must be a {}integer",
+                if allow_zero {
+                    "non-negative "
+                } else {
+                    "positive "
+                }
+            )
+        })?;
+    Ok(value)
+}
+
+struct AnalysisBuildPermit {
+    _local: crate::parallel::BuildGatePermit<'static>,
+    _file: File,
+}
+
 #[derive(Clone)]
 pub struct AnalysisContext {
     pub inner: Arc<AnalysisData>,
@@ -27,13 +77,15 @@ pub struct AnalysisData {
     pub meta: TraceMeta,
     pub trace: Trace,
     index: OnceLock<Index>,
+    record_symbols: OnceLock<SymbolMap>,
     symbols: OnceLock<SymbolMap>,
     pub modules: ModuleResolver,
-    cfg: OnceLock<CFG>,
+    cfg: OnceLock<Result<CFG, super::AnalysisError>>,
     function_index: OnceLock<FunctionIndex>,
     analysis_index: OnceLock<AnalysisIndex>,
     dep_users: OnceLock<DependencyUsers>,
-    memshadow: OnceLock<MemShadow>,
+    memshadow: OnceLock<Result<MemShadow, super::AnalysisError>>,
+    resources: AnalysisResources,
     call_tree: OnceLock<CallNode>,
     call_tree_depth_cache: Mutex<HashMap<usize, CallNode>>,
     frame_depths: OnceLock<Vec<u32>>,
@@ -62,12 +114,14 @@ impl AnalysisContext {
         let trace = Trace::load(&trace_dir)?;
 
         let modules = ModuleResolver::from_modules(&meta.modules);
+        let resources = AnalysisResources::from_env()?;
 
         let inner = Arc::new(AnalysisData {
             trace_dir,
             meta,
             trace,
             index: OnceLock::new(),
+            record_symbols: OnceLock::new(),
             symbols: OnceLock::new(),
             modules,
             cfg: OnceLock::new(),
@@ -75,6 +129,7 @@ impl AnalysisContext {
             analysis_index: OnceLock::new(),
             dep_users: OnceLock::new(),
             memshadow: OnceLock::new(),
+            resources,
             call_tree: OnceLock::new(),
             call_tree_depth_cache: Mutex::new(HashMap::new()),
             frame_depths: OnceLock::new(),
@@ -97,16 +152,80 @@ pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl AnalysisData {
+    pub fn resources(&self) -> AnalysisResources {
+        self.resources
+    }
+
+    fn limit_error(&self, limit: crate::parallel::BuildLimit) -> super::AnalysisError {
+        super::AnalysisError::limit(format!(
+            "{} limit exceeded: requested {}, configured budget {}",
+            limit.component, limit.estimated_bytes, limit.budget_bytes
+        ))
+    }
+
+    fn build_permit(&self) -> Result<AnalysisBuildPermit, super::AnalysisError> {
+        let local = crate::parallel::global_build_gate()
+            .acquire(self.resources.build_concurrency, self.resources.build_wait)
+            .map_err(|limit| self.limit_error(limit))?;
+        let path = self.trace_dir.join("trace.bin.analysis-build.lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| super::AnalysisError::internal(error.to_string()))?;
+        let started = Instant::now();
+        loop {
+            match file.try_lock() {
+                Ok(()) => {
+                    return Ok(AnalysisBuildPermit {
+                        _local: local,
+                        _file: file,
+                    });
+                }
+                Err(std::fs::TryLockError::WouldBlock)
+                    if started.elapsed() < self.resources.build_wait =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(self.limit_error(crate::parallel::BuildLimit {
+                        component: "concurrent_builds",
+                        estimated_bytes: 2,
+                        budget_bytes: 1,
+                    }));
+                }
+                Err(std::fs::TryLockError::Error(error)) => {
+                    return Err(super::AnalysisError::internal(error.to_string()));
+                }
+            }
+        }
+    }
+
     pub fn index(&self) -> &Index {
         self.index.get_or_init(|| Index::load_or_build(&self.trace))
     }
 
     pub fn symbols(&self) -> &SymbolMap {
         self.symbols.get_or_init(|| {
+            let mut symbols = self.record_symbols().clone();
+            let auto = auto_known_symbols_with_modules(&self.trace, &self.modules);
+            for (pc, name) in auto {
+                if symbols.has_start_pc(pc) {
+                    continue;
+                }
+                symbols.add_resolved(pc, name, &self.modules);
+            }
+            symbols.freeze();
+            symbols
+        })
+    }
+
+    pub fn record_symbols(&self) -> &SymbolMap {
+        self.record_symbols.get_or_init(|| {
             let trace_dir = &self.trace_dir;
             let meta = &self.meta;
-            let trace = &self.trace;
-            let modules = &self.modules;
             // Build SymbolMap from per-call meta.json::known_offsets if present,
             // otherwise empty. Format from per-call meta.json:
             //   { "known_offsets": { "0x0": "f_root", "0x100": "f_alpha", ... } }
@@ -159,16 +278,6 @@ impl AnalysisData {
                     symbols.add(pc, name.clone());
                 }
             }
-            // Merge auto-discovered bl-target entries; examples + static WIN.
-            // These are module-aware, so calls into app-private helper SOs get a
-            // name relative to the target SO rather than the primary SO base.
-            let auto = auto_known_symbols_with_modules(trace, modules);
-            for (pc, name) in auto {
-                if symbols.has_start_pc(pc) {
-                    continue;
-                }
-                symbols.add_resolved(pc, name, modules);
-            }
             symbols.freeze();
             symbols
         })
@@ -182,17 +291,17 @@ impl AnalysisData {
             } else {
                 "idle"
             },
-            if self.symbols.get().is_some() {
+            if self.record_symbols.get().is_some() {
                 "ready"
             } else {
                 "idle"
             },
-            if self.cfg.get().is_some() {
+            if matches!(self.cfg.get(), Some(Ok(_))) {
                 "ready"
             } else {
                 "idle"
             },
-            if self.memshadow.get().is_some() {
+            if matches!(self.memshadow.get(), Some(Ok(_))) {
                 "ready"
             } else {
                 "idle"
@@ -200,22 +309,51 @@ impl AnalysisData {
         ]
     }
 
-    pub fn cfg(&self) -> &CFG {
-        self.cfg.get_or_init(|| build_cfg(&self.trace))
+    pub fn cfg(&self) -> Result<&CFG, super::AnalysisError> {
+        self.cfg
+            .get_or_init(|| {
+                let _permit = self.build_permit()?;
+                build_cfg_with_budget(&self.trace, self.resources.memory_budget_bytes)
+                    .map_err(|limit| self.limit_error(limit))
+            })
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
-    pub fn function_index(&self) -> &FunctionIndex {
-        self.function_index
-            .get_or_init(|| build_function_index(self.symbols(), Some(self.cfg())))
+    pub fn function_index(&self) -> Result<&FunctionIndex, super::AnalysisError> {
+        if let Some(index) = self.function_index.get() {
+            return Ok(index);
+        }
+        let cfg = self.cfg()?;
+        Ok(self
+            .function_index
+            .get_or_init(|| build_function_index(self.symbols(), Some(cfg))))
     }
 
-    pub fn memshadow(&self) -> &MemShadow {
+    pub fn memshadow(&self) -> Result<&MemShadow, super::AnalysisError> {
         self.memshadow
-            .get_or_init(|| MemShadow::load_or_build(&self.trace))
+            .get_or_init(|| {
+                if let Some(mem) = MemShadow::load_sidecar_with_budget(
+                    &self.trace,
+                    self.resources.memory_budget_bytes,
+                )
+                .map_err(|limit| self.limit_error(limit))?
+                {
+                    return Ok(mem);
+                }
+                let _permit = self.build_permit()?;
+                MemShadow::load_or_build_with_budget(
+                    &self.trace,
+                    self.resources.memory_budget_bytes,
+                )
+                .map_err(|limit| self.limit_error(limit))
+            })
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     pub fn memshadow_if_ready(&self) -> Option<&MemShadow> {
-        self.memshadow.get()
+        self.memshadow.get().and_then(|result| result.as_ref().ok())
     }
 
     pub fn analysis_index(&self) -> &AnalysisIndex {

@@ -100,6 +100,9 @@ pub fn backward_taint(
     q: BackwardTaintQuery,
 ) -> Result<BackwardTaintResponse, AnalysisError> {
     let inner = state.inner.clone();
+    if q.through_mem {
+        let _ = inner.memshadow()?;
+    }
     let response = backward_taint_response(&inner, q);
     Ok(response)
 }
@@ -116,7 +119,7 @@ fn backward_taint_response(
         HashSet::new()
     };
     let mem_arg = if q.through_mem {
-        Some(inner.memshadow())
+        Some(inner.memshadow_if_ready().expect("memshadow preloaded"))
     } else {
         None
     };

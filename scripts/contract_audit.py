@@ -16,6 +16,33 @@ REPO = Path(__file__).resolve().parent.parent
 CLI = REPO / "rust" / "crates" / "tracemiku-cli" / "tests"
 CORE = REPO / "rust" / "crates" / "tracemiku-core" / "tests"
 
+# Resource/lazy-loading regressions must name the executable tests that protect them;
+# merely keeping a file with unrelated tests does not satisfy these invariants.
+REQUIRED_TESTS = {
+    CLI / "contract_consolidated.rs": [
+        "records_selected_indices_honor_register_filter_and_share_pagination_shape",
+        "records_detail_heavy_options_compose_and_restore_evidence",
+        "zero_memory_budget_keeps_light_detail_and_limits_heavy_analysis",
+        "concurrent_cold_cli_builds_queue_and_share_a_complete_sidecar",
+    ],
+    CORE / "analysis/records_queries.rs": [
+        "records_detail_is_light_by_default_and_heavy_providers_are_independent",
+    ],
+    CORE / "analysis/mem_flow_tests.rs": [
+        "memory_accesses_uses_trace_stream_and_memshadow_without_full_index",
+    ],
+    CORE / "memshadow_tests.rs": [
+        "compact_byte_event_is_8_bytes_and_checks_record_index_boundaries",
+        "mmap_sidecar_matches_cold_build_without_file_sized_heap_allocation",
+        "large_worker_mmap_preserves_boundary_tail_conditional_and_anchor_semantics",
+        "same_length_worker_rewrite_invalidates_sidecar",
+    ],
+    REPO / "rust/crates/tracemiku-core/src/cfg.rs": [
+        "repeated_edges_aggregate_without_capacity_growth",
+        "repeated_dynamic_branches_keep_counts_scc_and_memory_budget",
+    ],
+}
+
 # CLI command families -> contract test file that must exist and contain tests.
 # Keys are public commands from ./tracemiku; values are test files (no suffix).
 CLI_COVERAGE: dict[str, list[str]] = {
@@ -35,7 +62,7 @@ CLI_COVERAGE: dict[str, list[str]] = {
     "completions": ["contract_completions"],
     "list": ["contract_basic"],
     "info": ["contract_consolidated", "contract_basic", "contract_capture"],
-    "records": ["contract_consolidated", "contract_query"],
+    "records": ["contract_consolidated", "contract_query", "contract_offline"],
     "resolve": ["contract_consolidated", "contract_query"],
     "search": ["contract_query"],
     "reg-at": ["contract_query"],
@@ -146,9 +173,19 @@ def live_cli_commands() -> list[str]:
     return list(paths(data["commands"]))
 
 
+def check_required_tests() -> list[str]:
+    missing = []
+    for path, names in REQUIRED_TESTS.items():
+        text = path.read_text() if path.exists() else ""
+        missing.extend(f'{path.relative_to(REPO)}::{name}'
+                       for name in names if f'fn {name}(' not in text)
+    return missing
+
+
 def main() -> int:
     cli_gaps = check_coverage(CLI_COVERAGE, CLI)
     query_gaps = check_coverage(QUERY_COVERAGE, CORE)
+    required_test_gaps = check_required_tests()
     invariant_gaps = [name for name in ("contract_entrypoint", "contract_offline")
                       if not file_has_tests(CLI, name)]
     # Cross-check the declared command mapping against the real binary so a
@@ -169,12 +206,13 @@ def main() -> int:
         "cli_gaps": cli_gaps,
         "query_gaps": query_gaps,
         "invariant_gaps": invariant_gaps,
+        "required_test_gaps": required_test_gaps,
         "cli_mapping_stale": stale,
         "cli_mapping_missing": missing,
     }
     print(json.dumps(report, indent=2, sort_keys=True))
     stale_ok = not stale and not missing
-    return 0 if not cli_gaps and not query_gaps and not invariant_gaps and stale_ok else 1
+    return 0 if not cli_gaps and not query_gaps and not invariant_gaps and not required_test_gaps and stale_ok else 1
 
 
 if __name__ == "__main__":

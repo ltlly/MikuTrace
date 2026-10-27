@@ -8,6 +8,7 @@
 - 地址/偏移默认十六进制：`10` = `0x10`，`d16` = 十进制 16。分析命令通常接收 `<call_dir>`。
 - Rust 分析成功退出 0，输出 JSON；`list` 默认逐行 JSON，`--json` 返回数组；`completions` 输出 shell 源码。
 - Rust 执行错误退出 1，stdout 为 `{"status":"error","error":{"code":"…","message":"…"}}`（可带 `error.details`）；参数错误退出 2，诊断在 stderr。部分旧查询退出 0 但结果含 `status=error`，须同时检查。`trace/recover` 输出单个 JSON，诊断在 stderr；`ok` 退出 0，`incomplete/pending/error` 退出 2。
+- CFG 与 MemShadow 构建内存预算由 `TRACEMIKU_MEMORY_BUDGET_MB` 控制（默认 1024 MiB，0 禁止这两类重构建，轻量查询仍可用），超限返回 `limit_exceeded`。`TRACEMIKU_ANALYSIS_THREADS` 及组件专用变量限制线程数；`TRACEMIKU_BUILD_CONCURRENCY` 限制进程内构建并发，`TRACEMIKU_BUILD_WAIT_MS` 限制等待时间（0 表示立即失败）。同一 trace 的跨进程构建经 `trace.bin.analysis-build.lock` 串行执行，后等待者获得锁后重查 sidecar。MemShadow v8 sidecar 使用紧凑事件、独立地址目录及 mmap 热加载，写入采用原子替换。
 - 输出字段受契约测试约束，部分报告另有 [JSON schema](schema/)。内存来源与缺口见 [内存契约](memory-completeness-design.md)。
 
 ## 发现与元数据
@@ -31,11 +32,18 @@
 | `search` | 反汇编/操作数正则搜索 |
 
 `records` 默认只读取所选记录，不构建索引、符号、CFG 或 MemShadow；`--detail`
-才加载注释所需的分析。当下一条记录存在时，每条记录内联输出执行后寄存器变更
+只增加完整寄存器、符号和轻量寄存器注释，不构建 CFG 或 MemShadow。需要重证据时分别添加
+`--detail-pointers`（解引用/字符串指针注释）、`--detail-memory`（所选内存操作数的逐字节历史，
+每条记录最多 256 个事件，超出标为 `truncated`）和 `--detail-cfg`（基本块及执行次数）；三个选项
+可自由组合，均须与 `--detail` 同用。各项通过 `pointer_status`、`memory_status`、`cfg_status`
+明确报告 `disabled`/`ready`/`truncated`，未请求的内存历史为 `null`。当下一条记录存在时，每条记录内联输出执行后寄存器变更
 `writes_reg`（含 `reg`/`before`/`after`）和内存访问 `mem_access`（含 `r`/`w`、`ea`、`size`、`val`）。
 单条和多条查询共享 `records` 数组、返回数与截断字段。
 运行 `python3 scripts/benchmark_records.py` 可复测合成 trace 上的单条读取成本，
 对照任务是 Python 直接定位读取原始值；此基准不代表完整分析任务。
+`python3 scripts/benchmark_records.py --detail-suite --rounds 3 --output <JSON>` 另可复测
+5 万和 20 万条包含 load/store、call/ret 与重复动态边的 trace，逐轮保存普通记录、轻量详情、
+MemShadow 冷/热构建和 CFG 的 RSS、耗时与原始输出。
 
 ## 控制流与调用
 

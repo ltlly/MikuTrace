@@ -54,6 +54,21 @@ fn unified_entrypoint_matches_typed_core_queries_offline() {
             Query::Records(request(json!({"indices":[1],"detail":true}))),
         ),
         (
+            "records",
+            vec![
+                "--indices",
+                "1",
+                "--detail",
+                "--detail-pointers",
+                "--detail-memory",
+                "--detail-cfg",
+            ],
+            Query::Records(request(json!({
+                "indices":[1], "detail":true, "detail_pointers":true,
+                "detail_memory":true, "detail_cfg":true
+            }))),
+        ),
+        (
             "cfg",
             vec![],
             Query::CfgInspect(request(

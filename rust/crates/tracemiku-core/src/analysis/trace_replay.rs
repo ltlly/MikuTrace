@@ -26,7 +26,7 @@ pub fn trace_replay(
                 "positive count and start inside trace required",
             ));
         }
-        let mem = state.inner.memshadow();
+        let mem = state.inner.memshadow()?;
         replay_trace(trace, mem, query.start, query.count).map_err(AnalysisError::invalid)
     })?;
     Ok(result)

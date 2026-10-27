@@ -24,13 +24,13 @@ pub struct FunctionsResponse {
 
 pub fn functions(state: &AnalysisContext) -> Result<FunctionsResponse, AnalysisError> {
     let inner = state.inner.clone();
-    let response = functions_response(inner);
+    let response = functions_response(inner)?;
     Ok(response)
 }
 
-fn functions_response(inner: Arc<AnalysisData>) -> FunctionsResponse {
-    let fns = inner.function_index().entries.clone();
-    functions_response_from_entries(fns)
+fn functions_response(inner: Arc<AnalysisData>) -> Result<FunctionsResponse, AnalysisError> {
+    let fns = inner.function_index()?.entries.clone();
+    Ok(functions_response_from_entries(fns))
 }
 
 fn functions_response_from_entries(fns: Vec<FunctionEntry>) -> FunctionsResponse {
@@ -69,7 +69,7 @@ pub fn inspect(
     state: &AnalysisContext,
     q: FunctionsQuery,
 ) -> Result<FunctionsInspection, AnalysisError> {
-    let mut entries = state.inner.function_index().entries.clone();
+    let mut entries = state.inner.function_index()?.entries.clone();
     if let Some(name) = q.fn_name.as_ref() {
         entries.retain(|f| &f.name == name);
     }

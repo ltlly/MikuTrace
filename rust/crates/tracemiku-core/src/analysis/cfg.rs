@@ -42,6 +42,7 @@ pub struct CfgResponse {
 
 pub fn cfg(state: &AnalysisContext, q: CfgQuery) -> Result<CfgResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.cfg()?;
     let response = cfg_response(&inner, q, None);
     Ok(response)
 }
@@ -51,7 +52,7 @@ fn cfg_response(
     q: CfgQuery,
     selected: Option<u64>,
 ) -> CfgResponse {
-    let cfg = &inner.cfg();
+    let cfg = inner.cfg().expect("CFG preloaded");
     let symbols = inner.symbols();
 
     let filter_fn = if q.fn_name.is_empty() {
@@ -193,6 +194,7 @@ pub fn inspect(
             "coverage requires pc or function name",
         ));
     }
+    let _ = state.inner.cfg()?;
     let block = q
         .pc
         .as_ref()
@@ -209,6 +211,7 @@ pub fn inspect(
         let b = state
             .inner
             .cfg()
+            .expect("CFG preloaded")
             .block_containing(selected.unwrap())
             .ok_or_else(|| AnalysisError::not_found("block not found"))?;
         let index = state.inner.index();

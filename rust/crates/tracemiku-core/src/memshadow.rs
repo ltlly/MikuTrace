@@ -1,7 +1,7 @@
 //! Sparse byte-level memory shadow built from a trace.
 //!
 //! Direct port of `viewer/memshadow.py:58-339`, with a Rust-native v7 binary
-//! sidecar (`TMMSV7`) for fast reloads on large traces.
+//! sidecar (`TMMSV8`) with fixed-layout sections for mmap reloads on large traces.
 //!
 //! Each instruction has full register state captured BEFORE its execution.
 //! Memory state is reconstructed by walking through stores (the source register
@@ -17,17 +17,21 @@
 //! source_idx)` returns the latest event with `idx <= t`, or `(None, "??",
 //! None)` if no event yet.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io::{BufReader, Read, Write};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 
 use crate::disasm::{addr_of, decode, DecodedInsn, MemOp};
-use crate::sidecar_io::{
-    elem_cap, invalid_data, read_len, read_len_capped, read_u32, read_u64, write_atomic, write_u32,
-    write_u64,
+pub use crate::memshadow_store::{
+    ByteEvent, ByteEventKind, ByteEvents, CopySources, EventList, MemRec, MemRecords,
 };
+use crate::sidecar_io::{invalid_data, write_atomic, write_u32, write_u64};
 use crate::trace::Trace;
+use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -70,32 +74,19 @@ impl std::fmt::Display for MemShadowError {
 
 impl std::error::Error for MemShadowError {}
 
-/// One byte-level memory event: which trace-record idx touched this byte,
-/// the byte value, and the kind ("r" = load, "w" = store, "x" = external/
-/// boundary-diff write from external_writes.bin).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ByteEvent {
-    pub idx: usize,
-    pub byte: u8,
-    pub kind: &'static str,
-}
-
 /// One memory-side index entry where the source/dest register WAS observable.
 ///
 /// Note: this collides with [`crate::index::MemRec`]. The prelude re-exports
 /// this one as `ShadowMemRec` to disambiguate. The `index::MemRec` has an
 /// `Option<u64>` value; this one's value is always known.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MemRec {
-    pub idx: usize,
-    pub addr: u64,
-    pub size: u32,
-    pub value: u64,
-}
-
-const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV7\0\0";
-const SIDECAR_VERSION: u32 = 7;
-pub const SIDECAR_SUFFIX: &str = ".memshadow.v7.bin";
+const SIDECAR_MAGIC: &[u8; 8] = b"TMMSV8\0\0";
+const SIDECAR_VERSION: u32 = 8;
+const SIDECAR_HEADER_SIZE: usize = 136;
+const MEMREC_DISK_SIZE: usize = 32;
+const ADDRESS_DISK_SIZE: usize = 24;
+const EVENT_DISK_SIZE: usize = 8;
+const COPY_DISK_SIZE: usize = 24;
+pub const SIDECAR_SUFFIX: &str = ".memshadow.v8.bin";
 const EXTERNAL_WRITES_FILE: &str = "external_writes.bin";
 const EXTERNAL_WRITE_RECORD_SIZE: usize = 17;
 const PARALLEL_MIN_RECORDS: usize = 250_000;
@@ -173,7 +164,10 @@ impl MemSnapshot {
 
     /// Load `<call_dir>/memory_snapshot.bin` if present and valid.
     pub fn load(trace: &Trace) -> Option<Self> {
-        let raw = std::fs::read(trace.call_dir().join(SNAPSHOT_FILE)).ok()?;
+        let file = std::fs::File::open(trace.call_dir().join(SNAPSHOT_FILE)).ok()?;
+        // SAFETY: the snapshot is immutable for this read; parsing copies only
+        // validated regions and does not retain a second whole-file heap blob.
+        let raw = unsafe { Mmap::map(&file) }.ok()?;
         Self::parse(&raw)
     }
 
@@ -202,19 +196,19 @@ impl MemSnapshot {
 /// `find_strings` (printable-ASCII run scan).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemShadow {
-    pub writes: Vec<MemRec>,
-    pub reads: Vec<MemRec>,
-    pub bytes: BTreeMap<u64, Vec<ByteEvent>>,
+    pub writes: MemRecords,
+    pub reads: MemRecords,
+    pub bytes: ByteEvents,
     /// Mapping `(dst_addr, write_idx) -> src_addr` for uninstrumented external
     /// memory copy boundaries (`memcpy` / `memmove`).
-    pub copy_sources: HashMap<(u64, usize), u64>,
+    pub copy_sources: CopySources,
     /// Initial-memory-snapshot fallback layer (kind `i`). `None` when no
     /// `memory_snapshot.bin` was captured for this trace.
     pub snapshot: Option<MemSnapshot>,
 }
 
 impl MemShadow {
-    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v7.bin`.
+    /// Sidecar path for this trace: `<call_dir>/trace.bin.memshadow.v8.bin`.
     pub fn sidecar_path(trace: &Trace) -> PathBuf {
         trace.call_dir().join(format!("trace.bin{SIDECAR_SUFFIX}"))
     }
@@ -225,22 +219,40 @@ impl MemShadow {
         self.copy_sources.get(&(addr, idx)).copied()
     }
 
-    /// Load from a valid v7 sidecar when possible; otherwise cold-build and
+    /// Load from a valid v8 sidecar when possible; otherwise cold-build and
     /// best-effort save. Corrupt/stale sidecars are ignored.
     pub fn load_or_build(trace: &Trace) -> Self {
-        if let Some(mut mem) = Self::try_load_sidecar(trace) {
-            mem.snapshot = MemSnapshot::load(trace);
-            return mem;
+        Self::load_or_build_with_budget(trace, usize::MAX)
+            .expect("unbounded MemShadow build cannot exceed its budget")
+    }
+
+    pub fn load_sidecar_with_budget(
+        trace: &Trace,
+        budget_bytes: usize,
+    ) -> Result<Option<Self>, crate::parallel::BuildLimit> {
+        let Some(mut mem) = Self::try_load_sidecar(trace) else {
+            return Ok(None);
+        };
+        mem.snapshot = load_snapshot_with_budget(trace, mem.estimated_heap_bytes(), budget_bytes)?;
+        Ok(Some(mem))
+    }
+
+    pub fn load_or_build_with_budget(
+        trace: &Trace,
+        budget_bytes: usize,
+    ) -> Result<Self, crate::parallel::BuildLimit> {
+        if let Some(mem) = Self::load_sidecar_with_budget(trace, budget_bytes)? {
+            return Ok(mem);
         }
         let before = memory_input_digest(trace).ok();
-        let mut mem = Self::build_from_trace(trace);
+        let mut mem = Self::build_from_trace_with_budget(trace, budget_bytes)?;
         // A live append/change during reconstruction must not create a cache
         // that claims to represent the new inputs.
         if before.is_some() && before == memory_input_digest(trace).ok() {
             let _ = mem.save_sidecar(trace);
         }
-        mem.snapshot = MemSnapshot::load(trace);
-        mem
+        mem.snapshot = load_snapshot_with_budget(trace, mem.estimated_heap_bytes(), budget_bytes)?;
+        Ok(mem)
     }
 
     /// Walk every record once; for each store, record the source-reg pre-state
@@ -249,10 +261,26 @@ impl MemShadow {
     /// `<call_dir>/external_writes.bin` as kind `"x"` writes and reconstructs
     /// uninstrumented external `memcpy`/`memmove`/`memset` boundaries.
     pub fn build_from_trace(trace: &Trace) -> Self {
+        Self::build_from_trace_with_budget(trace, usize::MAX)
+            .expect("unbounded MemShadow build cannot exceed its budget")
+    }
+
+    pub fn build_from_trace_with_budget(
+        trace: &Trace,
+        budget_bytes: usize,
+    ) -> Result<Self, crate::parallel::BuildLimit> {
         let n = trace.len();
+        if n > u32::MAX as usize + 1 {
+            return Err(crate::parallel::BuildLimit {
+                component: "memshadow_record_index",
+                estimated_bytes: n,
+                budget_bytes: u32::MAX as usize + 1,
+            });
+        }
         let workers = memshadow_worker_count(n);
+        let worker_budget = budget_bytes / workers.max(1) / 2;
         let mut mem = if workers <= 1 {
-            build_range(trace, 0, n)
+            build_range(trace, 0, n, worker_budget)?
         } else {
             tracing::info!(
                 target: "tracemiku-core",
@@ -270,24 +298,80 @@ impl MemShadow {
                     if start >= end {
                         continue;
                     }
-                    handles.push(scope.spawn(move || build_range(trace, start, end)));
+                    handles
+                        .push(scope.spawn(move || build_range(trace, start, end, worker_budget)));
                 }
                 handles
                     .into_iter()
                     .map(|handle| handle.join().expect("memshadow worker panicked"))
                     .collect::<Vec<_>>()
             });
-
-            merge_partials(partials)
+            let mut completed = Vec::with_capacity(partials.len());
+            for partial in partials {
+                completed.push(partial?);
+            }
+            merge_partials(completed)
         };
-        merge_worker_traces(trace, &mut mem);
-        merge_external_writes(trace, &mut mem);
-        let snap = MemSnapshot::load(trace);
+        let mut event_count = mem.bytes.event_count();
+        mem.ensure_budget(budget_bytes)?;
+        merge_worker_traces(trace, &mut mem, &mut event_count, budget_bytes)?;
+        merge_external_writes(trace, &mut mem, &mut event_count, budget_bytes)?;
+        let snap = load_snapshot_with_budget(trace, mem.estimated_heap_bytes(), budget_bytes)?;
         crate::memshadow_ext::merge_uninstrumented_mem_calls(trace, &mut mem, snap.as_ref());
-        mem
+        mem.ensure_budget(budget_bytes)?;
+        let finalize_extra = mem
+            .bytes
+            .event_count()
+            .saturating_mul(EVENT_DISK_SIZE)
+            .saturating_add(mem.bytes.len().saturating_mul(ADDRESS_DISK_SIZE));
+        crate::parallel::check_memory_budget(
+            "memshadow",
+            mem.estimated_heap_bytes().saturating_add(finalize_extra),
+            budget_bytes,
+        )?;
+        mem.bytes.finalize();
+        mem.copy_sources.finalize();
+        mem.ensure_budget(budget_bytes)?;
+        Ok(mem)
     }
 
-    /// Try to load `<call_dir>/trace.bin.memshadow.v7.bin`.
+    fn estimated_heap_bytes(&self) -> usize {
+        self.writes
+            .heap_bytes()
+            .saturating_add(self.reads.heap_bytes())
+            .saturating_add(self.bytes.estimated_heap_bytes())
+            .saturating_add(self.copy_sources.heap_bytes())
+            .saturating_add(self.snapshot.as_ref().map_or(0, MemSnapshot::total_bytes))
+    }
+
+    fn estimated_heap_bytes_with_event_count(&self, event_count: usize) -> usize {
+        self.writes
+            .heap_bytes()
+            .saturating_add(self.reads.heap_bytes())
+            .saturating_add(
+                self.bytes
+                    .estimated_heap_bytes_with_event_count(event_count),
+            )
+            .saturating_add(self.copy_sources.heap_bytes())
+    }
+
+    fn ensure_budget(&self, budget_bytes: usize) -> Result<(), crate::parallel::BuildLimit> {
+        crate::parallel::check_memory_budget("memshadow", self.estimated_heap_bytes(), budget_bytes)
+    }
+
+    fn ensure_budget_with_event_count(
+        &self,
+        event_count: usize,
+        budget_bytes: usize,
+    ) -> Result<(), crate::parallel::BuildLimit> {
+        crate::parallel::check_memory_budget(
+            "memshadow",
+            self.estimated_heap_bytes_with_event_count(event_count),
+            budget_bytes,
+        )
+    }
+
+    /// Try to load `<call_dir>/trace.bin.memshadow.v8.bin`.
     ///
     /// Returns `None` for miss, stale trace size, schema mismatch, or corrupt
     /// content. Callers that want a ready MemShadow should use
@@ -296,38 +380,59 @@ impl MemShadow {
         Self::read_sidecar(trace).ok()
     }
 
-    /// Save this shadow as v7 binary sidecar. Writes to a temp file in the
+    /// Save this shadow as v8 fixed-layout binary sidecar. Writes to a temp file in the
     /// call directory and then atomically renames it over the final path.
     pub fn save_sidecar(&self, trace: &Trace) -> std::io::Result<()> {
+        let (addresses, events) = self.bytes.finalized_parts().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "memshadow byte index must be finalized before saving",
+            )
+        })?;
+        if !self.copy_sources.is_finalized() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "memshadow copy sources must be finalized before saving",
+            ));
+        }
+        let writes_len = self.writes.len();
+        let reads_len = self.reads.len();
+        let addresses_len = addresses.len();
+        let events_len = events.len();
+        let copy_len = self.copy_sources.len();
+        let writes_offset = SIDECAR_HEADER_SIZE;
+        let reads_offset = section_end(writes_offset, writes_len, MEMREC_DISK_SIZE)?;
+        let addresses_offset = section_end(reads_offset, reads_len, MEMREC_DISK_SIZE)?;
+        let events_offset = section_end(addresses_offset, addresses_len, ADDRESS_DISK_SIZE)?;
+        let copy_offset = section_end(events_offset, events_len, EVENT_DISK_SIZE)?;
+        let _ = section_end(copy_offset, copy_len, COPY_DISK_SIZE)?;
+
         write_atomic(
             &Self::sidecar_path(trace),
-            "trace.bin.memshadow.v7.bin",
+            "trace.bin.memshadow.v8.bin",
             |f| {
                 f.write_all(SIDECAR_MAGIC)?;
                 write_u32(f, SIDECAR_VERSION)?;
+                write_u32(f, SIDECAR_HEADER_SIZE as u32)?;
                 write_u64(f, trace.raw().len() as u64)?;
                 f.write_all(&memory_input_digest(trace)?)?;
-                write_u64(f, self.writes.len() as u64)?;
-                write_u64(f, self.reads.len() as u64)?;
-                write_u64(f, self.bytes.len() as u64)?;
-
-                for rec in &self.writes {
-                    write_memrec(f, rec)?;
+                for len in [writes_len, reads_len, addresses_len, events_len, copy_len] {
+                    write_u64(f, len as u64)?;
                 }
-                for rec in &self.reads {
-                    write_memrec(f, rec)?;
+                for offset in [
+                    writes_offset,
+                    reads_offset,
+                    addresses_offset,
+                    events_offset,
+                    copy_offset,
+                ] {
+                    write_u64(f, offset as u64)?;
                 }
-                for (addr, evs) in &self.bytes {
-                    write_u64(f, *addr)?;
-                    write_u64(f, evs.len() as u64)?;
-                    for ev in evs {
-                        write_u64(f, ev.idx as u64)?;
-                        f.write_all(&[ev.byte, kind_to_code(ev.kind)?])?;
-                    }
-                }
-                let copy_items = crate::memshadow_ext::sorted_copy_sources(&self.copy_sources);
-                write_u64(f, copy_items.len() as u64)?;
-                for (dst, idx, src) in copy_items {
+                f.write_all(bytemuck::cast_slice(&self.writes[..]))?;
+                f.write_all(bytemuck::cast_slice(&self.reads[..]))?;
+                f.write_all(bytemuck::cast_slice(addresses))?;
+                f.write_all(byte_events_as_bytes(events))?;
+                for (dst, idx, src) in self.copy_sources.iter() {
                     write_u64(f, dst)?;
                     write_u64(f, idx as u64)?;
                     write_u64(f, src)?;
@@ -340,95 +445,66 @@ impl MemShadow {
     fn read_sidecar(trace: &Trace) -> std::io::Result<Self> {
         let path = Self::sidecar_path(trace);
         let raw = std::fs::File::open(path)?;
-        let file_len = raw.metadata()?.len() as usize;
-        let mut f = BufReader::with_capacity(1024 * 1024, raw);
-        let mut magic = [0u8; 8];
-        f.read_exact(&mut magic)?;
-        if &magic != SIDECAR_MAGIC {
+        let file_len = usize::try_from(raw.metadata()?.len())
+            .map_err(|_| invalid_data("memshadow sidecar is too large for this host"))?;
+        // SAFETY: the sidecar is mapped read-only and all sections are validated
+        // before any typed slice is exposed.
+        let mmap = unsafe { Mmap::map(&raw) }?;
+        if file_len < SIDECAR_HEADER_SIZE || mmap.get(..8) != Some(SIDECAR_MAGIC) {
             return Err(invalid_data("bad memshadow sidecar magic"));
         }
-        let version = read_u32(&mut f)?;
-        if version != SIDECAR_VERSION {
+        if u32_at(&mmap, 8)? != SIDECAR_VERSION {
             return Err(invalid_data("bad memshadow sidecar version"));
         }
-        let trace_size = read_u64(&mut f)?;
-        if trace_size != trace.raw().len() as u64 {
+        if u32_at(&mmap, 12)? as usize != SIDECAR_HEADER_SIZE {
+            return Err(invalid_data("bad memshadow sidecar header size"));
+        }
+        if u64_at(&mmap, 16)? != trace.raw().len() as u64 {
             return Err(invalid_data("stale memshadow sidecar trace size"));
         }
-        let mut digest = [0; 32];
-        f.read_exact(&mut digest)?;
-        if digest != memory_input_digest(trace)? {
+        if mmap.get(24..56) != Some(memory_input_digest(trace)?.as_slice()) {
             return Err(invalid_data("stale memshadow sidecar inputs"));
         }
-        // 长度上限以 sidecar 文件字节数推导：每条 MemRec 最少 28 字节
-        // （idx 8 + addr 8 + size 4 + value 8），损坏文件的超大长度在分配
-        // 前即被拒绝。
-        let memrec_cap = elem_cap(file_len, 28);
-        let writes_len = read_len_capped(&mut f, memrec_cap)?;
-        let reads_len = read_len_capped(&mut f, memrec_cap)?;
-        // 每个地址项最少 26 字节：addr 8 + 事件数前缀 8 + 至少一个事件
-        // （idx 8 + byte/kind 2）；写入端不会序列化空事件表。
-        let addr_len = read_len_capped(&mut f, elem_cap(file_len, 26))?;
+        let writes_len = read_sidecar_len(&mmap, 56, file_len, MEMREC_DISK_SIZE)?;
+        let reads_len = read_sidecar_len(&mmap, 64, file_len, MEMREC_DISK_SIZE)?;
+        let addresses_len = read_sidecar_len(&mmap, 72, file_len, ADDRESS_DISK_SIZE)?;
+        let events_len = read_sidecar_len(&mmap, 80, file_len, EVENT_DISK_SIZE)?;
+        let copy_len = read_sidecar_len(&mmap, 88, file_len, COPY_DISK_SIZE)?;
+        let writes_offset = sidecar_usize(&mmap, 96)?;
+        let reads_offset = sidecar_usize(&mmap, 104)?;
+        let addresses_offset = sidecar_usize(&mmap, 112)?;
+        let events_offset = sidecar_usize(&mmap, 120)?;
+        let copy_offset = sidecar_usize(&mmap, 128)?;
 
+        let expected_writes_end = section_end(writes_offset, writes_len, MEMREC_DISK_SIZE)?;
+        let expected_reads_end = section_end(reads_offset, reads_len, MEMREC_DISK_SIZE)?;
+        let expected_addresses_end =
+            section_end(addresses_offset, addresses_len, ADDRESS_DISK_SIZE)?;
+        let expected_events_end = section_end(events_offset, events_len, EVENT_DISK_SIZE)?;
+        let expected_copy_end = section_end(copy_offset, copy_len, COPY_DISK_SIZE)?;
+        if writes_offset != SIDECAR_HEADER_SIZE
+            || reads_offset != expected_writes_end
+            || addresses_offset != expected_reads_end
+            || events_offset != expected_addresses_end
+            || copy_offset != expected_events_end
+            || expected_copy_end != file_len
+        {
+            return Err(invalid_data("inconsistent memshadow sidecar sections"));
+        }
+
+        let map = Arc::new(mmap);
         let n_records = trace.len();
-        let mut writes = Vec::with_capacity(writes_len);
-        for _ in 0..writes_len {
-            let rec = read_memrec(&mut f)?;
-            if rec.idx >= n_records {
-                return Err(invalid_data("memshadow sidecar write idx out of range"));
-            }
-            writes.push(rec);
-        }
-        let mut reads = Vec::with_capacity(reads_len);
-        for _ in 0..reads_len {
-            let rec = read_memrec(&mut f)?;
-            if rec.idx >= n_records {
-                return Err(invalid_data("memshadow sidecar read idx out of range"));
-            }
-            reads.push(rec);
-        }
-        let mut bytes = BTreeMap::new();
-        for _ in 0..addr_len {
-            let addr = read_u64(&mut f)?;
-            // 每个事件 10 字节：idx 8 + byte/kind 2。
-            let event_len = read_len_capped(&mut f, elem_cap(file_len, 10))?;
-            let mut evs = Vec::with_capacity(event_len);
-            for _ in 0..event_len {
-                let idx = read_len(&mut f)?;
-                if idx >= n_records {
-                    return Err(invalid_data(
-                        "memshadow sidecar byte event idx out of range",
-                    ));
-                }
-                let mut bb = [0u8; 2];
-                f.read_exact(&mut bb)?;
-                let kind = code_to_kind(bb[1])?;
-                evs.push(ByteEvent {
-                    idx,
-                    byte: bb[0],
-                    kind,
-                });
-            }
-            evs.sort_by_key(|ev| ev.idx);
-            bytes.insert(addr, evs);
-        }
-        let copy_len = read_len_capped(&mut f, elem_cap(file_len, 24))?;
-        let mut copy_sources = HashMap::with_capacity(copy_len);
-        for _ in 0..copy_len {
-            let dst = read_u64(&mut f)?;
-            let idx = read_len(&mut f)?;
-            let src = read_u64(&mut f)?;
-            if idx >= n_records {
-                return Err(invalid_data(
-                    "memshadow sidecar copy_source idx out of range",
-                ));
-            }
-            copy_sources.insert((dst, idx), src);
-        }
-        let mut trailing = [0u8; 1];
-        if f.read(&mut trailing)? != 0 {
-            return Err(invalid_data("trailing bytes in memshadow sidecar"));
-        }
+        let writes = MemRecords::from_mapped(map.clone(), writes_offset, writes_len, n_records)?;
+        let reads = MemRecords::from_mapped(map.clone(), reads_offset, reads_len, n_records)?;
+        let bytes = ByteEvents::from_mapped(
+            map.clone(),
+            addresses_offset,
+            addresses_len,
+            events_offset,
+            events_len,
+            n_records,
+        )?;
+        let copy_sources = CopySources::from_mapped(map, copy_offset, copy_len, n_records)?;
         Ok(Self {
             writes,
             reads,
@@ -450,7 +526,7 @@ impl MemShadow {
             let mut hi = evs.len();
             while lo < hi {
                 let mid = (lo + hi) / 2;
-                if (evs[mid].idx as u64) <= t {
+                if (evs[mid].idx() as u64) <= t {
                     lo = mid + 1;
                 } else {
                     hi = mid;
@@ -458,7 +534,7 @@ impl MemShadow {
             }
             if lo != 0 {
                 let ev = &evs[lo - 1];
-                return (Some(ev.byte), ev.kind, Some(ev.idx));
+                return (Some(ev.byte), ev.kind.as_str(), Some(ev.idx()));
             }
         }
         // No traced event at-or-before `t`: fall back to the initial-snapshot
@@ -477,7 +553,7 @@ impl MemShadow {
     /// before `before_idx`. Returns None if no such write exists.
     ///
     /// Mirrors the inner loop of viewer/taint.py:282-299 for one byte:
-    /// fetch `bytes.get(addr+o)`, find the partition point where ev.idx
+    /// fetch `bytes.get(addr+o)`, find the partition point where ev.idx()
     /// crosses `before_idx`, then walk back to the first write.
     ///
     /// "kind" semantics: "w" = store, "x" = external/JNI write.
@@ -488,12 +564,12 @@ impl MemShadow {
         before_idx: usize,
     ) -> Option<usize> {
         let evs = self.bytes.get(&byte_addr)?;
-        // partition_point: first index where ev.idx >= before_idx
-        let pos = evs.partition_point(|ev| ev.idx < before_idx);
+        // partition_point: first index where ev.idx() >= before_idx
+        let pos = evs.partition_point(|ev| ev.idx() < before_idx);
         for j in (0..pos).rev() {
             let ev = &evs[j];
             if ev.kind == "w" || ev.kind == "x" {
-                return Some(ev.idx);
+                return Some(ev.idx());
             }
         }
         None
@@ -509,7 +585,7 @@ impl MemShadow {
         before_idx: usize,
     ) -> Option<UnloggedWriteGap> {
         let evs = self.bytes.get(&byte_addr)?;
-        let pos = evs.partition_point(|ev| ev.idx < before_idx);
+        let pos = evs.partition_point(|ev| ev.idx() < before_idx);
         let mut last_w: Option<(usize, &ByteEvent)> = None;
         for (j, ev) in evs[..pos].iter().enumerate().rev() {
             if ev.kind == "w" || ev.kind == "x" {
@@ -521,9 +597,9 @@ impl MemShadow {
             for r_ev in &evs[w_pos + 1..pos] {
                 if r_ev.kind == "r" && r_ev.byte != w_ev.byte {
                     return Some(UnloggedWriteGap {
-                        prev_write_idx: Some(w_ev.idx),
+                        prev_write_idx: Some(w_ev.idx()),
                         prev_write_byte: Some(w_ev.byte),
-                        first_observing_read_idx: r_ev.idx,
+                        first_observing_read_idx: r_ev.idx(),
                         observed_byte: r_ev.byte,
                     });
                 }
@@ -540,7 +616,7 @@ impl MemShadow {
                         return Some(UnloggedWriteGap {
                             prev_write_idx: Some(0),
                             prev_write_byte: Some(sb),
-                            first_observing_read_idx: r_ev.idx,
+                            first_observing_read_idx: r_ev.idx(),
                             observed_byte: r_ev.byte,
                         });
                     }
@@ -548,7 +624,7 @@ impl MemShadow {
                     return Some(UnloggedWriteGap {
                         prev_write_idx: None,
                         prev_write_byte: None,
-                        first_observing_read_idx: r_ev.idx,
+                        first_observing_read_idx: r_ev.idx(),
                         observed_byte: r_ev.byte,
                     });
                 }
@@ -567,14 +643,14 @@ impl MemShadow {
         evidence_start: usize,
     ) -> (Option<u8>, &'static str, Option<usize>) {
         if let Some(events) = self.bytes.get(&addr) {
-            let end = events.partition_point(|e| e.idx < before_idx);
+            let end = events.partition_point(|e| e.idx() < before_idx);
             if let Some(e) = events[..end]
                 .iter()
                 .rev()
-                .take_while(|e| e.idx >= evidence_start)
+                .take_while(|e| e.idx() >= evidence_start)
                 .find(|e| e.kind == "w" || e.kind == "x")
             {
-                return (Some(e.byte), e.kind, Some(e.idx));
+                return (Some(e.byte), e.kind.as_str(), Some(e.idx()));
             }
         }
         if evidence_start == 0 {
@@ -666,10 +742,16 @@ pub fn memshadow_worker_count(n: usize) -> usize {
     )
 }
 
-fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
+fn build_range(
+    trace: &Trace,
+    start: usize,
+    end: usize,
+    budget_bytes: usize,
+) -> Result<MemShadow, crate::parallel::BuildLimit> {
     let mut writes: Vec<MemRec> = Vec::new();
     let mut reads: Vec<MemRec> = Vec::new();
-    let mut bytes: BTreeMap<u64, Vec<ByteEvent>> = BTreeMap::new();
+    let mut bytes = ByteEvents::default();
+    let mut event_count = 0usize;
     for i in start..end {
         let rec = trace.record(i);
         let d = decode(rec.pc, rec.inst);
@@ -686,8 +768,10 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
                         addr,
                         size: op.size,
                         value: v,
+                        reserved: 0,
                     });
-                    splat_byte_slice(&mut bytes, addr, &raw_bytes, i, "w");
+                    event_count +=
+                        splat_byte_slice(&mut bytes, addr, &raw_bytes, i, ByteEventKind::Write);
                 }
             } else if let Some(raw_bytes) = bytes_of_read(trace, i, op, &d) {
                 let v = low_u64_from_le(&raw_bytes);
@@ -696,32 +780,38 @@ fn build_range(trace: &Trace, start: usize, end: usize) -> MemShadow {
                     addr,
                     size: op.size,
                     value: v,
+                    reserved: 0,
                 });
-                splat_byte_slice(&mut bytes, addr, &raw_bytes, i, "r");
+                event_count +=
+                    splat_byte_slice(&mut bytes, addr, &raw_bytes, i, ByteEventKind::Read);
             }
         }
+        let estimated = (writes.capacity().saturating_add(reads.capacity()))
+            .saturating_mul(32)
+            .saturating_add(bytes.estimated_heap_bytes_with_event_count(event_count));
+        crate::parallel::check_memory_budget("memshadow", estimated, budget_bytes)?;
     }
-    MemShadow {
-        writes,
-        reads,
+    Ok(MemShadow {
+        writes: writes.into(),
+        reads: reads.into(),
         bytes,
-        copy_sources: HashMap::new(),
+        copy_sources: CopySources::default(),
         snapshot: None,
-    }
+    })
 }
 
 fn merge_partials(partials: Vec<MemShadow>) -> MemShadow {
     let mut out = MemShadow {
-        writes: Vec::new(),
-        reads: Vec::new(),
-        bytes: BTreeMap::new(),
-        copy_sources: HashMap::new(),
+        writes: MemRecords::default(),
+        reads: MemRecords::default(),
+        bytes: ByteEvents::default(),
+        copy_sources: CopySources::default(),
         snapshot: None,
     };
     for mut partial in partials {
         out.writes.append(&mut partial.writes);
         out.reads.append(&mut partial.reads);
-        for (addr, mut events) in partial.bytes {
+        for (addr, mut events) in partial.bytes.into_building() {
             out.bytes.entry(addr).or_default().append(&mut events);
         }
     }
@@ -746,22 +836,39 @@ fn worker_trace_files(call_dir: &std::path::Path) -> Vec<PathBuf> {
     files
 }
 
-fn merge_worker_traces(trace: &Trace, mem: &mut MemShadow) {
+fn merge_worker_traces(
+    trace: &Trace,
+    mem: &mut MemShadow,
+    event_count: &mut usize,
+    budget_bytes: usize,
+) -> Result<(), crate::parallel::BuildLimit> {
     let files = worker_trace_files(trace.call_dir());
     if files.is_empty() {
-        return;
+        return Ok(());
     }
     let default_anchor = trace.len().saturating_sub(1);
+    let anchor_windows =
+        crate::memshadow_ext::load_worker_anchor_windows(trace.call_dir(), default_anchor);
     let mut added = false;
     for path in files {
-        let Ok(raw) = std::fs::read(&path) else {
+        let Ok(file) = std::fs::File::open(&path) else {
+            tracing::warn!(path = %path.display(), "cannot open worker trace");
             continue;
+        };
+        // SAFETY: worker records are read through a read-only mapping; an
+        // incomplete trailing record is excluded by integer division below.
+        let raw = match unsafe { Mmap::map(&file) } {
+            Ok(raw) => raw,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "cannot mmap worker trace");
+                continue;
+            }
         };
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let n = raw.len() / crate::trace::REC_SIZE;
         for i in 0..n {
             let anchor_idx = crate::memshadow_ext::worker_record_anchor_idx(
-                trace.call_dir(),
+                &anchor_windows,
                 file_name,
                 i,
                 n,
@@ -814,24 +921,43 @@ fn merge_worker_traces(trace: &Trace, mem: &mut MemShadow) {
                     addr,
                     size: op.size,
                     value: v,
+                    reserved: 0,
                 });
-                splat_byte_slice(&mut mem.bytes, addr, raw_bytes, anchor_idx, "x");
+                *event_count += splat_byte_slice(
+                    &mut mem.bytes,
+                    addr,
+                    raw_bytes,
+                    anchor_idx,
+                    ByteEventKind::External,
+                );
                 added = true;
             }
+            mem.ensure_budget_with_event_count(*event_count, budget_bytes)?;
         }
     }
     if added {
         mem.writes.sort_by_key(|rec| (rec.idx, rec.addr));
         for events in mem.bytes.values_mut() {
-            events.sort_by_key(|ev| ev.idx);
+            events.sort_by_key(|ev| ev.idx());
         }
     }
+    Ok(())
 }
 
-fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
+fn merge_external_writes(
+    trace: &Trace,
+    mem: &mut MemShadow,
+    event_count: &mut usize,
+    budget_bytes: usize,
+) -> Result<(), crate::parallel::BuildLimit> {
     let path = trace.call_dir().join(EXTERNAL_WRITES_FILE);
-    let Ok(raw) = std::fs::read(path) else {
-        return;
+    let Ok(file) = std::fs::File::open(path) else {
+        return Ok(());
+    };
+    // SAFETY: external write records are read through a read-only mapping;
+    // chunks_exact deliberately ignores an incomplete trailing record.
+    let Ok(raw) = (unsafe { Mmap::map(&file) }) else {
+        return Ok(());
     };
     let mut seen: BTreeSet<(usize, u64, u8)> = BTreeSet::new();
     for chunk in raw.as_chunks::<EXTERNAL_WRITE_RECORD_SIZE>().0 {
@@ -839,6 +965,9 @@ fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
         let Ok(idx) = usize::try_from(idx_u64) else {
             continue;
         };
+        if idx >= trace.len() {
+            continue;
+        }
         let addr = u64::from_le_bytes(chunk[8..16].try_into().unwrap());
         let byte = chunk[16];
         if !seen.insert((idx, addr, byte)) {
@@ -849,17 +978,20 @@ fn merge_external_writes(trace: &Trace, mem: &mut MemShadow) {
             addr,
             size: 1,
             value: byte as u64,
+            reserved: 0,
         });
-        mem.bytes.entry(addr).or_default().push(ByteEvent {
-            idx,
-            byte,
-            kind: "x",
-        });
+        mem.bytes
+            .entry(addr)
+            .or_default()
+            .push(ByteEvent::new(idx, byte, ByteEventKind::External));
+        *event_count = event_count.saturating_add(1);
+        mem.ensure_budget_with_event_count(*event_count, budget_bytes)?;
     }
     mem.writes.sort_by_key(|rec| (rec.idx, rec.addr));
     for events in mem.bytes.values_mut() {
-        events.sort_by_key(|ev| ev.idx);
+        events.sort_by_key(|ev| ev.idx());
     }
+    Ok(())
 }
 
 /// Flush a pending printable-ASCII run into `out` if it meets `min_len`,
@@ -881,18 +1013,19 @@ fn flush_run(
 
 /// Splat a slice of LE bytes into the per-addr event map starting at `addr`.
 fn splat_byte_slice(
-    bytes: &mut BTreeMap<u64, Vec<ByteEvent>>,
+    bytes: &mut ByteEvents,
     addr: u64,
     raw: &[u8],
     idx: usize,
-    kind: &'static str,
-) {
+    kind: ByteEventKind,
+) -> usize {
     for (o, &b) in raw.iter().enumerate() {
         bytes
             .entry(addr.wrapping_add(o as u64))
             .or_default()
-            .push(ByteEvent { idx, byte: b, kind });
+            .push(ByteEvent::new(idx, b, kind));
     }
+    raw.len()
 }
 
 fn low_u64_from_le(raw: &[u8]) -> u64 {
@@ -1074,6 +1207,24 @@ pub(crate) fn value_of_write(
 
 /// Bind reconstructed events to all inputs that affect them. Snapshots are
 /// loaded fresh and are not serialized in the event cache.
+fn load_snapshot_with_budget(
+    trace: &Trace,
+    current_bytes: usize,
+    budget_bytes: usize,
+) -> Result<Option<MemSnapshot>, crate::parallel::BuildLimit> {
+    let path = trace.call_dir().join(SNAPSHOT_FILE);
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return Ok(None);
+    };
+    let snapshot_bytes = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+    crate::parallel::check_memory_budget(
+        "memshadow_snapshot",
+        current_bytes.saturating_add(snapshot_bytes),
+        budget_bytes,
+    )?;
+    Ok(MemSnapshot::load(trace))
+}
+
 fn memory_input_digest(trace: &Trace) -> std::io::Result<[u8; 32]> {
     let mut hash = Sha256::new();
     hash.update(trace.digest());
@@ -1110,54 +1261,90 @@ fn memory_input_digest(trace: &Trace) -> std::io::Result<[u8; 32]> {
         if let Some(name) = worker_path.file_name().and_then(|n| n.to_str()) {
             hash.update(name.as_bytes());
         }
-        if let Ok(mut file) = std::fs::File::open(&worker_path) {
+        if let Ok(file) = std::fs::File::open(&worker_path) {
             hash.update([1]);
-            let mut buf = [0; 64 * 1024];
-            loop {
-                let n = file.read(&mut buf)?;
-                if n == 0 {
-                    break;
+            let metadata = file.metadata()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                // ctime cannot be reset by userspace after rewriting a worker;
+                // unlike hashing GiBs on every hot query, this keeps reload I/O bounded.
+                for value in [
+                    metadata.dev(),
+                    metadata.ino(),
+                    metadata.size(),
+                    metadata.mtime() as u64,
+                    metadata.mtime_nsec() as u64,
+                    metadata.ctime() as u64,
+                    metadata.ctime_nsec() as u64,
+                ] {
+                    hash.update(value.to_le_bytes());
                 }
-                hash.update(&buf[..n]);
+            }
+            #[cfg(not(unix))]
+            {
+                hash.update(metadata.len().to_le_bytes());
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(elapsed) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    {
+                        hash.update(elapsed.as_nanos().to_le_bytes());
+                    }
+                }
             }
         }
     }
     Ok(hash.finalize().into())
 }
 
-fn write_memrec(w: &mut impl Write, rec: &MemRec) -> std::io::Result<()> {
-    write_u64(w, rec.idx as u64)?;
-    write_u64(w, rec.addr)?;
-    write_u32(w, rec.size)?;
-    write_u64(w, rec.value)
+fn section_end(offset: usize, len: usize, width: usize) -> std::io::Result<usize> {
+    len.checked_mul(width)
+        .and_then(|bytes| offset.checked_add(bytes))
+        .ok_or_else(|| invalid_data("memshadow sidecar section offset overflow"))
 }
 
-fn read_memrec(r: &mut impl Read) -> std::io::Result<MemRec> {
-    Ok(MemRec {
-        idx: read_len(r)?,
-        addr: read_u64(r)?,
-        size: read_u32(r)?,
-        value: read_u64(r)?,
-    })
+fn read_sidecar_len(
+    raw: &[u8],
+    offset: usize,
+    file_len: usize,
+    width: usize,
+) -> std::io::Result<usize> {
+    let len = sidecar_usize(raw, offset)?;
+    if len > file_len / width {
+        return Err(invalid_data("sidecar length exceeds size limit"));
+    }
+    Ok(len)
 }
 
-fn kind_to_code(kind: &str) -> std::io::Result<u8> {
-    match kind {
-        "r" => Ok(0),
-        "w" => Ok(1),
-        "x" => Ok(2),
-        _ => Err(invalid_data("bad memshadow event kind")),
+fn sidecar_usize(raw: &[u8], offset: usize) -> std::io::Result<usize> {
+    usize::try_from(u64_at(raw, offset)?).map_err(|_| invalid_data("sidecar usize overflow"))
+}
+
+fn u32_at(raw: &[u8], offset: usize) -> std::io::Result<u32> {
+    let bytes = raw
+        .get(offset..offset + 4)
+        .ok_or_else(|| invalid_data("truncated memshadow sidecar u32"))?;
+    Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| {
+        invalid_data("truncated memshadow sidecar u32")
+    })?))
+}
+
+fn u64_at(raw: &[u8], offset: usize) -> std::io::Result<u64> {
+    let bytes = raw
+        .get(offset..offset + 8)
+        .ok_or_else(|| invalid_data("truncated memshadow sidecar u64"))?;
+    Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+        invalid_data("truncated memshadow sidecar u64")
+    })?))
+}
+
+fn byte_events_as_bytes(events: &[ByteEvent]) -> &[u8] {
+    // SAFETY: ByteEvent implements NoUninit with explicit reserved bytes, so
+    // every byte in the slice is initialized and valid to serialize.
+    unsafe {
+        std::slice::from_raw_parts(events.as_ptr().cast::<u8>(), std::mem::size_of_val(events))
     }
 }
 
-fn code_to_kind(code: u8) -> std::io::Result<&'static str> {
-    match code {
-        0 => Ok("r"),
-        1 => Ok("w"),
-        2 => Ok("x"),
-        _ => Err(invalid_data("bad memshadow event kind code")),
-    }
-}
 /// One byte's provenance in a Tenet-style export.
 #[derive(Debug, Clone, Serialize)]
 pub struct TenetByte {
@@ -1241,17 +1428,13 @@ mod tests {
                 addr: 0x7000,
                 size: 1,
                 value: 0x41,
-            }],
-            reads: Vec::new(),
-            bytes: BTreeMap::from([(
-                0x7000,
-                vec![ByteEvent {
-                    idx: 1,
-                    byte: 0x41,
-                    kind: "w",
-                }],
-            )]),
-            copy_sources: HashMap::new(),
+                reserved: 0,
+            }]
+            .into(),
+            reads: MemRecords::default(),
+            bytes: BTreeMap::from([(0x7000, vec![ByteEvent::new(1, 0x41, ByteEventKind::Write)])])
+                .into(),
+            copy_sources: CopySources::default(),
             snapshot: None,
         };
         let partial_b = MemShadow {
@@ -1260,17 +1443,13 @@ mod tests {
                 addr: 0x7000,
                 size: 1,
                 value: 0x42,
-            }],
-            reads: Vec::new(),
-            bytes: BTreeMap::from([(
-                0x7000,
-                vec![ByteEvent {
-                    idx: 3,
-                    byte: 0x42,
-                    kind: "w",
-                }],
-            )]),
-            copy_sources: HashMap::new(),
+                reserved: 0,
+            }]
+            .into(),
+            reads: MemRecords::default(),
+            bytes: BTreeMap::from([(0x7000, vec![ByteEvent::new(3, 0x42, ByteEventKind::Write)])])
+                .into(),
+            copy_sources: CopySources::default(),
             snapshot: None,
         };
 
@@ -1282,7 +1461,7 @@ mod tests {
                 .get(&0x7000)
                 .unwrap()
                 .iter()
-                .map(|ev| ev.idx)
+                .map(|ev| ev.idx())
                 .collect::<Vec<_>>(),
             vec![1, 3]
         );
@@ -1331,17 +1510,13 @@ mod tests {
         let mut bytes = BTreeMap::new();
         bytes.insert(
             0x2000u64,
-            vec![ByteEvent {
-                idx: 5,
-                byte: 0x99,
-                kind: "w",
-            }],
+            vec![ByteEvent::new(5, 0x99, ByteEventKind::Write)],
         );
         let mem = MemShadow {
-            writes: Vec::new(),
-            reads: Vec::new(),
-            bytes,
-            copy_sources: HashMap::new(),
+            writes: MemRecords::default(),
+            reads: MemRecords::default(),
+            bytes: bytes.into(),
+            copy_sources: CopySources::default(),
             snapshot: Some(snap),
         };
 
@@ -1356,10 +1531,10 @@ mod tests {
     #[test]
     fn byte_at_no_snapshot_is_unknown() {
         let mem = MemShadow {
-            writes: Vec::new(),
-            reads: Vec::new(),
-            bytes: BTreeMap::new(),
-            copy_sources: HashMap::new(),
+            writes: MemRecords::default(),
+            reads: MemRecords::default(),
+            bytes: ByteEvents::default(),
+            copy_sources: CopySources::default(),
             snapshot: None,
         };
         assert_eq!(mem.byte_at(0x1000, 10), (None, "??", None));

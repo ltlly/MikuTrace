@@ -44,6 +44,9 @@ pub fn run() -> anyhow::Result<()> {
             regs,
             indices,
             detail,
+            detail_pointers,
+            detail_memory,
+            detail_cfg,
         }) => {
             let count = end.map_or(count, |end_idx| end_idx.saturating_sub(start));
             query_json(
@@ -55,6 +58,9 @@ pub fn run() -> anyhow::Result<()> {
                     regs,
                     indices,
                     detail,
+                    detail_pointers,
+                    detail_memory,
+                    detail_cfg,
                 }),
             )
         }

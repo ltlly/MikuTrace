@@ -61,6 +61,7 @@ pub fn fn_summary(
     q: FnSummaryQuery,
 ) -> Result<FnSummaryResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.cfg()?;
     let response = fn_summary_response(&inner, q);
     Ok(response)
 }
@@ -71,6 +72,7 @@ fn fn_summary_response(
 ) -> FnSummaryResponse {
     let mut blocks = inner
         .cfg()
+        .expect("CFG preloaded")
         .blocks()
         .into_iter()
         .filter(|block| {
@@ -127,8 +129,13 @@ fn fn_summary_response(
         .map(|block| block.start_pc)
         .collect::<std::collections::HashSet<_>>();
     let mut callee_counts = std::collections::BTreeMap::<u64, u64>::new();
-    for edge in inner.cfg().graph.edge_references() {
-        let Some(src) = inner.cfg().graph.node_weight(edge.source()) else {
+    for edge in inner.cfg().expect("CFG preloaded").graph.edge_references() {
+        let Some(src) = inner
+            .cfg()
+            .expect("CFG preloaded")
+            .graph
+            .node_weight(edge.source())
+        else {
             continue;
         };
         if !fn_starts.contains(&src.start_pc) {
@@ -141,7 +148,12 @@ fn fn_summary_response(
         if !is_call {
             continue;
         }
-        let Some(dst) = inner.cfg().graph.node_weight(edge.target()) else {
+        let Some(dst) = inner
+            .cfg()
+            .expect("CFG preloaded")
+            .graph
+            .node_weight(edge.target())
+        else {
             continue;
         };
         *callee_counts.entry(dst.start_pc).or_default() += edge.weight().count;

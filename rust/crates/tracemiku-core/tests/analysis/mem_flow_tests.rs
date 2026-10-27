@@ -96,6 +96,26 @@ fn memory_accesses_returns_observed_byte_events() {
 }
 
 #[test]
+fn memory_accesses_uses_trace_stream_and_memshadow_without_full_index() {
+    let (_tmp, cd) = synth_call_dir();
+    let app = AnalysisContext::load(cd).expect("load analysis context");
+    let resp = analysis_support::query(&app, "memory-accesses?addr=0x7000&size=1", None);
+    assert_eq!(resp.error_code(), None);
+    let value: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+    assert_eq!(value["returned"], 2);
+    assert_eq!(value["events"][0]["bytes"], serde_json::json!([65]));
+    let components = app.inner.loaded_components();
+    assert_eq!(
+        components[0], "idle",
+        "memory accesses must not build Index"
+    );
+    assert_eq!(
+        components[3], "ready",
+        "memory accesses still use MemShadow"
+    );
+}
+
+#[test]
 fn memory_accesses_filters_time_and_write_kind() {
     let (_tmp, cd) = synth_call_dir();
     let (status, v) = get(

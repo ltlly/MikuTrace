@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::analysis::context::AnalysisContext;
+use crate::analysis::AnalysisError;
 use crate::prelude::MemShadow;
 
 const MAX_STRING_LEN: usize = 4_096;
@@ -86,9 +87,11 @@ pub(crate) fn preview_call(
     state: &AnalysisContext,
     call: &super::jni_scan::JniCallRecord,
     max_len: usize,
-) -> Option<JniStringHit> {
-    let (arg_name, direction) = jni_string_op(&call.jni_fn)?;
-    let mem = state.inner.memshadow();
+) -> Result<Option<JniStringHit>, AnalysisError> {
+    let Some((arg_name, direction)) = jni_string_op(&call.jni_fn) else {
+        return Ok(None);
+    };
+    let mem = state.inner.memshadow()?;
     let (buffer_addr, cursor) = match direction {
         "out_x0"
             if call.idx + 1 < state.inner.trace.len()
@@ -112,7 +115,7 @@ pub(crate) fn preview_call(
     } else {
         (None, None, None, "return_unobserved")
     };
-    Some(JniStringHit {
+    Ok(Some(JniStringHit {
         idx: call.idx,
         pc: format!("{:#x}", call.pc),
         rel: call.rel.map(|rel| format!("{rel:#x}")),
@@ -127,5 +130,5 @@ pub(crate) fn preview_call(
         bytes_hex,
         string,
         read_stop,
-    })
+    }))
 }

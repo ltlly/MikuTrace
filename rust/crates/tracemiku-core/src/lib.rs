@@ -21,6 +21,7 @@ pub mod function_index;
 pub mod index;
 pub mod memshadow;
 mod memshadow_ext;
+mod memshadow_store;
 pub mod parallel;
 pub mod prelude;
 pub mod replay;

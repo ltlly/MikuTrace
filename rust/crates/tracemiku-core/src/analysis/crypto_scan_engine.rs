@@ -255,7 +255,7 @@ fn match_pattern_at(mem: &MemShadow, addr: u64, pattern: &[u8]) -> Option<usize>
         if last.byte != *want {
             return None;
         }
-        first_idx = Some(first_idx.map_or(last.idx, |old| old.min(last.idx)));
+        first_idx = Some(first_idx.map_or(last.idx(), |old| old.min(last.idx())));
     }
     first_idx
 }
@@ -406,9 +406,11 @@ fn find_context_final_update_idx(
     for w in 0..num_words {
         if let Some(evs) = mem.bytes.get(&(addr + (w * 4) as u64)) {
             for ev in evs {
-                if ev.idx > init_idx && ev.idx < next_init_idx && (ev.kind == "w" || ev.kind == "x")
+                if ev.idx() > init_idx
+                    && ev.idx() < next_init_idx
+                    && (ev.kind == "w" || ev.kind == "x")
                 {
-                    word_writes.push(ev.idx);
+                    word_writes.push(ev.idx());
                 }
             }
         }
@@ -425,8 +427,8 @@ fn find_context_final_update_idx(
             let mut written_in_window = false;
             for b in 0..4 {
                 if let Some(evs) = mem.bytes.get(&(addr + (w * 4 + b) as u64)) {
-                    let lo = evs.partition_point(|e| e.idx < window_start);
-                    let hi = evs.partition_point(|e| e.idx <= end_idx);
+                    let lo = evs.partition_point(|e| e.idx() < window_start);
+                    let hi = evs.partition_point(|e| e.idx() <= end_idx);
                     if evs[lo..hi].iter().any(|e| e.kind == "w" || e.kind == "x") {
                         written_in_window = true;
                     }
@@ -464,12 +466,12 @@ fn find_context_final_update_idx(
     for offset in 0..iv_len {
         if let Some(evs) = mem.bytes.get(&(addr + offset as u64)) {
             for ev in evs {
-                if ev.idx > init_idx
-                    && ev.idx < next_init_idx
+                if ev.idx() > init_idx
+                    && ev.idx() < next_init_idx
                     && (ev.kind == "w" || ev.kind == "x")
-                    && ev.idx > fallback
+                    && ev.idx() > fallback
                 {
-                    fallback = ev.idx;
+                    fallback = ev.idx();
                 }
             }
         }
@@ -512,11 +514,11 @@ fn byte_validity_intervals(mem: &MemShadow, addr: u64, want: u8) -> Vec<(usize, 
         for ev in evs {
             if ev.byte == want {
                 if active_start.is_none() {
-                    active_start = Some(ev.idx);
+                    active_start = Some(ev.idx());
                 }
             } else if let Some(start) = active_start.take() {
-                if start < ev.idx {
-                    intervals.push((start, ev.idx));
+                if start < ev.idx() {
+                    intervals.push((start, ev.idx()));
                 }
             }
         }

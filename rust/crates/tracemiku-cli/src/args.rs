@@ -60,9 +60,18 @@ pub(super) enum Cmd {
         /// 逗号分隔的记录下标；与区间查询使用同一输出结构。
         #[arg(long, value_delimiter = ',')]
         indices: Option<Vec<usize>>,
-        /// 加载完整寄存器、符号、CFG 和内存注释；需要全 trace 分析。
+        /// 加载完整寄存器和符号；CFG、指针及内存历史需分别显式开启。
         #[arg(long)]
         detail: bool,
+        /// 为 --detail 启用内存解引用和字符串指针注释；构建 MemShadow。
+        #[arg(long, requires = "detail")]
+        detail_pointers: bool,
+        /// 为 --detail 启用所选内存操作数的逐字节历史；构建 MemShadow。
+        #[arg(long, requires = "detail")]
+        detail_memory: bool,
+        /// 为 --detail 启用基本块和执行次数；构建 CFG。
+        #[arg(long, requires = "detail")]
+        detail_cfg: bool,
     },
     /// 查询同一 PC 的所有执行位置，按游标前后分页。
     #[command(name = "pc-hits")]

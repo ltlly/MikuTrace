@@ -131,6 +131,7 @@ fn resolve_fn_name(
 
 pub fn coverage(state: &AnalysisContext, q: CoverageQuery) -> Result<Value, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.cfg()?;
     let value = coverage_response(&inner, q);
     Ok(value)
 }
@@ -140,7 +141,7 @@ fn coverage_response(inner: &crate::analysis::context::AnalysisData, q: Coverage
         Ok(n) => n,
         Err(v) => return v,
     };
-    let cfg = &inner.cfg();
+    let cfg = inner.cfg().expect("CFG preloaded");
 
     // Collect this function's executed blocks.
     let mut block_count = 0usize;

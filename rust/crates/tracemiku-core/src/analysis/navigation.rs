@@ -55,6 +55,7 @@ pub struct BlockDetail {
 pub fn block(state: &AnalysisContext, q: PcQuery) -> Result<BlockDetail, AnalysisError> {
     let pc = parse::parse_hex_u64(&q.pc).ok_or(AnalysisError::invalid("invalid query"))?;
     let inner = state.inner.clone();
+    let _ = inner.cfg()?;
     let detail = (block_detail_response(&inner, pc))
         .ok_or(AnalysisError::not_found("trace record or value not found"))?;
     Ok(detail)
@@ -64,7 +65,7 @@ fn block_detail_response(
     inner: &crate::analysis::context::AnalysisData,
     pc: u64,
 ) -> Option<BlockDetail> {
-    let block = inner.cfg().block_containing(pc)?;
+    let block = inner.cfg().expect("CFG preloaded").block_containing(pc)?;
     let (func_name, off_u64) = inner.symbols().lookup(block.start_pc);
     let func = (!func_name.is_empty()).then_some(func_name);
     let off = func.as_ref().map(|_| format!("{off_u64:#x}"));
@@ -104,7 +105,10 @@ fn block_detail_response(
             }
         })
         .collect();
-    let all_exits = inner.cfg().edges_from(block.start_pc);
+    let all_exits = inner
+        .cfg()
+        .expect("CFG preloaded")
+        .edges_from(block.start_pc);
     let total_exits = all_exits.len();
     let exits_truncated = total_exits > MAX_BLOCK_EXITS;
     let exits = all_exits
@@ -146,23 +150,26 @@ pub struct LoopsResponse {
 
 pub fn loops(state: &AnalysisContext) -> Result<LoopsResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.cfg()?;
     let response = loops_response(&inner);
     Ok(response)
 }
 
 fn loops_response(inner: &crate::analysis::context::AnalysisData) -> LoopsResponse {
     let mut groups: BTreeMap<u32, Vec<u64>> = BTreeMap::new();
-    for block in inner.cfg().blocks() {
+    for block in inner.cfg().expect("CFG preloaded").blocks() {
         groups.entry(block.scc_id).or_default().push(block.start_pc);
     }
     let self_edges: BTreeSet<u64> = inner
         .cfg()
+        .expect("CFG preloaded")
         .graph
         .edge_references()
         .filter_map(|edge| {
             (edge.source() == edge.target()).then(|| {
                 inner
                     .cfg()
+                    .expect("CFG preloaded")
                     .graph
                     .node_weight(edge.source())
                     .map(|b| b.start_pc)

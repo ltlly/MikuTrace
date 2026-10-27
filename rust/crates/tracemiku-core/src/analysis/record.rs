@@ -11,6 +11,29 @@ use crate::prelude::*;
 
 use crate::analysis::context::AnalysisContext;
 
+const MAX_DETAIL_MEMORY_EVENTS: usize = 256;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecordDetailOptions {
+    pub pointers: bool,
+    pub memory: bool,
+    pub cfg: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecordMemoryEvent {
+    pub idx: usize,
+    pub kind: &'static str,
+    pub byte: u8,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecordMemoryByteHistory {
+    pub addr: String,
+    pub truncated: bool,
+    pub events: Vec<RecordMemoryEvent>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RecordDetail {
     pub idx: usize,
@@ -24,6 +47,10 @@ pub struct RecordDetail {
     pub regs_annotated: BTreeMap<String, String>,
     pub regs_def: Vec<String>,
     pub regs_use: Vec<String>,
+    pub pointer_status: &'static str,
+    pub memory_status: &'static str,
+    pub memory_history: Option<Vec<RecordMemoryByteHistory>>,
+    pub memory_truncated: bool,
     pub exec_count: Option<u64>,
     pub block_pc: Option<String>,
     pub cfg_status: &'static str,
@@ -33,6 +60,14 @@ pub struct RecordDetail {
 }
 
 pub fn record(state: &AnalysisContext, idx: usize) -> Result<RecordDetail, AnalysisError> {
+    record_with_options(state, idx, RecordDetailOptions::default())
+}
+
+pub fn record_with_options(
+    state: &AnalysisContext,
+    idx: usize,
+    options: RecordDetailOptions,
+) -> Result<RecordDetail, AnalysisError> {
     let inner = &state.inner;
     if idx >= inner.trace.len() {
         return Err(AnalysisError::not_found("trace record or value not found"));
@@ -57,27 +92,63 @@ pub fn record(state: &AnalysisContext, idx: usize) -> Result<RecordDetail, Analy
         None
     };
     let sp = r.reg("sp").unwrap_or(0);
-    let memshadow = Some(inner.memshadow());
+    let memshadow = (options.pointers || options.memory)
+        .then(|| inner.memshadow())
+        .transpose()?;
+    let cfg = options.cfg.then(|| inner.cfg()).transpose()?;
+    let local_symbols = if options.cfg || idx == 0 {
+        None
+    } else {
+        crate::symbols::auto_symbol_for_direct_call(&inner.trace, &inner.modules, idx - 1).map(
+            |(target, name)| {
+                let mut symbols = inner.record_symbols().clone();
+                symbols.add_resolved(target, name, &inner.modules);
+                symbols.freeze();
+                symbols
+            },
+        )
+    };
+    let symbols = if options.cfg {
+        inner.symbols()
+    } else if let Some(symbols) = local_symbols.as_ref() {
+        symbols
+    } else {
+        inner.record_symbols()
+    };
     let regs_annotated = names
         .iter()
         .filter_map(|nm| {
             r.reg(nm).map(|v| {
                 (
                     (*nm).to_string(),
-                    classify_reg_value(inner, memshadow, v, idx, sp),
+                    classify_reg_value_with_symbols(
+                        inner,
+                        options.pointers.then_some(memshadow).flatten(),
+                        symbols,
+                        v,
+                        idx,
+                        sp,
+                    ),
                 )
             })
         })
         .collect();
+    let (memory_history, memory_truncated) = if options.memory {
+        let (history, truncated) =
+            record_memory_history(&r, &d, memshadow.expect("enabled memory"));
+        (Some(history), truncated)
+    } else {
+        (None, false)
+    };
 
     // Symbol resolution (M2-γ).
-    let (func_name, func_off) = inner.symbols().lookup(r.pc);
+    let (func_name, func_off) = symbols.lookup(r.pc);
     let (func, off) = if func_name.is_empty() {
         (None, None)
     } else {
         (Some(func_name), Some(format!("{func_off:#x}")))
     };
-    let block = inner.cfg().block_containing(r.pc);
+    let block = cfg.and_then(|cfg| cfg.block_containing(r.pc));
     let exec_count = block.map(|b| b.executions);
     let block_pc = block.map(|b| format!("{:#x}", b.start_pc));
 
@@ -93,13 +164,63 @@ pub fn record(state: &AnalysisContext, idx: usize) -> Result<RecordDetail, Analy
         regs_annotated,
         regs_def: d.regs_def.to_vec(),
         regs_use: d.regs_use.to_vec(),
+        pointer_status: if options.pointers {
+            "ready"
+        } else {
+            "disabled"
+        },
+        memory_status: if !options.memory {
+            "disabled"
+        } else if memory_truncated {
+            "truncated"
+        } else {
+            "ready"
+        },
+        memory_history,
+        memory_truncated,
         exec_count,
         block_pc,
-        cfg_status: "ready",
+        cfg_status: if options.cfg { "ready" } else { "disabled" },
         is_branch: d.is_branch,
         is_call: d.is_call,
         is_ret: d.is_ret,
     })
+}
+
+fn record_memory_history(
+    record: &crate::trace::Record,
+    decoded: &crate::disasm::DecodedInsn,
+    mem: &crate::memshadow::MemShadow,
+) -> (Vec<RecordMemoryByteHistory>, bool) {
+    let mut history = Vec::new();
+    let mut remaining = MAX_DETAIL_MEMORY_EVENTS;
+    let mut truncated = false;
+    for op in decoded.mem_op.iter().filter(|op| !op.base.is_empty()) {
+        let base = crate::disasm::addr_of(record, op);
+        for offset in 0..u64::from(op.size) {
+            let addr = base.wrapping_add(offset);
+            let Some(events) = mem.bytes.get(&addr) else {
+                continue;
+            };
+            let take = events.len().min(remaining);
+            let event_truncated = take < events.len();
+            truncated |= event_truncated;
+            remaining = remaining.saturating_sub(take);
+            history.push(RecordMemoryByteHistory {
+                addr: format!("{addr:#x}"),
+                truncated: event_truncated,
+                events: events[events.len() - take..]
+                    .iter()
+                    .map(|event| RecordMemoryEvent {
+                        idx: event.idx(),
+                        kind: event.kind.as_str(),
+                        byte: event.byte,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    (history, truncated)
 }
 
 fn regs_map(record: &crate::trace::Record, names: &[&str]) -> BTreeMap<String, String> {
@@ -115,6 +236,17 @@ fn regs_map(record: &crate::trace::Record, names: &[&str]) -> BTreeMap<String, S
 pub(crate) fn classify_reg_value(
     inner: &crate::analysis::context::AnalysisData,
     memshadow: Option<&crate::memshadow::MemShadow>,
+    value: u64,
+    idx: usize,
+    sp: u64,
+) -> String {
+    classify_reg_value_with_symbols(inner, memshadow, inner.symbols(), value, idx, sp)
+}
+
+fn classify_reg_value_with_symbols(
+    inner: &crate::analysis::context::AnalysisData,
+    memshadow: Option<&crate::memshadow::MemShadow>,
+    symbols: &SymbolMap,
     value: u64,
     idx: usize,
     sp: u64,
@@ -148,7 +280,7 @@ pub(crate) fn classify_reg_value(
                 .as_ref()
                 .is_some_and(|m| m.name == module.name)
             {
-                let (fname, foff) = inner.symbols().lookup(cur);
+                let (fname, foff) = symbols.lookup(cur);
                 if !fname.is_empty() {
                     parts.push(format!("[{fname}+{foff:#x}]"));
                 } else {

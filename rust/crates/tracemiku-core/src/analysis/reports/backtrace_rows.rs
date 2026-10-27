@@ -373,11 +373,9 @@ pub(super) fn upstream_writer_for_def_on(
             "kind": kind,
         }));
     };
+    let memshadow = context.inner.memshadow()?;
     let unlogged_write_gap = (0..size).find_map(|off| {
-        context
-            .inner
-            .memshadow()
-            .unlogged_write_gap_before(addr.saturating_add(off), idx.saturating_add(1))
+        memshadow.unlogged_write_gap_before(addr.saturating_add(off), idx.saturating_add(1))
     });
     let idx_lo = idx.saturating_sub(lookback);
     let idx_hi = idx;

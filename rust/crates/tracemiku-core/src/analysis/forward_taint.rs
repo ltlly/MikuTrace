@@ -101,6 +101,9 @@ pub fn forward_taint(
     q: ForwardTaintQuery,
 ) -> Result<ForwardTaintResponse, AnalysisError> {
     let inner = state.inner.clone();
+    if q.through_mem {
+        let _ = inner.memshadow()?;
+    }
     let response = forward_taint_response(&inner, q);
     Ok(response)
 }
@@ -117,7 +120,7 @@ fn forward_taint_response(
         HashSet::new()
     };
     let mem_arg = if q.through_mem {
-        Some(inner.memshadow())
+        Some(inner.memshadow_if_ready().expect("memshadow preloaded"))
     } else {
         None
     };

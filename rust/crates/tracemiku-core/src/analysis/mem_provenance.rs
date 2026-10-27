@@ -55,19 +55,19 @@ pub fn mem_provenance(
     addr.checked_add(count as u64 - 1)
         .ok_or_else(|| AnalysisError::invalid("address range overflows u64"))?;
     let at = q.at.unwrap_or(usize::MAX);
-    let mem = state.inner.memshadow();
+    let mem = state.inner.memshadow()?;
     let mut bytes = Vec::with_capacity(count);
     let mut writer_runs: Vec<WriterRun> = Vec::new();
     for offset in 0..count {
         let a = addr + offset as u64;
         let (byte, kind, source_idx) = mem.byte_at(a, at as u64);
         let shadow_writer = mem.bytes.get(&a).and_then(|events| {
-            let end = events.partition_point(|e| e.idx <= at);
+            let end = events.partition_point(|e| e.idx() <= at);
             events[..end]
                 .iter()
                 .rev()
                 .find(|e| e.kind == "w" || e.kind == "x")
-                .map(|e| (e.idx, e.kind == "x"))
+                .map(|e| (e.idx(), e.kind == "x"))
         });
         let writer = shadow_writer;
         let last_writer = writer.map(|(idx, external)| {

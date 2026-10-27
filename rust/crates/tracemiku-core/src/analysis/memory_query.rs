@@ -81,6 +81,7 @@ pub fn last_write_of_addr(
         });
     };
     let inner = state.inner.clone();
+    let _ = inner.memshadow()?;
     let response = last_write_of_addr_response(&inner, q, addr);
     Ok(response)
 }
@@ -107,10 +108,10 @@ fn build_byte_history(
             let mut last_write_idx = None;
             let mut last_write_byte = None;
             if let Some(evs) = mem.bytes.get(&b_addr) {
-                let pos = evs.partition_point(|ev| ev.idx < before);
+                let pos = evs.partition_point(|ev| ev.idx() < before);
                 for ev in evs[..pos].iter().rev() {
                     if ev.kind == "w" || ev.kind == "x" {
-                        last_write_idx = Some(ev.idx);
+                        last_write_idx = Some(ev.idx());
                         last_write_byte = Some(ev.byte);
                         break;
                     }
@@ -144,7 +145,7 @@ fn last_write_of_addr_response(
     if q.with_external {
         return last_write_of_addr_response_from_memshadow(inner, q, addr, before, query_size);
     }
-    let mem = inner.memshadow();
+    let mem = inner.memshadow_if_ready().expect("MemShadow preloaded");
     let (unlogged_write_gap, byte_history) = build_byte_history(mem, addr, query_size, before);
     let mut last_seen_idx: Option<usize> = None;
     let mut writes_before = 0usize;
@@ -201,7 +202,7 @@ fn last_write_of_addr_response(
                 if let Some(ev) = mem.bytes.get(&base.saturating_add(o)).and_then(|evs| {
                     evs.iter()
                         .rev()
-                        .find(|e| e.idx == writer_idx && e.kind == "w")
+                        .find(|e| e.idx() == writer_idx && e.kind == "w")
                 }) {
                     val |= u64::from(ev.byte) << (o * 8);
                     any = true;
@@ -247,7 +248,7 @@ fn last_write_of_addr_response_from_memshadow(
     before: usize,
     query_size: u32,
 ) -> LastWriteOfAddrResponse {
-    let mem = inner.memshadow();
+    let mem = inner.memshadow_if_ready().expect("MemShadow preloaded");
     let (unlogged_write_gap, byte_history) = build_byte_history(mem, addr, query_size, before);
     let mut writes_before = 0usize;
     let mut writes_after = 0usize;
@@ -330,8 +331,8 @@ fn mem_write_kind_at(
     mem.bytes
         .get(&addr)?
         .iter()
-        .find(|ev| ev.idx == idx && (ev.kind == "w" || ev.kind == "x"))
-        .map(|ev| ev.kind)
+        .find(|ev| ev.idx() == idx && (ev.kind == "w" || ev.kind == "x"))
+        .map(|ev| ev.kind.as_str())
 }
 
 #[derive(Debug, Deserialize)]
@@ -387,6 +388,7 @@ pub fn mem_writes_in_range(
     q: MemWritesInRangeQuery,
 ) -> Result<MemWritesInRangeResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.memshadow()?;
     mem_writes_in_range_response(&inner, q)
 }
 
@@ -405,7 +407,7 @@ fn mem_writes_in_range_response(
     let src_byte = parse_optional_int("src_byte", &q.src_byte)?.map(|v| (v & 0xff) as u8);
     let max = effective_writes_max(q.max);
     if q.with_external || src_byte.is_some() {
-        let memshadow = inner.memshadow();
+        let memshadow = inner.memshadow_if_ready().expect("MemShadow preloaded");
         return Ok(mem_writes_in_range_from_memshadow(
             inner, max, lo, hi, addr_lo, addr_hi, src_byte, memshadow,
         ));
@@ -597,6 +599,7 @@ pub fn idxs_touching_range(
     q: TouchingRangeQuery,
 ) -> Result<TouchingRangeResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.memshadow()?;
     let response = idxs_touching_range_response(&inner, q);
     Ok(response)
 }
@@ -607,7 +610,11 @@ fn idxs_touching_range_response(
 ) -> TouchingRangeResponse {
     let start = parse::parse_hex_u64(&q.addr).unwrap_or(0);
     let size = q.size.max(1);
-    let (writers, readers) = touching_range_idxs_from_memshadow(inner.memshadow(), start, size);
+    let (writers, readers) = touching_range_idxs_from_memshadow(
+        inner.memshadow_if_ready().expect("MemShadow preloaded"),
+        start,
+        size,
+    );
     let (writers_before, writers_after) = split_around_cursor(&writers, q.cursor, q.limit);
     let (readers_before, readers_after) = split_around_cursor(&readers, q.cursor, q.limit);
     TouchingRangeResponse {
@@ -664,6 +671,7 @@ pub fn idxs_touching_addr(
     q: TouchingAddrQuery,
 ) -> Result<TouchingAddrResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.memshadow()?;
     let response = idxs_touching_addr_response(&inner, q);
     Ok(response)
 }
@@ -673,7 +681,11 @@ fn idxs_touching_addr_response(
     q: TouchingAddrQuery,
 ) -> TouchingAddrResponse {
     let addr = parse::parse_hex_u64(&q.addr).unwrap_or(0);
-    let mut entries = touching_addr_entries_from_memshadow(inner.memshadow(), addr, q.with_bytes);
+    let mut entries = touching_addr_entries_from_memshadow(
+        inner.memshadow_if_ready().expect("MemShadow preloaded"),
+        addr,
+        q.with_bytes,
+    );
     entries.sort_by_key(|e| e.idx);
     let cut = entries.partition_point(|e| e.idx < q.cursor);
     let limit = effective_touch_limit(q.limit);
@@ -704,12 +716,12 @@ fn touching_addr_entries_from_memshadow(
                 .iter()
                 .filter_map(|ev| {
                     let kind = if ev.kind == "r" || ev.kind == "w" || ev.kind == "x" {
-                        ev.kind
+                        ev.kind.as_str()
                     } else {
                         return None;
                     };
                     Some(TouchingAddrEntry {
-                        idx: ev.idx,
+                        idx: ev.idx(),
                         kind,
                         byte: include_byte.then_some(ev.byte),
                     })
@@ -762,6 +774,7 @@ pub fn find_mem_pattern(
     q: FindMemPatternQuery,
 ) -> Result<FindMemPatternResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.memshadow()?;
     let response = find_mem_pattern_response(&inner, q);
     Ok(response)
 }
@@ -797,11 +810,11 @@ fn byte_validity_intervals(
         for ev in evs {
             if ev.byte == want {
                 if current_start.is_none() {
-                    current_start = Some(ev.idx);
+                    current_start = Some(ev.idx());
                 }
             } else if let Some(start) = current_start.take() {
-                if start < ev.idx {
-                    intervals.push((start, ev.idx));
+                if start < ev.idx() {
+                    intervals.push((start, ev.idx()));
                 }
             }
         }
@@ -841,9 +854,9 @@ fn overwritten_after(
     for (offset, &want) in pattern.iter().enumerate() {
         let b_addr = addr.saturating_add(offset as u64);
         if let Some(evs) = mem.bytes.get(&b_addr) {
-            let pos = evs.partition_point(|ev| (ev.idx as u64) <= after_idx);
+            let pos = evs.partition_point(|ev| (ev.idx() as u64) <= after_idx);
             if let Some(change_ev) = evs[pos..].iter().find(|ev| ev.byte != want) {
-                earliest = Some(earliest.map_or(change_ev.idx, |old| old.min(change_ev.idx)));
+                earliest = Some(earliest.map_or(change_ev.idx(), |old| old.min(change_ev.idx())));
             }
         }
     }
@@ -859,7 +872,7 @@ fn find_mem_pattern_response(
     let mut count = 0usize;
     let mut hits = Vec::new();
     if !pattern.is_empty() {
-        let mem = inner.memshadow();
+        let mem = inner.memshadow_if_ready().expect("MemShadow preloaded");
         if q.since >= 0 {
             let cursor = q.since as u64;
             for &addr in mem.bytes.keys() {
@@ -1037,9 +1050,9 @@ fn touching_range_idxs_from_memshadow(
     for (_, events) in mem.bytes.range(start..end) {
         for ev in events {
             if ev.kind == "r" {
-                readers.push(ev.idx);
+                readers.push(ev.idx());
             } else if ev.kind == "w" || ev.kind == "x" {
-                writers.push(ev.idx);
+                writers.push(ev.idx());
             }
         }
     }

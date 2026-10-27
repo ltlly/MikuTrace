@@ -38,7 +38,7 @@ fn crypto_analysis_response(
         return Ok(cached.clone());
     }
     let (mem_scan, detected_contexts) = {
-        let mem = inner.memshadow();
+        let mem = inner.memshadow()?;
         if mem.bytes.is_empty() && mem.snapshot.is_none() {
             (
                 CryptoScanResponse {

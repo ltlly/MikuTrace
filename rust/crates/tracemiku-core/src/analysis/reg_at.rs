@@ -55,7 +55,8 @@ pub struct DistinctValue {
 
 pub fn reg_at(state: &AnalysisContext, q: RegAtQuery) -> Result<Value, AnalysisError> {
     let inner = state.inner.clone();
-    let value = reg_at_response(&inner, q);
+    let mem = inner.memshadow()?;
+    let value = reg_at_response(&inner, q, mem);
     Ok(value)
 }
 
@@ -100,7 +101,11 @@ fn resolve_pc(
     }))
 }
 
-fn reg_at_response(inner: &crate::analysis::context::AnalysisData, q: RegAtQuery) -> Value {
+fn reg_at_response(
+    inner: &crate::analysis::context::AnalysisData,
+    q: RegAtQuery,
+    mem: &crate::memshadow::MemShadow,
+) -> Value {
     let pc = match resolve_pc(inner, &q) {
         Ok(pc) => pc,
         Err(v) => return v,
@@ -134,7 +139,7 @@ fn reg_at_response(inner: &crate::analysis::context::AnalysisData, q: RegAtQuery
         });
     }
 
-    let mem = Some(inner.memshadow());
+    let mem = Some(mem);
     let max = q.max.min(MAX_HITS_RETURNED);
 
     // Distinct-value distribution over ALL hits; per-hit rows capped at `max`.

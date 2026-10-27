@@ -417,6 +417,27 @@ pub fn auto_known_offsets_with_base(trace: &Trace, base: u64) -> HashMap<u64, St
 /// Module-aware call-target discovery. Keys are ABSOLUTE target PCs. Names use
 /// the target module's relative offset when the target resolves into a module,
 /// so cross-SO calls do not inherit the primary module base.
+/// Resolve one direct call without scanning the rest of the trace. This is
+/// used by lightweight record detail; arbitrary PCs are never named.
+pub fn auto_symbol_for_direct_call(
+    trace: &Trace,
+    modules: &ModuleResolver,
+    idx: usize,
+) -> Option<(u64, String)> {
+    let record = trace.record(idx);
+    let decoded = decode(record.pc, record.inst);
+    if !decoded.is_call {
+        return None;
+    }
+    let target = parse_branch_target(&decoded.op_str)?;
+    let name = if let Some((_, rel)) = modules.resolve_relative(target) {
+        format!("sub_{rel:x}")
+    } else {
+        format!("sub_{target:x}")
+    };
+    Some((target, name))
+}
+
 pub fn auto_known_symbols_with_modules(
     trace: &Trace,
     modules: &ModuleResolver,

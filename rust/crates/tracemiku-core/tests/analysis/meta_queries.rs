@@ -74,14 +74,14 @@ fn context_builds_cfg_on_demand() {
     let (_tmp, call_dir) = synth_call_dir();
     let state = AnalysisContext::load(call_dir).expect("load context");
     // Empty trace → 0 blocks, but the field exists.
-    let _ = state.inner.cfg().block_count();
+    let _ = state.inner.cfg().unwrap().block_count();
 }
 
 #[test]
 fn context_builds_function_index_on_demand() {
     let (_tmp, call_dir) = synth_call_dir();
     let state = AnalysisContext::load(call_dir).expect("load context");
-    let _ = state.inner.function_index().len();
+    let _ = state.inner.function_index().unwrap().len();
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn context_builds_memshadow_on_demand() {
     // synth fixture has no stores → memshadow.bytes is empty but the field
     // exists and is queryable.
     assert!(state.inner.memshadow_if_ready().is_none());
-    let memshadow = state.inner.memshadow();
+    let memshadow = state.inner.memshadow().unwrap();
     assert!(state.inner.memshadow_if_ready().is_some());
     let _ = memshadow.bytes.len();
     let _ = memshadow.byte_at(0x7000, 1 << 60);

@@ -42,16 +42,14 @@ fn memshadow_error_is_exhaustive() {
     }
 }
 
-/// 构造一个头部合法、但 `writes_len` 字段为超大值的 memshadow sidecar。
-/// 头布局：magic 8 + version u32 + trace_size u64 + writes_len u64。
-fn craft_memshadow_sidecar_with_huge_len(call_dir: &std::path::Path, trace: &Trace) {
-    let mut blob: Vec<u8> = Vec::new();
-    blob.extend_from_slice(b"TMMSV5\0\0");
-    blob.extend_from_slice(&5u32.to_le_bytes());
-    blob.extend_from_slice(&(trace.raw().len() as u64).to_le_bytes());
-    // 超大长度：远超该文件物理大小能容纳的元素数。
-    blob.extend_from_slice(&0x7FFF_FFFF_FFFFu64.to_le_bytes());
-    std::fs::write(call_dir.join("trace.bin.memshadow.v5.bin"), blob).unwrap();
+/// 构造一个头部和摘要合法、但 `writes_len` 字段为超大值的 v8 sidecar。
+fn craft_memshadow_sidecar_with_huge_len(_call_dir: &std::path::Path, trace: &Trace) {
+    let _ = MemShadow::load_or_build(trace);
+    let path = MemShadow::sidecar_path(trace);
+    let mut blob = std::fs::read(&path).unwrap();
+    // 固定头部中 writes_len 位于 56..64；远超物理文件可容纳的元素数。
+    blob[56..64].copy_from_slice(&0x7FFF_FFFF_FFFFu64.to_le_bytes());
+    std::fs::write(&path, blob).unwrap();
 }
 
 #[test]

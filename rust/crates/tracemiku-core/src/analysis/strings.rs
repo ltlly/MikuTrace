@@ -52,6 +52,7 @@ pub struct StringsResponse {
 
 pub fn strings(state: &AnalysisContext, q: StringsQuery) -> Result<StringsResponse, AnalysisError> {
     let inner = state.inner.clone();
+    let _ = inner.memshadow()?;
     let response = strings_response(&inner, q);
     Ok(response)
 }
@@ -60,7 +61,7 @@ fn strings_response(
     inner: &crate::analysis::context::AnalysisData,
     q: StringsQuery,
 ) -> StringsResponse {
-    let mem = inner.memshadow();
+    let mem = inner.memshadow_if_ready().expect("memshadow preloaded");
     let limit = effective_limit(q.limit);
     let (count, strings) = collect_strings(mem, q.min_len, &q.q, q.cursor, limit);
     let returned = strings.len();

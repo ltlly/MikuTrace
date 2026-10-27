@@ -58,7 +58,7 @@ fn string_provenance_response(
 ) -> Result<StringProvenanceResponse, AnalysisError> {
     let start = parse::parse_hex_u64(&q.addr).ok_or(AnalysisError::invalid("invalid query"))?;
     let length = q.length.clamp(1, MAX_LENGTH);
-    let memshadow = inner.memshadow();
+    let memshadow = inner.memshadow()?;
     let (mut writers, mut writers_total) =
         idxs_by_byte_from_memshadow(memshadow, start, length, true);
     fill_missing_idxs_by_byte(
@@ -124,7 +124,7 @@ fn idxs_by_byte_from_memshadow(
             }
             totals[offset] += 1;
             if idxs[offset].len() < WRITERS_CAP {
-                idxs[offset].push(ev.idx);
+                idxs[offset].push(ev.idx());
             }
         }
     }

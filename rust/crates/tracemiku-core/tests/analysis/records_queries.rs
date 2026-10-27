@@ -81,6 +81,73 @@ fn synth_large_call_dir(records: usize) -> (tempfile::TempDir, PathBuf) {
 }
 
 #[test]
+fn records_detail_is_light_by_default_and_heavy_providers_are_independent() {
+    let (_tmp, call_dir) = synth_call_dir_with_symbols();
+
+    let app = AnalysisContext::load(call_dir.clone()).expect("load analysis context");
+    let resp = analysis_support::query(&app, "records?start=1&count=1&detail=true", None);
+    assert_eq!(resp.error_code(), None);
+    let value: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+    let detail = &value["records"][0]["detail"];
+    assert_eq!(detail["pointer_status"], "disabled");
+    assert_eq!(detail["memory_status"], "disabled");
+    assert_eq!(detail["cfg_status"], "disabled");
+    assert!(detail["memory_history"].is_null());
+    assert!(detail["exec_count"].is_null());
+    let components = app.inner.loaded_components();
+    assert_eq!(
+        components[0], "idle",
+        "detail must not build the full index"
+    );
+    assert_eq!(components[1], "ready", "light symbols are allowed");
+    assert_eq!(components[2], "idle", "detail must not build CFG");
+    assert_eq!(components[3], "idle", "detail must not build MemShadow");
+
+    for heavy in ["detail_pointers=true", "detail_memory=true"] {
+        let app = AnalysisContext::load(call_dir.clone()).expect("load analysis context");
+        let query = format!("records?start=1&count=1&detail=true&{heavy}");
+        let resp = analysis_support::query(&app, &query, None);
+        assert_eq!(resp.error_code(), None, "{heavy}");
+        let value: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+        let components = app.inner.loaded_components();
+        assert_eq!(components[0], "idle", "{heavy} must not build full index");
+        assert_eq!(components[2], "idle", "{heavy} must not build CFG");
+        assert_eq!(components[3], "ready", "{heavy} must build MemShadow");
+        if heavy == "detail_memory=true" {
+            assert_eq!(value["records"][0]["detail"]["memory_status"], "ready");
+            assert!(value["records"][0]["detail"]["memory_history"].is_array());
+            assert_eq!(value["records"][0]["detail"]["pointer_status"], "disabled");
+        } else {
+            assert_eq!(value["records"][0]["detail"]["pointer_status"], "ready");
+            assert_eq!(value["records"][0]["detail"]["memory_status"], "disabled");
+        }
+    }
+
+    let app = AnalysisContext::load(call_dir).expect("load analysis context");
+    let resp = analysis_support::query(
+        &app,
+        "records?start=1&count=1&detail=true&detail_cfg=true",
+        None,
+    );
+    assert_eq!(resp.error_code(), None);
+    let value: serde_json::Value = serde_json::from_slice(&resp.bytes()).unwrap();
+    assert_eq!(value["records"][0]["detail"]["cfg_status"], "ready");
+    assert!(value["records"][0]["detail"]["exec_count"].is_u64());
+    let components = app.inner.loaded_components();
+    assert_eq!(components[0], "idle");
+    assert_eq!(components[2], "ready");
+    assert_eq!(components[3], "idle");
+}
+
+#[test]
+fn records_detail_rejects_heavy_options_without_detail() {
+    let (_tmp, call_dir) = synth_call_dir();
+    let app = AnalysisContext::load(call_dir).expect("load analysis context");
+    let resp = analysis_support::query(&app, "records?detail_memory=true", None);
+    assert_eq!(resp.error_code(), Some("invalid_argument"));
+}
+
+#[test]
 fn records_default_window() {
     let (_tmp, call_dir) = synth_call_dir();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
@@ -206,9 +273,9 @@ fn record_single_returns_full_regs() {
     assert_eq!(v["idx"], 0);
     assert_eq!(v["pc"], "0x100000");
     assert!(v["asm"].as_str().unwrap().contains("nop"));
-    assert_eq!(v["exec_count"], 1);
-    assert_eq!(v["block_pc"], "0x100000");
-    assert_eq!(v["cfg_status"], "ready");
+    assert!(v["exec_count"].is_null());
+    assert!(v["block_pc"].is_null());
+    assert_eq!(v["cfg_status"], "disabled");
     assert_eq!(v["is_branch"], false);
     assert_eq!(v["is_call"], false);
     assert_eq!(v["is_ret"], false);
@@ -276,7 +343,7 @@ fn synth_call_dir_with_symbols() -> (tempfile::TempDir, PathBuf) {
 fn records_with_symbols_populates_func_off() {
     let (_tmp, call_dir) = synth_call_dir_with_symbols();
     let app = AnalysisContext::load(call_dir).expect("load analysis context");
-    let resp = analysis_support::query(&app, "records?count=9&detail=true", None);
+    let resp = analysis_support::query(&app, "records?count=9&detail=true&detail_cfg=true", None);
     let body = resp.bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -311,8 +378,8 @@ fn record_detail_with_symbols_populates_func_off() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["func"], "f_alpha");
     assert_eq!(v["off"], "0x0");
-    assert_eq!(v["block_pc"], "0x100100");
-    assert_eq!(v["cfg_status"], "ready");
+    assert!(v["block_pc"].is_null());
+    assert_eq!(v["cfg_status"], "disabled");
 }
 
 #[test]

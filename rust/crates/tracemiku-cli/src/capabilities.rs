@@ -23,6 +23,16 @@ pub(super) fn capabilities_json() -> serde_json::Value {
             "preferred_interface": "specialized commands through ./tracemiku"
         },
         "commands": commands,
+        "analysis_resources": {
+            "memory_budget_env": "TRACEMIKU_MEMORY_BUDGET_MB",
+            "memory_budget_default_mb": 1024,
+            "memory_budget_scope": "CFG and MemShadow construction; zero disables these heavy builds",
+            "thread_env": "TRACEMIKU_ANALYSIS_THREADS and component-specific overrides",
+            "build_concurrency_env": "TRACEMIKU_BUILD_CONCURRENCY",
+            "build_wait_env": "TRACEMIKU_BUILD_WAIT_MS",
+            "cross_process_build": "serialized per trace through trace.bin.analysis-build.lock",
+            "memshadow_sidecar": "v8 compact mmap sections with atomic replacement"
+        },
         "capture_extensions": {
             "schema_version": 2,
             "command": "trace",

@@ -175,8 +175,9 @@ pub(super) fn byte_lineage_value_on(
                     .get("writer_idx")
                     .and_then(|v| v.as_u64())
                     .map(|idx| idx as usize);
+                let memshadow = analysis.inner.memshadow()?;
                 let memcpy_src_addr = writer_idx
-                    .and_then(|idx| analysis.inner.memshadow().copy_source_at(addr, idx))
+                    .and_then(|idx| memshadow.copy_source_at(addr, idx))
                     .or_else(|| {
                         write
                             .get("copy_from")

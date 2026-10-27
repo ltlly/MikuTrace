@@ -96,7 +96,7 @@ fn mem_dump_response(
             return Err(AnalysisError::invalid("memory time is outside trace"));
         }
     }
-    let mem = inner.memshadow();
+    let mem = inner.memshadow()?;
     let mut bytes = Vec::with_capacity(count);
     let at = q.at.unwrap_or(u64::MAX);
     for i in 0..count {

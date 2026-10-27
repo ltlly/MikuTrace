@@ -58,7 +58,7 @@ fn idxs_for_block_response(
     // Reject invalid input instead of silently resolving to 0 and missing a
     // block that never existed (audit P0-1).
     let target = parse_address(&q.pc).map_err(|_| AnalysisError::invalid("invalid query"))?;
-    let cfg = &inner.cfg();
+    let cfg = inner.cfg()?;
 
     let block = cfg
         .block(target)

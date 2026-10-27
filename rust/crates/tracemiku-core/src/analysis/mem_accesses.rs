@@ -2,7 +2,7 @@
 use super::{AnalysisContext, AnalysisError};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -61,6 +61,48 @@ pub struct MemAccessesResponse {
 // (idx, kind 0=read 1=write 2=external, address, access size)
 type AccessKey = (usize, u8, u64, usize, Option<u8>);
 
+fn trace_accesses<'a>(
+    trace: &'a crate::trace::Trace,
+    start: usize,
+    end: usize,
+    addr: u64,
+    last: u64,
+    kind_filter: String,
+) -> impl Iterator<Item = AccessKey> + 'a {
+    let mut next = start;
+    let mut pending = VecDeque::new();
+    std::iter::from_fn(move || {
+        loop {
+            if let Some(event) = pending.pop_front() {
+                return Some(event);
+            }
+            if next >= end {
+                return None;
+            }
+            let idx = next;
+            next += 1;
+            let record = trace.record(idx);
+            let decoded = crate::disasm::decode(record.pc, record.inst);
+            for op in decoded.mem_op.iter().filter(|op| !op.base.is_empty()) {
+                let kind = u8::from(op.is_write);
+                if (kind == 0 && kind_filter == "write") || (kind == 1 && kind_filter == "read") {
+                    continue;
+                }
+                let access_addr = crate::disasm::addr_of(&record, op);
+                if access_addr <= last && access_addr.saturating_add(u64::from(op.size) - 1) >= addr
+                {
+                    pending.push_back((idx, kind, access_addr, op.size as usize, None));
+                }
+            }
+            // Heap merge requires every input stream to be ordered even for
+            // instructions with multiple memory operands.
+            if pending.len() > 1 {
+                pending.make_contiguous().sort_by_key(|event| *event);
+            }
+        }
+    })
+}
+
 pub fn mem_accesses(
     state: &AnalysisContext,
     q: MemAccessesQuery,
@@ -84,33 +126,25 @@ pub fn mem_accesses(
     if q.start > end {
         return Err(AnalysisError::invalid("start exceeds end"));
     }
-    let index = state.inner.index();
-    let mem = state.inner.memshadow();
+    let mem = state.inner.memshadow()?;
     let mut streams: Vec<Box<dyn Iterator<Item = AccessKey> + '_>> = Vec::new();
-    for (kind, recs) in [(0, &index.mem_reads), (1, &index.mem_writes)] {
-        if (kind == 0 && q.kind == "write") || (kind == 1 && q.kind == "read") {
-            continue;
-        }
-        let lo = recs.partition_point(|r| r.idx < q.start);
-        let hi = recs.partition_point(|r| r.idx < end);
-        streams.push(Box::new(
-            recs[lo..hi]
-                .iter()
-                .filter(move |r| {
-                    r.addr <= last && r.addr.saturating_add(u64::from(r.size) - 1) >= addr
-                })
-                .map(move |r| (r.idx, kind, r.addr, r.size as usize, None)),
-        ));
-    }
+    streams.push(Box::new(trace_accesses(
+        &state.inner.trace,
+        q.start,
+        end,
+        addr,
+        last,
+        q.kind.clone(),
+    )));
     if q.kind != "read" {
         for (&at, events) in mem.bytes.range(addr..=last) {
-            let lo = events.partition_point(|e| e.idx < q.start);
-            let hi = events.partition_point(|e| e.idx < end);
+            let lo = events.partition_point(|e| e.idx() < q.start);
+            let hi = events.partition_point(|e| e.idx() < end);
             streams.push(Box::new(
                 events[lo..hi]
                     .iter()
                     .filter(|e| e.kind == "x")
-                    .map(move |e| (e.idx, 2, at, 1, Some(e.byte))),
+                    .map(move |e| (e.idx(), 2, at, 1, Some(e.byte))),
             ));
         }
     }
@@ -148,11 +182,11 @@ pub fn mem_accesses(
                     external_byte
                 } else {
                     mem.bytes.get(&a).and_then(|es| {
-                        let hi = es.partition_point(|e| e.idx <= idx);
+                        let hi = es.partition_point(|e| e.idx() <= idx);
                         es[..hi]
                             .iter()
                             .rev()
-                            .take_while(|e| e.idx == idx)
+                            .take_while(|e| e.idx() == idx)
                             .find(|e| e.kind == kind_tag)
                             .map(|e| e.byte)
                     })

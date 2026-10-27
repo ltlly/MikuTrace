@@ -134,7 +134,7 @@ pub fn inspect(
             continue;
         }
         let string_preview = if q.strings {
-            super::jni_strings::preview_call(state, call, q.max_len)
+            super::jni_strings::preview_call(state, call, q.max_len)?
         } else {
             None
         };

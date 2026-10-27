@@ -11,10 +11,10 @@
 //! synthetic `"x"` byte writes in [`MemShadow`], and records `(dst_addr, idx) -> src_addr`
 //! mappings in `copy_sources` so `byte-lineage` can hop across buffer copies.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::disasm::decode;
-use crate::memshadow::{ByteEvent, MemRec, MemShadow, MemSnapshot};
+use crate::memshadow::{ByteEvent, ByteEventKind, ByteEvents, MemRec, MemShadow, MemSnapshot};
 use crate::trace::{Record, Trace};
 
 const MAX_SYNTH_COPY_LEN: u64 = 16_384;
@@ -157,16 +157,16 @@ fn parse_branch_target(op_str: &str) -> Option<u64> {
 
 /// Evaluate known byte at `addr` at or before `idx` using current `mem.bytes` and `snapshot`.
 fn known_byte_at_or_before(
-    bytes: &BTreeMap<u64, Vec<ByteEvent>>,
+    bytes: &ByteEvents,
     snapshot: Option<&MemSnapshot>,
     addr: u64,
     idx: usize,
 ) -> Option<(u8, &'static str)> {
     if let Some(evs) = bytes.get(&addr) {
-        let pos = evs.partition_point(|ev| ev.idx <= idx);
+        let pos = evs.partition_point(|ev| ev.idx() <= idx);
         if pos > 0 {
             let ev = &evs[pos - 1];
-            return Some((ev.byte, ev.kind));
+            return Some((ev.byte, ev.kind.as_str()));
         }
     }
     if let Some(snap) = snapshot {
@@ -179,13 +179,9 @@ fn known_byte_at_or_before(
 
 /// Check the first event on `addr` strictly after `idx`. If it is a read (`"r"`),
 /// return the read byte value.
-fn first_post_call_read_before_write(
-    bytes: &BTreeMap<u64, Vec<ByteEvent>>,
-    addr: u64,
-    idx: usize,
-) -> Option<u8> {
+fn first_post_call_read_before_write(bytes: &ByteEvents, addr: u64, idx: usize) -> Option<u8> {
     let evs = bytes.get(&addr)?;
-    let pos = evs.partition_point(|ev| ev.idx <= idx);
+    let pos = evs.partition_point(|ev| ev.idx() <= idx);
     let first = evs.get(pos)?;
     (first.kind == "r").then_some(first.byte)
 }
@@ -193,22 +189,15 @@ fn first_post_call_read_before_write(
 /// Insert `ByteEvent` into `evs` while maintaining ascending `idx` order.
 /// Returns `true` if inserted, `false` if a write (`"w"` or `"x"`) at `idx` already exists.
 fn insert_ordered_write_event(evs: &mut Vec<ByteEvent>, idx: usize, byte: u8) -> bool {
-    let lo = evs.partition_point(|ev| ev.idx < idx);
-    let hi = evs.partition_point(|ev| ev.idx <= idx);
+    let lo = evs.partition_point(|ev| ev.idx() < idx);
+    let hi = evs.partition_point(|ev| ev.idx() <= idx);
     if evs[lo..hi]
         .iter()
         .any(|ev| ev.kind == "w" || ev.kind == "x")
     {
         return false;
     }
-    evs.insert(
-        hi,
-        ByteEvent {
-            idx,
-            byte,
-            kind: "x",
-        },
-    );
+    evs.insert(hi, ByteEvent::new(idx, byte, ByteEventKind::External));
     true
 }
 
@@ -274,6 +263,7 @@ fn try_synthesize_mem_copy(
                 addr: d_addr,
                 size: 1,
                 value: byte as u64,
+                reserved: 0,
             });
             mem.copy_sources.insert((d_addr, idx), s_addr);
             emitted_count += 1;
@@ -322,6 +312,7 @@ fn try_synthesize_memset(
                 addr: d_addr,
                 size: 1,
                 value: fill_byte as u64,
+                reserved: 0,
             });
             emitted_count += 1;
         }
@@ -329,19 +320,7 @@ fn try_synthesize_memset(
     emitted_count
 }
 
-/// Serialize `copy_sources` in deterministic sorted order for the sidecar.
-pub(crate) fn sorted_copy_sources(
-    copy_sources: &HashMap<(u64, usize), u64>,
-) -> Vec<(u64, usize, u64)> {
-    let mut items: Vec<(u64, usize, u64)> = copy_sources
-        .iter()
-        .map(|(&(dst, idx), &src)| (dst, idx, src))
-        .collect();
-    items.sort_unstable_by_key(|&(dst, idx, _)| (dst, idx));
-    items
-}
-
-fn load_worker_anchor_windows(
+pub(crate) fn load_worker_anchor_windows(
     call_dir: &std::path::Path,
     default_anchor: usize,
 ) -> HashMap<String, (usize, usize)> {
@@ -394,13 +373,12 @@ fn load_worker_anchor_windows(
 /// Interpolate a worker record index `i` (out of `n` worker records) into its
 /// main-thread causality window `[spawned_at, ended_at]`.
 pub(crate) fn worker_record_anchor_idx(
-    call_dir: &std::path::Path,
+    windows: &HashMap<String, (usize, usize)>,
     file_name: &str,
     worker_idx: usize,
     worker_len: usize,
     default_anchor: usize,
 ) -> usize {
-    let windows = load_worker_anchor_windows(call_dir, default_anchor);
     let Some(&(spawned, ended)) = windows.get(file_name) else {
         return default_anchor;
     };

@@ -76,7 +76,45 @@ fn records_selected_indices_honor_register_filter_and_share_pagination_shape() {
     assert_eq!(rows["detail"], false);
     let detail = run_json(&["records", path, "--start", "7", "--count", "1", "--detail"]);
     assert_eq!(detail["records"][0]["detail"]["regs"]["x0"], "0x21");
+    assert_eq!(detail["records"][0]["detail"]["pointer_status"], "disabled");
+    assert_eq!(detail["records"][0]["detail"]["memory_status"], "disabled");
+    assert_eq!(detail["records"][0]["detail"]["cfg_status"], "disabled");
+    assert!(detail["records"][0]["detail"]["memory_history"].is_null());
+    assert!(detail["records"][0]["exec_count"].is_null());
     assert_eq!(detail["returned"], 1);
+}
+
+#[test]
+fn records_detail_heavy_options_compose_and_restore_evidence() {
+    let (_tmp, cd) = synth_deep_dir();
+    let path = cd.to_str().unwrap();
+    let value = run_json(&[
+        "records",
+        path,
+        "--start",
+        "1",
+        "--count",
+        "1",
+        "--detail",
+        "--detail-pointers",
+        "--detail-memory",
+        "--detail-cfg",
+    ]);
+    let row = &value["records"][0];
+    let detail = &row["detail"];
+    assert_eq!(detail["pointer_status"], "ready");
+    assert_eq!(detail["memory_status"], "ready");
+    assert_eq!(detail["cfg_status"], "ready");
+    assert!(detail["regs_annotated"]["x1"]
+        .as_str()
+        .unwrap()
+        .contains("apro.ogh"));
+    let history = detail["memory_history"].as_array().unwrap();
+    assert_eq!(history.len(), 8);
+    assert!(history
+        .iter()
+        .all(|byte| !byte["events"].as_array().unwrap().is_empty()));
+    assert!(row["exec_count"].as_u64().unwrap() >= 1);
 }
 
 #[test]
@@ -227,4 +265,105 @@ fn cfg_function_and_backtrace_merged_views_keep_evidence_separate() {
     assert!(functions["summary"].is_object());
     let bt = run_json(&["backtrace", p, "--idx", "4", "--lr-clues"]);
     assert!(bt["lr_clues"].is_object());
+}
+
+#[test]
+fn zero_memory_budget_keeps_light_detail_and_limits_heavy_analysis() {
+    let (_tmp, cd) = synth_deep_dir();
+    let path = cd.to_str().unwrap();
+    let binary = env!("CARGO_BIN_EXE_tracemiku-cli");
+    let light = Command::new(binary)
+        .args(["records", path, "--start", "1", "--count", "1", "--detail"])
+        .env("TRACEMIKU_MEMORY_BUDGET_MB", "0")
+        .output()
+        .unwrap();
+    assert!(
+        light.status.success(),
+        "light detail failed: {}",
+        String::from_utf8_lossy(&light.stdout)
+    );
+    let light: serde_json::Value = serde_json::from_slice(&light.stdout).unwrap();
+    assert_eq!(light["records"][0]["detail"]["memory_status"], "disabled");
+
+    for option in ["--detail-memory", "--detail-cfg"] {
+        let output = Command::new(binary)
+            .args([
+                "records", path, "--start", "1", "--count", "1", "--detail", option,
+            ])
+            .env("TRACEMIKU_MEMORY_BUDGET_MB", "0")
+            .env("TRACEMIKU_BUILD_WAIT_MS", "0")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let error: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(error["status"], "error", "{option}: {error}");
+        assert_eq!(
+            error["error"]["code"], "limit_exceeded",
+            "{option}: {error}"
+        );
+    }
+}
+
+#[test]
+fn concurrent_cold_cli_builds_queue_and_share_a_complete_sidecar() {
+    let (_tmp, cd) = synth_deep_dir();
+    let path = cd.to_str().unwrap();
+    let binary = env!("CARGO_BIN_EXE_tracemiku-cli");
+    let lock_path = cd.join("trace.bin.analysis-build.lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(lock_path)
+        .unwrap();
+    lock.lock().unwrap();
+
+    let mut children = (0..2)
+        .map(|_| {
+            Command::new(binary)
+                .args(["mem-dump", path, "--addr", "0x2000", "--count", "16"])
+                .env("TRACEMIKU_BUILD_WAIT_MS", "10000")
+                .env("TRACEMIKU_BUILD_CONCURRENCY", "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    for child in &mut children {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "child bypassed the build lock"
+        );
+    }
+    lock.unlock().unwrap();
+
+    let outputs = children
+        .into_iter()
+        .map(|child| child.wait_with_output().unwrap())
+        .collect::<Vec<_>>();
+    for output in &outputs {
+        assert!(
+            output.status.success(),
+            "concurrent build failed\nstdout:{}\nstderr:{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let first: serde_json::Value = serde_json::from_slice(&outputs[0].stdout).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&outputs[1].stdout).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first["status"], "ready");
+    assert_eq!(first["bytes"].as_array().unwrap().len(), 16);
+    assert!(cd.join("trace.bin.memshadow.v8.bin").is_file());
+
+    let hot = Command::new(binary)
+        .args(["mem-dump", path, "--addr", "0x2000", "--count", "16"])
+        .env("TRACEMIKU_BUILD_WAIT_MS", "0")
+        .output()
+        .unwrap();
+    assert!(hot.status.success());
+    let hot: serde_json::Value = serde_json::from_slice(&hot.stdout).unwrap();
+    assert_eq!(hot, first);
 }
