@@ -192,6 +192,7 @@ function openWorkerTrace(tid: number, pthread: string, start: NativePointer, spa
         ringRecs: WORKER_RING_RECS,
         file, ioState: file.state, flushNative: null, active: Memory.alloc(4),
         filePath: path,
+        fileBytes: 0,
         cm: null,
         onInsnPtr: NULL,
     };

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "target": {
+    "pkg": "com.aliyun.tongyi",
+    "so": "libsgmainso",
+    "fn_offset": "0x57b60"
+  },
+  "capture": {
+    "max_calls": 6,
+    "trace_init": true,
+    "jni_hooks": "none"
+  },
+  "agent_plugins": [
+    {
+      "id": "warm_boot_filter",
+      "path": "warm_boot_filter.js",
+      "config": { "enabled": true }
+    }
+  ]
+}

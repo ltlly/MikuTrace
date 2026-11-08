@@ -22,7 +22,7 @@ export function ioHealth(): any[] {
     return blocked;
 }
 export function internalIoActive(tid: number): boolean { return (internalThreads.get(tid) || 0) > 0; }
-function internal<T>(call: () => T): T {
+export function withInternalIo<T>(call: () => T): T {
     const tid = Process.getCurrentThreadId();
     internalThreads.set(tid, (internalThreads.get(tid) || 0) + 1);
     try { return call(); }
@@ -118,14 +118,14 @@ export class NativeFile {
         this.state = state || ioState();
         activeFiles.set(this.state, path);
         // O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC：绝不覆盖恢复源。
-        const result = internal(() => openFd(Memory.allocUtf8String(path), 1 | 64 | 128 | 0x80000, 0o600));
+        const result = withInternalIo(() => openFd(Memory.allocUtf8String(path), 1 | 64 | 128 | 0x80000, 0o600));
         if (result.value < 0) {
             if (!STATE.fnEntered && !STATE.preEntryActive) {
                 activeFiles.delete(this.state);
                 throw new Error(`open ${path}: errno=${result.errno}`);
             }
             // 已进入采集窗口后，路径或磁盘故障必须阻塞生产，不允许异常使目标继续漏跑。
-            internal(() => openRetry(this.state, Memory.allocUtf8String(path)));
+            withInternalIo(() => openRetry(this.state, Memory.allocUtf8String(path)));
         } else this.state.writeS32(result.value);
         internalFds.add(this.state.readS32());
         this.state.add(4).writeU32(0);
@@ -139,20 +139,20 @@ export class NativeFile {
             : bytes;
         const buf = Memory.alloc(Math.max(data.byteLength, 1));
         buf.writeByteArray(data);
-        internal(() => writeAll(this.state, buf, data.byteLength));
+        withInternalIo(() => writeAll(this.state, buf, data.byteLength));
     }
-    flush(): void { if (!this.closed) internal(() => syncAll(this.state)); }
+    flush(): void { if (!this.closed) withInternalIo(() => syncAll(this.state)); }
     writeAt(offset: number, bytes: ArrayBuffer): void {
         if (this.closed) throw new Error(`write closed ${this.path}`);
         const data = Memory.alloc(bytes.byteLength);
         data.writeByteArray(bytes);
-        internal(() => writeAt(this.state, data, bytes.byteLength, offset));
+        withInternalIo(() => writeAt(this.state, data, bytes.byteLength, offset));
     }
     close(): void {
         if (this.closed) return;
         this.flush();
         internalFds.delete(this.state.readS32());
-        const result = internal(() => closeFd(this.state.readS32()));
+        const result = withInternalIo(() => closeFd(this.state.readS32()));
         this.closed = true;
         activeFiles.delete(this.state);
         this.state.writeS32(-1);
@@ -165,9 +165,10 @@ export function syncDirectory(path: string): void {
     nativeIoSymbols();
     // Linux/Android AArch64 的 O_DIRECTORY=040000；0x10000 是 O_DIRECT，
     // 在不同文件系统上可能返回 EINVAL，不能沿用 x86 的常量。
-    const result = internal(() => openFd(Memory.allocUtf8String(path), 0x4000 | 0x80000, 0));
+    const result = withInternalIo(() => openFd(Memory.allocUtf8String(path), 0x4000 | 0x80000, 0));
     if (result.value < 0) throw new Error(`open directory ${path}: errno=${result.errno}`);
     const state = ioState();
     state.writeS32(result.value);
-    try { syncAll(state); } finally { closeFd(result.value); }
+    try { withInternalIo(() => syncAll(state)); }
+    finally { withInternalIo(() => closeFd(result.value)); }
 }

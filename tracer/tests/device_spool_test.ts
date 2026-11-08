@@ -69,15 +69,15 @@ let pluginEvents = [{ phase: "install", status: "ok" }];
 const manifestModules: any = {
     "../core/state": { STATE: {
         traceDir: "/spool", traceFilePath: "/spool/trace.bin", callIdx: 1,
-        primaryTid: 42, started: 1000, includeRanges: [],
-    }, REC_SIZE: 272 },
+        primaryTid: 42, started: 1000, includeRanges: [], traceFileBytes: 3 * 272,
+    }, REC_SIZE: 272, SIMD_REC_SIZE: 520 },
     "../core/utils": { getExport: () => "rename" },
     "../core/entry": { entryAddress: () => ({ toString: () => "0x1000" }) },
     "../core/external_writes": {},
     "../target_plugins": { drainTargetPluginEvents() {
         const events = pluginEvents; pluginEvents = []; return events;
     } },
-    "../core/native_io": { syncDirectory() {}, NativeFile: class {
+    "../core/native_io": { syncDirectory() {}, withInternalIo: (call: () => any) => call(), NativeFile: class {
         file: string;
         bytes = 0;
         constructor(file: string) { this.file = file; artifactFiles.set(file, ""); }
@@ -123,4 +123,81 @@ assert.equal(missingEntry.meta.capture_scope.entry_complete, false);
 assert.equal(missingEntry.meta.capture_scope.coverage_gaps, 1);
 assert.equal(missingEntry.meta.truncated, true);
 assert.equal(JSON.parse(artifactFiles.get("/spool/call2_coverage_gaps.jsonl")!).reason, "entry-not-observed");
+
+for (const [traceBytes, simdBytes, declared, expectedGaps] of [
+    [3 * 272, 3 * 520, 3, 0],
+    [2 * 272, 3 * 520, 3, 1],
+    [3 * 272, 2 * 520, 3, 1],
+    [2 * 272 + 17, 2 * 520 + 31, 3, 2],
+    [200_000 * 272, 200_000 * 520, 37_800_000, 2],
+    [0, 0, 3, 2],
+] as const) {
+    const state = manifestModules["../core/state"].STATE;
+    state.callIdx++;
+    state.simdSidecar = true;
+    state.simdTraceFilePath = "/spool/simd_trace.bin";
+    const ringState = fresh.state as any;
+    let traceCounter = traceBytes;
+    let simdCounter = simdBytes;
+    ringState.traceFile = { get bytes() { return traceCounter; }, close() { traceCounter = 0; } };
+    ringState.simdTraceFile = { get bytes() { return simdCounter; }, close() { simdCounter = 0; } };
+    fresh.exports.closeTraceFile();
+    fresh.exports.closeSimdTraceFile();
+    fresh.exports.closeTraceFile();
+    fresh.exports.closeSimdTraceFile();
+    assert.equal(ringState.traceFileBytes, traceBytes);
+    assert.equal(ringState.simdTraceFileBytes, simdBytes);
+    state.traceFileBytes = ringState.traceFileBytes;
+    state.simdTraceFileBytes = ringState.simdTraceFileBytes;
+    manifestExports.beginManifest();
+    const end: any = { total: declared, simdRecords: declared, dropped: 0, simdDropped: 0,
+        truncated: false, firstPc: "0x1000", returnObserved: true };
+    manifestExports.sealManifest(end, true);
+    const result = JSON.parse(artifactFiles.get(`/spool/call_${state.callIdx}.json`)!);
+    const records = Math.floor(traceBytes / 272);
+    const simdRecords = Math.floor(simdBytes / 520);
+    assert.equal(result.files[0].bytes, traceBytes);
+    assert.equal(result.files[0].records, records);
+    assert.equal(result.files[1].bytes, simdBytes);
+    assert.equal(result.files[1].records, simdRecords);
+    assert.equal(result.meta.records, records);
+    assert.equal(result.meta.device_records, records);
+    assert.equal(result.meta.bytes, traceBytes);
+    assert.equal(result.meta.declared_head, declared);
+    assert.equal(result.meta.dropped, declared - records);
+    assert.equal(result.meta.simd_sidecar.records, simdRecords);
+    assert.equal(result.meta.simd_sidecar.bytes, simdBytes);
+    assert.equal(result.meta.simd_sidecar.dropped, declared - simdRecords);
+    assert.equal(result.meta.truncated, expectedGaps > 0);
+    assert.equal(result.meta.capture_scope.coverage_gaps, expectedGaps);
+    assert.equal(end.total, records);
+    assert.equal(end.truncated, expectedGaps > 0);
+    if (expectedGaps) {
+        const gaps = artifactFiles.get(`/spool/call${state.callIdx}_coverage_gaps.jsonl`)!.trim().split("\n").map(line => JSON.parse(line));
+        assert.equal(gaps.length, expectedGaps);
+        for (const gap of gaps) {
+            assert.equal(gap.reason, "short-file-or-unflushed-tail");
+            assert.equal(gap.declared_head, declared);
+            assert.equal(gap.actual_records, gap.file === "trace.bin" ? records : simdRecords);
+        }
+    }
+}
+const workerState = manifestModules["../core/state"].STATE;
+workerState.callIdx++;
+workerState.simdSidecar = false;
+workerState.traceFileBytes = 3 * 272;
+manifestExports.beginManifest();
+manifestExports.sealManifest({ total: 3, dropped: 0, truncated: false, firstPc: "0x1000", returnObserved: true,
+    workerTraces: [{ tid: 99, devicePath: "/spool/worker99.bin", bytes: 2 * 272 + 13,
+        records: 2, declared_head: 3, dropped: 1, truncated: true }] }, true);
+const workerSealed = JSON.parse(artifactFiles.get(`/spool/call_${workerState.callIdx}.json`)!);
+const workerArtifact = workerSealed.files.find((file: any) => file.name === "worker_trace_tid99.bin");
+assert.equal(workerArtifact.bytes, 2 * 272 + 13);
+assert.equal(workerArtifact.records, 2);
+assert.equal(workerSealed.meta.truncated, true);
+assert.equal(workerSealed.meta.capture_scope.coverage_gaps, 1);
+const workerGap = JSON.parse(artifactFiles.get(`/spool/call${workerState.callIdx}_coverage_gaps.jsonl`)!);
+assert.equal(workerGap.file, "worker_trace_tid99.bin");
+assert.equal(workerGap.declared_head, 3);
+assert.equal(workerGap.actual_records, 2);
 console.log("device spool: fresh app directory + actual UID + write/read probe + fail closed: PASS");

@@ -364,7 +364,7 @@ function installFnHook(fp: NativePointer, onInsn: NativePointer): void {
                 endedManifest = manifestPath;
                 completedCalls++;
                 send({ ...end, manifestPath });
-                lastHead = total; lastTail = total;
+                lastHead = end.total; lastTail = end.total;
                 if (STATE.callIdx >= maxCalls || !acceptingCalls) retireCapture();
                 clearInterval(STATE.hbTimer); STATE.hbTimer = null;
 

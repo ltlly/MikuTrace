@@ -54,6 +54,9 @@ sidecar 描述。地址用 `0x` 字符串，计数与长度用整数。旧字段
 - 调用返回后 unfollow，排空主 trace/worker/SIMD 和事件，fsync，再原子发布 call
   manifest。session 仅在所有请求的调用已封口后进入 `SEALED`。显式停止只取消后续
   调用，不能截断正在执行的调用。
+- 主 trace、worker 与 SIMD 的封口字节数取自关闭前保存的 native writer 成功写入计数，记录数
+  为实际字节数除以记录长度后向下取整。`declared_head` 保留生产计数；计数差异或残缺
+  记录写入 `coverage_gaps.jsonl`，缺失完整记录计入 `dropped` 并标记 `truncated=true`。
 - host 只压缩 `SEALED` session，按 65536 条主 trace 的字节大小分块，gzip -1 后通过
   ADB 回传；其他记录格式向下按各自记录长度对齐。每块有原始/压缩长度和 SHA-256，
   host 凭据另存序号、字节偏移和记录区间。
@@ -93,6 +96,14 @@ Stalker 将含 exclusive-monitor 指令的整个翻译块标为不可插入内�
 磁盘一直不可写会使目标持续等待；SIGKILL、目标崩溃、强制重启或掉电可能丢失未同步
 的内存尾批。未封口 session 保持 `pending`，文件存在或末尾是 ret 均不能替代封口证据。
 关闭文件或排空 sidecar 失败时 session 进入 `FAILED`，不会发布成功的调用封口。
+
+libc 语义事件覆盖文件描述符创建、复制、关闭、定位和路径操作。FD 路径在事件边界
+通过 `/proc/self/fd` 有界读取，跨调用关闭或 FD 复用不会继承旧路径；解析失败保留
+未知路径。路径与 I/O 之间的并发 FD 替换仍可能形成归因竞争。采集器自身的 FD 和
+内部 I/O 调用排除在语义事件之外。`read/pread64` 在返回成功后、`write/pwrite64`
+在进入时保存最多 128 字节到 `args.data_hex`，超出上限或读取失败用
+`args.data_truncated` 表达；失败另有 `args.data_error`。这些载荷只覆盖主线程被
+hook 的 libc 边界，inline SVC 仍只有执行前参数，stdio 缓冲内容不等同于内核 I/O。
 
 封口后恢复原入口、卸载 hook、回收 Stalker/CModule 及大缓冲。小型入口桥保留到进程
 退出，避免其他线程仍在桥上执行时被释放。Frida eternalize 的最小 JS 运行时

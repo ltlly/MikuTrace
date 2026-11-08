@@ -135,6 +135,7 @@ export interface TraceRingState {
 }
 
 export interface WorkerTraceState extends TraceRingState {
+    fileBytes: number;
     tid: number;
     pthread: string;
     start: string;
@@ -224,6 +225,7 @@ export interface AgentState {
     simdStrideBuf: NativePointer | null;
     simdTraceFile: any | null;
     simdTraceFilePath: string | null;
+    simdTraceFileBytes: number;
 
     semanticEvents: boolean;
     semanticEventBuf: any[];
@@ -240,6 +242,7 @@ export interface AgentState {
     primaryTid: number;
     traceFile: any | null;
     traceFilePath: string | null;
+    traceFileBytes: number;
     /** trace 输出目录; host 可通过 initOpts.traceDir 指定以避开 app 私有 cache */
     traceDir: string | null;
 
@@ -288,7 +291,7 @@ export function createInitialState(): AgentState {
         simdSidecar: false, simdSampleStride: 1,
         simdRingBuf: null, simdHeadBuf: null, simdTailBuf: null,
         simdDroppedBuf: null, simdRingRecsBuf: null, simdStrideBuf: null,
-        simdTraceFile: null, simdTraceFilePath: null,
+        simdTraceFile: null, simdTraceFilePath: null, simdTraceFileBytes: 0,
 
         semanticEvents: false, semanticEventBuf: [], semanticHooksInstalled: false,
         semanticEventSeq: 0, onSvcEventCb: null,
@@ -297,7 +300,7 @@ export function createInitialState(): AgentState {
 
         hbTimer: null, batchSeq: 0, started: 0,
         callIdx: 0, primaryTid: 0,
-        traceFile: null, traceFilePath: null, traceDir: null,
+        traceFile: null, traceFilePath: null, traceFileBytes: 0, traceDir: null,
 
         jniHookSpecs: null, jniHookEvents: [], jniHooksInstalled: false,
         enableForkHook: false, forkEvents: [], forkHooksInstalled: false,

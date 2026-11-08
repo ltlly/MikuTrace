@@ -54,6 +54,7 @@ typedef struct { uint64_t pc, sp, nzcv, x[31]; unsigned char v[32][16]; } GumCpu
 #include <pthread.h>
 #include <sched.h>
 #include <stdatomic.h>
+#include <sys/stat.h>
 
 unsigned char ring[3 * 272], simd_ring[2 * 520];
 unsigned long long ring_recs = 3, simd_ring_recs = 2, simd_stride = 1;
@@ -127,6 +128,12 @@ int main(int argc, char **argv) {
         on_insn(&ctx, i % 17 == 0 ? mapped : NULL);
         assert(ctx.pc == (unsigned long long)&instruction);
     }
+    struct stat trace_stat, simd_stat;
+    assert(fstat(fileno(trace), &trace_stat) == 0 && fstat(fileno(simd), &simd_stat) == 0);
+    assert(((unsigned long long *)trace_io)[2] == (unsigned long long)trace_stat.st_size);
+    assert(((unsigned long long *)simd_io)[2] == (unsigned long long)simd_stat.st_size);
+    assert(trace_stat.st_size == tail * 272 && tail < head);
+    assert(simd_stat.st_size == simd_tail * 520 && simd_tail < simd_head);
     flush_trace(); flush_simd();
     atomic_store(&producer_completed, 1);
     if (disk_full) { assert(pthread_join(releaser, NULL) == 0); assert(atomic_load(&observed_enospc)); }
@@ -134,6 +141,8 @@ int main(int argc, char **argv) {
     assert(first_pc == 0x1000);
     assert(((unsigned long long *)trace_io)[2] == total * 272);
     assert(((unsigned long long *)simd_io)[2] == total * 520);
+    assert(fstat(fileno(trace), &trace_stat) == 0 && fstat(fileno(simd), &simd_stat) == 0);
+    assert(trace_stat.st_size == total * 272 && simd_stat.st_size == total * 520);
     if (!disk_full) assert(interruptions > 0 && no_space > 0 && waits >= no_space);
     assert(trace_io[1] == 0 && simd_io[1] == 0);
     rewind(trace); rewind(simd);

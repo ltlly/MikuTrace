@@ -12,7 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from tracemiku_common import adb_command, atomic_json
-from tracemiku_device import launch_start
+from tracemiku_device import launch_start, resolve_running_pid
 from tracemiku_spool import AdbSpool, recover_run
 from tracemiku_target import HostPlugin
 
@@ -146,14 +146,7 @@ def capture(args, root, rust_json, log):
         elif args.launch:
             pid = launch_start(args.pkg)
         elif pid is None and args.pkg:
-            matches = [process.pid for process in device.enumerate_processes() if process.name == args.pkg]
-            if len(matches) == 1:
-                pid = matches[0]
-            else:
-                values = subprocess.run(adb_command("shell", "pidof", args.pkg),
-                                        capture_output=True, text=True, timeout=30, check=False).stdout.split()
-                if len(values) == 1:
-                    pid = int(values[0])
+            pid = resolve_running_pid(args.pkg, device)
         if pid is None:
             raise ValueError("找不到唯一目标进程；请用 --attach-pid 或 --spawn")
         session = device.attach(pid)

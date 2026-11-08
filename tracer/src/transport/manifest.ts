@@ -2,7 +2,7 @@ import { encodeExtWriteEvent, EXT_WRITE_RECORD_SIZE } from "../core/external_wri
 /** 设备是采集结果的事实源；IPC 仅提供进度，不承载唯一副本。 */
 import { STATE, REC_SIZE, SIMD_REC_SIZE } from "../core/state";
 import { getExport } from "../core/utils";
-import { NativeFile, syncDirectory } from "../core/native_io";
+import { NativeFile, syncDirectory, withInternalIo } from "../core/native_io";
 import { entryAddress } from "../core/entry";
 import { drainTargetPluginEvents } from "../target_plugins";
 
@@ -21,7 +21,7 @@ function atomicJson(path: string, value: any): void {
     file.write(JSON.stringify(value));
     file.close();
     const rename = new SystemFunction(getExport("rename")!, "int", ["pointer", "pointer"]);
-    const result = rename(Memory.allocUtf8String(temp), Memory.allocUtf8String(path));
+    const result = withInternalIo(() => rename(Memory.allocUtf8String(temp), Memory.allocUtf8String(path)));
     if (result.value !== 0) throw new Error(`manifest rename errno=${(result as any).errno}`);
     syncDirectory(STATE.traceDir!);
 }
@@ -94,7 +94,42 @@ export function registerSnapshot(info: any): void {
     files.push({ name: "memory_snapshot.bin", device_path: info.devicePath, bytes: info.bytes });
 }
 
+function reconcileRecords(name: string, actualBytes: number, declaredHead: number, dropped = 0) {
+    const artifact = files.find(file => file.name === name)!;
+    if (!Number.isSafeInteger(actualBytes) || actualBytes < 0) {
+        throw new Error(`invalid written byte count for ${name}`);
+    }
+    const records = Math.floor(actualBytes / artifact.record_size!);
+    const truncated = records !== declaredHead || actualBytes % artifact.record_size! !== 0;
+    const missing = Math.max(0, declaredHead - records);
+    Object.assign(artifact, { bytes: actualBytes, records });
+    if (truncated) persistEvents("coverage_gaps.jsonl", [{
+        reason: "short-file-or-unflushed-tail", evidence: "native-written-bytes", file: name,
+        declared_head: declaredHead, actual_records: records, actual_bytes: actualBytes,
+        record_size: artifact.record_size, dropped: missing,
+    }]);
+    return { records, bytes: actualBytes, dropped: dropped + missing, truncated };
+}
+
 export function sealManifest(end: any, sessionComplete: boolean): string {
+    const declaredHead = end.total;
+    const trace = reconcileRecords("trace.bin", STATE.traceFileBytes, declaredHead, end.dropped);
+    const simd = STATE.simdSidecar
+        ? reconcileRecords("simd_trace.bin", STATE.simdTraceFileBytes, end.simdRecords, end.simdDropped)
+        : null;
+    Object.assign(end, {
+        declared_head: declaredHead, total: trace.records, bytes: trace.bytes, dropped: trace.dropped,
+        truncated: Boolean(end.truncated || trace.truncated || simd?.truncated),
+    });
+    if (simd) Object.assign(end, {
+        simd_declared_head: end.simdRecords, simdRecords: simd.records, simdDropped: simd.dropped,
+    });
+    for (const worker of end.workerTraces || []) {
+        const name = `worker_trace_tid${worker.tid}.bin`;
+        files.push({ name, device_path: worker.devicePath, record_size: REC_SIZE });
+        const actual = reconcileRecords(name, worker.bytes, worker.declared_head);
+        if (actual.truncated || worker.truncated) end.truncated = true;
+    }
     const expected = entryAddress()?.toString() || null;
     const isInitWindow = end.entryBoundary === "module-init-and-entry";
     const entryComplete = isInitWindow
@@ -112,15 +147,6 @@ export function sealManifest(end: any, sessionComplete: boolean): string {
         artifact.records = counts[name];
         if (name === "external_writes.bin") artifact.record_size = 17;
     }
-    files[0].bytes = end.total * REC_SIZE;
-    files[0].records = end.total;
-    if (STATE.simdSidecar) Object.assign(files[1], {
-        bytes: end.simdRecords * SIMD_REC_SIZE, records: end.simdRecords,
-    });
-    for (const worker of end.workerTraces || []) files.push({
-        name: `worker_trace_tid${worker.tid}.bin`, device_path: worker.devicePath,
-        bytes: worker.records * REC_SIZE, records: worker.records, record_size: REC_SIZE,
-    });
     const fnAddr = expected || (STATE.target && STATE.fnOffset != null
         ? STATE.target.base.add(STATE.fnOffset).toString() : manifest.meta.fn_addr);
     const modInfo = STATE.target ? {
@@ -134,7 +160,7 @@ export function sealManifest(end: any, sessionComplete: boolean): string {
         modules: Process.enumerateModules().map(m => ({
             name: m.name, base: m.base.toString(), size: m.size, path: m.path,
         })),
-        records: end.total, device_records: end.total, bytes: end.total * REC_SIZE,
+        records: trace.records, device_records: trace.records, bytes: trace.bytes,
         closed_at: Date.now() / 1000, event_counts: counts,
         truncated: end.truncated || (counts["snapshot_errors.jsonl"] || 0) > 0 ||
             (counts["coverage_gaps.jsonl"] || 0) > 0,
@@ -155,9 +181,10 @@ export function sealManifest(end: any, sessionComplete: boolean): string {
     if (snapshot) manifest.meta.memory_snapshot = {
         file: "memory_snapshot.bin", regions: snapshot.regions, bytes: snapshot.bytes,
     };
-    if (STATE.simdSidecar) manifest.meta.simd_sidecar = {
+    if (simd) manifest.meta.simd_sidecar = {
         file: "simd_trace.bin", record_size: SIMD_REC_SIZE, records: end.simdRecords,
-        bytes: end.simdRecords * SIMD_REC_SIZE, dropped: end.simdDropped,
+        bytes: simd.bytes, dropped: simd.dropped, truncated: simd.truncated,
+        declared_head: end.simd_declared_head,
         sample_stride: STATE.simdSampleStride,
     };
     manifest.state = "SEALED";

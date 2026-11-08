@@ -165,3 +165,84 @@ def test_launch_diagnostics_do_not_pollute_capture_json(monkeypatch, capsys):
     output = capsys.readouterr()
     assert output.out == ""
     assert "[launch]" in output.err
+
+
+@pytest.mark.parametrize("identity", ["dev.fixture", {"identifier": "dev.fixture"}])
+def test_resolve_pid_uses_package_metadata_with_localized_main_name(monkeypatch, identity):
+    from types import SimpleNamespace
+
+    import tracemiku_device
+
+    processes = [
+        SimpleNamespace(pid=20, name="dev.fixture:push", parameters={"applications": [identity]}),
+        SimpleNamespace(pid=42, name="千问", parameters={"applications": [identity]}),
+        SimpleNamespace(pid=99, name="dev.fixture", parameters={"applications": ["dev.other"]}),
+    ]
+    def enumerate_processes(*, scope):
+        assert scope == "metadata"
+        return processes
+    device = SimpleNamespace(enumerate_processes=enumerate_processes)
+    monkeypatch.setattr(tracemiku_device.subprocess, "run", lambda *args, **kwargs: pytest.fail("unexpected adb"))
+    assert tracemiku_device.resolve_running_pid("dev.fixture", device) == 42
+
+
+def test_resolve_pid_application_identity_handles_setargv0_and_renamed_child(monkeypatch):
+    from types import SimpleNamespace
+
+    import tracemiku_device
+
+    processes = [SimpleNamespace(pid=pid, name=name, parameters={"applications": ["dev.fixture"]})
+                 for pid, name in [(42, "renamed-main"), (43, "renamed-worker")]]
+    def enumerate_applications(*, identifiers, scope):
+        assert identifiers == ["dev.fixture"] and scope == "minimal"
+        return [SimpleNamespace(identifier="dev.fixture", name="千问", pid=42)]
+    device = SimpleNamespace(enumerate_processes=lambda **kwargs: processes,
+                             enumerate_applications=enumerate_applications)
+    monkeypatch.setattr(tracemiku_device.subprocess, "run", lambda *args, **kwargs: pytest.fail("unexpected adb"))
+    assert tracemiku_device.resolve_running_pid("dev.fixture", device) == 42
+
+
+@pytest.mark.parametrize("pids, expected", [("42\n", 42), ("42\n43\n", None), ("", None)])
+def test_resolve_pid_proc_fallback_is_exact_bounded_and_uses_selected_device(monkeypatch, pids, expected):
+    from types import SimpleNamespace
+
+    import tracemiku_device
+
+    monkeypatch.setenv("ANDROID_SERIAL", "fixture-serial")
+    monkeypatch.setenv("ANDROID_ADB_SERVER_PORT", "5038")
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        assert kwargs["timeout"] == 30
+        return SimpleNamespace(returncode=0, stdout=pids, stderr="")
+    monkeypatch.setattr(tracemiku_device, "make_su_detector", lambda: lambda: True)
+    monkeypatch.setattr(tracemiku_device.subprocess, "run", run)
+    device = SimpleNamespace(enumerate_processes=lambda **kwargs: [
+        SimpleNamespace(pid=43, name="dev.fixture:push", parameters={"applications": ["dev.fixture"]}),
+    ])
+    assert tracemiku_device.resolve_running_pid("dev.fixture", device) == expected
+    assert commands[0][:7] == ["adb", "-P", "5038", "-s", "fixture-serial", "shell", commands[0][-1]]
+    import shlex
+    shell = shlex.split(commands[0][-1])
+    assert shell[:2] == ["su", "-c"]
+    assert "/proc/[0-9]*/cmdline" in shell[2]
+    assert "read -r -d '' argv0" in shell[2]
+    assert '[ "$argv0" = dev.fixture ]' in shell[2]
+
+
+def test_resolve_pid_proc_first_field_does_not_match_suffix_or_arguments(tmp_path, monkeypatch):
+    import tracemiku_device
+
+    proc = tmp_path / "proc"
+    for pid, cmdline in [(42, b"dev.fixture\0--flag\0"), (43, b"dev.fixture:push\0"),
+                         (44, b"other\0dev.fixture\0"), (45, b"dev.fixture.extra\0")]:
+        directory = proc / str(pid)
+        directory.mkdir(parents=True)
+        (directory / "cmdline").write_bytes(cmdline)
+    actual_run = subprocess.run
+    def run(command, **kwargs):
+        script = command[-1].replace("/proc/", str(proc) + "/")
+        return actual_run(["bash", "-c", script], **kwargs)
+    monkeypatch.setattr(tracemiku_device, "make_su_detector", lambda: lambda: False)
+    monkeypatch.setattr(tracemiku_device.subprocess, "run", run)
+    assert tracemiku_device.resolve_running_pid("dev.fixture") == 42

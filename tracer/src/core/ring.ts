@@ -26,6 +26,7 @@ export function closeWorkerTraceFiles(): void {
     for (const key of Object.keys(STATE.workerTraces || {})) {
         const worker = STATE.workerTraces[key];
         if (worker.file) {
+            worker.fileBytes = worker.file.bytes;
             worker.file.close();
             worker.file = null;
         }
@@ -39,14 +40,18 @@ export function workerTraceSummaries(): any[] {
         const worker = STATE.workerTraces[key] as WorkerTraceState;
         const spawnedAtIdx = typeof worker.spawnedAtIdx === "number" ? worker.spawnedAtIdx : 0;
         const endedAtIdx = typeof worker.endedAtIdx === "number" ? worker.endedAtIdx : currentHead;
+        const declaredHead = worker.headBuf.readU64().toNumber();
+        const bytes = worker.file ? worker.file.bytes : worker.fileBytes;
+        const records = Math.floor(bytes / REC_SIZE);
+        const dropped = worker.droppedBuf.readU64().toNumber() + Math.max(0, declaredHead - records);
         out.push({
             tid: worker.tid,
             file: `worker_trace_tid${worker.tid}.bin`,
             pthread: worker.pthread,
             start: worker.start,
             devicePath: worker.filePath,
-            records: worker.headBuf.readU64().toNumber(),
-            dropped: worker.droppedBuf.readU64().toNumber(),
+            bytes, records, dropped, declared_head: declaredHead,
+            truncated: dropped > 0 || records !== declaredHead || bytes % REC_SIZE !== 0,
             recordSize: REC_SIZE,
             spawnedAtIdx,
             endedAtIdx,
@@ -154,6 +159,8 @@ export function ensureTraceDir(): void {
 /** Open trace output file for a call */
 export function openTraceFile(callIdx: number, tid: number): void {
     ensureTraceDir();
+    STATE.traceFileBytes = 0;
+    STATE.simdTraceFileBytes = 0;
     const path = `${STATE.traceDir}/trace_call${callIdx}_tid${tid}.bin`;
     STATE.traceFile = new NativeFile(path, STATE.traceIoState!);
     STATE.traceFilePath = path;
@@ -174,6 +181,7 @@ export function openTraceFile(callIdx: number, tid: number): void {
 
 export function closeTraceFile(): void {
     if (STATE.traceFile) {
+        STATE.traceFileBytes = STATE.traceFile.bytes;
         STATE.traceFile.close();
         STATE.traceFile = null;
     }
@@ -181,6 +189,7 @@ export function closeTraceFile(): void {
 
 export function closeSimdTraceFile(): void {
     if (STATE.simdTraceFile) {
+        STATE.simdTraceFileBytes = STATE.simdTraceFile.bytes;
         STATE.simdTraceFile.close();
         STATE.simdTraceFile = null;
     }

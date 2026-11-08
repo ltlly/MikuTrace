@@ -160,3 +160,17 @@ def test_spawn_and_attach_remain_mutually_exclusive(environment, tmp_path):
     options.attach_pid = 100
     with pytest.raises(ValueError, match="互斥"):
         capture_module.capture(options, environment.root, None, lambda message: None)
+
+
+def test_attach_package_uses_running_pid_resolver(environment, tmp_path, monkeypatch):
+    options = args(tmp_path)
+    options.spawn = False
+    resolved = []
+    def resolve(pkg, device):
+        resolved.append(pkg)
+        return 4242
+    monkeypatch.setattr(capture_module, "resolve_running_pid", resolve)
+    assert capture_module.capture(options, environment.root, None, lambda message: None)["status"] == "ok"
+    assert resolved == ["dev.fixture"]
+    assert "spawn" not in environment.sequence
+    assert "attach" in environment.sequence

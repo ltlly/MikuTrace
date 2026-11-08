@@ -6,11 +6,63 @@ so the adb/UI launch logic is a separate, importable module. Pure subprocess
 """
 
 import os
+import shlex
 import subprocess
 import sys
 import time
 
-from tracemiku_common import adb_command
+from tracemiku_common import adb_command, make_su_detector
+
+
+def resolve_running_pid(pkg, device=None):
+    """按应用身份解析唯一主进程；显示名和 :suffix 不作为包名证据。"""
+    if not isinstance(pkg, str) or not pkg or "\0" in pkg:
+        raise ValueError("invalid package identifier")
+    candidates = set()
+    if device is not None:
+        try:
+            processes = device.enumerate_processes(scope="metadata")
+        except Exception:
+            processes = []
+        for process in processes:
+            parameters = getattr(process, "parameters", {}) or {}
+            identities = parameters.get("applications", [])
+            if not isinstance(identities, list):
+                identities = [identities]
+            identities = [*identities, parameters.get("application"), parameters.get("package")]
+            identifiers = {identity.get("identifier") if isinstance(identity, dict) else identity
+                           for identity in identities if isinstance(identity, (str, dict))}
+            if pkg in identifiers and not process.name.startswith(pkg + ":") and process.pid > 0:
+                candidates.add(process.pid)
+        try:
+            applications = device.enumerate_applications(identifiers=[pkg], scope="minimal")
+        except Exception:
+            applications = []
+        main_pids = {app.pid for app in applications if app.identifier == pkg and app.pid > 0}
+        if len(main_pids) == 1:
+            return main_pids.pop()
+        if len(main_pids) > 1:
+            return None
+        if len(candidates) == 1:
+            return candidates.pop()
+
+    command = f"""for cmdline in /proc/[0-9]*/cmdline; do
+    IFS= read -r -d '' argv0 < "$cmdline" 2>/dev/null || continue
+    [ "$argv0" = {shlex.quote(pkg)} ] || continue
+    process_id="${{cmdline#/proc/}}"
+    printf '%s\\n' "${{process_id%/cmdline}}"
+done"""
+    if make_su_detector()():
+        command = "su -c " + shlex.quote(command)
+    try:
+        result = subprocess.run(adb_command("shell", command), capture_output=True,
+                                text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode:
+        return None
+    pids = {int(value) for value in result.stdout.split() if value.isdecimal() and int(value) > 0}
+    return pids.pop() if len(pids) == 1 else None
 
 
 def usable_devices(devices_output, want_serial):
